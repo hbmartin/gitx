@@ -17,4 +17,6 @@
 - (instancetype)initWithDiff:(NSString *)diff;
 
 @property (readonly) NSString *diff;
+@property (readonly, nullable) PBGitCommit *startCommit;
+@property (readonly, nullable) PBGitCommit *diffCommit;
 @end

@@ -116,6 +116,12 @@
                                     <action selector="performClose:" target="-1" id="193"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Repository Settings…" id="codex-repo-settings">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="showRepositorySettings:" target="-1" id="codex-repo-settings-action"/>
+                                </connections>
+                            </menuItem>
                             <menuItem title="Clone To…" id="954">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>

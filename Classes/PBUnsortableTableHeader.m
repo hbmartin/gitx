@@ -7,12 +7,18 @@
 //
 
 #import "PBUnsortableTableHeader.h"
+#import "PBGitDefaults.h"
 
 
 @implementation PBUnsortableTableHeader
 
 - (void)mouseDown:(NSEvent *)theEvent
 {
+	if (![PBGitDefaults historyColumnSortingEnabled]) {
+		controller.sortDescriptors = @[];
+		[controller rearrangeObjects];
+		return;
+	}
 	NSPoint location = [self convertPoint:[[self window] mouseLocationOutsideOfEventStream] fromView:[[self window] contentView]];
 	NSInteger aColumnIndex = [self columnAtPoint:location];
 

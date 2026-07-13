@@ -35,3 +35,4 @@
 #import "PBGitHistoryController.h"
 #import "PBGitCommit.h"
 #import "PBGitRef.h"
+#import "PBHighlighting.h"

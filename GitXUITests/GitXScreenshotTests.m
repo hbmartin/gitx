@@ -85,6 +85,44 @@
     [self addAttachment:attachment];
 }
 
+- (BOOL)runGit:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory {
+    NSTask *task = [[NSTask alloc] init];
+    // /usr/bin/git delegates through xcrun, which refuses to run from the UI
+    // test runner's sandbox. Invoke Xcode's real Git binary directly.
+    task.executableURL = [NSURL fileURLWithPath:@"/Applications/Xcode.app/Contents/Developer/usr/bin/git"];
+    task.arguments = arguments;
+    task.currentDirectoryURL = [NSURL fileURLWithPath:directory isDirectory:YES];
+    NSError *error = nil;
+    [task launchAndReturnError:&error];
+    [task waitUntilExit];
+    return error == nil && task.terminationStatus == 0;
+}
+
+- (NSString *)makeDirtyRepositoryFixture {
+    NSString *repositoryPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"gitx-dirty-%@", NSUUID.UUID.UUIDString]];
+    [[NSFileManager defaultManager] createDirectoryAtPath:repositoryPath withIntermediateDirectories:YES attributes:nil error:nil];
+    XCTAssertTrue(([self runGit:@[@"init", @"-q"] inDirectory:repositoryPath]));
+    XCTAssertTrue(([self runGit:@[@"config", @"user.name", @"GitX Tests"] inDirectory:repositoryPath]));
+    XCTAssertTrue(([self runGit:@[@"config", @"user.email", @"tests@gitx.invalid"] inDirectory:repositoryPath]));
+    [@"tracked\n" writeToFile:[repositoryPath stringByAppendingPathComponent:@"tracked.swift"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    XCTAssertTrue(([self runGit:@[@"add", @"tracked.swift"] inDirectory:repositoryPath]));
+    XCTAssertTrue(([self runGit:@[@"commit", @"-q", @"-m", @"Initial"] inDirectory:repositoryPath]));
+    [@"tracked\nchanged\n" writeToFile:[repositoryPath stringByAppendingPathComponent:@"tracked.swift"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [@"new\n" writeToFile:[repositoryPath stringByAppendingPathComponent:@"new.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    return repositoryPath;
+}
+
+- (XCUIElement *)selectHistoryForCurrentBranch {
+	[self.app activate];
+    NSPredicate *branchName = [NSPredicate predicateWithFormat:@"value == 'main' OR value == 'master'"];
+    XCUIElement *branch = [self.app.staticTexts matchingPredicate:branchName].firstMatch;
+    XCTAssertTrue([branch waitForExistenceWithTimeout:10], @"The repository's current branch should be visible in the sidebar");
+    [branch click];
+    XCUIElement *table = self.app.tables[@"CommitList"];
+    XCTAssertTrue([table waitForExistenceWithTimeout:15], @"Selecting the current branch should open history");
+    return table;
+}
+
 // MARK: - Tests
 
 - (void)testMainWindowExists {
@@ -114,6 +152,57 @@
     }
 
     [self saveWindowScreenshotNamed:@"staging-view"];
+}
+
+- (void)testUncommittedChangesRowAppearsForDirtyRepository {
+    [self.app terminate];
+    NSString *fixture = [self makeDirtyRepositoryFixture];
+    self.app.launchEnvironment = @{ @"GITX_UITEST_REPO" : fixture };
+    [self.app launch];
+    XCTAssertTrue([self waitForWindow]);
+	[self selectHistoryForCurrentBranch];
+
+    XCUIElement *workingState = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value BEGINSWITH 'Uncommitted Changes'"]].firstMatch;
+    XCTAssertTrue([workingState waitForExistenceWithTimeout:15], @"Dirty repositories should pin an Uncommitted Changes row above history");
+    [self saveWindowScreenshotNamed:@"uncommitted-changes-row"];
+}
+
+- (void)testMultipleCommitSelectionShowsDiffPresentationControl {
+    if (![self waitForWindow]) { return; }
+	XCUIElement *table = [self selectHistoryForCurrentBranch];
+    [NSThread sleepForTimeInterval:1.0];
+    XCTAssertGreaterThan(table.tableRows.count, 2);
+    [[table.tableRows elementBoundByIndex:1] click];
+    [XCUIElement performWithKeyModifiers:XCUIKeyModifierCommand block:^{
+        [[table.tableRows elementBoundByIndex:2] click];
+    }];
+
+    XCUIElement *presentation = [[self.app descendantsMatchingType:XCUIElementTypeAny] elementMatchingPredicate:[NSPredicate predicateWithFormat:@"identifier == 'MultiCommitDiffPresentation'"]];
+    XCTAssertTrue([presentation waitForExistenceWithTimeout:10]);
+    [self saveWindowScreenshotNamed:@"multiple-commit-diff"];
+}
+
+- (void)testHistoryAndFetchPreferencesAreAvailable {
+    if (![self waitForWindow]) { return; }
+	[self.app activate];
+	[self.app.menuBars.menuBarItems[@"GitX"] click];
+	[self.app.menuItems[@"Settings…"] click];
+	XCUIElement *preferences = self.app.dialogs.firstMatch;
+	XCTAssertTrue([preferences waitForExistenceWithTimeout:5]);
+	XCUIElement *pane = preferences.toolbars.buttons[@"History & Fetch"];
+	if (pane.exists) {
+		[pane click];
+	} else {
+		XCUIElement *more = preferences.popUpButtons[@"more toolbar items"];
+		XCTAssertTrue([more waitForExistenceWithTimeout:5]);
+		[more click];
+		XCUIElement *menuItem = self.app.menuItems[@"History & Fetch"];
+		XCTAssertTrue([menuItem waitForExistenceWithTimeout:5]);
+		[menuItem click];
+	}
+    XCTAssertTrue([preferences.checkBoxes[@"Allow commit columns to sort history"] waitForExistenceWithTimeout:5]);
+    XCTAssertTrue(preferences.popUpButtons.firstMatch.exists);
+    [self saveWindowScreenshotNamed:@"history-fetch-preferences"];
 }
 
 // - (void)testFullScreenScreenshot {
@@ -160,4 +249,3 @@
 }
 
 @end
-

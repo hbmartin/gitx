@@ -6,13 +6,12 @@
 //
 
 import Cocoa
-import WebKit
 
 @objc class PBCommitList: NSTableView {
 
     // MARK: - Properties
 
-    @IBOutlet weak var webView: WebView!
+    @IBOutlet weak var webView: NSView!
     @IBOutlet weak var webController: PBWebHistoryController!
     @IBOutlet weak var controller: PBGitHistoryController!
     @IBOutlet weak var searchController: PBHistorySearchController!
@@ -24,7 +23,6 @@ import WebKit
 
     override func awakeFromNib() {
         super.awakeFromNib()
-        webView.drawsBackground = false
     }
 
     // MARK: - Drag and Drop
@@ -99,9 +97,9 @@ import WebKit
         if character == " " {
             if controller.selectedCommitDetailsIndex == 0 {
                 if modifiers.contains(.shift) {
-                    webView.scrollPageUp(self)
+                    webController.scrollPageUp()
                 } else {
-                    webView.scrollPageDown(self)
+                    webController.scrollPageDown()
                 }
             } else {
                 controller.toggleQLPreviewPanel(self)
@@ -169,6 +167,11 @@ import WebKit
               let commit = cell.objectValue as? PBGitCommit else {
             return nil
         }
+		// The Working State row is a navigation surface, not an immutable
+		// commit, so commit/ref actions do not apply to it.
+		if commit.sha.isEmpty {
+			return nil
+		}
 
         let point = window?.contentView?.convert(event.locationInWindow, to: cell) ?? .zero
         let i = Int(cell.indexAt(x: point.x))
@@ -194,8 +197,6 @@ import WebKit
         return menu
     }
 }
-
-
 
 
 

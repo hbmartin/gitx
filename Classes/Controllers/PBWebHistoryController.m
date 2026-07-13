@@ -1,20 +1,24 @@
-//
-//  PBWebGitController.m
-//  GitTest
-//
-//  Created by Pieter de Bie on 14-06-08.
-//  Copyright 2008 __MyCompanyName__. All rights reserved.
-//
-
 #import "PBWebHistoryController.h"
-#import "PBGitDefaults.h"
-#import <ObjectiveGit/GTConfiguration.h>
-#import "PBGitRef.h"
-#import "PBGitRevSpecifier.h"
-#import <stdatomic.h>
+#import "PBNativeContentView.h"
+#import "PBUncommittedChanges.h"
+#import "PBGitRepository.h"
+#import "PBGitRepository_PBGitBinarySupport.h"
+#import "PBGitIndex.h"
+#import "PBChangedFile.h"
+#import "PBTask.h"
 
-@interface PBWebHistoryController ()
-@property (nonatomic) atomic_ulong commitSummaryGeneration;
+static NSString *const PBMultiCommitDiffPresentationKey = @"PBMultiCommitDiffPresentation";
+static NSString *const PBEmptyTreeSHA = @"4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
+	PBMultiCommitDiffPresentationSequential = 0,
+	PBMultiCommitDiffPresentationCombined = 1,
+};
+
+@interface PBWebHistoryController () <PBNativeContentViewDelegate>
+@property (nonatomic) NSSegmentedControl *presentationControl;
+@property (nonatomic) NSArray<PBGitCommit *> *displayedCommits;
+@property (nonatomic) NSArray<PBGitCommit *> *renderedCommits;
 @end
 
 @implementation PBWebHistoryController
@@ -26,327 +30,193 @@
 	startFile = @"history";
 	repository = historyController.repository;
 	[super awakeFromNib];
-	[historyController addObserver:self
-						   keyPath:@"webCommits"
-						   options:0
-							 block:^(MAKVONotification *notification) {
-								 [self changeContentTo:self->historyController.webCommits];
-							 }];
-}
+	self.nativeView.delegate = self;
 
-- (void)closeView
-{
-	[[self script] setValue:nil forKey:@"commit"];
+	self.presentationControl = [NSSegmentedControl segmentedControlWithLabels:@[ @"Sequential", @"Combined" ]
+										 trackingMode:NSSegmentSwitchTrackingSelectOne
+											 target:self
+											 action:@selector(presentationChanged:)];
+	self.presentationControl.controlSize = NSControlSizeSmall;
+	self.presentationControl.accessibilityIdentifier = @"MultiCommitDiffPresentation";
+	self.presentationControl.selectedSegment = [[NSUserDefaults standardUserDefaults] integerForKey:PBMultiCommitDiffPresentationKey];
+	NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 32)];
+	accessory.translatesAutoresizingMaskIntoConstraints = NO;
+	self.presentationControl.translatesAutoresizingMaskIntoConstraints = NO;
+	[accessory addSubview:self.presentationControl];
+	[NSLayoutConstraint activateConstraints:@[
+		[accessory.heightAnchor constraintEqualToConstant:32],
+		[self.presentationControl.centerXAnchor constraintEqualToAnchor:accessory.centerXAnchor],
+		[self.presentationControl.centerYAnchor constraintEqualToAnchor:accessory.centerYAnchor],
+	]];
+	[self.nativeView setAccessoryView:accessory];
+	accessory.hidden = YES;
 
-	[super closeView];
+	[historyController addObserver:self keyPath:@"webCommits" options:0 block:^(MAKVONotification *notification) {
+		[notification.observer changeContentTo:((PBGitHistoryController *)notification.target).webCommits];
+	}];
 }
 
 - (void)didLoad
 {
-	currentOID = nil;
 	[self changeContentTo:historyController.webCommits];
+}
+
+- (NSArray<PBGitCommit *> *)oldestFirst:(NSArray<PBGitCommit *> *)commits
+{
+	// NSArrayController supplies selected commits in visible (newest-first Git
+	// graph) order. Reversing preserves topology even when authored dates lie.
+	return commits.reverseObjectEnumerator.allObjects;
+}
+
+- (NSString *)diffForCommit:(PBGitCommit *)commit
+{
+	NSString *base = commit.parents.firstObject.SHA ?: PBEmptyTreeSHA;
+	NSError *error = nil;
+	return [historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, commit.SHA ] error:&error] ?: @"";
+}
+
+- (BOOL)commitsShareAncestryPath:(NSArray<PBGitCommit *> *)commits
+{
+	for (NSUInteger index = 1; index < commits.count; index++) {
+		NSError *error = nil;
+		NSString *lineage = [historyController.repository outputOfTaskWithArguments:@[ @"rev-list", @"--first-parent", commits[index].SHA ] error:&error];
+		if (!lineage) return NO;
+		NSSet<NSString *> *firstParents = [NSSet setWithArray:[lineage componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]];
+		if (![firstParents containsObject:commits[index - 1].SHA]) return NO;
+	}
+	return YES;
+}
+
+- (NSArray<NSDictionary *> *)sequentialSectionsForCommits:(NSArray<PBGitCommit *> *)commits
+{
+	NSMutableArray *sections = [NSMutableArray array];
+	for (PBGitCommit *commit in commits) {
+		NSString *shortSHA = commit.shortName ?: @"";
+		NSString *title = [NSString stringWithFormat:@"%@  %@\n%@ — %@", shortSHA, commit.subject ?: @"", commit.author ?: @"", commit.authorDate ?: @""];
+		[sections addObject:@{
+			PBNativeSectionTitleKey : title,
+			PBNativeSectionTextKey : [self diffForCommit:commit],
+			PBNativeSectionContextKey : @"readOnly",
+		}];
+	}
+	return sections;
+}
+
+- (NSArray<NSDictionary *> *)combinedSectionsForCommits:(NSArray<PBGitCommit *> *)commits
+{
+	PBGitCommit *oldest = commits.firstObject;
+	PBGitCommit *newest = commits.lastObject;
+	NSString *base = oldest.parents.firstObject.SHA ?: PBEmptyTreeSHA;
+	NSError *error = nil;
+	NSString *combined = [historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, newest.SHA ] error:&error] ?: @"";
+	return @[@{
+		PBNativeSectionTitleKey : [NSString stringWithFormat:@"Combined Diff — %@ through %@", oldest.shortName, newest.shortName],
+		PBNativeSectionTextKey : combined,
+		PBNativeSectionContextKey : @"readOnly",
+	}];
+}
+
+- (NSString *)syntheticUntrackedDiffForFile:(PBChangedFile *)file
+{
+	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:3] ?: @"";
+	NSMutableArray<NSString *> *lines = [[contents componentsSeparatedByString:@"\n"] mutableCopy];
+	BOOL endsWithNewline = [contents hasSuffix:@"\n"];
+	if (endsWithNewline && [lines.lastObject length] == 0) [lines removeLastObject];
+	if (lines.count == 0 || (lines.count == 1 && [lines.firstObject length] == 0)) return @"";
+	NSMutableString *added = [NSMutableString string];
+	for (NSString *line in lines) [added appendFormat:@"+%@\n", line];
+	if (!endsWithNewline) [added appendString:@"\\ No newline at end of file\n"];
+	return [NSString stringWithFormat:@"diff --git a/%@ b/%@\nnew file mode 100644\n--- /dev/null\n+++ b/%@\n@@ -0,0 +1,%lu @@\n%@", file.path, file.path, file.path, (unsigned long)lines.count, added];
+}
+
+- (NSArray<NSDictionary *> *)workingStateSections
+{
+	NSError *error = nil;
+	NSString *staged = [historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--cached", @"--find-renames", @"--no-ext-diff" ] error:&error] ?: @"";
+	NSMutableString *unstaged = [[historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff" ] error:&error] ?: @"" mutableCopy];
+	for (PBChangedFile *file in historyController.repository.index.indexChanges) {
+		if (file.status == NEW && file.hasUnstagedChanges) [unstaged appendString:[self syntheticUntrackedDiffForFile:file]];
+	}
+	return @[
+		@{ PBNativeSectionTitleKey : @"Staged Changes", PBNativeSectionTextKey : staged, PBNativeSectionContextKey : @"readOnly" },
+		@{ PBNativeSectionTitleKey : @"Unstaged Changes", PBNativeSectionTextKey : unstaged, PBNativeSectionContextKey : @"readOnly" },
+	];
 }
 
 - (void)changeContentTo:(NSArray<PBGitCommit *> *)commits
 {
-	if (commits == nil || commits.count == 0 || !finishedLoading) {
+	self.displayedCommits = commits ?: @[];
+	self.presentationControl.superview.hidden = commits.count <= 1;
+	if (commits.count == 0) {
+		[self.nativeView showMessage:@"No commit selected"];
+		return;
+	}
+	if ([commits.firstObject isKindOfClass:PBUncommittedChanges.class]) {
+		self.renderedCommits = @[];
+		self.presentationControl.superview.hidden = YES;
+		NSArray *sections = [self workingStateSections];
+		self->diff = [[sections valueForKey:PBNativeSectionTextKey] componentsJoinedByString:@"\n"];
+		[self.nativeView showDiffSections:sections];
 		return;
 	}
 
-	if (commits.count == 1) {
-		[self changeContentToCommit:commits.firstObject];
+	NSArray<PBGitCommit *> *ordered = [self oldestFirst:commits];
+	BOOL combinedEnabled = commits.count > 1 && [self commitsShareAncestryPath:ordered];
+	[self.presentationControl setEnabled:combinedEnabled forSegment:PBMultiCommitDiffPresentationCombined];
+	PBMultiCommitDiffPresentation mode = self.presentationControl.selectedSegment;
+	if (mode == PBMultiCommitDiffPresentationCombined && !combinedEnabled) {
+		mode = PBMultiCommitDiffPresentationSequential;
+		self.presentationControl.selectedSegment = mode;
+		self.presentationControl.toolTip = NSLocalizedString(@"Combined Diff requires commits on one ancestry path.", @"Explanation shown when selected commits cannot produce one combined diff");
 	} else {
-		[self changeContentToMultipleSelectionMessage];
+		self.presentationControl.toolTip = nil;
 	}
+	NSArray *sections = mode == PBMultiCommitDiffPresentationCombined ? [self combinedSectionsForCommits:ordered] : [self sequentialSectionsForCommits:ordered];
+	self.renderedCommits = mode == PBMultiCommitDiffPresentationCombined ? @[ ordered.lastObject ] : ordered;
+	self->diff = [[sections valueForKey:PBNativeSectionTextKey] componentsJoinedByString:@"\n"];
+	[self.nativeView showDiffSections:sections];
 }
 
-- (void)changeContentToMultipleSelectionMessage
+- (nullable NSData *)dataForGitObject:(NSString *)object
 {
-	NSArray *arguments = @[
-		@[ NSLocalizedString(@"Multiple commits are selected.", @"Multiple selection Message: Title"),
-		   NSLocalizedString(@"Use the Copy command to copy their information.", @"Multiple selection Message: Copy Command"),
-		   NSLocalizedString(@"Or select a single commit to see its diff.", @"Multiple selection Message: Diff Hint") ]
-	];
-	[[self script] callWebScriptMethod:@"showMultipleSelectionMessage" withArguments:arguments];
+	PBTask *task = [historyController.repository taskWithArguments:@[ @"show", object ]];
+	if (![task launchTask:nil]) return nil;
+	return task.standardOutputData;
 }
 
-static NSString *deltaTypeName(GTDeltaType t)
+- (NSImage *)nativeContentView:(PBNativeContentView *)view imageForPath:(NSString *)path section:(NSUInteger)sectionIndex
 {
-	switch (t) {
-		case GTDeltaTypeUnmodified:
-			return @"unmodified";
-		case GTDeltaTypeAdded:
-			return @"added";
-		case GTDeltaTypeDeleted:
-			return @"removed";
-		case GTDeltaTypeModified:
-			return @"modified";
-		case GTDeltaTypeRenamed:
-			return @"renamed";
-		case GTDeltaTypeCopied:
-			return @"copied";
-		case GTDeltaTypeIgnored:
-			return @"ignored";
-		case GTDeltaTypeUntracked:
-			return @"untracked";
-		case GTDeltaTypeTypeChange:
-			return @"type changed";
-		case GTDeltaTypeUnreadable:
-			return @"unreadable";
-		case GTDeltaTypeConflicted:
-			return @"conflicted";
+	NSData *data = nil;
+	if (sectionIndex < self.renderedCommits.count) {
+		PBGitCommit *commit = self.renderedCommits[sectionIndex];
+		data = [self dataForGitObject:[NSString stringWithFormat:@"%@:%@", commit.SHA, path]];
+		if (!data.length && commit.parents.firstObject) data = [self dataForGitObject:[NSString stringWithFormat:@"%@:%@", commit.parents.firstObject.SHA, path]];
+	} else {
+		data = [NSData dataWithContentsOfURL:[historyController.repository.workingDirectoryURL URLByAppendingPathComponent:path]];
+		if (!data.length) data = [self dataForGitObject:[@":" stringByAppendingString:path]];
 	}
+	return data.length ? [[NSImage alloc] initWithData:data] : nil;
 }
 
-static NSDictionary *loadCommitSummary(GTRepository *repo, GTCommit *commit, BOOL (^isCanceled)(void));
-
-// A GTDiffDelta's GTDiffFile does not always set the file size. See `git_diff_get_delta`.
-static NSUInteger reallyGetFileSize(GTRepository *repo, GTDiffFile *file)
+- (void)presentationChanged:(NSSegmentedControl *)sender
 {
-	GTObjectDatabase *odb = [repo objectDatabaseWithError:nil];
-	if (!odb) return 0;
-	size_t size = 0;
-	git_otype otype;
-	if (git_odb_read_header(&size, &otype, odb.git_odb, file.OID.git_oid) != 0) {
-		return 0;
-	}
-	return size;
+	[[NSUserDefaults standardUserDefaults] setInteger:sender.selectedSegment forKey:PBMultiCommitDiffPresentationKey];
+	[self changeContentTo:self.displayedCommits];
 }
 
-- (void)changeContentToCommit:(PBGitCommit *)commit
-{
-	// The sha is the same, but refs may have changed. reload it lazy
-	if ([currentOID isEqual:commit.OID]) {
-		[[self script] callWebScriptMethod:@"reload" withArguments:nil];
-		return;
-	}
-
-	NSArray *arguments = @[ commit, [[[historyController repository] headRef] simpleRef] ];
-	id scriptResult = [[self script] callWebScriptMethod:@"loadCommit" withArguments:arguments];
-	if (!scriptResult) {
-		// the web view is not really ready for scripting???
-		[self performSelector:_cmd withObject:commit afterDelay:0.05];
-		return;
-	}
-	currentOID = commit.OID;
-
-	unsigned long gen = atomic_fetch_add(&_commitSummaryGeneration, 1) + 1;
-
-	// Open a new repo instance for the background queue
-	NSError *err = nil;
-	GTRepository *repo =
-		[GTRepository repositoryWithURL:[repository gtRepo].gitDirectoryURL
-								  error:&err];
-	if (!repo) {
-		NSLog(@"Failed to open repository: %@", err);
-		return;
-	}
-	GTCommit *queueCommit = [repo lookUpObjectByOID:commit.OID error:&err];
-	if (!queueCommit) {
-		NSLog(@"Failed to find commit: %@", err);
-		return;
-	}
-
-	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-		NSDictionary *summary = loadCommitSummary(repo, queueCommit, ^BOOL {
-			return gen != atomic_load(&self->_commitSummaryGeneration);
-		});
-		if (!summary) return;
-		NSError *err = nil;
-		NSString *summaryJSON =
-			[[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:summary
-																		   options:0
-																			 error:&err]
-								  encoding:NSUTF8StringEncoding];
-		if (!summaryJSON) {
-			NSLog(@"Commit summary JSON error: %@", err);
-			return;
-		}
-		dispatch_async(dispatch_get_main_queue(), ^{
-			[self commitSummaryLoaded:summaryJSON forOID:commit.OID];
-		});
-	});
-}
-
-static NSDictionary *loadCommitSummary(GTRepository *repo, GTCommit *commit, BOOL (^isCanceled)(void))
-{
-	if (isCanceled()) return nil;
-	GTDiffOptionsFlags diffFlags = GTDiffOptionsFlagsNormal;
-	GTDiffFindOptionsFlags findFlags = GTDiffFindOptionsFlagsFindRenames;
-	if (![PBGitDefaults showWhitespaceDifferences]) {
-		diffFlags |= GTDiffOptionsFlagsIgnoreWhitespace;
-		findFlags |= GTDiffFindOptionsFlagsIgnoreWhitespace;
-	}
-	NSError *err = nil;
-	GTDiff *d = [GTDiff diffOldTree:commit.parents.firstObject.tree
-						withNewTree:commit.tree
-					   inRepository:repo
-							options:@{GTDiffOptionsFlagsKey : @(diffFlags)}
-							  error:&err];
-
-	if (!d) {
-		NSLog(@"Commit summary diff error: %@", err);
-		return nil;
-	}
-
-	// Rewrite the diff to display moved files.
-	[d findSimilarWithOptions:
-	 @{GTDiffFindOptionsFlagsKey : @(findFlags),
-	   GTDiffFindOptionsRenameLimitKey : @(2000)
-	 }];
-
-	if (isCanceled()) return nil;
-	NSMutableArray<NSDictionary<NSString *, NSObject *> *> *fileDeltas = [NSMutableArray array];
-	NSMutableString *fullDiff = [NSMutableString string];
-	[d enumerateDeltasUsingBlock:^(GTDiffDelta *_Nonnull delta, BOOL *_Nonnull stop) {
-		if (isCanceled()) {
-			*stop = YES;
-			return;
-		}
-		NSUInteger numLinesAdded = 0;
-		NSUInteger numLinesRemoved = 0;
-		NSError *err = nil;
-		GTDiffPatch *patch = [delta generatePatch:&err];
-		if (isCanceled()) {
-			*stop = YES;
-			return;
-		}
-		if (patch) {
-			numLinesAdded = patch.addedLinesCount;
-			numLinesRemoved = patch.deletedLinesCount;
-			NSData *patchData = patch.patchData;
-			if (patchData) {
-				NSString *patchString =
-					[[NSString alloc] initWithData:patchData
-										  encoding:NSUTF8StringEncoding];
-				if (!patchString) {
-					patchString =
-						[[NSString alloc] initWithData:patchData
-											  encoding:NSISOLatin1StringEncoding];
-				}
-				if (patchString) {
-					[fullDiff appendString:patchString];
-				}
-			}
-			// Use the patch's delta as it may have loaded more file sizes.
-			delta = patch.delta;
-		} else {
-			NSLog(@"generatePatch error: %@", err);
-		}
-		GTDiffFile *oldFile = delta.oldFile;
-		GTDiffFile *newFile = delta.newFile;
-		NSUInteger oldFileSize = oldFile.size;
-		NSUInteger newFileSize = newFile.size;
-		if (oldFileSize == 0 && (oldFile.flags & GIT_DIFF_FLAG_EXISTS)) {
-			oldFileSize = reallyGetFileSize(repo, newFile);
-		}
-		if (newFileSize == 0 && (newFile.flags & GIT_DIFF_FLAG_EXISTS)) {
-			newFileSize = reallyGetFileSize(repo, newFile);
-		}
-		[fileDeltas addObject:@{
-			@"filename" : newFile.path,
-			@"oldFilename" : oldFile.path,
-			@"newFilename" : newFile.path,
-			@"changeType" : deltaTypeName(delta.type),
-			@"oldFileSize" : @(oldFileSize),
-			@"newFileSize" : @(newFileSize),
-			@"numLinesAdded" : @(numLinesAdded),
-			@"numLinesRemoved" : @(numLinesRemoved),
-			@"binary" : [NSNumber numberWithBool:(delta.flags & GTDiffFileFlagBinary) != 0],
-		}];
-	}];
-	if (isCanceled()) return nil;
-	return @{
-		@"filesInfo" : fileDeltas,
-		@"fullDiff" : fullDiff,
-	};
-}
-
-- (void)commitSummaryLoaded:(NSString *)summaryJSON forOID:(GTOID *)summaryOID
-{
-	if (![currentOID isEqual:summaryOID]) {
-		// a different summary finished loading late
-		return;
-	}
-
-	[self.view.windowScriptObject callWebScriptMethod:@"loadCommitDiff" withArguments:@[ summaryJSON ]];
-}
-
-- (void)selectCommit:(NSString *)sha
+- (void)nativeContentView:(PBNativeContentView *)view selectCommit:(NSString *)sha
 {
 	[historyController selectCommit:[GTOID oidWithSHA:sha]];
 }
 
 - (void)sendKey:(NSString *)key
 {
-	id script = self.view.windowScriptObject;
-	[script callWebScriptMethod:@"handleKeyFromCocoa" withArguments:[NSArray arrayWithObject:key]];
+	if ([key isEqualToString:@"j"]) [self.nativeView.textView scrollLineDown:self];
+	else if ([key isEqualToString:@"k"]) [self.nativeView.textView scrollLineUp:self];
 }
 
-- (void)copySource
-{
-	NSString *source = [(DOMHTMLElement *)self.view.mainFrame.DOMDocument.documentElement outerHTML];
-	NSPasteboard *a = [NSPasteboard generalPasteboard];
-	[a declareTypes:[NSArray arrayWithObject:NSPasteboardTypeString] owner:self];
-	[a setString:source forType:NSPasteboardTypeString];
-}
-
-- (NSArray *)webView:(WebView *)sender
-	contextMenuItemsForElement:(NSDictionary *)element
-			  defaultMenuItems:(NSArray *)defaultMenuItems
-{
-	DOMNode *node = [element valueForKey:@"WebElementDOMNode"];
-
-	while (node) {
-		// Every ref has a class name of 'refs' and some other class. We check on that to see if we pressed on a ref.
-		if ([[node className] hasPrefix:@"refs "]) {
-			NSString *selectedRefString = [[[node childNodes] item:0] textContent];
-			for (PBGitRef *ref in historyController.webCommits.firstObject.refs) {
-				if ([[ref shortName] isEqualToString:selectedRefString])
-					return [historyController menuItemsForRef:ref];
-			}
-			NSLog(@"Could not find selected ref!");
-			return defaultMenuItems;
-		}
-		if ([node hasAttributes] && [[node attributes] getNamedItem:@"representedFile"])
-			return [historyController menuItemsForPaths:[NSArray arrayWithObject:[[[node attributes] getNamedItem:@"representedFile"] nodeValue]]];
-		else if ([[node class] isEqual:[DOMHTMLImageElement class]]) {
-			// Copy Image is the only menu item that makes sense here since we don't need
-			// to download the image or open it in a new window (besides with the
-			// current implementation these two entries can crash GitX anyway)
-			for (NSMenuItem *item in defaultMenuItems)
-				if ([item tag] == WebMenuItemTagCopyImageToClipboard)
-					return [NSArray arrayWithObject:item];
-			return nil;
-		}
-
-		node = [node parentNode];
-	}
-
-	return defaultMenuItems;
-}
-
-
-// Open external links in the default browser
-- (void)webView:(WebView *)sender decidePolicyForNewWindowAction:(NSDictionary *)actionInformation
-						   request:(NSURLRequest *)request
-					  newFrameName:(NSString *)frameName
-				  decisionListener:(id<WebPolicyDecisionListener>)listener
-{
-	[[NSWorkspace sharedWorkspace] openURL:[request URL]];
-}
-
-- getConfig:(NSString *)key
-{
-	NSError *error = nil;
-	GTConfiguration *config = [historyController.repository.gtRepo configurationWithError:&error];
-	return [config stringForKey:key];
-}
-
-
-- (void)preferencesChanged
-{
-	[[self script] callWebScriptMethod:@"enableFeatures" withArguments:nil];
-}
+- (void)scrollPageUp { [self.nativeView scrollPageUp]; }
+- (void)scrollPageDown { [self.nativeView scrollPageDown]; }
+- (void)preferencesChanged { [self changeContentTo:self.displayedCommits]; }
 
 @end

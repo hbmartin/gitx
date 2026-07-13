@@ -1,163 +1,59 @@
-//
-//  GLFileView.m
-//  GitX
-//
-//  Created by German Laullon on 14/09/10.
-//  Copyright 2010 __MyCompanyName__. All rights reserved.
-//
-
-#import <MGScopeBar/MGScopeBar.h>
-
 #import "GLFileView.h"
+#import "PBNativeContentView.h"
+#import "PBGitGradientBarView.h"
 #import "PBGitTree.h"
+#import "PBWorkingTree.h"
+#import "PBUncommittedChanges.h"
 #import "PBGitCommit.h"
 #import "PBGitHistoryController.h"
+#import "PBGitRepository.h"
+#import "PBGitRepository_PBGitBinarySupport.h"
+#import "PBGitIndex.h"
+#import "PBChangedFile.h"
+#import "PBTask.h"
 
+static NSString *const PBEmptyTreeSHA = @"4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-#define GROUP_LABEL @"Label"				  // string
-#define GROUP_SEPARATOR @"HasSeparator"		  // BOOL as NSNumber
-#define GROUP_SELECTION_MODE @"SelectionMode" // MGScopeBarGroupSelectionMode (int) as NSNumber
-#define GROUP_ITEMS @"Items"				  // array of dictionaries, each containing the following keys:
-#define ITEM_IDENTIFIER @"Identifier"		  // string
-#define ITEM_NAME @"Name"					  // string
+typedef NS_ENUM(NSInteger, PBFileMode) {
+	PBFileModeSource = 0,
+	PBFileModeBlame = 1,
+	PBFileModeHistory = 2,
+	PBFileModeDiff = 3,
+};
 
-#define GROUP_ID_FILEVIEW @"fileview"
-#define GROUP_ID_BLAME @"blame"
-#define GROUP_ID_LOG @"log"
-
-@interface GLFileView ()
-
+@interface GLFileView () <PBNativeContentViewDelegate>
+@property (nonatomic) NSSegmentedControl *modeControl;
 - (void)saveSplitViewPosition;
-
 @end
-
 
 @implementation GLFileView
 
 - (void)awakeFromNib
 {
-	startFile = GROUP_ID_FILEVIEW;
-	//repository = historyController.repository;
+	startFile = @"fileview";
 	[super awakeFromNib];
-	[historyController.treeController addObserver:self
-										  keyPath:@"selection"
-										  options:0
-											block:^(MAKVONotification *notification) {
-												[self showFile];
-											}];
+	self.nativeView.delegate = self;
+	[historyController.treeController addObserver:self keyPath:@"selection" options:0 block:^(MAKVONotification *notification) {
+		[notification.observer showFile];
+	}];
 
-	self.groups = [NSMutableArray arrayWithCapacity:0];
-
-	NSArray *items = [NSArray arrayWithObjects:
-								  [NSDictionary dictionaryWithObjectsAndKeys:
-													startFile, ITEM_IDENTIFIER,
-													@"Source", ITEM_NAME,
-													nil],
-								  [NSDictionary dictionaryWithObjectsAndKeys:
-													GROUP_ID_BLAME, ITEM_IDENTIFIER,
-													@"Blame", ITEM_NAME,
-													nil],
-								  [NSDictionary dictionaryWithObjectsAndKeys:
-													GROUP_ID_LOG, ITEM_IDENTIFIER,
-													@"History", ITEM_NAME,
-													nil],
-								  nil];
-	[self.groups addObject:[NSDictionary dictionaryWithObjectsAndKeys:
-											 [NSNumber numberWithBool:NO], GROUP_SEPARATOR,
-											 [NSNumber numberWithInt:MGScopeBarGroupSelectionModeRadio], GROUP_SELECTION_MODE, // single selection group.
-											 items, GROUP_ITEMS,
-											 nil]];
-	[typeBar reloadData];
+	self.modeControl = [NSSegmentedControl segmentedControlWithLabels:@[ @"Source", @"Blame", @"History", @"Diff" ]
+										 trackingMode:NSSegmentSwitchTrackingSelectOne
+											 target:self
+											 action:@selector(modeChanged:)];
+	self.modeControl.selectedSegment = PBFileModeSource;
+	self.modeControl.segmentStyle = NSSegmentStyleAutomatic;
+	self.modeControl.controlSize = NSControlSizeSmall;
+	self.modeControl.translatesAutoresizingMaskIntoConstraints = NO;
+	[typeBar addSubview:self.modeControl];
+	[(PBGitGradientBarView *)typeBar setTopShade:237/255.0f bottomShade:216/255.0f];
+	[NSLayoutConstraint activateConstraints:@[
+		[self.modeControl.centerXAnchor constraintEqualToAnchor:typeBar.centerXAnchor],
+		[self.modeControl.centerYAnchor constraintEqualToAnchor:typeBar.centerYAnchor],
+	]];
 
 	[fileListSplitView setHidden:YES];
 	[self performSelector:@selector(restoreSplitViewPositiion) withObject:nil afterDelay:0];
-}
-
-- (void)showFile
-{
-	NSArray *files = [historyController.treeController selectedObjects];
-	if ([files count] > 0) {
-		PBGitTree *file = [files objectAtIndex:0];
-
-		NSString *fileTxt = @"";
-		if ([startFile isEqualToString:GROUP_ID_FILEVIEW])
-			fileTxt = [self escapeHTML:[file textContents]];
-		else if ([startFile isEqualToString:GROUP_ID_BLAME])
-			fileTxt = [self parseBlame:[file blame]];
-		else if ([startFile isEqualToString:GROUP_ID_LOG])
-			fileTxt = [self htmlHistory:file];
-
-		id script = self.view.windowScriptObject;
-		NSString *filePath = [file fullPath];
-		[script callWebScriptMethod:@"showFile" withArguments:[NSArray arrayWithObjects:fileTxt, filePath, nil]];
-	}
-
-#if 0
-	NSString *dom=[[[[view mainFrame] DOMDocument] documentElement] outerHTML];
-	NSString *tmpFile=@"~/tmp/test.html";
-	[dom writeToFile:[tmpFile stringByExpandingTildeInPath] atomically:true encoding:NSUTF8StringEncoding error:nil];
-#endif
-}
-
-#pragma mark JavaScript log.js methods
-
-- (void)selectCommit:(NSString *)c
-{
-	[historyController selectCommit:[GTOID oidWithSHA:c]];
-}
-
-#pragma mark MGScopeBarDelegate methods
-
-- (NSInteger)numberOfGroupsInScopeBar:(MGScopeBar *)theScopeBar
-{
-	return [self.groups count];
-}
-
-
-- (NSArray *)scopeBar:(MGScopeBar *)theScopeBar itemIdentifiersForGroup:(NSInteger)groupNumber
-{
-	return [[self.groups objectAtIndex:groupNumber] valueForKeyPath:[NSString stringWithFormat:@"%@.%@", GROUP_ITEMS, ITEM_IDENTIFIER]];
-}
-
-
-- (NSString *)scopeBar:(MGScopeBar *)theScopeBar labelForGroup:(NSInteger)groupNumber
-{
-	return [[self.groups objectAtIndex:groupNumber] objectForKey:GROUP_LABEL]; // might be nil, which is fine (nil means no label).
-}
-
-
-- (NSString *)scopeBar:(MGScopeBar *)theScopeBar titleOfItem:(NSString *)identifier inGroup:(NSInteger)groupNumber
-{
-	NSArray *items = [[self.groups objectAtIndex:groupNumber] objectForKey:GROUP_ITEMS];
-	if (items) {
-		for (NSDictionary *item in items) {
-			if ([[item objectForKey:ITEM_IDENTIFIER] isEqualToString:identifier]) {
-				return [item objectForKey:ITEM_NAME];
-				break;
-			}
-		}
-	}
-	return nil;
-}
-
-
-- (MGScopeBarGroupSelectionMode)scopeBar:(MGScopeBar *)theScopeBar selectionModeForGroup:(NSInteger)groupNumber
-{
-	return [[[self.groups objectAtIndex:groupNumber] objectForKey:GROUP_SELECTION_MODE] intValue];
-}
-
-- (void)scopeBar:(MGScopeBar *)theScopeBar selectedStateChanged:(BOOL)selected forItem:(NSString *)identifier inGroup:(NSInteger)groupNumber
-{
-	startFile = identifier;
-	NSString *path = [NSString stringWithFormat:@"html/views/%@", identifier];
-	NSString *html = [[NSBundle mainBundle] pathForResource:@"index" ofType:@"html" inDirectory:path];
-	NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL fileURLWithPath:html]];
-	[self.view.mainFrame loadRequest:request];
-}
-
-- (NSView *)accessoryViewForScopeBar:(MGScopeBar *)scopeBar
-{
-	return accessoryView;
 }
 
 - (void)didLoad
@@ -165,195 +61,168 @@
 	[self showFile];
 }
 
+- (void)modeChanged:(NSSegmentedControl *)sender
+{
+	[self showFile];
+}
+
+- (NSArray<NSDictionary *> *)historyEntriesForTree:(PBGitTree *)file
+{
+	NSString *separator = NSUUID.UUID.UUIDString;
+	NSString *terminator = NSUUID.UUID.UUIDString;
+	NSString *format = [[@"%h,%s,%aN,%ar,%H" stringByReplacingOccurrencesOfString:@"," withString:separator] stringByAppendingString:terminator];
+	NSString *output = [file log:format] ?: @"";
+	NSMutableArray *entries = [NSMutableArray array];
+	for (NSString *raw in [output componentsSeparatedByString:terminator]) {
+		NSArray<NSString *> *parts = [raw componentsSeparatedByString:separator];
+		if (parts.count < 5) continue;
+		[entries addObject:@{
+			@"subject" : parts[1], @"author" : parts[2], @"date" : parts[3],
+			@"sha" : [parts[4] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],
+		}];
+	}
+	return entries;
+}
+
+- (NSString *)syntheticDiffForUntrackedFile:(PBChangedFile *)file
+{
+	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:3] ?: @"";
+	NSMutableArray<NSString *> *lines = [[contents componentsSeparatedByString:@"\n"] mutableCopy];
+	BOOL endsWithNewline = [contents hasSuffix:@"\n"];
+	if (endsWithNewline && [lines.lastObject length] == 0) [lines removeLastObject];
+	if (lines.count == 0 || (lines.count == 1 && [lines.firstObject length] == 0)) return @"";
+	NSMutableString *added = [NSMutableString string];
+	for (NSString *line in lines) [added appendFormat:@"+%@\n", line];
+	if (!endsWithNewline) [added appendString:@"\\ No newline at end of file\n"];
+	return [NSString stringWithFormat:@"diff --git a/%@ b/%@\nnew file mode 100644\n--- /dev/null\n+++ b/%@\n@@ -0,0 +1,%lu @@\n%@", file.path, file.path, file.path, (unsigned long)lines.count, added];
+}
+
+- (NSArray<NSDictionary *> *)diffSectionsForTrees:(NSArray<PBGitTree *> *)trees
+{
+	NSMutableArray *sections = [NSMutableArray array];
+	PBGitCommit *commit = historyController.selectedCommits.firstObject;
+	BOOL workingState = [commit isKindOfClass:PBUncommittedChanges.class];
+	for (PBGitTree *tree in trees) {
+		if (!tree.leaf) continue;
+		if (workingState) {
+			PBChangedFile *change = nil;
+			for (PBChangedFile *candidate in historyController.repository.index.indexChanges) {
+				if ([candidate.path isEqualToString:tree.fullPath]) { change = candidate; break; }
+			}
+			if (!change) continue;
+			if (change.hasStagedChanges) {
+				[sections addObject:@{ PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:3] ?: @"", PBNativeSectionContextKey : @"readOnly" }];
+			}
+			if (change.hasUnstagedChanges) {
+				NSString *diffText = change.status == NEW ? [self syntheticDiffForUntrackedFile:change] : [historyController.repository.index diffForFile:change staged:NO contextLines:3];
+				[sections addObject:@{ PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly" }];
+			}
+		} else {
+			NSString *base = commit.parents.firstObject.SHA ?: PBEmptyTreeSHA;
+			NSError *error = nil;
+			NSString *patch = [historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, commit.SHA, @"--", tree.fullPath ] error:&error] ?: @"";
+			[sections addObject:@{ PBNativeSectionTitleKey : tree.fullPath, PBNativeSectionTextKey : patch, PBNativeSectionContextKey : @"readOnly" }];
+		}
+	}
+	return sections;
+}
+
+- (void)showFile
+{
+	NSArray<PBGitTree *> *selected = historyController.treeController.selectedObjects;
+	if (selected.count == 0) {
+		[self.nativeView showMessage:@"No file selected"];
+		return;
+	}
+	PBFileMode mode = self.modeControl.selectedSegment;
+	NSMutableArray *sections = [NSMutableArray array];
+	for (PBGitTree *file in selected) {
+		if (!file.leaf) continue;
+		if (mode == PBFileModeSource || mode == PBFileModeBlame) {
+			[sections addObject:@{
+				PBNativeSectionTitleKey : file.fullPath ?: file.path,
+				PBNativeSectionPathKey : file.fullPath ?: file.path,
+				PBNativeSectionTextKey : mode == PBFileModeSource ? (file.textContents ?: @"") : (file.blame ?: @""),
+			}];
+		} else if (mode == PBFileModeHistory) {
+			[sections addObject:@{ PBNativeSectionTitleKey : file.fullPath ?: file.path, PBNativeSectionEntriesKey : [self historyEntriesForTree:file] }];
+		}
+	}
+	if (mode == PBFileModeDiff) sections = [[self diffSectionsForTrees:selected] mutableCopy];
+	if (sections.count == 0) {
+		[self.nativeView showMessage:@"Select one or more files to view this mode."];
+	} else if (mode == PBFileModeSource) {
+		[self.nativeView showSourceSections:sections];
+	} else if (mode == PBFileModeBlame) {
+		[self.nativeView showBlameSections:sections];
+	} else if (mode == PBFileModeHistory) {
+		[self.nativeView showHistorySections:sections];
+	} else {
+		[self.nativeView showDiffSections:sections];
+	}
+}
+
+- (void)nativeContentView:(PBNativeContentView *)view selectCommit:(NSString *)sha
+{
+	[historyController selectCommit:[GTOID oidWithSHA:sha]];
+}
+
+- (NSImage *)nativeContentView:(PBNativeContentView *)view imageForPath:(NSString *)path section:(NSUInteger)sectionIndex
+{
+	PBGitCommit *commit = historyController.selectedCommits.firstObject;
+	NSData *data = nil;
+	if ([commit isKindOfClass:PBUncommittedChanges.class]) {
+		data = [NSData dataWithContentsOfURL:[historyController.repository.workingDirectoryURL URLByAppendingPathComponent:path]];
+	} else if (commit.SHA.length) {
+		PBTask *task = [historyController.repository taskWithArguments:@[ @"show", [NSString stringWithFormat:@"%@:%@", commit.SHA, path] ]];
+		if ([task launchTask:nil]) data = task.standardOutputData;
+	}
+	return data.length ? [[NSImage alloc] initWithData:data] : nil;
+}
+
 - (void)closeView
 {
 	[self saveSplitViewPosition];
-
 	[super closeView];
 }
-
-- (NSString *)escapeHTML:(NSString *)txt
-{
-	CFStringRef escaped = CFXMLCreateStringByEscapingEntities(NULL, (__bridge CFStringRef)txt, NULL);
-	return (__bridge_transfer NSString *)escaped;
-}
-
-- (NSString *)parseBlame:(NSString *)txt
-{
-	txt = [self escapeHTML:txt];
-
-	NSArray *lines = [txt componentsSeparatedByString:@"\n"];
-	NSString *line;
-	NSMutableDictionary *headers = [NSMutableDictionary dictionary];
-	NSMutableString *res = [NSMutableString string];
-
-	[res appendString:@"<table class='blocks'>\n"];
-	int i = 0;
-	while (i < [lines count]) {
-		line = [lines objectAtIndex:i];
-		NSArray *header = [line componentsSeparatedByString:@" "];
-		if ([header count] == 4) {
-			NSString *commitID = (NSString *)[header objectAtIndex:0];
-			int nLines = [(NSString *)[header objectAtIndex:3] intValue];
-			[res appendFormat:@"<tr class='block l%d'>\n", nLines];
-			line = [lines objectAtIndex:++i];
-			if ([[[line componentsSeparatedByString:@" "] objectAtIndex:0] isEqual:@"author"]) {
-				NSString *author = [line stringByReplacingOccurrencesOfString:@"author" withString:@""];
-				NSString *summary = nil;
-				while (summary == nil) {
-					line = [lines objectAtIndex:i++];
-					if ([[[line componentsSeparatedByString:@" "] objectAtIndex:0] isEqual:@"summary"]) {
-						summary = [line stringByReplacingOccurrencesOfString:@"summary" withString:@""];
-					}
-				}
-				NSRange trunc_c = {0, 7};
-				NSString *truncate_c = commitID;
-				if ([commitID length] > 8) {
-					truncate_c = [commitID substringWithRange:trunc_c];
-				}
-				NSRange trunc = {0, 22};
-				NSString *truncate_a = author;
-				if ([author length] > 22) {
-					truncate_a = [author substringWithRange:trunc];
-				}
-				NSString *truncate_s = summary;
-				if ([summary length] > 30) {
-					truncate_s = [summary substringWithRange:trunc];
-				}
-				NSString *block = [NSString stringWithFormat:@"<td><p class='author'><a class='commit-link' href='#' data-commit-id='%@'>%@</a> %@</p><p class='summary'>%@</p></td>\n<td>\n", commitID, truncate_c, truncate_a, truncate_s];
-				[headers setObject:block forKey:[header objectAtIndex:0]];
-			}
-			[res appendString:[headers objectForKey:[header objectAtIndex:0]]];
-
-			NSMutableString *code = [NSMutableString string];
-			do {
-				line = [lines objectAtIndex:i++];
-			} while ([line characterAtIndex:0] != '\t');
-			line = [line substringFromIndex:1];
-			line = [line stringByReplacingOccurrencesOfString:@"\t" withString:@"&nbsp;&nbsp;&nbsp;&nbsp;"];
-			[code appendString:line];
-			[code appendString:@"\n"];
-
-			int n;
-			for (n = 1; n < nLines; n++) {
-				i++;
-				do {
-					line = [lines objectAtIndex:i++];
-				} while ([line characterAtIndex:0] != '\t');
-				line = [line substringFromIndex:1];
-				line = [line stringByReplacingOccurrencesOfString:@"\t" withString:@"&nbsp;&nbsp;&nbsp;&nbsp;"];
-				[code appendString:line];
-				[code appendString:@"\n"];
-			}
-			[res appendFormat:@"<pre class='first-line: %@;brush: objc'>%@</pre>", [header objectAtIndex:2], code];
-			[res appendString:@"</td>\n"];
-		} else {
-			break;
-		}
-		[res appendString:@"</tr>\n"];
-	}
-	[res appendString:@"</table>\n"];
-	//NSLog(@"%@",res);
-
-	return (NSString *)res;
-}
-
-- (NSString *)htmlHistory:(PBGitTree *)file
-{
-	// \0 can't be passed as a shell argument, so use a sufficiently long random seperator instead
-	NSString *seperator = [[NSUUID UUID] UUIDString];
-	NSString *commitTerminator = [[NSUUID UUID] UUIDString];
-	NSString *logFormat = [[@"%h,%s,%aN,%ar,%H" stringByReplacingOccurrencesOfString:@"," withString:seperator] stringByAppendingString:commitTerminator];
-	NSString *output = [file log:logFormat];
-	NSArray<NSString *> *rawCommits = [output componentsSeparatedByString:commitTerminator];
-	rawCommits = [rawCommits subarrayWithRange:(NSRange){0, rawCommits.count - 1}];
-
-	NSCharacterSet *whitespaceSet = [NSCharacterSet whitespaceCharacterSet];
-
-	NSMutableString *html = [NSMutableString string];
-	for (NSString *rawCommit in rawCommits) {
-		NSArray<NSString *> *parts = [rawCommit componentsSeparatedByString:seperator];
-		[html appendFormat:
-				  @"<div id='%@' class='commit'>"
-				   "<p class='title'>%@</p>"
-				   "<table>"
-				   "<tr><td>Author:</td><td>%@</td></tr>"
-				   "<tr><td>Date:</td><td>%@</td></tr>"
-				   "<tr><td>Commit:</td><td><a class='commit-link' href='#'>%@</a></td></tr>"
-				   "</table>"
-				   "</div>",
-				  [self escapeHTML:[parts[0] stringByTrimmingCharactersInSet:whitespaceSet]], // trim leading newline from split
-				  [self escapeHTML:parts[1]],
-				  [self escapeHTML:parts[2]],
-				  [self escapeHTML:parts[3]],
-				  [self escapeHTML:parts[4]]];
-	}
-	return html;
-}
-
-
-#pragma mark NSSplitView delegate methods
 
 #define kFileListSplitViewLeftMin 120
 #define kFileListSplitViewRightMin 180
 #define kHFileListSplitViewPositionDefault @"File List SplitView Position"
 
-- (CGFloat)splitView:(NSSplitView *)splitView constrainMinCoordinate:(CGFloat)proposedMin ofSubviewAt:(NSInteger)dividerIndex
-{
-	return kFileListSplitViewLeftMin;
-}
+- (CGFloat)splitView:(NSSplitView *)splitView constrainMinCoordinate:(CGFloat)proposedMin ofSubviewAt:(NSInteger)dividerIndex { return kFileListSplitViewLeftMin; }
+- (CGFloat)splitView:(NSSplitView *)splitView constrainMaxCoordinate:(CGFloat)proposedMax ofSubviewAt:(NSInteger)dividerIndex { return splitView.frame.size.width - splitView.dividerThickness - kFileListSplitViewRightMin; }
 
-- (CGFloat)splitView:(NSSplitView *)splitView constrainMaxCoordinate:(CGFloat)proposedMax ofSubviewAt:(NSInteger)dividerIndex
-{
-	return [splitView frame].size.width - [splitView dividerThickness] - kFileListSplitViewRightMin;
-}
-
-// while the user resizes the window keep the left (file list) view constant and just resize the right view
-// unless the right view gets too small
 - (void)splitView:(NSSplitView *)splitView resizeSubviewsWithOldSize:(NSSize)oldSize
 {
-	NSRect newFrame = [splitView frame];
-
-	CGFloat dividerThickness = [splitView dividerThickness];
-
-	NSView *leftView = [[splitView subviews] objectAtIndex:0];
-	NSRect leftFrame = [leftView frame];
+	NSRect newFrame = splitView.frame;
+	CGFloat dividerThickness = splitView.dividerThickness;
+	NSView *leftView = splitView.subviews[0];
+	NSRect leftFrame = leftView.frame;
 	leftFrame.size.height = newFrame.size.height;
-
-	if ((newFrame.size.width - leftFrame.size.width - dividerThickness) < kFileListSplitViewRightMin) {
+	if (newFrame.size.width - leftFrame.size.width - dividerThickness < kFileListSplitViewRightMin)
 		leftFrame.size.width = newFrame.size.width - kFileListSplitViewRightMin - dividerThickness;
-	}
-
-	NSView *rightView = [[splitView subviews] objectAtIndex:1];
-	NSRect rightFrame = [rightView frame];
+	NSView *rightView = splitView.subviews[1];
+	NSRect rightFrame = rightView.frame;
 	rightFrame.origin.x = leftFrame.size.width + dividerThickness;
 	rightFrame.size.width = newFrame.size.width - rightFrame.origin.x;
 	rightFrame.size.height = newFrame.size.height;
-
-	[leftView setFrame:leftFrame];
-	[rightView setFrame:rightFrame];
+	leftView.frame = leftFrame;
+	rightView.frame = rightFrame;
 }
 
-// NSSplitView does not save and restore the position of the SplitView correctly so do it manually
 - (void)saveSplitViewPosition
 {
-	CGFloat position = [[[fileListSplitView subviews] objectAtIndex:0] frame].size.width;
+	CGFloat position = [fileListSplitView.subviews[0] frame].size.width;
 	[[NSUserDefaults standardUserDefaults] setDouble:position forKey:kHFileListSplitViewPositionDefault];
-	[[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-// make sure this happens after awakeFromNib
 - (void)restoreSplitViewPositiion
 {
 	CGFloat position = [[NSUserDefaults standardUserDefaults] doubleForKey:kHFileListSplitViewPositionDefault];
-	if (position < 1.0)
-		position = 200;
-
+	if (position < 1.0) position = 200;
 	[fileListSplitView setPosition:position ofDividerAtIndex:0];
 	[fileListSplitView setHidden:NO];
 }
-
-
-@synthesize groups;
 
 @end

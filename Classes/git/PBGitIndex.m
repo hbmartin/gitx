@@ -643,7 +643,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 }
 
 
-- (NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context
+- (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context
 {
 	NSString *parameter = [NSString stringWithFormat:@"-U%lu", context];
 	if (staged) {
@@ -681,13 +681,6 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		PBLogError(error);
 	}
 	return output;
-}
-
-#pragma mark WebKit Accessibility
-
-+ (BOOL)isSelectorExcludedFromWebScript:(SEL)aSelector
-{
-	return NO;
 }
 
 @end

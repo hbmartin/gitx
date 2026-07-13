@@ -7,6 +7,17 @@
 //
 
 #define kDialogAcceptDroppedRef @"Accept Dropped Ref"
+
+typedef NS_ENUM(NSInteger, PBAutoFetchScope) {
+	PBAutoFetchScopeNone = 0,
+	PBAutoFetchScopeActiveRepository = 1,
+	PBAutoFetchScopeOpenRepositories = 2,
+	PBAutoFetchScopeOpenAndRecentRepositories = 3,
+};
+
+extern NSString *const PBGitHistorySortingPreferenceDidChangeNotification;
+extern NSString *const PBAutoFetchPreferencesDidChangeNotification;
+
 @interface PBGitDefaults : NSObject {
 }
 
@@ -30,6 +41,14 @@
 + (void)setHistorySearchMode:(NSInteger)mode;
 + (BOOL)useRepositoryWatcher;
 + (NSString *)terminalHandler;
++ (BOOL)historyColumnSortingEnabled;
++ (void)setHistoryColumnSortingEnabled:(BOOL)enabled;
++ (PBAutoFetchScope)autoFetchScope;
++ (void)setAutoFetchScope:(PBAutoFetchScope)scope;
++ (NSInteger)autoFetchIntervalMinutes;
++ (void)setAutoFetchIntervalMinutes:(NSInteger)minutes;
++ (BOOL)notifyAboutFetchedCommitsForRepositoryURL:(NSURL *)repositoryURL;
++ (void)setNotifyAboutFetchedCommits:(BOOL)enabled forRepositoryURL:(NSURL *)repositoryURL;
 
 
 // Suppressed Dialog Warnings

@@ -18,6 +18,7 @@
 #import "PBCloneRepositoryPanel.h"
 #import "OpenRecentController.h"
 #import "PBGitBinary.h"
+#import "PBAutoFetchManager.h"
 
 #import <Sparkle/SPUStandardUpdaterController.h>
 #import <Sparkle/SPUUpdater.h>
@@ -133,6 +134,7 @@ static OpenRecentController *recentsDialog = nil;
 
 	[NSApp registerObserverForAppearanceChanges:self];
 	[self registerServices];
+	[[PBAutoFetchManager sharedManager] start];
 	started = YES;
 
 	// UI-test hook: open a repo path passed via environment variable so that

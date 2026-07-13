@@ -27,6 +27,7 @@
 #import "PBDiffWindowController.h"
 #import "PBGitStash.h"
 #import "PBGitCommit.h"
+#import "PBAutoFetchManager.h"
 
 @interface PBGitWindowController () {
 	__weak PBViewController *contentController;
@@ -95,6 +96,8 @@
 		return ![self.repository isBareRepository];
 	} else if (menuItem.action == @selector(fetchRemote:)) {
 		return [self validateMenuItem:menuItem remoteTitle:@"Fetch “%@”" plainTitle:@"Fetch"];
+	} else if (menuItem.action == @selector(showRepositorySettings:)) {
+		return self.repository != nil;
 	} else if (menuItem.action == @selector(pullRemote:)) {
 		return [self validateMenuItem:menuItem remoteTitle:@"Pull From “%@”" plainTitle:@"Pull"];
 	} else if (menuItem.action == @selector(pullRebaseRemote:)) {
@@ -102,6 +105,27 @@
 	}
 
 	return YES;
+}
+
+- (IBAction)showRepositorySettings:(id)sender
+{
+	NSAlert *alert = [[NSAlert alloc] init];
+	alert.messageText = [NSString stringWithFormat:@"Settings for %@", self.repository.projectName];
+	alert.informativeText = @"These settings apply only to this repository.";
+	[alert addButtonWithTitle:@"Done"];
+	[alert addButtonWithTitle:@"Cancel"];
+
+	NSButton *notifications = [NSButton checkboxWithTitle:@"Notify me when scheduled fetch finds new commits" target:nil action:nil];
+	notifications.state = [PBGitDefaults notifyAboutFetchedCommitsForRepositoryURL:self.repository.workingDirectoryURL] ? NSControlStateValueOn : NSControlStateValueOff;
+	notifications.frame = NSMakeRect(0, 0, 390, 24);
+	alert.accessoryView = notifications;
+
+	[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse returnCode) {
+		if (returnCode == NSAlertFirstButtonReturn) {
+			[PBGitDefaults setNotifyAboutFetchedCommits:(notifications.state == NSControlStateValueOn)
+										 forRepositoryURL:self.repository.workingDirectoryURL];
+		}
+	}];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem remoteTitle:(NSString *)localisationKeyWithRemote plainTitle:(NSString *)localizationKeyWithoutRemote
@@ -303,6 +327,8 @@
 		completionHandler:^(NSError *error) {
 			if (error) {
 				[self showErrorSheet:error];
+			} else {
+				[[PBAutoFetchManager sharedManager] recordManualFetchSucceededForRepositoryURL:self.repository.workingDirectoryURL];
 			}
 		}];
 }

@@ -26,8 +26,18 @@
 
 - (void)drawRect:(NSRect)dirtyRect
 {
-	if (![NSApp isDarkMode])
-		[gradient drawInRect:[self bounds] angle:90];
+	if ([NSApp isDarkMode]) {
+		[NSColor.controlBackgroundColor setFill];
+		NSRectFill(self.bounds);
+	} else {
+		[gradient drawInRect:self.bounds angle:90];
+	}
+}
+
+- (void)viewDidChangeEffectiveAppearance
+{
+	[super viewDidChangeEffectiveAppearance];
+	self.needsDisplay = YES;
 }
 
 
