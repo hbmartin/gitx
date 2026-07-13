@@ -343,6 +343,11 @@
 	return [parent.fullPath stringByAppendingPathComponent:self.path];
 }
 
+- (NSString *)displayPath
+{
+	return self.path;
+}
+
 - (void)dealloc
 {
 	if (localFileName) {

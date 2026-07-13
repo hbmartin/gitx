@@ -99,6 +99,15 @@ const BOOL PBTaskDebugEnable = NO;
 {
 	NSParameterAssert(terminationHandler != nil);
 
+	// additionalEnvironment is intentionally mutable until launch time. A
+	// number of callers configure a task after creating it, so folding these
+	// values into NSTask's environment in the initializer is too early.
+	if (self.additionalEnvironment.count) {
+		NSMutableDictionary *environment = [self.task.environment mutableCopy] ?: [NSMutableDictionary dictionary];
+		[environment addEntriesFromDictionary:self.additionalEnvironment];
+		self.task.environment = environment;
+	}
+
 	__weak PBTask *weakSelf = self;
 	self.task.terminationHandler = ^(NSTask *task) {
 		NSError *error = nil;

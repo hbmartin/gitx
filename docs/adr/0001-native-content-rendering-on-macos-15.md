@@ -1,0 +1,3 @@
+# Use native content rendering and HighlightKit on macOS 15
+
+GitX will target macOS 15 and replace its legacy WebKit and SyntaxHighlighter content surfaces with shared native AppKit renderers using PhraseHQ HighlightKit. This deliberately trades support for older macOS releases for adaptive native appearance, one reusable diff interaction model across History and Commit workflows, and maintained Swift syntax grammars; the existing WebKit/SyntaxHighlighter implementation and the narrower swift-highlight package were rejected because they would either retain duplicate browser UI or cover substantially fewer languages.

@@ -7,23 +7,24 @@
 //
 
 #import <Cocoa/Cocoa.h>
-#import <WebKit/WebKit.h>
+
+@class PBNativeContentView;
 
 @interface PBWebController : NSObject {
 	NSString *startFile;
 	BOOL finishedLoading;
 
-	// For async git reading
-	NSMapTable *callbacks;
-
 	// For the repository access
 	__weak IBOutlet id repository;
 }
 
-@property (weak) IBOutlet WebView *view;
+@property (weak) IBOutlet NSView *view;
+@property (nonatomic, readonly) PBNativeContentView *nativeView;
 @property NSString *startFile;
 @property (weak) id repository;
 
-- (WebScriptObject *)script;
 - (void)closeView;
+- (void)didLoad;
+- (void)preferencesChanged;
+- (void)makeWebViewFirstResponder;
 @end

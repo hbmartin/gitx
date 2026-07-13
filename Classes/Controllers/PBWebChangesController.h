@@ -19,8 +19,6 @@
 	__weak IBOutlet PBGitCommitController *controller;
 	IBOutlet PBGitIndexController *indexController;
 
-	PBChangedFile *selectedFile;
-	BOOL selectedFileIsCached;
 }
 
 - (void)refresh;

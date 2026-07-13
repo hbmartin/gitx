@@ -14,6 +14,9 @@
 
 @implementation PBDiffWindowController
 
+@synthesize startCommit = _startCommit;
+@synthesize diffCommit = _diffCommit;
+
 + (void)showDiff:(NSString *)diff
 {
 	PBDiffWindowController *diffController = [[self alloc] initWithDiff:diff];
@@ -25,7 +28,10 @@
 	NSParameterAssert(startCommit != nil);
 	NSString *diff = [startCommit.repository performDiff:startCommit against:diffCommit forFiles:filePaths];
 
-	[PBDiffWindowController showDiff:[diff copy]];
+	PBDiffWindowController *diffController = [[self alloc] initWithDiff:[diff copy]];
+	diffController->_startCommit = startCommit;
+	diffController->_diffCommit = diffCommit ?: startCommit.repository.headCommit;
+	[diffController showWindow:self];
 }
 
 - (id)initWithDiff:(NSString *)aDiff

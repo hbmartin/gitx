@@ -24,6 +24,8 @@
 }
 
 - (void)sendKey:(NSString *)key;
+- (void)scrollPageUp;
+- (void)scrollPageDown;
 
 @property (readonly) NSString *diff;
 

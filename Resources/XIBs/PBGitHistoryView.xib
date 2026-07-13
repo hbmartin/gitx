@@ -3,7 +3,6 @@
     <dependencies>
         <deployment identifier="macosx"/>
         <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="14460.31"/>
-        <plugIn identifier="com.apple.WebKitIBPlugin" version="14460.31"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <objects>
@@ -40,7 +39,7 @@
                 <binding destination="-2" name="contentArray" keyPath="gitTree.children" id="90"/>
             </connections>
         </treeController>
-        <arrayController objectClassName="PBGitCommit" editable="NO" selectsInsertedObjects="NO" avoidsEmptySelection="NO" id="39" userLabel="CommitsController">
+        <arrayController objectClassName="PBGitCommit" editable="NO" selectsInsertedObjects="NO" avoidsEmptySelection="NO" id="39" userLabel="CommitsController" customClass="PBHistoryArrayController">
             <declaredKeys>
                 <string>self</string>
                 <string>OID</string>
@@ -586,18 +585,10 @@
                                                             <rect key="frame" x="0.0" y="0.0" width="955" height="207"/>
                                                             <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                             <subviews>
-                                                                <webView focusRingType="none" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="21">
+                                                                <customView focusRingType="none" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="21">
                                                                     <rect key="frame" x="-1" y="-1" width="957" height="209"/>
                                                                     <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                                                                    <webPreferences key="preferences" defaultFontSize="12" defaultFixedFontSize="12">
-                                                                        <nil key="identifier"/>
-                                                                    </webPreferences>
-                                                                    <connections>
-                                                                        <outlet property="UIDelegate" destination="40" id="85"/>
-                                                                        <outlet property="frameLoadDelegate" destination="40" id="84"/>
-                                                                        <outlet property="policyDelegate" destination="40" id="109"/>
-                                                                    </connections>
-                                                                </webView>
+                                                                </customView>
                                                             </subviews>
                                                         </view>
                                                         <color key="fillColor" name="windowBackgroundColor" catalog="System" colorSpace="catalog"/>
@@ -620,7 +611,7 @@
                                                                     <rect key="frame" x="0.0" y="0.0" width="233" height="214"/>
                                                                     <autoresizingMask key="autoresizingMask"/>
                                                                     <subviews>
-                                                                        <outlineView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="lastColumnOnly" alternatingRowBackgroundColors="YES" autosaveColumns="NO" indentationPerLevel="16" autoresizesOutlineColumn="YES" outlineTableColumn="18" id="15" customClass="PBQLOutlineView">
+                                                                        <outlineView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" allowsMultipleSelection="YES" columnAutoresizingStyle="lastColumnOnly" alternatingRowBackgroundColors="YES" autosaveColumns="NO" indentationPerLevel="16" autoresizesOutlineColumn="YES" outlineTableColumn="18" id="15" customClass="PBQLOutlineView">
                                                                             <rect key="frame" x="0.0" y="0.0" width="233" height="214"/>
                                                                             <autoresizingMask key="autoresizingMask" heightSizable="YES"/>
                                                                             <size key="intercellSpacing" width="3" height="2"/>
@@ -640,7 +631,7 @@
                                                                                     </textFieldCell>
                                                                                     <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
                                                                                     <connections>
-                                                                                        <binding destination="38" name="value" keyPath="arrangedObjects.path" id="92">
+                                                                                        <binding destination="38" name="value" keyPath="arrangedObjects.displayPath" id="92">
                                                                                             <dictionary key="options">
                                                                                                 <integer key="NSConditionallySetsEditable" value="1"/>
                                                                                             </dictionary>
@@ -667,14 +658,11 @@
                                                                 <rect key="frame" x="234" y="0.0" width="721" height="214"/>
                                                                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                                 <subviews>
-                                                                    <webView fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="450" userLabel="FileViewer">
+                                                                    <customView fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="450" userLabel="FileViewer">
                                                                         <rect key="frame" x="0.0" y="0.0" width="721" height="189"/>
                                                                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
-                                                                        <webPreferences key="preferences" defaultFontSize="12" defaultFixedFontSize="12">
-                                                                            <nil key="identifier"/>
-                                                                        </webPreferences>
-                                                                    </webView>
-                                                                    <customView fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="475" userLabel="TypeBar" customClass="MGScopeBar">
+                                                                    </customView>
+                                                                    <customView fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="475" userLabel="TypeBar" customClass="PBGitGradientBarView">
                                                                         <rect key="frame" x="0.0" y="190" width="721" height="24"/>
                                                                         <autoresizingMask key="autoresizingMask" widthSizable="YES" flexibleMinY="YES"/>
                                                                         <subviews>
@@ -700,9 +688,6 @@ IA
                                                                                 </subviews>
                                                                             </customView>
                                                                         </subviews>
-                                                                        <connections>
-                                                                            <outlet property="delegate" destination="452" id="485"/>
-                                                                        </connections>
                                                                     </customView>
                                                                 </subviews>
                                                             </customView>

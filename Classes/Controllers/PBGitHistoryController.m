@@ -27,6 +27,9 @@
 #import "PBGitRevisionRow.h"
 #import "PBGitRevisionCell.h"
 #import "PBGitStash.h"
+#import "PBHistoryArrayController.h"
+#import "PBUncommittedChanges.h"
+#import "PBGitIndex.h"
 
 #define kHistorySelectedDetailIndexKey @"PBHistorySelectedDetailIndex"
 #define kHistoryDetailViewIndex 0
@@ -56,11 +59,13 @@
 	PBGitTree *gitTree;
 	NSArray<PBGitCommit *> *webCommits;
 	NSArray<PBGitCommit *> *selectedCommits;
+	PBUncommittedChanges *uncommittedChanges;
 }
 
 - (void)updateBranchFilterMatrix;
 - (void)restoreFileBrowserSelection;
 - (void)saveFileBrowserSelection;
+- (void)updateUncommittedChanges;
 
 @end
 
@@ -158,8 +163,11 @@
 	NSSize cellSpacing = [commitList intercellSpacing];
 	cellSpacing.height = 0;
 	[commitList setIntercellSpacing:cellSpacing];
+	commitList.allowsMultipleSelection = YES;
+	commitList.accessibilityIdentifier = @"CommitList";
 	[fileBrowser setTarget:self];
 	[fileBrowser setDoubleAction:@selector(openSelectedFile:)];
+	fileBrowser.allowsMultipleSelection = YES;
 
 	if (!repository.currentBranch) {
 		[repository reloadRefs];
@@ -190,8 +198,42 @@
 
 	// listen for updates
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_repositoryUpdatedNotification:) name:PBGitRepositoryEventNotification object:repository];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(indexUpdated:) name:PBGitIndexIndexUpdated object:repository.index];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(historySortingPreferenceChanged:) name:PBGitHistorySortingPreferenceDidChangeNotification object:nil];
+	[self updateUncommittedChanges];
 
 	[super awakeFromNib];
+}
+
+- (void)indexUpdated:(NSNotification *)notification
+{
+	[self updateUncommittedChanges];
+}
+
+- (void)historySortingPreferenceChanged:(NSNotification *)notification
+{
+	if (![PBGitDefaults historyColumnSortingEnabled]) commitController.sortDescriptors = @[];
+	[commitController rearrangeObjects];
+	[commitList reloadData];
+}
+
+- (void)updateUncommittedChanges
+{
+	BOOL wasSelected = [self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class];
+	BOOL isDirty = self.repository.index.indexChanges.count > 0;
+	if (isDirty) {
+		uncommittedChanges = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+		((PBHistoryArrayController *)commitController).pinnedObject = uncommittedChanges;
+		if (wasSelected) [commitController setSelectedObjects:@[ uncommittedChanges ]];
+	} else {
+		uncommittedChanges = nil;
+		((PBHistoryArrayController *)commitController).pinnedObject = nil;
+		if (wasSelected) {
+			PBGitCommit *newest = self.firstCommit;
+			[commitController setSelectedObjects:newest ? @[ newest ] : @[]];
+		}
+	}
+	[self updateStatus];
 }
 
 - (void)_repositoryUpdatedNotification:(NSNotification *)notification
@@ -206,6 +248,10 @@
 - (void)reselectCommitAfterUpdate
 {
 	[self updateStatus];
+	if ([self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class] && uncommittedChanges) {
+		[commitController setSelectedObjects:@[ uncommittedChanges ]];
+		return;
+	}
 
 	if ([self.repository.currentBranch isSimpleRef])
 		[self selectCommit:[self.repository OIDForRef:self.repository.currentBranch.ref]];
@@ -231,11 +277,23 @@
 - (void)updateKeys
 {
 	NSArray<PBGitCommit *> *newSelectedCommits = commitController.selectedObjects;
+	if (newSelectedCommits.count > 1) {
+		for (PBGitCommit *commit in newSelectedCommits) {
+			if ([commit isKindOfClass:PBUncommittedChanges.class]) {
+				newSelectedCommits = @[ commit ];
+				[commitController setSelectedObjects:newSelectedCommits];
+				break;
+			}
+		}
+	}
 	if (![self.selectedCommits isEqualToArray:newSelectedCommits]) {
 		self.selectedCommits = newSelectedCommits;
 	}
 
 	PBGitCommit *firstSelectedCommit = self.selectedCommits.firstObject;
+	if (!firstSelectedCommit) return;
+	if (self.selectedCommits.count > 1 && self.selectedCommitDetailsIndex == kHistoryTreeViewIndex)
+		self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
 
 	if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex) {
 		self.gitTree = firstSelectedCommit.tree;
@@ -250,7 +308,7 @@
 
 - (BOOL)singleCommitSelected
 {
-	return self.selectedCommits.count == 1;
+	return self.selectedCommits.count == 1 && ![self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class];
 }
 
 + (NSSet *)keyPathsForValuesAffectingSingleCommitSelected
@@ -299,8 +357,8 @@
 - (PBGitCommit *)firstCommit
 {
 	NSArray *arrangedObjects = [commitController arrangedObjects];
-	if ([arrangedObjects count] > 0)
-		return [arrangedObjects objectAtIndex:0];
+	for (PBGitCommit *commit in arrangedObjects)
+		if (![commit isKindOfClass:PBUncommittedChanges.class]) return commit;
 
 	return nil;
 }
@@ -329,7 +387,8 @@
 - (void)updateStatus
 {
 	self.isBusy = self.repository.revisionList.isUpdating;
-	self.status = [NSString stringWithFormat:@"%lu commits loaded", [[commitController arrangedObjects] count]];
+	NSUInteger count = [[commitController arrangedObjects] count] - (uncommittedChanges ? 1 : 0);
+	self.status = [NSString stringWithFormat:@"%lu commits loaded", (unsigned long)count];
 }
 
 - (void)restoreFileBrowserSelection
@@ -594,6 +653,13 @@
 - (BOOL)hasNonlinearPath
 {
 	return [commitController filterPredicate] || [[commitController sortDescriptors] count] > 0;
+}
+
+- (NSIndexSet *)tableView:(NSTableView *)tableView selectionIndexesForProposedSelection:(NSIndexSet *)proposedSelectionIndexes
+{
+	if ([proposedSelectionIndexes containsIndex:0] && uncommittedChanges && proposedSelectionIndexes.count > 1)
+		return [NSIndexSet indexSetWithIndex:0];
+	return proposedSelectionIndexes;
 }
 
 - (void)closeView

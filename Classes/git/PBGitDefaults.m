@@ -31,6 +31,13 @@
 #define kSuppressedDialogWarnings @"Suppressed Dialog Warnings"
 #define kUseRepositoryWatcher @"PBUseRepositoryWatcher"
 #define kTerminalHandler @"PBTerminalHandler"
+#define kHistoryColumnSortingEnabled @"PBHistoryColumnSortingEnabled"
+#define kAutoFetchScope @"PBAutoFetchScope"
+#define kAutoFetchIntervalMinutes @"PBAutoFetchIntervalMinutes"
+#define kAutoFetchRepositoryNotifications @"PBAutoFetchRepositoryNotifications"
+
+NSString *const PBGitHistorySortingPreferenceDidChangeNotification = @"PBGitHistorySortingPreferenceDidChangeNotification";
+NSString *const PBAutoFetchPreferencesDidChangeNotification = @"PBAutoFetchPreferencesDidChangeNotification";
 
 @implementation PBGitDefaults
 
@@ -67,6 +74,10 @@
 					  forKey:kUseRepositoryWatcher];
 	[defaultValues setObject:@"com.apple.Terminal"
 					  forKey:kTerminalHandler];
+	[defaultValues setObject:@YES forKey:kHistoryColumnSortingEnabled];
+	[defaultValues setObject:@(PBAutoFetchScopeNone) forKey:kAutoFetchScope];
+	[defaultValues setObject:@15 forKey:kAutoFetchIntervalMinutes];
+	[defaultValues setObject:@{} forKey:kAutoFetchRepositoryNotifications];
 	[[NSUserDefaults standardUserDefaults] registerDefaults:defaultValues];
 }
 
@@ -231,6 +242,60 @@
 + (NSString *)terminalHandler
 {
 	return [[NSUserDefaults standardUserDefaults] stringForKey:kTerminalHandler];
+}
+
++ (BOOL)historyColumnSortingEnabled
+{
+	return [[NSUserDefaults standardUserDefaults] boolForKey:kHistoryColumnSortingEnabled];
+}
+
++ (void)setHistoryColumnSortingEnabled:(BOOL)enabled
+{
+	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kHistoryColumnSortingEnabled];
+	[[NSNotificationCenter defaultCenter] postNotificationName:PBGitHistorySortingPreferenceDidChangeNotification object:nil];
+}
+
++ (PBAutoFetchScope)autoFetchScope
+{
+	NSInteger scope = [[NSUserDefaults standardUserDefaults] integerForKey:kAutoFetchScope];
+	return (scope >= PBAutoFetchScopeNone && scope <= PBAutoFetchScopeOpenAndRecentRepositories) ? scope : PBAutoFetchScopeNone;
+}
+
++ (void)setAutoFetchScope:(PBAutoFetchScope)scope
+{
+	[[NSUserDefaults standardUserDefaults] setInteger:scope forKey:kAutoFetchScope];
+	[[NSNotificationCenter defaultCenter] postNotificationName:PBAutoFetchPreferencesDidChangeNotification object:nil];
+}
+
++ (NSInteger)autoFetchIntervalMinutes
+{
+	NSInteger interval = [[NSUserDefaults standardUserDefaults] integerForKey:kAutoFetchIntervalMinutes];
+	return MAX(1, MIN(1440, interval));
+}
+
++ (void)setAutoFetchIntervalMinutes:(NSInteger)minutes
+{
+	[[NSUserDefaults standardUserDefaults] setInteger:MAX(1, MIN(1440, minutes)) forKey:kAutoFetchIntervalMinutes];
+	[[NSNotificationCenter defaultCenter] postNotificationName:PBAutoFetchPreferencesDidChangeNotification object:nil];
+}
+
++ (NSString *)repositoryDefaultsKeyForURL:(NSURL *)repositoryURL
+{
+	return repositoryURL.URLByStandardizingPath.path ?: repositoryURL.path ?: @"";
+}
+
++ (BOOL)notifyAboutFetchedCommitsForRepositoryURL:(NSURL *)repositoryURL
+{
+	NSDictionary *settings = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kAutoFetchRepositoryNotifications];
+	return [settings[[self repositoryDefaultsKeyForURL:repositoryURL]] boolValue];
+}
+
++ (void)setNotifyAboutFetchedCommits:(BOOL)enabled forRepositoryURL:(NSURL *)repositoryURL
+{
+	NSMutableDictionary *settings = [[[NSUserDefaults standardUserDefaults] dictionaryForKey:kAutoFetchRepositoryNotifications] mutableCopy] ?: [NSMutableDictionary dictionary];
+	NSString *key = [self repositoryDefaultsKeyForURL:repositoryURL];
+	if (key.length) settings[key] = @(enabled);
+	[[NSUserDefaults standardUserDefaults] setObject:settings forKey:kAutoFetchRepositoryNotifications];
 }
 
 @end
