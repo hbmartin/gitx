@@ -8,6 +8,8 @@
 
 #import <Cocoa/Cocoa.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 @class PBFileChangesTableView;
 
 @protocol PBFileChangesTableViewStagingDelegate <NSObject>
@@ -16,3 +18,5 @@
 
 @interface PBFileChangesTableView : NSTableView
 @end
+
+NS_ASSUME_NONNULL_END

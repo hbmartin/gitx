@@ -1,0 +1,122 @@
+[
+  {
+    "violation": {
+      "ruleIdentifier": "unused_import",
+      "location": {
+        "file": "Classes/GitXSwift.swift",
+        "line": 12,
+        "character": 1
+      },
+      "ruleDescription": "All imported modules should be required to make the file compile",
+      "severity": "error",
+      "reason": "All imported modules should be required to make the file compile",
+      "ruleName": "Unused Import"
+    },
+    "text": "import Cocoa"
+  },
+  {
+    "violation": {
+      "ruleIdentifier": "unused_import",
+      "location": {
+        "file": "Classes/PBCommitList.swift",
+        "line": 8,
+        "character": 1
+      },
+      "ruleDescription": "All imported modules should be required to make the file compile",
+      "severity": "error",
+      "reason": "All imported modules should be required to make the file compile",
+      "ruleName": "Unused Import"
+    },
+    "text": "import Cocoa"
+  },
+  {
+    "violation": {
+      "ruleIdentifier": "unused_declaration",
+      "location": {
+        "file": "Classes/PBCommitList.swift",
+        "line": 15,
+        "character": 24
+      },
+      "ruleDescription": "Declarations should be referenced at least once within all files linted",
+      "severity": "error",
+      "reason": "Declarations should be referenced at least once within all files linted",
+      "ruleName": "Unused Declaration"
+    },
+    "text": "    @IBOutlet weak var searchController: PBHistorySearchController!"
+  },
+  {
+    "violation": {
+      "ruleIdentifier": "unused_import",
+      "location": {
+        "file": "Classes/Views/PBFileChangesTableView.swift",
+        "line": 8,
+        "character": 1
+      },
+      "ruleDescription": "All imported modules should be required to make the file compile",
+      "severity": "error",
+      "reason": "All imported modules should be required to make the file compile",
+      "ruleName": "Unused Import"
+    },
+    "text": "import Cocoa"
+  },
+  {
+    "violation": {
+      "ruleIdentifier": "unused_declaration",
+      "location": {
+        "file": "Classes/Views/PBFileChangesTableView.swift",
+        "line": 11,
+        "character": 13
+      },
+      "ruleDescription": "Declarations should be referenced at least once within all files linted",
+      "severity": "error",
+      "reason": "Declarations should be referenced at least once within all files linted",
+      "ruleName": "Unused Declaration"
+    },
+    "text": "final class PBFileChangesTableView: NSTableView {"
+  },
+  {
+    "violation": {
+      "ruleIdentifier": "unused_import",
+      "location": {
+        "file": "Classes/Views/PBHighlighting.swift",
+        "line": 1,
+        "character": 1
+      },
+      "ruleDescription": "All imported modules should be required to make the file compile",
+      "severity": "error",
+      "reason": "All imported modules should be required to make the file compile",
+      "ruleName": "Unused Import"
+    },
+    "text": ""
+  },
+  {
+    "violation": {
+      "ruleIdentifier": "unused_declaration",
+      "location": {
+        "file": "Classes/Views/PBHighlighting.swift",
+        "line": 5,
+        "character": 13
+      },
+      "ruleDescription": "Declarations should be referenced at least once within all files linted",
+      "severity": "error",
+      "reason": "Declarations should be referenced at least once within all files linted",
+      "ruleName": "Unused Declaration"
+    },
+    "text": "final class PBHighlighting: NSObject {"
+  },
+  {
+    "violation": {
+      "ruleIdentifier": "unused_declaration",
+      "location": {
+        "file": "Classes/Views/PBHighlighting.swift",
+        "line": 45,
+        "character": 17
+      },
+      "ruleDescription": "Declarations should be referenced at least once within all files linted",
+      "severity": "error",
+      "reason": "Declarations should be referenced at least once within all files linted",
+      "ruleName": "Unused Declaration"
+    },
+    "text": "    static func highlightedString(forText text: String, path: String) -> NSAttributedString {"
+  }
+]

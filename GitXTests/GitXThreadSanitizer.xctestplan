@@ -20,6 +20,9 @@
   },
   "testTargets" : [
     {
+      "skippedTests" : [
+        "GitXPerformanceTests"
+      ],
       "target" : {
         "containerPath" : "container:GitX.xcodeproj",
         "identifier" : "C0DE2000000000000000000B",

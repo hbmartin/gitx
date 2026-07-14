@@ -213,7 +213,7 @@
 		if (![remotes containsObject:selection]) {
 			selection = [remotes containsObject:@"origin"] ? @"origin" : remotes.firstObject;
 		}
-		[pushRemotePopUpButton selectItemWithTitle:selection];
+		[pushRemotePopUpButton selectItemAtIndex:[remotes indexOfObject:selection]];
 	}
 
 	pushAfterCommitButton.enabled = canPush;

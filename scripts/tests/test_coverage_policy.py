@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+import pathlib
+import tempfile
+import unittest
+
+from support import load_script
+
+
+class CoveragePolicyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.module = load_script("check_coverage.py")
+
+    def test_policy_is_loaded_from_checked_in_json(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "coverage.json"
+            path.write_text(
+                '{"version": 1, "target": "GitX.app", '
+                '"minimumLineCoverage": 0.5, "files": {"Classes/A.m": 0.75}}'
+            )
+
+            policy = self.module.load_policy(path)
+
+        self.assertEqual(policy.target, "GitX.app")
+        self.assertEqual(policy.minimum_line_coverage, 0.5)
+        self.assertEqual(policy.files, {"Classes/A.m": 0.75})
+
+    def test_coverage_regressions_fail_against_the_policy(self) -> None:
+        policy = self.module.CoveragePolicy(
+            target="GitX.app",
+            minimum_line_coverage=0.5,
+            files={"Classes/A.m": 0.75},
+        )
+
+        failures = self.module.evaluate_coverage(
+            policy,
+            target_coverage=0.49,
+            file_coverage={"Classes/A.m": 0.74},
+        )
+
+        self.assertEqual(len(failures), 2)
+
+    def test_recording_improvements_never_lowers_a_floor(self) -> None:
+        policy = self.module.CoveragePolicy(
+            target="GitX.app",
+            minimum_line_coverage=0.5,
+            files={"Classes/A.m": 0.75, "Classes/B.m": 0.8},
+        )
+
+        ratcheted = self.module.ratchet_policy(
+            policy,
+            target_coverage=0.6,
+            file_coverage={"Classes/A.m": 0.9, "Classes/B.m": 0.7},
+        )
+
+        self.assertEqual(ratcheted.minimum_line_coverage, 0.6)
+        self.assertEqual(ratcheted.files["Classes/A.m"], 0.9)
+        self.assertEqual(ratcheted.files["Classes/B.m"], 0.8)
+
+
+if __name__ == "__main__":
+    unittest.main()

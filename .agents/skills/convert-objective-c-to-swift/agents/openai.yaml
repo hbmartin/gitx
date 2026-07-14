@@ -1,0 +1,4 @@
+interface:
+  display_name: "Convert Objective-C to Swift"
+  short_description: "Safely migrate gitx Objective-C into Swift"
+  default_prompt: "Use $convert-objective-c-to-swift to migrate the first-party Objective-C code I am changing while preserving gitx behavior and compatibility."

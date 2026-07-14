@@ -194,6 +194,8 @@
 		C0DE20000000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DE20000000000000000005 /* XCTest.framework */; };
 		C0DE2000000000000000000F /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1058C7A1FEA54F0111CA2CBB /* Cocoa.framework */; };
 		C0DE30000000000000000001 /* GitXCoreTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE30000000000000000002 /* GitXCoreTests.m */; };
+		C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE50000000000000000002 /* GitXPerformanceTests.swift */; };
+		C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
 		D87127011229A21C00012334 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D87127001229A21C00012334 /* QuartzCore.framework */; };
 		D89E9B141218BA260097A90B /* ScriptingBridge.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D89E9AB21218A9DA0097A90B /* ScriptingBridge.framework */; };
@@ -720,6 +722,9 @@
 		C0DE20000000000000000004 /* GitXTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitXTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0DE20000000000000000005 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/MacOSX.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
 		C0DE30000000000000000002 /* GitXCoreTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXCoreTests.m; sourceTree = "<group>"; };
+		C0DE50000000000000000002 /* GitXPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXPerformanceTests.swift; sourceTree = "<group>"; };
+		C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXSwiftFeatureTests.swift; sourceTree = "<group>"; };
+		C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "GitXTests-Bridging-Header.h"; sourceTree = "<group>"; };
 		CC0000020000002 /* GitXScreenshotTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXScreenshotTests.m; sourceTree = "<group>"; };
 		CC0000030000003 /* GitXUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitXUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D87127001229A21C00012334 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
@@ -1253,8 +1258,11 @@
 		C0DE20000000000000000006 /* GitXTests */ = {
 			isa = PBXGroup;
 			children = (
+				C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */,
 				C0DE30000000000000000002 /* GitXCoreTests.m */,
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
+				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
+				C0DE50000000000000000002 /* GitXPerformanceTests.swift */,
 			);
 			path = GitXTests;
 			sourceTree = "<group>";
@@ -1798,6 +1806,8 @@
 			files = (
 				C0DE30000000000000000001 /* GitXCoreTests.m in Sources */,
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
+				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
+				C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2195,6 +2205,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "GitXTests/GitXTests-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GitX.app/Contents/MacOS/GitX";
 			};
 			name = Debug;
@@ -2216,6 +2228,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "GitXTests/GitXTests-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GitX.app/Contents/MacOS/GitX";
 			};
 			name = Release;

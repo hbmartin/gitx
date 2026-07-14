@@ -15,6 +15,7 @@
 - (NSString *)makeDirtyRepositoryFixture;
 - (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
 - (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
+- (void)openPreferences;
 - (void)openStagingView;
 @end
 
@@ -25,7 +26,12 @@
 	[super setUp];
 	self.continueAfterFailure = NO;
 	self.app = [[XCUIApplication alloc] init];
-	self.app.launchArguments = @[ @"-ApplePersistenceIgnoreState", @"YES" ];
+	self.app.launchArguments = @[
+		@"-ApplePersistenceIgnoreState", @"YES",
+		@"-AppleLanguages", @"(en)",
+		@"-AppleLocale", @"en_US_POSIX",
+		@"-NSAutomaticWindowAnimationsEnabled", @"NO"
+	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
 
 	// An explicit environment override is useful for local one-off runs. CI
@@ -104,6 +110,21 @@
 	attachment.name = name;
 	attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
 	[self addAttachment:attachment];
+}
+
+- (void)waitForElement:(XCUIElement *)element toHaveValue:(id)value timeout:(NSTimeInterval)timeout
+{
+	NSPredicate *predicate = [NSPredicate predicateWithFormat:@"value == %@", value];
+	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:predicate object:element];
+	[self waitForExpectations:@[ expectation ] timeout:timeout];
+}
+
+- (void)openPreferences
+{
+	XCTAssertTrue([self waitForWindow], @"Preferences require the application to finish launching");
+	[self.app activate];
+	[self.app.windows.firstMatch typeKey:@"," modifierFlags:XCUIKeyModifierCommand];
+	XCTAssertTrue([self.app.dialogs.firstMatch waitForExistenceWithTimeout:5]);
 }
 
 - (BOOL)runGit:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
@@ -382,12 +403,8 @@
 
 - (void)testHistoryAndFetchPreferencesAreAvailable
 {
-	XCTAssertTrue([self waitForWindow], @"Preferences require the application to finish launching");
-	[self.app activate];
-	[self.app.menuBars.menuBarItems[@"GitX"] click];
-	[self.app.menuItems[@"Settings…"] click];
+	[self openPreferences];
 	XCUIElement *preferences = self.app.dialogs.firstMatch;
-	XCTAssertTrue([preferences waitForExistenceWithTimeout:5]);
 	XCUIElement *pane = preferences.toolbars.buttons[@"History & Fetch"];
 	if (pane.exists) {
 		[pane click];
@@ -406,12 +423,8 @@
 
 - (void)testAppearancePreferenceOffersAutomaticLightAndDark
 {
-	XCTAssertTrue([self waitForWindow], @"Preferences require the application to finish launching");
-	[self.app activate];
-	[self.app.menuBars.menuBarItems[@"GitX"] click];
-	[self.app.menuItems[@"Settings…"] click];
+	[self openPreferences];
 	XCUIElement *preferences = self.app.dialogs.firstMatch;
-	XCTAssertTrue([preferences waitForExistenceWithTimeout:5]);
 
 	XCUIElement *generalPane = preferences.toolbars.buttons[@"General"];
 	XCTAssertTrue([generalPane waitForExistenceWithTimeout:5]);
@@ -427,23 +440,19 @@
 			XCUIElement *choice = self.app.menuItems[title];
 			XCTAssertTrue([choice waitForExistenceWithTimeout:5]);
 			[choice click];
-			XCTAssertEqualObjects(appearance.value, title);
-			[NSThread sleepForTimeInterval:0.2];
+			[self waitForElement:appearance toHaveValue:title timeout:5];
 			[self saveWindowScreenshotNamed:[NSString stringWithFormat:@"appearance-%@", title.lowercaseString]];
 		}
 	} @finally {
 		if (originalValue.length && ![appearance.value isEqual:originalValue]) {
 			[appearance click];
-			[self.app.menuItems[originalValue] click];
+			XCUIElement *originalChoice = self.app.menuItems[originalValue];
+			XCTAssertTrue([originalChoice waitForExistenceWithTimeout:5]);
+			[originalChoice click];
+			[self waitForElement:appearance toHaveValue:originalValue timeout:5];
 		}
 	}
 }
-
-// - (void)testFullScreenScreenshot {
-//     // Capture the entire screen — useful for catching system-level visual regressions
-//     [NSThread sleepForTimeInterval:1.0]; // let the app settle
-//     [self saveScreenshotNamed:@"full-screen"];
-// }
 
 - (void)testCommitContextMenuScreenshot
 {
@@ -456,11 +465,9 @@
 	// Right-click to open the context menu
 	[firstRow rightClick];
 
-	// Wait for the menu to appear
 	XCUIElement *menu = self.app.menus.firstMatch;
 	XCTAssertTrue([menu waitForExistenceWithTimeout:5], @"Right-clicking a commit should open its context menu");
-
-	[NSThread sleepForTimeInterval:0.3]; // let the menu fully render
+	XCTAssertTrue([menu.menuItems.firstMatch waitForExistenceWithTimeout:5], @"The commit context menu should finish populating");
 	[self saveWindowScreenshotNamed:@"commit-context-menu"];
 
 	// Dismiss the menu
