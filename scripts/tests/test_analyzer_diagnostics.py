@@ -62,6 +62,14 @@ class AnalyzerDiagnosticsTests(unittest.TestCase):
         )[0]
         self.assertEqual(test_diagnostic.path, "GitXTests/GitXCoreTests.m")
 
+    def test_parser_uses_source_directory_nearest_the_file(self) -> None:
+        diagnostic = self.module.parse_diagnostics(
+            "/Users/Classes/workspace/gitx/Classes/Legacy.m:10:2: warning: "
+            "'oldAPI' is deprecated [-Wdeprecated-declarations]"
+        )[0]
+
+        self.assertEqual(diagnostic.path, "Classes/Legacy.m")
+
 
 if __name__ == "__main__":
     unittest.main()

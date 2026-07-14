@@ -47,7 +47,7 @@ def normalize_first_party_path(path: str) -> str | None:
             return normalized
         marker = f"/{prefix}/"
         if marker in normalized:
-            return f"{prefix}/{normalized.split(marker, 1)[1]}"
+            return f"{prefix}/{normalized.rsplit(marker, 1)[1]}"
     return None
 
 

@@ -50,12 +50,15 @@ def evaluate_headers(
         failures.append(f"{path} was modified and must add NS_ASSUME_NONNULL_BEGIN/END")
 
     for path in sorted(changed_headers):
-        for line_number, line in enumerate(added_lines.get(path, []), start=1):
-            if RAW_COLLECTION.search(line):
+        for line in added_lines.get(path, []):
+            clean_line = line.split("//", 1)[0]
+            if RAW_COLLECTION.search(clean_line):
                 failures.append(
                     f"{path} added a raw collection declaration ({line.strip()}); add lightweight generics"
                 )
-            if ERROR_OUT_PARAMETER.search(line) and not any(marker in line for marker in NULLABILITY_MARKERS):
+            if ERROR_OUT_PARAMETER.search(clean_line) and not any(
+                marker in clean_line for marker in NULLABILITY_MARKERS
+            ):
                 failures.append(
                     f"{path} added an error out-parameter without explicit nullable annotations ({line.strip()})"
                 )
@@ -90,8 +93,12 @@ def added_source_lines(root: pathlib.Path, merge_base: str, path: str) -> list[s
 
     diff = run("git", "diff", "--unified=0", merge_base, "--", path, cwd=root)
     lines: list[str] = []
+    in_hunk = False
     for line in diff.splitlines():
-        if line.startswith("+") and not line.startswith("+++"):
+        if line.startswith("@@ "):
+            in_hunk = True
+            continue
+        if in_hunk and line.startswith("+"):
             lines.append(line[1:])
     return lines
 

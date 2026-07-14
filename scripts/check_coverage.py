@@ -40,7 +40,7 @@ def policy_payload(policy: CoveragePolicy) -> dict[str, object]:
 
 
 def coverage_floor(value: float) -> float:
-    return math.floor(value * 10_000) / 10_000
+    return math.floor(value * 10_000 + 1e-9) / 10_000
 
 
 def evaluate_coverage(
@@ -104,7 +104,7 @@ def relative_source_path(raw_path: str, root: pathlib.Path) -> str | None:
         normalized = raw_path.replace("\\", "/")
         marker = "/Classes/"
         if marker in normalized:
-            return f"Classes/{normalized.split(marker, 1)[1]}"
+            return f"Classes/{normalized.rsplit(marker, 1)[1]}"
         return None
 
 
