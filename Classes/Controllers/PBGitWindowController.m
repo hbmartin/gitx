@@ -110,22 +110,23 @@
 - (IBAction)showRepositorySettings:(id)sender
 {
 	NSAlert *alert = [[NSAlert alloc] init];
-	alert.messageText = [NSString stringWithFormat:@"Settings for %@", self.repository.projectName];
-	alert.informativeText = @"These settings apply only to this repository.";
-	[alert addButtonWithTitle:@"Done"];
-	[alert addButtonWithTitle:@"Cancel"];
+	alert.messageText = [NSString stringWithFormat:NSLocalizedString(@"Settings for %@", @"Repository settings title"), self.repository.projectName];
+	alert.informativeText = NSLocalizedString(@"These settings apply only to this repository.", @"Repository settings detail");
+	[alert addButtonWithTitle:NSLocalizedString(@"Done", @"Done button")];
+	[alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Cancel button")];
 
-	NSButton *notifications = [NSButton checkboxWithTitle:@"Notify me when scheduled fetch finds new commits" target:nil action:nil];
+	NSButton *notifications = [NSButton checkboxWithTitle:NSLocalizedString(@"Notify me when scheduled fetch finds new commits", @"Repository fetch notification checkbox") target:nil action:nil];
 	notifications.state = [PBGitDefaults notifyAboutFetchedCommitsForRepositoryURL:self.repository.workingDirectoryURL] ? NSControlStateValueOn : NSControlStateValueOff;
 	notifications.frame = NSMakeRect(0, 0, 390, 24);
 	alert.accessoryView = notifications;
 
-	[alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse returnCode) {
-		if (returnCode == NSAlertFirstButtonReturn) {
-			[PBGitDefaults setNotifyAboutFetchedCommits:(notifications.state == NSControlStateValueOn)
-										 forRepositoryURL:self.repository.workingDirectoryURL];
-		}
-	}];
+	[alert beginSheetModalForWindow:self.window
+				  completionHandler:^(NSModalResponse returnCode) {
+					  if (returnCode == NSAlertFirstButtonReturn) {
+						  [PBGitDefaults setNotifyAboutFetchedCommits:(notifications.state == NSControlStateValueOn)
+													 forRepositoryURL:self.repository.workingDirectoryURL];
+					  }
+				  }];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem remoteTitle:(NSString *)localisationKeyWithRemote plainTitle:(NSString *)localizationKeyWithoutRemote
@@ -289,11 +290,14 @@
 		}
 	}
 
-	[[NSWorkspace sharedWorkspace] openURLs:nonSubmoduleURLs
-					withAppBundleIdentifier:nil
-									options:0
-			 additionalEventParamDescriptor:nil
-						  launchIdentifiers:NULL];
+	NSWorkspaceOpenConfiguration *configuration = [NSWorkspaceOpenConfiguration configuration];
+	for (NSURL *URL in nonSubmoduleURLs) {
+		[[NSWorkspace sharedWorkspace] openURL:URL
+								 configuration:configuration
+							 completionHandler:^(__unused NSRunningApplication *application, NSError *error) {
+								 if (error) PBLogError(error);
+							 }];
+	}
 }
 
 - (void)revealURLsInFinder:(NSArray<NSURL *> *)fileURLs

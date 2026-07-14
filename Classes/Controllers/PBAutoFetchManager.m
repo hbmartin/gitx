@@ -15,13 +15,15 @@
 #import <UserNotifications/UserNotifications.h>
 
 static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
+static NSTimeInterval const PBAutoFetchRetryBaseInterval = 60.0;
+static NSTimeInterval const PBAutoFetchRetryMaximumInterval = 15.0 * 60.0;
 
 @interface PBAutoFetchManager () <UNUserNotificationCenterDelegate>
 @property (nonatomic) NSTimer *timer;
 @property (nonatomic) dispatch_queue_t fetchQueue;
 @property (nonatomic) NSMutableDictionary<NSString *, NSDate *> *nextFetchDates;
 @property (nonatomic) NSMutableSet<NSString *> *inFlightRepositories;
-@property (nonatomic) NSMutableSet<NSString *> *pausedRepositories;
+@property (nonatomic) NSMutableDictionary<NSString *, NSNumber *> *failureCounts;
 @property (nonatomic) PBAutoFetchScope lastScope;
 @property (nonatomic) BOOL started;
 @property (nonatomic) BOOL requestedNotificationAuthorization;
@@ -46,7 +48,7 @@ static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
 	_fetchQueue = dispatch_queue_create("com.gitx.autofetch", DISPATCH_QUEUE_SERIAL);
 	_nextFetchDates = [NSMutableDictionary dictionary];
 	_inFlightRepositories = [NSMutableSet set];
-	_pausedRepositories = [NSMutableSet set];
+	_failureCounts = [NSMutableDictionary dictionary];
 	_lastScope = PBAutoFetchScopeNone;
 	return self;
 }
@@ -88,7 +90,10 @@ static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
 	self.lastScope = scope;
 	if (scope == PBAutoFetchScopeNone) return;
 	[self ensureNotificationAuthorization];
-	if (wasDisabled) [self.nextFetchDates removeAllObjects];
+	if (wasDisabled) {
+		[self.nextFetchDates removeAllObjects];
+		[self.failureCounts removeAllObjects];
+	}
 	[self evaluateRepositoriesForImmediateFetch:wasDisabled];
 }
 
@@ -101,12 +106,21 @@ static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
 {
 	// A wake represents one catch-up opportunity. The normal interval starts
 	// again when that fetch is scheduled.
+	[self.failureCounts removeAllObjects];
 	[self evaluateRepositoriesForImmediateFetch:YES];
+}
+
++ (NSTimeInterval)retryDelayForFailureCount:(NSUInteger)failureCount
+{
+	if (failureCount == 0) return 0;
+	NSUInteger exponent = MIN(failureCount - 1, (NSUInteger)4);
+	return MIN(PBAutoFetchRetryBaseInterval * (NSTimeInterval)(1UL << exponent), PBAutoFetchRetryMaximumInterval);
 }
 
 - (NSString *)keyForURL:(NSURL *)url
 {
-	return url.URLByStandardizingPath.path ?: url.path ?: @"";
+	return url.URLByStandardizingPath.path ?: url.path ?:
+														 @"";
 }
 
 - (NSDictionary<NSString *, NSURL *> *)candidateRepositoryURLs
@@ -144,12 +158,11 @@ static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
 	NSDate *now = [NSDate date];
 	NSDictionary<NSString *, NSURL *> *candidates = [self candidateRepositoryURLs];
 	for (NSString *key in candidates) {
-		if ([self.pausedRepositories containsObject:key] || [self.inFlightRepositories containsObject:key]) continue;
+		if ([self.inFlightRepositories containsObject:key]) continue;
 		NSDate *next = self.nextFetchDates[key];
 		if (!immediate && next && [next compare:now] == NSOrderedDescending) continue;
 		NSURL *url = candidates[key];
 		[self.inFlightRepositories addObject:key];
-		self.nextFetchDates[key] = [now dateByAddingTimeInterval:(NSTimeInterval)[PBGitDefaults autoFetchIntervalMinutes] * 60.0];
 		dispatch_async(self.fetchQueue, ^{
 			[self fetchRepositoryAtURL:url key:key];
 		});
@@ -159,6 +172,7 @@ static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
 - (PBTask *)taskForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments
 {
 	PBTask *task = [PBTask taskWithLaunchPath:[PBGitBinary path] arguments:arguments inDirectory:url.path];
+	task.timeout = 10.0 * 60.0;
 	task.additionalEnvironment = @{
 		@"GIT_TERMINAL_PROMPT" : @"0",
 		@"GCM_INTERACTIVE" : @"never",
@@ -238,10 +252,14 @@ static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
 	dispatch_async(dispatch_get_main_queue(), ^{
 		[self.inFlightRepositories removeObject:key];
 		if (!before || !after) {
-			[self.pausedRepositories addObject:key];
-			[self postFailureNotificationForURL:url error:error];
+			NSUInteger failureCount = self.failureCounts[key].unsignedIntegerValue + 1;
+			self.failureCounts[key] = @(failureCount);
+			self.nextFetchDates[key] = [[NSDate date] dateByAddingTimeInterval:[PBAutoFetchManager retryDelayForFailureCount:failureCount]];
+			if (failureCount == 1) [self postFailureNotificationForURL:url error:error];
 			return;
 		}
+		[self.failureCounts removeObjectForKey:key];
+		self.nextFetchDates[key] = [[NSDate date] dateByAddingTimeInterval:(NSTimeInterval)[PBGitDefaults autoFetchIntervalMinutes] * 60.0];
 		[self refreshOpenRepositoryAtURL:url];
 		if (advances.count && [PBGitDefaults notifyAboutFetchedCommitsForRepositoryURL:url]) {
 			[self postAdvanceNotificationForURL:url advances:advances];
@@ -270,10 +288,12 @@ static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
 - (void)postFailureNotificationForURL:(NSURL *)url error:(NSError *)error
 {
 	UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
-	content.title = [NSString stringWithFormat:@"Auto-fetch paused for %@", url.lastPathComponent];
-	content.body = error.localizedFailureReason ?: error.localizedDescription ?: @"Git could not refresh this repository. A successful manual fetch will resume scheduled fetching.";
+	content.title = [NSString stringWithFormat:@"Auto-fetch failed for %@", url.lastPathComponent];
+	NSString *reason = error.localizedFailureReason ?: error.localizedDescription ?:
+																					@"Git could not refresh this repository.";
+	content.body = [reason stringByAppendingString:@" GitX will retry automatically."];
 	content.sound = [UNNotificationSound defaultSound];
-	content.userInfo = @{ @"repository" : url.path ?: @"", @"kind" : @"failure" };
+	content.userInfo = @{@"repository" : url.path ?: @"", @"kind" : @"failure"};
 	UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:[NSString stringWithFormat:@"gitx-fetch-failure-%@", [self keyForURL:url]] content:content trigger:nil];
 	[[UNUserNotificationCenter currentNotificationCenter] addNotificationRequest:request withCompletionHandler:nil];
 }
@@ -308,13 +328,13 @@ static NSTimeInterval const PBAutoFetchTimerResolution = 30.0;
 - (void)recordManualFetchSucceededForRepositoryURL:(NSURL *)repositoryURL
 {
 	NSString *key = [self keyForURL:repositoryURL];
-	[self.pausedRepositories removeObject:key];
+	[self.failureCounts removeObjectForKey:key];
 	self.nextFetchDates[key] = [[NSDate date] dateByAddingTimeInterval:(NSTimeInterval)[PBGitDefaults autoFetchIntervalMinutes] * 60.0];
 }
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
-	 didReceiveNotificationResponse:(UNNotificationResponse *)response
-			withCompletionHandler:(void (^)(void))completionHandler
+	didReceiveNotificationResponse:(UNNotificationResponse *)response
+			 withCompletionHandler:(void (^)(void))completionHandler
 {
 	NSDictionary *info = response.notification.request.content.userInfo;
 	NSString *path = info[@"repository"];

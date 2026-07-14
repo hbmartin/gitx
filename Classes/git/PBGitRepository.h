@@ -7,6 +7,7 @@
 //
 
 #import <Cocoa/Cocoa.h>
+#import <ObjectiveGit/GTRepository+Reset.h>
 
 @class PBGitHistoryList;
 @class PBGitRevSpecifier;

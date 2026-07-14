@@ -31,6 +31,7 @@
 #define kSuppressedDialogWarnings @"Suppressed Dialog Warnings"
 #define kUseRepositoryWatcher @"PBUseRepositoryWatcher"
 #define kTerminalHandler @"PBTerminalHandler"
+#define kAppearancePreference @"PBAppearancePreference"
 #define kHistoryColumnSortingEnabled @"PBHistoryColumnSortingEnabled"
 #define kAutoFetchScope @"PBAutoFetchScope"
 #define kAutoFetchIntervalMinutes @"PBAutoFetchIntervalMinutes"
@@ -38,6 +39,7 @@
 
 NSString *const PBGitHistorySortingPreferenceDidChangeNotification = @"PBGitHistorySortingPreferenceDidChangeNotification";
 NSString *const PBAutoFetchPreferencesDidChangeNotification = @"PBAutoFetchPreferencesDidChangeNotification";
+NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePreferenceDidChangeNotification";
 
 @implementation PBGitDefaults
 
@@ -74,6 +76,7 @@ NSString *const PBAutoFetchPreferencesDidChangeNotification = @"PBAutoFetchPrefe
 					  forKey:kUseRepositoryWatcher];
 	[defaultValues setObject:@"com.apple.Terminal"
 					  forKey:kTerminalHandler];
+	[defaultValues setObject:@(PBAppearancePreferenceAutomatic) forKey:kAppearancePreference];
 	[defaultValues setObject:@YES forKey:kHistoryColumnSortingEnabled];
 	[defaultValues setObject:@(PBAutoFetchScopeNone) forKey:kAutoFetchScope];
 	[defaultValues setObject:@15 forKey:kAutoFetchIntervalMinutes];
@@ -242,6 +245,20 @@ NSString *const PBAutoFetchPreferencesDidChangeNotification = @"PBAutoFetchPrefe
 + (NSString *)terminalHandler
 {
 	return [[NSUserDefaults standardUserDefaults] stringForKey:kTerminalHandler];
+}
+
++ (PBAppearancePreference)appearancePreference
+{
+	NSInteger preference = [[NSUserDefaults standardUserDefaults] integerForKey:kAppearancePreference];
+	return (preference >= PBAppearancePreferenceAutomatic && preference <= PBAppearancePreferenceDark) ? preference : PBAppearancePreferenceAutomatic;
+}
+
++ (void)setAppearancePreference:(PBAppearancePreference)preference
+{
+	PBAppearancePreference validatedPreference =
+		(preference >= PBAppearancePreferenceAutomatic && preference <= PBAppearancePreferenceDark) ? preference : PBAppearancePreferenceAutomatic;
+	[[NSUserDefaults standardUserDefaults] setInteger:validatedPreference forKey:kAppearancePreference];
+	[[NSNotificationCenter defaultCenter] postNotificationName:PBAppearancePreferenceDidChangeNotification object:nil];
 }
 
 + (BOOL)historyColumnSortingEnabled

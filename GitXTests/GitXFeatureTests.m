@@ -1,19 +1,33 @@
 #import <XCTest/XCTest.h>
+#import <dlfcn.h>
+#import <objc/runtime.h>
 
 #import "PBGitDefaults.h"
+#import "PBAutoFetchManager.h"
 #import "PBHistoryArrayController.h"
 #import "PBHighlighting.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
+#import "NSAppearance+PBDarkMode.h"
 
 @interface GitXFeatureTests : XCTestCase
+
+@property (nonatomic) BOOL originalHistorySortingEnabled;
+@property (nonatomic) PBAutoFetchScope originalAutoFetchScope;
+@property (nonatomic) NSInteger originalAutoFetchInterval;
+
 @end
 
 @interface PBNativeContentView (GitXFeatureTests)
 - (nullable NSString *)patchWithFileHeader:(NSArray<NSString *> *)fileHeader
-							 hunkLines:(NSArray<NSString *> *)hunkLines
-						selectedIndexes:(NSIndexSet *)selectedIndexes
-							  reverse:(BOOL)reverse;
+								 hunkLines:(NSArray<NSString *> *)hunkLines
+						   selectedIndexes:(NSIndexSet *)selectedIndexes
+								   reverse:(BOOL)reverse;
+- (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines;
+@end
+
+@interface PBAutoFetchManager (GitXFeatureTests)
++ (NSTimeInterval)retryDelayForFailureCount:(NSUInteger)failureCount;
 @end
 
 @implementation GitXFeatureTests
@@ -21,9 +35,20 @@
 - (void)setUp
 {
 	[super setUp];
+	self.originalHistorySortingEnabled = [PBGitDefaults historyColumnSortingEnabled];
+	self.originalAutoFetchScope = [PBGitDefaults autoFetchScope];
+	self.originalAutoFetchInterval = [PBGitDefaults autoFetchIntervalMinutes];
 	[PBGitDefaults setHistoryColumnSortingEnabled:YES];
 	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeNone];
 	[PBGitDefaults setAutoFetchIntervalMinutes:15];
+}
+
+- (void)tearDown
+{
+	[PBGitDefaults setHistoryColumnSortingEnabled:self.originalHistorySortingEnabled];
+	[PBGitDefaults setAutoFetchScope:self.originalAutoFetchScope];
+	[PBGitDefaults setAutoFetchIntervalMinutes:self.originalAutoFetchInterval];
+	[super tearDown];
 }
 
 - (void)testAutoFetchDefaultsClampInterval
@@ -36,10 +61,47 @@
 	XCTAssertEqual([PBGitDefaults autoFetchScope], PBAutoFetchScopeOpenRepositories);
 }
 
+- (void)testAppearancePreferenceValidatesAndAppliesGlobally
+{
+	PBAppearancePreference originalPreference = [PBGitDefaults appearancePreference];
+	NSAppearance *originalAppearance = NSApp.appearance;
+	__block NSInteger notificationCount = 0;
+	id notificationToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBAppearancePreferenceDidChangeNotification
+					object:nil
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					notificationCount++;
+				}];
+
+	@try {
+		[PBGitDefaults setAppearancePreference:PBAppearancePreferenceLight];
+		XCTAssertEqual([PBGitDefaults appearancePreference], PBAppearancePreferenceLight);
+		XCTAssertEqualObjects(NSApp.appearance.name, NSAppearanceNameAqua);
+
+		[PBGitDefaults setAppearancePreference:PBAppearancePreferenceDark];
+		XCTAssertEqual([PBGitDefaults appearancePreference], PBAppearancePreferenceDark);
+		XCTAssertEqualObjects(NSApp.appearance.name, NSAppearanceNameDarkAqua);
+
+		[PBGitDefaults setAppearancePreference:PBAppearancePreferenceAutomatic];
+		XCTAssertEqual([PBGitDefaults appearancePreference], PBAppearancePreferenceAutomatic);
+		XCTAssertNil(NSApp.appearance);
+
+		[PBGitDefaults setAppearancePreference:(PBAppearancePreference)NSIntegerMax];
+		XCTAssertEqual([PBGitDefaults appearancePreference], PBAppearancePreferenceAutomatic);
+		XCTAssertNil(NSApp.appearance);
+		XCTAssertEqual(notificationCount, 4);
+	} @finally {
+		[[NSNotificationCenter defaultCenter] removeObserver:notificationToken];
+		[PBGitDefaults setAppearancePreference:originalPreference];
+		NSApp.appearance = originalAppearance;
+	}
+}
+
 - (void)testHistoryControllerPinsWorkingStateAboveSortedCommits
 {
 	PBHistoryArrayController *controller = [[PBHistoryArrayController alloc] initWithContent:@[
-		@{ @"subject" : @"B" }, @{ @"subject" : @"A" }
+		@{@"subject" : @"B"}, @{@"subject" : @"A"}
 	]];
 	NSObject *workingState = [[NSObject alloc] init];
 	controller.pinnedObject = workingState;
@@ -78,6 +140,41 @@
 	XCTAssertTrue([task.standardOutputString containsString:@"GITX_TEST_ENVIRONMENT=present"]);
 }
 
+- (void)testAppearanceObservationDoesNotOverrideNSApplicationKVOHandling
+{
+	Method method = class_getInstanceMethod(NSApplication.class,
+											@selector(observeValueForKeyPath:ofObject:change:context:));
+	Dl_info methodInfo = {0};
+	int lookupResult = dladdr(method_getImplementation(method), &methodInfo);
+	XCTAssertEqual(lookupResult, 1);
+	if (lookupResult == 0 || methodInfo.dli_fname == NULL)
+		return;
+	XCTAssertFalse([[NSString stringWithUTF8String:methodInfo.dli_fname] containsString:@"/GitX.app/Contents/MacOS/GitX"]);
+}
+
+- (void)testAppearanceObservationPostsEffectiveAppearanceNotification
+{
+	NSApplication *application = NSApplication.sharedApplication;
+	NSObject *notificationObject = [[NSObject alloc] init];
+	__block BOOL receivedNotification = NO;
+	id notificationToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBEffectiveAppearanceChanged
+					object:notificationObject
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					receivedNotification = YES;
+				}];
+
+	NSAppearance *originalAppearance = application.appearance;
+	[application registerObserverForAppearanceChanges:notificationObject];
+	application.appearance = [NSAppearance appearanceNamed:application.isDarkMode ? NSAppearanceNameAqua : NSAppearanceNameDarkAqua];
+
+	XCTAssertTrue(receivedNotification);
+	application.appearance = originalAppearance;
+	[application registerObserverForAppearanceChanges:application.delegate];
+	[[NSNotificationCenter defaultCenter] removeObserver:notificationToken];
+}
+
 - (void)testNativeDiffBuildsLinePatchesForStageAndUnstage
 {
 	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
@@ -93,6 +190,47 @@
 	XCTAssertTrue([unstagePatch containsString:@"@@ -1,4 +1,3 @@"]);
 	XCTAssertTrue([unstagePatch containsString:@"-old\n new"]);
 	XCTAssertFalse([unstagePatch containsString:@"+new"]);
+}
+
+- (void)testNativeDiffOmitsNoNewlineMarkerWhenAssociatedChangeIsOmitted
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSArray *header = @[ @"diff --git a/file.txt b/file.txt", @"--- a/file.txt", @"+++ b/file.txt" ];
+	NSArray *hunk = @[ @"@@ -1,3 +1,5 @@", @" a", @" old", @"+new", @" tail", @"+extra", @"\\ No newline at end of file" ];
+	NSString *patch = [view patchWithFileHeader:header hunkLines:hunk selectedIndexes:[NSIndexSet indexSetWithIndex:3] reverse:NO];
+	XCTAssertNotNil(patch);
+	XCTAssertTrue([patch containsString:@"+new"]);
+	XCTAssertFalse([patch containsString:@"+extra"]);
+	XCTAssertFalse([patch containsString:@"No newline at end of file"]);
+}
+
+- (void)testNativeDiffExtractsPathsContainingSpacesAndRenameDestinations
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSArray *spaced = @[ @"diff --git a/Folder/file name.txt b/Folder/file name.txt", @"--- a/Folder/file name.txt", @"+++ b/Folder/file name.txt" ];
+	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:spaced], @"Folder/file name.txt");
+	NSArray *renamed = @[ @"diff --git a/old.txt b/new name.txt", @"similarity index 100%", @"rename from old.txt", @"rename to new name.txt" ];
+	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:renamed], @"new name.txt");
+}
+
+- (void)testTaskSupportsShortConfigurableTimeouts
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/sleep" arguments:@[ @"1" ] inDirectory:nil];
+	task.timeout = 0.02;
+	NSError *error = nil;
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskTimeoutError);
+}
+
+- (void)testAutoFetchRetryDelayIsExponentialAndBounded
+{
+	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:0], 0);
+	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:1], 60);
+	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:2], 120);
+	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:4], 480);
+	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:5], 900);
+	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:20], 900);
 }
 
 @end

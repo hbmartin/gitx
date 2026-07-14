@@ -15,8 +15,15 @@ typedef NS_ENUM(NSInteger, PBAutoFetchScope) {
 	PBAutoFetchScopeOpenAndRecentRepositories = 3,
 };
 
+typedef NS_ENUM(NSInteger, PBAppearancePreference) {
+	PBAppearancePreferenceAutomatic = 0,
+	PBAppearancePreferenceLight = 1,
+	PBAppearancePreferenceDark = 2,
+};
+
 extern NSString *const PBGitHistorySortingPreferenceDidChangeNotification;
 extern NSString *const PBAutoFetchPreferencesDidChangeNotification;
+extern NSString *const PBAppearancePreferenceDidChangeNotification;
 
 @interface PBGitDefaults : NSObject {
 }
@@ -41,6 +48,8 @@ extern NSString *const PBAutoFetchPreferencesDidChangeNotification;
 + (void)setHistorySearchMode:(NSInteger)mode;
 + (BOOL)useRepositoryWatcher;
 + (NSString *)terminalHandler;
++ (PBAppearancePreference)appearancePreference;
++ (void)setAppearancePreference:(PBAppearancePreference)preference;
 + (BOOL)historyColumnSortingEnabled;
 + (void)setHistoryColumnSortingEnabled:(BOOL)enabled;
 + (PBAutoFetchScope)autoFetchScope;

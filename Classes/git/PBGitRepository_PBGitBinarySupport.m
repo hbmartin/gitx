@@ -18,7 +18,7 @@
 	NSArray *realArgs = @[ [@"--git-dir=" stringByAppendingString:self.gitURL.path] ];
 
 	// Prepend a --git-dir argument in case we're running against a bare repository
-	realArgs = [realArgs arrayByAddingObjectsFromArray:arguments];
+	realArgs = [realArgs arrayByAddingObjectsFromArray:arguments ?: @[]];
 
 	return [PBTask taskWithLaunchPath:[PBGitBinary path] arguments:realArgs inDirectory:self.workingDirectory];
 }
@@ -26,7 +26,8 @@
 - (BOOL)launchTaskWithArguments:(NSArray *)arguments input:(NSString *)inputString error:(NSError **)error
 {
 	PBTask *task = [self taskWithArguments:arguments];
-	task.standardInputData = [inputString dataUsingEncoding:NSUTF8StringEncoding];
+	if (inputString)
+		task.standardInputData = [inputString dataUsingEncoding:NSUTF8StringEncoding];
 	return [task launchTask:error];
 }
 
@@ -38,7 +39,8 @@
 - (NSString *)outputOfTaskWithArguments:(NSArray *)arguments input:(NSString *)inputString error:(NSError **)error
 {
 	PBTask *task = [self taskWithArguments:arguments];
-	task.standardInputData = [inputString dataUsingEncoding:NSUTF8StringEncoding];
+	if (inputString)
+		task.standardInputData = [inputString dataUsingEncoding:NSUTF8StringEncoding];
 	BOOL success = [task launchTask:error];
 	if (!success) return nil;
 

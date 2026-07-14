@@ -1,0 +1,572 @@
+#import <XCTest/XCTest.h>
+#import <ObjectiveGit/GTCommit.h>
+#import <ObjectiveGit/GTOID.h>
+#import <ObjectiveGit/GTRepository.h>
+
+#import "PBChangedFile.h"
+#import "PBGraphCellInfo.h"
+#import "PBGitBinary.h"
+#import "PBGitCommit.h"
+#import "PBGitGrapher.h"
+#import "PBGitIndex.h"
+#import "PBGitRef.h"
+#import "PBGitRepository.h"
+#import "PBGitRepository_PBGitBinarySupport.h"
+#import "PBGitRevSpecifier.h"
+#import "PBNativeContentView.h"
+#import "PBUncommittedChanges.h"
+#import "PBWorkingTree.h"
+#import "PBTask.h"
+
+@interface PBNativeContentView (GitXCoreTests)
+- (nullable NSString *)patchWithFileHeader:(NSArray<NSString *> *)fileHeader
+								 hunkLines:(NSArray<NSString *> *)hunkLines
+						   selectedIndexes:(NSIndexSet *)selectedIndexes
+								   reverse:(BOOL)reverse;
+@end
+
+@interface GitXTestRepository : NSObject
+
+@property (nonatomic, copy, readonly) NSString *path;
+
+- (nullable instancetype)initWithError:(NSError **)error;
+- (nullable NSString *)git:(NSArray<NSString *> *)arguments error:(NSError **)error;
+- (BOOL)writeText:(NSString *)text toPath:(NSString *)relativePath error:(NSError **)error;
+- (BOOL)commitAllWithMessage:(NSString *)message error:(NSError **)error;
+
+@end
+
+@implementation GitXTestRepository
+
+- (nullable instancetype)initWithError:(NSError **)error
+{
+	self = [super init];
+	if (!self) return nil;
+
+	_path = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"GitXTests-%@", NSUUID.UUID.UUIDString]];
+	if (![[NSFileManager defaultManager] createDirectoryAtPath:_path withIntermediateDirectories:YES attributes:nil error:error])
+		return nil;
+
+	if (![self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] error:error] ||
+		![self git:@[ @"config", @"user.name", @"GitX Test" ] error:error] ||
+		![self git:@[ @"config", @"user.email", @"gitx-tests@example.invalid" ] error:error])
+		return nil;
+
+	return self;
+}
+
+- (void)dealloc
+{
+	[[NSFileManager defaultManager] removeItemAtPath:self.path error:nil];
+}
+
+- (nullable NSString *)git:(NSArray<NSString *> *)arguments error:(NSError **)error
+{
+	return [PBTask outputForCommand:PBGitBinary.path arguments:arguments inDirectory:self.path error:error];
+}
+
+- (BOOL)writeText:(NSString *)text toPath:(NSString *)relativePath error:(NSError **)error
+{
+	NSString *absolutePath = [self.path stringByAppendingPathComponent:relativePath];
+	NSString *parent = absolutePath.stringByDeletingLastPathComponent;
+	if (![[NSFileManager defaultManager] createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:error])
+		return NO;
+	return [text writeToFile:absolutePath atomically:YES encoding:NSUTF8StringEncoding error:error];
+}
+
+- (BOOL)commitAllWithMessage:(NSString *)message error:(NSError **)error
+{
+	return [self git:@[ @"add", @"--all" ] error:error] != nil &&
+		[self git:@[ @"commit", @"--quiet", @"-m", message ]
+			error:error] != nil;
+}
+
+@end
+
+@interface GitXRepositoryTestCase : XCTestCase
+
+@property (nonatomic, strong) GitXTestRepository *fixture;
+@property (nonatomic, strong) PBGitRepository *repository;
+
+- (void)refreshIndexAfterPerforming:(dispatch_block_t)operation;
+- (nullable PBChangedFile *)changedFileAtPath:(NSString *)path;
+- (nullable PBGitTree *)treeAtPath:(NSString *)path inRoot:(PBGitTree *)root;
+
+@end
+
+
+@implementation GitXRepositoryTestCase
+
+- (void)setUp
+{
+	[super setUp];
+	NSError *error = nil;
+	self.fixture = [[GitXTestRepository alloc] initWithError:&error];
+	XCTAssertNotNil(self.fixture, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"first line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"initial commit" error:&error], @"%@", error);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+}
+
+- (void)tearDown
+{
+	self.repository = nil;
+	self.fixture = nil;
+	[super tearDown];
+}
+
+- (void)refreshIndexAfterPerforming:(dispatch_block_t)operation
+{
+	XCTestExpectation *expectation = [self expectationWithDescription:@"index refresh finished"];
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexFinishedIndexRefresh
+					object:self.repository.index
+					 queue:NSOperationQueue.mainQueue
+				usingBlock:^(__unused NSNotification *notification) {
+					[expectation fulfill];
+				}];
+	operation();
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+}
+
+- (nullable PBChangedFile *)changedFileAtPath:(NSString *)path
+{
+	for (PBChangedFile *file in self.repository.index.indexChanges) {
+		if ([file.path isEqualToString:path])
+			return file;
+	}
+	return nil;
+}
+
+- (nullable PBGitTree *)treeAtPath:(NSString *)path inRoot:(PBGitTree *)root
+{
+	NSMutableArray<PBGitTree *> *pending = [root.children mutableCopy];
+	while (pending.count) {
+		PBGitTree *candidate = pending.firstObject;
+		[pending removeObjectAtIndex:0];
+		if ([candidate.fullPath isEqualToString:path]) return candidate;
+		[pending addObjectsFromArray:candidate.children];
+	}
+	return nil;
+}
+
+@end
+
+
+@interface GitXRefAndRevisionTests : XCTestCase
+@end
+
+@implementation GitXRefAndRevisionTests
+
+- (void)testRefClassificationAndNames
+{
+	PBGitRef *branch = [PBGitRef refFromString:@"refs/heads/feature/nested"];
+	XCTAssertTrue(branch.isBranch);
+	XCTAssertEqualObjects(branch.branchName, @"feature/nested");
+	XCTAssertEqualObjects(branch.shortName, @"feature/nested");
+	XCTAssertEqualObjects(branch.refishType, kGitXBranchType);
+
+	PBGitRef *tag = [PBGitRef refFromString:@"refs/tags/v1.2.3"];
+	XCTAssertTrue(tag.isTag);
+	XCTAssertEqualObjects(tag.tagName, @"v1.2.3");
+	XCTAssertEqualObjects(tag.refishType, kGitXTagType);
+
+	PBGitRef *remoteBranch = [PBGitRef refFromString:@"refs/remotes/origin/team/topic"];
+	XCTAssertTrue(remoteBranch.isRemote);
+	XCTAssertTrue(remoteBranch.isRemoteBranch);
+	XCTAssertEqualObjects(remoteBranch.remoteName, @"origin");
+	XCTAssertEqualObjects(remoteBranch.remoteBranchName, @"team/topic");
+	XCTAssertEqualObjects(remoteBranch.remoteRef.ref, @"refs/remotes/origin");
+	XCTAssertEqualObjects(remoteBranch.refishType, kGitXRemoteBranchType);
+
+	PBGitRef *stash = [PBGitRef refFromString:@"refs/stash@{2}"];
+	XCTAssertTrue(stash.isStash);
+	XCTAssertEqualObjects(stash.shortName, @"stash@{2}");
+	XCTAssertEqualObjects(stash.refishType, kGitXStashType);
+}
+
+- (void)testRefEqualityUsesFullReference
+{
+	PBGitRef *first = [PBGitRef refFromString:@"refs/heads/main"];
+	PBGitRef *same = [PBGitRef refFromString:@"refs/heads/main"];
+	PBGitRef *tag = [PBGitRef refFromString:@"refs/tags/main"];
+	XCTAssertTrue([first isEqualToRef:same]);
+	XCTAssertFalse([first isEqualToRef:tag]);
+}
+
+- (void)testRevisionSpecifierDistinguishesSimpleAndComplexRevisions
+{
+	PBGitRevSpecifier *simple = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"refs/heads/main" ]];
+	XCTAssertTrue(simple.isSimpleRef);
+	XCTAssertEqualObjects(simple.simpleRef, @"refs/heads/main");
+	XCTAssertEqualObjects(simple.ref.ref, @"refs/heads/main");
+	XCTAssertFalse(simple.hasPathLimiter);
+
+	NSArray<NSString *> *complexValues = @[ @"HEAD~2", @"main..topic", @"branch@{upstream}", @"-invalid", @"name with space" ];
+	for (NSString *value in complexValues) {
+		PBGitRevSpecifier *complex = [[PBGitRevSpecifier alloc] initWithParameters:@[ value ]];
+		XCTAssertFalse(complex.isSimpleRef, @"%@ should be complex", value);
+		XCTAssertNil(complex.simpleRef);
+	}
+
+	PBGitRevSpecifier *pathLimited = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD", @"--", @"Sources" ]];
+	XCTAssertTrue(pathLimited.hasPathLimiter);
+	XCTAssertEqualObjects(pathLimited.title, @"“Sources”");
+}
+
+- (void)testRevisionSpecifierCopyAndWellKnownFilters
+{
+	PBGitRevSpecifier *source = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"main", @"--", @"file.txt" ] description:@"selection"];
+	source.workingDirectory = [NSURL fileURLWithPath:@"/tmp"];
+	PBGitRevSpecifier *copy = [source copy];
+	XCTAssertNotEqual(source, copy);
+	XCTAssertEqualObjects(source.parameters, copy.parameters);
+	XCTAssertEqualObjects(source.description, copy.description);
+	XCTAssertEqualObjects(source.workingDirectory, copy.workingDirectory);
+	XCTAssertTrue(PBGitRevSpecifier.allBranchesRevSpec.isAllBranchesRev);
+	XCTAssertTrue(PBGitRevSpecifier.localBranchesRevSpec.isLocalBranchesRev);
+}
+
+@end
+
+
+@interface GitXRepositoryIntegrationTests : GitXRepositoryTestCase
+@end
+
+
+@implementation GitXRepositoryIntegrationTests
+
+- (void)testRepositoryDiscoversHeadAndReferences
+{
+	XCTAssertFalse(self.repository.isBareRepository);
+	XCTAssertFalse(self.repository.isShallowRepository);
+	XCTAssertEqualObjects(self.repository.workingDirectory.stringByResolvingSymlinksInPath,
+						  self.fixture.path.stringByResolvingSymlinksInPath);
+	XCTAssertEqualObjects(self.repository.projectName, self.fixture.path.lastPathComponent);
+	XCTAssertNotNil(self.repository.headOID);
+	XCTAssertEqualObjects(self.repository.headRef.ref.ref, @"refs/heads/main");
+	XCTAssertTrue([self.repository revisionExists:@"HEAD"]);
+	XCTAssertFalse([self.repository revisionExists:@"refs/heads/missing"]);
+
+	PBGitRef *main = [self.repository refForName:@"main"];
+	XCTAssertEqualObjects(main.ref, @"refs/heads/main");
+	XCTAssertTrue([self.repository refExists:main]);
+	XCTAssertTrue([self.repository checkRefFormat:@"refs/heads/valid-name"]);
+	XCTAssertFalse([self.repository checkRefFormat:@"invalid ref"]);
+}
+
+- (void)testCreateReloadAndDeleteBranchAndTag
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.repository createBranch:@"feature/integration" atRefish:self.repository.headRef.ref error:&error], @"%@", error);
+	XCTAssertTrue([self.repository createTag:@"v-test" message:@"integration tag" atRefish:self.repository.headRef.ref error:&error], @"%@", error);
+	[self.repository reloadRefs];
+
+	PBGitRef *branch = [self.repository refForName:@"feature/integration"];
+	PBGitRef *tag = [self.repository refForName:@"v-test"];
+	XCTAssertNotNil(branch);
+	XCTAssertNotNil(tag);
+	XCTAssertTrue([self.repository refExists:branch]);
+	XCTAssertTrue([self.repository refExists:tag]);
+	XCTAssertTrue([self.repository deleteRef:branch error:&error], @"%@", error);
+	XCTAssertTrue([self.repository deleteRef:tag error:&error], @"%@", error);
+	XCTAssertFalse([self.repository refExists:branch]);
+	XCTAssertFalse([self.repository refExists:tag]);
+}
+
+- (void)testRemoteDiscoveryUsesLocalFixture
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.repository addRemote:@"origin" withURL:self.fixture.path error:&error], @"%@", error);
+	XCTAssertEqualObjects(self.repository.remotes, (@[ @"origin" ]));
+	XCTAssertTrue(self.repository.hasRemotes);
+	NSString *fetchOutput = [self.fixture git:@[ @"fetch", @"--quiet", @"origin" ] error:&error];
+	XCTAssertNotNil(fetchOutput, @"%@", error);
+	[self.repository reloadRefs];
+	XCTAssertNotNil([self.repository refForName:@"origin/main"]);
+}
+
+- (void)testDetachedHeadIsRepresentedByHeadSpecifier
+{
+	NSError *error = nil;
+	NSString *checkoutOutput = [self.fixture git:@[ @"checkout", @"--quiet", @"--detach", @"HEAD" ] error:&error];
+	XCTAssertNotNil(checkoutOutput, @"%@", error);
+	self.repository = nil;
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"HEAD");
+	XCTAssertEqualObjects(self.repository.headRef.title, @"“detached HEAD”");
+	XCTAssertNotNil(self.repository.headOID);
+}
+
+- (void)testBareAndShallowRepositoryDiscovery
+{
+	NSError *error = nil;
+	NSString *barePath = [self.fixture.path stringByAppendingString:@"-bare.git"];
+	NSString *shallowPath = [self.fixture.path stringByAppendingString:@"-shallow"];
+	@try {
+		NSString *bareOutput = [self.fixture git:@[ @"clone", @"--bare", @"--quiet", self.fixture.path, barePath ] error:&error];
+		XCTAssertNotNil(bareOutput, @"%@", error);
+		PBGitRepository *bare = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:barePath] error:&error];
+		XCTAssertNotNil(bare, @"%@", error);
+		XCTAssertTrue(bare.isBareRepository);
+		XCTAssertFalse(bare.isShallowRepository);
+		XCTAssertNotNil(bare.headOID);
+
+		XCTAssertTrue([self.fixture writeText:@"second commit\n" toPath:@"second.txt" error:&error], @"%@", error);
+		XCTAssertTrue([self.fixture commitAllWithMessage:@"second commit" error:&error], @"%@", error);
+		NSString *sourceURL = [NSURL fileURLWithPath:self.fixture.path].absoluteString;
+		NSString *shallowOutput = [self.fixture git:@[ @"clone", @"--quiet", @"--depth", @"1", sourceURL, shallowPath ] error:&error];
+		XCTAssertNotNil(shallowOutput, @"%@", error);
+		PBGitRepository *shallow = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:shallowPath] error:&error];
+		XCTAssertNotNil(shallow, @"%@", error);
+		XCTAssertTrue(shallow.isShallowRepository);
+		NSString *commitCount = [PBTask outputForCommand:PBGitBinary.path arguments:@[ @"rev-list", @"--count", @"HEAD" ] inDirectory:shallowPath error:&error];
+		XCTAssertEqualObjects([commitCount stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet], @"1");
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:barePath error:nil];
+		[[NSFileManager defaultManager] removeItemAtPath:shallowPath error:nil];
+	}
+}
+
+- (void)testLinkedWorktreeDiscovery
+{
+	NSError *error = nil;
+	NSString *worktreePath = [self.fixture.path stringByAppendingString:@"-worktree"];
+	PBGitRepository *worktree = nil;
+	@try {
+		NSString *output = [self.fixture git:@[ @"worktree", @"add", @"--quiet", @"-b", @"linked", worktreePath ] error:&error];
+		XCTAssertNotNil(output, @"%@", error);
+		worktree = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:worktreePath] error:&error];
+		XCTAssertNotNil(worktree, @"%@", error);
+		XCTAssertEqualObjects(worktree.workingDirectory.stringByResolvingSymlinksInPath,
+							  worktreePath.stringByResolvingSymlinksInPath);
+		XCTAssertEqualObjects(worktree.headRef.ref.branchName, @"linked");
+	} @finally {
+		worktree = nil;
+		[self.fixture git:@[ @"worktree", @"remove", @"--force", worktreePath ] error:nil];
+		[[NSFileManager defaultManager] removeItemAtPath:worktreePath error:nil];
+	}
+}
+
+- (void)testSubmoduleDiscovery
+{
+	NSError *error = nil;
+	GitXTestRepository *submoduleSource = [[GitXTestRepository alloc] initWithError:&error];
+	XCTAssertNotNil(submoduleSource, @"%@", error);
+	XCTAssertTrue([submoduleSource writeText:@"child\n" toPath:@"child.txt" error:&error], @"%@", error);
+	XCTAssertTrue([submoduleSource commitAllWithMessage:@"child commit" error:&error], @"%@", error);
+	NSString *output = [self.fixture git:@[ @"-c", @"protocol.file.allow=always", @"submodule", @"add", @"--quiet", submoduleSource.path, @"Modules/Child" ] error:&error];
+	XCTAssertNotNil(output, @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"add submodule" error:&error], @"%@", error);
+	[self.repository reloadRefs];
+	XCTAssertEqual(self.repository.submodules.count, 1);
+	XCTAssertNotNil([self.repository submoduleAtPath:@"Modules/Child" error:&error], @"%@", error);
+}
+
+- (void)testCommitGraphDecoratesMergeHistory
+{
+	NSError *error = nil;
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"-b", @"topic" ] error:&error]));
+	XCTAssertTrue([self.fixture writeText:@"topic\n" toPath:@"topic.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"topic commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"main" ] error:&error]));
+	XCTAssertTrue([self.fixture writeText:@"main\n" toPath:@"main.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"main commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"merge", @"--quiet", @"--no-ff", @"topic", @"-m", @"merge topic" ] error:&error]));
+
+	NSString *revisionOutput = [self.fixture git:@[ @"rev-list", @"--topo-order", @"--all" ] error:&error];
+	NSArray<NSString *> *revisions = [revisionOutput componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+	PBGitGrapher *grapher = [[PBGitGrapher alloc] init];
+	__block long maximumColumns = 0;
+	for (NSString *SHA in revisions) {
+		if (!SHA.length) continue;
+		GTCommit *gtCommit = [self.repository.gtRepo lookUpObjectBySHA:SHA objectType:GTObjectTypeCommit error:&error];
+		XCTAssertNotNil(gtCommit, @"%@", error);
+		PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:gtCommit];
+		[grapher decorateCommit:commit];
+		XCTAssertNotNil(commit.lineInfo);
+		maximumColumns = MAX(maximumColumns, commit.lineInfo.numColumns);
+	}
+	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
+}
+
+@end
+
+
+@interface GitXIndexIntegrationTests : GitXRepositoryTestCase
+@end
+
+
+@implementation GitXIndexIntegrationTests
+
+- (void)testRefreshStageAndUnstageTrackedAndUnicodePaths
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"first line\nsecond line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"new contents\n" toPath:@"folder/spaced ünicode.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	PBChangedFile *untracked = [self changedFileAtPath:@"folder/spaced ünicode.txt"];
+	XCTAssertNotNil(tracked);
+	XCTAssertNotNil(untracked);
+	XCTAssertEqual(tracked.status, MODIFIED);
+	XCTAssertEqual(untracked.status, NEW);
+	XCTAssertTrue(tracked.hasUnstagedChanges);
+	XCTAssertTrue(untracked.hasUnstagedChanges);
+
+	XCTAssertTrue(([self.repository.index stageFiles:@[ tracked, untracked ]]));
+	NSString *cached = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];
+	XCTAssertTrue([cached containsString:@"tracked.txt"]);
+	XCTAssertTrue([cached containsString:@"folder/spaced"]);
+	XCTAssertTrue(([self.repository.index unstageFiles:@[ tracked, untracked ]]));
+	NSString *cachedAfterUnstage = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];
+	XCTAssertEqualObjects(cachedAfterUnstage, @"");
+}
+
+- (void)testDiffAndPatchRoundTrip
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"first line\nchanged line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	NSString *diff = [self.repository.index diffForFile:tracked staged:NO contextLines:3];
+	XCTAssertTrue([diff containsString:@"+changed line"]);
+
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue([self.repository.index applyPatch:diff stage:YES reverse:NO]);
+	}];
+	NSString *stagedDiff = [self.fixture git:@[ @"diff", @"--cached" ] error:&error];
+	XCTAssertTrue([stagedDiff containsString:@"+changed line"]);
+
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue([self.repository.index applyPatch:diff stage:YES reverse:YES]);
+	}];
+	NSString *unstagedDiff = [self.fixture git:@[ @"diff", @"--cached" ] error:&error];
+	XCTAssertEqualObjects(unstagedDiff, @"");
+	XCTAssertFalse([self.repository.index applyPatch:@"not a patch\n" stage:YES reverse:NO]);
+}
+
+- (void)testDiscardRestoresTrackedFilesButLeavesUntrackedFiles
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"modified\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"untracked\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	PBChangedFile *untracked = [self changedFileAtPath:@"untracked.txt"];
+	[self.repository.index discardChangesForFiles:@[ tracked, untracked ]];
+	NSString *trackedText = [NSString stringWithContentsOfFile:[self.fixture.path stringByAppendingPathComponent:@"tracked.txt"] encoding:NSUTF8StringEncoding error:&error];
+	XCTAssertEqualObjects(trackedText, @"first line\n");
+	XCTAssertTrue([[NSFileManager defaultManager] fileExistsAtPath:[self.fixture.path stringByAppendingPathComponent:@"untracked.txt"]]);
+}
+
+- (void)testPartialPatchDoesNotCarryNoNewlineMarkerFromOmittedLine
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"a\nold\ntail\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"patch base" error:&error], @"%@", error);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSArray *header = @[ @"diff --git a/tracked.txt b/tracked.txt", @"--- a/tracked.txt", @"+++ b/tracked.txt" ];
+	NSArray *hunk = @[ @"@@ -1,3 +1,5 @@", @" a", @" old", @"+new", @" tail", @"+extra", @"\\ No newline at end of file" ];
+	NSString *patch = [view patchWithFileHeader:header hunkLines:hunk selectedIndexes:[NSIndexSet indexSetWithIndex:3] reverse:NO];
+	XCTAssertNotNil(patch);
+	XCTAssertFalse([patch containsString:@"No newline at end of file"]);
+	XCTAssertTrue([self.repository.index applyPatch:patch stage:YES reverse:NO]);
+	NSString *stagedContents = [self.fixture git:@[ @"show", @":tracked.txt" ] error:&error];
+	XCTAssertEqualObjects(stagedContents, @"a\nold\nnew\ntail\n");
+}
+
+- (void)testWorkingTreeTreatsNulBytesAsBinaryAndUncommittedTreeIsCached
+{
+	unsigned char bytes[] = {0x89, 0x00, 0x50, 0x4e, 0x47};
+	NSData *data = [NSData dataWithBytes:bytes length:sizeof(bytes)];
+	NSString *path = [self.fixture.path stringByAppendingPathComponent:@"binary.dat"];
+	XCTAssertTrue([data writeToFile:path options:NSDataWritingAtomic error:nil]);
+
+	PBWorkingTree *root = [PBWorkingTree rootForRepository:self.repository];
+	PBGitTree *binary = [self treeAtPath:@"binary.dat" inRoot:root];
+	XCTAssertNotNil(binary);
+	XCTAssertEqualObjects(binary.textContents, @"This file cannot be displayed as text.");
+
+	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+	XCTAssertEqual(changes.tree, changes.tree);
+}
+
+@end
+
+
+@interface PBTaskCoreTests : XCTestCase
+@end
+
+
+@implementation PBTaskCoreTests
+
+- (void)testStandardInputRoundTrip
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/cat" arguments:@[] inDirectory:nil];
+	task.standardInputData = [@"héllo from stdin\n" dataUsingEncoding:NSUTF8StringEncoding];
+	NSError *error = nil;
+	XCTAssertTrue([task launchTask:&error], @"%@", error);
+	XCTAssertEqualObjects(task.standardOutputString, @"héllo from stdin\n");
+}
+
+- (void)testNonZeroExitIncludesStatusAndCombinedOutput
+{
+	NSError *error = nil;
+	NSString *output = [PBTask outputForCommand:@"/bin/sh"
+									  arguments:@[ @"-c", @"printf stdout; printf stderr >&2; exit 7" ]
+									inDirectory:nil
+										  error:&error];
+	XCTAssertNil(output);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskNonZeroExitCodeError);
+	XCTAssertEqualObjects(error.userInfo[PBTaskTerminationStatusKey], @7);
+	NSString *failureOutput = error.userInfo[PBTaskTerminationOutputKey];
+	XCTAssertTrue([failureOutput containsString:@"stdout"]);
+	XCTAssertTrue([failureOutput containsString:@"stderr"]);
+}
+
+- (void)testMissingExecutableReturnsLaunchError
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/path/that/does/not/exist" arguments:@[] inDirectory:nil];
+	NSError *error = nil;
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	XCTAssertNotNil(error.userInfo[PBTaskUnderlyingExceptionKey]);
+}
+
+- (void)testAsyncCompletionUsesRequestedQueueAndCapturesLargeOutput
+{
+	static void *queueKey = &queueKey;
+	dispatch_queue_t queue = dispatch_queue_create("org.gitx.tests.task-completion", DISPATCH_QUEUE_SERIAL);
+	dispatch_queue_set_specific(queue, queueKey, queueKey, NULL);
+	XCTestExpectation *expectation = [self expectationWithDescription:@"task completion"];
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/seq" arguments:@[ @"1", @"10000" ] inDirectory:nil];
+	[task performTaskOnQueue:queue
+		   completionHandler:^(NSData *data, NSError *error) {
+			   XCTAssertTrue(dispatch_get_specific(queueKey) != NULL);
+			   XCTAssertNil(error);
+			   NSString *output = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+			   XCTAssertTrue([output hasPrefix:@"1\n2\n"]);
+			   XCTAssertTrue([output hasSuffix:@"10000\n"]);
+			   [expectation fulfill];
+		   }];
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
+@end

@@ -296,6 +296,8 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 	} else if (self.gtRepo.isHEADUnborn) {
 		branchRef = headRef;
 	}
+	if (!branchRef)
+		return nil;
 
 	_headRef = [[PBGitRevSpecifier alloc] initWithRef:[PBGitRef refFromString:branchRef.name]];
 	_headOID = branchRef.OID;
@@ -420,6 +422,9 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 
 - (BOOL)refExists:(PBGitRef *)ref
 {
+	if (!ref.ref.length)
+		return NO;
+
 	NSError *gtError = nil;
 	GTReference *gtRef = [self.gtRepo lookUpReferenceWithName:ref.ref error:&gtError];
 	if (gtRef) {
@@ -438,12 +443,20 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 
 	NSError *taskError = nil;
 	NSString *output = [self outputOfTaskWithArguments:@[ @"show-ref", name ] error:&taskError];
+	if (!output.length)
+		return nil;
 
 	// the output is in the format: <SHA-1 ID> <space> <reference name>
 	// with potentially multiple lines if there are multiple matching refs (ex: refs/remotes/origin/master)
 	// here we only care about the first match
-	NSArray *refList = [output componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-	if (refList.count != 1) return nil;
+	NSArray<NSString *> *parts = [output componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	NSMutableArray<NSString *> *refList = [NSMutableArray arrayWithCapacity:parts.count];
+	for (NSString *part in parts) {
+		if (part.length)
+			[refList addObject:part];
+	}
+	if (refList.count < 2)
+		return nil;
 
 	NSString *refName = [refList objectAtIndex:1];
 	return [PBGitRef refFromString:refName];
@@ -631,17 +644,19 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 - (NSArray<NSString *> *)remotes
 {
 	NSError *error = nil;
-	NSArray *remotes = [self.gtRepo remoteNamesWithError:&error];
-	if (!remotes) {
+	NSString *output = [self outputOfTaskWithArguments:@[ @"remote" ] error:&error];
+	if (!output) {
 		PBLogError(error);
 		return nil;
 	}
-	return remotes;
+	if (!output.length)
+		return @[];
+	return [output componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
 }
 
 - (BOOL)hasRemotes
 {
-	return ([self remotes] != nil);
+	return self.remotes.count > 0;
 }
 
 - (PBGitRef *)remoteRefForBranch:(PBGitRef *)branch error:(NSError **)error

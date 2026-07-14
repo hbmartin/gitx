@@ -22,14 +22,14 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface PBGitHistoryController : PBViewController
+@interface PBGitHistoryController : PBViewController <NSMenuItemValidation>
 
 @property (readonly) NSArrayController *commitController;
 @property (readonly) NSTreeController *treeController;
 @property (readonly) PBHistorySearchController *searchController;
 
 @property (assign) NSInteger selectedCommitDetailsIndex;
-@property PBGitTree *gitTree;
+@property (nullable) PBGitTree *gitTree;
 @property NSArray<PBGitCommit *> *webCommits;
 @property NSArray<PBGitCommit *> *selectedCommits;
 

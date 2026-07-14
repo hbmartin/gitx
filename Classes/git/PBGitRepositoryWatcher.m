@@ -290,7 +290,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 	if (!eventStream) return;
 
-	FSEventStreamScheduleWithRunLoop(eventStream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+	FSEventStreamSetDispatchQueue(eventStream, dispatch_get_main_queue());
 	FSEventStreamStart(eventStream);
 
 	_running = YES;
@@ -303,7 +303,6 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 	if (eventStream) {
 		FSEventStreamStop(eventStream);
-		FSEventStreamUnscheduleFromRunLoop(eventStream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
 	}
 
 	_running = NO;

@@ -64,13 +64,18 @@
             ReferencedContainer = "container:GitX.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
-      <EnvironmentVariables>
-         <EnvironmentVariable
-            key = "GITX_UITEST_REPO"
-            value = "$(GITX_SCREENSHOT_REPO)"
-            isEnabled = "YES">
-         </EnvironmentVariable>
-      </EnvironmentVariables>
+      <TestPlans>
+         <TestPlanReference
+            reference = "container:GitXTests/GitX.xctestplan"
+            default = "YES">
+         </TestPlanReference>
+         <TestPlanReference
+            reference = "container:GitXTests/GitXAddressUndefined.xctestplan">
+         </TestPlanReference>
+         <TestPlanReference
+            reference = "container:GitXTests/GitXThreadSanitizer.xctestplan">
+         </TestPlanReference>
+      </TestPlans>
       <Testables>
          <TestableReference
             skipped = "NO">

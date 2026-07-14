@@ -1,0 +1,34 @@
+{
+  "configurations" : [
+    {
+      "id" : "042BB3B6-E916-4F9F-A735-E5B65A786F31",
+      "name" : "Address and Undefined Behavior",
+      "options" : {
+        "addressSanitizer" : {
+          "enabled" : true
+        },
+        "mainThreadCheckerEnabled" : true,
+        "undefinedBehaviorSanitizerEnabled" : true
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:GitX.xcodeproj",
+      "identifier" : "8D1107260486CEB800E47090",
+      "name" : "GitX"
+    },
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:GitX.xcodeproj",
+        "identifier" : "C0DE2000000000000000000B",
+        "name" : "GitXTests"
+      }
+    }
+  ],
+  "version" : 1
+}

@@ -44,26 +44,27 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           # create variables
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-          PP_PATH=$RUNNER_TEMP/build_pp.provisionprofile
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          CERTIFICATE_PATH="$RUNNER_TEMP/build_certificate.p12"
+          PP_PATH="$RUNNER_TEMP/build_pp.provisionprofile"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
 
           # import certificate and provisioning profile from secrets
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o "$PP_PATH"
 
           # create temporary keychain
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           # import certificate to keychain
-          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
 
           # apply provisioning profile
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          cp "$PP_PATH" "$PROFILE_DIR"
       - name: Show openssl version
         run: |
           openssl version
@@ -86,29 +87,30 @@ jobs:
         if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: brew install exiftool imagemagick
       - name: Checkout fixed repo snapshot for screenshots
-        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
           git clone --no-checkout "$GITHUB_WORKSPACE" /tmp/gitx-screenshot-repo
           git -C /tmp/gitx-screenshot-repo checkout 52ff1051d0c8e5cf3ee5
       - name: Run tests
-        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
           xcodebuild test \
             -workspace GitX.xcworkspace \
             -scheme GitX \
             -destination "platform=macOS,arch=${{ matrix.abi }}" \
+            -only-testing:GitXUITests \
             ARCHS="${{ matrix.abi }}" \
             CODE_SIGN_IDENTITY="-" \
             GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo \
             -resultBundlePath TestResults-${{ matrix.abi }}.xcresult
       - name: Extract screenshots from test results
-        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
           python3 scripts/extract_screenshots.py \
             TestResults-${{ matrix.abi }}.xcresult \
             ./scripts/screenshots-${{ matrix.abi }}
       - name: Upload screenshots
-        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         uses: actions/upload-artifact@v7
         with:
           name: Screenshots-${{ matrix.abi }}
@@ -121,7 +123,7 @@ jobs:
           SCREENSHOT_PASSWORD: ${{ secrets.SCREENSHOT_PASSWORD }}
           emulatorApi: ${{ matrix.abi }}
         run: |
-          ls -ls ./scripts/Screenshots-${{ matrix.abi }}
+          ls -ls ./scripts/screenshots-${{ matrix.abi }}
           ./screenShotScript/screenShotCompare.sh false
       - name: Archive screenshots diffs
         if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
@@ -148,10 +150,10 @@ jobs:
         env:
           EXPORT_OPTIONS: ${{ secrets.NOTARY_EXPORT_OPTIONS }}
         run: |
-          EXPORT_OPTIONS_PATH=$RUNNER_TEMP/ExportOptions.plist
-          echo -n "$EXPORT_OPTIONS" > EXPORT_OPTIONS_PATH
+          EXPORT_OPTIONS_PATH="$RUNNER_TEMP/ExportOptions.plist"
+          echo -n "$EXPORT_OPTIONS" > "$EXPORT_OPTIONS_PATH"
           echo "EXPORT_OPTIONS_PATH=$EXPORT_OPTIONS_PATH"
-          xcodebuild -exportArchive -archivePath GitX.xcarchive -exportPath . -exportOptionsPlist EXPORT_OPTIONS_PATH
+          xcodebuild -exportArchive -archivePath GitX.xcarchive -exportPath . -exportOptionsPlist "$EXPORT_OPTIONS_PATH"
           echo "Create GitX-${{ matrix.abi }}.dmg"
           mkdir dist && cp -R GitX.app dist/ && ln -s /Applications dist/
           hdiutil create -fs HFS+ -srcfolder dist/ -volname GitX GitX-${{ matrix.abi }}.dmg
@@ -168,17 +170,15 @@ jobs:
           APP_PATH="GitX.app"
           ZIP_PATH="GitX.zip"
           NOTARY_LOG="notary.log"
-          ID_FILE="id.txt"
-
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
-          xcrun notarytool submit "$ZIP_PATH" --key-id $KEY_ID --apple-id $APPLE_ID --team-id $TEAM_ID --password $APPLE_PASSWORD --wait | tee "$NOTARY_LOG" echo "print log output"
+          xcrun notarytool submit "$ZIP_PATH" --key-id "$KEY_ID" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_PASSWORD" --wait | tee "$NOTARY_LOG"
           cat "$NOTARY_LOG"
 
-          ID=$(cat "$NOTARY_LOG" | tail -3 | cut -d':' -f2 | head -n 1)
+          ID=$(tail -3 "$NOTARY_LOG" | cut -d':' -f2 | head -n 1)
           echo "Id is: $ID"
 
-          xcrun notarytool log $ID --apple-id $APPLE_ID --team-id $TEAM_ID --password $APPLE_PASSWORD
+          xcrun notarytool log "$ID" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_PASSWORD"
       - name: Staple Notarization
         if: ${{ env.variableSet != '' }}
         run: |
@@ -209,8 +209,8 @@ jobs:
       - name: Clean up keychain and provisioning profile
         if: ${{ env.variableSet != '' }}
         run: |
-          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
-          rm ~/Library/MobileDevice/Provisioning\ Profiles/build_pp.provisionprofile
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db"
+          rm "$HOME/Library/MobileDevice/Provisioning Profiles/build_pp.provisionprofile"
   
   release:
     if: startsWith(github.event.ref, 'refs/tags/')
@@ -242,15 +242,17 @@ jobs:
         with:
           name: GitX-arm64.zip
       - name: Check pre-release
+        env:
+          RELEASE_TAG: ${{ steps.tagger.outputs.tag }}
         run: |
-          echo "tag=${{steps.tagger.outputs.tag}}"
-          if [[ ${{ steps.tagger.outputs.tag }} == *alpha* || ${{ steps.tagger.outputs.tag }} == *beta* ]]
+          echo "tag=$RELEASE_TAG"
+          if [[ "$RELEASE_TAG" == *alpha* || "$RELEASE_TAG" == *beta* ]]
           then
              prerelease=true
           else
              prerelease=false
           fi
-          echo "PRE_RELEASE=$prerelease" >> $GITHUB_ENV
+          echo "PRE_RELEASE=$prerelease" >> "$GITHUB_ENV"
           echo "prerelease=$prerelease"
       - name: Create Release
         uses: softprops/action-gh-release@v3
@@ -269,7 +271,9 @@ jobs:
 
       - name: update Sparkle
         if: ${{ env.PRE_RELEASE == 'false' }}
-        run: curl -u $GITHUB_ACTOR:${{ secrets.CLASSIC_TOKEN }} -X POST https://api.github.com/repos/$GITHUB_REPOSITORY/pages/builds
+        env:
+          CLASSIC_TOKEN: ${{ secrets.CLASSIC_TOKEN }}
+        run: curl -u "$GITHUB_ACTOR:$CLASSIC_TOKEN" -X POST "https://api.github.com/repos/$GITHUB_REPOSITORY/pages/builds"
 
       - name: Checkout brew repo
         uses: actions/checkout@v7
@@ -281,16 +285,18 @@ jobs:
       - name: Show shasum
         run: |
           find . -name "gitx.rb"
-          export shax86=$(shasum -a 256 GitX-x86_64.dmg | cut -d " " -f1)
+          shax86=$(shasum -a 256 GitX-x86_64.dmg | cut -d " " -f1)
           echo "x86 sha256=$shax86"
-          export shaarm64=$(shasum -a 256 GitX-arm64.dmg | cut -d " " -f1)
+          shaarm64=$(shasum -a 256 GitX-arm64.dmg | cut -d " " -f1)
           echo "arm64 sha256=$shaarm64"
           cd brew/Casks/g
-          sed -n 1,3p gitx.rb > gitx.rb.new
-          echo "  version \"${{ steps.tagger.outputs.tag }}\"" >> gitx.rb.new
-          echo "  sha256 arm:   \"$shaarm64\"," >> gitx.rb.new
-          echo "         intel: \"$shax86\"" >> gitx.rb.new
-          sed -n 7,33p gitx.rb >> gitx.rb.new
+          {
+            sed -n 1,3p gitx.rb
+            echo "  version \"${{ steps.tagger.outputs.tag }}\""
+            echo "  sha256 arm:   \"$shaarm64\","
+            echo "         intel: \"$shax86\""
+            sed -n 7,33p gitx.rb
+          } > gitx.rb.new
           cat gitx.rb.new
           cp gitx.rb.new gitx.rb
           rm gitx.rb.new

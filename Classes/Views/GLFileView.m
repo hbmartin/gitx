@@ -23,6 +23,8 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 
 @interface GLFileView () <PBNativeContentViewDelegate>
 @property (nonatomic) NSSegmentedControl *modeControl;
+@property (nonatomic) dispatch_queue_t fileLoadQueue;
+@property (nonatomic) NSUInteger fileLoadGeneration;
 - (void)saveSplitViewPosition;
 @end
 
@@ -33,20 +35,24 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 	startFile = @"fileview";
 	[super awakeFromNib];
 	self.nativeView.delegate = self;
-	[historyController.treeController addObserver:self keyPath:@"selection" options:0 block:^(MAKVONotification *notification) {
-		[notification.observer showFile];
-	}];
+	self.fileLoadQueue = dispatch_queue_create("com.gitx.file-load", DISPATCH_QUEUE_CONCURRENT);
+	[historyController.treeController addObserver:self
+										  keyPath:@"selection"
+										  options:0
+											block:^(MAKVONotification *notification) {
+												[notification.observer showFile];
+											}];
 
 	self.modeControl = [NSSegmentedControl segmentedControlWithLabels:@[ @"Source", @"Blame", @"History", @"Diff" ]
-										 trackingMode:NSSegmentSwitchTrackingSelectOne
-											 target:self
-											 action:@selector(modeChanged:)];
+														 trackingMode:NSSegmentSwitchTrackingSelectOne
+															   target:self
+															   action:@selector(modeChanged:)];
 	self.modeControl.selectedSegment = PBFileModeSource;
 	self.modeControl.segmentStyle = NSSegmentStyleAutomatic;
 	self.modeControl.controlSize = NSControlSizeSmall;
 	self.modeControl.translatesAutoresizingMaskIntoConstraints = NO;
 	[typeBar addSubview:self.modeControl];
-	[(PBGitGradientBarView *)typeBar setTopShade:237/255.0f bottomShade:216/255.0f];
+	[(PBGitGradientBarView *)typeBar setTopShade:237 / 255.0f bottomShade:216 / 255.0f];
 	[NSLayoutConstraint activateConstraints:@[
 		[self.modeControl.centerXAnchor constraintEqualToAnchor:typeBar.centerXAnchor],
 		[self.modeControl.centerYAnchor constraintEqualToAnchor:typeBar.centerYAnchor],
@@ -77,7 +83,9 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		NSArray<NSString *> *parts = [raw componentsSeparatedByString:separator];
 		if (parts.count < 5) continue;
 		[entries addObject:@{
-			@"subject" : parts[1], @"author" : parts[2], @"date" : parts[3],
+			@"subject" : parts[1],
+			@"author" : parts[2],
+			@"date" : parts[3],
 			@"sha" : [parts[4] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],
 		}];
 	}
@@ -97,31 +105,44 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 	return [NSString stringWithFormat:@"diff --git a/%@ b/%@\nnew file mode 100644\n--- /dev/null\n+++ b/%@\n@@ -0,0 +1,%lu @@\n%@", file.path, file.path, file.path, (unsigned long)lines.count, added];
 }
 
+- (BOOL)isFileLoadGenerationCurrent:(NSUInteger)generation
+{
+	@synchronized(self) {
+		return generation == self.fileLoadGeneration;
+	}
+}
+
 - (NSArray<NSDictionary *> *)diffSectionsForTrees:(NSArray<PBGitTree *> *)trees
+										   commit:(PBGitCommit *)commit
+										  changes:(NSArray<PBChangedFile *> *)changes
+									   generation:(NSUInteger)generation
 {
 	NSMutableArray *sections = [NSMutableArray array];
-	PBGitCommit *commit = historyController.selectedCommits.firstObject;
 	BOOL workingState = [commit isKindOfClass:PBUncommittedChanges.class];
 	for (PBGitTree *tree in trees) {
+		if (![self isFileLoadGenerationCurrent:generation]) return @[];
 		if (!tree.leaf) continue;
 		if (workingState) {
 			PBChangedFile *change = nil;
-			for (PBChangedFile *candidate in historyController.repository.index.indexChanges) {
-				if ([candidate.path isEqualToString:tree.fullPath]) { change = candidate; break; }
+			for (PBChangedFile *candidate in changes) {
+				if ([candidate.path isEqualToString:tree.fullPath]) {
+					change = candidate;
+					break;
+				}
 			}
 			if (!change) continue;
 			if (change.hasStagedChanges) {
-				[sections addObject:@{ PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:3] ?: @"", PBNativeSectionContextKey : @"readOnly" }];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:3] ?: @"", PBNativeSectionContextKey : @"readOnly"}];
 			}
 			if (change.hasUnstagedChanges) {
 				NSString *diffText = change.status == NEW ? [self syntheticDiffForUntrackedFile:change] : [historyController.repository.index diffForFile:change staged:NO contextLines:3];
-				[sections addObject:@{ PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly" }];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly"}];
 			}
 		} else {
 			NSString *base = commit.parents.firstObject.SHA ?: PBEmptyTreeSHA;
 			NSError *error = nil;
 			NSString *patch = [historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, commit.SHA, @"--", tree.fullPath ] error:&error] ?: @"";
-			[sections addObject:@{ PBNativeSectionTitleKey : tree.fullPath, PBNativeSectionTextKey : patch, PBNativeSectionContextKey : @"readOnly" }];
+			[sections addObject:@{PBNativeSectionTitleKey : tree.fullPath, PBNativeSectionTextKey : patch, PBNativeSectionContextKey : @"readOnly"}];
 		}
 	}
 	return sections;
@@ -129,37 +150,52 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 
 - (void)showFile
 {
-	NSArray<PBGitTree *> *selected = historyController.treeController.selectedObjects;
+	NSArray<PBGitTree *> *selected = [historyController.treeController.selectedObjects copy];
+	NSUInteger generation;
+	@synchronized(self) {
+		generation = ++self.fileLoadGeneration;
+	}
 	if (selected.count == 0) {
 		[self.nativeView showMessage:@"No file selected"];
 		return;
 	}
 	PBFileMode mode = self.modeControl.selectedSegment;
-	NSMutableArray *sections = [NSMutableArray array];
-	for (PBGitTree *file in selected) {
-		if (!file.leaf) continue;
-		if (mode == PBFileModeSource || mode == PBFileModeBlame) {
-			[sections addObject:@{
-				PBNativeSectionTitleKey : file.fullPath ?: file.path,
-				PBNativeSectionPathKey : file.fullPath ?: file.path,
-				PBNativeSectionTextKey : mode == PBFileModeSource ? (file.textContents ?: @"") : (file.blame ?: @""),
-			}];
-		} else if (mode == PBFileModeHistory) {
-			[sections addObject:@{ PBNativeSectionTitleKey : file.fullPath ?: file.path, PBNativeSectionEntriesKey : [self historyEntriesForTree:file] }];
+	PBGitCommit *commit = historyController.selectedCommits.firstObject;
+	NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
+	[self.nativeView showMessage:@"Loading file…"];
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), self.fileLoadQueue, ^{
+		if (![self isFileLoadGenerationCurrent:generation]) return;
+		NSMutableArray *sections = [NSMutableArray array];
+		for (PBGitTree *file in selected) {
+			if (![self isFileLoadGenerationCurrent:generation]) return;
+			if (!file.leaf) continue;
+			if (mode == PBFileModeSource || mode == PBFileModeBlame) {
+				[sections addObject:@{
+					PBNativeSectionTitleKey : file.fullPath ?: file.path,
+					PBNativeSectionPathKey : file.fullPath ?: file.path,
+					PBNativeSectionTextKey : mode == PBFileModeSource ? (file.textContents ?: @"") : (file.blame ?: @""),
+				}];
+			} else if (mode == PBFileModeHistory) {
+				[sections addObject:@{PBNativeSectionTitleKey : file.fullPath ?: file.path, PBNativeSectionEntriesKey : [self historyEntriesForTree:file]}];
+			}
 		}
-	}
-	if (mode == PBFileModeDiff) sections = [[self diffSectionsForTrees:selected] mutableCopy];
-	if (sections.count == 0) {
-		[self.nativeView showMessage:@"Select one or more files to view this mode."];
-	} else if (mode == PBFileModeSource) {
-		[self.nativeView showSourceSections:sections];
-	} else if (mode == PBFileModeBlame) {
-		[self.nativeView showBlameSections:sections];
-	} else if (mode == PBFileModeHistory) {
-		[self.nativeView showHistorySections:sections];
-	} else {
-		[self.nativeView showDiffSections:sections];
-	}
+		if (mode == PBFileModeDiff) sections = [[self diffSectionsForTrees:selected commit:commit changes:changes generation:generation] mutableCopy];
+		if (![self isFileLoadGenerationCurrent:generation]) return;
+		dispatch_async(dispatch_get_main_queue(), ^{
+			if (![self isFileLoadGenerationCurrent:generation]) return;
+			if (sections.count == 0) {
+				[self.nativeView showMessage:@"Select one or more files to view this mode."];
+			} else if (mode == PBFileModeSource) {
+				[self.nativeView showSourceSections:sections];
+			} else if (mode == PBFileModeBlame) {
+				[self.nativeView showBlameSections:sections];
+			} else if (mode == PBFileModeHistory) {
+				[self.nativeView showHistorySections:sections];
+			} else {
+				[self.nativeView showDiffSections:sections];
+			}
+		});
+	});
 }
 
 - (void)nativeContentView:(PBNativeContentView *)view selectCommit:(NSString *)sha
@@ -182,6 +218,9 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 
 - (void)closeView
 {
+	@synchronized(self) {
+		self.fileLoadGeneration++;
+	}
 	[self saveSplitViewPosition];
 	[super closeView];
 }
@@ -190,8 +229,14 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 #define kFileListSplitViewRightMin 180
 #define kHFileListSplitViewPositionDefault @"File List SplitView Position"
 
-- (CGFloat)splitView:(NSSplitView *)splitView constrainMinCoordinate:(CGFloat)proposedMin ofSubviewAt:(NSInteger)dividerIndex { return kFileListSplitViewLeftMin; }
-- (CGFloat)splitView:(NSSplitView *)splitView constrainMaxCoordinate:(CGFloat)proposedMax ofSubviewAt:(NSInteger)dividerIndex { return splitView.frame.size.width - splitView.dividerThickness - kFileListSplitViewRightMin; }
+- (CGFloat)splitView:(NSSplitView *)splitView constrainMinCoordinate:(CGFloat)proposedMin ofSubviewAt:(NSInteger)dividerIndex
+{
+	return kFileListSplitViewLeftMin;
+}
+- (CGFloat)splitView:(NSSplitView *)splitView constrainMaxCoordinate:(CGFloat)proposedMax ofSubviewAt:(NSInteger)dividerIndex
+{
+	return splitView.frame.size.width - splitView.dividerThickness - kFileListSplitViewRightMin;
+}
 
 - (void)splitView:(NSSplitView *)splitView resizeSubviewsWithOldSize:(NSSize)oldSize
 {

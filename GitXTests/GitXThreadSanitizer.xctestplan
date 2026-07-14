@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "024B3F2D-ECE7-40B7-9F37-6427498B657A",
+      "name" : "Thread Sanitizer",
+      "options" : {
+        "mainThreadCheckerEnabled" : true,
+        "threadSanitizerEnabled" : true
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : false,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:GitX.xcodeproj",
+      "identifier" : "8D1107260486CEB800E47090",
+      "name" : "GitX"
+    },
+    "testTimeoutsEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:GitX.xcodeproj",
+        "identifier" : "C0DE2000000000000000000B",
+        "name" : "GitXTests"
+      }
+    }
+  ],
+  "version" : 1
+}

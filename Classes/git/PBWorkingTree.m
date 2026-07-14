@@ -3,9 +3,10 @@
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitIndex.h"
 #import "PBChangedFile.h"
+#include <string.h>
 
 @interface PBWorkingTree ()
-@property (nonatomic) NSArray<PBWorkingTree *> *workingChildren;
+@property (nonatomic) NSMutableArray<PBWorkingTree *> *workingChildren;
 @property (nonatomic) NSString *workingStatus;
 @end
 
@@ -17,7 +18,7 @@
 	root.repository = repository;
 	root.path = @"";
 	root.leaf = NO;
-	root.workingChildren = @[];
+	root.workingChildren = [NSMutableArray array];
 
 	NSMutableDictionary<NSString *, PBChangedFile *> *changes = [NSMutableDictionary dictionary];
 	for (PBChangedFile *file in repository.index.indexChanges) changes[file.path] = file;
@@ -45,9 +46,9 @@
 				node.parent = parent;
 				node.path = component;
 				node.leaf = index == components.count - 1;
-				node.workingChildren = @[];
+				node.workingChildren = [NSMutableArray array];
 				nodes[accumulated] = node;
-				parent.workingChildren = [parent.workingChildren arrayByAddingObject:node];
+				[parent.workingChildren addObject:node];
 			}
 			parent = node;
 		}
@@ -63,7 +64,7 @@
 	}
 
 	for (PBWorkingTree *node in nodes.allValues) {
-		node.workingChildren = [node.workingChildren sortedArrayUsingComparator:^NSComparisonResult(PBWorkingTree *left, PBWorkingTree *right) {
+		[node.workingChildren sortUsingComparator:^NSComparisonResult(PBWorkingTree *left, PBWorkingTree *right) {
 			if (left.leaf != right.leaf) return left.leaf ? NSOrderedDescending : NSOrderedAscending;
 			return [left.path localizedStandardCompare:right.path];
 		}];
@@ -98,10 +99,14 @@
 	if (!data) {
 		NSError *error = nil;
 		NSString *indexed = [self.repository outputOfTaskWithArguments:@[ @"show", [@":" stringByAppendingString:self.fullPath] ] error:&error];
-		return indexed ?: error.localizedDescription ?: @"";
+		return indexed ?: error.localizedDescription ?:
+													   @"";
 	}
+	if (data.length && memchr(data.bytes, 0, MIN(data.length, (NSUInteger)8000)))
+		return @"This file cannot be displayed as text.";
 	NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-	return string ?: [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding] ?: @"This file cannot be displayed as text.";
+	return string ?: [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding] ?:
+																							   @"This file cannot be displayed as text.";
 }
 
 - (NSString *)textContents

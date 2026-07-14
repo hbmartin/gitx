@@ -1,0 +1,24 @@
+{
+  "originHash" : "fdb8ee2984dd82212388d07e31e3536a31a63b3883913e13a00018dd340075b6",
+  "pins" : [
+    {
+      "identity" : "highlightkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/PhraseHQ/HighlightKit.git",
+      "state" : {
+        "revision" : "b323d4a052dba9155120587686e54ef535852235",
+        "version" : "0.1.1"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser.git",
+      "state" : {
+        "revision" : "6b2aa2748a7881eebb9f84fb10c01293e15b52ca",
+        "version" : "0.5.0"
+      }
+    }
+  ],
+  "version" : 3
+}

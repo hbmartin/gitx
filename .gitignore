@@ -9,5 +9,5 @@ __pycache__/
 .idea
 GitX.xcarchive/
 GitX.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
-GitX.xcworkspace/xcshareddata/swiftpm/
 /Dev.xcconfig
+reviews_triage/

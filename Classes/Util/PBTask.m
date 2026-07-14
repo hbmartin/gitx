@@ -24,6 +24,7 @@ const BOOL PBTaskDebugEnable = NO;
 
 @property (retain) NSTask *task;
 @property (retain) NSMutableData *standardOutputData;
+@property BOOL cancellationRequested;
 
 @end
 
@@ -40,6 +41,7 @@ const BOOL PBTaskDebugEnable = NO;
 	if (!self) return nil;
 
 	_task = [[NSTask alloc] init];
+	_timeout = 30.0;
 	[_task setLaunchPath:launchPath];
 	[_task setArguments:args];
 
@@ -168,7 +170,19 @@ const BOOL PBTaskDebugEnable = NO;
 
 	@try {
 		PBTaskLog(@"task %p: launching", self);
-		[self.task launch];
+		__block BOOL cancelled = NO;
+		@synchronized(self) {
+			cancelled = self.cancellationRequested;
+			if (!cancelled) [self.task launch];
+		}
+		if (cancelled) {
+			NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain
+												 code:NSUserCancelledError
+											 userInfo:@{NSLocalizedDescriptionKey : @"Task cancelled before launch"}];
+			dispatch_async(queue, ^{
+				terminationHandler(error);
+			});
+		}
 	}
 	@catch (NSException *exception) {
 		NSString *desc = @"Exception raised while launching task";
@@ -219,7 +233,7 @@ const BOOL PBTaskDebugEnable = NO;
 			   dispatch_semaphore_signal(sem);
 		   }];
 
-	dispatch_time_t timeout = dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC);
+	dispatch_time_t timeout = self.timeout <= 0 ? DISPATCH_TIME_FOREVER : dispatch_time(DISPATCH_TIME_NOW, (int64_t)(self.timeout * NSEC_PER_SEC));
 	PBTaskLog(@"task %p: waiting for completion", self);
 	if (dispatch_semaphore_wait(sem, timeout) != 0) {
 		// Timeout !
@@ -247,7 +261,10 @@ const BOOL PBTaskDebugEnable = NO;
 
 - (void)terminate
 {
-	[self.task terminate];
+	@synchronized(self) {
+		self.cancellationRequested = YES;
+		if (self.task.running) [self.task terminate];
+	}
 }
 
 - (NSString *)description

@@ -28,6 +28,7 @@ static OpenRecentController *recentsDialog = nil;
 
 @interface ApplicationController () <SPUUpdaterDelegate>
 @property (nonatomic, strong) SPUStandardUpdaterController *updaterController;
+- (void)applyAppearancePreference;
 @end
 
 @implementation ApplicationController
@@ -49,11 +50,53 @@ static OpenRecentController *recentsDialog = nil;
 	NSValueTransformer *transformer = [[PBNSURLPathUserDefaultsTransfomer alloc] init];
 	[NSValueTransformer setValueTransformer:transformer forName:@"PBNSURLPathUserDefaultsTransfomer"];
 
-	// Make sure the PBGitDefaults is initialized, by calling a random method
-	[PBGitDefaults class];
+	[[NSNotificationCenter defaultCenter] addObserver:self
+											 selector:@selector(appearancePreferenceChanged:)
+												 name:PBAppearancePreferenceDidChangeNotification
+											   object:nil];
+	[self applyAppearancePreference];
 
 	started = NO;
 	return self;
+}
+
+- (void)dealloc
+{
+	[[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)applyAppearancePreference
+{
+	PBAppearancePreference preference = [PBGitDefaults appearancePreference];
+	void (^applyAppearance)(void) = ^{
+		switch (preference) {
+			case PBAppearancePreferenceLight:
+				NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+				break;
+			case PBAppearancePreferenceDark:
+				NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+				break;
+			case PBAppearancePreferenceAutomatic:
+			default:
+				NSApp.appearance = nil;
+				break;
+		}
+	};
+
+	if (NSThread.isMainThread)
+		applyAppearance();
+	else
+		dispatch_sync(dispatch_get_main_queue(), applyAppearance);
+}
+
+- (void)appearancePreferenceChanged:(NSNotification *)notification
+{
+	[self applyAppearancePreference];
+}
+
+- (void)applicationWillFinishLaunching:(NSNotification *)notification
+{
+	[self applyAppearancePreference];
 }
 
 - (void)registerServices
@@ -145,6 +188,12 @@ static OpenRecentController *recentsDialog = nil;
 	if (uitestRepo.length > 0) {
 		NSURL *repoURL = [NSURL fileURLWithPath:uitestRepo];
 		PBRepositoryDocumentController *controller = [PBRepositoryDocumentController sharedDocumentController];
+		// UI tests request one deterministic document. Remove any windows that
+		// AppKit restored from an earlier test process before opening it.
+		for (NSDocument *document in controller.documents.copy) {
+			if (![document.fileURL isEqual:repoURL])
+				[document close];
+		}
 		// Defer to the next run-loop iteration so the app is fully initialised.
 		dispatch_async(dispatch_get_main_queue(), ^{
 			[controller openDocumentWithContentsOfURL:repoURL
@@ -171,7 +220,7 @@ static OpenRecentController *recentsDialog = nil;
 	[panel setCanChooseDirectories:true];
 
 	[panel beginWithCompletionHandler:^(NSInteger result) {
-		if (result == NSFileHandlingPanelOKButton) {
+		if (result == NSModalResponseOK) {
 			PBRepositoryDocumentController *controller = [PBRepositoryDocumentController sharedDocumentController];
 			[controller openDocumentWithContentsOfURL:panel.URL
 											  display:true
