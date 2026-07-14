@@ -11,6 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface PBRepositoryRefreshPolicy : NSObject
 + (BOOL)shouldRefreshAfterApplicationActivation;
++ (BOOL)shouldRefreshStatCacheAfterApplicationActivation;
 @end
 
 @interface PBRepositoryFocusRefreshTracker : NSObject
@@ -141,10 +142,13 @@ NS_ASSUME_NONNULL_END
 
 	[defaults removeObjectForKey:key];
 	XCTAssertFalse([PBRepositoryRefreshPolicy shouldRefreshAfterApplicationActivation]);
+	XCTAssertTrue([PBRepositoryRefreshPolicy shouldRefreshStatCacheAfterApplicationActivation]);
 	[defaults setBool:YES forKey:key];
 	XCTAssertTrue([PBRepositoryRefreshPolicy shouldRefreshAfterApplicationActivation]);
+	XCTAssertFalse([PBRepositoryRefreshPolicy shouldRefreshStatCacheAfterApplicationActivation]);
 	[defaults setBool:NO forKey:key];
 	XCTAssertFalse([PBRepositoryRefreshPolicy shouldRefreshAfterApplicationActivation]);
+	XCTAssertTrue([PBRepositoryRefreshPolicy shouldRefreshStatCacheAfterApplicationActivation]);
 
 	if (previousValue) {
 		[defaults setObject:previousValue forKey:key];

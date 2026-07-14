@@ -21,6 +21,11 @@ final class RepositoryRefreshPolicy: NSObject { // swiftlint:disable:this unused
         shouldRefreshAfterApplicationActivation(userDefaults: .standard)
     }
 
+    @objc(shouldRefreshStatCacheAfterApplicationActivation)
+    static func shouldRefreshStatCacheAfterApplicationActivation() -> Bool { // swiftlint:disable:this unused_declaration
+        !shouldRefreshAfterApplicationActivation()
+    }
+
     static func shouldRefreshAfterApplicationActivation(userDefaults: UserDefaults) -> Bool {
         userDefaults.bool(forKey: refreshOnApplicationFocusKey)
     }
