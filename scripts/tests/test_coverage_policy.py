@@ -58,6 +58,17 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertEqual(ratcheted.files["Classes/A.m"], 0.9)
         self.assertEqual(ratcheted.files["Classes/B.m"], 0.8)
 
+    def test_coverage_floor_does_not_underflow_four_decimal_value(self) -> None:
+        self.assertEqual(self.module.coverage_floor(0.0003), 0.0003)
+
+    def test_relative_source_path_uses_source_directory_nearest_the_file(self) -> None:
+        relative = self.module.relative_source_path(
+            "/Users/Classes/workspace/gitx/Classes/A.m",
+            pathlib.Path("/tmp/gitx"),
+        )
+
+        self.assertEqual(relative, "Classes/A.m")
+
 
 if __name__ == "__main__":
     unittest.main()
