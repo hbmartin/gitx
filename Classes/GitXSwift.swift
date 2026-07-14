@@ -11,12 +11,13 @@
 
 import Cocoa
 
+/// Supplies the refresh-on-focus preference to Objective-C controllers.
 @objc(PBRepositoryRefreshPolicy)
-final class RepositoryRefreshPolicy: NSObject {
+final class RepositoryRefreshPolicy: NSObject { // swiftlint:disable:this unused_declaration
     static let refreshOnApplicationFocusKey = "PBRefreshOnApplicationFocus"
 
     @objc(shouldRefreshAfterApplicationActivation)
-    static func shouldRefreshAfterApplicationActivation() -> Bool {
+    static func shouldRefreshAfterApplicationActivation() -> Bool { // swiftlint:disable:this unused_declaration
         shouldRefreshAfterApplicationActivation(userDefaults: .standard)
     }
 
@@ -25,12 +26,13 @@ final class RepositoryRefreshPolicy: NSObject {
     }
 }
 
+/// Tracks repository snapshots for Objective-C window controllers.
 @objc(PBRepositoryFocusRefreshTracker)
-final class RepositoryFocusRefreshTracker: NSObject {
+final class RepositoryFocusRefreshTracker: NSObject { // swiftlint:disable:this unused_declaration
     private var previousSnapshotComponents: [Data]?
 
     @objc(shouldRefreshForSnapshotComponents:)
-    func shouldRefresh(for snapshotComponents: [Data]) -> Bool {
+    func shouldRefresh(for snapshotComponents: [Data]) -> Bool { // swiftlint:disable:this unused_declaration
         defer { previousSnapshotComponents = snapshotComponents }
         guard let previousSnapshotComponents else { return false }
         return previousSnapshotComponents != snapshotComponents

@@ -42,8 +42,9 @@ private final class DispatchRepositoryRefreshScheduler: RepositoryRefreshSchedul
     }
 }
 
+/// Debounces repository events for the Objective-C repository watcher.
 @objc(PBRepositoryRefreshCoordinator)
-final class RepositoryRefreshCoordinator: NSObject {
+final class RepositoryRefreshCoordinator: NSObject { // swiftlint:disable:this unused_declaration
     typealias DeliveryHandler = (UInt, [String]) -> Void
 
     private let delay: TimeInterval
@@ -87,7 +88,7 @@ final class RepositoryRefreshCoordinator: NSObject {
     }
 
     @objc(recordEventType:paths:)
-    func record(eventType: UInt, paths: [String]) {
+    func record(eventType: UInt, paths: [String]) { // swiftlint:disable:this unused_declaration
         guard eventType != 0 else { return }
 
         lock.lock()
