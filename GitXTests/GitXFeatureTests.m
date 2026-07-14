@@ -51,6 +51,15 @@
 	[super tearDown];
 }
 
+- (void)waitForNativeView:(PBNativeContentView *)view toContainString:(NSString *)string
+{
+	NSPredicate *predicate = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return [view.textView.string containsString:string];
+	}];
+	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:predicate object:view];
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
 - (void)testAutoFetchDefaultsClampInterval
 {
 	[PBGitDefaults setAutoFetchIntervalMinutes:0];
@@ -126,15 +135,73 @@
 	XCTAssertNotNil([source attribute:NSForegroundColorAttributeName atIndex:0 effectiveRange:nil]);
 
 	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
-	[view showSourceSections:@[@{ PBNativeSectionPathKey : @"Example.swift", PBNativeSectionTextKey : @"let value = 42\n" }]];
+	[view showSourceSections:@[ @{PBNativeSectionPathKey : @"Example.swift", PBNativeSectionTextKey : @"let value = 42\n"} ]];
 	XCTAssertFalse(view.textView.isEditable);
 	XCTAssertTrue(view.textView.isSelectable);
+}
+
+- (void)testNativeDiffCombinesSyntaxAndDiffHighlighting
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSString *diff = @"diff --git a/Example.swift b/Example.swift\n"
+					  "--- a/Example.swift\n"
+					  "+++ b/Example.swift\n"
+					  "@@ -1 +1 @@\n"
+					  "-let oldValue = 1\n"
+					  "+let newValue = 42\n"
+					  "diff --git a/notes.txt b/notes.txt\n"
+					  "--- a/notes.txt\n"
+					  "+++ b/notes.txt\n"
+					  "@@ -0,0 +1 @@\n"
+					  "+plain value\n";
+	[view showDiffSections:@[ @{PBNativeSectionTextKey : diff, PBNativeSectionContextKey : @"readOnly"} ]];
+	[self waitForNativeView:view toContainString:@"+plain value"];
+
+	NSTextStorage *storage = view.textView.textStorage;
+	NSRange removedSwiftLine = [storage.string rangeOfString:@"-let oldValue = 1"];
+	XCTAssertNotEqual(removedSwiftLine.location, NSNotFound);
+	NSColor *removedPrefix = [storage attribute:NSForegroundColorAttributeName atIndex:removedSwiftLine.location effectiveRange:nil];
+	NSColor *removedToken = [storage attribute:NSForegroundColorAttributeName atIndex:removedSwiftLine.location + 1 effectiveRange:nil];
+	XCTAssertNotEqualObjects(removedPrefix, removedToken);
+	XCTAssertNotNil([storage attribute:NSBackgroundColorAttributeName atIndex:removedSwiftLine.location + 1 effectiveRange:nil]);
+
+	NSRange swiftLine = [storage.string rangeOfString:@"+let newValue = 42"];
+	XCTAssertNotEqual(swiftLine.location, NSNotFound);
+	NSColor *swiftPrefix = [storage attribute:NSForegroundColorAttributeName atIndex:swiftLine.location effectiveRange:nil];
+	NSColor *swiftToken = [storage attribute:NSForegroundColorAttributeName atIndex:swiftLine.location + 1 effectiveRange:nil];
+	NSColor *swiftPrefixBackground = [storage attribute:NSBackgroundColorAttributeName atIndex:swiftLine.location effectiveRange:nil];
+	NSColor *swiftTokenBackground = [storage attribute:NSBackgroundColorAttributeName atIndex:swiftLine.location + 1 effectiveRange:nil];
+	XCTAssertNotEqualObjects(swiftPrefix, swiftToken);
+	XCTAssertNotNil(swiftTokenBackground);
+	XCTAssertEqualObjects(swiftPrefixBackground, swiftTokenBackground);
+
+	NSRange textLine = [storage.string rangeOfString:@"+plain value"];
+	XCTAssertNotEqual(textLine.location, NSNotFound);
+	NSColor *textPrefix = [storage attribute:NSForegroundColorAttributeName atIndex:textLine.location effectiveRange:nil];
+	NSColor *textBody = [storage attribute:NSForegroundColorAttributeName atIndex:textLine.location + 1 effectiveRange:nil];
+	XCTAssertEqualObjects(textPrefix, textBody);
+	XCTAssertNotNil([storage attribute:NSBackgroundColorAttributeName atIndex:textLine.location + 1 effectiveRange:nil]);
+}
+
+- (void)testNativeDiffAlwaysRendersLargePatches
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSUInteger repeatedLineCount = 5200;
+	NSMutableString *diff = [NSMutableString stringWithFormat:@"diff --git a/large.txt b/large.txt\n--- /dev/null\n+++ b/large.txt\n@@ -0,0 +1,%lu @@\n", (unsigned long)(repeatedLineCount + 1)];
+	for (NSUInteger index = 0; index < repeatedLineCount; index++)
+		[diff appendFormat:@"+%04lu 0123456789012345678901234567890123456789\n", (unsigned long)index];
+	[diff appendString:@"+large-patch-tail\n"];
+	XCTAssertGreaterThan([diff lengthOfBytesUsingEncoding:NSUTF8StringEncoding], (NSUInteger)(200 * 1024));
+
+	[view showDiffSections:@[ @{PBNativeSectionTextKey : diff, PBNativeSectionContextKey : @"readOnly"} ]];
+	[self waitForNativeView:view toContainString:@"+large-patch-tail"];
+	XCTAssertFalse([view.textView.string containsString:@"Render patch"]);
 }
 
 - (void)testTaskAppliesEnvironmentConfiguredAfterCreation
 {
 	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/env" arguments:@[] inDirectory:nil];
-	task.additionalEnvironment = @{ @"GITX_TEST_ENVIRONMENT" : @"present" };
+	task.additionalEnvironment = @{@"GITX_TEST_ENVIRONMENT" : @"present"};
 	NSError *error = nil;
 	XCTAssertTrue([task launchTask:&error], @"%@", error);
 	XCTAssertTrue([task.standardOutputString containsString:@"GITX_TEST_ENVIRONMENT=present"]);

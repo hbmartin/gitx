@@ -161,8 +161,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 	PBFileMode mode = self.modeControl.selectedSegment;
 	PBGitCommit *commit = historyController.selectedCommits.firstObject;
 	NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
-	[self.nativeView showMessage:@"Loading file…"];
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), self.fileLoadQueue, ^{
+	dispatch_async(self.fileLoadQueue, ^{
 		if (![self isFileLoadGenerationCurrent:generation]) return;
 		NSMutableArray *sections = [NSMutableArray array];
 		for (PBGitTree *file in selected) {

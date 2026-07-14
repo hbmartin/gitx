@@ -196,7 +196,7 @@
 	XCTAssertTrue([self waitForWindow]);
 	[self selectHistoryForCurrentBranch];
 
-	XCUIElement *workingState = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value BEGINSWITH 'Uncommitted Changes'"]].firstMatch;
+	XCUIElement *workingState = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == '0 staged, 1 unstaged, 1 untracked'"]].firstMatch;
 	XCTAssertTrue([workingState waitForExistenceWithTimeout:15], @"Dirty repositories should pin an Uncommitted Changes row above history");
 	[self saveWindowScreenshotNamed:@"uncommitted-changes-row"];
 }

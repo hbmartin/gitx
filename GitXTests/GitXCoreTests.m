@@ -506,6 +506,21 @@
 	XCTAssertEqual(changes.tree, changes.tree);
 }
 
+- (void)testUncommittedChangesSubjectShowsOnlyStats
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"new\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+	XCTAssertEqualObjects(changes.subject, @"0 staged, 1 unstaged, 1 untracked");
+	XCTAssertEqualObjects(changes.message, changes.subject);
+	XCTAssertEqualObjects(changes.details, changes.subject);
+}
+
 @end
 
 
