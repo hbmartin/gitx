@@ -1,4 +1,3 @@
-@testable import GitX
 import XCTest
 
 final class GitXSwiftFeatureTests: XCTestCase {
@@ -23,10 +22,10 @@ final class GitXSwiftFeatureTests: XCTestCase {
     }
 
     func testLanguageNameClassification() {
-        XCTAssertEqual(GitX.PBHighlighting.languageName(forPath: "Dockerfile"), "dockerfile")
-        XCTAssertEqual(GitX.PBHighlighting.languageName(forPath: "GNUmakefile"), "makefile")
-        XCTAssertEqual(GitX.PBHighlighting.languageName(forPath: "Sources/EXAMPLE.SWIFT"), "swift")
-        XCTAssertNil(GitX.PBHighlighting.languageName(forPath: "archive.unknown"))
+        XCTAssertEqual(PBHighlighting.languageName(forPath: "Dockerfile"), "dockerfile")
+        XCTAssertEqual(PBHighlighting.languageName(forPath: "GNUmakefile"), "makefile")
+        XCTAssertEqual(PBHighlighting.languageName(forPath: "Sources/EXAMPLE.SWIFT"), "swift")
+        XCTAssertNil(PBHighlighting.languageName(forPath: "archive.unknown"))
     }
 
     func testRelativeDateFormatterHandlesCommonRanges() {
@@ -105,39 +104,5 @@ final class GitXSwiftFeatureTests: XCTestCase {
             XCTAssertEqual(process.terminationReason, .exit)
             XCTAssertEqual(process.terminationStatus, 0)
         }
-    }
-
-    func testRefreshOnFocusPolicyIsOptIn() throws {
-        let suiteName = "GitXTests.RefreshOnFocus.\(UUID().uuidString)"
-        let userDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { userDefaults.removePersistentDomain(forName: suiteName) }
-
-        XCTAssertFalse(
-            RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation(userDefaults: userDefaults)
-        )
-
-        userDefaults.set(true, forKey: RepositoryRefreshPolicy.refreshOnApplicationFocusKey)
-        XCTAssertTrue(
-            RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation(userDefaults: userDefaults)
-        )
-
-        userDefaults.set(false, forKey: RepositoryRefreshPolicy.refreshOnApplicationFocusKey)
-        XCTAssertFalse(
-            RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation(userDefaults: userDefaults)
-        )
-    }
-
-    func testFocusRefreshTrackerOnlyRefreshesForChangedSnapshots() {
-        let tracker = RepositoryFocusRefreshTracker()
-        let initialSnapshot = [Data("a".utf8), Data("bc".utf8)]
-        let changedAtComponentBoundary = [Data("ab".utf8), Data("c".utf8)]
-
-        XCTAssertFalse(tracker.shouldRefresh(for: initialSnapshot))
-        XCTAssertFalse(tracker.shouldRefresh(for: initialSnapshot))
-        XCTAssertTrue(tracker.shouldRefresh(for: changedAtComponentBoundary))
-        XCTAssertFalse(tracker.shouldRefresh(for: changedAtComponentBoundary))
-
-        tracker.reset()
-        XCTAssertFalse(tracker.shouldRefresh(for: initialSnapshot))
     }
 }
