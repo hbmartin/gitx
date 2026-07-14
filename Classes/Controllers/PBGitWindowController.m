@@ -28,6 +28,9 @@
 #import "PBGitStash.h"
 #import "PBGitCommit.h"
 #import "PBAutoFetchManager.h"
+#import "PBGitBinary.h"
+#import "PBTask.h"
+#import "GitX-Swift.h"
 
 @interface PBGitWindowController () {
 	__weak PBViewController *contentController;
@@ -35,6 +38,9 @@
 	PBGitSidebarController *_sidebarController;
 	PBGitHistoryController *_historyViewController;
 	PBGitCommitController *_commitViewController;
+	PBRepositoryFocusRefreshTracker *_focusRefreshTracker;
+	NSUInteger _focusRefreshGeneration;
+	BOOL _focusRefreshEnabled;
 
 	__weak IBOutlet NSView *sourceListControlsView;
 	__weak IBOutlet NSSplitView *splitView;
@@ -55,6 +61,7 @@
 	self = [super initWithWindowNibName:@"RepositoryWindow"];
 	if (!self)
 		return nil;
+	_focusRefreshTracker = [[PBRepositoryFocusRefreshTracker alloc] init];
 
 	return self;
 }
@@ -77,6 +84,13 @@
 - (void)windowWillClose:(NSNotification *)notification
 {
 	//	NSLog(@"Window will close!");
+	[[NSNotificationCenter defaultCenter] removeObserver:self
+															name:NSApplicationDidBecomeActiveNotification
+														object:nil];
+	[[NSNotificationCenter defaultCenter] removeObserver:self
+															name:NSUserDefaultsDidChangeNotification
+														object:nil];
+	_focusRefreshGeneration += 1;
 
 	[self.sidebarViewController closeView];
 	[self.historyViewController closeView];
@@ -166,6 +180,78 @@
 
 	[[statusField cell] setBackgroundStyle:NSBackgroundStyleRaised];
 	[progressIndicator setUsesThreadedAnimation:YES];
+
+	[[NSNotificationCenter defaultCenter] addObserver:self
+											 selector:@selector(applicationDidBecomeActive:)
+													 name:NSApplicationDidBecomeActiveNotification
+												 object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self
+											 selector:@selector(refreshPreferenceDidChange:)
+													 name:NSUserDefaultsDidChangeNotification
+												 object:nil];
+	[self refreshPreferenceDidChange:nil];
+}
+
+- (void)applicationDidBecomeActive:(NSNotification *)notification
+{
+	if (_focusRefreshEnabled) {
+		[self refreshIfRepositoryChangedSinceLastActivation];
+	}
+}
+
+- (void)refreshPreferenceDidChange:(NSNotification *)notification
+{
+	BOOL enabled = [PBRepositoryRefreshPolicy shouldRefreshAfterApplicationActivation];
+	if (enabled == _focusRefreshEnabled) return;
+
+	_focusRefreshEnabled = enabled;
+	_focusRefreshGeneration += 1;
+	[_focusRefreshTracker reset];
+	if (enabled) {
+		[self refreshIfRepositoryChangedSinceLastActivation];
+	}
+}
+
+- (void)refreshIfRepositoryChangedSinceLastActivation
+{
+	NSUInteger generation = ++_focusRefreshGeneration;
+	NSString *directory = self.repository.workingDirectoryURL.path ?: self.repository.gitURL.path;
+	NSMutableArray *snapshotComponents = [NSMutableArray array];
+	NSMutableArray<NSArray<NSString *> *> *commands = [NSMutableArray arrayWithObject:@[
+		@"for-each-ref",
+		@"--format=%(refname)%00%(objectname)%00",
+	]];
+	if (![self.repository isBareRepository]) {
+		[commands addObject:@[ @"status", @"--porcelain=v2", @"--branch", @"-z", @"--untracked-files=normal" ]];
+	}
+
+	for (NSUInteger index = 0; index < commands.count; index++) {
+		[snapshotComponents addObject:NSData.data];
+	}
+
+	dispatch_group_t snapshotGroup = dispatch_group_create();
+	__block BOOL snapshotFailed = NO;
+	[commands enumerateObjectsUsingBlock:^(NSArray<NSString *> *arguments, NSUInteger index, BOOL *stop) {
+		dispatch_group_enter(snapshotGroup);
+		PBTask *task = [PBTask taskWithLaunchPath:[PBGitBinary path] arguments:arguments inDirectory:directory];
+		task.timeout = 10.0;
+		[task performTaskWithCompletionHandler:^(NSData *data, NSError *error) {
+			if (error || !data) {
+				snapshotFailed = YES;
+			} else {
+				snapshotComponents[index] = data;
+			}
+			dispatch_group_leave(snapshotGroup);
+		}];
+	}];
+
+	dispatch_group_notify(snapshotGroup, dispatch_get_main_queue(), ^{
+		if (generation != self->_focusRefreshGeneration) return;
+		if (!self->_focusRefreshEnabled) return;
+		if (snapshotFailed || [self->_focusRefreshTracker shouldRefreshForSnapshotComponents:snapshotComponents]) {
+			[self refresh:self];
+		}
+	});
 }
 
 - (void)removeAllContentSubViews
