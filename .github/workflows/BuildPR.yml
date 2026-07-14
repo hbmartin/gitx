@@ -144,7 +144,9 @@ jobs:
       # end test
           
       - name: Build project
-        run: xcodebuild -workspace GitX.xcworkspace -scheme GitX -archivePath ./GitX archive ARCHS="${{ matrix.abi }}" PRODUCT_BUNDLE_IDENTIFIER=net.phere.GitX
+        run: xcodebuild -workspace GitX.xcworkspace -scheme GitX -archivePath ./GitX archive ARCHS="${{ matrix.abi }}"
+      - name: Verify archived bundle identifiers
+        run: python3 scripts/check_bundle_identifiers.py GitX.xcarchive/Products/Applications/GitX.app
       - name: Prepare artifact
         if: ${{ env.variableSet != '' }}
         env:
