@@ -187,6 +187,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		// Merge the three snapshots in Git-semantic order. The staged snapshot
 		// owns the parent-tree metadata used by whole-file unstage; the unstaged
 		// snapshot must not replace it with the current index entry.
+		NSUInteger stagedCount = stagedDictionary.count;
+		NSUInteger unstagedCount = unstagedDictionary.count;
+		NSUInteger untrackedCount = untrackedDictionary.count;
+
 		if (stagedDictionary) {
 			for (PBChangedFile *file in self.files)
 				file.hasStagedChanges = NO;
@@ -202,9 +206,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		if (untrackedDictionary)
 			[self addFilesFromDictionary:untrackedDictionary staged:NO tracked:NO];
 		NSLog(@"[GitX] Merged index refresh snapshots: %lu staged, %lu unstaged, %lu untracked",
-			  (unsigned long)stagedDictionary.count,
-			  (unsigned long)unstagedDictionary.count,
-			  (unsigned long)untrackedDictionary.count);
+			  (unsigned long)stagedCount,
+			  (unsigned long)unstagedCount,
+			  (unsigned long)untrackedCount);
 
 		// We need to find all files that don't have either
 		// staged or unstaged files, and delete them
