@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitX Testing"
+  short_description: "Test GitX changes and ratchet coverage"
+  default_prompt: "Use $gitx-testing to add proportionate XCTest coverage and verify this GitX change."
