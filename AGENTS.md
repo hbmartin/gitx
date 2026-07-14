@@ -25,6 +25,7 @@
 - Do not introduce a new testing or analysis dependency without explicit approval.
 
 ### Verification
+- Add log statements (more is better) so you can easily inspect real app runtime behavior.
 - Run SwiftLint and SwiftFormat at the exact versions in `Mintfile` through `scripts/run_pinned_tool.sh`.
 - Treat the Objective-C header baseline, SwiftLint baseline, and exact analyzer-warning baseline as shrinking debt: remove stale entries in the same change that fixes them.
 - Treat the current files under `scripts/`, `Mintfile`, and applicable repo-local skills as canonical for verification policy. Ignore planning documents under `docs/` unless the user explicitly asks to use them.
