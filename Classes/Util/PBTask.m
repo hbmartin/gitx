@@ -275,8 +275,8 @@ const BOOL PBTaskDebugEnable = NO;
 		}
 		if (cancelled) {
 			NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain
-											 code:NSUserCancelledError
-										 userInfo:@{NSLocalizedDescriptionKey : @"Task cancelled before launch"}];
+												 code:NSUserCancelledError
+											 userInfo:@{NSLocalizedDescriptionKey : @"Task cancelled before launch"}];
 			[self finishWithError:error];
 		} else if (self.timeout > 0) {
 			NSTimeInterval timeout = self.timeout;
@@ -314,9 +314,9 @@ const BOOL PBTaskDebugEnable = NO;
 {
 	NSParameterAssert(terminationHandler != nil);
 	[self performTaskOnQueue:queue
-			 resultHandler:^(NSData *data, NSError *error) {
-				 terminationHandler(error);
-			 }];
+			   resultHandler:^(NSData *data, NSError *error) {
+				   terminationHandler(error);
+			   }];
 }
 
 - (void)performTaskOnQueue:(dispatch_queue_t)queue completionHandler:(void (^)(NSData *readData, NSError *error))completionHandler

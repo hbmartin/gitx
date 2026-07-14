@@ -75,9 +75,9 @@
 
 	git_repository *repo = NULL;
 	int gitResult = git_repository_open_ext(&repo,
-										inputURL.path.UTF8String,
-										GIT_REPOSITORY_OPEN_CROSS_FS,
-										NULL);
+											inputURL.path.UTF8String,
+											GIT_REPOSITORY_OPEN_CROSS_FS,
+											NULL);
 	if (gitResult != GIT_OK || !repo) {
 		return nil;
 	}

@@ -85,11 +85,11 @@
 {
 	//	NSLog(@"Window will close!");
 	[[NSNotificationCenter defaultCenter] removeObserver:self
-															name:NSApplicationDidBecomeActiveNotification
-														object:nil];
+													name:NSApplicationDidBecomeActiveNotification
+												  object:nil];
 	[[NSNotificationCenter defaultCenter] removeObserver:self
-															name:NSUserDefaultsDidChangeNotification
-														object:nil];
+													name:NSUserDefaultsDidChangeNotification
+												  object:nil];
 	_focusRefreshGeneration += 1;
 
 	[self.sidebarViewController closeView];
@@ -183,12 +183,12 @@
 
 	[[NSNotificationCenter defaultCenter] addObserver:self
 											 selector:@selector(applicationDidBecomeActive:)
-													 name:NSApplicationDidBecomeActiveNotification
-												 object:nil];
+												 name:NSApplicationDidBecomeActiveNotification
+											   object:nil];
 	[[NSNotificationCenter defaultCenter] addObserver:self
 											 selector:@selector(refreshPreferenceDidChange:)
-													 name:NSUserDefaultsDidChangeNotification
-												 object:nil];
+												 name:NSUserDefaultsDidChangeNotification
+											   object:nil];
 	[self refreshPreferenceDidChange:nil];
 }
 

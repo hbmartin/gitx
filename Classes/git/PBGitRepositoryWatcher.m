@@ -100,17 +100,17 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 	__weak typeof(self) weakSelf = self;
 	refreshCoordinator = [[PBRepositoryRefreshCoordinator alloc]
-		initWithDelay:0.5
-	 deliveryHandler:^(NSUInteger eventType, NSArray<NSString *> *paths) {
-		 __strong typeof(weakSelf) self = weakSelf;
-		 if (!self) return;
+		  initWithDelay:0.5
+		deliveryHandler:^(NSUInteger eventType, NSArray<NSString *> *paths) {
+			__strong typeof(weakSelf) self = weakSelf;
+			if (!self) return;
 
-		 NSDictionary *eventInfo = @{kPBGitRepositoryEventTypeUserInfoKey : @(eventType),
-									 kPBGitRepositoryEventPathsUserInfoKey : paths};
-		 [[NSNotificationCenter defaultCenter] postNotificationName:PBGitRepositoryEventNotification
-												 object:self.repository
-											   userInfo:eventInfo];
-	 }];
+			NSDictionary *eventInfo = @{kPBGitRepositoryEventTypeUserInfoKey : @(eventType),
+										kPBGitRepositoryEventPathsUserInfoKey : paths};
+			[[NSNotificationCenter defaultCenter] postNotificationName:PBGitRepositoryEventNotification
+																object:self.repository
+															  userInfo:eventInfo];
+		}];
 
 	if ([PBGitDefaults useRepositoryWatcher] &&
 		![PBRepositoryRefreshPolicy shouldRefreshAfterApplicationActivation])

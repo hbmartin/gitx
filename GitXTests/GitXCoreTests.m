@@ -589,9 +589,9 @@
 {
 	NSError *error = nil;
 	NSString *output = [PBTask outputForCommand:@"/bin/sh"
-								  arguments:@[ @"-c", @"/usr/bin/seq 1 200000; printf 'large-output-tail\\n'; exit 7" ]
-								inDirectory:nil
-									  error:&error];
+									  arguments:@[ @"-c", @"/usr/bin/seq 1 200000; printf 'large-output-tail\\n'; exit 7" ]
+									inDirectory:nil
+										  error:&error];
 	XCTAssertNil(output);
 	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
 	XCTAssertEqual(error.code, PBTaskNonZeroExitCodeError);

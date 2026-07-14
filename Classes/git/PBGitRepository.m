@@ -88,8 +88,8 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 	watcher = [[PBGitRepositoryWatcher alloc] initWithRepository:self];
 	[[NSNotificationCenter defaultCenter] addObserver:self
 											 selector:@selector(refreshWatcherPreference:)
-													 name:NSUserDefaultsDidChangeNotification
-												 object:nil];
+												 name:NSUserDefaultsDidChangeNotification
+											   object:nil];
 
 	return self;
 }
