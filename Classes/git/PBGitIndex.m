@@ -620,6 +620,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;
 {
+	if (![hunk hasSuffix:@"\n"])
+		hunk = [hunk stringByAppendingString:@"\n"];
+
 	NSMutableArray *array = [NSMutableArray arrayWithObjects:@"apply", @"--unidiff-zero", nil];
 	if (stage)
 		[array addObject:@"--cached"];

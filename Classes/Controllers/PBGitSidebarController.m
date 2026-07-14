@@ -65,6 +65,7 @@
 {
 	[super awakeFromNib];
 	window.contentView = self.view;
+	sourceView.accessibilityIdentifier = @"RepositorySidebar";
 	[self populateList];
 
 	PBGitRepository *repository = self.repository;

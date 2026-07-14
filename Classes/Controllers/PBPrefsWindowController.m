@@ -13,6 +13,7 @@
 #define kPreferenceViewIdentifier @"PBGitXPreferenceViewIdentifier"
 
 @interface PBPrefsWindowController ()
+@property (nonatomic, strong) NSPopUpButton *appearancePopup;
 @property (nonatomic) NSView *historyAndFetchPrefsView;
 @property (nonatomic) NSButton *historySortingCheckbox;
 @property (nonatomic) NSPopUpButton *autoFetchScopePopup;
@@ -26,17 +27,59 @@
 
 - (void)setupToolbar
 {
+	[self createAppearancePreferenceIfNeeded];
+	[self syncAppearancePreference];
 	// GENERAL
-	[self addView:generalPrefsView label:@"General" image:[NSImage imageNamed:NSImageNameApplicationIcon]];
+	[self addView:generalPrefsView label:NSLocalizedString(@"General", @"General preferences toolbar item") image:[NSImage imageNamed:NSImageNameApplicationIcon]];
 	// INTERGRATION
-	[self addView:integrationPrefsView label:@"Integration" image:[NSImage imageNamed:NSImageNameNetwork]];
+	[self addView:integrationPrefsView label:NSLocalizedString(@"Integration", @"Integration preferences toolbar item") image:[NSImage imageNamed:NSImageNameNetwork]];
 	// UPDATES
-	[self addView:updatesPrefsView label:@"Updates"];
+	[self addView:updatesPrefsView label:NSLocalizedString(@"Updates", @"Updates preferences toolbar item")];
 	[self createHistoryAndFetchPreferencesIfNeeded];
 	[self syncHistoryAndFetchPreferences];
 	[self addView:self.historyAndFetchPrefsView
-			label:@"History & Fetch"
+			label:NSLocalizedString(@"History & Fetch", @"History and fetch preferences toolbar item")
 			image:[NSImage imageWithSystemSymbolName:@"arrow.triangle.2.circlepath" accessibilityDescription:nil]];
+}
+
+- (void)createAppearancePreferenceIfNeeded
+{
+	if (self.appearancePopup) return;
+
+	NSRect frame = generalPrefsView.frame;
+	frame.size.height += 58;
+	generalPrefsView.frame = frame;
+
+	NSTextField *label = [self labelWithString:NSLocalizedString(@"Appearance:", @"Appearance preference label") frame:NSMakeRect(103, 24, 90, 22)];
+	[generalPrefsView addSubview:label];
+
+	self.appearancePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(195, 20, 200, 28) pullsDown:NO];
+	NSArray<NSString *> *titles = @[
+		NSLocalizedString(@"Automatic (System)", @"Follow the system appearance preference"),
+		NSLocalizedString(@"Light", @"Light appearance preference"),
+		NSLocalizedString(@"Dark", @"Dark appearance preference"),
+	];
+	for (PBAppearancePreference preference = PBAppearancePreferenceAutomatic;
+		 preference <= PBAppearancePreferenceDark;
+		 preference++) {
+		[self.appearancePopup addItemWithTitle:titles[preference]];
+		self.appearancePopup.lastItem.tag = preference;
+	}
+	self.appearancePopup.target = self;
+	self.appearancePopup.action = @selector(appearancePreferenceChanged:);
+	self.appearancePopup.accessibilityIdentifier = @"AppearancePreference";
+	self.appearancePopup.accessibilityLabel = NSLocalizedString(@"Appearance", @"Appearance preference accessibility label");
+	[generalPrefsView addSubview:self.appearancePopup];
+}
+
+- (void)syncAppearancePreference
+{
+	[self.appearancePopup selectItemWithTag:[PBGitDefaults appearancePreference]];
+}
+
+- (IBAction)appearancePreferenceChanged:(NSPopUpButton *)sender
+{
+	[PBGitDefaults setAppearancePreference:sender.selectedItem.tag];
 }
 
 - (NSTextField *)labelWithString:(NSString *)string frame:(NSRect)frame
@@ -51,23 +94,28 @@
 	if (self.historyAndFetchPrefsView) return;
 	NSView *view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 520, 270)];
 
-	NSTextField *historyHeading = [self labelWithString:@"History" frame:NSMakeRect(40, 220, 440, 22)];
+	NSTextField *historyHeading = [self labelWithString:NSLocalizedString(@"History", @"History preferences heading") frame:NSMakeRect(40, 220, 440, 22)];
 	historyHeading.font = [NSFont boldSystemFontOfSize:NSFont.systemFontSize];
 	[view addSubview:historyHeading];
 
-	self.historySortingCheckbox = [NSButton checkboxWithTitle:@"Allow commit columns to sort history" target:self action:@selector(historySortingChanged:)];
+	self.historySortingCheckbox = [NSButton checkboxWithTitle:NSLocalizedString(@"Allow commit columns to sort history", @"History sorting preference") target:self action:@selector(historySortingChanged:)];
 	self.historySortingCheckbox.frame = NSMakeRect(40, 188, 400, 24);
 	[view addSubview:self.historySortingCheckbox];
-	NSTextField *historyHelp = [self labelWithString:@"Turn this off to keep commits exclusively in Git graph order." frame:NSMakeRect(60, 164, 420, 20)];
+	NSTextField *historyHelp = [self labelWithString:NSLocalizedString(@"Turn this off to keep commits exclusively in Git graph order.", @"History sorting preference help") frame:NSMakeRect(60, 164, 420, 20)];
 	historyHelp.textColor = NSColor.secondaryLabelColor;
 	[view addSubview:historyHelp];
 
-	NSTextField *fetchHeading = [self labelWithString:@"Scheduled Fetch" frame:NSMakeRect(40, 126, 440, 22)];
+	NSTextField *fetchHeading = [self labelWithString:NSLocalizedString(@"Scheduled Fetch", @"Scheduled fetch preferences heading") frame:NSMakeRect(40, 126, 440, 22)];
 	fetchHeading.font = [NSFont boldSystemFontOfSize:NSFont.systemFontSize];
 	[view addSubview:fetchHeading];
-	[view addSubview:[self labelWithString:@"Repositories:" frame:NSMakeRect(40, 92, 100, 24)]];
+	[view addSubview:[self labelWithString:NSLocalizedString(@"Repositories:", @"Scheduled fetch repository scope label") frame:NSMakeRect(40, 92, 100, 24)]];
 	self.autoFetchScopePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(142, 88, 270, 28) pullsDown:NO];
-	NSArray<NSString *> *scopeTitles = @[ @"None", @"Active repository", @"All open repositories", @"Open and recent repositories" ];
+	NSArray<NSString *> *scopeTitles = @[
+		NSLocalizedString(@"None", @"No repositories fetch automatically"),
+		NSLocalizedString(@"Active repository", @"Only the active repository fetches automatically"),
+		NSLocalizedString(@"All open repositories", @"All open repositories fetch automatically"),
+		NSLocalizedString(@"Open and recent repositories", @"Open and recent repositories fetch automatically"),
+	];
 	for (NSInteger scope = 0; scope < scopeTitles.count; scope++) {
 		[self.autoFetchScopePopup addItemWithTitle:scopeTitles[scope]];
 		self.autoFetchScopePopup.lastItem.tag = scope;
@@ -76,7 +124,7 @@
 	self.autoFetchScopePopup.action = @selector(autoFetchScopeChanged:);
 	[view addSubview:self.autoFetchScopePopup];
 
-	[view addSubview:[self labelWithString:@"Every:" frame:NSMakeRect(40, 54, 100, 24)]];
+	[view addSubview:[self labelWithString:NSLocalizedString(@"Every:", @"Scheduled fetch interval label") frame:NSMakeRect(40, 54, 100, 24)]];
 	self.autoFetchIntervalField = [[NSTextField alloc] initWithFrame:NSMakeRect(142, 51, 70, 26)];
 	NSNumberFormatter *formatter = [[NSNumberFormatter alloc] init];
 	formatter.minimum = @1;
@@ -93,9 +141,9 @@
 	self.autoFetchIntervalStepper.target = self;
 	self.autoFetchIntervalStepper.action = @selector(autoFetchIntervalChanged:);
 	[view addSubview:self.autoFetchIntervalStepper];
-	[view addSubview:[self labelWithString:@"minutes (1–1440)" frame:NSMakeRect(242, 54, 170, 24)]];
+	[view addSubview:[self labelWithString:NSLocalizedString(@"minutes (1–1440)", @"Scheduled fetch interval unit and bounds") frame:NSMakeRect(242, 54, 170, 24)]];
 
-	NSTextField *fetchHelp = [self labelWithString:@"Fetches are noninteractive and never prune. A failure pauses only that repository until a successful manual fetch." frame:NSMakeRect(40, 17, 440, 34)];
+	NSTextField *fetchHelp = [self labelWithString:NSLocalizedString(@"Fetches are noninteractive and never prune. A failure pauses only that repository until a successful manual fetch.", @"Scheduled fetch behavior help") frame:NSMakeRect(40, 17, 440, 34)];
 	fetchHelp.maximumNumberOfLines = 2;
 	fetchHelp.lineBreakMode = NSLineBreakByWordWrapping;
 	fetchHelp.textColor = NSColor.secondaryLabelColor;

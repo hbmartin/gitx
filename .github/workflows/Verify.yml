@@ -1,0 +1,110 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+  schedule:
+    - cron: "23 9 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: static verification
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.3"
+      - name: Install formatters and workflow linters
+        run: brew install swiftformat shellcheck actionlint
+      - name: Run static checks
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/verify_static.sh "$BASE_REF"
+
+  unit-and-analyze:
+    name: unit tests and analyzer
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.3"
+      - name: Prepare ObjectiveGit
+        run: |
+          cd External/objective-git
+          script/bootstrap
+          script/update_libgit2
+      - name: Run unit and integration tests
+        run: |
+          xcodebuild test \
+            -workspace GitX.xcworkspace \
+            -scheme GitX \
+            -destination "platform=macOS,arch=arm64" \
+            -only-testing:GitXTests \
+            -enableCodeCoverage YES \
+            CODE_SIGN_IDENTITY="-" \
+            -resultBundlePath "$RUNNER_TEMP/GitXTests.xcresult"
+      - name: Enforce coverage floors
+        run: scripts/check_coverage.py "$RUNNER_TEMP/GitXTests.xcresult"
+      - name: Run Clang static analyzer
+        env:
+          DERIVED_DATA_PATH: ${{ runner.temp }}/GitXAnalyze
+          ANALYZER_LOG_PATH: ${{ runner.temp }}/GitXAnalyze.log
+        run: scripts/run_analyzer.sh
+      - name: Upload test and analyzer results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: GitX-verification-results
+          path: |
+            ${{ runner.temp }}/GitXTests.xcresult
+            ${{ runner.temp }}/GitXAnalyze.log
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Address and undefined behavior sanitizers
+            test_plan: GitXAddressUndefined
+          - name: Thread sanitizer
+            test_plan: GitXThreadSanitizer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.3"
+      - name: Prepare ObjectiveGit
+        run: |
+          cd External/objective-git
+          script/bootstrap
+          script/update_libgit2
+      - name: Run sanitizer configuration
+        run: |
+          xcodebuild test \
+            -workspace GitX.xcworkspace \
+            -scheme GitX \
+            -testPlan "${{ matrix.test_plan }}" \
+            -destination "platform=macOS,arch=arm64" \
+            CODE_SIGN_IDENTITY="-"

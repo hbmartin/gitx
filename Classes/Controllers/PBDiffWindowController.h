@@ -10,13 +10,19 @@
 
 @class PBGitCommit;
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBDiffWindowController : NSWindowController
 
 + (void)showDiff:(NSString *)diff;
-+ (void)showDiffWindowWithFiles:(NSArray *)filePaths fromCommit:(PBGitCommit *)startCommit diffCommit:(PBGitCommit *)diffCommit;
++ (void)showDiffWindowWithFiles:(nullable NSArray *)filePaths
+					 fromCommit:(PBGitCommit *)startCommit
+					 diffCommit:(nullable PBGitCommit *)diffCommit;
 - (instancetype)initWithDiff:(NSString *)diff;
 
 @property (readonly) NSString *diff;
 @property (readonly, nullable) PBGitCommit *startCommit;
 @property (readonly, nullable) PBGitCommit *diffCommit;
 @end
+
+NS_ASSUME_NONNULL_END

@@ -290,7 +290,11 @@
 	}
 
 	PBGitCommit *firstSelectedCommit = self.selectedCommits.firstObject;
-	if (!firstSelectedCommit) return;
+	if (!firstSelectedCommit) {
+		self.gitTree = nil;
+		if (self.webCommits.count) self.webCommits = @[];
+		return;
+	}
 	if (self.selectedCommits.count > 1 && self.selectedCommitDetailsIndex == kHistoryTreeViewIndex)
 		self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
 
@@ -440,7 +444,7 @@
 		return;
 	PBGitTree *tree = [selectedFiles objectAtIndex:0];
 	NSString *name = [tree tmpFileNameForContents];
-	[[NSWorkspace sharedWorkspace] openFile:name];
+	[[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:name]];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem
@@ -540,6 +544,7 @@
 	PBGitCommit *selectedCommit = selectedObjects[0];
 
 	NSArray<GTOID *> *parents = selectedCommit.parents;
+	if (parents.count == 0) return;
 	/* TODO: This is a merge commit. It would be nice to choose the parent with
 	 * the most commits, but for now we will use whatever commit is our first parent.
 	 */
@@ -741,7 +746,11 @@
 		if ([[[self.repository headRef] ref] isEqualToRef:ref])
 			return NO;
 
-		NSData *data = [NSKeyedArchiver archivedDataWithRootObject:[NSArray arrayWithObjects:[NSNumber numberWithInteger:row], [NSNumber numberWithInt:index], NULL]];
+		NSArray<NSNumber *> *referenceLocation = @[ @(row), @(index) ];
+		NSData *data = [NSPropertyListSerialization dataWithPropertyList:referenceLocation
+																  format:NSPropertyListBinaryFormat_v1_0
+																 options:0
+																   error:nil];
 		[pboard declareTypes:[NSArray arrayWithObject:@"PBGitRef"] owner:self];
 		[pboard setData:data forType:@"PBGitRef"];
 	} else {
@@ -788,7 +797,10 @@
 	if (!data)
 		return NO;
 
-	NSArray *numbers = [NSKeyedUnarchiver unarchiveObjectWithData:data];
+	NSArray *numbers = [NSPropertyListSerialization propertyListWithData:data
+																 options:NSPropertyListImmutable
+																  format:nil
+																   error:nil];
 	int oldRow = [[numbers objectAtIndex:0] intValue];
 	if (oldRow == row)
 		return NO;
@@ -938,7 +950,7 @@
 - (BOOL)previewPanel:(id)panel handleEvent:(NSEvent *)event
 {
 	// redirect all key down events to the table view
-	if ([event type] == NSKeyDown) {
+	if ([event type] == NSEventTypeKeyDown) {
 		[fileBrowser keyDown:event];
 		return YES;
 	}
@@ -983,7 +995,7 @@
 	if (!isEnabled)
 		selector = nil;
 
-	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:selector keyEquivalent:@""];
+	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(title, @"Commit context menu item") action:selector keyEquivalent:@""];
 	[item setEnabled:isEnabled];
 	return item;
 }

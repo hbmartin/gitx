@@ -10,6 +10,7 @@
 @property (nonatomic) NSUInteger stagedCount;
 @property (nonatomic) NSUInteger unstagedCount;
 @property (nonatomic) NSUInteger untrackedCount;
+@property (nonatomic) PBGitTree *workingTree;
 @end
 
 @implementation PBUncommittedChanges
@@ -27,35 +28,108 @@
 	return self;
 }
 
-- (BOOL)isWorkingState { return YES; }
-- (PBGitRepository *)repository { return self.workingRepository; }
+- (BOOL)isWorkingState
+{
+	return YES;
+}
+- (PBGitRepository *)repository
+{
+	return self.workingRepository;
+}
 - (NSString *)subject
 {
 	return [NSString stringWithFormat:@"Uncommitted Changes — %lu staged, %lu unstaged, %lu untracked",
-		(unsigned long)self.stagedCount, (unsigned long)self.unstagedCount, (unsigned long)self.untrackedCount];
+									  (unsigned long)self.stagedCount, (unsigned long)self.unstagedCount, (unsigned long)self.untrackedCount];
 }
-- (NSString *)message { return self.subject; }
-- (NSString *)details { return self.subject; }
-- (NSString *)author { return @""; }
-- (NSString *)authorEmail { return @""; }
-- (NSString *)authorDate { return @""; }
-- (NSString *)committer { return @""; }
-- (NSString *)committerEmail { return @""; }
-- (NSString *)committerDate { return @""; }
-- (NSString *)SHA { return @""; }
-- (NSString *)shortName { return @""; }
-- (NSString *)SVNRevision { return nil; }
-- (NSDate *)date { return [super date]; }
-- (GTOID *)OID { return [super OID]; }
-- (GTCommit *)gtCommit { return [super gtCommit]; }
-- (NSArray<GTOID *> *)parents { return @[]; }
-- (NSMutableArray *)refs { return [NSMutableArray array]; }
-- (PBGraphCellInfo *)lineInfo { return [super lineInfo]; }
-- (PBGitTree *)tree { return [PBWorkingTree rootForRepository:self.workingRepository]; }
-- (NSArray *)treeContents { return self.tree.children; }
-- (BOOL)isOnHeadBranch { return NO; }
-- (NSString *)refishName { return @"WORKING_STATE"; }
-- (NSString *)refishType { return @"working-state"; }
+- (NSString *)message
+{
+	return self.subject;
+}
+- (NSString *)details
+{
+	return self.subject;
+}
+- (NSString *)author
+{
+	return @"";
+}
+- (NSString *)authorEmail
+{
+	return @"";
+}
+- (NSString *)authorDate
+{
+	return @"";
+}
+- (NSString *)committer
+{
+	return @"";
+}
+- (NSString *)committerEmail
+{
+	return @"";
+}
+- (NSString *)committerDate
+{
+	return @"";
+}
+- (NSString *)SHA
+{
+	return @"";
+}
+- (NSString *)shortName
+{
+	return @"";
+}
+- (NSString *)SVNRevision
+{
+	return nil;
+}
+- (NSDate *)date
+{
+	return [super date];
+}
+- (GTOID *)OID
+{
+	return [super OID];
+}
+- (GTCommit *)gtCommit
+{
+	return [super gtCommit];
+}
+- (NSArray<GTOID *> *)parents
+{
+	return @[];
+}
+- (NSMutableArray *)refs
+{
+	return [NSMutableArray array];
+}
+- (PBGraphCellInfo *)lineInfo
+{
+	return [super lineInfo];
+}
+- (PBGitTree *)tree
+{
+	if (!self.workingTree) self.workingTree = [PBWorkingTree rootForRepository:self.workingRepository];
+	return self.workingTree;
+}
+- (NSArray *)treeContents
+{
+	return self.tree.children;
+}
+- (BOOL)isOnHeadBranch
+{
+	return NO;
+}
+- (NSString *)refishName
+{
+	return @"WORKING_STATE";
+}
+- (NSString *)refishType
+{
+	return @"working-state";
+}
 
 - (NSString *)patch
 {

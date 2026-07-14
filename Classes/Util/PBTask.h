@@ -64,6 +64,8 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 
 /// The standard output of the command
 @property (readonly, retain) NSData *standardOutputData;
+/// Maximum synchronous execution time in seconds. Defaults to 30; values at or below zero disable the timeout.
+@property NSTimeInterval timeout;
 /// Set this if you want to pass data to the command on its standard input
 @property (retain) NSData *standardInputData;
 @property (retain) NSDictionary *additionalEnvironment;

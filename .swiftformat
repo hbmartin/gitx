@@ -1,0 +1,8 @@
+--swiftversion 5.0
+--indent 4
+--indentcase false
+--linebreaks lf
+--maxwidth none
+--self remove
+--stripunusedargs closure-only
+--disable andOperator,strongOutlets
