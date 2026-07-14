@@ -585,6 +585,19 @@
 	XCTAssertTrue([failureOutput containsString:@"stderr"]);
 }
 
+- (void)testSignalTerminationReturnsCaughtSignalError
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/sh"
+									arguments:@[ @"-c", @"kill -TERM $$" ]
+								  inDirectory:nil];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskCaughtSignalError);
+	XCTAssertTrue([error.localizedFailureReason containsString:@"caught a termination signal"]);
+}
+
 - (void)testNonZeroExitCapturesCompleteLargeOutput
 {
 	NSError *error = nil;
