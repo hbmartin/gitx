@@ -30,7 +30,6 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 
 - (void)awakeFromNib
 {
-	startFile = @"fileview";
 	[super awakeFromNib];
 	self.nativeView.delegate = self;
 	[historyController.treeController addObserver:self keyPath:@"selection" options:0 block:^(MAKVONotification *notification) {

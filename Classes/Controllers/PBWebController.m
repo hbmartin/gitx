@@ -7,7 +7,7 @@
 
 @implementation PBWebController
 
-@synthesize startFile, repository;
+@synthesize repository;
 
 - (void)awakeFromNib
 {

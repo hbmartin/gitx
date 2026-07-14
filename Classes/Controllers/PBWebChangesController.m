@@ -17,7 +17,6 @@ static void *const CachedFileSelectedContext = @"CachedFileSelectedContext";
 
 - (void)awakeFromNib
 {
-	startFile = @"commit";
 	[super awakeFromNib];
 	self.nativeView.delegate = self;
 	NSNumber *savedContext = [[NSUserDefaults standardUserDefaults] objectForKey:@"PBStageDiffContextLines"];

@@ -11,7 +11,6 @@
 @class PBNativeContentView;
 
 @interface PBWebController : NSObject {
-	NSString *startFile;
 	BOOL finishedLoading;
 
 	// For the repository access
@@ -20,7 +19,6 @@
 
 @property (weak) IBOutlet NSView *view;
 @property (nonatomic, readonly) PBNativeContentView *nativeView;
-@property NSString *startFile;
 @property (weak) id repository;
 
 - (void)closeView;
