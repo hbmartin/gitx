@@ -46,6 +46,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	dispatch_group_t _indexRefreshGroup;
 	BOOL _amend;
 	BOOL _refreshInProgress;
+	BOOL _refreshPending;
 }
 
 @property (retain) NSDictionary *amendEnvironment;
@@ -156,6 +157,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	__block BOOL shouldSkip = NO;
 	dispatch_sync(_indexRefreshQueue, ^{
 		if (self->_refreshInProgress) {
+			self->_refreshPending = YES;
 			shouldSkip = YES;
 			return;
 		}
@@ -196,11 +198,18 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			[self didChangeValueForKey:@"indexChanges"];
 		}
 
-		dispatch_async(self->_indexRefreshQueue, ^{
+		__block BOOL shouldReplay = NO;
+		dispatch_sync(self->_indexRefreshQueue, ^{
 			self->_refreshInProgress = NO;
+			shouldReplay = self->_refreshPending;
+			self->_refreshPending = NO;
 		});
 
-		[self postIndexRefreshFinished];
+		if (shouldReplay) {
+			[self refresh];
+		} else {
+			[self postIndexRefreshFinished];
+		}
 	});
 
 	if (isBare) {
@@ -213,7 +222,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			  inDirectory:self.repository.workingDirectoryURL.path
 		completionHandler:^(NSData *readData, NSError *error) {
 			// Serialize access to self.files via _indexRefreshQueue
-			dispatch_sync(self->_indexRefreshQueue, ^{
+			dispatch_async(self->_indexRefreshQueue, ^{
 				if (error) {
 					[self postIndexRefreshSuccess:NO message:@"ls-files failed"];
 				} else {
@@ -231,9 +240,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 					[self addFilesFromDictionary:dictionary staged:NO tracked:NO];
 					[self postIndexRefreshSuccess:YES message:@"ls-files success"];
 				}
-			});
 
-			dispatch_group_leave(self->_indexRefreshGroup);
+				dispatch_group_leave(self->_indexRefreshGroup);
+			});
 		}];
 
 	// Staged files
@@ -242,7 +251,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			  inDirectory:self.repository.workingDirectoryURL.path
 		completionHandler:^(NSData *readData, NSError *error) {
 			// Serialize access to self.files via _indexRefreshQueue
-			dispatch_sync(self->_indexRefreshQueue, ^{
+			dispatch_async(self->_indexRefreshQueue, ^{
 				if (error) {
 					[self postIndexRefreshSuccess:NO message:@"diff-index failed"];
 				} else {
@@ -251,9 +260,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 					[self addFilesFromDictionary:dic staged:YES tracked:YES];
 					[self postIndexRefreshSuccess:YES message:@"diff-index success"];
 				}
-			});
 
-			dispatch_group_leave(self->_indexRefreshGroup);
+				dispatch_group_leave(self->_indexRefreshGroup);
+			});
 		}];
 
 	// Unstaged files
@@ -262,7 +271,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			  inDirectory:self.repository.workingDirectoryURL.path
 		completionHandler:^(NSData *readData, NSError *error) {
 			// Serialize access to self.files via _indexRefreshQueue
-			dispatch_sync(self->_indexRefreshQueue, ^{
+			dispatch_async(self->_indexRefreshQueue, ^{
 				if (error) {
 					[self postIndexRefreshSuccess:NO message:@"diff-files failed"];
 				} else {
@@ -271,9 +280,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 					[self addFilesFromDictionary:dic staged:NO tracked:YES];
 					[self postIndexRefreshSuccess:YES message:@"diff-files success"];
 				}
-			});
 
-			dispatch_group_leave(self->_indexRefreshGroup);
+				dispatch_group_leave(self->_indexRefreshGroup);
+			});
 		}];
 }
 
