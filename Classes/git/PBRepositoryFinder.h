@@ -8,10 +8,14 @@
 
 #import <Foundation/Foundation.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBRepositoryFinder : NSObject
 
-+ (NSURL *)fileURLForURL:(NSURL *)inputURL;
-+ (NSURL *)workDirForURL:(NSURL *)fileURL;
-+ (NSURL *)gitDirForURL:(NSURL *)fileURL;
++ (nullable NSURL *)fileURLForURL:(NSURL *)inputURL;
++ (nullable NSURL *)workDirForURL:(NSURL *)fileURL;
++ (nullable NSURL *)gitDirForURL:(NSURL *)fileURL;
 
 @end
+
+NS_ASSUME_NONNULL_END
