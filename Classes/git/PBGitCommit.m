@@ -250,17 +250,6 @@ NSString *const kGitXCommitType = @"commit";
 }
 
 
-+ (BOOL)isSelectorExcludedFromWebScript:(SEL)aSelector
-{
-	return NO;
-}
-
-+ (BOOL)isKeyExcludedFromWebScript:(const char *)name
-{
-	return NO;
-}
-
-
 #pragma mark <PBGitRefish>
 
 - (NSString *)refishName

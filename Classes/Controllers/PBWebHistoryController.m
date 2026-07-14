@@ -27,7 +27,6 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 
 - (void)awakeFromNib
 {
-	startFile = @"history";
 	repository = historyController.repository;
 	[super awakeFromNib];
 	self.nativeView.delegate = self;

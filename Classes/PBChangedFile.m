@@ -48,14 +48,4 @@
 	return [NSImage imageNamed:filename];
 }
 
-+ (BOOL)isSelectorExcludedFromWebScript:(SEL)aSelector
-{
-	return NO;
-}
-
-+ (BOOL)isKeyExcludedFromWebScript:(const char *)name
-{
-	return NO;
-}
-
 @end

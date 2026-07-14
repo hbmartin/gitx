@@ -12,7 +12,6 @@
 
 - (void)awakeFromNib
 {
-	startFile = @"diff";
 	[super awakeFromNib];
 	self.nativeView.delegate = self;
 	[diffController addObserver:self

@@ -7,7 +7,7 @@
 
 @implementation PBWebController
 
-@synthesize startFile, repository;
+@synthesize repository;
 
 - (void)awakeFromNib
 {
@@ -43,11 +43,6 @@
 - (void)preferencesChangedWithNotification:(NSNotification *)notification
 {
 	[self preferencesChanged];
-}
-
-- (void)makeWebViewFirstResponder
-{
-	[self.view.window makeFirstResponder:self.nativeView.textView];
 }
 
 @end
