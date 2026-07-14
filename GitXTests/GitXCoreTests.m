@@ -585,6 +585,21 @@
 	XCTAssertTrue([failureOutput containsString:@"stderr"]);
 }
 
+- (void)testNonZeroExitCapturesCompleteLargeOutput
+{
+	NSError *error = nil;
+	NSString *output = [PBTask outputForCommand:@"/bin/sh"
+								  arguments:@[ @"-c", @"/usr/bin/seq 1 200000; printf 'large-output-tail\\n'; exit 7" ]
+								inDirectory:nil
+									  error:&error];
+	XCTAssertNil(output);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskNonZeroExitCodeError);
+	NSString *failureOutput = error.userInfo[PBTaskTerminationOutputKey];
+	XCTAssertGreaterThan(failureOutput.length, (NSUInteger)1000000);
+	XCTAssertTrue([failureOutput hasSuffix:@"200000\nlarge-output-tail\n"]);
+}
+
 - (void)testMissingExecutableReturnsLaunchError
 {
 	PBTask *task = [PBTask taskWithLaunchPath:@"/path/that/does/not/exist" arguments:@[] inDirectory:nil];
@@ -612,6 +627,35 @@
 			   [expectation fulfill];
 		   }];
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
+- (void)testAsyncTimeoutCompletesExactlyOnce
+{
+	static void *queueKey = &queueKey;
+	dispatch_queue_t queue = dispatch_queue_create("org.gitx.tests.task-timeout", DISPATCH_QUEUE_SERIAL);
+	dispatch_queue_set_specific(queue, queueKey, queueKey, NULL);
+	XCTestExpectation *completionExpectation = [self expectationWithDescription:@"timeout completion"];
+	XCTestExpectation *duplicateExpectation = [self expectationWithDescription:@"duplicate completion"];
+	duplicateExpectation.inverted = YES;
+	__block NSUInteger completionCount = 0;
+	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/sleep" arguments:@[ @"0.5" ] inDirectory:nil];
+	task.timeout = 0.02;
+	[task performTaskOnQueue:queue
+		   completionHandler:^(NSData *data, NSError *error) {
+			   completionCount += 1;
+			   XCTAssertTrue(dispatch_get_specific(queueKey) != NULL);
+			   if (completionCount == 1) {
+				   XCTAssertNil(data);
+				   XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+				   XCTAssertEqual(error.code, PBTaskTimeoutError);
+				   [completionExpectation fulfill];
+			   } else {
+				   [duplicateExpectation fulfill];
+			   }
+		   }];
+	[self waitForExpectations:@[ completionExpectation ] timeout:0.3];
+	[self waitForExpectations:@[ duplicateExpectation ] timeout:0.8];
+	XCTAssertEqual(completionCount, (NSUInteger)1);
 }
 
 @end
