@@ -13,7 +13,6 @@
 @class PBHistorySearchController;
 
 @interface PBCommitList : NSTableView {
-	__weak IBOutlet NSView *webView;
 	__weak IBOutlet PBWebHistoryController *webController;
 	__weak IBOutlet PBGitHistoryController *controller;
 	__weak IBOutlet PBHistorySearchController *searchController;

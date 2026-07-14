@@ -45,9 +45,4 @@
 	[self preferencesChanged];
 }
 
-- (void)makeWebViewFirstResponder
-{
-	[self.view.window makeFirstResponder:self.nativeView.textView];
-}
-
 @end

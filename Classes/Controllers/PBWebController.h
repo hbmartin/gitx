@@ -26,5 +26,4 @@
 - (void)closeView;
 - (void)didLoad;
 - (void)preferencesChanged;
-- (void)makeWebViewFirstResponder;
 @end

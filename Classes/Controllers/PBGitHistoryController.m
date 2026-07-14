@@ -51,7 +51,6 @@
 	__weak IBOutlet NSButton *allBranchesFilterItem;
 	__weak IBOutlet NSButton *localRemoteBranchesFilterItem;
 	__weak IBOutlet NSButton *selectedBranchFilterItem;
-	__weak IBOutlet id webView;
 
 	NSArray *currentFileBrowserSelectionPath;
 	NSInteger selectedCommitDetailsIndex;

@@ -23,7 +23,6 @@
                 <outlet property="upperToolbarView" destination="316" id="326"/>
                 <outlet property="view" destination="46" id="53"/>
                 <outlet property="webHistoryController" destination="40" id="402"/>
-                <outlet property="webView" destination="21" id="112"/>
             </connections>
         </customObject>
         <customObject id="-1" userLabel="First Responder" customClass="FirstResponder"/>
@@ -537,7 +536,6 @@
                                                     <outlet property="menu" destination="eTP-cx-OCg" id="xzi-Ng-ecd"/>
                                                     <outlet property="searchController" destination="423" id="436"/>
                                                     <outlet property="webController" destination="40" id="95"/>
-                                                    <outlet property="webView" destination="21" id="37"/>
                                                 </connections>
                                             </tableView>
                                         </subviews>

@@ -35,7 +35,6 @@
 		C0DE1000000000000000001A /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DE1000000000000000001B /* UserNotifications.framework */; };
 		C0DE10000000000000000016 /* HighlightKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0DE10000000000000000018 /* HighlightKit */; };
 		0A6858C711F7EA8A00AC2BE4 /* CoreServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A6858C611F7EA8A00AC2BE4 /* CoreServices.framework */; };
-		2682AABB1929140E00271A4D /* GTOID+JavaScript.m in Sources */ = {isa = PBXBuildFile; fileRef = 2682AABA1929140E00271A4D /* GTOID+JavaScript.m */; };
 		2DE9B60629ABEB450097873A /* GitX.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 2DE9B60529ABEB450097873A /* GitX.xcconfig */; };
 		373F9A201EAF97A200A77B4C /* NSSplitView+GitX.m in Sources */ = {isa = PBXBuildFile; fileRef = 373F9A1F1EAF97A200A77B4C /* NSSplitView+GitX.m */; };
 		37A5657D1EAD096300CA0332 /* Quartz.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 37A5657C1EAD096300CA0332 /* Quartz.framework */; };
@@ -457,8 +456,6 @@
 		C0DE1000000000000000001B /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
 		0A6858C611F7EA8A00AC2BE4 /* CoreServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreServices.framework; path = System/Library/Frameworks/CoreServices.framework; sourceTree = SDKROOT; };
 		1058C7A1FEA54F0111CA2CBB /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = /System/Library/Frameworks/Cocoa.framework; sourceTree = "<absolute>"; };
-		2682AAB91929140E00271A4D /* GTOID+JavaScript.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "GTOID+JavaScript.h"; sourceTree = "<group>"; };
-		2682AABA1929140E00271A4D /* GTOID+JavaScript.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "GTOID+JavaScript.m"; sourceTree = "<group>"; };
 		29B97324FDCFA39411CA2CEA /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = /System/Library/Frameworks/AppKit.framework; sourceTree = "<absolute>"; };
 		29B97325FDCFA39411CA2CEA /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = /System/Library/Frameworks/Foundation.framework; sourceTree = "<absolute>"; };
 		2DE9B60529ABEB450097873A /* GitX.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = GitX.xcconfig; sourceTree = "<group>"; };
@@ -724,7 +721,6 @@
 		D87127001229A21C00012334 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		D89E9AB21218A9DA0097A90B /* ScriptingBridge.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScriptingBridge.framework; path = System/Library/Frameworks/ScriptingBridge.framework; sourceTree = SDKROOT; };
 		D8E3B2B710DC9FB2001096A3 /* ScriptingBridge.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScriptingBridge.framework; path = /System/Library/Frameworks/ScriptingBridge.framework; sourceTree = "<absolute>"; };
-		F5D619ED0EAE62EA00341D73 /* html */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = folder; path = html; sourceTree = "<group>"; };
 		F5E4DBFA0EAB58D90013FAFC /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = /System/Library/Frameworks/SystemConfiguration.framework; sourceTree = "<absolute>"; };
 /* End PBXFileReference section */
 
@@ -899,7 +895,6 @@
 				4A5D760214A9A99E00DF6C68 /* en.lproj */,
 				4A90A73414A9D24300D0DA02 /* GitX.sdef */,
 				4A90A72914A9C12F00D0DA02 /* GitX_Prefix.pch */,
-				F5D619ED0EAE62EA00341D73 /* html */,
 				4A5D758114A9A90500DF6C68 /* Images */,
 				4A5D75B414A9A90500DF6C68 /* Info.plist */,
 				4A5D75B514A9A90500DF6C68 /* source.css */,
@@ -1134,8 +1129,6 @@
 				643952761603EF9B00BB7AFF /* PBSourceViewGitSubmoduleItem.m */,
 				4AB057E11652652000DE751D /* PBRepositoryFinder.h */,
 				4AB057E21652652000DE751D /* PBRepositoryFinder.m */,
-				2682AAB91929140E00271A4D /* GTOID+JavaScript.h */,
-				2682AABA1929140E00271A4D /* GTOID+JavaScript.m */,
 				4D843B3E1E5E3939004C3A6F /* PBGitRepository_PBGitBinarySupport.h */,
 				4D843B3F1E5E3939004C3A6F /* PBGitRepository_PBGitBinarySupport.m */,
 			);
@@ -1666,22 +1659,6 @@
 			shellPath = /bin/sh;
 			shellScript = "#!/bin/bash\n\n# This script automatically sets the version and short version string of\n# an Xcode project from the Git repository containing the project.\n#\n# To use this script in Xcode, add the script's path to a \"Run Script\" build\n# phase for your application target.\n\nset -o errexit\nset -o nounset\n\n# Alternatively, we could use Xcode's copy of the Git binary,\n# but old Xcodes don't have this.\nGIT=$(xcrun -find git)\n\n# Run Script build phases that operate on product files of the target that defines them should use the value of this build setting [TARGET_BUILD_DIR]. But Run Script build phases that operate on product files of other targets should use “BUILT_PRODUCTS_DIR” instead.\nINFO_PLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\n\n# Build version (closest-tag-or-branch \"-\" commits-since-tag \"-\" short-hash dirty-flag)\nBUILD_VERSION=$(git describe --tags --always --dirty=-dirty)-$(git rev-parse --abbrev-ref HEAD)\n\n# Use the latest tag for short version (expected tag format \"vn[.n[.n]]\")\n# or if there are no tags, we make up version 0.0.<commit count>\nLATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null)\nLATEST_TAG=${LATEST_TAG##v} # Remove the \"v\" from the front of the tag\nARCHITECTURE=$(uname -p)\nSHORT_VERSION=\"$LATEST_TAG\"\n\nMASTER_COMMIT_COUNT=$(git rev-list --count HEAD)\nBRANCH_COMMIT_COUNT=0\nBUNDLE_VERSION=\"$SHORT_VERSION\".\"$MASTER_COMMIT_COUNT [$ARCHITECTURE]\"\n\n# For debugging:\necho \"BUILD VERSION: $BUILD_VERSION\"\necho \"SHORT VERSION: $SHORT_VERSION\"\necho \"BUNDLE_VERSION: $BUNDLE_VERSION\"\n\n/usr/libexec/PlistBuddy -c \"Add :CFBundleBuildVersion string $BUILD_VERSION\" \"$INFO_PLIST\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Set :CFBundleBuildVersion $BUILD_VERSION\" \"$INFO_PLIST\"\n/usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString $BUILD_VERSION\" \"$INFO_PLIST\"\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUNDLE_VERSION\" \"$INFO_PLIST\"\n";
 		};
-		F5CF04A20EAE696C00D75C81 /* Copy HTML files */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			comments = "This is added as a script rather than a 'copy files' phase because those aren't updated correctly when you edit just a single file in a directory.\n\nThis might be improved further by using rsync, but I didn't dive into that yet.";
-			files = (
-			);
-			inputPaths = (
-			);
-			name = "Copy HTML files";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "resource_path=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nrm -rf \"$resource_path/html\"\ncp -r Resources/html \"$resource_path\"\n";
-		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -1762,7 +1739,6 @@
 				4A5D770E14A9A9CC00DF6C68 /* PBGitXProtocol.m in Sources */,
 				4A5D771114A9A9CC00DF6C68 /* GitXRelativeDateFormatter.m in Sources */,
 				4A5D771214A9A9CC00DF6C68 /* main.m in Sources */,
-				2682AABB1929140E00271A4D /* GTOID+JavaScript.m in Sources */,
 				4A5D771314A9A9CC00DF6C68 /* PBChangedFile.m in Sources */,
 				4A5D771414A9A9CC00DF6C68 /* PBCLIProxy.m in Sources */,
 				4D3FB3E7198AEAAF000B4A58 /* PBGitRepositoryDocument.m in Sources */,

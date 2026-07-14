@@ -11,7 +11,6 @@ import Cocoa
 
     // MARK: - Properties
 
-    @IBOutlet weak var webView: NSView!
     @IBOutlet weak var webController: PBWebHistoryController!
     @IBOutlet weak var controller: PBGitHistoryController!
     @IBOutlet weak var searchController: PBHistorySearchController!
