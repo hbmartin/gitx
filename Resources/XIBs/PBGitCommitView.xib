@@ -13,6 +13,8 @@
                 <outlet property="commitButton" destination="coC-RC-dhM" id="Zqw-Gy-05Z"/>
                 <outlet property="commitMessageView" destination="133" id="213"/>
                 <outlet property="commitSplitView" destination="186" id="314"/>
+                <outlet property="pushAfterCommitButton" destination="KQp-3q-8Pp" id="BQe-Tz-A5v"/>
+                <outlet property="pushRemotePopUpButton" destination="S8p-gR-91m" id="0vz-FA-5MH"/>
                 <outlet property="stagedFilesController" destination="86" id="DEn-cJ-SoD"/>
                 <outlet property="stagedTable" destination="57" id="itl-qb-bA3"/>
                 <outlet property="trackedFilesController" destination="EmG-y5-6ms" id="mqT-Qm-7zo"/>
@@ -60,7 +62,7 @@
                                                 <rect key="frame" x="1" y="1" width="199" height="218"/>
                                                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                 <subviews>
-                                                    <tableView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="lastColumnOnly" columnSelection="YES" autosaveColumns="NO" rowSizeStyle="automatic" viewBased="YES" id="48" customClass="PBFileChangesTableView">
+                                                    <tableView focusRingType="none" verticalHuggingPriority="750" allowsExpansionToolTips="YES" columnAutoresizingStyle="lastColumnOnly" columnSelection="YES" autosaveColumns="NO" rowSizeStyle="automatic" viewBased="YES" id="48" customClass="PBFileChangesTableView" customModule="GitX" customModuleProvider="target">
                                                         <rect key="frame" x="0.0" y="0.0" width="199" height="218"/>
                                                         <autoresizingMask key="autoresizingMask"/>
                                                         <size key="intercellSpacing" width="3" height="2"/>
@@ -239,12 +241,39 @@ DQ
                                                             <binding destination="-2" name="value" keyPath="index.amend" id="ZRJ-cU-Xy4"/>
                                                         </connections>
                                                     </button>
+                                                    <button translatesAutoresizingMaskIntoConstraints="NO" id="KQp-3q-8Pp">
+                                                        <rect key="frame" x="79" y="6" width="68" height="18"/>
+                                                        <buttonCell key="cell" type="check" title="Push to" bezelStyle="regularSquare" imagePosition="left" alignment="left" inset="2" id="fY4-Yq-fqE">
+                                                            <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
+                                                            <font key="font" metaFont="system"/>
+                                                        </buttonCell>
+                                                    </button>
+                                                    <popUpButton horizontalCompressionResistancePriority="250" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="S8p-gR-91m">
+                                                        <rect key="frame" x="149" y="3" width="110" height="22"/>
+                                                        <constraints>
+                                                            <constraint firstAttribute="width" relation="lessThanOrEqual" constant="110" id="mPW-Pm-Ng5"/>
+                                                        </constraints>
+                                                        <popUpButtonCell key="cell" type="push" title="No Remotes" bezelStyle="rounded" alignment="left" controlSize="small" lineBreakMode="truncatingTail" borderStyle="borderAndBezel" imageScaling="proportionallyDown" inset="2" id="FYc-c2-1qv">
+                                                            <behavior key="behavior" lightByBackground="YES" lightByGray="YES"/>
+                                                            <font key="font" metaFont="smallSystem"/>
+                                                            <menu key="menu" title="Push Remote" id="t91-yP-sA1">
+                                                                <items>
+                                                                    <menuItem title="No Remotes" id="Ivk-fd-GFs"/>
+                                                                </items>
+                                                            </menu>
+                                                        </popUpButtonCell>
+                                                    </popUpButton>
                                                 </subviews>
                                                 <constraints>
                                                     <constraint firstItem="coC-RC-dhM" firstAttribute="centerY" secondItem="vlh-ec-vC5" secondAttribute="centerY" id="cB9-4o-nl8"/>
                                                     <constraint firstAttribute="trailing" secondItem="coC-RC-dhM" secondAttribute="trailing" constant="6" id="g7L-s5-QjA"/>
                                                     <constraint firstAttribute="bottom" secondItem="coC-RC-dhM" secondAttribute="bottom" constant="4" id="iIW-4E-KKp"/>
+                                                    <constraint firstItem="KQp-3q-8Pp" firstAttribute="leading" secondItem="e4Y-vA-x9M" secondAttribute="trailing" constant="10" id="LCG-y4-3QL"/>
+                                                    <constraint firstItem="S8p-gR-91m" firstAttribute="centerY" secondItem="e4Y-vA-x9M" secondAttribute="centerY" id="T3Q-6s-a5R"/>
+                                                    <constraint firstItem="S8p-gR-91m" firstAttribute="leading" secondItem="KQp-3q-8Pp" secondAttribute="trailing" constant="2" id="d3V-JY-ZmB"/>
+                                                    <constraint firstItem="S8p-gR-91m" firstAttribute="trailing" relation="lessThanOrEqual" secondItem="coC-RC-dhM" secondAttribute="leading" constant="-8" id="jUx-rQ-Hvz"/>
                                                     <constraint firstItem="e4Y-vA-x9M" firstAttribute="leading" secondItem="vlh-ec-vC5" secondAttribute="leading" constant="6" id="s3c-80-Pa9"/>
+                                                    <constraint firstItem="KQp-3q-8Pp" firstAttribute="baseline" secondItem="e4Y-vA-x9M" secondAttribute="baseline" id="tPi-yX-iTB"/>
                                                     <constraint firstItem="coC-RC-dhM" firstAttribute="baseline" secondItem="e4Y-vA-x9M" secondAttribute="baseline" id="tgU-sM-CsV"/>
                                                 </constraints>
                                             </view>
@@ -281,7 +310,7 @@ DQ
                                                 <rect key="frame" x="1" y="1" width="198" height="218"/>
                                                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                                                 <subviews>
-                                                    <tableView focusRingType="none" verticalHuggingPriority="750" tag="1" allowsExpansionToolTips="YES" columnAutoresizingStyle="lastColumnOnly" columnSelection="YES" autosaveColumns="NO" rowSizeStyle="automatic" viewBased="YES" id="57" customClass="PBFileChangesTableView">
+                                                    <tableView focusRingType="none" verticalHuggingPriority="750" tag="1" allowsExpansionToolTips="YES" columnAutoresizingStyle="lastColumnOnly" columnSelection="YES" autosaveColumns="NO" rowSizeStyle="automatic" viewBased="YES" id="57" customClass="PBFileChangesTableView" customModule="GitX" customModuleProvider="target">
                                                         <rect key="frame" x="0.0" y="0.0" width="198" height="218"/>
                                                         <autoresizingMask key="autoresizingMask"/>
                                                         <size key="intercellSpacing" width="3" height="2"/>

@@ -288,6 +288,36 @@
 	XCTAssertNotNil([self.repository refForName:@"origin/main"]);
 }
 
+- (void)testPushToSelectedRemoteAndFailurePreservesLocalHead
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-push-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		XCTAssertTrue([self.repository addRemote:@"origin" withURL:remotePath error:&error], @"%@", error);
+		PBGitRef *branchRef = self.repository.headRef.ref;
+		PBGitRef *remoteRef = [PBGitRef refFromString:@"refs/remotes/origin"];
+		XCTAssertTrue([self.repository pushBranch:branchRef toRemote:remoteRef error:&error], @"%@", error);
+
+		NSString *localHead = [self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error];
+		NSString *remoteHead = [self.fixture git:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] error:&error];
+		XCTAssertEqualObjects(localHead, remoteHead);
+
+		XCTAssertTrue([self.fixture writeText:@"local commit retained after push failure\n" toPath:@"failure.txt" error:&error], @"%@", error);
+		XCTAssertTrue([self.fixture commitAllWithMessage:@"local commit before failed push" error:&error], @"%@", error);
+		NSString *headBeforeFailure = [self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error];
+		NSString *missingRemotePath = [remotePath stringByAppendingString:@"-missing"];
+		XCTAssertNotNil(([self.fixture git:@[ @"remote", @"set-url", @"origin", missingRemotePath ] error:&error]), @"%@", error);
+
+		error = nil;
+		XCTAssertFalse([self.repository pushBranch:branchRef toRemote:remoteRef error:&error]);
+		XCTAssertNotNil(error);
+		XCTAssertEqualObjects(([self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]), headBeforeFailure);
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
 - (void)testDetachedHeadIsRepresentedByHeadSpecifier
 {
 	NSError *error = nil;
@@ -504,6 +534,21 @@
 
 	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
 	XCTAssertEqual(changes.tree, changes.tree);
+}
+
+- (void)testUncommittedChangesSubjectShowsOnlyStats
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"new\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+	XCTAssertEqualObjects(changes.subject, @"0 staged, 1 unstaged, 1 untracked");
+	XCTAssertEqualObjects(changes.message, changes.subject);
+	XCTAssertEqualObjects(changes.details, changes.subject);
 }
 
 @end

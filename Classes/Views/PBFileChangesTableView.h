@@ -8,6 +8,11 @@
 
 #import <Cocoa/Cocoa.h>
 
+@class PBFileChangesTableView;
+
+@protocol PBFileChangesTableViewStagingDelegate <NSObject>
+- (void)fileChangesTableViewDidRequestStagingToggle:(PBFileChangesTableView *)tableView;
+@end
 
 @interface PBFileChangesTableView : NSTableView
 @end

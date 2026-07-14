@@ -116,6 +116,7 @@
 		4A5D772C14A9A9CC00DF6C68 /* PBCreateBranchSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76C514A9A9CC00DF6C68 /* PBCreateBranchSheet.m */; };
 		4A5D772D14A9A9CC00DF6C68 /* PBCreateTagSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76C714A9A9CC00DF6C68 /* PBCreateTagSheet.m */; };
 		4A5D772E14A9A9CC00DF6C68 /* PBFileChangesTableView.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76C914A9A9CC00DF6C68 /* PBFileChangesTableView.m */; };
+		C0DE40000000000000000001 /* PBFileChangesTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE40000000000000000002 /* PBFileChangesTableView.swift */; };
 		4A5D772F14A9A9CC00DF6C68 /* PBGitGradientBarView.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76CB14A9A9CC00DF6C68 /* PBGitGradientBarView.m */; };
 		4A5D773014A9A9CC00DF6C68 /* PBGitRevisionCell.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76CD14A9A9CC00DF6C68 /* PBGitRevisionCell.m */; };
 		4A5D773114A9A9CC00DF6C68 /* PBGitXMessageSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76CF14A9A9CC00DF6C68 /* PBGitXMessageSheet.m */; };
@@ -591,6 +592,7 @@
 		4A5D76C714A9A9CC00DF6C68 /* PBCreateTagSheet.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBCreateTagSheet.m; sourceTree = "<group>"; };
 		4A5D76C814A9A9CC00DF6C68 /* PBFileChangesTableView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBFileChangesTableView.h; sourceTree = "<group>"; };
 		4A5D76C914A9A9CC00DF6C68 /* PBFileChangesTableView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBFileChangesTableView.m; sourceTree = "<group>"; };
+		C0DE40000000000000000002 /* PBFileChangesTableView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PBFileChangesTableView.swift; sourceTree = "<group>"; };
 		4A5D76CA14A9A9CC00DF6C68 /* PBGitGradientBarView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitGradientBarView.h; sourceTree = "<group>"; };
 		4A5D76CB14A9A9CC00DF6C68 /* PBGitGradientBarView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitGradientBarView.m; sourceTree = "<group>"; };
 		4A5D76CC14A9A9CC00DF6C68 /* PBGitRevisionCell.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitRevisionCell.h; sourceTree = "<group>"; };
@@ -1173,6 +1175,7 @@
 				4A5D76C714A9A9CC00DF6C68 /* PBCreateTagSheet.m */,
 				4A5D76C814A9A9CC00DF6C68 /* PBFileChangesTableView.h */,
 				4A5D76C914A9A9CC00DF6C68 /* PBFileChangesTableView.m */,
+				C0DE40000000000000000002 /* PBFileChangesTableView.swift */,
 				4A5D76CA14A9A9CC00DF6C68 /* PBGitGradientBarView.h */,
 				4A5D76CB14A9A9CC00DF6C68 /* PBGitGradientBarView.m */,
 				4A5D76CC14A9A9CC00DF6C68 /* PBGitRevisionCell.h */,
@@ -1756,6 +1759,7 @@
 				4DF173E921A1D60A003CD3CE /* NSAppearance+PBDarkMode.m in Sources */,
 				4A5D772D14A9A9CC00DF6C68 /* PBCreateTagSheet.m in Sources */,
 				4A5D772E14A9A9CC00DF6C68 /* PBFileChangesTableView.m in Sources */,
+				C0DE40000000000000000001 /* PBFileChangesTableView.swift in Sources */,
 				6C5244131E00C66E0051DE20 /* PBHistorySearchMode.m in Sources */,
 				4A5D772F14A9A9CC00DF6C68 /* PBGitGradientBarView.m in Sources */,
 				4A5D773014A9A9CC00DF6C68 /* PBGitRevisionCell.m in Sources */,

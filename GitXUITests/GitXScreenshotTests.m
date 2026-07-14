@@ -13,6 +13,9 @@
 @property (nonatomic, strong) XCUIApplication *app;
 @property (nonatomic, strong) NSMutableArray<NSString *> *temporaryRepositoryPaths;
 - (NSString *)makeDirtyRepositoryFixture;
+- (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
+- (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
+- (void)openStagingView;
 @end
 
 @implementation GitXScreenshotTests
@@ -125,6 +128,44 @@
 	return error == nil && task.terminationStatus == 0;
 }
 
+- (NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
+{
+	NSTask *task = [[NSTask alloc] init];
+	NSString *developerDirectory = NSProcessInfo.processInfo.environment[@"DEVELOPER_DIR"];
+	if (!developerDirectory.length) {
+		developerDirectory = @"/Applications/Xcode.app/Contents/Developer";
+	}
+	NSString *gitPath = [developerDirectory stringByAppendingPathComponent:@"usr/bin/git"];
+	if (![[NSFileManager defaultManager] isExecutableFileAtPath:gitPath]) {
+		gitPath = @"/usr/bin/git";
+	}
+
+	NSPipe *outputPipe = [NSPipe pipe];
+	task.executableURL = [NSURL fileURLWithPath:gitPath];
+	task.arguments = arguments;
+	task.currentDirectoryURL = [NSURL fileURLWithPath:directory isDirectory:YES];
+	task.standardOutput = outputPipe;
+	task.standardError = [NSFileHandle fileHandleWithNullDevice];
+	NSError *error = nil;
+	if (![task launchAndReturnError:&error]) return nil;
+	NSData *output = [outputPipe.fileHandleForReading readDataToEndOfFile];
+	[task waitUntilExit];
+	if (task.terminationStatus != 0) return nil;
+
+	NSString *string = [[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding];
+	return [string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+- (NSString *)configureOriginForRepository:(NSString *)repositoryPath
+{
+	NSString *remotePath = [repositoryPath stringByAppendingString:@"-remote.git"];
+	[self.temporaryRepositoryPaths addObject:remotePath];
+	XCTAssertTrue(([self runGit:@[ @"init", @"--bare", @"--quiet", remotePath ] inDirectory:repositoryPath]));
+	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"origin", remotePath ] inDirectory:repositoryPath]));
+	XCTAssertTrue(([self runGit:@[ @"push", @"--quiet", @"--set-upstream", @"origin", @"main" ] inDirectory:repositoryPath]));
+	return remotePath;
+}
+
 - (NSString *)makeDirtyRepositoryFixture
 {
 	NSString *repositoryPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"gitx-dirty-%@", NSUUID.UUID.UUIDString]];
@@ -159,6 +200,16 @@
 	return table;
 }
 
+- (void)openStagingView
+{
+	XCTAssertTrue([self waitForWindow], @"Staging requires a repository window");
+	XCUIElement *sidebar = self.app.outlines[@"RepositorySidebar"];
+	XCTAssertTrue([sidebar waitForExistenceWithTimeout:10], @"The repository sidebar should be accessible");
+	XCUIElement *stageItem = sidebar.staticTexts[@"Stage"];
+	XCTAssertTrue([stageItem waitForExistenceWithTimeout:10], @"The Stage item should be visible in the sidebar");
+	[stageItem click];
+}
+
 // MARK: - Tests
 
 - (void)testMainWindowExists
@@ -177,14 +228,123 @@
 
 - (void)testStagingTabScreenshot
 {
-	XCTAssertTrue([self waitForWindow], @"Staging requires a repository window");
-	XCUIElement *sidebar = self.app.outlines[@"RepositorySidebar"];
-	XCTAssertTrue([sidebar waitForExistenceWithTimeout:10], @"The repository sidebar should be accessible");
-	XCUIElement *stageItem = sidebar.staticTexts[@"Stage"];
-	XCTAssertTrue([stageItem waitForExistenceWithTimeout:10], @"The Stage item should be visible in the sidebar");
-	[stageItem click];
+	[self openStagingView];
 
 	[self saveWindowScreenshotNamed:@"staging-view"];
+}
+
+- (void)testSpaceStagesFilesAndSuccessfulCommitPushesWithoutASecondConfirmation
+{
+	[self.app terminate];
+	NSString *repositoryPath = [self makeDirtyRepositoryFixture];
+	[self configureOriginForRepository:repositoryPath];
+	NSString *trackingRemotePath = [repositoryPath stringByAppendingString:@"-tracking-remote.git"];
+	[self.temporaryRepositoryPaths addObject:trackingRemotePath];
+	XCTAssertTrue(([self runGit:@[ @"init", @"--bare", @"--quiet", trackingRemotePath ] inDirectory:repositoryPath]));
+	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"backup", trackingRemotePath ] inDirectory:repositoryPath]));
+	XCTAssertTrue(([self runGit:@[ @"push", @"--quiet", @"--set-upstream", @"backup", @"main" ] inDirectory:repositoryPath]));
+	NSString *remotePath = trackingRemotePath;
+	NSString *initialHead = [self gitOutput:@[ @"rev-parse", @"HEAD" ] inDirectory:repositoryPath];
+	NSString *initialRemoteHead = [self gitOutput:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] inDirectory:repositoryPath];
+	XCTAssertEqualObjects(initialHead, initialRemoteHead);
+
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repositoryPath};
+	[self.app launch];
+	[self openStagingView];
+
+	XCUIElement *unstagedTable = self.app.tables[@"UnstagedFiles"];
+	XCUIElement *stagedTable = self.app.tables[@"StagedFiles"];
+	XCTAssertTrue([unstagedTable waitForExistenceWithTimeout:10]);
+	XCTAssertTrue([stagedTable waitForExistenceWithTimeout:10]);
+	XCUIElement *trackedFile = unstagedTable.staticTexts[@"tracked.swift"];
+	XCTAssertTrue([trackedFile waitForExistenceWithTimeout:10]);
+	[self.app activate];
+	XCUICoordinate *tableOrigin = [unstagedTable coordinateWithNormalizedOffset:CGVectorMake(0, 0)];
+	[[tableOrigin coordinateWithOffset:CGVectorMake(50, 10)] click];
+	[unstagedTable typeKey:XCUIKeyboardKeySpace modifierFlags:0];
+	XCTAssertTrue([stagedTable.staticTexts[@"tracked.swift"] waitForExistenceWithTimeout:10], @"Space should move the selected file to Staged Changes");
+
+	XCUIElement *pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
+	XCUIElement *remotePopup = self.app.popUpButtons[@"PushRemote"];
+	XCTAssertTrue([pushCheckbox waitForExistenceWithTimeout:10]);
+	XCTAssertTrue(pushCheckbox.isEnabled);
+	XCTAssertTrue([remotePopup waitForExistenceWithTimeout:10]);
+	XCTAssertEqualObjects(remotePopup.value, @"backup", @"The checked-out branch's tracking remote should be preferred over origin");
+	[pushCheckbox click];
+	XCTAssertEqualObjects(pushCheckbox.value, @1);
+
+	XCUIElement *message = self.app.textViews[@"CommitMessage"];
+	XCTAssertTrue([message waitForExistenceWithTimeout:10]);
+	[message click];
+	NSTask *pasteTask = [[NSTask alloc] init];
+	pasteTask.executableURL = [NSURL fileURLWithPath:@"/usr/bin/pbcopy"];
+	NSPipe *pasteInput = [NSPipe pipe];
+	pasteTask.standardInput = pasteInput;
+	XCTAssertTrue([pasteTask launchAndReturnError:nil]);
+	[pasteInput.fileHandleForWriting writeData:[@"Commit and push UI test" dataUsingEncoding:NSUTF8StringEncoding]];
+	[pasteInput.fileHandleForWriting closeFile];
+	[pasteTask waitUntilExit];
+	XCTAssertEqual(pasteTask.terminationStatus, 0);
+	[message typeKey:@"v" modifierFlags:XCUIKeyModifierCommand];
+
+	NSString *hookPath = [repositoryPath stringByAppendingPathComponent:@".git/hooks/pre-commit"];
+	XCTAssertTrue([@"#!/bin/sh\nexit 1\n" writeToFile:hookPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:hookPath error:nil]);
+	[self.app.buttons[@"Commit"] click];
+	XCUIElement *hookFailure = self.app.staticTexts[@"Commit hook failed"];
+	XCTAssertTrue([hookFailure waitForExistenceWithTimeout:10]);
+	XCTAssertEqualObjects(pushCheckbox.value, @1, @"A failed commit must leave commit-and-push armed for retry");
+	XCTAssertEqualObjects(([self gitOutput:@[ @"rev-parse", @"HEAD" ] inDirectory:repositoryPath]), initialHead);
+	XCTAssertTrue([[NSFileManager defaultManager] removeItemAtPath:hookPath error:nil]);
+	[self.app.buttons[@"OK"] click];
+
+	NSString *postCommitHookPath = [repositoryPath stringByAppendingPathComponent:@".git/hooks/post-commit"];
+	XCTAssertTrue([@"#!/bin/sh\nexit 1\n" writeToFile:postCommitHookPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:postCommitHookPath error:nil]);
+	[self.app.buttons[@"Commit"] click];
+	NSPredicate *checkboxReset = [NSPredicate predicateWithFormat:@"value == 0"];
+	XCTNSPredicateExpectation *resetExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:checkboxReset object:pushCheckbox];
+	[self waitForExpectations:@[ resetExpectation ] timeout:15];
+
+	NSPredicate *remoteUpdated = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		NSString *localHead = [self gitOutput:@[ @"rev-parse", @"HEAD" ] inDirectory:repositoryPath];
+		NSString *remoteHead = [self gitOutput:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] inDirectory:repositoryPath];
+		return localHead.length > 0 && ![localHead isEqualToString:initialHead] && [localHead isEqualToString:remoteHead];
+	}];
+	XCTNSPredicateExpectation *pushExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:remoteUpdated object:repositoryPath];
+	[self waitForExpectations:@[ pushExpectation ] timeout:20];
+	XCTAssertTrue([[NSFileManager defaultManager] removeItemAtPath:postCommitHookPath error:nil]);
+	XCTAssertEqualObjects(remotePopup.value, @"backup", @"Resetting the checkbox should preserve the remote selection");
+}
+
+- (void)testPushControlsRefreshForRemotesAndDisableForDetachedHead
+{
+	[self.app terminate];
+	NSString *repositoryPath = [self makeDirtyRepositoryFixture];
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repositoryPath};
+	[self.app launch];
+	[self openStagingView];
+
+	XCUIElement *pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
+	XCUIElement *remotePopup = self.app.popUpButtons[@"PushRemote"];
+	XCTAssertTrue([pushCheckbox waitForExistenceWithTimeout:10]);
+	XCTAssertFalse(pushCheckbox.isEnabled);
+	XCTAssertFalse(remotePopup.isEnabled);
+	XCTAssertEqualObjects(remotePopup.value, @"No Remotes");
+
+	[self configureOriginForRepository:repositoryPath];
+	NSPredicate *remoteAvailable = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return pushCheckbox.isEnabled && remotePopup.isEnabled && [remotePopup.value isEqual:@"origin"];
+	}];
+	XCTNSPredicateExpectation *remoteExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:remoteAvailable object:pushCheckbox];
+	[self waitForExpectations:@[ remoteExpectation ] timeout:15];
+
+	XCTAssertTrue(([self runGit:@[ @"checkout", @"--quiet", @"--detach", @"HEAD" ] inDirectory:repositoryPath]));
+	NSPredicate *detachedDisabled = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return !pushCheckbox.isEnabled && !remotePopup.isEnabled;
+	}];
+	XCTNSPredicateExpectation *detachedExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:detachedDisabled object:pushCheckbox];
+	[self waitForExpectations:@[ detachedExpectation ] timeout:15];
 }
 
 - (void)testUncommittedChangesRowAppearsForDirtyRepository
@@ -196,7 +356,7 @@
 	XCTAssertTrue([self waitForWindow]);
 	[self selectHistoryForCurrentBranch];
 
-	XCUIElement *workingState = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value BEGINSWITH 'Uncommitted Changes'"]].firstMatch;
+	XCUIElement *workingState = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == '0 staged, 1 unstaged, 1 untracked'"]].firstMatch;
 	XCTAssertTrue([workingState waitForExistenceWithTimeout:15], @"Dirty repositories should pin an Uncommitted Changes row above history");
 	[self saveWindowScreenshotNamed:@"uncommitted-changes-row"];
 }

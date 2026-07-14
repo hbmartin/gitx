@@ -38,7 +38,7 @@
 }
 - (NSString *)subject
 {
-	return [NSString stringWithFormat:@"Uncommitted Changes — %lu staged, %lu unstaged, %lu untracked",
+	return [NSString stringWithFormat:@"%lu staged, %lu unstaged, %lu untracked",
 									  (unsigned long)self.stagedCount, (unsigned long)self.unstagedCount, (unsigned long)self.untrackedCount];
 }
 - (NSString *)message
