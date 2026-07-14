@@ -17,6 +17,8 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 @property (nonatomic) NSMutableSet<NSString *> *expandedImages;
 @property (nonatomic) NSArray<NSDictionary *> *currentDiffSections;
 @property (nonatomic) NSUInteger renderGeneration;
+@property (nonatomic) NSDictionary<NSAttributedStringKey, id> *baseTextAttributes;
+@property (nonatomic) NSDictionary<NSAttributedStringKey, id> *titleTextAttributes;
 @end
 
 @implementation PBNativeContentView
@@ -30,6 +32,10 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 	_linkPayloads = [NSMutableDictionary dictionary];
 	_collapsedFiles = [NSMutableSet set];
 	_expandedImages = [NSMutableSet set];
+	_baseTextAttributes = @{NSFontAttributeName : [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular],
+							NSForegroundColorAttributeName : NSColor.textColor};
+	_titleTextAttributes = @{NSFontAttributeName : [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
+							 NSForegroundColorAttributeName : NSColor.labelColor};
 
 	_rootStack = [[NSStackView alloc] initWithFrame:NSZeroRect];
 	_rootStack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -84,14 +90,12 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 
 - (NSDictionary *)baseAttributes
 {
-	return @{ NSFontAttributeName : [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular],
-			  NSForegroundColorAttributeName : NSColor.textColor };
+	return self.baseTextAttributes;
 }
 
 - (NSDictionary *)titleAttributes
 {
-	return @{ NSFontAttributeName : [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
-			  NSForegroundColorAttributeName : NSColor.labelColor };
+	return self.titleTextAttributes;
 }
 
 - (void)setAccessoryView:(NSView *)accessoryView

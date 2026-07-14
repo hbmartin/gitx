@@ -369,8 +369,46 @@
 
 - (void)performPushForBranch:(PBGitRef *)branchRef toRemote:(PBGitRef *)remoteRef
 {
+	[self performPushForBranch:branchRef toRemote:remoteRef requiresConfirmation:YES];
+}
+
+- (void)performPushForBranch:(PBGitRef *)branchRef
+					toRemote:(PBGitRef *)remoteRef
+		requiresConfirmation:(BOOL)requiresConfirmation
+{
 	if ((!branchRef && !remoteRef) || (branchRef && !branchRef.isBranch && !branchRef.isRemoteBranch && !branchRef.isTag) || (remoteRef && !remoteRef.isRemote))
 		return;
+
+	void (^beginPush)(void) = ^{
+		NSString *description = nil;
+		if (branchRef && remoteRef)
+			description = [NSString stringWithFormat:@"Pushing %@ '%@' to remote %@", branchRef.refishType, branchRef.shortName, remoteRef.remoteName];
+		else if (branchRef)
+			description = [NSString stringWithFormat:@"Pushing %@ '%@' to default remote", branchRef.refishType, branchRef.shortName];
+		else
+			description = [NSString stringWithFormat:@"Pushing updates to remote %@", remoteRef.remoteName];
+
+		PBRemoteProgressSheet *progressSheet = [PBRemoteProgressSheet progressSheetWithTitle:@"Pushing remote…"
+																				 description:description
+																			windowController:self];
+
+		[progressSheet
+			beginProgressSheetForBlock:^{
+				NSError *error = nil;
+				BOOL success = [self.repository pushBranch:branchRef toRemote:remoteRef error:&error];
+				return (success ? nil : error);
+			}
+			completionHandler:^(NSError *error) {
+				if (error) {
+					[self showErrorSheet:error];
+				}
+			}];
+	};
+
+	if (!requiresConfirmation) {
+		beginPush();
+		return;
+	}
 
 	NSString *description = nil;
 	if (branchRef && remoteRef)
@@ -388,33 +426,7 @@
 	[alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Push alert - cancel button")];
 	[alert setShowsSuppressionButton:YES];
 
-	[self confirmDialog:alert
-		suppressionIdentifier:@"Confirm Push"
-					forAction:^{
-						NSString *description = nil;
-						if (branchRef && remoteRef)
-							description = [NSString stringWithFormat:@"Pushing %@ '%@' to remote %@", branchRef.refishType, branchRef.shortName, remoteRef.remoteName];
-						else if (branchRef)
-							description = [NSString stringWithFormat:@"Pushing %@ '%@' to default remote", branchRef.refishType, branchRef.shortName];
-						else
-							description = [NSString stringWithFormat:@"Pushing updates to remote %@", remoteRef.remoteName];
-
-						PBRemoteProgressSheet *progressSheet = [PBRemoteProgressSheet progressSheetWithTitle:@"Pushing remote…"
-																								 description:description
-																							windowController:self];
-
-						[progressSheet
-							beginProgressSheetForBlock:^{
-								NSError *error = nil;
-								BOOL success = [self.repository pushBranch:branchRef toRemote:remoteRef error:&error];
-								return (success ? nil : error);
-							}
-							completionHandler:^(NSError *error) {
-								if (error) {
-									[self showErrorSheet:error];
-								}
-							}];
-					}];
+	[self confirmDialog:alert suppressionIdentifier:@"Confirm Push" forAction:beginPush];
 }
 
 - (NSArray<NSURL *> *)selectedURLsFromSender:(id)sender

@@ -6,9 +6,32 @@
 #import "PBAutoFetchManager.h"
 #import "PBHistoryArrayController.h"
 #import "PBHighlighting.h"
+#import "PBFileChangesTableView.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
 #import "NSAppearance+PBDarkMode.h"
+
+@interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
+
+@property (nonatomic) NSUInteger stagingToggleCount;
+@property (nonatomic, weak) id lastSender;
+
+@end
+
+@implementation PBFileChangesActionTarget
+
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView
+{
+	return 3;
+}
+
+- (void)fileChangesTableViewDidRequestStagingToggle:(PBFileChangesTableView *)tableView
+{
+	self.stagingToggleCount++;
+	self.lastSender = tableView;
+}
+
+@end
 
 @interface GitXFeatureTests : XCTestCase
 
@@ -31,6 +54,20 @@
 @end
 
 @implementation GitXFeatureTests
+
+- (NSEvent *)spaceKeyEventWithModifiers:(NSEventModifierFlags)modifiers
+{
+	return [NSEvent keyEventWithType:NSEventTypeKeyDown
+							location:NSZeroPoint
+					   modifierFlags:modifiers
+						   timestamp:0
+						windowNumber:0
+							 context:nil
+						  characters:@" "
+		 charactersIgnoringModifiers:@" "
+						   isARepeat:NO
+							 keyCode:49];
+}
 
 - (void)setUp
 {
@@ -68,6 +105,34 @@
 	XCTAssertEqual([PBGitDefaults autoFetchIntervalMinutes], 1440);
 	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
 	XCTAssertEqual([PBGitDefaults autoFetchScope], PBAutoFetchScopeOpenRepositories);
+}
+
+- (void)testSpaceKeyRoutesSelectedFileRowsToStageAndUnstageActions
+{
+	PBFileChangesActionTarget *target = [[PBFileChangesActionTarget alloc] init];
+	PBFileChangesTableView *table = [[PBFileChangesTableView alloc] initWithFrame:NSMakeRect(0, 0, 300, 120)];
+	table.dataSource = target;
+	table.delegate = target;
+	table.allowsMultipleSelection = YES;
+	[table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"Files"]];
+	[table reloadData];
+	[table selectRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)] byExtendingSelection:NO];
+
+	table.tag = 0;
+	[table keyDown:[self spaceKeyEventWithModifiers:0]];
+	XCTAssertEqual(target.stagingToggleCount, 1);
+	XCTAssertEqual(target.lastSender, table);
+
+	table.tag = 1;
+	[table keyDown:[self spaceKeyEventWithModifiers:0]];
+	XCTAssertEqual(target.stagingToggleCount, 2);
+
+	[table keyDown:[self spaceKeyEventWithModifiers:NSEventModifierFlagCommand]];
+	XCTAssertEqual(target.stagingToggleCount, 2, @"Modified Space should retain the table's normal key handling");
+
+	[table deselectAll:nil];
+	[table keyDown:[self spaceKeyEventWithModifiers:0]];
+	XCTAssertEqual(target.stagingToggleCount, 2, @"Space without selected rows should not invoke a staging action");
 }
 
 - (void)testAppearancePreferenceValidatesAndAppliesGlobally

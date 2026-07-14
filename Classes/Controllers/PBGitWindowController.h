@@ -90,6 +90,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)performFetchForRef:(nullable PBGitRef *)ref;
 - (void)performPullForBranch:(PBGitRef *)branchRef remote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase;
 - (void)performPushForBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef;
+- (void)performPushForBranch:(nullable PBGitRef *)branchRef
+					toRemote:(nullable PBGitRef *)remoteRef
+		requiresConfirmation:(BOOL)requiresConfirmation;
 
 @end
 

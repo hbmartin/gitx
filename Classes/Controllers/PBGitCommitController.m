@@ -11,8 +11,11 @@
 #import "PBChangedFile.h"
 #import "PBWebChangesController.h"
 #import "PBGitIndex.h"
+#import "PBGitRef.h"
+#import "PBGitRevSpecifier.h"
 #import "PBGitRepositoryWatcher.h"
 #import "PBCommitMessageView.h"
+#import "PBFileChangesTableView.h"
 #import "PBTask.h"
 #import "NSSplitView+GitX.h"
 
@@ -25,7 +28,7 @@
 
 #define FileChangesTableViewType @"GitFileChangedType"
 
-@interface PBGitCommitController () <NSTextViewDelegate, NSMenuDelegate> {
+@interface PBGitCommitController () <NSTextViewDelegate, NSMenuDelegate, PBFileChangesTableViewStagingDelegate> {
 	IBOutlet PBCommitMessageView *commitMessageView;
 
 	IBOutlet NSArrayController *unstagedFilesController;
@@ -34,6 +37,8 @@
 
 	IBOutlet NSTabView *controlsTabView;
 	IBOutlet NSButton *commitButton;
+	IBOutlet NSButton *pushAfterCommitButton;
+	IBOutlet NSPopUpButton *pushRemotePopUpButton;
 
 	IBOutlet PBWebChangesController *webController;
 	IBOutlet NSSplitView *commitSplitView;
@@ -41,6 +46,11 @@
 
 @property (weak) IBOutlet NSTableView *unstagedTable;
 @property (weak) IBOutlet NSTableView *stagedTable;
+@property (nonatomic, strong) PBGitRef *pendingPushBranchRef;
+@property (nonatomic, copy) NSString *pendingPushRemoteName;
+
+- (nullable NSString *)selectedPushRemoteName;
+- (void)reloadPushRemotes;
 
 @end
 
@@ -83,6 +93,7 @@
 
 	commitMessageView.repository = self.repository;
 	commitMessageView.delegate = self;
+	commitMessageView.accessibilityIdentifier = @"CommitMessage";
 
 	NSMutableDictionary *attrs = commitMessageView.typingAttributes.mutableCopy;
 	if (!attrs) {
@@ -113,6 +124,10 @@
 
 	[unstagedTable setTarget:self];
 	[stagedTable setTarget:self];
+	unstagedTable.accessibilityIdentifier = @"UnstagedFiles";
+	stagedTable.accessibilityIdentifier = @"StagedFiles";
+	pushAfterCommitButton.accessibilityIdentifier = @"PushAfterCommit";
+	pushRemotePopUpButton.accessibilityIdentifier = @"PushRemote";
 
 	[unstagedTable registerForDraggedTypes:[NSArray arrayWithObject:FileChangesTableViewType]];
 	[stagedTable registerForDraggedTypes:[NSArray arrayWithObject:FileChangesTableViewType]];
@@ -120,11 +135,14 @@
 	// Copy the menu over so we have two discrete menu objects
 	// which allows us to tell them apart in our delegate methods
 	stagedTable.menu = [unstagedTable.menu copy];
+
+	[self reloadPushRemotes];
 }
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification
 {
 	[self.repository.index refreshStatCache];
+	[self reloadPushRemotes];
 }
 
 - (void)repositoryUpdatedNotification:(NSNotification *)notification
@@ -134,11 +152,16 @@
 		// refresh if the working directory or index is modified
 		[self refresh:self];
 	}
+	if (eventType & PBGitRepositoryWatcherEventTypeGitDirectory) {
+		[self.repository reloadRefs];
+		[self reloadPushRemotes];
+	}
 }
 
 - (void)updateView
 {
 	[self refresh:nil];
+	[self reloadPushRemotes];
 }
 
 - (void)closeView
@@ -156,6 +179,48 @@
 - (PBGitIndex *)index
 {
 	return self.repository.index;
+}
+
+- (NSString *)selectedPushRemoteName
+{
+	id representedObject = pushRemotePopUpButton.selectedItem.representedObject;
+	return [representedObject isKindOfClass:NSString.class] ? representedObject : nil;
+}
+
+- (void)reloadPushRemotes
+{
+	NSString *previousSelection = [self selectedPushRemoteName];
+	NSArray<NSString *> *remotes = [self.repository.remotes sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+	PBGitRef *headRef = self.repository.headRef.ref;
+	BOOL canPush = headRef.isBranch && remotes.count > 0;
+
+	[pushRemotePopUpButton removeAllItems];
+	if (remotes.count == 0) {
+		[pushRemotePopUpButton addItemWithTitle:NSLocalizedString(@"No Remotes", @"Placeholder in the commit push remote popup when no remotes are configured")];
+		pushRemotePopUpButton.lastItem.enabled = NO;
+	} else {
+		for (NSString *remoteName in remotes) {
+			[pushRemotePopUpButton addItemWithTitle:remoteName];
+			pushRemotePopUpButton.lastItem.representedObject = remoteName;
+		}
+
+		NSString *selection = nil;
+		if ([remotes containsObject:previousSelection]) {
+			selection = previousSelection;
+		} else if (headRef.isBranch) {
+			selection = [self.repository remoteRefForBranch:headRef error:NULL].remoteName;
+		}
+		if (![remotes containsObject:selection]) {
+			selection = [remotes containsObject:@"origin"] ? @"origin" : remotes.firstObject;
+		}
+		[pushRemotePopUpButton selectItemWithTitle:selection];
+	}
+
+	pushAfterCommitButton.enabled = canPush;
+	pushRemotePopUpButton.enabled = canPush;
+	if (!canPush) {
+		pushAfterCommitButton.state = NSControlStateValueOff;
+	}
 }
 
 - (void)commitWithVerification:(BOOL)doVerify
@@ -190,6 +255,17 @@
 									   kMinimalCommitMessageLength];
 		[self.windowController showMessageSheet:message infoText:info];
 		return;
+	}
+
+	self.pendingPushBranchRef = nil;
+	self.pendingPushRemoteName = nil;
+	if (pushAfterCommitButton.enabled && pushAfterCommitButton.state == NSControlStateValueOn) {
+		PBGitRef *headRef = self.repository.headRef.ref;
+		NSString *remoteName = [self selectedPushRemoteName];
+		if (headRef.isBranch && remoteName.length > 0) {
+			self.pendingPushBranchRef = headRef;
+			self.pendingPushRemoteName = remoteName;
+		}
 	}
 
 	[stagedFilesController setSelectionIndexes:[NSIndexSet indexSet]];
@@ -403,6 +479,15 @@ static void reselectNextFile(NSArrayController *controller)
 	reselectNextFile(stagedFilesController);
 }
 
+- (void)fileChangesTableViewDidRequestStagingToggle:(PBFileChangesTableView *)tableView
+{
+	if (tableView == unstagedTable) {
+		[self stageFiles:tableView];
+	} else if (tableView == stagedTable) {
+		[self unstageFiles:tableView];
+	}
+}
+
 - (IBAction)discardFiles:(id)sender
 {
 	NSArray *selectedFiles = unstagedFilesController.selectedObjects;
@@ -435,12 +520,25 @@ static void reselectNextFile(NSArrayController *controller)
 	commitMessageView.editable = YES;
 	commitMessageView.string = @"";
 	[webController setStateMessage:notification.userInfo[kNotificationDictionaryDescriptionKey]];
+
+	PBGitRef *branchRef = self.pendingPushBranchRef;
+	NSString *remoteName = self.pendingPushRemoteName;
+	self.pendingPushBranchRef = nil;
+	self.pendingPushRemoteName = nil;
+	pushAfterCommitButton.state = NSControlStateValueOff;
+
+	if (branchRef.isBranch && remoteName.length > 0) {
+		PBGitRef *remoteRef = [PBGitRef refFromString:[kGitXRemoteRefPrefix stringByAppendingString:remoteName]];
+		[self.windowController performPushForBranch:branchRef toRemote:remoteRef requiresConfirmation:NO];
+	}
 }
 
 - (void)commitFailed:(NSNotification *)notification
 {
 	self.isBusy = NO;
 	commitMessageView.editable = YES;
+	self.pendingPushBranchRef = nil;
+	self.pendingPushRemoteName = nil;
 
 	NSString *reason = notification.userInfo[kNotificationDictionaryDescriptionKey];
 	self.status = [NSString stringWithFormat:
@@ -455,6 +553,8 @@ static void reselectNextFile(NSArrayController *controller)
 {
 	self.isBusy = NO;
 	commitMessageView.editable = YES;
+	self.pendingPushBranchRef = nil;
+	self.pendingPushRemoteName = nil;
 
 	NSString *reason = notification.userInfo[kNotificationDictionaryDescriptionKey];
 	self.status = [NSString stringWithFormat:
