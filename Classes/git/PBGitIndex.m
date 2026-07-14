@@ -139,8 +139,6 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 															  userInfo:@{@"description" : message}];
 		}
 	});
-
-	[self postIndexUpdated];
 }
 
 - (void)postIndexUpdated
@@ -168,6 +166,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		return;
 	}
 
+	__block NSMutableDictionary *untrackedDictionary = nil;
+	__block NSMutableDictionary *stagedDictionary = nil;
+	__block NSMutableDictionary *unstagedDictionary = nil;
+
 	// Enter the group for ALL tasks upfront, before launching any of them.
 	// This prevents dispatch_group_notify from firing prematurely if an
 	// early task completes before later tasks have called group_enter.
@@ -182,6 +184,24 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	// This block runs once all tasks have called group_leave.
 	dispatch_group_notify(_indexRefreshGroup, dispatch_get_main_queue(), ^{
 		// At this point, all index operations have finished.
+		// Merge the three snapshots in Git-semantic order. The staged snapshot
+		// owns the parent-tree metadata used by whole-file unstage; the unstaged
+		// snapshot must not replace it with the current index entry.
+		if (stagedDictionary) {
+			for (PBChangedFile *file in self.files)
+				file.hasStagedChanges = NO;
+		}
+		if (unstagedDictionary && untrackedDictionary) {
+			for (PBChangedFile *file in self.files)
+				file.hasUnstagedChanges = NO;
+		}
+		if (stagedDictionary)
+			[self addFilesFromDictionary:stagedDictionary staged:YES tracked:YES];
+		if (unstagedDictionary)
+			[self addFilesFromDictionary:unstagedDictionary staged:NO tracked:YES];
+		if (untrackedDictionary)
+			[self addFilesFromDictionary:untrackedDictionary staged:NO tracked:NO];
+
 		// We need to find all files that don't have either
 		// staged or unstaged files, and delete them
 
@@ -197,6 +217,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 				[self.files removeObject:file];
 			[self didChangeValueForKey:@"indexChanges"];
 		}
+
+		[self postIndexUpdated];
 
 		__block BOOL shouldReplay = NO;
 		dispatch_sync(self->_indexRefreshQueue, ^{
@@ -237,7 +259,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 						[dictionary setObject:fileStatus forKey:path];
 					}
 
-					[self addFilesFromDictionary:dictionary staged:NO tracked:NO];
+					untrackedDictionary = dictionary;
 					[self postIndexRefreshSuccess:YES message:@"ls-files success"];
 				}
 
@@ -256,8 +278,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 					[self postIndexRefreshSuccess:NO message:@"diff-index failed"];
 				} else {
 					NSArray *lines = [self linesFromData:readData];
-					NSMutableDictionary *dic = [self dictionaryForLines:lines];
-					[self addFilesFromDictionary:dic staged:YES tracked:YES];
+					stagedDictionary = [self dictionaryForLines:lines];
 					[self postIndexRefreshSuccess:YES message:@"diff-index success"];
 				}
 
@@ -276,8 +297,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 					[self postIndexRefreshSuccess:NO message:@"diff-files failed"];
 				} else {
 					NSArray *lines = [self linesFromData:readData];
-					NSMutableDictionary *dic = [self dictionaryForLines:lines];
-					[self addFilesFromDictionary:dic staged:NO tracked:YES];
+					unstagedDictionary = [self dictionaryForLines:lines];
 					[self postIndexRefreshSuccess:YES message:@"diff-files success"];
 				}
 
@@ -532,46 +552,34 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 	// Staging
 	while (loopCount < filesCount) {
-		// Input string for update-index
-		// This will be a list of filenames that
-		// should be updated. It's similar to
-		// "git add -- <files>
-		NSMutableString *input = [NSMutableString string];
-
-		for (NSUInteger i = loopFrom; i < loopTo; i++) {
-			loopCount++;
-
-			PBChangedFile *file = [files objectAtIndex:i];
-
-			if (stage) {
-				[input appendFormat:@"%@\0", file.path];
-			} else {
-				NSString *indexInfo;
-				if (file.status == NEW) {
-					// Index info lies because the file is NEW
-					indexInfo = [NSString stringWithFormat:@"0 0000000000000000000000000000000000000000\t%@\0", file.path];
-				} else {
-					indexInfo = [file indexInfo];
-				}
-				[input appendString:indexInfo];
-			}
-		}
-
-		NSArray *arguments = nil;
-		if (stage) {
-			arguments = @[ @"update-index", @"--add", @"--remove", @"-z", @"--stdin" ];
-		} else {
-			arguments = @[ @"update-index", @"-z", @"--index-info" ];
-		}
-
 		NSError *error = nil;
-		BOOL success = [self.repository launchTaskWithArguments:arguments
-														  input:input
-														  error:&error];
+		BOOL success = NO;
+		if (stage) {
+			// Input is a NUL-delimited list of paths, equivalent to git add.
+			NSMutableString *input = [NSMutableString string];
+			for (NSUInteger i = loopFrom; i < loopTo; i++) {
+				PBChangedFile *file = [files objectAtIndex:i];
+				[input appendFormat:@"%@\0", file.path];
+			}
+			success = [self.repository launchTaskWithArguments:@[ @"update-index", @"--add", @"--remove", @"-z", @"--stdin" ]
+														 input:input
+														 error:&error];
+		} else {
+			// Reset paths from the comparison tree instead of trusting cached
+			// PBChangedFile blob metadata, which can lag behind partial staging.
+			NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:@"reset", @"--quiet", [self parentTree], @"--", nil];
+			for (NSUInteger i = loopFrom; i < loopTo; i++) {
+				PBChangedFile *file = [files objectAtIndex:i];
+				[arguments addObject:file.path];
+			}
+			success = [self.repository launchTaskWithArguments:arguments error:&error];
+		}
 		if (!success) {
 			[self postOperationFailed:[NSString stringWithFormat:@"Error in %@ files. Return value: %@", (stage ? @"staging" : @"unstaging"), error.userInfo[PBTaskTerminationStatusKey]]];
 			return NO;
 		}
+
+		loopCount = loopTo;
 
 		for (NSUInteger i = loopFrom; i < loopTo; i++) {
 			PBChangedFile *file = [files objectAtIndex:i];
@@ -707,17 +715,25 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		// Object found, this is still a cached / uncached thing
 		if (fileStatus) {
 			if (tracked) {
-				NSString *mode = [[fileStatus objectAtIndex:0] substringFromIndex:1];
-				NSString *sha = [fileStatus objectAtIndex:2];
-				file.commitBlobSHA = sha;
-				file.commitBlobMode = mode;
+				BOOL preserveStagedIdentity = !staged && file.hasStagedChanges;
+				if (!preserveStagedIdentity) {
+					NSString *mode = [[fileStatus objectAtIndex:0] substringFromIndex:1];
+					NSString *sha = [fileStatus objectAtIndex:2];
+					file.commitBlobSHA = sha;
+					file.commitBlobMode = mode;
+
+					if ([[fileStatus objectAtIndex:4] isEqualToString:@"D"])
+						file.status = DELETED;
+					else if ([[fileStatus objectAtIndex:0] isEqualToString:@":000000"])
+						file.status = NEW;
+					else
+						file.status = MODIFIED;
+				}
 
 				if (staged)
 					file.hasStagedChanges = YES;
 				else
 					file.hasUnstagedChanges = YES;
-				if ([[fileStatus objectAtIndex:4] isEqualToString:@"D"])
-					file.status = DELETED;
 			} else {
 				// Untracked file, set status to NEW, only unstaged changes
 				file.hasStagedChanges = NO;

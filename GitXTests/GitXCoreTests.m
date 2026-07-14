@@ -490,11 +490,11 @@
 	NSError *error = nil;
 	XCTAssertTrue([self.fixture writeText:@"first line\nstaged line\nunstaged line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
 	NSString *patch = @"diff --git a/tracked.txt b/tracked.txt\n"
-		@"--- a/tracked.txt\n"
-		@"+++ b/tracked.txt\n"
-		@"@@ -1 +1,2 @@\n"
-		@" first line\n"
-		@"+staged line\n";
+					  @"--- a/tracked.txt\n"
+					  @"+++ b/tracked.txt\n"
+					  @"@@ -1 +1,2 @@\n"
+					  @" first line\n"
+					  @"+staged line\n";
 	[self refreshIndexAfterPerforming:^{
 		XCTAssertTrue([self.repository.index applyPatch:patch stage:YES reverse:NO]);
 	}];
@@ -509,6 +509,33 @@
 	XCTAssertTrue([stagedDiff containsString:@"+staged line"]);
 	XCTAssertFalse([stagedDiff containsString:@"unstaged line"]);
 	XCTAssertTrue([unstagedDiff containsString:@"+unstaged line"]);
+}
+
+- (void)testWholeFileUnstageAfterPartialStageIgnoresStaleIndexMetadata
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"first line\nstaged line\nunstaged line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	NSString *patch = @"diff --git a/tracked.txt b/tracked.txt\n"
+					  @"--- a/tracked.txt\n"
+					  @"+++ b/tracked.txt\n"
+					  @"@@ -1 +1,2 @@\n"
+					  @" first line\n"
+					  @"+staged line\n";
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue([self.repository.index applyPatch:patch stage:YES reverse:NO]);
+	}];
+
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	tracked.commitBlobMode = @"100644";
+	tracked.commitBlobSHA = [[self.fixture git:@[ @"rev-parse", @":tracked.txt" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertTrue([self.repository.index unstageFiles:@[ tracked ]]);
+
+	NSString *stagedNames = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];
+	NSString *workingText = [NSString stringWithContentsOfFile:[self.fixture.path stringByAppendingPathComponent:@"tracked.txt"] encoding:NSUTF8StringEncoding error:&error];
+	XCTAssertEqualObjects(stagedNames, @"");
+	XCTAssertEqualObjects(workingText, @"first line\nstaged line\nunstaged line\n");
 }
 
 - (void)testAmendRefreshTreatsFileAddedByLastCommitAsNew
@@ -528,6 +555,62 @@
 	XCTAssertEqual(added.status, NEW);
 	XCTAssertTrue(added.hasStagedChanges);
 	XCTAssertFalse(added.hasUnstagedChanges);
+}
+
+- (void)testAmendCanUnstageModifiedFileAddedByLastCommit
+{
+	NSError *error = nil;
+	NSString *path = @"folder/spaced ünicode.txt";
+	XCTAssertTrue([self.fixture writeText:@"committed\n" toPath:path error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"add file" error:&error], @"%@", error);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"committed\nmodified\n" toPath:path error:&error], @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	XCTAssertEqual([self changedFileAtPath:path].status, MODIFIED);
+	[self refreshIndexAfterPerforming:^{
+		self.repository.index.amend = YES;
+	}];
+	PBChangedFile *added = [self changedFileAtPath:path];
+	XCTAssertNotNil(added);
+	XCTAssertEqual(added.status, NEW);
+	XCTAssertTrue(added.hasStagedChanges);
+	XCTAssertTrue(added.hasUnstagedChanges);
+	XCTAssertTrue([self.repository.index unstageFiles:@[ added ]]);
+
+	NSString *stagedNames = [self.fixture git:@[ @"diff", @"--cached", @"--name-only", @"HEAD^" ] error:&error];
+	NSString *indexEntry = [self.fixture git:@[ @"ls-files", @"--stage", @"--", path ] error:&error];
+	NSString *workingText = [NSString stringWithContentsOfFile:[self.fixture.path stringByAppendingPathComponent:path] encoding:NSUTF8StringEncoding error:&error];
+	XCTAssertEqualObjects(stagedNames, @"");
+	XCTAssertEqualObjects(indexEntry, @"");
+	XCTAssertEqualObjects(workingText, @"committed\nmodified\n");
+}
+
+- (void)testRefreshPublishesOneCoherentIndexUpdate
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"untracked\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	__block NSUInteger updateCount = 0;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexIndexUpdated
+					object:self.repository.index
+					 queue:NSOperationQueue.mainQueue
+				usingBlock:^(__unused NSNotification *notification) {
+					updateCount++;
+				}];
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	XCTAssertEqual(updateCount, 1);
+	XCTAssertNotNil([self changedFileAtPath:@"tracked.txt"]);
+	XCTAssertNotNil([self changedFileAtPath:@"untracked.txt"]);
 }
 
 - (void)testReadOnlyRefreshSucceedsWhileIndexLockExists
@@ -553,6 +636,25 @@
 	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
 	XCTAssertEqual(failureCount, 0);
 	XCTAssertNotNil([self changedFileAtPath:@"tracked.txt"]);
+}
+
+- (void)testWholeFileUnstageFailureLeavesIndexUntouched
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	NSString *lockPath = [self.fixture.path stringByAppendingPathComponent:@".git/index.lock"];
+	XCTAssertTrue([NSData.data writeToFile:lockPath options:NSDataWritingAtomic error:&error], @"%@", error);
+
+	XCTAssertFalse([self.repository.index unstageFiles:@[ tracked ]]);
+
+	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
+	NSString *stagedNames = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];
+	XCTAssertEqualObjects(stagedNames, @"tracked.txt\n");
 }
 
 - (void)testDiscardRestoresTrackedFilesButLeavesUntrackedFiles
