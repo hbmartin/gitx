@@ -84,6 +84,9 @@ final class GitXSwiftFeatureTests: XCTestCase {
             try runGit(["init", "--quiet"], in: worktree)
             try runGit(["config", "core.repositoryformatversion", "1"], in: worktree)
 
+            XCTAssertNil(PBRepositoryFinder.workDir(for: worktree))
+            XCTAssertNil(PBRepositoryFinder.fileURL(for: worktree))
+
             let cliURL = try XCTUnwrap(Bundle.main.url(forResource: "gitx", withExtension: nil))
             let process = Process()
             process.executableURL = cliURL

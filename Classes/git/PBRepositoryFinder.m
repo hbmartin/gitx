@@ -69,17 +69,27 @@
 
 + (NSURL *)fileURLForURL:(NSURL *)inputURL
 {
-	NSURL *gitDir = [self gitDirForURL:inputURL];
-	if (!gitDir) {
-		return nil; // not a Git directory at all
+	if (!inputURL.isFileURL) {
+		return nil;
 	}
 
-	NSURL *workDir = [self workDirForURL:inputURL];
-	if (workDir) {
-		return workDir; // root of this working copy or deepest submodule
+	git_repository *repo = NULL;
+	int gitResult = git_repository_open_ext(&repo,
+										inputURL.path.UTF8String,
+										GIT_REPOSITORY_OPEN_CROSS_FS,
+										NULL);
+	if (gitResult != GIT_OK || !repo) {
+		return nil;
 	}
 
-	return gitDir; // bare repo
+	const char *repositoryPath = git_repository_workdir(repo);
+	if (!repositoryPath) {
+		repositoryPath = git_repository_path(repo); // bare repository
+	}
+	NSURL *result = repositoryPath ? [NSURL fileURLWithPath:[NSString stringWithUTF8String:repositoryPath]] : nil;
+
+	git_repository_free(repo);
+	return result;
 }
 
 @end
