@@ -336,6 +336,22 @@
 	XCTAssertFalse([patch containsString:@"No newline at end of file"]);
 }
 
+- (void)testNativeDiffKeepsAdjacentHtaccessLineSelectionStable
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSArray *header = @[ @"diff --git a/.htaccess b/.htaccess", @"--- a/.htaccess", @"+++ b/.htaccess" ];
+	NSArray *hunk = @[ @"@@ -1,4 +1,6 @@", @" RewriteEngine On", @" RewriteCond %{REQUEST_FILENAME} !-f", @"+RewriteCond %{REQUEST_URI} !^/index\\.php", @"+RewriteRule ^ index.php [L]", @" RewriteRule ^ old.php [L]", @" RewriteCond %{REQUEST_FILENAME} !-d" ];
+	NSMutableIndexSet *selected = [NSMutableIndexSet indexSetWithIndex:3];
+	[selected addIndex:4];
+
+	NSString *patch = [view patchWithFileHeader:header hunkLines:hunk selectedIndexes:selected reverse:NO];
+
+	XCTAssertNotNil(patch);
+	XCTAssertTrue([patch containsString:@"+RewriteCond %{REQUEST_URI} !^/index\\.php\n"]);
+	XCTAssertTrue([patch containsString:@"+RewriteRule ^ index.php [L]\n"]);
+	XCTAssertTrue([patch containsString:@" RewriteRule ^ old.php [L]\n"]);
+}
+
 - (void)testNativeDiffExtractsPathsContainingSpacesAndRenameDestinations
 {
 	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];

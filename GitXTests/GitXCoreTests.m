@@ -485,6 +485,76 @@
 	XCTAssertFalse([self.repository.index applyPatch:@"not a patch\n" stage:YES reverse:NO]);
 }
 
+- (void)testRefreshRepresentsPartiallyStagedFileInBothSections
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"first line\nstaged line\nunstaged line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	NSString *patch = @"diff --git a/tracked.txt b/tracked.txt\n"
+		@"--- a/tracked.txt\n"
+		@"+++ b/tracked.txt\n"
+		@"@@ -1 +1,2 @@\n"
+		@" first line\n"
+		@"+staged line\n";
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue([self.repository.index applyPatch:patch stage:YES reverse:NO]);
+	}];
+
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	XCTAssertEqual(tracked.status, MODIFIED);
+	XCTAssertTrue(tracked.hasStagedChanges);
+	XCTAssertTrue(tracked.hasUnstagedChanges);
+	NSString *stagedDiff = [self.repository.index diffForFile:tracked staged:YES contextLines:3];
+	NSString *unstagedDiff = [self.repository.index diffForFile:tracked staged:NO contextLines:3];
+	XCTAssertTrue([stagedDiff containsString:@"+staged line"]);
+	XCTAssertFalse([stagedDiff containsString:@"unstaged line"]);
+	XCTAssertTrue([unstagedDiff containsString:@"+unstaged line"]);
+}
+
+- (void)testAmendRefreshTreatsFileAddedByLastCommitAsNew
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"new file\n" toPath:@"amended.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"add file" error:&error], @"%@", error);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		self.repository.index.amend = YES;
+	}];
+
+	PBChangedFile *added = [self changedFileAtPath:@"amended.txt"];
+	XCTAssertNotNil(added);
+	XCTAssertEqual(added.status, NEW);
+	XCTAssertTrue(added.hasStagedChanges);
+	XCTAssertFalse(added.hasUnstagedChanges);
+}
+
+- (void)testReadOnlyRefreshSucceedsWhileIndexLockExists
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	NSString *lockPath = [self.fixture.path stringByAppendingPathComponent:@".git/index.lock"];
+	XCTAssertTrue([NSData.data writeToFile:lockPath options:NSDataWritingAtomic error:&error], @"%@", error);
+	__block NSUInteger failureCount = 0;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexIndexRefreshFailed
+					object:self.repository.index
+					 queue:NSOperationQueue.mainQueue
+				usingBlock:^(__unused NSNotification *notification) {
+					failureCount++;
+				}];
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
+	XCTAssertEqual(failureCount, 0);
+	XCTAssertNotNil([self changedFileAtPath:@"tracked.txt"]);
+}
+
 - (void)testDiscardRestoresTrackedFilesButLeavesUntrackedFiles
 {
 	NSError *error = nil;
