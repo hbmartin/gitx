@@ -1,10 +1,10 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.2129,
+  "minimumLineCoverage": 0.2135,
   "files": {
     "Classes/GitXRelativeDateFormatter.m": 0.6666,
-    "Classes/Util/PBTask.m": 0.8895,
+    "Classes/Util/PBTask.m": 0.9143,
     "Classes/Views/PBHighlighting.swift": 1.0,
     "Classes/Views/PBNativeContentView.m": 0.5706,
     "Classes/git/PBGitBinary.m": 0.6105,
