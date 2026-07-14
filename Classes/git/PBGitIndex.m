@@ -201,6 +201,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			[self addFilesFromDictionary:unstagedDictionary staged:NO tracked:YES];
 		if (untrackedDictionary)
 			[self addFilesFromDictionary:untrackedDictionary staged:NO tracked:NO];
+		NSLog(@"[GitX] Merged index refresh snapshots: %lu staged, %lu unstaged, %lu untracked",
+			  (unsigned long)stagedDictionary.count,
+			  (unsigned long)unstagedDictionary.count,
+			  (unsigned long)untrackedDictionary.count);
 
 		// We need to find all files that don't have either
 		// staged or unstaged files, and delete them
@@ -555,6 +559,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		NSError *error = nil;
 		BOOL success = NO;
 		if (stage) {
+			NSLog(@"[GitX] Staging paths %lu-%lu of %lu", (unsigned long)loopFrom, (unsigned long)loopTo, (unsigned long)filesCount);
 			// Input is a NUL-delimited list of paths, equivalent to git add.
 			NSMutableString *input = [NSMutableString string];
 			for (NSUInteger i = loopFrom; i < loopTo; i++) {
@@ -565,9 +570,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 														 input:input
 														 error:&error];
 		} else {
+			NSString *parentTree = [self parentTree];
+			NSLog(@"[GitX] Unstaging paths %lu-%lu of %lu from %@", (unsigned long)loopFrom, (unsigned long)loopTo, (unsigned long)filesCount, parentTree);
 			// Reset paths from the comparison tree instead of trusting cached
 			// PBChangedFile blob metadata, which can lag behind partial staging.
-			NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:@"reset", @"--quiet", [self parentTree], @"--", nil];
+			NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:@"reset", @"--quiet", parentTree, @"--", nil];
 			for (NSUInteger i = loopFrom; i < loopTo; i++) {
 				PBChangedFile *file = [files objectAtIndex:i];
 				[arguments addObject:file.path];

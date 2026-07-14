@@ -19,7 +19,81 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)reset;
 @end
 
+@interface NSObject (PBRefreshCoalescerTesting)
+- (instancetype)initWithDeliveryHandler:(void (^)(void))deliveryHandler;
+- (void)requestRefresh;
+- (void)cancel;
+@end
+
 @interface RepositoryRefreshCoordinatorTests : XCTestCase
+@end
+
+@interface RefreshCoalescerTests : XCTestCase
+@end
+
+@implementation RefreshCoalescerTests
+
+- (void)testBurstOfRefreshRequestsDeliversOnce
+{
+	Class coalescerClass = NSClassFromString(@"PBRefreshCoalescer");
+	XCTAssertNotNil(coalescerClass);
+	if (!coalescerClass) return;
+	XCTestExpectation *delivered = [self expectationWithDescription:@"Refresh delivered"];
+	__block NSUInteger deliveryCount = 0;
+	id coalescer = [[coalescerClass alloc] initWithDeliveryHandler:^{
+		deliveryCount++;
+		[delivered fulfill];
+	}];
+
+	[coalescer requestRefresh];
+	[coalescer requestRefresh];
+	[coalescer requestRefresh];
+
+	[self waitForExpectations:@[ delivered ] timeout:1.0];
+	XCTAssertEqual(deliveryCount, (NSUInteger)1);
+}
+
+- (void)testRequestDuringDeliveryProducesOneTrailingRefresh
+{
+	Class coalescerClass = NSClassFromString(@"PBRefreshCoalescer");
+	XCTAssertNotNil(coalescerClass);
+	if (!coalescerClass) return;
+	XCTestExpectation *delivered = [self expectationWithDescription:@"Initial and trailing refresh delivered"];
+	delivered.expectedFulfillmentCount = 2;
+	__block NSUInteger deliveryCount = 0;
+	__block id coalescer = nil;
+	coalescer = [[coalescerClass alloc] initWithDeliveryHandler:^{
+		deliveryCount++;
+		if (deliveryCount == 1) {
+			[coalescer requestRefresh];
+			[coalescer requestRefresh];
+		}
+		[delivered fulfill];
+	}];
+
+	[coalescer requestRefresh];
+
+	[self waitForExpectations:@[ delivered ] timeout:1.0];
+	XCTAssertEqual(deliveryCount, (NSUInteger)2);
+}
+
+- (void)testCancellationDropsPendingRefresh
+{
+	Class coalescerClass = NSClassFromString(@"PBRefreshCoalescer");
+	XCTAssertNotNil(coalescerClass);
+	if (!coalescerClass) return;
+	XCTestExpectation *delivered = [self expectationWithDescription:@"Cancelled refresh is not delivered"];
+	delivered.inverted = YES;
+	id coalescer = [[coalescerClass alloc] initWithDeliveryHandler:^{
+		[delivered fulfill];
+	}];
+
+	[coalescer requestRefresh];
+	[coalescer cancel];
+
+	[self waitForExpectations:@[ delivered ] timeout:0.1];
+}
+
 @end
 
 NS_ASSUME_NONNULL_END

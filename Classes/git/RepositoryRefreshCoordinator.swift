@@ -42,6 +42,67 @@ private final class DispatchRepositoryRefreshScheduler: RepositoryRefreshSchedul
     }
 }
 
+/// Coalesces duplicate controller invalidations into one refresh on the next main-loop turn.
+@objc(PBRefreshCoalescer)
+final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declaration
+    private let deliveryHandler: () -> Void
+    private let lock = NSLock()
+    private var generation: UInt64 = 0
+    private var scheduledGeneration: UInt64?
+
+    @objc(initWithDeliveryHandler:)
+    init(deliveryHandler: @escaping () -> Void) {
+        self.deliveryHandler = deliveryHandler
+    }
+
+    deinit {
+        cancel()
+    }
+
+    @objc
+    func requestRefresh() {
+        lock.lock()
+        guard scheduledGeneration == nil else {
+            lock.unlock()
+            NSLog("[GitX] Coalesced a duplicate stage-diff refresh request")
+            return
+        }
+
+        generation &+= 1
+        let requestedGeneration = generation
+        scheduledGeneration = requestedGeneration
+        lock.unlock()
+
+        NSLog("[GitX] Scheduled a stage-diff refresh for the next main-loop turn")
+
+        DispatchQueue.main.async { [weak self] in
+            self?.deliver(generation: requestedGeneration)
+        }
+    }
+
+    @objc
+    func cancel() {
+        lock.lock()
+        generation &+= 1
+        scheduledGeneration = nil
+        lock.unlock()
+        NSLog("[GitX] Cancelled the pending stage-diff refresh")
+    }
+
+    private func deliver(generation requestedGeneration: UInt64) {
+        lock.lock()
+        guard scheduledGeneration == requestedGeneration else {
+            lock.unlock()
+            return
+        }
+        scheduledGeneration = nil
+        lock.unlock()
+
+        NSLog("[GitX] Delivering one coalesced stage-diff refresh")
+        deliveryHandler()
+    }
+}
+
 /// Debounces repository events for the Objective-C repository watcher.
 @objc(PBRepositoryRefreshCoordinator)
 final class RepositoryRefreshCoordinator: NSObject { // swiftlint:disable:this unused_declaration

@@ -8,9 +8,16 @@
 static void *const UnstagedFileSelectedContext = @"UnstagedFileSelectedContext";
 static void *const CachedFileSelectedContext = @"CachedFileSelectedContext";
 
+@interface PBRefreshCoalescer : NSObject
+- (instancetype)initWithDeliveryHandler:(void (^)(void))deliveryHandler;
+- (void)requestRefresh;
+- (void)cancel;
+@end
+
 @interface PBWebChangesController () <PBNativeContentViewDelegate>
 @property (nonatomic) NSUInteger contextLines;
 @property (nonatomic) NSTextField *contextValueLabel;
+@property (nonatomic) PBRefreshCoalescer *refreshCoalescer;
 @end
 
 @implementation PBWebChangesController
@@ -19,6 +26,10 @@ static void *const CachedFileSelectedContext = @"CachedFileSelectedContext";
 {
 	[super awakeFromNib];
 	self.nativeView.delegate = self;
+	__weak typeof(self) weakSelf = self;
+	self.refreshCoalescer = [[PBRefreshCoalescer alloc] initWithDeliveryHandler:^{
+		[weakSelf refresh];
+	}];
 	NSNumber *savedContext = [[NSUserDefaults standardUserDefaults] objectForKey:@"PBStageDiffContextLines"];
 	self.contextLines = savedContext ? savedContext.unsignedIntegerValue : 3;
 	NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 34)];
@@ -59,6 +70,8 @@ static void *const CachedFileSelectedContext = @"CachedFileSelectedContext";
 
 - (void)closeView
 {
+	[self.refreshCoalescer cancel];
+	self.refreshCoalescer = nil;
 	[unstagedFilesController removeObserver:self forKeyPath:@"selection"];
 	[stagedFilesController removeObserver:self forKeyPath:@"selection"];
 	[super closeView];
@@ -72,7 +85,7 @@ static void *const CachedFileSelectedContext = @"CachedFileSelectedContext";
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
 {
 	if (context == UnstagedFileSelectedContext || context == CachedFileSelectedContext) {
-		[self refresh];
+		[self.refreshCoalescer requestRefresh];
 		return;
 	}
 	[super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
@@ -95,8 +108,11 @@ static void *const CachedFileSelectedContext = @"CachedFileSelectedContext";
 	NSMutableArray<NSDictionary *> *sections = [NSMutableArray array];
 	for (PBChangedFile *file in stagedFilesController.selectedObjects) [sections addObject:[self sectionForFile:file staged:YES]];
 	for (PBChangedFile *file in unstagedFilesController.selectedObjects) [sections addObject:[self sectionForFile:file staged:NO]];
-	if (sections.count == 0) [self.nativeView showMessage:@"No file selected"];
-	else [self.nativeView showDiffSections:sections];
+	NSLog(@"[GitX] Rendering %lu selected stage-diff sections", (unsigned long)sections.count);
+	if (sections.count == 0)
+		[self.nativeView showMessage:@"No file selected"];
+	else
+		[self.nativeView showDiffSections:sections];
 }
 
 - (void)showMultiple:(NSArray *)files
@@ -112,23 +128,23 @@ static void *const CachedFileSelectedContext = @"CachedFileSelectedContext";
 - (void)nativeContentView:(PBNativeContentView *)view performDiffAction:(NSString *)action patch:(NSString *)patch
 {
 	if ([action isEqualToString:@"stage"]) {
+		NSLog(@"[GitX] Applying a partial stage patch");
 		[controller.index applyPatch:patch stage:YES reverse:NO];
-		[self refresh];
 	} else if ([action isEqualToString:@"unstage"]) {
+		NSLog(@"[GitX] Applying a partial unstage patch");
 		[controller.index applyPatch:patch stage:YES reverse:YES];
-		[self refresh];
 	} else if ([action isEqualToString:@"discard"]) {
 		NSAlert *alert = [[NSAlert alloc] init];
 		alert.messageText = NSLocalizedString(@"Discard hunk", @"");
 		alert.informativeText = NSLocalizedString(@"Are you sure you wish to discard this hunk? This operation cannot be undone.", @"");
 		[alert addButtonWithTitle:NSLocalizedString(@"Discard", @"")];
 		[alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"")];
-		[alert beginSheetModalForWindow:self.view.window completionHandler:^(NSModalResponse response) {
-			if (response == NSAlertFirstButtonReturn) {
-				[self->controller.index applyPatch:patch stage:NO reverse:YES];
-				[self refresh];
-			}
-		}];
+		[alert beginSheetModalForWindow:self.view.window
+					  completionHandler:^(NSModalResponse response) {
+						  if (response == NSAlertFirstButtonReturn) {
+							  [self->controller.index applyPatch:patch stage:NO reverse:YES];
+						  }
+					  }];
 	}
 }
 
