@@ -17,9 +17,12 @@
 	}
 
 	git_repository *repo = NULL;
-	git_repository_open_ext(&repo, fileURL.path.UTF8String, GIT_REPOSITORY_OPEN_CROSS_FS, NULL);
-	if (!repo) {
-		return NULL;
+	int gitResult = git_repository_open_ext(&repo,
+											fileURL.path.UTF8String,
+											GIT_REPOSITORY_OPEN_CROSS_FS,
+											NULL);
+	if (gitResult != GIT_OK || !repo) {
+		return nil;
 	}
 
 	const char *workdir = git_repository_workdir(repo);

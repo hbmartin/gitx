@@ -77,4 +77,29 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertNil(PBRepositoryFinder.gitDir(for: webURL))
         XCTAssertNil(PBRepositoryFinder.fileURL(for: webURL))
     }
+
+    func testCommandLineToolDoesNotCrashWhenLibgitRejectsRepositoryFormat() throws {
+        try withTemporaryDirectory { worktree in
+            try runGit(["init", "--quiet"], in: worktree)
+            try runGit(["config", "core.repositoryformatversion", "1"], in: worktree)
+
+            let cliURL = try XCTUnwrap(Bundle.main.url(forResource: "gitx", withExtension: nil))
+            let process = Process()
+            process.executableURL = cliURL
+            process.currentDirectoryURL = worktree
+            process.arguments = []
+            var environment = ProcessInfo.processInfo.environment
+            environment["PWD"] = worktree.path
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+
+            try process.run()
+            process.waitUntilExit()
+
+            XCTAssertEqual(process.terminationReason, .exit)
+            XCTAssertEqual(process.terminationStatus, 0)
+        }
+    }
 }
