@@ -1,0 +1,31 @@
+included:
+  - Classes
+  - GitXTests
+
+excluded:
+  - External
+  - build
+
+only_rules:
+  - duplicate_imports
+  - empty_count
+  - empty_string
+  - identical_operands
+  - overridden_super_call
+  - prohibited_super_call
+  - redundant_nil_coalescing
+  - unowned_variable_capture
+  - unused_closure_parameter
+  - unused_control_flow_label
+  - unused_enumerated
+  - unused_optional_binding
+  - unused_setter_value
+  - weak_delegate
+  - yoda_condition
+
+analyzer_rules:
+  - unused_declaration
+  - unused_import
+
+strict: true
+reporter: xcode

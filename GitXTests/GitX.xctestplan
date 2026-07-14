@@ -19,17 +19,13 @@
   },
   "testTargets" : [
     {
+      "skippedTests" : [
+        "GitXPerformanceTests"
+      ],
       "target" : {
         "containerPath" : "container:GitX.xcodeproj",
         "identifier" : "C0DE2000000000000000000B",
         "name" : "GitXTests"
-      }
-    },
-    {
-      "target" : {
-        "containerPath" : "container:GitX.xcodeproj",
-        "identifier" : "CC000008A000008",
-        "name" : "GitXUITests"
       }
     }
   ],

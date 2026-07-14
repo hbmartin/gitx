@@ -27,8 +27,15 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: "26.3"
-      - name: Install formatters and workflow linters
-        run: brew install swiftformat shellcheck actionlint
+      - name: Restore pinned Swift tool cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.mint
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.3-mint-${{ hashFiles('Mintfile') }}
+      - name: Install pinned Swift tools and workflow linters
+        run: |
+          brew install mint shellcheck actionlint
+          mint bootstrap
       - name: Run static checks
         env:
           BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -45,6 +52,15 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: "26.3"
+      - name: Restore pinned Swift tool cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.mint
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.3-mint-${{ hashFiles('Mintfile') }}
+      - name: Install pinned Swift tools
+        run: |
+          brew install mint
+          mint bootstrap
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git
@@ -55,8 +71,8 @@ jobs:
           xcodebuild test \
             -workspace GitX.xcworkspace \
             -scheme GitX \
+            -testPlan GitX \
             -destination "platform=macOS,arch=arm64" \
-            -only-testing:GitXTests \
             -enableCodeCoverage YES \
             CODE_SIGN_IDENTITY="-" \
             -resultBundlePath "$RUNNER_TEMP/GitXTests.xcresult"
@@ -75,6 +91,37 @@ jobs:
           path: |
             ${{ runner.temp }}/GitXTests.xcresult
             ${{ runner.temp }}/GitXAnalyze.log
+
+  ui:
+    name: UI workflows
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.3"
+      - name: Prepare ObjectiveGit
+        run: |
+          cd External/objective-git
+          script/bootstrap
+          script/update_libgit2
+      - name: Run UI plan
+        run: |
+          xcodebuild test \
+            -workspace GitX.xcworkspace \
+            -scheme GitX \
+            -testPlan GitXUI \
+            -destination "platform=macOS,arch=arm64" \
+            CODE_SIGN_IDENTITY="-" \
+            -resultBundlePath "$RUNNER_TEMP/GitXUI.xcresult"
+      - name: Upload UI result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: GitXUI-results
+          path: ${{ runner.temp }}/GitXUI.xcresult
 
   sanitizers:
     name: ${{ matrix.name }}
@@ -107,4 +154,43 @@ jobs:
             -scheme GitX \
             -testPlan "${{ matrix.test_plan }}" \
             -destination "platform=macOS,arch=arm64" \
-            CODE_SIGN_IDENTITY="-"
+            CODE_SIGN_IDENTITY="-" \
+            -resultBundlePath "$RUNNER_TEMP/${{ matrix.test_plan }}.xcresult"
+      - name: Upload sanitizer result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.test_plan }}-results
+          path: ${{ runner.temp }}/${{ matrix.test_plan }}.xcresult
+
+  performance:
+    name: performance suite
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.3"
+      - name: Prepare ObjectiveGit
+        run: |
+          cd External/objective-git
+          script/bootstrap
+          script/update_libgit2
+      - name: Run performance suite
+        run: |
+          xcodebuild test \
+            -workspace GitX.xcworkspace \
+            -scheme GitX \
+            -testPlan GitXPerformance \
+            -destination "platform=macOS,arch=arm64" \
+            CODE_SIGN_IDENTITY="-" \
+            -resultBundlePath "$RUNNER_TEMP/GitXPerformance.xcresult"
+      - name: Upload performance result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: GitXPerformance-results
+          path: ${{ runner.temp }}/GitXPerformance.xcresult

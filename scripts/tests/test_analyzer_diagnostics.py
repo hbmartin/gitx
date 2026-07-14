@@ -56,6 +56,12 @@ class AnalyzerDiagnosticsTests(unittest.TestCase):
         self.assertEqual(first_diagnostic.fingerprint, moved_diagnostic.fingerprint)
         self.assertEqual(first_diagnostic.fingerprint.path, "Classes/Legacy.m")
 
+        test_diagnostic = self.module.parse_diagnostics(
+            "/tmp/build/GitX/GitXTests/GitXCoreTests.m:12:4: warning: "
+            "test warning [-Wunused-variable]"
+        )[0]
+        self.assertEqual(test_diagnostic.path, "GitXTests/GitXCoreTests.m")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,65 @@
 {
-  "-Wdeprecated-declarations": 16
+  "version": 2,
+  "warnings": [
+    {
+      "path": "Classes/Controllers/PBGitCommitController.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead",
+      "count": 2
+    },
+    {
+      "path": "Classes/Controllers/PBRepositoryDocumentController.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSFileHandlingPanelOKButton' is deprecated: first deprecated in macOS 10.13",
+      "count": 1
+    },
+    {
+      "path": "Classes/Controllers/PBRepositoryDocumentController.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'setAllowedFileTypes:' is deprecated: first deprecated in macOS 12.0 - Use -allowedContentTypes instead",
+      "count": 1
+    },
+    {
+      "path": "Classes/PBCLIProxy.h",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSConnection' is deprecated: first deprecated in macOS 10.13 - Use NSXPCConnection instead",
+      "count": 2
+    },
+    {
+      "path": "Classes/PBCLIProxy.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSConnection' is deprecated: first deprecated in macOS 10.13 - Use NSXPCConnection instead",
+      "count": 1
+    },
+    {
+      "path": "Classes/Views/PBCommitMessageView.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead",
+      "count": 2
+    },
+    {
+      "path": "Classes/Views/PBQLOutlineView.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSFilesPromisePboardType' is deprecated: first deprecated in macOS 10.14",
+      "count": 3
+    },
+    {
+      "path": "Classes/Views/PBQLOutlineView.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSRightMouseDown' is deprecated: first deprecated in macOS 10.12",
+      "count": 1
+    },
+    {
+      "path": "Classes/Views/PBSourceViewBadge.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSBackgroundStyleDark' is deprecated: first deprecated in macOS 11.0",
+      "count": 2
+    },
+    {
+      "path": "Classes/Views/PBSourceViewBadge.m",
+      "category": "-Wdeprecated-declarations",
+      "message": "'NSCenterTextAlignment' is deprecated: first deprecated in macOS 10.12",
+      "count": 1
+    }
+  ]
 }

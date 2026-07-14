@@ -16,10 +16,14 @@ xcodebuild analyze \
     -workspace GitX.xcworkspace \
     -scheme GitX \
     -configuration Debug \
-    -destination "platform=macOS,arch=arm64" \
-    -derivedDataPath "$derived_data" \
-    ARCHS=arm64 \
-    CODE_SIGN_IDENTITY="-" \
+	-destination "platform=macOS,arch=arm64" \
+	-derivedDataPath "$derived_data" \
+	ARCHS=arm64 \
+	CLANG_STATIC_ANALYZER_MODE_ON_ANALYZE_ACTION=deep \
+	CLANG_WARN_NULLABILITY_COMPLETENESS=YES \
+	CLANG_WARN_NULLABILITY_COMPLETENESS_ON_ARRAYS=YES \
+	CODE_SIGN_IDENTITY="-" \
     2>&1 | tee "$log_path"
 
 python3 scripts/check_analyzer_diagnostics.py "$log_path"
+scripts/run_pinned_tool.sh swiftlint analyze --strict --config .swiftlint.yml --baseline .swiftlint-baseline.json --compiler-log-path "$log_path"
