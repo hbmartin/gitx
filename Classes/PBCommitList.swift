@@ -17,12 +17,6 @@ import Cocoa
     @objc dynamic var useAdjustScroll: Bool = false
     @objc private(set) var mouseDownPoint: NSPoint = .zero
 
-    // MARK: - Lifecycle
-
-    override func awakeFromNib() {
-        super.awakeFromNib()
-    }
-
     // MARK: - Drag and Drop
 
     override func draggingSession(_ session: NSDraggingSession,

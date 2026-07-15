@@ -26,12 +26,12 @@ jobs:
           fetch-depth: 0
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "26.3"
+          xcode-version: "26.2"
       - name: Restore pinned Swift tool cache
         uses: actions/cache@v5
         with:
           path: ~/.mint
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.3-mint-${{ hashFiles('Mintfile') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.2-mint-${{ hashFiles('Mintfile') }}
       - name: Install pinned Swift tools and workflow linters
         run: |
           brew install mint shellcheck actionlint
@@ -51,12 +51,12 @@ jobs:
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "26.3"
+          xcode-version: "26.2"
       - name: Restore pinned Swift tool cache
         uses: actions/cache@v5
         with:
           path: ~/.mint
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.3-mint-${{ hashFiles('Mintfile') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.2-mint-${{ hashFiles('Mintfile') }}
       - name: Install pinned Swift tools
         run: |
           brew install mint
@@ -101,7 +101,7 @@ jobs:
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "26.3"
+          xcode-version: "26.2"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git
@@ -141,7 +141,7 @@ jobs:
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "26.3"
+          xcode-version: "26.2"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git
@@ -173,7 +173,7 @@ jobs:
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "26.3"
+          xcode-version: "26.2"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git

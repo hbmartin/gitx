@@ -2,11 +2,11 @@ import Dispatch
 import Foundation
 import Synchronization
 
-protocol RepositoryRefreshScheduledAction: AnyObject, Sendable {
+nonisolated protocol RepositoryRefreshScheduledAction: AnyObject, Sendable {
     func cancel()
 }
 
-protocol RepositoryRefreshScheduling: AnyObject, Sendable {
+nonisolated protocol RepositoryRefreshScheduling: AnyObject, Sendable {
     /// Implementations enqueue `action`; they must not execute it synchronously.
     func schedule(
         after delay: TimeInterval,
@@ -14,7 +14,7 @@ protocol RepositoryRefreshScheduling: AnyObject, Sendable {
     ) -> any RepositoryRefreshScheduledAction
 }
 
-private final class DispatchRepositoryRefreshAction: RepositoryRefreshScheduledAction, Sendable {
+private final nonisolated class DispatchRepositoryRefreshAction: RepositoryRefreshScheduledAction, Sendable {
     private let isCancelled = Mutex(false)
 
     func cancel() {
@@ -30,7 +30,7 @@ private final class DispatchRepositoryRefreshAction: RepositoryRefreshScheduledA
     }
 }
 
-private final class DispatchRepositoryRefreshScheduler: RepositoryRefreshScheduling, Sendable {
+private final nonisolated class DispatchRepositoryRefreshScheduler: RepositoryRefreshScheduling, Sendable {
     private let queue = DispatchQueue(label: "org.gitx.repositoryRefreshCoordinator")
 
     func schedule(
@@ -96,7 +96,7 @@ final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declar
 
 /// Debounces repository events for the Objective-C repository watcher.
 @objc(PBRepositoryRefreshCoordinator)
-final class RepositoryRefreshCoordinator: NSObject, Sendable { // swiftlint:disable:this unused_declaration
+final nonisolated class RepositoryRefreshCoordinator: NSObject, Sendable { // swiftlint:disable:this unused_declaration
     typealias DeliveryHandler = @Sendable (UInt, [String]) -> Void
     typealias CallbackExecutor = @Sendable (@escaping @Sendable () -> Void) -> Void
 

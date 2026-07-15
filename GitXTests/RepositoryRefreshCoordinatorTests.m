@@ -14,6 +14,17 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)cancel;
 @end
 
+@interface PBCommitRenderInput : NSObject
+@property (nonatomic, copy, readonly) NSString *sha;
+@property (nonatomic, copy, readonly) NSString *title;
+- (instancetype)initWithSHA:(NSString *)sha
+				  parentSHA:(nullable NSString *)parentSHA
+				  shortName:(NSString *)shortName
+					subject:(NSString *)subject
+					 author:(NSString *)author
+				 authorDate:(NSString *)authorDate;
+@end
+
 @interface PBThreadCheckedRepository : PBGitRepository
 
 @property (nonatomic, readonly) NSUInteger offMainGTRepositoryAccessCount;
@@ -341,6 +352,26 @@ NS_ASSUME_NONNULL_END
 	XCTAssertEqual(deliveredPaths.count, (NSUInteger)64);
 	XCTAssertEqualObjects(deliveredPaths.firstObject, @"/repository/path-0");
 	XCTAssertEqualObjects(deliveredPaths.lastObject, @"/repository/path-9");
+}
+
+- (void)testCommitRenderInputMetadataCanBeReadOnBackgroundRenderQueue
+{
+	PBCommitRenderInput *input = [[PBCommitRenderInput alloc] initWithSHA:@"abcdef0123456789"
+																parentSHA:nil
+																shortName:@"abcdef0"
+																  subject:@"Render safely"
+																   author:@"Ada"
+															   authorDate:@"Today"];
+	XCTestExpectation *readFinished = [self expectationWithDescription:@"render metadata read"];
+	__block NSString *renderedTitle = nil;
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		renderedTitle = [NSString stringWithFormat:@"%@ — %@", input.sha, input.title];
+		[readFinished fulfill];
+	});
+
+	[self waitForExpectations:@[ readFinished ] timeout:2.0];
+	XCTAssertEqualObjects(renderedTitle, @"abcdef0123456789 — abcdef0  Render safely\nAda — Today");
 }
 
 - (void)testCancellationDropsPendingBatch

@@ -1985,12 +1985,15 @@
 				INSTALL_PATH = /Applications;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks";
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitX;
 				PRODUCT_NAME = GitX;
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_OBJC_BRIDGING_HEADER = "Classes/GitX-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				VALID_ARCHS = "x86_64 arm64";
 				VERSIONING_SYSTEM = "apple-generic";
 				WRAPPER_EXTENSION = app;
@@ -2024,9 +2027,11 @@
 				PRODUCT_NAME = GitX;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_INSTALLED_PRODUCT = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_OBJC_BRIDGING_HEADER = "Classes/GitX-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				VALID_ARCHS = "x86_64 arm64";
 				VERSIONING_SYSTEM = "apple-generic";
 				WRAPPER_EXTENSION = app;
@@ -2222,12 +2227,14 @@
 					"$(PROJECT_DIR)/Classes/Util",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks";
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "GitXTests/GitXTests-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GitX.app/Contents/MacOS/GitX";
 			};
 			name = Debug;
@@ -2249,9 +2256,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "GitXTests/GitXTests-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
-				SWIFT_VERSION = 5.0;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GitX.app/Contents/MacOS/GitX";
 			};
 			name = Release;

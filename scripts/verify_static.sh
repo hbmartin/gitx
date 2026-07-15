@@ -54,6 +54,7 @@ fi
 scripts/run_pinned_tool.sh swiftlint lint --strict --config .swiftlint.yml --baseline .swiftlint-baseline.json
 
 python3 scripts/check_header_interop.py "$merge_base"
+python3 scripts/check_swift_concurrency_escapes.py
 
 find Resources -name '*.plist' -print0 | xargs -0 -n1 plutil -lint
 find Resources -name '*.xib' -print0 | while IFS= read -r -d '' xib; do

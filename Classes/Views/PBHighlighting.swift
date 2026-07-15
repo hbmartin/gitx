@@ -2,7 +2,7 @@ import Cocoa
 import HighlightKit
 
 @objc(PBHighlighting)
-final class PBHighlighting: NSObject {
+final nonisolated class PBHighlighting: NSObject {
     private static let maximumHighlightedDiffByteCount = 200 * 1024
 
     private static let extensionLanguages: [String: String] = [

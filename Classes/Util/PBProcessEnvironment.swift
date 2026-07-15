@@ -1,7 +1,7 @@
 import Foundation
 
 @objc(PBProcessEnvironment)
-final class PBProcessEnvironment: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class PBProcessEnvironment: NSObject { // swiftlint:disable:this unused_declaration
     @objc(preparedEnvironment:homeDirectory:)
     // swiftlint:disable:next unused_declaration
     static func preparedEnvironment(

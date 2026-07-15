@@ -434,6 +434,19 @@
 	XCTAssertTrue(view.textView.isSelectable);
 }
 
+- (void)testHighlightingCanRunOnTheBackgroundRenderQueue
+{
+	XCTestExpectation *highlighted = [self expectationWithDescription:@"background highlighting completed"];
+	__block NSAttributedString *result = nil;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		result = [PBHighlighting highlightedStringForText:@"let value = 42\n" path:@"Example.swift"];
+		[highlighted fulfill];
+	});
+
+	[self waitForExpectations:@[ highlighted ] timeout:2.0];
+	XCTAssertEqualObjects(result.string, @"let value = 42\n");
+}
+
 - (void)testNativeDiffCombinesSyntaxAndDiffHighlighting
 {
 	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
