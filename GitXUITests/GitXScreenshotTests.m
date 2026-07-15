@@ -254,6 +254,51 @@
 	[self saveWindowScreenshotNamed:@"staging-view"];
 }
 
+- (void)testPartiallyStagedAdditionShowsOnlyTheIndexedContent
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
+	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
+	NSString *newPath = [fixture stringByAppendingPathComponent:@"partial.txt"];
+	XCTAssertTrue([@"staged line\n" writeToFile:newPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	XCTAssertTrue(([self runGit:@[ @"add", @"partial.txt" ] inDirectory:fixture]));
+	XCTAssertTrue([@"staged line\nunstaged line\n" writeToFile:newPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	[self openStagingView];
+
+	XCUIElement *stagedTable = self.app.tables[@"StagedFiles"];
+	XCUIElement *unstagedTable = self.app.tables[@"UnstagedFiles"];
+	XCUIElement *stagedFile = stagedTable.staticTexts[@"partial.txt"];
+	XCTAssertTrue([stagedFile waitForExistenceWithTimeout:10]);
+	XCTAssertTrue([unstagedTable.staticTexts[@"partial.txt"] waitForExistenceWithTimeout:10]);
+	[stagedFile click];
+	XCUIElement *diff = self.app.textViews.firstMatch;
+	NSPredicate *indexedContent = [NSPredicate predicateWithFormat:@"value CONTAINS 'staged line' AND NOT value CONTAINS 'unstaged line'"];
+	XCTNSPredicateExpectation *diffExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:indexedContent object:diff];
+	[self waitForExpectations:@[ diffExpectation ] timeout:15];
+	[self saveWindowScreenshotNamed:@"partially-staged-addition-index-diff"];
+}
+
+- (void)testHistoryRemainsUsableAfterResizingWhileHidden
+{
+	XCTAssertTrue([self waitForWindow]);
+	[self openStagingView];
+	XCUIElement *window = self.app.windows.firstMatch;
+	CGRect originalFrame = window.frame;
+	[self.app.menuBars.menuBarItems[@"Window"] click];
+	XCUIElement *zoom = self.app.menuItems[@"Zoom"];
+	XCTAssertTrue([zoom waitForExistenceWithTimeout:5]);
+	[zoom click];
+	XCTAssertNotEqual(window.frame.size.width, originalFrame.size.width);
+
+	XCUIElement *history = [self selectHistoryForCurrentBranch];
+	XCTAssertTrue([history.tableRows.firstMatch waitForExistenceWithTimeout:15]);
+	XCTAssertTrue(self.app.textViews.firstMatch.exists, @"The restored history view should retain its native diff renderer");
+	[self saveWindowScreenshotNamed:@"history-after-hidden-resize"];
+}
+
 - (void)testSpaceStagesFilesAndSuccessfulCommitPushesWithoutASecondConfirmation
 {
 	[self.app terminate];
