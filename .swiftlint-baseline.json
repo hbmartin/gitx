@@ -65,7 +65,7 @@
       "location": {
         "file": "Classes/Views/PBFileChangesTableView.swift",
         "line": 11,
-        "character": 13
+        "character": 25
       },
       "ruleDescription": "Declarations should be referenced at least once within all files linted",
       "severity": "error",
@@ -102,7 +102,7 @@
       "reason": "Declarations should be referenced at least once within all files linted",
       "ruleName": "Unused Declaration"
     },
-    "text": "final class PBHighlighting: NSObject {"
+    "text": "final nonisolated class PBHighlighting: NSObject {"
   },
   {
     "violation": {
