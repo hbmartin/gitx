@@ -271,7 +271,6 @@
 	XCTAssertEqualObjects([alpha valueForKey:@"stringValue"], @"Alpha");
 	XCTAssertEqual([root findRev:revision], revisionItem);
 
-	[folder removeChild:nil];
 	[folder removeChild:alpha];
 	[folder removeChild:bravo];
 	[folder removeChild:revisionItem];

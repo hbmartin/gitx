@@ -34,7 +34,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithWatcher:(PBGitRepositoryWatcher *)watcher;
 @end
 
-extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
+extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable streamRef,
 										   void *clientCallBackInfo,
 										   size_t numEvents,
 										   void *eventPaths,
