@@ -24,6 +24,8 @@
 #import "NSSplitView+GitX.h"
 // GitXRelativeDateFormatter.swift owns the implementation.
 #import "GitXRelativeDateFormatter.h"
+// PBHistoryArrayController.swift owns the implementation.
+#import "PBHistoryArrayController.h"
 
 // ── Add further headers below only when a Swift source file needs them ────────
 // PBCommitList.swift needs these:
@@ -36,3 +38,4 @@
 #import "PBGitCommit.h"
 #import "PBGitRef.h"
 #import "PBHighlighting.h"
+#import "PBGitDefaults.h"
