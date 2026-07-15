@@ -257,21 +257,21 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertFalse(PBReferenceActionPolicy.canPush(refishType: "remote branch"))
     }
 
-    func testReferenceActionPolicyCharacterizesCurrentDeletionEligibility() {
+    func testReferenceActionPolicyAllowsRemoteTrackingBranchRemoval() {
         XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "branch"))
         XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "remote"))
         XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "tag"))
-        XCTAssertFalse(PBReferenceActionPolicy.canDelete(refishType: "remote branch"))
+        XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "remote branch"))
     }
 
-    func testReferenceActionPolicyCharacterizesCurrentDeletionMenuTitles() {
+    func testReferenceActionPolicyDistinguishesDeleteFromLocalRemoval() {
         XCTAssertEqual(
             PBReferenceActionPolicy.deletionMenuTitle(refName: "origin/topic", isRemote: true),
-            "Delete “origin/topic”…"
+            "Remove “origin/topic”…"
         )
         XCTAssertEqual(
             PBReferenceActionPolicy.deletionMenuTitle(refName: "topic", isRemote: false),
-            "Remove “topic”…"
+            "Delete “topic”…"
         )
     }
 

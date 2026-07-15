@@ -74,7 +74,7 @@ final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_d
 
     @objc(canDeleteRefishType:)
     static func canDelete(refishType: String?) -> Bool { // swiftlint:disable:this unused_declaration
-        [kGitXBranchType, kGitXRemoteType, kGitXTagType].contains(refishType)
+        [kGitXBranchType, kGitXRemoteType, kGitXRemoteBranchType, kGitXTagType].contains(refishType)
     }
 
     @objc(deletionMenuTitleForRefName:isRemote:)
@@ -84,12 +84,12 @@ final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_d
     ) -> String { // swiftlint:disable:this unused_declaration
         let format = isRemote
             ? NSLocalizedString(
-                "Delete “%@”…",
-                comment: "Contextual Menu Item to delete a local ref (e.g. branch)"
+                "Remove “%@”…",
+                comment: "Contextual menu item to remove a local remote or remote-tracking ref"
             )
             : NSLocalizedString(
-                "Remove “%@”…",
-                comment: "Contextual Menu Item to remove a remote"
+                "Delete “%@”…",
+                comment: "Contextual menu item to delete a local ref (e.g. branch)"
             )
         return String(format: format, refName)
     }
