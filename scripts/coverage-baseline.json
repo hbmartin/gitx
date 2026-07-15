@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.2752,
+  "minimumLineCoverage": 0.2753,
   "files": {
     "Classes/GitXRelativeDateFormatter.m": 0.6666,
     "Classes/Util/PBTask.m": 0.9143,
