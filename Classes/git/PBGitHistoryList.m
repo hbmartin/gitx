@@ -9,12 +9,15 @@
 #import "PBGitHistoryList.h"
 #import "PBGitRepository.h"
 #import "PBGitRevList.h"
+#import "PBGitCommit.h"
 #import "PBGitGrapher.h"
 #import "PBGitHistoryGrapher.h"
 #import "PBGitRef.h"
 #import "PBGitRevSpecifier.h"
 
 @interface PBGitHistoryList () <PBGitHistoryGrapherDelegate>
+
+@property (nonatomic) NSMutableSet<NSString *> *publishedCommitSHAs;
 
 - (void)resetGraphing;
 
@@ -110,17 +113,26 @@
 {
 	if (!array || [array count] == 0)
 		return;
+	NSMutableArray<PBGitCommit *> *uniqueCommits = [NSMutableArray arrayWithCapacity:array.count];
+	for (PBGitCommit *commit in array) {
+		if ([self.publishedCommitSHAs containsObject:commit.SHA]) continue;
+		[self.publishedCommitSHAs addObject:commit.SHA];
+		[uniqueCommits addObject:commit];
+	}
+	if (uniqueCommits.count == 0) return;
 
 	if (resetCommits) {
-		self.commits = [NSMutableArray array];
+		self.commits = [uniqueCommits mutableCopy];
 		resetCommits = NO;
+		NSLog(@"[GitX] Atomically replaced history with %lu commits", (unsigned long)uniqueCommits.count);
+		return;
 	}
 
-	NSRange range = NSMakeRange([commits count], [array count]);
+	NSRange range = NSMakeRange([commits count], [uniqueCommits count]);
 	NSIndexSet *indexes = [NSIndexSet indexSetWithIndexesInRange:range];
 
 	[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indexes forKey:@"commits"];
-	[commits addObjectsFromArray:array];
+	[commits addObjectsFromArray:uniqueCommits];
 	[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indexes forKey:@"commits"];
 }
 
@@ -136,6 +148,12 @@
 - (void)finishedGraphing
 {
 	if (!currentRevList.parsing && ([[graphQueue operations] count] == 0)) {
+		if (resetCommits && currentRevList.commits.count == 0) {
+			self.commits = [NSMutableArray array];
+			self.publishedCommitSHAs = [NSMutableSet set];
+			resetCommits = NO;
+			NSLog(@"[GitX] Cleared history after an empty revision load");
+		}
 		self.isUpdating = NO;
 	}
 }
@@ -148,6 +166,7 @@
 {
 	resetCommits = YES;
 	self.isUpdating = YES;
+	self.publishedCommitSHAs = [NSMutableSet set];
 
 	[graphQueue cancelAllOperations];
 	graphQueue = [[NSOperationQueue alloc] init];
@@ -241,8 +260,9 @@
 						options:NSKeyValueObservingOptionNew
 						  block:^(MAKVONotification *notification) {
 							  PBGitHistoryList *observer = notification.observer;
-							  if (notification.kind == NSKeyValueChangeInsertion) {
+							  if (notification.kind == NSKeyValueChangeInsertion || notification.kind == NSKeyValueChangeSetting) {
 								  NSArray *newCommits = notification.newValue;
+								  if (newCommits.count == 0) return;
 								  if ([observer->repository.currentBranch isSimpleRef])
 									  [observer->graphQueue addOperation:[observer operationForCommits:newCommits]];
 								  else
@@ -327,7 +347,6 @@
 		lastBranchFilter = -1;
 		lastRemoteRef = nil;
 		lastOID = nil;
-		self.commits = [NSMutableArray array];
 		[projectRevList loadRevisionsWithCompletionBlock:^{
 			dispatch_async(dispatch_get_main_queue(), ^{
 				[self finishedGraphing];
@@ -348,7 +367,6 @@
 	lastBranchFilter = -1;
 	lastRemoteRef = nil;
 	lastOID = nil;
-	self.commits = [NSMutableArray array];
 
 	[otherRevListParser loadRevisionsWithCompletionBlock:^{
 		dispatch_async(dispatch_get_main_queue(), ^{

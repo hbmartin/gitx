@@ -2,6 +2,7 @@
 #import <ObjectiveGit/GTCommit.h>
 #import <ObjectiveGit/GTOID.h>
 #import <ObjectiveGit/GTRepository.h>
+#import "MAKVONotificationCenter.h"
 
 #import "PBChangedFile.h"
 #import "PBGraphCellInfo.h"
@@ -484,6 +485,42 @@
 
 	NSArray<PBGitCommit *> *commits = self.repository.revisionList.commits;
 	NSSet<NSString *> *uniqueSHAs = [NSSet setWithArray:[commits valueForKey:@"SHA"]];
+	XCTAssertEqual(commits.count, expectedCount);
+	XCTAssertEqual(uniqueSHAs.count, expectedCount);
+}
+
+- (void)testRapidHistoryRefreshKeepsAUniqueNonemptySnapshot
+{
+	NSError *error = nil;
+	for (NSUInteger index = 0; index < 12; index++) {
+		NSString *path = [NSString stringWithFormat:@"rapid-history-%lu.txt", (unsigned long)index];
+		XCTAssertTrue([self.fixture writeText:path toPath:path error:&error], @"%@", error);
+		XCTAssertTrue([self.fixture commitAllWithMessage:path error:&error], @"%@", error);
+	}
+	NSUInteger expectedCount = [[self.fixture git:@[ @"rev-list", @"--count", @"HEAD" ] error:&error] integerValue];
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+
+	PBGitHistoryList *history = self.repository.revisionList;
+	XCTAssertEqual(history.commits.count, expectedCount);
+	NSMutableArray<NSNumber *> *publishedCounts = [NSMutableArray array];
+	id<MAKVOObservation> observation = [history addObserver:self
+								keyPath:@"commits"
+								options:0
+								  block:^(__unused MAKVONotification *notification) {
+		[publishedCounts addObject:@(history.commits.count)];
+	}];
+
+	[self.repository forceUpdateRevisions];
+	XCTAssertEqual(history.commits.count, expectedCount, @"Refresh should retain the previous snapshot until replacement data is ready");
+	[self.repository forceUpdateRevisions];
+	[self waitForHistoryUpdate];
+	[observation remove];
+
+	NSArray<PBGitCommit *> *commits = history.commits;
+	NSSet<NSString *> *uniqueSHAs = [NSSet setWithArray:[commits valueForKey:@"SHA"]];
+	XCTAssertFalse([publishedCounts containsObject:@0], @"A nonempty refresh should not flash an empty commit list");
 	XCTAssertEqual(commits.count, expectedCount);
 	XCTAssertEqual(uniqueSHAs.count, expectedCount);
 }
