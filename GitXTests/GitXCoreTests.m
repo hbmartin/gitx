@@ -3,7 +3,6 @@
 #import <ObjectiveGit/GTOID.h>
 #import <ObjectiveGit/GTRepository.h>
 #import "MAKVONotificationCenter.h"
-
 #import "PBMacros.h"
 #import "PBChangedFile.h"
 #import "PBGraphCellInfo.h"
@@ -270,6 +269,10 @@
 	XCTAssertTrue([[folder description] containsString:@"Folder"]);
 	XCTAssertEqualObjects([alpha valueForKey:@"stringValue"], @"Alpha");
 	XCTAssertEqual([root findRev:revision], revisionItem);
+
+	NSUInteger childCount = folder.sortedChildren.count;
+	[folder removeChild:nil];
+	XCTAssertEqual(folder.sortedChildren.count, childCount, @"Removing a nil child should be a no-op");
 
 	[folder removeChild:alpha];
 	[folder removeChild:bravo];
@@ -1016,6 +1019,38 @@
 	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
 	XCTAssertEqual(failureCount, 0);
 	XCTAssertNotNil([self changedFileAtPath:@"tracked.txt"]);
+}
+
+- (void)testRefreshReportsFailureWhenUntrackedScanCannotReadExcludes
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"untracked\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	PBChangedFile *untracked = [self changedFileAtPath:@"untracked.txt"];
+	XCTAssertNotNil(untracked);
+
+	NSString *gitDirectory = [self.fixture.path stringByAppendingPathComponent:@".git"];
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.excludesFile", gitDirectory ] error:&error]), @"%@", error);
+	NSMutableArray<NSString *> *failureDescriptions = [NSMutableArray array];
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexIndexRefreshFailed
+					object:self.repository.index
+					 queue:NSOperationQueue.mainQueue
+				usingBlock:^(NSNotification *notification) {
+					[failureDescriptions addObject:notification.userInfo[@"description"]];
+				}];
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"--unset", @"core.excludesFile" ] error:&error]), @"%@", error);
+	XCTAssertTrue([failureDescriptions containsObject:@"ls-files failed"]);
+	XCTAssertEqual([self changedFileAtPath:@"untracked.txt"], untracked,
+		@"A failed refresh must preserve the last coherent untracked snapshot");
 }
 
 - (void)testWholeFileUnstageFailureLeavesIndexUntouched

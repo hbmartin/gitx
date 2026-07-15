@@ -119,6 +119,24 @@
 
 @interface PBAutoFetchManager (GitXFeatureTests)
 + (NSTimeInterval)retryDelayForFailureCount:(NSUInteger)failureCount;
+- (void)timerFired:(NSTimer *)timer;
+@end
+
+@interface PBAutoFetchManagerSpy : PBAutoFetchManager
+
+@property (nonatomic) NSUInteger evaluationCount;
+@property (nonatomic) BOOL lastEvaluationWasImmediate;
+
+@end
+
+@implementation PBAutoFetchManagerSpy
+
+- (void)evaluateRepositoriesForImmediateFetch:(BOOL)immediate
+{
+	self.evaluationCount++;
+	self.lastEvaluationWasImmediate = immediate;
+}
+
 @end
 
 @implementation GitXFeatureTests
@@ -173,6 +191,20 @@
 	XCTAssertEqual([PBGitDefaults autoFetchIntervalMinutes], 1440);
 	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
 	XCTAssertEqual([PBGitDefaults autoFetchScope], PBAutoFetchScopeOpenRepositories);
+}
+
+- (void)testAutoFetchTimerRequestsANonImmediateEvaluation
+{
+	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
+	NSTimer *timer = [NSTimer timerWithTimeInterval:1
+											repeats:NO
+											  block:^(__unused NSTimer *firedTimer){
+											  }];
+
+	[manager timerFired:timer];
+
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1);
+	XCTAssertFalse(manager.lastEvaluationWasImmediate);
 }
 
 - (void)testJumpToCheckedOutBranchReloadsAndReadsHead
