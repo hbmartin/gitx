@@ -132,6 +132,7 @@
 					options:0
 					  block:^(MAKVONotification *notification) {
 						  PBGitHistoryController *observer = notification.observer;
+						  observer->forceSelectionUpdate = YES;
 						  // Reset the sorting
 						  if ([[observer.commitController sortDescriptors] count]) {
 							  [observer.commitController setSortDescriptors:[NSArray array]];
@@ -250,6 +251,22 @@
 	if ([self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class] && uncommittedChanges) {
 		[commitController setSelectedObjects:@[ uncommittedChanges ]];
 		return;
+	}
+	if (!forceSelectionUpdate && self.selectedCommits.count) {
+		NSMutableArray<PBGitCommit *> *preservedSelection = [NSMutableArray arrayWithCapacity:self.selectedCommits.count];
+		for (PBGitCommit *selectedCommit in self.selectedCommits) {
+			for (PBGitCommit *candidate in commitController.content) {
+				if ([candidate.OID isEqual:selectedCommit.OID]) {
+					[preservedSelection addObject:candidate];
+					break;
+				}
+			}
+		}
+		if (preservedSelection.count == self.selectedCommits.count) {
+			[commitController setSelectedObjects:preservedSelection];
+			NSLog(@"[GitX] Preserved %lu selected commits across a history update", (unsigned long)preservedSelection.count);
+			return;
+		}
 	}
 
 	if ([self.repository.currentBranch isSimpleRef])

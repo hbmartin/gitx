@@ -382,6 +382,30 @@
 	[self saveWindowScreenshotNamed:@"uncommitted-changes-row"];
 }
 
+- (void)testWorkingStateInsertionPreservesAnOlderCommitSelection
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
+	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow]);
+	XCUIElement *table = [self selectHistoryForCurrentBranch];
+	XCUIElement *initialRow = [table.tableRows containingType:XCUIElementTypeStaticText identifier:@"Initial"].firstMatch;
+	XCTAssertTrue([initialRow waitForExistenceWithTimeout:15]);
+	[initialRow click];
+	XCTAssertTrue(initialRow.isSelected);
+
+	NSString *trackedPath = [fixture stringByAppendingPathComponent:@"tracked.swift"];
+	XCTAssertTrue([@"tracked\nsecond\nthird\nexternal edit\n" writeToFile:trackedPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	XCUIElement *workingState = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == '0 staged, 1 unstaged, 0 untracked'"]].firstMatch;
+	XCTAssertTrue([workingState waitForExistenceWithTimeout:15]);
+	XCUIElement *currentInitialRow = [table.tableRows containingType:XCUIElementTypeStaticText identifier:@"Initial"].firstMatch;
+	XCTAssertTrue(currentInitialRow.isSelected, @"Adding Working State must not jump an older selection to HEAD. %@", table.debugDescription);
+	[self saveWindowScreenshotNamed:@"working-state-preserves-old-selection"];
+}
+
 - (void)testMultipleCommitSelectionShowsDiffPresentationControl
 {
 	XCTAssertTrue([self waitForWindow], @"Commit selection requires a repository window");
