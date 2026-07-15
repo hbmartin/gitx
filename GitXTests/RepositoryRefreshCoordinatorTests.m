@@ -390,11 +390,15 @@ NS_ASSUME_NONNULL_END
 	dispatch_queue_t eventQueue = dispatch_queue_create(
 		"org.gitx.tests.concurrentRepositoryEvents",
 		DISPATCH_QUEUE_CONCURRENT);
-	dispatch_apply(64, eventQueue, ^(size_t index) {
-		NSUInteger eventType = (NSUInteger)1 << (index % 4);
-		NSString *path = [NSString stringWithFormat:@"/repository/path-%zu", index];
-		[coordinator recordEventType:eventType paths:@[ path ]];
-	});
+	dispatch_group_t eventGroup = dispatch_group_create();
+	for (NSUInteger index = 0; index < 64; index++) {
+		dispatch_group_async(eventGroup, eventQueue, ^{
+			NSUInteger eventType = (NSUInteger)1 << (index % 4);
+			NSString *path = [NSString stringWithFormat:@"/repository/path-%lu", (unsigned long)index];
+			[coordinator recordEventType:eventType paths:@[ path ]];
+		});
+	}
+	XCTAssertEqual(dispatch_group_wait(eventGroup, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)), (long)0);
 
 	[self waitForExpectations:@[ delivered ] timeout:2.0];
 	XCTAssertEqual(deliveredEventType, (NSUInteger)0xF);
