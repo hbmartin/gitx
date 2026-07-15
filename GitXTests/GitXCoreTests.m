@@ -427,6 +427,28 @@
 	}
 }
 
+- (void)testPushTagToSelectedRemote
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-tag-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		XCTAssertTrue([self.repository addRemote:@"origin" withURL:remotePath error:&error], @"%@", error);
+		XCTAssertTrue([self.repository createTag:@"v-selected" message:@"" atRefish:self.repository.headRef.ref error:&error], @"%@", error);
+		PBGitRef *tag = [self.repository refForName:@"v-selected"];
+		PBGitRef *remote = [PBGitRef refFromString:@"refs/remotes/origin"];
+		XCTAssertNotNil(tag);
+		XCTAssertEqualObjects(tag.refishType, kGitXTagType);
+
+		XCTAssertTrue([self.repository pushBranch:tag toRemote:remote error:&error], @"%@", error);
+		NSString *localTag = [self.fixture git:@[ @"rev-parse", @"refs/tags/v-selected" ] error:&error];
+		NSString *remoteTag = [self.fixture git:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/tags/v-selected" ] error:&error];
+		XCTAssertEqualObjects(remoteTag, localTag);
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
 - (void)testDetachedHeadIsRepresentedByHeadSpecifier
 {
 	NSError *error = nil;
