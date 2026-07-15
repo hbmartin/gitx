@@ -36,4 +36,27 @@ NS_ASSUME_NONNULL_BEGIN
     NS_SWIFT_NAME(plan(configuredRemoteNames:existingRemoteNames:nonEmptyRemoteNames:));
 @end
 
+@interface PBCommitRenderInput : NSObject
+@property (nonatomic, copy, readonly) NSString *sha;
+@property (nonatomic, copy, readonly, nullable) NSString *parentSHA;
+@property (nonatomic, copy, readonly) NSString *shortName;
+@property (nonatomic, copy, readonly) NSString *title;
+@property (nonatomic, copy, readonly) NSArray<NSString *> *imageRevisions;
+- (instancetype)initWithSHA:(NSString *)sha
+                  parentSHA:(nullable NSString *)parentSHA
+                  shortName:(NSString *)shortName
+                    subject:(NSString *)subject
+                     author:(NSString *)author
+                 authorDate:(NSString *)authorDate;
+@end
+
+@interface PBWorkingStateRefreshPolicy : NSObject
++ (BOOL)shouldReplaceDisplayedDiff:(nullable NSString *)displayedDiff
+                      renderedDiff:(NSString *)renderedDiff;
+@end
+
+@interface PBRewindOverlayView : NSView
+- (instancetype)initWithFrame:(NSRect)frameRect;
+@end
+
 NS_ASSUME_NONNULL_END

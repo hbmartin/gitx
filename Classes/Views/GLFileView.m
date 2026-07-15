@@ -11,6 +11,7 @@
 #import "PBGitIndex.h"
 #import "PBChangedFile.h"
 #import "PBTask.h"
+#import "PBGitBinary.h"
 
 static NSString *const PBEmptyTreeSHA = @"4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -111,13 +112,30 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 	}
 }
 
+- (NSDictionary<NSString *, id> *)imageSourceForRevisions:(NSArray<NSString *> *)revisions workingTree:(BOOL)workingTree
+{
+	NSAssert(NSThread.isMainThread, @"Image source state must be captured on the main thread");
+	PBGitRepository *repository = historyController.repository;
+	NSMutableDictionary<NSString *, id> *source = [@{
+		PBNativeImageSourceRevisionsKey : revisions,
+		PBNativeImageSourceWorkingTreeKey : @(workingTree),
+	} mutableCopy];
+	if (repository.workingDirectoryURL) source[PBNativeImageSourceWorkingTreeURLKey] = repository.workingDirectoryURL;
+	if (PBGitBinary.path) source[PBNativeImageSourceGitLaunchPathKey] = PBGitBinary.path;
+	if (repository.gitURL.path) source[PBNativeImageSourceGitDirectoryKey] = repository.gitURL.path;
+	if (repository.workingDirectory) source[PBNativeImageSourceTaskDirectoryKey] = repository.workingDirectory;
+	return source;
+}
+
 - (NSArray<NSDictionary *> *)diffSectionsForTrees:(NSArray<PBGitTree *> *)trees
-										   commit:(PBGitCommit *)commit
+								 workingState:(BOOL)workingState
+									 commitSHA:(NSString *)commitSHA
+									 parentSHA:(nullable NSString *)parentSHA
 										  changes:(NSArray<PBChangedFile *> *)changes
+									 imageSource:(NSDictionary<NSString *, id> *)imageSource
 									   generation:(NSUInteger)generation
 {
 	NSMutableArray *sections = [NSMutableArray array];
-	BOOL workingState = [commit isKindOfClass:PBUncommittedChanges.class];
 	for (PBGitTree *tree in trees) {
 		if (![self isFileLoadGenerationCurrent:generation]) return @[];
 		if (!tree.leaf) continue;
@@ -131,18 +149,18 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 			}
 			if (!change) continue;
 			if (change.hasStagedChanges) {
-				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:3] ?: @"", PBNativeSectionContextKey : @"readOnly"}];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:3] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
 			}
 			if (change.hasUnstagedChanges) {
 				BOOL untracked = change.status == NEW && !change.hasStagedChanges;
 				NSString *diffText = untracked ? [self syntheticDiffForUntrackedFile:change] : [historyController.repository.index diffForFile:change staged:NO contextLines:3];
-				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly"}];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
 			}
 		} else {
-			NSString *base = commit.parents.firstObject.SHA ?: PBEmptyTreeSHA;
+			NSString *base = parentSHA ?: PBEmptyTreeSHA;
 			NSError *error = nil;
-			NSString *patch = [historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, commit.SHA, @"--", tree.fullPath ] error:&error] ?: @"";
-			[sections addObject:@{PBNativeSectionTitleKey : tree.fullPath, PBNativeSectionTextKey : patch, PBNativeSectionContextKey : @"readOnly"}];
+			NSString *patch = [historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, commitSHA, @"--", tree.fullPath ] error:&error] ?: @"";
+			[sections addObject:@{PBNativeSectionTitleKey : tree.fullPath, PBNativeSectionTextKey : patch, PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
 		}
 	}
 	return sections;
@@ -161,6 +179,11 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 	}
 	PBFileMode mode = self.modeControl.selectedSegment;
 	PBGitCommit *commit = historyController.selectedCommits.firstObject;
+	BOOL workingState = [commit isKindOfClass:PBUncommittedChanges.class];
+	NSString *commitSHA = commit.SHA ?: @"";
+	NSString *parentSHA = commit.parents.firstObject.SHA;
+	NSArray<NSString *> *imageRevisions = workingState || !commitSHA.length ? @[] : @[ commitSHA ];
+	NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:imageRevisions workingTree:workingState];
 	NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
 	dispatch_async(self.fileLoadQueue, ^{
 		if (![self isFileLoadGenerationCurrent:generation]) return;
@@ -178,7 +201,8 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 				[sections addObject:@{PBNativeSectionTitleKey : file.fullPath ?: file.path, PBNativeSectionEntriesKey : [self historyEntriesForTree:file]}];
 			}
 		}
-		if (mode == PBFileModeDiff) sections = [[self diffSectionsForTrees:selected commit:commit changes:changes generation:generation] mutableCopy];
+		if (mode == PBFileModeDiff)
+			sections = [[self diffSectionsForTrees:selected workingState:workingState commitSHA:commitSHA parentSHA:parentSHA changes:changes imageSource:imageSource generation:generation] mutableCopy];
 		if (![self isFileLoadGenerationCurrent:generation]) return;
 		dispatch_async(dispatch_get_main_queue(), ^{
 			if (![self isFileLoadGenerationCurrent:generation]) return;
@@ -202,17 +226,26 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 	[historyController selectCommit:[GTOID oidWithSHA:sha]];
 }
 
-- (NSImage *)nativeContentView:(PBNativeContentView *)view imageForPath:(NSString *)path section:(NSUInteger)sectionIndex
+- (nullable NSData *)nativeContentView:(PBNativeContentView *)view
+				 imageDataForPath:(NSString *)path
+						section:(NSUInteger)sectionIndex
+					 imageSource:(NSDictionary<NSString *, id> *)imageSource
 {
-	PBGitCommit *commit = historyController.selectedCommits.firstObject;
-	NSData *data = nil;
-	if ([commit isKindOfClass:PBUncommittedChanges.class]) {
-		data = [NSData dataWithContentsOfURL:[historyController.repository.workingDirectoryURL URLByAppendingPathComponent:path]];
-	} else if (commit.SHA.length) {
-		PBTask *task = [historyController.repository taskWithArguments:@[ @"show", [NSString stringWithFormat:@"%@:%@", commit.SHA, path] ]];
-		if ([task launchTask:nil]) data = task.standardOutputData;
+	if ([imageSource[PBNativeImageSourceWorkingTreeKey] boolValue]) {
+		NSURL *workingTreeURL = imageSource[PBNativeImageSourceWorkingTreeURLKey];
+		NSData *data = [NSData dataWithContentsOfURL:[workingTreeURL URLByAppendingPathComponent:path]];
+		if (data.length) return data;
 	}
-	return data.length ? [[NSImage alloc] initWithData:data] : nil;
+	NSString *launchPath = imageSource[PBNativeImageSourceGitLaunchPathKey];
+	NSString *gitDirectory = imageSource[PBNativeImageSourceGitDirectoryKey];
+	if (!launchPath.length || !gitDirectory.length) return nil;
+	for (NSString *revision in imageSource[PBNativeImageSourceRevisionsKey] ?: @[]) {
+		NSString *object = [revision isEqualToString:@":"] ? [@":" stringByAppendingString:path] : [NSString stringWithFormat:@"%@:%@", revision, path];
+		NSArray<NSString *> *arguments = @[ [@"--git-dir=" stringByAppendingString:gitDirectory], @"show", object ];
+		PBTask *task = [PBTask taskWithLaunchPath:launchPath arguments:arguments inDirectory:imageSource[PBNativeImageSourceTaskDirectoryKey]];
+		if ([task launchTask:nil] && task.standardOutputData.length) return task.standardOutputData;
+	}
+	return nil;
 }
 
 - (void)closeView

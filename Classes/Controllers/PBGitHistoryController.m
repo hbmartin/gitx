@@ -226,9 +226,23 @@
 	BOOL wasSelected = [self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class];
 	BOOL isDirty = self.repository.index.indexChanges.count > 0;
 	if (isDirty) {
-		uncommittedChanges = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
-		((PBHistoryArrayController *)commitController).pinnedObject = uncommittedChanges;
-		if (wasSelected) [commitController setSelectedObjects:@[ uncommittedChanges ]];
+		if (!uncommittedChanges) {
+			uncommittedChanges = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+			((PBHistoryArrayController *)commitController).pinnedObject = uncommittedChanges;
+			if (wasSelected) [commitController setSelectedObjects:@[ uncommittedChanges ]];
+		} else {
+			[uncommittedChanges refreshFromRepository];
+			NSArray *arrangedCommits = commitController.arrangedObjects;
+			NSUInteger row = [arrangedCommits indexOfObjectIdenticalTo:uncommittedChanges];
+			if (row != NSNotFound)
+				[commitList reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row] columnIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, commitList.numberOfColumns)]];
+			if (wasSelected) {
+				if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex)
+					[self updateKeys];
+				else
+					[webHistoryController refreshDisplayedContent];
+			}
+		}
 	} else {
 		uncommittedChanges = nil;
 		((PBHistoryArrayController *)commitController).pinnedObject = nil;

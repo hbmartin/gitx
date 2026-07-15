@@ -11,6 +11,66 @@
 
 import Cocoa
 
+/// Immutable commit metadata captured before history rendering leaves the main thread.
+@objc(PBCommitRenderInput)
+final class CommitRenderInput: NSObject { // swiftlint:disable:this unused_declaration
+    @objc let sha: String
+    @objc let parentSHA: String?
+    @objc let shortName: String
+    @objc let title: String
+    @objc let imageRevisions: [String]
+
+    @objc(initWithSHA:parentSHA:shortName:subject:author:authorDate:)
+    init(
+        sha: String,
+        parentSHA: String?,
+        shortName: String,
+        subject: String,
+        author: String,
+        authorDate: String
+    ) {
+        self.sha = sha
+        self.parentSHA = parentSHA
+        self.shortName = shortName
+        title = "\(shortName)  \(subject)\n\(author) — \(authorDate)"
+        imageRevisions = [sha, parentSHA].compactMap { $0 }
+    }
+}
+
+/// Avoids replacing a visible Working State document when only its refresh notification changed.
+@objc(PBWorkingStateRefreshPolicy)
+final class WorkingStateRefreshPolicy: NSObject { // swiftlint:disable:this unused_declaration
+    @objc(shouldReplaceDisplayedDiff:renderedDiff:)
+    static func shouldReplaceDisplayedDiff( // swiftlint:disable:this unused_declaration
+        _ displayedDiff: String?,
+        renderedDiff: String
+    ) -> Bool {
+        displayedDiff != renderedDiff
+    }
+}
+
+/// A single layer-backed surface for the transient search-wrap indicator.
+@objc(PBRewindOverlayView)
+final class RewindOverlayView: NSView { // swiftlint:disable:this unused_declaration
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureLayer()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("PBRewindOverlayView is created programmatically")
+    }
+
+    private func configureLayer() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor(calibratedWhite: 0, alpha: 0.5).cgColor
+        layer?.borderColor = NSColor(calibratedWhite: 0.5, alpha: 0.5).cgColor
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 12
+    }
+}
+
 /// Supplies the refresh-on-focus preference to Objective-C controllers.
 @objc(PBRepositoryRefreshPolicy)
 final class RepositoryRefreshPolicy: NSObject { // swiftlint:disable:this unused_declaration

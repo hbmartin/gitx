@@ -1064,6 +1064,32 @@
 	XCTAssertEqualObjects(changes.details, changes.subject);
 }
 
+- (void)testUncommittedChangesRefreshesStatsAndInvalidatesCachedTree
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+	PBGitTree *unstagedTree = changes.tree;
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	XCTAssertEqual(changes.stagedCount, 0);
+	XCTAssertEqual(changes.unstagedCount, 1);
+
+	XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	[changes refreshFromRepository];
+
+	XCTAssertEqual(changes.stagedCount, 1);
+	XCTAssertEqual(changes.unstagedCount, 0);
+	XCTAssertNotEqual(changes.tree, unstagedTree);
+}
+
 @end
 
 

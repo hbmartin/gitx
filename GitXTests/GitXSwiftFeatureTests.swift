@@ -2,6 +2,53 @@ import AppKit
 import XCTest
 
 final class GitXSwiftFeatureTests: XCTestCase {
+    func testCommitRenderInputFreezesPlainMetadataAndImageRevisions() {
+        let input = PBCommitRenderInput(
+            sha: "abcdef0123456789",
+            parentSHA: "1234567890abcdef",
+            shortName: "abcdef0",
+            subject: "Render safely",
+            author: "Ada",
+            authorDate: "Today"
+        )
+
+        XCTAssertEqual(input.sha, "abcdef0123456789")
+        XCTAssertEqual(input.parentSHA, "1234567890abcdef")
+        XCTAssertEqual(input.shortName, "abcdef0")
+        XCTAssertEqual(input.title, "abcdef0  Render safely\nAda — Today")
+        XCTAssertEqual(input.imageRevisions, ["abcdef0123456789", "1234567890abcdef"])
+    }
+
+    func testCommitRenderInputOmitsMissingRootParentFromImageRevisions() {
+        let input = PBCommitRenderInput(
+            sha: "abcdef0123456789",
+            parentSHA: nil,
+            shortName: "abcdef0",
+            subject: "Root",
+            author: "Ada",
+            authorDate: "Today"
+        )
+
+        XCTAssertEqual(input.imageRevisions, ["abcdef0123456789"])
+    }
+
+    func testWorkingStateRefreshPolicyPreservesAnEqualDisplayedDiff() {
+        XCTAssertFalse(PBWorkingStateRefreshPolicy.shouldReplaceDisplayedDiff("same", renderedDiff: "same"))
+        XCTAssertTrue(PBWorkingStateRefreshPolicy.shouldReplaceDisplayedDiff(nil, renderedDiff: "same"))
+        XCTAssertTrue(PBWorkingStateRefreshPolicy.shouldReplaceDisplayedDiff("old", renderedDiff: "new"))
+    }
+
+    func testRewindOverlayUsesOneLayerBackedSurface() throws {
+        let overlay = PBRewindOverlayView(frame: NSRect(x: 0, y: 0, width: 125, height: 125))
+
+        XCTAssertFalse(overlay.isKind(of: NSBox.self))
+        let layer = try XCTUnwrap(overlay.layer)
+        XCTAssertEqual(layer.borderWidth, 1)
+        XCTAssertEqual(layer.cornerRadius, 12)
+        XCTAssertNotNil(layer.backgroundColor)
+        XCTAssertNotNil(layer.borderColor)
+    }
+
     private func largeDiff(
         lineCount: Int,
         path: String = "Large.swift",
@@ -89,7 +136,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let now = Date()
 
         XCTAssertNil(formatter.string(for: "not a date"))
-        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(3_600)), "In the future!")
+        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(3600)), "In the future!")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-10)), "seconds ago")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-80)), "1 minute ago")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-600)), "10 minutes ago")

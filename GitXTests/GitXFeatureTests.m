@@ -14,6 +14,7 @@
 #import "PBHighlighting.h"
 #import "PBFileChangesTableView.h"
 #import "PBNativeContentView.h"
+#import "PBGitRevisionCell.h"
 #import "PBTask.h"
 #import "PBWebController.h"
 #import "NSAppearance+PBDarkMode.h"
@@ -36,6 +37,28 @@
 {
 	self.stagingToggleCount++;
 	self.lastSender = tableView;
+}
+
+@end
+
+@interface PBNativeImageDataDelegate : NSObject <PBNativeContentViewDelegate>
+
+@property (nonatomic) NSData *imageData;
+@property (atomic) BOOL callbackWasOnMainThread;
+@property (atomic) NSDictionary<NSString *, id> *capturedImageSource;
+
+@end
+
+@implementation PBNativeImageDataDelegate
+
+- (NSData *)nativeContentView:(PBNativeContentView *)view
+			 imageDataForPath:(NSString *)path
+					section:(NSUInteger)sectionIndex
+				 imageSource:(NSDictionary<NSString *, id> *)imageSource
+{
+	self.callbackWasOnMainThread = NSThread.isMainThread;
+	self.capturedImageSource = imageSource;
+	return self.imageData;
 }
 
 @end
@@ -217,6 +240,73 @@
 	[table deselectAll:nil];
 	[table keyDown:[self spaceKeyEventWithModifiers:0]];
 	XCTAssertEqual(target.stagingToggleCount, 2, @"Space without selected rows should not invoke a staging action");
+
+	[table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+	table.delegate = nil;
+	[table keyDown:[self spaceKeyEventWithModifiers:0]];
+	XCTAssertEqual(target.stagingToggleCount, 2, @"Space without a staging delegate must not route through the responder chain");
+}
+
+- (void)testRevisionCellObjectValueIsNullableBeforeTableConfiguration
+{
+	PBGitRevisionCell *cell = [[PBGitRevisionCell alloc] initWithFrame:NSMakeRect(0, 0, 200, 20)];
+	XCTAssertNil(cell.objectValue);
+}
+
+- (void)testNativeDiffLoadsImageDataOffMainAndInstallsAttachment
+{
+	NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+													pixelsWide:2
+													pixelsHigh:2
+												 bitsPerSample:8
+										   samplesPerPixel:4
+												hasAlpha:YES
+												isPlanar:NO
+										  colorSpaceName:NSCalibratedRGBColorSpace
+											 bytesPerRow:0
+											bitsPerPixel:0];
+	memset(bitmap.bitmapData, 0x7f, bitmap.bytesPerRow * bitmap.pixelsHigh);
+	NSData *imageData = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+	XCTAssertGreaterThan(imageData.length, 0);
+
+	PBNativeImageDataDelegate *delegate = [[PBNativeImageDataDelegate alloc] init];
+	delegate.imageData = imageData;
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	view.delegate = delegate;
+	[view setValue:[NSMutableSet setWithObject:@"0:image.png"] forKey:@"expandedImages"];
+	NSDictionary<NSString *, id> *imageSource = @{
+		PBNativeImageSourceRevisionsKey : @[ @"abc123" ],
+		PBNativeImageSourceGitLaunchPathKey : @"/usr/bin/git",
+		PBNativeImageSourceGitDirectoryKey : @"/tmp/example/.git",
+		PBNativeImageSourceTaskDirectoryKey : @"/tmp/example",
+	};
+	NSString *diff = @"diff --git a/image.png b/image.png\n"
+					 @"Binary files a/image.png and b/image.png differ\n";
+	[view showDiffSections:@[ @{
+		PBNativeSectionTextKey : diff,
+		PBNativeSectionContextKey : @"readOnly",
+		PBNativeSectionImageSourceKey : imageSource,
+	} ]];
+
+	NSPredicate *hasAttachment = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		NSAttributedString *storage = view.textView.textStorage;
+		__block BOOL foundAttachment = NO;
+		[storage enumerateAttribute:NSAttachmentAttributeName
+						 inRange:NSMakeRange(0, storage.length)
+						  options:0
+					 usingBlock:^(id value, __unused NSRange range, BOOL *stop) {
+						 if (value) {
+							 foundAttachment = YES;
+							 *stop = YES;
+						 }
+					 }];
+		return foundAttachment;
+	}];
+	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:hasAttachment object:view];
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
+
+	XCTAssertFalse(delegate.callbackWasOnMainThread);
+	XCTAssertEqualObjects(delegate.capturedImageSource, imageSource);
 }
 
 - (void)testAppearancePreferenceValidatesAndAppliesGlobally
