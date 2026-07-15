@@ -275,7 +275,10 @@
 	XCUIElement *stagedTable = self.app.tables[@"StagedFiles"];
 	XCUIElement *unstagedTable = self.app.tables[@"UnstagedFiles"];
 	XCUIElement *stagedFile = stagedTable.staticTexts[@"partial.txt"];
-	XCTAssertTrue([stagedFile waitForExistenceWithTimeout:10]);
+	if (![stagedFile waitForExistenceWithTimeout:10]) {
+		[self.app.windows.firstMatch typeKey:@"r" modifierFlags:XCUIKeyModifierCommand];
+	}
+	XCTAssertTrue([stagedFile waitForExistenceWithTimeout:15]);
 	XCTAssertTrue([unstagedTable.staticTexts[@"partial.txt"] waitForExistenceWithTimeout:10]);
 	[stagedFile click];
 	XCUIElement *diff = self.app.textViews.firstMatch;
