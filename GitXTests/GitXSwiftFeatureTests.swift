@@ -162,6 +162,23 @@ final class GitXSwiftFeatureTests: XCTestCase {
         }
     }
 
+    func testTaskAppliesCallerEnvironmentOverridesAtLaunch() throws {
+        let task = PBTask(launchPath: "/usr/bin/env", arguments: [], inDirectory: nil)
+        task.additionalEnvironment = ["GITX_ENVIRONMENT_OVERRIDE": "configured-after-initialization"]
+        let completed = expectation(description: "environment task completed")
+
+        task.perform(on: .main) { data, error in
+            XCTAssertNil(error)
+            let output = data.flatMap { String(data: $0, encoding: .utf8) }
+            XCTAssertTrue(output?.contains(
+                "GITX_ENVIRONMENT_OVERRIDE=configured-after-initialization"
+            ) == true)
+            completed.fulfill()
+        }
+
+        wait(for: [completed], timeout: 5)
+    }
+
     func testLargeNativeDiffProducesScrollableDocument() throws {
         let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
         view.layoutSubtreeIfNeeded()
