@@ -234,17 +234,19 @@ final class RemoteSidebarSyncPlan: NSObject { // swiftlint:disable:this unused_d
 @objc(PBGitDefaultsPolicy)
 final class GitDefaultsPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(validatedAutoFetchScopeRawValue:)
+    // swiftlint:disable:next unused_declaration
     static func validatedAutoFetchScope(
         rawValue: Int
-    ) -> Int { // swiftlint:disable:this unused_declaration
+    ) -> Int {
         let validRange = PBAutoFetchScope.none.rawValue ... PBAutoFetchScope.openAndRecentRepositories.rawValue
         return validRange.contains(rawValue) ? rawValue : PBAutoFetchScope.none.rawValue
     }
 
     @objc(repositoryDefaultsKeyForURL:)
+    // swiftlint:disable:next unused_declaration
     static func repositoryDefaultsKey(
         for repositoryURL: URL
-    ) -> String { // swiftlint:disable:this unused_declaration
+    ) -> String {
         repositoryURL.standardizedFileURL.resolvingSymlinksInPath().path
     }
 }

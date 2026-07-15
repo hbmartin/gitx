@@ -14,6 +14,11 @@ NSString *const PBNativeImageSourceGitLaunchPathKey = @"gitLaunchPath";
 NSString *const PBNativeImageSourceGitDirectoryKey = @"gitDirectory";
 NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 
+__attribute__((annotate("returns_localized_nsstring"))) static inline NSString *PBDisplayReadyString(NSString *string)
+{
+	return string;
+}
+
 @interface PBNativeContentView ()
 @property (nonatomic) NSStackView *rootStack;
 @property (nonatomic) NSScrollView *scrollView;
@@ -245,7 +250,7 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	NSString *token = NSUUID.UUID.UUIDString;
 	NSURL *URL = [NSURL URLWithString:[NSString stringWithFormat:@"gitx-action://%@", token]];
 	linkPayloads[URL.absoluteString] = payload;
-	NSMutableAttributedString *link = [[NSMutableAttributedString alloc] initWithString:title
+	NSMutableAttributedString *link = [[NSMutableAttributedString alloc] initWithString:PBDisplayReadyString(title)
 																			 attributes:@{
 																				 NSFontAttributeName : [NSFont systemFontOfSize:11 weight:NSFontWeightMedium],
 																				 NSLinkAttributeName : URL,
