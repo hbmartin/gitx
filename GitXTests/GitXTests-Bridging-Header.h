@@ -16,6 +16,14 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSString *)deletionMenuTitleForRefName:(NSString *)refName
                                  isRemote:(BOOL)isRemote
     NS_SWIFT_NAME(deletionMenuTitle(refName:isRemote:));
++ (NSString *)deletionConfirmationTitleForRefishType:(NSString *)refishType
+                                            shortName:(NSString *)shortName
+    NS_SWIFT_NAME(deletionConfirmationTitle(refishType:shortName:));
++ (NSString *)deletionConfirmationMessageForRefishType:(NSString *)refishType
+                                              shortName:(NSString *)shortName
+    NS_SWIFT_NAME(deletionConfirmationMessage(refishType:shortName:));
++ (NSString *)deletionConfirmationButtonTitleForRefishType:(NSString *)refishType
+    NS_SWIFT_NAME(deletionConfirmationButtonTitle(refishType:));
 @end
 
 NS_ASSUME_NONNULL_END

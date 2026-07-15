@@ -275,6 +275,71 @@ final class GitXSwiftFeatureTests: XCTestCase {
         )
     }
 
+    func testRemoteTrackingBranchConfirmationExplainsLocalRemoval() {
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationTitle(
+                refishType: "remote branch",
+                shortName: "origin/topic"
+            ),
+            "Remove remote branch 'origin/topic'?"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationMessage(
+                refishType: "remote branch",
+                shortName: "origin/topic"
+            ),
+            "This removes only the local remote-tracking branch. "
+                + "The branch on the remote server is left unchanged."
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationButtonTitle(refishType: "remote branch"),
+            "Remove"
+        )
+    }
+
+    func testRemoteConfigurationConfirmationUsesRemovalTerminology() {
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationTitle(
+                refishType: "remote",
+                shortName: "origin"
+            ),
+            "Remove remote 'origin'?"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationMessage(
+                refishType: "remote",
+                shortName: "origin"
+            ),
+            "This removes the remote configuration and its local remote-tracking branches. "
+                + "Branches on the remote server are left unchanged."
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationButtonTitle(refishType: "remote"),
+            "Remove"
+        )
+    }
+
+    func testLocalBranchConfirmationUsesDeletionTerminology() {
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationTitle(
+                refishType: "branch",
+                shortName: "topic"
+            ),
+            "Delete branch 'topic'?"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationMessage(
+                refishType: "branch",
+                shortName: "topic"
+            ),
+            "Are you sure you want to delete the branch 'topic'?"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationButtonTitle(refishType: "branch"),
+            "Delete"
+        )
+    }
+
     func testLargeNativeDiffProducesScrollableDocument() throws {
         let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
         view.layoutSubtreeIfNeeded()

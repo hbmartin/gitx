@@ -93,4 +93,43 @@ final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_d
             )
         return String(format: format, refName)
     }
+
+    @objc(deletionConfirmationTitleForRefishType:shortName:)
+    static func deletionConfirmationTitle(
+        refishType: String,
+        shortName: String
+    ) -> String { // swiftlint:disable:this unused_declaration
+        let verb = usesRemovalTerminology(refishType: refishType) ? "Remove" : "Delete"
+        return "\(verb) \(refishType) '\(shortName)'?"
+    }
+
+    @objc(deletionConfirmationMessageForRefishType:shortName:)
+    static func deletionConfirmationMessage(
+        refishType: String,
+        shortName: String
+    ) -> String { // swiftlint:disable:this unused_declaration
+        switch refishType {
+        case kGitXRemoteBranchType:
+            return "This removes only the local remote-tracking branch. "
+                + "The branch on the remote server is left unchanged."
+        case kGitXRemoteType:
+            return "This removes the remote configuration and its local remote-tracking branches. "
+                + "Branches on the remote server are left unchanged."
+        default:
+            return "Are you sure you want to delete the \(refishType) '\(shortName)'?"
+        }
+    }
+
+    @objc(deletionConfirmationButtonTitleForRefishType:)
+    static func deletionConfirmationButtonTitle(
+        refishType: String
+    ) -> String { // swiftlint:disable:this unused_declaration
+        usesRemovalTerminology(refishType: refishType)
+            ? NSLocalizedString("Remove", comment: "Remove remote ref alert - default button")
+            : NSLocalizedString("Delete", comment: "Delete local ref alert - default button")
+    }
+
+    private static func usesRemovalTerminology(refishType: String) -> Bool {
+        [kGitXRemoteType, kGitXRemoteBranchType].contains(refishType)
+    }
 }

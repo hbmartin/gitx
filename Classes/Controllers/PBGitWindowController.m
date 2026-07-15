@@ -633,13 +633,13 @@
 		return;
 
 	PBGitRef *ref = (PBGitRef *)refish;
-
-	NSString *ref_desc = [NSString stringWithFormat:@"%@ '%@'", [ref refishType], [ref shortName]];
+	NSString *refishType = ref.refishType;
+	NSString *shortName = ref.shortName;
 
 	NSAlert *alert = [[NSAlert alloc] init];
-	alert.messageText = [NSString stringWithFormat:@"Delete %@?", ref_desc];
-	alert.informativeText = [NSString stringWithFormat:@"Are you sure you want to remove the %@?", ref_desc];
-	[alert addButtonWithTitle:NSLocalizedString(@"Delete", @"Delete ref alert - default button")];
+	alert.messageText = [PBReferenceActionPolicy deletionConfirmationTitleForRefishType:refishType shortName:shortName];
+	alert.informativeText = [PBReferenceActionPolicy deletionConfirmationMessageForRefishType:refishType shortName:shortName];
+	[alert addButtonWithTitle:[PBReferenceActionPolicy deletionConfirmationButtonTitleForRefishType:refishType]];
 	[alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Delete ref alert - cancel button")];
 
 	[self confirmDialog:alert
