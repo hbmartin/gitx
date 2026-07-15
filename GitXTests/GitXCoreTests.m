@@ -505,11 +505,12 @@
 	PBGitHistoryList *history = self.repository.revisionList;
 	XCTAssertEqual(history.commits.count, expectedCount);
 	NSMutableArray<NSNumber *> *publishedCounts = [NSMutableArray array];
+	__weak PBGitHistoryList *weakHistory = history;
 	id<MAKVOObservation> observation = [history addObserver:self
 													keyPath:@"commits"
 													options:0
 													  block:^(__unused MAKVONotification *notification) {
-														  [publishedCounts addObject:@(history.commits.count)];
+														  [publishedCounts addObject:@(weakHistory.commits.count)];
 													  }];
 
 	[self.repository forceUpdateRevisions];
