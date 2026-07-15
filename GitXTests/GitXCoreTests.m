@@ -752,6 +752,35 @@
 	XCTAssertEqualObjects(amendedParents, originalParent);
 }
 
+- (void)testAmendingMergeCommitPreservesAllParents
+{
+	NSError *error = nil;
+	XCTAssertNotNil(([self.fixture git:@[ @"switch", @"--quiet", @"-c", @"side" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"side\n" toPath:@"side.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"side commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"switch", @"--quiet", @"main" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"main\n" toPath:@"main.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"main commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"merge", @"--quiet", @"--no-ff", @"side", @"-m", @"merge side" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"commit.gpgSign", @"false" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
+
+	NSString *originalParents = [[self.fixture git:@[ @"show", @"-s", @"--format=%P", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertEqual([originalParents componentsSeparatedByString:@" "].count, 2);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		self.repository.index.amend = YES;
+	}];
+	[self.repository.index commitWithMessage:@"amended merge commit" andVerify:NO];
+
+	NSString *amendedParents = [[self.fixture git:@[ @"show", @"-s", @"--format=%P", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertEqualObjects(amendedParents, originalParents);
+}
+
 - (void)testAmendCanUnstageModifiedFileAddedByLastCommit
 {
 	NSError *error = nil;

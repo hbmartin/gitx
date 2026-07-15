@@ -422,10 +422,17 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 
 	NSMutableArray *arguments = [NSMutableArray arrayWithObjects:@"commit-tree", tree, nil];
-	NSString *parent = self.amend ? @"HEAD^" : @"HEAD";
-	if ([self.repository revisionExists:parent]) {
+	if (self.amend) {
+		GTReference *headRef = [self.repository.gtRepo headReferenceWithError:NULL];
+		GTCommit *headCommit = [headRef resolvedTarget];
+		NSLog(@"[GitX] Amending commit with %lu preserved parent(s)", (unsigned long)headCommit.parentOIDs.count);
+		for (GTOID *parentOID in headCommit.parentOIDs) {
+			[arguments addObject:@"-p"];
+			[arguments addObject:parentOID.SHA];
+		}
+	} else if ([self.repository revisionExists:@"HEAD"]) {
 		[arguments addObject:@"-p"];
-		[arguments addObject:parent];
+		[arguments addObject:@"HEAD"];
 	}
 
 	BOOL gpgSign = [config boolForKey:@"commit.gpgSign"];
