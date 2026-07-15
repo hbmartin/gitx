@@ -251,9 +251,9 @@ final class GitXSwiftFeatureTests: XCTestCase {
         environment["PATH"]?.split(separator: ":").map(String.init) ?? []
     }
 
-    func testReferenceActionPolicyCharacterizesCurrentPushEligibility() {
+    func testReferenceActionPolicyAllowsBranchesAndTagsToPush() {
         XCTAssertTrue(PBReferenceActionPolicy.canPush(refishType: "branch"))
-        XCTAssertFalse(PBReferenceActionPolicy.canPush(refishType: "tag"))
+        XCTAssertTrue(PBReferenceActionPolicy.canPush(refishType: "tag"))
         XCTAssertFalse(PBReferenceActionPolicy.canPush(refishType: "remote branch"))
     }
 

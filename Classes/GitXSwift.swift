@@ -69,7 +69,7 @@ final class HistoryRefreshSelectionPolicy: NSObject { // swiftlint:disable:this 
 final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(canPushRefishTypeToNamedRemote:)
     static func canPushToNamedRemote(refishType: String?) -> Bool { // swiftlint:disable:this unused_declaration
-        refishType == kGitXBranchType
+        [kGitXBranchType, kGitXTagType].contains(refishType)
     }
 
     @objc(canDeleteRefishType:)
