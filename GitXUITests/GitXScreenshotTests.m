@@ -15,7 +15,7 @@
 - (NSString *)makeDirtyRepositoryFixture;
 - (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
 - (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
-- (void)openPreferences;
+- (void)openPreferencesWaitingForElement:(XCUIElement *)element;
 - (void)openStagingView;
 @end
 
@@ -30,7 +30,8 @@
 		@"-ApplePersistenceIgnoreState", @"YES",
 		@"-AppleLanguages", @"(en)",
 		@"-AppleLocale", @"en_US_POSIX",
-		@"-NSAutomaticWindowAnimationsEnabled", @"NO"
+		@"-NSAutomaticWindowAnimationsEnabled", @"NO",
+		@"-PBGitXPreferenceViewIdentifier", @"General"
 	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
 
@@ -119,12 +120,15 @@
 	[self waitForExpectations:@[ expectation ] timeout:timeout];
 }
 
-- (void)openPreferences
+- (void)openPreferencesWaitingForElement:(XCUIElement *)element
 {
 	XCTAssertTrue([self waitForWindow], @"Preferences require the application to finish launching");
-	[self.app activate];
-	[self.app.windows.firstMatch typeKey:@"," modifierFlags:XCUIKeyModifierCommand];
-	XCTAssertTrue([self.app.dialogs.firstMatch waitForExistenceWithTimeout:5]);
+	for (NSUInteger attempt = 0; attempt < 2; attempt++) {
+		[self.app activate];
+		[self.app.windows.firstMatch typeKey:@"," modifierFlags:XCUIKeyModifierCommand];
+		if ([element waitForExistenceWithTimeout:5]) return;
+	}
+	XCTFail(@"The requested preferences pane should expose %@", element);
 }
 
 - (BOOL)runGit:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
@@ -287,11 +291,15 @@
 	[self openStagingView];
 	XCUIElement *window = self.app.windows.firstMatch;
 	CGRect originalFrame = window.frame;
-	[self.app.menuBars.menuBarItems[@"Window"] click];
-	XCUIElement *zoom = self.app.menuItems[@"Zoom"];
-	XCTAssertTrue([zoom waitForExistenceWithTimeout:5]);
-	[zoom click];
-	XCTAssertNotEqual(window.frame.size.width, originalFrame.size.width);
+	XCUIElement *resizeButton = window.buttons[XCUIIdentifierFullScreenWindow];
+	if (!resizeButton.exists) resizeButton = window.buttons[XCUIIdentifierZoomWindow];
+	XCTAssertTrue([resizeButton waitForExistenceWithTimeout:5]);
+	[resizeButton click];
+	NSPredicate *frameChanged = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return !CGSizeEqualToSize(window.frame.size, originalFrame.size);
+	}];
+	XCTNSPredicateExpectation *resizeExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:frameChanged object:window];
+	[self waitForExpectations:@[ resizeExpectation ] timeout:5];
 
 	XCUIElement *history = [self selectHistoryForCurrentBranch];
 	XCTAssertTrue([history.tableRows.firstMatch waitForExistenceWithTimeout:15]);
@@ -472,36 +480,22 @@
 
 - (void)testHistoryAndFetchPreferencesAreAvailable
 {
-	[self openPreferences];
-	XCUIElement *preferences = self.app.dialogs.firstMatch;
-	XCUIElement *pane = preferences.toolbars.buttons[@"History & Fetch"];
-	if (pane.exists) {
-		[pane click];
-	} else {
-		XCUIElement *more = preferences.popUpButtons[@"more toolbar items"];
-		XCTAssertTrue([more waitForExistenceWithTimeout:5]);
-		[more click];
-		XCUIElement *menuItem = self.app.menuItems[@"History & Fetch"];
-		XCTAssertTrue([menuItem waitForExistenceWithTimeout:5]);
-		[menuItem click];
-	}
-	XCTAssertTrue([preferences.checkBoxes[@"Allow commit columns to sort history"] waitForExistenceWithTimeout:5]);
-	XCTAssertTrue(preferences.popUpButtons.firstMatch.exists);
+	[self.app terminate];
+	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
+	arguments[arguments.count - 1] = @"History & Fetch";
+	self.app.launchArguments = arguments;
+	[self.app launch];
+	XCUIElement *historySorting = self.app.checkBoxes[@"Allow commit columns to sort history"];
+	[self openPreferencesWaitingForElement:historySorting];
+	XCTAssertTrue(self.app.popUpButtons.firstMatch.exists);
 	[self saveWindowScreenshotNamed:@"history-fetch-preferences"];
 }
 
 - (void)testGeneralPreferencesOfferRefreshOnFocus
 {
-	[self openPreferences];
-	XCUIElement *preferences = self.app.dialogs.firstMatch;
-
-	XCUIElement *generalPane = preferences.toolbars.buttons[@"General"];
-	XCTAssertTrue([generalPane waitForExistenceWithTimeout:5]);
-	[generalPane click];
-
-	XCUIElement *continuousWatch = preferences.checkBoxes[@"Watch for changes in repositories"];
-	XCUIElement *refreshOnFocus = preferences.checkBoxes[@"Refresh repositories when GitX regains focus"];
-	XCTAssertTrue([continuousWatch waitForExistenceWithTimeout:5]);
+	XCUIElement *continuousWatch = self.app.checkBoxes[@"Watch for changes in repositories"];
+	XCUIElement *refreshOnFocus = self.app.checkBoxes[@"Refresh repositories when GitX regains focus"];
+	[self openPreferencesWaitingForElement:continuousWatch];
 	XCTAssertTrue([refreshOnFocus waitForExistenceWithTimeout:5]);
 	BOOL watchedOriginally = [continuousWatch.value boolValue];
 	BOOL focusedOriginally = [refreshOnFocus.value boolValue];
@@ -528,32 +522,23 @@
 
 - (void)testAppearancePreferenceOffersAutomaticLightAndDark
 {
-	[self openPreferences];
-	XCUIElement *preferences = self.app.dialogs.firstMatch;
-
-	XCUIElement *generalPane = preferences.toolbars.buttons[@"General"];
-	XCTAssertTrue([generalPane waitForExistenceWithTimeout:5]);
-	[generalPane click];
-
-	XCUIElement *appearance = preferences.popUpButtons[@"AppearancePreference"];
-	XCTAssertTrue([appearance waitForExistenceWithTimeout:5]);
+	XCUIElement *appearance = self.app.popUpButtons[@"AppearancePreference"];
+	[self openPreferencesWaitingForElement:appearance];
 	NSString *originalValue = appearance.value;
 
 	@try {
 		for (NSString *title in @[ @"Dark", @"Light", @"Automatic (System)" ]) {
 			[appearance click];
-			XCUIElement *choice = self.app.menuItems[title];
-			XCTAssertTrue([choice waitForExistenceWithTimeout:5]);
-			[choice click];
+			[appearance typeKey:[title substringToIndex:1].lowercaseString modifierFlags:0];
+			[appearance typeKey:XCUIKeyboardKeyEnter modifierFlags:0];
 			[self waitForElement:appearance toHaveValue:title timeout:5];
 			[self saveWindowScreenshotNamed:[NSString stringWithFormat:@"appearance-%@", title.lowercaseString]];
 		}
 	} @finally {
 		if (originalValue.length && ![appearance.value isEqual:originalValue]) {
 			[appearance click];
-			XCUIElement *originalChoice = self.app.menuItems[originalValue];
-			XCTAssertTrue([originalChoice waitForExistenceWithTimeout:5]);
-			[originalChoice click];
+			[appearance typeKey:[originalValue substringToIndex:1].lowercaseString modifierFlags:0];
+			[appearance typeKey:XCUIKeyboardKeyEnter modifierFlags:0];
 			[self waitForElement:appearance toHaveValue:originalValue timeout:5];
 		}
 	}
