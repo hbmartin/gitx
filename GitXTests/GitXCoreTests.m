@@ -8,6 +8,7 @@
 #import "PBGitBinary.h"
 #import "PBGitCommit.h"
 #import "PBGitGrapher.h"
+#import "PBGitHistoryList.h"
 #import "PBGitIndex.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
@@ -90,6 +91,7 @@
 @property (nonatomic, strong) PBGitRepository *repository;
 
 - (void)refreshIndexAfterPerforming:(dispatch_block_t)operation;
+- (void)waitForHistoryUpdate;
 - (nullable PBChangedFile *)changedFileAtPath:(NSString *)path;
 - (nullable PBGitTree *)treeAtPath:(NSString *)path inRoot:(PBGitTree *)root;
 
@@ -130,6 +132,17 @@
 	operation();
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
+}
+
+- (void)waitForHistoryUpdate
+{
+	PBGitHistoryList *history = self.repository.revisionList;
+	if (!history.isUpdating) return;
+	NSPredicate *finished = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return !history.isUpdating;
+	}];
+	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:finished object:history];
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
 }
 
 - (nullable PBChangedFile *)changedFileAtPath:(NSString *)path
@@ -452,6 +465,27 @@
 		maximumColumns = MAX(maximumColumns, commit.lineInfo.numColumns);
 	}
 	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
+}
+
+- (void)testNormalHistoryLoadPublishesEveryCommitOnce
+{
+	NSError *error = nil;
+	for (NSUInteger index = 0; index < 4; index++) {
+		NSString *path = [NSString stringWithFormat:@"history-%lu.txt", (unsigned long)index];
+		XCTAssertTrue([self.fixture writeText:path toPath:path error:&error], @"%@", error);
+		XCTAssertTrue([self.fixture commitAllWithMessage:path error:&error], @"%@", error);
+	}
+	NSString *expectedText = [self.fixture git:@[ @"rev-list", @"--count", @"HEAD" ] error:&error];
+	NSUInteger expectedCount = expectedText.integerValue;
+
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+
+	NSArray<PBGitCommit *> *commits = self.repository.revisionList.commits;
+	NSSet<NSString *> *uniqueSHAs = [NSSet setWithArray:[commits valueForKey:@"SHA"]];
+	XCTAssertEqual(commits.count, expectedCount);
+	XCTAssertEqual(uniqueSHAs.count, expectedCount);
 }
 
 - (void)testUnchangedSymlinkRenameUsesRenameMetadata
