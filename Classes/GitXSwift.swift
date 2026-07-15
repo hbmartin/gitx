@@ -78,10 +78,11 @@ final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_d
     }
 
     @objc(deletionMenuTitleForRefName:isRemote:)
+    // swiftlint:disable:next unused_declaration
     static func deletionMenuTitle(
         refName: String,
         isRemote: Bool
-    ) -> String { // swiftlint:disable:this unused_declaration
+    ) -> String {
         let format = isRemote
             ? NSLocalizedString(
                 "Remove “%@”…",
@@ -95,19 +96,21 @@ final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_d
     }
 
     @objc(deletionConfirmationTitleForRefishType:shortName:)
+    // swiftlint:disable:next unused_declaration
     static func deletionConfirmationTitle(
         refishType: String,
         shortName: String
-    ) -> String { // swiftlint:disable:this unused_declaration
+    ) -> String {
         let verb = usesRemovalTerminology(refishType: refishType) ? "Remove" : "Delete"
         return "\(verb) \(refishType) '\(shortName)'?"
     }
 
     @objc(deletionConfirmationMessageForRefishType:shortName:)
+    // swiftlint:disable:next unused_declaration
     static func deletionConfirmationMessage(
         refishType: String,
         shortName: String
-    ) -> String { // swiftlint:disable:this unused_declaration
+    ) -> String {
         switch refishType {
         case kGitXRemoteBranchType:
             return "This removes only the local remote-tracking branch. "
@@ -121,9 +124,10 @@ final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_d
     }
 
     @objc(deletionConfirmationButtonTitleForRefishType:)
+    // swiftlint:disable:next unused_declaration
     static func deletionConfirmationButtonTitle(
         refishType: String
-    ) -> String { // swiftlint:disable:this unused_declaration
+    ) -> String {
         usesRemovalTerminology(refishType: refishType)
             ? NSLocalizedString("Remove", comment: "Remove remote ref alert - default button")
             : NSLocalizedString("Delete", comment: "Delete local ref alert - default button")
@@ -146,11 +150,12 @@ final class RemoteSidebarSyncPlan: NSObject { // swiftlint:disable:this unused_d
     }
 
     @objc(planWithConfiguredRemoteNames:existingRemoteNames:nonEmptyRemoteNames:)
+    // swiftlint:disable:next unused_declaration
     static func make(
         configuredRemoteNames: [String],
         existingRemoteNames: [String],
         nonEmptyRemoteNames: [String]
-    ) -> RemoteSidebarSyncPlan { // swiftlint:disable:this unused_declaration
+    ) -> RemoteSidebarSyncPlan {
         let configured = Set(configuredRemoteNames)
         let existing = Set(existingRemoteNames)
         let nonEmpty = Set(nonEmptyRemoteNames)
