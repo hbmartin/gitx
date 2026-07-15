@@ -183,6 +183,7 @@
 		AABBCC0300000003 /* GitXSwift.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC0200000002 /* GitXSwift.swift */; };
 		BF42F1331E025403004769FF /* GitXTextView.m in Sources */ = {isa = PBXBuildFile; fileRef = BF42F1321E025403004769FF /* GitXTextView.m */; };
 		C0DE10000000000000000011 /* PBHighlighting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000002 /* PBHighlighting.swift */; };
+		C0DE44300000000000000001 /* PBProcessEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE44300000000000000003 /* PBProcessEnvironment.swift */; };
 		C0DE10000000000000000012 /* PBNativeContentView.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000004 /* PBNativeContentView.m */; };
 		C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000006 /* PBHistoryArrayController.swift */; };
 		C0DE10000000000000000014 /* PBWorkingTree.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000008 /* PBWorkingTree.m */; };
@@ -709,6 +710,8 @@
 		BF42F1431E025411004769FF /* GitXTextView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GitXTextView.h; sourceTree = "<group>"; };
 		C0DE10000000000000000001 /* PBHighlighting.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBHighlighting.h; sourceTree = "<group>"; };
 		C0DE10000000000000000002 /* PBHighlighting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBHighlighting.swift; sourceTree = "<group>"; };
+		C0DE44300000000000000002 /* PBProcessEnvironment.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBProcessEnvironment.h; sourceTree = "<group>"; };
+		C0DE44300000000000000003 /* PBProcessEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBProcessEnvironment.swift; sourceTree = "<group>"; };
 		C0DE10000000000000000003 /* PBNativeContentView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBNativeContentView.h; sourceTree = "<group>"; };
 		C0DE10000000000000000004 /* PBNativeContentView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBNativeContentView.m; sourceTree = "<group>"; };
 		C0DE10000000000000000005 /* PBHistoryArrayController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBHistoryArrayController.h; sourceTree = "<group>"; };
@@ -1156,6 +1159,8 @@
 				4DECFBB11E662962004C3A6F /* ObjectiveGit+PBCategories.m */,
 				4D843B1D1E5D27C3004C3A6F /* PBTask.h */,
 				4D843B1E1E5D27C3004C3A6F /* PBTask.m */,
+				C0DE44300000000000000002 /* PBProcessEnvironment.h */,
+				C0DE44300000000000000003 /* PBProcessEnvironment.swift */,
 			);
 			path = Util;
 			sourceTree = "<group>";
@@ -1694,6 +1699,7 @@
 			files = (
 				C0DE10000000000000000019 /* PBAutoFetchManager.m in Sources */,
 				C0DE10000000000000000011 /* PBHighlighting.swift in Sources */,
+				C0DE44300000000000000001 /* PBProcessEnvironment.swift in Sources */,
 				C0DE70000000000000000001 /* RepositoryRefreshCoordinator.swift in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,

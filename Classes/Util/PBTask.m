@@ -7,6 +7,7 @@
 //
 
 #import "PBTask.h"
+#import "PBProcessEnvironment.h"
 
 NSString *const PBTaskErrorDomain = @"PBTaskErrorDomain";
 NSString *const PBTaskUnderlyingExceptionKey = @"PBTaskUnderlyingExceptionKey";
@@ -60,7 +61,9 @@ const BOOL PBTaskDebugEnable = NO;
 	[_task setArguments:args];
 
 	// Prepare ourselves a nicer environment
-	NSMutableDictionary *env = [[[NSProcessInfo processInfo] environment] mutableCopy];
+	NSMutableDictionary *env = [[PBProcessEnvironment
+		preparedEnvironment:[[NSProcessInfo processInfo] environment]
+		     homeDirectory:NSHomeDirectory()] mutableCopy];
 	[env removeObjectsForKeys:@[
 		@"DYLD_INSERT_LIBRARIES", @"DYLD_LIBRARY_PATH",
 		@"MallocGuardEdges", @"MallocNanoZone", @"MallocScribble", @"MallocStackLogging", @"MallocStackLoggingNoCompact",

@@ -4,6 +4,7 @@
 #import "PBHighlighting.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
+#import "PBProcessEnvironment.h"
 
 NS_ASSUME_NONNULL_BEGIN
 NS_ASSUME_NONNULL_END

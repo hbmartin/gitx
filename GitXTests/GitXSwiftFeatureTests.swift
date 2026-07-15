@@ -162,7 +162,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         }
     }
 
-    func testTaskAppliesCallerEnvironmentOverridesAtLaunch() throws {
+    func testTaskAppliesCallerEnvironmentOverridesAtLaunch() {
         let task = PBTask(launchPath: "/usr/bin/env", arguments: [], inDirectory: nil)
         task.additionalEnvironment = ["GITX_ENVIRONMENT_OVERRIDE": "configured-after-initialization"]
         let completed = expectation(description: "environment task completed")
@@ -177,6 +177,78 @@ final class GitXSwiftFeatureTests: XCTestCase {
         }
 
         wait(for: [completed], timeout: 5)
+    }
+
+    func testProcessEnvironmentPreservesPathOrderAndDeduplicatesEntries() {
+        let prepared = PBProcessEnvironment.preparedEnvironment(
+            [
+                "PATH": "/custom/bin:/usr/bin:/custom/bin",
+                "KEEP": "yes",
+            ],
+            homeDirectory: "/Users/example"
+        )
+
+        XCTAssertEqual(prepared["KEEP"], "yes")
+        XCTAssertEqual(pathEntries(in: prepared), [
+            "/custom/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/opt/local/bin",
+            "/sw/bin",
+            "/Users/example/.local/bin",
+            "/Users/example/bin",
+        ])
+    }
+
+    func testProcessEnvironmentBuildsPathWhenMissingOrEmpty() {
+        let expected = [
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/opt/local/bin",
+            "/sw/bin",
+            "/Users/example/.local/bin",
+            "/Users/example/bin",
+        ]
+
+        XCTAssertEqual(
+            pathEntries(in: PBProcessEnvironment.preparedEnvironment(
+                [:],
+                homeDirectory: "/Users/example"
+            )),
+            expected
+        )
+        XCTAssertEqual(
+            pathEntries(in: PBProcessEnvironment.preparedEnvironment(
+                ["PATH": ""],
+                homeDirectory: "/Users/example"
+            )),
+            expected
+        )
+    }
+
+    func testProcessEnvironmentExpandsAndDeduplicatesHomeDirectories() {
+        let prepared = PBProcessEnvironment.preparedEnvironment(
+            ["PATH": "/Users/example/bin::/Users/example/.local/bin:/Users/example/bin"],
+            homeDirectory: "/Users/example"
+        )
+        let entries = pathEntries(in: prepared)
+
+        XCTAssertEqual(entries.first, "/Users/example/bin")
+        XCTAssertEqual(entries.filter { $0 == "/Users/example/bin" }.count, 1)
+        XCTAssertEqual(entries.filter { $0 == "/Users/example/.local/bin" }.count, 1)
+        XCTAssertFalse(entries.contains(""))
+    }
+
+    private func pathEntries(in environment: [String: String]) -> [String] {
+        environment["PATH"]?.split(separator: ":").map(String.init) ?? []
     }
 
     func testLargeNativeDiffProducesScrollableDocument() throws {
