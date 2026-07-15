@@ -145,7 +145,9 @@
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification
 {
-	if ([PBRepositoryRefreshPolicy shouldRefreshStatCacheAfterApplicationActivation]) {
+	BOOL shouldRefresh = [PBRepositoryRefreshPolicy shouldRefreshStatCacheAfterApplicationActivation];
+	NSLog(@"[GitX] Application activation %@ the index stat-cache refresh", shouldRefresh ? @"triggered" : @"skipped");
+	if (shouldRefresh) {
 		[self.repository.index refreshStatCache];
 	}
 	[self reloadPushRemotes];

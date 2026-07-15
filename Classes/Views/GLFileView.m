@@ -12,6 +12,7 @@
 #import "PBChangedFile.h"
 #import "PBTask.h"
 #import "PBGitBinary.h"
+#import "GitX-Swift.h"
 
 static NSString *const PBEmptyTreeSHA = @"4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -182,7 +183,9 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 	BOOL workingState = [commit isKindOfClass:PBUncommittedChanges.class];
 	NSString *commitSHA = commit.SHA ?: @"";
 	NSString *parentSHA = commit.parents.firstObject.SHA;
-	NSArray<NSString *> *imageRevisions = workingState || !commitSHA.length ? @[] : @[ commitSHA ];
+	NSArray<NSString *> *imageRevisions = [PBImageRevisionPolicy revisionsForCommitSHA:commitSHA
+																			 parentSHA:parentSHA
+																		  workingState:workingState];
 	NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:imageRevisions workingTree:workingState];
 	NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
 	dispatch_async(self.fileLoadQueue, ^{

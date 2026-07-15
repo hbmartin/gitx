@@ -506,7 +506,10 @@
 	[panel setAlphaValue:0.0f];
 
 	Class overlayClass = NSClassFromString(@"PBRewindOverlayView");
-	NSAssert(overlayClass != nil, @"PBRewindOverlayView must be linked into GitX");
+	if (!overlayClass) {
+		NSLog(@"[GitX] PBRewindOverlayView is unavailable; skipping the history rewind overlay");
+		return nil;
+	}
 	NSView *overlay = [[overlayClass alloc] initWithFrame:[[panel contentView] frame]];
 	[[panel contentView] addSubview:overlay];
 
@@ -540,6 +543,7 @@
 	} else {
 		// The panel is already closed, create a new one
 		rewindPanel = [self rewindPanel];
+		if (!rewindPanel) return;
 
 		[[[historyController view] window] addChildWindow:rewindPanel ordered:NSWindowAbove];
 	}
