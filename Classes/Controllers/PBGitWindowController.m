@@ -49,6 +49,7 @@
 
 	__weak IBOutlet NSTextField *statusField;
 	__weak IBOutlet NSProgressIndicator *progressIndicator;
+	__weak IBOutlet NSButton *jumpToCheckedOutBranchButton;
 }
 @end
 
@@ -180,6 +181,7 @@
 
 	[[statusField cell] setBackgroundStyle:NSBackgroundStyleRaised];
 	[progressIndicator setUsesThreadedAnimation:YES];
+	jumpToCheckedOutBranchButton.accessibilityIdentifier = @"JumpToCheckedOutBranchButton";
 
 	[[NSNotificationCenter defaultCenter] addObserver:self
 											 selector:@selector(applicationDidBecomeActive:)
@@ -900,6 +902,14 @@
 - (IBAction)refresh:(id)sender
 {
 	[contentController refresh:self];
+}
+
+- (IBAction)jumpToCheckedOutBranch:(id)sender
+{
+	NSLog(@"[GitX] Jumping to the repository's checked-out branch");
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	[_sidebarController selectCurrentBranch];
 }
 
 - (IBAction)createBranch:(id)sender

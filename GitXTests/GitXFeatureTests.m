@@ -5,6 +5,10 @@
 
 #import "PBGitDefaults.h"
 #import "PBAutoFetchManager.h"
+#import "PBMacros.h"
+#import "PBGitRepository.h"
+#import "PBGitRepositoryDocument.h"
+#import "PBGitWindowController.h"
 #import "PBHistoryArrayController.h"
 #import "PBHighlighting.h"
 #import "PBFileChangesTableView.h"
@@ -31,6 +35,44 @@
 {
 	self.stagingToggleCount++;
 	self.lastSender = tableView;
+}
+
+@end
+
+@interface PBCheckedOutBranchRepositorySpy : PBGitRepository
+
+@property (nonatomic) NSUInteger reloadRefsCount;
+@property (nonatomic) NSUInteger readCurrentBranchCount;
+
+@end
+
+@implementation PBCheckedOutBranchRepositorySpy
+
+- (void)reloadRefs
+{
+	self.reloadRefsCount++;
+}
+
+- (void)readCurrentBranch
+{
+	self.readCurrentBranchCount++;
+}
+
+@end
+
+
+@interface PBCheckedOutBranchDocumentSpy : PBGitRepositoryDocument
+
+@property (nonatomic, strong) PBCheckedOutBranchRepositorySpy *repositorySpy;
+
+@end
+
+
+@implementation PBCheckedOutBranchDocumentSpy
+
+- (PBGitRepository *)repository
+{
+	return self.repositorySpy;
 }
 
 @end
@@ -107,6 +149,20 @@
 	XCTAssertEqual([PBGitDefaults autoFetchIntervalMinutes], 1440);
 	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
 	XCTAssertEqual([PBGitDefaults autoFetchScope], PBAutoFetchScopeOpenRepositories);
+}
+
+- (void)testJumpToCheckedOutBranchReloadsAndReadsHead
+{
+	PBCheckedOutBranchRepositorySpy *repository = [[PBCheckedOutBranchRepositorySpy alloc] init];
+	PBCheckedOutBranchDocumentSpy *document = [[PBCheckedOutBranchDocumentSpy alloc] init];
+	document.repositorySpy = repository;
+	PBGitWindowController *controller = [[PBGitWindowController alloc] init];
+	controller.document = document;
+
+	[controller jumpToCheckedOutBranch:self];
+
+	XCTAssertEqual(repository.reloadRefsCount, 1);
+	XCTAssertEqual(repository.readCurrentBranchCount, 1);
 }
 
 - (void)testSpaceKeyRoutesSelectedFileRowsToStageAndUnstageActions

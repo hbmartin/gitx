@@ -587,6 +587,12 @@ DQ
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="916"/>
+                            <menuItem title="Jump to Checked-Out Branch" keyEquivalent="j" id="jump-to-checked-out-branch-menu-item">
+                                <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
+                                <connections>
+                                    <action selector="jumpToCheckedOutBranch:" target="-1" id="jump-to-checked-out-branch-menu-action"/>
+                                </connections>
+                            </menuItem>
                             <menuItem title="Refresh" keyEquivalent="r" id="915">
                                 <connections>
                                     <action selector="refresh:" target="-1" id="926"/>
