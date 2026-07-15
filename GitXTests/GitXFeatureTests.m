@@ -1,5 +1,6 @@
 #import <XCTest/XCTest.h>
 #import <dlfcn.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
 
 #import "PBGitDefaults.h"
@@ -183,6 +184,20 @@
 	NSArray *arranged = controller.arrangedObjects;
 	XCTAssertEqual(arranged.firstObject, workingState);
 	XCTAssertEqualObjects(arranged[1][@"subject"], @"A");
+}
+
+- (void)testContextClickSelectsOnlyAnUnselectedCommit
+{
+	Class commitListClass = NSClassFromString(@"GitX.PBCommitList");
+	XCTAssertNotNil(commitListClass);
+	SEL selector = NSSelectorFromString(@"shouldReplaceSelectionForContextClickAtRow:selectedRows:");
+	XCTAssertTrue([commitListClass respondsToSelector:selector]);
+	BOOL (*shouldReplaceSelection)(id, SEL, NSInteger, NSIndexSet *) = (void *)objc_msgSend;
+	NSMutableIndexSet *selected = [NSMutableIndexSet indexSetWithIndex:1];
+	[selected addIndex:2];
+	XCTAssertTrue(shouldReplaceSelection(commitListClass, selector, 4, selected));
+	XCTAssertFalse(shouldReplaceSelection(commitListClass, selector, 2, selected));
+	XCTAssertFalse(shouldReplaceSelection(commitListClass, selector, -1, selected));
 }
 
 - (void)testDisablingHistorySortingClearsNewDescriptors
