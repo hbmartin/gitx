@@ -678,13 +678,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 {
 	NSString *parameter = [NSString stringWithFormat:@"-U%lu", context];
 	if (staged) {
-		NSArray *arguments = nil;
-		if (file.status == NEW) {
-			NSString *indexPath = [@":0:" stringByAppendingString:file.path];
-			arguments = @[ @"show", indexPath ];
-		} else {
-			arguments = @[ @"diff-index", parameter, @"--cached", self.parentTree, @"--", file.path ];
-		}
+		NSLog(@"[GitX] Rendering staged %@ for %@", file.status == NEW ? @"addition" : @"change", file.path);
+		NSArray *arguments = @[ @"diff-index", parameter, @"--cached", self.parentTree, @"--", file.path ];
 
 		NSError *error = nil;
 		NSString *output = [self.repository outputOfTaskWithArguments:arguments error:&error];
@@ -695,7 +690,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	}
 
 	// unstaged
-	if (file.status == NEW) {
+	BOOL untracked = file.status == NEW && !file.hasStagedChanges;
+	if (untracked) {
+		NSLog(@"[GitX] Rendering untracked contents for %@", file.path);
 		NSStringEncoding encoding;
 		NSError *error = nil;
 		NSURL *fileURL = [self.repository.workingDirectoryURL URLByAppendingPathComponent:file.path];
@@ -705,6 +702,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		return contents;
 	}
 
+	NSLog(@"[GitX] Rendering tracked worktree delta for %@", file.path);
 	NSError *error = nil;
 	NSString *output = [self.repository outputOfTaskWithArguments:@[ @"diff-files", parameter, @"--", file.path ]
 															error:&error];

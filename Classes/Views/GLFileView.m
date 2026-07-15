@@ -134,7 +134,8 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:3] ?: @"", PBNativeSectionContextKey : @"readOnly"}];
 			}
 			if (change.hasUnstagedChanges) {
-				NSString *diffText = change.status == NEW ? [self syntheticDiffForUntrackedFile:change] : [historyController.repository.index diffForFile:change staged:NO contextLines:3];
+				BOOL untracked = change.status == NEW && !change.hasStagedChanges;
+				NSString *diffText = untracked ? [self syntheticDiffForUntrackedFile:change] : [historyController.repository.index diffForFile:change staged:NO contextLines:3];
 				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly"}];
 			}
 		} else {

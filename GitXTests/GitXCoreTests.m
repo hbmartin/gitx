@@ -566,6 +566,14 @@
 	XCTAssertFalse([cached containsString:@"second unstaged line"]);
 	XCTAssertTrue([working containsString:@" first staged line"]);
 	XCTAssertTrue([working containsString:@"+second unstaged line"]);
+
+	NSString *stagedDiff = [self.repository.index diffForFile:partiallyStaged staged:YES contextLines:3];
+	NSString *unstagedDiff = [self.repository.index diffForFile:partiallyStaged staged:NO contextLines:3];
+	XCTAssertTrue([stagedDiff containsString:@"+first staged line"]);
+	XCTAssertFalse([stagedDiff containsString:@"second unstaged line"]);
+	XCTAssertTrue([unstagedDiff containsString:@" first staged line"]);
+	XCTAssertTrue([unstagedDiff containsString:@"+second unstaged line"]);
+	XCTAssertFalse([unstagedDiff containsString:@"+first staged line"]);
 }
 
 - (void)testWholeFileUnstageAfterPartialStageIgnoresStaleIndexMetadata
