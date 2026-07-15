@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.3454,
+  "minimumLineCoverage": 0.3457,
   "files": {
     "Classes/Controllers/ApplicationController.m": 0.284,
     "Classes/Controllers/DBPrefsWindowController.m": 0.0,
@@ -64,7 +64,7 @@
     "Classes/Views/PBGitRevisionRow.m": 0.0,
     "Classes/Views/PBGitXMessageSheet.m": 0.0,
     "Classes/Views/PBHighlighting.swift": 1.0,
-    "Classes/Views/PBNativeContentView.m": 0.6317,
+    "Classes/Views/PBNativeContentView.m": 0.6332,
     "Classes/Views/PBQLOutlineView.m": 0.0,
     "Classes/Views/PBQLTextView.m": 0.0,
     "Classes/Views/PBRemoteProgressSheet.m": 0.0,
@@ -81,7 +81,7 @@
     "Classes/git/PBGitLane.mm": 1.0,
     "Classes/git/PBGitRef.m": 0.8695,
     "Classes/git/PBGitRepository.m": 0.4594,
-    "Classes/git/PBGitRepositoryWatcher.m": 0.8547,
+    "Classes/git/PBGitRepositoryWatcher.m": 0.863,
     "Classes/git/PBGitRepository_PBGitBinarySupport.m": 0.3857,
     "Classes/git/PBGitRevList.m": 0.7956,
     "Classes/git/PBGitRevSpecifier.m": 0.8453,
