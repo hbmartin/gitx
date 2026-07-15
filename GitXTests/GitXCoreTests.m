@@ -333,6 +333,21 @@
 	XCTAssertNotNil([self.repository refForName:@"origin/main"]);
 }
 
+- (void)testRepositoryDiscoversExternallyConfiguredRemoteBeforeFetch
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-configured-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		XCTAssertNotNil(([self.fixture git:@[ @"remote", @"add", @"cli-added", remotePath ] error:&error]), @"%@", error);
+
+		XCTAssertEqualObjects(self.repository.remotes, (@[ @"cli-added" ]));
+		XCTAssertNil([self.repository refForName:@"cli-added/main"], @"An unfetched remote should not need tracking refs to be discoverable");
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
 - (void)testPushToSelectedRemoteAndFailurePreservesLocalHead
 {
 	NSError *error = nil;
