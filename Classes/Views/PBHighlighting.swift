@@ -3,6 +3,8 @@ import HighlightKit
 
 @objc(PBHighlighting)
 final class PBHighlighting: NSObject {
+    private static let maximumHighlightedDiffByteCount = 200 * 1024
+
     private static let extensionLanguages: [String: String] = [
         "ada": "ada", "adb": "ada", "ads": "ada",
         "applescript": "applescript", "s": "armasm", "asm": "armasm",
@@ -26,7 +28,7 @@ final class PBHighlighting: NSObject {
         "r": "r", "rb": "ruby", "rs": "rust", "scala": "scala",
         "scm": "scheme", "sql": "sql", "swift": "swift",
         "ts": "typescript", "tsx": "typescript", "vim": "vim",
-        "yaml": "yaml", "yml": "yaml"
+        "yaml": "yaml", "yml": "yaml",
     ]
 
     @objc(languageNameForPath:)
@@ -39,6 +41,11 @@ final class PBHighlighting: NSObject {
         default: break
         }
         return extensionLanguages[(name as NSString).pathExtension]
+    }
+
+    @objc(shouldHighlightDiffWithByteCount:)
+    static func shouldHighlightDiff(byteCount: UInt) -> Bool {
+        byteCount <= maximumHighlightedDiffByteCount
     }
 
     @objc(highlightedStringForText:path:)

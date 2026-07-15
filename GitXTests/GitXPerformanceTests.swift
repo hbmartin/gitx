@@ -1,9 +1,103 @@
+import AppKit
 import XCTest
 
 /// Scheduled microbenchmarks for deterministic parsing and presentation policy.
 /// Keep fixture creation outside each measured block and keep this class out of
 /// correctness and sanitizer plans.
 final class GitXPerformanceTests: XCTestCase {
+    private func largeDiff(path: String, lineCount: Int) -> String {
+        var diff = """
+        diff --git a/\(path) b/\(path)
+        --- a/\(path)
+        +++ b/\(path)
+        @@ -1,\(lineCount) +1,\(lineCount) @@
+
+        """
+        for index in 0 ..< lineCount {
+            diff += "-let oldValue\(index) = \(index)\n"
+            diff += "+let newValue\(index) = \(index + 1)\n"
+        }
+        return diff
+    }
+
+    private func renderedDiff() throws -> (
+        window: NSWindow,
+        view: PBNativeContentView,
+        scrollView: NSScrollView
+    ) {
+        XCTAssertTrue(Thread.isMainThread)
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        view.translatesAutoresizingMaskIntoConstraints = true
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        window.layoutIfNeeded()
+        let path = "Large.swift"
+        let diff = largeDiff(path: path, lineCount: 4500)
+        view.showDiffSections([
+            [
+                PBNativeSectionTextKey: diff,
+                PBNativeSectionPathKey: path,
+                PBNativeSectionContextKey: "readOnly",
+            ],
+        ])
+        let rendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                view.textView.string.contains("+let newValue4499 = 4500")
+            },
+            object: view.textView
+        )
+        wait(for: [rendered], timeout: 20)
+        window.layoutIfNeeded()
+        window.displayIfNeeded()
+
+        let scrollView = try XCTUnwrap(view.textView.enclosingScrollView)
+        XCTAssertGreaterThan(
+            try XCTUnwrap(scrollView.documentView).frame.height,
+            scrollView.contentView.bounds.height
+        )
+        return (window, view, scrollView)
+    }
+
+    private func scrollWorkload(
+        window: NSWindow,
+        view: PBNativeContentView,
+        scrollView: NSScrollView
+    ) -> CGFloat {
+        let clipView = scrollView.contentView
+        let documentHeight = scrollView.documentView?.frame.height ?? 0
+        let maximumY = max(0, documentHeight - clipView.bounds.height)
+        let viewportSize = clipView.bounds.size
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(viewportSize.width),
+            pixelsHigh: Int(viewportSize.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return 0 }
+        var checksum: CGFloat = 0
+        for step in 0 ..< 40 {
+            let fraction = CGFloat((step * 37) % 101) / 100
+            clipView.scroll(to: NSPoint(x: 0, y: maximumY * fraction))
+            scrollView.reflectScrolledClipView(clipView)
+            view.layoutSubtreeIfNeeded()
+            let viewport = NSRect(origin: clipView.bounds.origin, size: viewportSize)
+            view.textView.cacheDisplay(in: viewport, to: bitmap)
+            window.displayIfNeeded()
+            checksum += clipView.bounds.origin.y
+        }
+        return checksum
+    }
+
     func testRevisionSpecifierParsingPerformance() {
         let parameterSets = [
             ["refs/heads/main"],
@@ -61,5 +155,22 @@ final class GitXPerformanceTests: XCTestCase {
         }
 
         XCTAssertNotNil(lastLanguage)
+    }
+
+    func testLargeNativeDiffScrollingPerformance() throws {
+        let fixture = try renderedDiff()
+        _ = scrollWorkload(window: fixture.window, view: fixture.view, scrollView: fixture.scrollView)
+        _ = scrollWorkload(window: fixture.window, view: fixture.view, scrollView: fixture.scrollView)
+
+        var checksum: CGFloat = 0
+        measure {
+            checksum = scrollWorkload(
+                window: fixture.window,
+                view: fixture.view,
+                scrollView: fixture.scrollView
+            )
+        }
+
+        XCTAssertGreaterThan(checksum, 0)
     }
 }

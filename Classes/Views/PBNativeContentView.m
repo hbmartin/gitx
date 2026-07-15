@@ -490,6 +490,10 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			  toString:(NSMutableAttributedString *)rendered
 {
 	NSArray<NSString *> *lines = [diff componentsSeparatedByString:@"\n"];
+	NSUInteger byteCount = [diff lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+	BOOL shouldHighlightSyntax = [PBHighlighting shouldHighlightDiffWithByteCount:byteCount];
+	if (!shouldHighlightSyntax)
+		NSLog(@"[GitX] Rendering %lu-byte diff with lightweight coloring for responsive scrolling", (unsigned long)byteCount);
 	NSMutableArray<NSString *> *fileHeader = [NSMutableArray array];
 	NSString *fileKey;
 	NSString *currentPath = fallbackPath ?: @"";
@@ -530,7 +534,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			NSString *patch = [[patchLines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
 			currentHunkStart = index;
 			currentHunkEnd = end;
-			currentHunkSyntax = [self syntaxHighlightsForHunkLines:currentHunkLines path:currentPath];
+			currentHunkSyntax = shouldHighlightSyntax ? [self syntaxHighlightsForHunkLines:currentHunkLines path:currentPath] : @{};
 			[self appendDiffLine:line toString:rendered];
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"  "]];
 			if ([context isEqualToString:@"staged"]) {
