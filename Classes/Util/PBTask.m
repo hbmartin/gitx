@@ -9,6 +9,8 @@
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
 
+#import <signal.h>
+
 NSString *const PBTaskErrorDomain = @"PBTaskErrorDomain";
 NSString *const PBTaskUnderlyingExceptionKey = @"PBTaskUnderlyingExceptionKey";
 NSString *const PBTaskTerminationStatusKey = @"PBTaskTerminationStatusKey";
@@ -16,6 +18,7 @@ NSString *const PBTaskTerminationOutputKey = @"PBTaskTerminationOutputKey";
 
 const BOOL PBTaskDebugEnable = NO;
 static const NSTimeInterval PBTaskOutputDrainGrace = 0.1;
+static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 #define PBTaskLog(...)                             \
 	do {                                           \
@@ -167,7 +170,8 @@ static const NSTimeInterval PBTaskOutputDrainGrace = 0.1;
 - (void)finishIfReady
 {
 	if (self.operationFinished) return;
-	if (!self.forcedError && (!self.taskFinished || !self.outputFinished)) return;
+	if (!self.taskFinished) return;
+	if (!self.forcedError && !self.outputFinished) return;
 
 	self.operationFinished = YES;
 	NSData *output = [self.standardOutputBuffer copy] ?: [NSData data];
@@ -360,15 +364,29 @@ static const NSTimeInterval PBTaskOutputDrainGrace = 0.1;
 				dispatch_async(strongSelf.stateQueue, ^{
 					if (strongSelf.operationFinished || strongSelf.taskFinished) return;
 					BOOL taskWasRunning;
+					pid_t processIdentifier = 0;
 					@synchronized(strongSelf) {
 						taskWasRunning = strongSelf.task.running;
-						if (taskWasRunning) [strongSelf.task terminate];
+						if (taskWasRunning) processIdentifier = strongSelf.task.processIdentifier;
 					}
 					if (!taskWasRunning) return;
 					strongSelf.forcedError = [strongSelf timeoutError];
-					strongSelf.taskFinished = YES;
-					strongSelf.outputFinished = YES;
-					[strongSelf finishIfReady];
+					@synchronized(strongSelf) {
+						if (strongSelf.task.running) [strongSelf.task terminate];
+					}
+					PBTaskLog(@"task %p: timeout sent SIGTERM to %d", strongSelf, processIdentifier);
+
+					dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(PBTaskTerminationGrace * NSEC_PER_SEC)), strongSelf.stateQueue, ^{
+						if (strongSelf.operationFinished || strongSelf.taskFinished) return;
+						BOOL shouldKill;
+						@synchronized(strongSelf) {
+							shouldKill = processIdentifier > 0 && strongSelf.task.running && strongSelf.task.processIdentifier == processIdentifier;
+						}
+						if (shouldKill) {
+							PBTaskLog(@"task %p: timeout escalating to SIGKILL for %d", strongSelf, processIdentifier);
+							kill(processIdentifier, SIGKILL);
+						}
+					});
 				});
 			});
 		}
