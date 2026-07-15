@@ -31,6 +31,11 @@
 - (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines;
 @end
 
+@interface PBGitSidebarController (GitXCoreTests)
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldEditTableColumn:(nullable NSTableColumn *)tableColumn item:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldSelectItem:(id)item;
+@end
+
 @interface GitXTestRepository : NSObject
 
 @property (nonatomic, copy, readonly) NSString *path;
@@ -247,6 +252,32 @@
 	XCTAssertTrue(PBGitRevSpecifier.localBranchesRevSpec.isLocalBranchesRev);
 }
 
+- (void)testSourceViewHierarchySortsFindsAndPrunesChildren
+{
+	PBSourceViewItem *root = [PBSourceViewItem groupItemWithTitle:@"Root"];
+	PBSourceViewItem *folder = [PBSourceViewItem itemWithTitle:@"Folder"];
+	PBSourceViewItem *bravo = [PBSourceViewItem itemWithTitle:@"Bravo"];
+	PBSourceViewItem *alpha = [PBSourceViewItem itemWithTitle:@"Alpha"];
+	PBGitRevSpecifier *revision = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"refs/heads/topic" ]];
+	PBSourceViewItem *revisionItem = [PBSourceViewItem itemWithRevSpec:revision];
+
+	[root addChild:folder];
+	[folder addChild:bravo];
+	[folder addChild:alpha];
+	[folder addChild:revisionItem];
+
+	XCTAssertEqualObjects([folder.sortedChildren valueForKey:@"title"], (@[ @"Alpha", @"Bravo", @"topic" ]));
+	XCTAssertTrue([[folder description] containsString:@"Folder"]);
+	XCTAssertEqualObjects([alpha valueForKey:@"stringValue"], @"Alpha");
+	XCTAssertEqual([root findRev:revision], revisionItem);
+
+	[folder removeChild:nil];
+	[folder removeChild:alpha];
+	[folder removeChild:bravo];
+	[folder removeChild:revisionItem];
+	XCTAssertEqual(root.sortedChildren.count, (NSUInteger)0, @"An empty non-group folder should prune itself");
+}
+
 @end
 
 
@@ -263,6 +294,13 @@
 	XCTAssertEqualObjects(self.repository.workingDirectory.stringByResolvingSymlinksInPath,
 						  self.fixture.path.stringByResolvingSymlinksInPath);
 	XCTAssertEqualObjects(self.repository.projectName, self.fixture.path.lastPathComponent);
+	XCTAssertEqualObjects(self.repository.getIndexURL.path.stringByResolvingSymlinksInPath,
+						  [[self.fixture.path stringByAppendingPathComponent:@".git/index"] stringByResolvingSymlinksInPath]);
+	XCTAssertEqualObjects(self.repository.gitIgnoreFilename.lastPathComponent, @".gitignore");
+	XCTAssertEqualObjects(self.repository.gitIgnoreFilename.stringByDeletingLastPathComponent.stringByResolvingSymlinksInPath,
+						  self.fixture.path.stringByResolvingSymlinksInPath);
+	XCTAssertFalse(self.repository.hasSVNRemote);
+	XCTAssertFalse(self.repository.hasSVNRemote, @"The cached SVN result should remain stable");
 	XCTAssertNotNil(self.repository.headOID);
 	XCTAssertEqualObjects(self.repository.headRef.ref.ref, @"refs/heads/main");
 	XCTAssertTrue([self.repository revisionExists:@"HEAD"]);
@@ -359,6 +397,10 @@
 		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
 		PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
 		(void)sidebar.view;
+		[sidebar selectCurrentBranch];
+		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
+		XCTAssertFalse([sidebar outlineView:sidebar.sourceView shouldSelectItem:sidebar.remotes]);
+		XCTAssertFalse([sidebar outlineView:sidebar.sourceView shouldEditTableColumn:nil item:sidebar.remotes]);
 		XCTAssertFalse([[[sidebar.remotes.sortedChildren valueForKey:@"title"] copy] containsObject:@"cli-added"]);
 
 		XCTAssertNotNil(([self.fixture git:@[ @"remote", @"add", @"cli-added", remotePath ] error:&error]), @"%@", error);

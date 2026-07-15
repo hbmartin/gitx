@@ -25,6 +25,10 @@ NS_ASSUME_NONNULL_BEGIN
 				 authorDate:(NSString *)authorDate;
 @end
 
+@interface PBGitRepositoryWatcher (GitXTests)
+- (nullable NSDate *)fileModificationDateAtPath:(NSString *)path;
+@end
+
 @interface PBThreadCheckedRepository : PBGitRepository
 
 @property (nonatomic, readonly) NSUInteger offMainGTRepositoryAccessCount;
@@ -167,6 +171,16 @@ NS_ASSUME_NONNULL_BEGIN
 	XCTAssertNotNil(statusRepository);
 	XCTAssertNotEqual(statusRepository, self.repository.gtRepo);
 	XCTAssertNotEqual(statusRepository.git_repository, self.repository.gtRepo.git_repository);
+}
+
+- (void)testWatcherReportsExistingAndMissingFileModificationDates
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	NSString *trackedPath = [self.repositoryURL.path stringByAppendingPathComponent:@"changed.txt"];
+	NSString *missingPath = [self.repositoryURL.path stringByAppendingPathComponent:@"missing.txt"];
+
+	XCTAssertNotNil([watcher fileModificationDateAtPath:trackedPath]);
+	XCTAssertNil([watcher fileModificationDateAtPath:missingPath]);
 }
 
 - (void)testLinkedWorktreeWatcherOpensStatusRepositoryFromWorktree
@@ -330,7 +344,7 @@ NS_ASSUME_NONNULL_END
 	__block NSUInteger deliveredEventType = 0;
 	__block NSArray<NSString *> *deliveredPaths = nil;
 	PBRepositoryRefreshCoordinator *coordinator = [[PBRepositoryRefreshCoordinator alloc]
-		initWithDelay:0.1
+		  initWithDelay:0.1
 		deliveryHandler:^(NSUInteger eventType, NSArray<NSString *> *paths) {
 			deliveredEventType = eventType;
 			deliveredPaths = paths;
@@ -339,8 +353,7 @@ NS_ASSUME_NONNULL_END
 
 	dispatch_queue_t eventQueue = dispatch_queue_create(
 		"org.gitx.tests.concurrentRepositoryEvents",
-		DISPATCH_QUEUE_CONCURRENT
-	);
+		DISPATCH_QUEUE_CONCURRENT);
 	dispatch_apply(64, eventQueue, ^(size_t index) {
 		NSUInteger eventType = (NSUInteger)1 << (index % 4);
 		NSString *path = [NSString stringWithFormat:@"/repository/path-%zu", index];
