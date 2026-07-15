@@ -10,6 +10,7 @@
 #import "PBFileChangesTableView.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
+#import "PBWebController.h"
 #import "NSAppearance+PBDarkMode.h"
 
 @interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
@@ -261,6 +262,24 @@
 	NSColor *textBody = [storage attribute:NSForegroundColorAttributeName atIndex:textLine.location + 1 effectiveRange:nil];
 	XCTAssertEqualObjects(textPrefix, textBody);
 	XCTAssertNotNil([storage attribute:NSBackgroundColorAttributeName atIndex:textLine.location + 1 effectiveRange:nil]);
+}
+
+- (void)testNativeHistoryContentTracksHostBoundsWhileResizing
+{
+	NSView *host = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 700, 420)];
+	PBWebController *controller = [[PBWebController alloc] init];
+	controller.view = host;
+	[controller awakeFromNib];
+	[controller.nativeView showMessage:@"Resize-safe history content"];
+
+	for (NSValue *sizeValue in @[ [NSValue valueWithSize:NSMakeSize(360, 240)], [NSValue valueWithSize:NSMakeSize(980, 640)], [NSValue valueWithSize:NSMakeSize(520, 300)] ]) {
+		host.frameSize = sizeValue.sizeValue;
+		[host layoutSubtreeIfNeeded];
+		XCTAssertTrue(NSEqualRects(controller.nativeView.frame, host.bounds));
+		XCTAssertTrue([controller.nativeView.textView.string containsString:@"Resize-safe history content"]);
+	}
+
+	[controller closeView];
 }
 
 - (void)testNativeDiffAlwaysRendersLargePatches

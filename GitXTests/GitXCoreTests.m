@@ -277,6 +277,20 @@
 	XCTAssertFalse([self.repository refExists:tag]);
 }
 
+- (void)testManualRevisionRefreshReloadsExternallyChangedHeadAndBranches
+{
+	NSError *error = nil;
+	[self.repository readCurrentBranch];
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"-b", @"feature/manual-refresh" ] error:&error]), @"%@", error);
+
+	[self.repository forceUpdateRevisions];
+
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/feature/manual-refresh");
+	XCTAssertNotNil([self.repository refForName:@"feature/manual-refresh"]);
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
+}
+
 - (void)testRemoteDiscoveryUsesLocalFixture
 {
 	NSError *error = nil;
