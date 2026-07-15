@@ -29,6 +29,7 @@
 #import "PBGitHistoryList.h"
 #import "PBGitStash.h"
 #import "PBError.h"
+#import "GitX-Swift.h"
 
 NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 
@@ -85,6 +86,10 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 
 	// Setup the FSEvents watcher to fire notifications when things change
 	watcher = [[PBGitRepositoryWatcher alloc] initWithRepository:self];
+	[[NSNotificationCenter defaultCenter] addObserver:self
+											 selector:@selector(refreshWatcherPreference:)
+												 name:NSUserDefaultsDidChangeNotification
+											   object:nil];
 
 	return self;
 }
@@ -92,7 +97,19 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 - (void)dealloc
 {
 	// NSLog(@"Dealloc of repository");
+	[[NSNotificationCenter defaultCenter] removeObserver:self];
 	[watcher stop];
+}
+
+- (void)refreshWatcherPreference:(NSNotification *)notification
+{
+	BOOL shouldWatch = [PBGitDefaults useRepositoryWatcher] &&
+		![PBRepositoryRefreshPolicy shouldRefreshAfterApplicationActivation];
+	if (shouldWatch) {
+		[watcher start];
+	} else {
+		[watcher stop];
+	}
 }
 
 #pragma mark -

@@ -421,6 +421,42 @@
 	[self saveWindowScreenshotNamed:@"history-fetch-preferences"];
 }
 
+- (void)testGeneralPreferencesOfferRefreshOnFocus
+{
+	[self openPreferences];
+	XCUIElement *preferences = self.app.dialogs.firstMatch;
+
+	XCUIElement *generalPane = preferences.toolbars.buttons[@"General"];
+	XCTAssertTrue([generalPane waitForExistenceWithTimeout:5]);
+	[generalPane click];
+
+	XCUIElement *continuousWatch = preferences.checkBoxes[@"Watch for changes in repositories"];
+	XCUIElement *refreshOnFocus = preferences.checkBoxes[@"Refresh repositories when GitX regains focus"];
+	XCTAssertTrue([continuousWatch waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([refreshOnFocus waitForExistenceWithTimeout:5]);
+	BOOL watchedOriginally = [continuousWatch.value boolValue];
+	BOOL focusedOriginally = [refreshOnFocus.value boolValue];
+
+	@try {
+		if (watchedOriginally) {
+			[continuousWatch click];
+		}
+		XCTAssertTrue(refreshOnFocus.isEnabled);
+		if (![refreshOnFocus.value boolValue]) {
+			[refreshOnFocus click];
+		}
+		XCTAssertFalse(continuousWatch.isEnabled);
+		[self saveWindowScreenshotNamed:@"refresh-on-focus-preference"];
+	} @finally {
+		if ([refreshOnFocus.value boolValue] != focusedOriginally) {
+			[refreshOnFocus click];
+		}
+		if ([continuousWatch.value boolValue] != watchedOriginally) {
+			[continuousWatch click];
+		}
+	}
+}
+
 - (void)testAppearancePreferenceOffersAutomaticLightAndDark
 {
 	[self openPreferences];

@@ -485,6 +485,178 @@
 	XCTAssertFalse([self.repository.index applyPatch:@"not a patch\n" stage:YES reverse:NO]);
 }
 
+- (void)testRefreshRepresentsPartiallyStagedFileInBothSections
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"first line\nstaged line\nunstaged line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	NSString *patch = @"diff --git a/tracked.txt b/tracked.txt\n"
+					  @"--- a/tracked.txt\n"
+					  @"+++ b/tracked.txt\n"
+					  @"@@ -1 +1,2 @@\n"
+					  @" first line\n"
+					  @"+staged line\n";
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue([self.repository.index applyPatch:patch stage:YES reverse:NO]);
+	}];
+
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	XCTAssertEqual(tracked.status, MODIFIED);
+	XCTAssertTrue(tracked.hasStagedChanges);
+	XCTAssertTrue(tracked.hasUnstagedChanges);
+	NSString *stagedDiff = [self.repository.index diffForFile:tracked staged:YES contextLines:3];
+	NSString *unstagedDiff = [self.repository.index diffForFile:tracked staged:NO contextLines:3];
+	XCTAssertTrue([stagedDiff containsString:@"+staged line"]);
+	XCTAssertFalse([stagedDiff containsString:@"unstaged line"]);
+	XCTAssertTrue([unstagedDiff containsString:@"+unstaged line"]);
+}
+
+- (void)testWholeFileUnstageAfterPartialStageIgnoresStaleIndexMetadata
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"first line\nstaged line\nunstaged line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	NSString *patch = @"diff --git a/tracked.txt b/tracked.txt\n"
+					  @"--- a/tracked.txt\n"
+					  @"+++ b/tracked.txt\n"
+					  @"@@ -1 +1,2 @@\n"
+					  @" first line\n"
+					  @"+staged line\n";
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue([self.repository.index applyPatch:patch stage:YES reverse:NO]);
+	}];
+
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	tracked.commitBlobMode = @"100644";
+	tracked.commitBlobSHA = [[self.fixture git:@[ @"rev-parse", @":tracked.txt" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertTrue([self.repository.index unstageFiles:@[ tracked ]]);
+
+	NSString *stagedNames = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];
+	NSString *workingText = [NSString stringWithContentsOfFile:[self.fixture.path stringByAppendingPathComponent:@"tracked.txt"] encoding:NSUTF8StringEncoding error:&error];
+	XCTAssertEqualObjects(stagedNames, @"");
+	XCTAssertEqualObjects(workingText, @"first line\nstaged line\nunstaged line\n");
+}
+
+- (void)testAmendRefreshTreatsFileAddedByLastCommitAsNew
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"new file\n" toPath:@"amended.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"add file" error:&error], @"%@", error);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		self.repository.index.amend = YES;
+	}];
+
+	PBChangedFile *added = [self changedFileAtPath:@"amended.txt"];
+	XCTAssertNotNil(added);
+	XCTAssertEqual(added.status, NEW);
+	XCTAssertTrue(added.hasStagedChanges);
+	XCTAssertFalse(added.hasUnstagedChanges);
+}
+
+- (void)testAmendCanUnstageModifiedFileAddedByLastCommit
+{
+	NSError *error = nil;
+	NSString *path = @"folder/spaced ünicode.txt";
+	XCTAssertTrue([self.fixture writeText:@"committed\n" toPath:path error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"add file" error:&error], @"%@", error);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"committed\nmodified\n" toPath:path error:&error], @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	XCTAssertEqual([self changedFileAtPath:path].status, MODIFIED);
+	[self refreshIndexAfterPerforming:^{
+		self.repository.index.amend = YES;
+	}];
+	PBChangedFile *added = [self changedFileAtPath:path];
+	XCTAssertNotNil(added);
+	XCTAssertEqual(added.status, NEW);
+	XCTAssertTrue(added.hasStagedChanges);
+	XCTAssertTrue(added.hasUnstagedChanges);
+	XCTAssertTrue([self.repository.index unstageFiles:@[ added ]]);
+
+	NSString *stagedNames = [self.fixture git:@[ @"diff", @"--cached", @"--name-only", @"HEAD^" ] error:&error];
+	NSString *indexEntry = [self.fixture git:@[ @"ls-files", @"--stage", @"--", path ] error:&error];
+	NSString *workingText = [NSString stringWithContentsOfFile:[self.fixture.path stringByAppendingPathComponent:path] encoding:NSUTF8StringEncoding error:&error];
+	XCTAssertEqualObjects(stagedNames, @"");
+	XCTAssertEqualObjects(indexEntry, @"");
+	XCTAssertEqualObjects(workingText, @"committed\nmodified\n");
+}
+
+- (void)testRefreshPublishesOneCoherentIndexUpdate
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"untracked\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	__block NSUInteger updateCount = 0;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexIndexUpdated
+					object:self.repository.index
+					 queue:NSOperationQueue.mainQueue
+				usingBlock:^(__unused NSNotification *notification) {
+					updateCount++;
+				}];
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	XCTAssertEqual(updateCount, 1);
+	XCTAssertNotNil([self changedFileAtPath:@"tracked.txt"]);
+	XCTAssertNotNil([self changedFileAtPath:@"untracked.txt"]);
+}
+
+- (void)testReadOnlyRefreshSucceedsWhileIndexLockExists
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	NSString *lockPath = [self.fixture.path stringByAppendingPathComponent:@".git/index.lock"];
+	XCTAssertTrue([NSData.data writeToFile:lockPath options:NSDataWritingAtomic error:&error], @"%@", error);
+	__block NSUInteger failureCount = 0;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexIndexRefreshFailed
+					object:self.repository.index
+					 queue:NSOperationQueue.mainQueue
+				usingBlock:^(__unused NSNotification *notification) {
+					failureCount++;
+				}];
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
+	XCTAssertEqual(failureCount, 0);
+	XCTAssertNotNil([self changedFileAtPath:@"tracked.txt"]);
+}
+
+- (void)testWholeFileUnstageFailureLeavesIndexUntouched
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	NSString *lockPath = [self.fixture.path stringByAppendingPathComponent:@".git/index.lock"];
+	XCTAssertTrue([NSData.data writeToFile:lockPath options:NSDataWritingAtomic error:&error], @"%@", error);
+
+	XCTAssertFalse([self.repository.index unstageFiles:@[ tracked ]]);
+
+	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
+	NSString *stagedNames = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];
+	XCTAssertEqualObjects(stagedNames, @"tracked.txt\n");
+}
+
 - (void)testDiscardRestoresTrackedFilesButLeavesUntrackedFiles
 {
 	NSError *error = nil;
@@ -585,6 +757,34 @@
 	XCTAssertTrue([failureOutput containsString:@"stderr"]);
 }
 
+- (void)testSignalTerminationReturnsCaughtSignalError
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/sh"
+									arguments:@[ @"-c", @"kill -TERM $$" ]
+								  inDirectory:nil];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskCaughtSignalError);
+	XCTAssertTrue([error.localizedFailureReason containsString:@"caught a termination signal"]);
+}
+
+- (void)testNonZeroExitCapturesCompleteLargeOutput
+{
+	NSError *error = nil;
+	NSString *output = [PBTask outputForCommand:@"/bin/sh"
+									  arguments:@[ @"-c", @"/usr/bin/seq 1 200000; printf 'large-output-tail\\n'; exit 7" ]
+									inDirectory:nil
+										  error:&error];
+	XCTAssertNil(output);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskNonZeroExitCodeError);
+	NSString *failureOutput = error.userInfo[PBTaskTerminationOutputKey];
+	XCTAssertGreaterThan(failureOutput.length, (NSUInteger)1000000);
+	XCTAssertTrue([failureOutput hasSuffix:@"200000\nlarge-output-tail\n"]);
+}
+
 - (void)testMissingExecutableReturnsLaunchError
 {
 	PBTask *task = [PBTask taskWithLaunchPath:@"/path/that/does/not/exist" arguments:@[] inDirectory:nil];
@@ -612,6 +812,35 @@
 			   [expectation fulfill];
 		   }];
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
+- (void)testAsyncTimeoutCompletesExactlyOnce
+{
+	static void *queueKey = &queueKey;
+	dispatch_queue_t queue = dispatch_queue_create("org.gitx.tests.task-timeout", DISPATCH_QUEUE_SERIAL);
+	dispatch_queue_set_specific(queue, queueKey, queueKey, NULL);
+	XCTestExpectation *completionExpectation = [self expectationWithDescription:@"timeout completion"];
+	XCTestExpectation *duplicateExpectation = [self expectationWithDescription:@"duplicate completion"];
+	duplicateExpectation.inverted = YES;
+	__block NSUInteger completionCount = 0;
+	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/sleep" arguments:@[ @"0.5" ] inDirectory:nil];
+	task.timeout = 0.02;
+	[task performTaskOnQueue:queue
+		   completionHandler:^(NSData *data, NSError *error) {
+			   completionCount += 1;
+			   XCTAssertTrue(dispatch_get_specific(queueKey) != NULL);
+			   if (completionCount == 1) {
+				   XCTAssertNil(data);
+				   XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+				   XCTAssertEqual(error.code, PBTaskTimeoutError);
+				   [completionExpectation fulfill];
+			   } else {
+				   [duplicateExpectation fulfill];
+			   }
+		   }];
+	[self waitForExpectations:@[ completionExpectation ] timeout:0.3];
+	[self waitForExpectations:@[ duplicateExpectation ] timeout:0.8];
+	XCTAssertEqual(completionCount, (NSUInteger)1);
 }
 
 @end

@@ -18,9 +18,25 @@
         <customObject id="-1" userLabel="First Responder" customClass="FirstResponder"/>
         <customObject id="-3" userLabel="Application" customClass="NSObject"/>
         <customView id="1" userLabel="General">
-            <rect key="frame" x="0.0" y="0.0" width="500" height="250"/>
+            <rect key="frame" x="0.0" y="0.0" width="500" height="272"/>
             <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
             <subviews>
+                <button toolTip="Use this instead of continuous repository watching." fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="focus-refresh-checkbox">
+                    <rect key="frame" x="103" y="235" width="300" height="18"/>
+                    <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                    <buttonCell key="cell" type="check" title="Refresh repositories when GitX regains focus" bezelStyle="regularSquare" imagePosition="left" alignment="left" inset="2" id="focus-refresh-cell">
+                        <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
+                        <font key="font" metaFont="system"/>
+                    </buttonCell>
+                    <connections>
+                        <binding destination="28" name="enabled" keyPath="values.PBUseRepositoryWatcher" id="focus-refresh-enabled-binding">
+                            <dictionary key="options">
+                                <string key="NSValueTransformerName">NSNegateBoolean</string>
+                            </dictionary>
+                        </binding>
+                        <binding destination="28" name="value" keyPath="values.PBRefreshOnApplicationFocus" id="focus-refresh-binding"/>
+                    </connections>
+                </button>
                 <button fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="114">
                     <rect key="frame" x="103" y="191" width="273" height="18"/>
                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
@@ -40,6 +56,11 @@
                         <font key="font" metaFont="system"/>
                     </buttonCell>
                     <connections>
+                        <binding destination="28" name="enabled" keyPath="values.PBRefreshOnApplicationFocus" id="watcher-enabled-binding">
+                            <dictionary key="options">
+                                <string key="NSValueTransformerName">NSNegateBoolean</string>
+                            </dictionary>
+                        </binding>
                         <binding destination="28" name="value" keyPath="values.PBUseRepositoryWatcher" id="163"/>
                     </connections>
                 </button>

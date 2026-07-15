@@ -19,7 +19,7 @@ concurrency:
 jobs:
   static:
     name: static verification
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -43,7 +43,7 @@ jobs:
 
   unit-and-analyze:
     name: unit tests and analyzer
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -94,7 +94,7 @@ jobs:
 
   ui:
     name: UI workflows
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -126,7 +126,7 @@ jobs:
   sanitizers:
     name: ${{ matrix.name }}
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64]
     strategy:
       fail-fast: false
       matrix:
@@ -166,7 +166,7 @@ jobs:
   performance:
     name: performance suite
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v7
         with:

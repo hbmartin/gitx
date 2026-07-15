@@ -68,7 +68,6 @@
     "Classes/git/PBGitStash.h",
     "Classes/git/PBGitTree.h",
     "Classes/git/PBGitXProtocol.h",
-    "Classes/git/PBRepositoryFinder.h",
     "Classes/git/PBSourceViewFolderItem.h",
     "Classes/git/PBSourceViewGitBranchItem.h",
     "Classes/git/PBSourceViewGitRemoteBranchItem.h",

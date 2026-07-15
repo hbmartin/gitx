@@ -28,6 +28,10 @@
 
 #define FileChangesTableViewType @"GitFileChangedType"
 
+@interface PBRepositoryRefreshPolicy : NSObject
++ (BOOL)shouldRefreshStatCacheAfterApplicationActivation;
+@end
+
 @interface PBGitCommitController () <NSTextViewDelegate, NSMenuDelegate, PBFileChangesTableViewStagingDelegate> {
 	IBOutlet PBCommitMessageView *commitMessageView;
 
@@ -141,7 +145,9 @@
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification
 {
-	[self.repository.index refreshStatCache];
+	if ([PBRepositoryRefreshPolicy shouldRefreshStatCacheAfterApplicationActivation]) {
+		[self.repository.index refreshStatCache];
+	}
 	[self reloadPushRemotes];
 }
 

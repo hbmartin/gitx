@@ -10,12 +10,11 @@
 #import "PBGitRepositoryWatcher.h"
 #import "PBGitRepository.h"
 #import "PBGitDefaults.h"
+#import "GitX-Swift.h"
 
 NSString *PBGitRepositoryEventNotification = @"PBGitRepositoryModifiedNotification";
 NSString *kPBGitRepositoryEventTypeUserInfoKey = @"kPBGitRepositoryEventTypeUserInfoKey";
 NSString *kPBGitRepositoryEventPathsUserInfoKey = @"kPBGitRepositoryEventPathsUserInfoKey";
-
-typedef void (^PBGitRepositoryWatcherCallbackBlock)(NSArray *changedFiles);
 
 /* Small helper class to keep track of events */
 @interface PBGitRepositoryWatcherEventPath : NSObject
@@ -28,8 +27,10 @@ typedef void (^PBGitRepositoryWatcherCallbackBlock)(NSArray *changedFiles);
 
 @interface PBGitRepositoryWatcher () {
 	FSEventStreamRef eventStream;
+	dispatch_queue_t eventQueue;
 	NSDate *gitDirTouchDate;
 	NSDate *indexTouchDate;
+	PBRepositoryRefreshCoordinator *refreshCoordinator;
 
 	BOOL _running;
 }
@@ -95,14 +96,31 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 	_repository = theRepository;
 	_statusCache = [NSMutableDictionary new];
+	eventQueue = dispatch_queue_create("org.gitx.repositoryWatcher", DISPATCH_QUEUE_SERIAL);
 
-	if ([PBGitDefaults useRepositoryWatcher])
+	__weak typeof(self) weakSelf = self;
+	refreshCoordinator = [[PBRepositoryRefreshCoordinator alloc]
+		  initWithDelay:0.5
+		deliveryHandler:^(NSUInteger eventType, NSArray<NSString *> *paths) {
+			__strong typeof(weakSelf) self = weakSelf;
+			if (!self) return;
+
+			NSDictionary *eventInfo = @{kPBGitRepositoryEventTypeUserInfoKey : @(eventType),
+										kPBGitRepositoryEventPathsUserInfoKey : paths};
+			[[NSNotificationCenter defaultCenter] postNotificationName:PBGitRepositoryEventNotification
+																object:self.repository
+															  userInfo:eventInfo];
+		}];
+
+	if ([PBGitDefaults useRepositoryWatcher] &&
+		![PBRepositoryRefreshPolicy shouldRefreshAfterApplicationActivation])
 		[self start];
 	return self;
 }
 
 - (void)dealloc
 {
+	[refreshCoordinator cancel];
 	if (eventStream) {
 		FSEventStreamStop(eventStream);
 		FSEventStreamInvalidate(eventStream);
@@ -198,10 +216,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 	}
 
 	if (event != 0x0) {
-		NSDictionary *eventInfo = @{kPBGitRepositoryEventTypeUserInfoKey : @(event),
-									kPBGitRepositoryEventPathsUserInfoKey : paths};
-
-		[[NSNotificationCenter defaultCenter] postNotificationName:PBGitRepositoryEventNotification object:self.repository userInfo:eventInfo];
+		[refreshCoordinator recordEventType:event paths:paths];
 	}
 }
 
@@ -242,10 +257,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 	}
 
 	if (event != 0x0) {
-		NSDictionary *eventInfo = @{kPBGitRepositoryEventTypeUserInfoKey : @(event),
-									kPBGitRepositoryEventPathsUserInfoKey : paths};
-
-		[[NSNotificationCenter defaultCenter] postNotificationName:PBGitRepositoryEventNotification object:self.repository userInfo:eventInfo];
+		[refreshCoordinator recordEventType:event paths:paths];
 	}
 }
 
@@ -290,7 +302,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 	if (!eventStream) return;
 
-	FSEventStreamSetDispatchQueue(eventStream, dispatch_get_main_queue());
+	FSEventStreamSetDispatchQueue(eventStream, eventQueue);
 	FSEventStreamStart(eventStream);
 
 	_running = YES;
@@ -298,6 +310,8 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 - (void)stop
 {
+	[refreshCoordinator cancel];
+
 	if (!_running)
 		return;
 
