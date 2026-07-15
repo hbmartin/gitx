@@ -13,7 +13,7 @@ import Cocoa
 
 /// Immutable commit metadata captured before history rendering leaves the main thread.
 @objc(PBCommitRenderInput)
-final class CommitRenderInput: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class CommitRenderInput: NSObject, Sendable { // swiftlint:disable:this unused_declaration
     @objc let sha: String
     @objc let parentSHA: String?
     @objc let shortName: String
@@ -39,7 +39,7 @@ final class CommitRenderInput: NSObject { // swiftlint:disable:this unused_decla
 
 /// Avoids replacing a visible Working State document when only its refresh notification changed.
 @objc(PBWorkingStateRefreshPolicy)
-final class WorkingStateRefreshPolicy: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class WorkingStateRefreshPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(shouldReplaceDisplayedDiff:renderedDiff:)
     static func shouldReplaceDisplayedDiff( // swiftlint:disable:this unused_declaration
         _ displayedDiff: String?,
@@ -73,7 +73,7 @@ final class RewindOverlayView: NSView { // swiftlint:disable:this unused_declara
 
 /// Supplies the refresh-on-focus preference to Objective-C controllers.
 @objc(PBRepositoryRefreshPolicy)
-final class RepositoryRefreshPolicy: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class RepositoryRefreshPolicy: NSObject { // swiftlint:disable:this unused_declaration
     static let refreshOnApplicationFocusKey = "PBRefreshOnApplicationFocus"
 
     @objc(shouldRefreshAfterApplicationActivation)
@@ -111,7 +111,7 @@ final class RepositoryFocusRefreshTracker: NSObject { // swiftlint:disable:this 
 
 /// Decides whether a refs refresh should keep following the checked-out branch.
 @objc(PBHistoryRefreshSelectionPolicy)
-final class HistoryRefreshSelectionPolicy: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class HistoryRefreshSelectionPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(shouldFollowCheckedOutBranchWithStageSelected:viewedRef:previousHeadRef:)
     // Called through PBHistoryRefreshSelectionPolicy's Objective-C selector.
     // swiftlint:disable:next unused_declaration
@@ -126,7 +126,7 @@ final class HistoryRefreshSelectionPolicy: NSObject { // swiftlint:disable:this 
 
 /// Keeps reference-action eligibility and menu wording out of AppKit controllers.
 @objc(PBReferenceActionPolicy)
-final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(canPushRefishTypeToNamedRemote:)
     static func canPushToNamedRemote(refishType: String?) -> Bool { // swiftlint:disable:this unused_declaration
         [kGitXBranchType, kGitXTagType].contains(refishType)
@@ -200,7 +200,7 @@ final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_d
 
 /// Plans configured-remote changes while preserving nodes backed by tracking refs.
 @objc(PBRemoteSidebarSyncPlan)
-final class RemoteSidebarSyncPlan: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class RemoteSidebarSyncPlan: NSObject, Sendable { // swiftlint:disable:this unused_declaration
     @objc let namesToAdd: [String]
     @objc let namesToRemove: [String]
 
@@ -232,7 +232,7 @@ final class RemoteSidebarSyncPlan: NSObject { // swiftlint:disable:this unused_d
 
 /// Canonicalizes persisted Git defaults before the Objective-C facade stores them.
 @objc(PBGitDefaultsPolicy)
-final class GitDefaultsPolicy: NSObject { // swiftlint:disable:this unused_declaration
+final nonisolated class GitDefaultsPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(validatedAutoFetchScopeRawValue:)
     // swiftlint:disable:next unused_declaration
     static func validatedAutoFetchScope(

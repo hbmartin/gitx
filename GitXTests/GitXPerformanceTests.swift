@@ -4,6 +4,7 @@ import XCTest
 /// Scheduled microbenchmarks for deterministic parsing and presentation policy.
 /// Keep fixture creation outside each measured block and keep this class out of
 /// correctness and sanitizer plans.
+@MainActor
 final class GitXPerformanceTests: XCTestCase {
     private func largeDiff(path: String, lineCount: Int) -> String {
         var diff = """

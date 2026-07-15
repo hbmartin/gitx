@@ -101,6 +101,41 @@
 
 @end
 
+@interface PBManualRefreshContentSpy : NSObject
+
+@property (nonatomic) NSUInteger refreshCount;
+
+@end
+
+@implementation PBManualRefreshContentSpy
+
+- (void)refresh:(id)sender
+{
+	self.refreshCount++;
+}
+
+@end
+
+@interface PBManualRefreshWindowControllerSpy : PBGitWindowController
+
+@property (nonatomic) NSUInteger titleSynchronizationCount;
+
+@end
+
+@implementation PBManualRefreshWindowControllerSpy
+
+- (void)synchronizeWindowTitleWithDocumentName
+{
+	self.titleSynchronizationCount++;
+}
+
+- (NSWindow *)window
+{
+	return nil;
+}
+
+@end
+
 @interface GitXFeatureTests : XCTestCase
 
 @property (nonatomic) BOOL originalHistorySortingEnabled;
@@ -119,6 +154,24 @@
 
 @interface PBAutoFetchManager (GitXFeatureTests)
 + (NSTimeInterval)retryDelayForFailureCount:(NSUInteger)failureCount;
+- (void)timerFired:(NSTimer *)timer;
+@end
+
+@interface PBAutoFetchManagerSpy : PBAutoFetchManager
+
+@property (nonatomic) NSUInteger evaluationCount;
+@property (nonatomic) BOOL lastEvaluationWasImmediate;
+
+@end
+
+@implementation PBAutoFetchManagerSpy
+
+- (void)evaluateRepositoriesForImmediateFetch:(BOOL)immediate
+{
+	self.evaluationCount++;
+	self.lastEvaluationWasImmediate = immediate;
+}
+
 @end
 
 @implementation GitXFeatureTests
@@ -175,6 +228,20 @@
 	XCTAssertEqual([PBGitDefaults autoFetchScope], PBAutoFetchScopeOpenRepositories);
 }
 
+- (void)testAutoFetchTimerRequestsANonImmediateEvaluation
+{
+	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
+	NSTimer *timer = [NSTimer timerWithTimeInterval:1
+											repeats:NO
+											  block:^(__unused NSTimer *firedTimer){
+											  }];
+
+	[manager timerFired:timer];
+
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1);
+	XCTAssertFalse(manager.lastEvaluationWasImmediate);
+}
+
 - (void)testJumpToCheckedOutBranchReloadsAndReadsHead
 {
 	PBCheckedOutBranchRepositorySpy *repository = [[PBCheckedOutBranchRepositorySpy alloc] init];
@@ -187,6 +254,18 @@
 
 	XCTAssertEqual(repository.reloadRefsCount, 1);
 	XCTAssertEqual(repository.readCurrentBranchCount, 1);
+}
+
+- (void)testManualRefreshForwardsToContentAndSynchronizesWindowTitle
+{
+	PBManualRefreshContentSpy *content = [[PBManualRefreshContentSpy alloc] init];
+	PBManualRefreshWindowControllerSpy *controller = [[PBManualRefreshWindowControllerSpy alloc] init];
+	[controller setValue:content forKey:@"contentController"];
+
+	[controller refresh:self];
+
+	XCTAssertEqual(content.refreshCount, (NSUInteger)1);
+	XCTAssertEqual(controller.titleSynchronizationCount, (NSUInteger)1);
 }
 
 - (void)testEmbeddedCommandLineToolDeclaresAppleEventsAuthorization
@@ -432,6 +511,19 @@
 	[view showSourceSections:@[ @{PBNativeSectionPathKey : @"Example.swift", PBNativeSectionTextKey : @"let value = 42\n"} ]];
 	XCTAssertFalse(view.textView.isEditable);
 	XCTAssertTrue(view.textView.isSelectable);
+}
+
+- (void)testHighlightingCanRunOnTheBackgroundRenderQueue
+{
+	XCTestExpectation *highlighted = [self expectationWithDescription:@"background highlighting completed"];
+	__block NSAttributedString *result = nil;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		result = [PBHighlighting highlightedStringForText:@"let value = 42\n" path:@"Example.swift"];
+		[highlighted fulfill];
+	});
+
+	[self waitForExpectations:@[ highlighted ] timeout:2.0];
+	XCTAssertEqualObjects(result.string, @"let value = 42\n");
 }
 
 - (void)testNativeDiffCombinesSyntaxAndDiffHighlighting

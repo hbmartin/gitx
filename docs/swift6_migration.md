@@ -1,110 +1,126 @@
-# Swift 6 Migration Roadmap
+# Swift 6.2 Migration
 
-## Decision
+GitX's first-party Swift now builds in Swift 6 language mode with the Swift 6.2
+concurrency model. The application remains a mixed Objective-C/Swift target;
+this migration changes the language and isolation contract of Swift code rather
+than rewriting stable Objective-C code.
 
-Migrate GitX to Swift 6 language mode incrementally while retaining XCTest for all tests. This roadmap does **not** adopt Swift Testing. Objective-C tests, AppKit/UI automation, performance metrics, existing test infrastructure, and the desired incremental migration are all served by XCTest.
+## Toolchain contract
 
-The migration has two separate axes:
+- CI is pinned to Xcode 26.2, whose bundled compiler is Swift 6.2.3.
+- Xcode expresses every Swift 6.x language mode as `SWIFT_VERSION = 6.0`.
+  The Xcode pin, not a `6.2` project-setting value, selects the 6.2 compiler.
+- The app and app-hosted unit-test targets use complete strict-concurrency
+  checking and treat Swift warnings as errors.
+- ObjectiveGit's two existing framework-header warning categories are demoted
+  from errors only at the Swift importer boundary. First-party Swift warnings
+  remain fatal, and the existing Objective-C warning/analyzer baselines remain
+  independent.
 
-- toolchain adoption: build with the pinned Xcode/Swift compiler;
-- language-mode adoption: enable stricter Swift 6 checking target by target.
+The migration was also exercised locally with Xcode 26.6 / Swift 6.3.3 because
+that is the installed developer toolchain. The Xcode 26.2 CI jobs are the
+authoritative exact-version verification. This distinction matters because the
+Swift 6.3 line has had executor-restoration regressions around
+`nonisolated(nonsending)` and `@concurrent`; GitX currently uses neither an
+`@concurrent` function nor a nonisolated async function.
 
-Using a Swift 6 compiler does not require enabling Swift 6 language mode immediately.
+## Project settings
 
-## Phase 0: Reproducible Baseline
+The app target enables:
 
-- Keep CI and documented local development on a pinned Xcode version.
-- Keep SwiftLint and SwiftFormat pinned through `Mintfile`.
-- Require a clean build, XCTest run, analyzer run, and warning baseline before changing concurrency settings.
-- Record the current `SWIFT_VERSION`, strict-concurrency, upcoming-feature, and warnings-as-errors settings for every target.
-- Keep generated Swift interfaces and Objective-C bridging headers out of unrelated migration commits.
+```text
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
+SWIFT_TREAT_WARNINGS_AS_ERRORS = YES
+SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor
+SWIFT_APPROACHABLE_CONCURRENCY = YES
+```
 
-Exit condition: the same revision produces the same compiler/linter result locally and in CI.
+The unit-test target uses Swift 6, complete checking, warnings as errors, and
+Approachable Concurrency. It intentionally keeps the language's nonisolated
+default because `XCTestCase` is a nonisolated Objective-C superclass. AppKit
+test suites opt into `@MainActor` explicitly.
 
-## Phase 1: Prepare APIs in Existing Language Mode
+Debug app and test builds also pass
+`-Xfrontend -enable-actor-data-race-checks`. All shared test plans retain Main
+Thread Checker coverage; dedicated Address/Undefined Behavior and Thread
+Sanitizer plans remain checked in.
 
-- Turn on targeted upcoming-feature and concurrency warnings one category at a time in CI, initially without making them errors.
-- Make ownership and isolation explicit at boundaries: immutable values should be `Sendable`; UI work should be main-actor isolated; mutable shared services should have one documented synchronization owner.
-- Replace implicit shared mutable state in new Swift code with injected dependencies.
-- Modernize Objective-C headers as they are touched: nullability regions, lightweight generics, and explicit nullable delegates, outlets, return values, and error out-parameters.
-- Reduce imported implicitly-unwrapped optionals before tightening Swift checking.
-- Prefer completion handlers with documented queue behavior until an async conversion can be isolated and tested.
+## Isolation model
 
-Do not scatter `@unchecked Sendable`, `nonisolated(unsafe)`, or blanket `@preconcurrency` annotations merely to silence diagnostics. Each exception needs a comment naming the synchronization or compatibility guarantee and a follow-up issue.
+GitX uses a MainActor-first model without forcing background work onto the UI
+executor:
 
-Exit condition: new or edited Swift code introduces no new strict-concurrency warnings, and Objective-C interop debt continues to shrink.
+- AppKit views and ordinary UI helpers inherit the app target's MainActor
+  default. `RefreshCoalescer` is explicitly `@MainActor` because it owns a UI
+  invalidation scheduled for the next main-loop turn.
+- Immutable render snapshots, decision policies, process-environment assembly,
+  and syntax highlighting are explicitly `nonisolated`. Objective-C render and
+  task queues call these APIs off-main today, so their Swift contract matches
+  their real execution context.
+- `CommitRenderInput` and `RemoteSidebarSyncPlan` are immutable `Sendable`
+  snapshots.
+- `RepositoryRefreshCoordinator` is nonisolated and `Sendable`; all mutable
+  debounce state is stored in a checked `Synchronization.Mutex`. Scheduled
+  closures and scheduling protocols are `@Sendable`.
+- `PBHistoryArrayController` remains nonisolated because `NSArrayController`'s
+  override contract is nonisolated even though GitX wires the instance through
+  Cocoa Bindings on the main thread.
+- Mutable focus-refresh tracking remains MainActor-owned by its window
+  controller.
 
-## Phase 2: Establish the Foundation-Only Boundary
+No first-party Swift source currently uses `@unchecked Sendable`,
+`nonisolated(unsafe)`, `@preconcurrency`, `assumeIsolated`, `unsafeBitCast`, or
+`@retroactive`.
 
-Create the `GitXCore` and hostless XCTest targets described in [future_work.md](future_work.md). Pure value types and policies are the safest first Swift 6 surface because they do not inherit AppKit isolation or Objective-C mutability.
+## Enforcement
 
-- Enable complete concurrency checking on `GitXCore` first.
-- Run its XCTest target in parallel and randomized order.
-- Use injected clocks/calendars and immutable fixtures.
-- Require `Sendable` for values that cross task or actor boundaries; do not require it for values that never cross one.
+`scripts/check_swift_concurrency_escapes.py` scans production and test Swift.
+Any future safety escape must have a nearby comment containing:
 
-Exit condition: `GitXCore` builds cleanly with complete checking and has no unsafe concurrency suppressions.
+```text
+swift6-safety-justification:
+```
 
-## Phase 3: Isolate AppKit and Adapters
+The justification must name the synchronization or compatibility invariant.
+The check runs from `scripts/verify_static.sh`, and policy tests pin the language
+mode, concurrency settings, runtime checks, and Xcode 26.2 workflow versions.
 
-- Treat AppKit views, controllers, documents, and UI delegates as main-actor-owned.
-- Annotate the narrowest useful surface rather than marking the entire application main-actor-isolated by default.
-- Keep Objective-C callbacks at adapter boundaries. Hop to the main actor deliberately before changing UI state.
-- Replace callback races with explicit state machines/use-case objects before converting them to async APIs.
-- Audit notification observers, KVO/Cocoa Bindings, timers, file watchers, dispatch callbacks, and ObjectiveGit completion handlers for queue assumptions.
-- Keep tests that instantiate AppKit in the app-hosted XCTest target and make their main-thread requirement explicit.
+## Verification workflow
 
-Exit condition: UI-bound Swift files have an understandable isolation model, and compiler warnings no longer depend on broad compatibility annotations.
+Migration changes must keep these shared plans green:
 
-## Phase 4: Per-Target Swift 6 Language Mode
+```sh
+xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitX \
+  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
+xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXUI \
+  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
+xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXPerformance \
+  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
+xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXThreadSanitizer \
+  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
+xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXAddressUndefined \
+  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
+```
 
-Adopt language mode in this order:
+After the unit plan, enforce and ratchet coverage with
+`scripts/check_coverage.py`. Run pinned SwiftFormat and SwiftLint through
+`scripts/run_pinned_tool.sh`, then run `scripts/verify_static.sh` and the Clang
+analyzer.
 
-1. `GitXCore` and its hostless XCTest bundle.
-2. Small leaf Swift adapters with no controller ownership.
-3. App-hosted unit-test Swift support, if introduced.
-4. The GitX app target after all of its current Swift files are clean.
-5. UI and performance test targets last; they remain XCTest.
+The built application must also be exercised directly. At minimum, open a real
+repository, render history and a diff, enter the staging view, stage and unstage
+a disposable change, and verify watcher-driven refreshes with the Debug actor
+checks active.
 
-Make each target change a focused commit. A target advances only when its tests, static checks, analyzer, and sanitizer plans remain green. Do not mix a language-mode flip with behavior changes or broad formatting.
+## Deliberate non-goals
 
-## Phase 5: Warnings as Errors and Ratchet
-
-- Make Swift warnings errors in CI once the app target has no warning baseline.
-- Keep local Debug builds practical; CI is the authoritative clean-build gate.
-- Treat new unsafe concurrency escape hatches like warning debt: exact checked-in entries with owner, rationale, and removal condition.
-- Remove compatibility flags and suppression entries as dependencies and Objective-C headers improve.
-- Re-run Address/Undefined Behavior and Thread Sanitizer plans after each isolation milestone.
-
-Exit condition: all first-party targets use Swift 6 language mode, CI has zero unbudgeted warnings, and unsafe exceptions are explicit and shrinking.
-
-## Test Strategy During Migration
-
-- XCTest remains the only test framework.
-- Preserve Objective-C XCTest coverage for Objective-C exception behavior and legacy interop.
-- Use hostless XCTest for Foundation-only values.
-- Use app-hosted XCTest for AppKit and ObjectiveGit integration.
-- Use XCUITest for a small set of accessibility-driven workflows.
-- Use XCTest performance APIs and `XCTMetric`; performance tests run in their own plan.
-- Do not perform screenshot comparison testing as part of this roadmap.
-
-Every migration slice begins with characterization tests when coverage is absent. Coverage floors must not be lowered to accommodate the migration.
-
-## Diagnostic Triage Rules
-
-When the compiler reports a concurrency problem, prefer fixes in this order:
-
-1. Make the value immutable or keep it within one isolation domain.
-2. Move UI ownership to the main actor.
-3. Pass a value snapshot instead of sharing a mutable object.
-4. Introduce an actor or existing lock owner when shared mutation is real.
-5. Wrap a legacy callback behind a small adapter with documented queue behavior.
-6. Use a temporary compatibility annotation only with a concrete reason and removal plan.
-
-## Explicit Non-Goals
-
-- No Swift Testing adoption.
-- No wholesale rewrite of working Objective-C.
-- No automatic conversion of controllers without first extracting their decision logic.
-- No simultaneous replacement of ObjectiveGit or AppKit.
-- No requirement that every class be an actor or every protocol be `Sendable`.
+- XCTest remains the repository's test framework; this migration does not adopt
+  Swift Testing.
+- Stable Objective-C is not converted merely to increase the Swift percentage.
+- The app target is not split into new modules in this change. If non-UI Swift
+  grows substantially, moving those types into a nonisolated core target is the
+  preferred next architectural step.
+- Do not add `@concurrent`, actors, or unsafe Sendable conformances as migration
+  decoration. Add them only when an observed workload or ownership boundary
+  requires them and tests cover the concurrent behavior.

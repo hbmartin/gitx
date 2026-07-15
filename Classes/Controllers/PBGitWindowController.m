@@ -905,6 +905,8 @@
 - (IBAction)refresh:(id)sender
 {
 	[contentController refresh:self];
+	[self synchronizeWindowTitleWithDocumentName];
+	NSLog(@"[GitX] Manual refresh synchronized window title: %@", self.window.title);
 }
 
 - (IBAction)jumpToCheckedOutBranch:(id)sender

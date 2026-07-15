@@ -1,5 +1,6 @@
 #import <XCTest/XCTest.h>
 #import <ObjectiveGit/GTRepository.h>
+#import <CoreServices/CoreServices.h>
 
 #import "PBGitRepository.h"
 #import "PBGitRepositoryWatcher.h"
@@ -13,6 +14,32 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)recordEventType:(NSUInteger)eventType paths:(NSArray<NSString *> *)paths;
 - (void)cancel;
 @end
+
+@interface PBCommitRenderInput : NSObject
+@property (nonatomic, copy, readonly) NSString *sha;
+@property (nonatomic, copy, readonly) NSString *title;
+- (instancetype)initWithSHA:(NSString *)sha
+				  parentSHA:(nullable NSString *)parentSHA
+				  shortName:(NSString *)shortName
+					subject:(NSString *)subject
+					 author:(NSString *)author
+				 authorDate:(NSString *)authorDate;
+@end
+
+@interface PBGitRepositoryWatcher (GitXTests)
+- (nullable NSDate *)fileModificationDateAtPath:(NSString *)path;
+@end
+
+@interface PBGitRepositoryWatcherCallbackContext : NSObject
+- (instancetype)initWithWatcher:(PBGitRepositoryWatcher *)watcher;
+@end
+
+extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable streamRef,
+										   void *clientCallBackInfo,
+										   size_t numEvents,
+										   void *eventPaths,
+										   const FSEventStreamEventFlags eventFlags[],
+										   const FSEventStreamEventId eventIds[]);
 
 @interface PBThreadCheckedRepository : PBGitRepository
 
@@ -156,6 +183,40 @@ NS_ASSUME_NONNULL_BEGIN
 	XCTAssertNotNil(statusRepository);
 	XCTAssertNotEqual(statusRepository, self.repository.gtRepo);
 	XCTAssertNotEqual(statusRepository.git_repository, self.repository.gtRepo.git_repository);
+}
+
+- (void)testWatcherReportsExistingAndMissingFileModificationDates
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	NSString *trackedPath = [self.repositoryURL.path stringByAppendingPathComponent:@"changed.txt"];
+	NSString *missingPath = [self.repositoryURL.path stringByAppendingPathComponent:@"missing.txt"];
+
+	XCTAssertNotNil([watcher fileModificationDateAtPath:trackedPath]);
+	XCTAssertNil([watcher fileModificationDateAtPath:missingPath]);
+}
+
+- (void)testWatcherCallbackIgnoresGitLockFiles
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	PBGitRepositoryWatcherCallbackContext *context =
+		[[PBGitRepositoryWatcherCallbackContext alloc] initWithWatcher:watcher];
+	NSString *lockPath = [[watcher valueForKey:@"gitDir"] stringByAppendingPathComponent:@"index.lock"];
+	NSArray<NSString *> *eventPaths = @[ lockPath ];
+	FSEventStreamEventFlags eventFlags[] = {kFSEventStreamEventFlagNone};
+	FSEventStreamEventId eventIds[] = {1};
+	XCTestExpectation *notification = [self expectationForNotification:PBGitRepositoryEventNotification
+																object:self.repository
+															   handler:nil];
+	notification.inverted = YES;
+
+	PBGitRepositoryWatcherCallback(NULL,
+								   (__bridge void *)context,
+								   eventPaths.count,
+								   (__bridge void *)eventPaths,
+								   eventFlags,
+								   eventIds);
+
+	[self waitForExpectations:@[ notification ] timeout:0.2];
 }
 
 - (void)testLinkedWorktreeWatcherOpensStatusRepositoryFromWorktree
@@ -311,6 +372,59 @@ NS_ASSUME_NONNULL_END
 
 	[self waitForExpectations:@[ delivered ] timeout:1.0];
 	XCTAssertEqual(deliveryCount, (NSUInteger)1);
+}
+
+- (void)testConcurrentEventsAreCoalescedWithoutDroppingPaths
+{
+	XCTestExpectation *delivered = [self expectationWithDescription:@"concurrent batch delivered"];
+	__block NSUInteger deliveredEventType = 0;
+	__block NSArray<NSString *> *deliveredPaths = nil;
+	PBRepositoryRefreshCoordinator *coordinator = [[PBRepositoryRefreshCoordinator alloc]
+		  initWithDelay:0.1
+		deliveryHandler:^(NSUInteger eventType, NSArray<NSString *> *paths) {
+			deliveredEventType = eventType;
+			deliveredPaths = paths;
+			[delivered fulfill];
+		}];
+
+	dispatch_queue_t eventQueue = dispatch_queue_create(
+		"org.gitx.tests.concurrentRepositoryEvents",
+		DISPATCH_QUEUE_CONCURRENT);
+	dispatch_group_t eventGroup = dispatch_group_create();
+	for (NSUInteger index = 0; index < 64; index++) {
+		dispatch_group_async(eventGroup, eventQueue, ^{
+			NSUInteger eventType = (NSUInteger)1 << (index % 4);
+			NSString *path = [NSString stringWithFormat:@"/repository/path-%lu", (unsigned long)index];
+			[coordinator recordEventType:eventType paths:@[ path ]];
+		});
+	}
+	XCTAssertEqual(dispatch_group_wait(eventGroup, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)), (long)0);
+
+	[self waitForExpectations:@[ delivered ] timeout:2.0];
+	XCTAssertEqual(deliveredEventType, (NSUInteger)0xF);
+	XCTAssertEqual(deliveredPaths.count, (NSUInteger)64);
+	XCTAssertEqualObjects(deliveredPaths.firstObject, @"/repository/path-0");
+	XCTAssertEqualObjects(deliveredPaths.lastObject, @"/repository/path-9");
+}
+
+- (void)testCommitRenderInputMetadataCanBeReadOnBackgroundRenderQueue
+{
+	PBCommitRenderInput *input = [[PBCommitRenderInput alloc] initWithSHA:@"abcdef0123456789"
+																parentSHA:nil
+																shortName:@"abcdef0"
+																  subject:@"Render safely"
+																   author:@"Ada"
+															   authorDate:@"Today"];
+	XCTestExpectation *readFinished = [self expectationWithDescription:@"render metadata read"];
+	__block NSString *renderedTitle = nil;
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		renderedTitle = [NSString stringWithFormat:@"%@ — %@", input.sha, input.title];
+		[readFinished fulfill];
+	});
+
+	[self waitForExpectations:@[ readFinished ] timeout:2.0];
+	XCTAssertEqualObjects(renderedTitle, @"abcdef0123456789 — abcdef0  Render safely\nAda — Today");
 }
 
 - (void)testCancellationDropsPendingBatch

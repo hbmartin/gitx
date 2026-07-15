@@ -1,28 +1,28 @@
+import Dispatch
 import Foundation
+import Synchronization
 
-protocol RepositoryRefreshScheduledAction: AnyObject {
+nonisolated protocol RepositoryRefreshScheduledAction: AnyObject, Sendable {
     func cancel()
 }
 
-protocol RepositoryRefreshScheduling: AnyObject {
+nonisolated protocol RepositoryRefreshScheduling: AnyObject, Sendable {
     /// Implementations enqueue `action`; they must not execute it synchronously.
-    func schedule(after delay: TimeInterval, action: @escaping () -> Void) -> RepositoryRefreshScheduledAction
+    func schedule(
+        after delay: TimeInterval,
+        action: @escaping @Sendable () -> Void
+    ) -> any RepositoryRefreshScheduledAction
 }
 
-private final class DispatchRepositoryRefreshAction: RepositoryRefreshScheduledAction {
-    private let lock = NSLock()
-    private var isCancelled = false
+private final nonisolated class DispatchRepositoryRefreshAction: RepositoryRefreshScheduledAction, Sendable {
+    private let isCancelled = Mutex(false)
 
     func cancel() {
-        lock.lock()
-        isCancelled = true
-        lock.unlock()
+        isCancelled.withLock { $0 = true }
     }
 
-    func perform(_ action: () -> Void) {
-        lock.lock()
-        let shouldPerform = !isCancelled
-        lock.unlock()
+    func perform(_ action: @Sendable () -> Void) {
+        let shouldPerform = isCancelled.withLock { !$0 }
 
         if shouldPerform {
             action()
@@ -30,10 +30,13 @@ private final class DispatchRepositoryRefreshAction: RepositoryRefreshScheduledA
     }
 }
 
-private final class DispatchRepositoryRefreshScheduler: RepositoryRefreshScheduling {
+private final nonisolated class DispatchRepositoryRefreshScheduler: RepositoryRefreshScheduling, Sendable {
     private let queue = DispatchQueue(label: "org.gitx.repositoryRefreshCoordinator")
 
-    func schedule(after delay: TimeInterval, action: @escaping () -> Void) -> RepositoryRefreshScheduledAction {
+    func schedule(
+        after delay: TimeInterval,
+        action: @escaping @Sendable () -> Void
+    ) -> any RepositoryRefreshScheduledAction {
         let scheduledAction = DispatchRepositoryRefreshAction()
         queue.asyncAfter(deadline: .now() + delay) {
             scheduledAction.perform(action)
@@ -43,10 +46,10 @@ private final class DispatchRepositoryRefreshScheduler: RepositoryRefreshSchedul
 }
 
 /// Coalesces duplicate controller invalidations into one refresh on the next main-loop turn.
+@MainActor
 @objc(PBRefreshCoalescer)
 final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declaration
     private let deliveryHandler: () -> Void
-    private let lock = NSLock()
     private var generation: UInt64 = 0
     private var scheduledGeneration: UInt64?
 
@@ -55,15 +58,9 @@ final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declar
         self.deliveryHandler = deliveryHandler
     }
 
-    deinit {
-        cancel()
-    }
-
     @objc
     func requestRefresh() {
-        lock.lock()
         guard scheduledGeneration == nil else {
-            lock.unlock()
             NSLog("[GitX] Coalesced a duplicate stage-diff refresh request")
             return
         }
@@ -71,7 +68,6 @@ final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declar
         generation &+= 1
         let requestedGeneration = generation
         scheduledGeneration = requestedGeneration
-        lock.unlock()
 
         NSLog("[GitX] Scheduled a stage-diff refresh for the next main-loop turn")
 
@@ -82,21 +78,16 @@ final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declar
 
     @objc
     func cancel() {
-        lock.lock()
         generation &+= 1
         scheduledGeneration = nil
-        lock.unlock()
         NSLog("[GitX] Cancelled the pending stage-diff refresh")
     }
 
     private func deliver(generation requestedGeneration: UInt64) {
-        lock.lock()
         guard scheduledGeneration == requestedGeneration else {
-            lock.unlock()
             return
         }
         scheduledGeneration = nil
-        lock.unlock()
 
         NSLog("[GitX] Delivering one coalesced stage-diff refresh")
         deliveryHandler()
@@ -105,20 +96,23 @@ final class RefreshCoalescer: NSObject { // swiftlint:disable:this unused_declar
 
 /// Debounces repository events for the Objective-C repository watcher.
 @objc(PBRepositoryRefreshCoordinator)
-final class RepositoryRefreshCoordinator: NSObject { // swiftlint:disable:this unused_declaration
-    typealias DeliveryHandler = (UInt, [String]) -> Void
+final nonisolated class RepositoryRefreshCoordinator: NSObject, Sendable { // swiftlint:disable:this unused_declaration
+    typealias DeliveryHandler = @Sendable (UInt, [String]) -> Void
+    typealias CallbackExecutor = @Sendable (@escaping @Sendable () -> Void) -> Void
+
+    private struct State {
+        var accumulatedEventType: UInt = 0
+        var accumulatedPaths = Set<String>()
+        var generation: UInt64 = 0
+        var cancellationGeneration: UInt64 = 0
+        var scheduledAction: (any RepositoryRefreshScheduledAction)?
+    }
 
     private let delay: TimeInterval
-    private let scheduler: RepositoryRefreshScheduling
-    private let callbackExecutor: (@escaping () -> Void) -> Void
+    private let scheduler: any RepositoryRefreshScheduling
+    private let callbackExecutor: CallbackExecutor
     private let deliveryHandler: DeliveryHandler
-    private let lock = NSLock()
-
-    private var accumulatedEventType: UInt = 0
-    private var accumulatedPaths = Set<String>()
-    private var generation: UInt64 = 0
-    private var cancellationGeneration: UInt64 = 0
-    private var scheduledAction: RepositoryRefreshScheduledAction?
+    private let state = Mutex(State())
 
     @objc(initWithDelay:deliveryHandler:)
     convenience init(delay: TimeInterval, deliveryHandler: @escaping DeliveryHandler) {
@@ -134,8 +128,8 @@ final class RepositoryRefreshCoordinator: NSObject { // swiftlint:disable:this u
 
     init(
         delay: TimeInterval,
-        scheduler: RepositoryRefreshScheduling,
-        callbackExecutor: @escaping (@escaping () -> Void) -> Void,
+        scheduler: any RepositoryRefreshScheduling,
+        callbackExecutor: @escaping CallbackExecutor,
         deliveryHandler: @escaping DeliveryHandler
     ) {
         self.delay = delay
@@ -152,50 +146,54 @@ final class RepositoryRefreshCoordinator: NSObject { // swiftlint:disable:this u
     func record(eventType: UInt, paths: [String]) { // swiftlint:disable:this unused_declaration
         guard eventType != 0 else { return }
 
-        lock.lock()
-        accumulatedEventType |= eventType
-        accumulatedPaths.formUnion(paths)
-        generation &+= 1
-        let scheduledGeneration = generation
-        scheduledAction?.cancel()
-        scheduledAction = scheduler.schedule(after: delay) { [weak self] in
-            self?.deliver(generation: scheduledGeneration)
+        state.withLock { state in
+            state.accumulatedEventType |= eventType
+            state.accumulatedPaths.formUnion(paths)
+            state.generation &+= 1
+            let scheduledGeneration = state.generation
+            state.scheduledAction?.cancel()
+            state.scheduledAction = scheduler.schedule(after: delay) { [weak self] in
+                self?.deliver(generation: scheduledGeneration)
+            }
         }
-        lock.unlock()
     }
 
     @objc
     func cancel() {
-        lock.lock()
-        generation &+= 1
-        cancellationGeneration &+= 1
-        scheduledAction?.cancel()
-        scheduledAction = nil
-        accumulatedEventType = 0
-        accumulatedPaths.removeAll(keepingCapacity: false)
-        lock.unlock()
+        state.withLock { state in
+            state.generation &+= 1
+            state.cancellationGeneration &+= 1
+            state.scheduledAction?.cancel()
+            state.scheduledAction = nil
+            state.accumulatedEventType = 0
+            state.accumulatedPaths.removeAll(keepingCapacity: false)
+        }
     }
 
     private func deliver(generation scheduledGeneration: UInt64) {
-        lock.lock()
-        guard scheduledGeneration == generation else {
-            lock.unlock()
-            return
+        let delivery: (eventType: UInt, paths: [String], cancellationGeneration: UInt64)? = state.withLock { state in
+            guard scheduledGeneration == state.generation else {
+                return nil
+            }
+
+            let delivery = (
+                eventType: state.accumulatedEventType,
+                paths: state.accumulatedPaths.sorted(),
+                cancellationGeneration: state.cancellationGeneration
+            )
+            state.scheduledAction = nil
+            state.accumulatedEventType = 0
+            state.accumulatedPaths.removeAll(keepingCapacity: true)
+            return delivery
         }
 
-        let eventType = accumulatedEventType
-        let paths = accumulatedPaths.sorted()
-        let scheduledCancellationGeneration = cancellationGeneration
-        scheduledAction = nil
-        accumulatedEventType = 0
-        accumulatedPaths.removeAll(keepingCapacity: true)
-        lock.unlock()
+        guard let delivery else { return }
 
         callbackExecutor { [weak self] in
             self?.deliverIfNotCancelled(
-                eventType: eventType,
-                paths: paths,
-                cancellationGeneration: scheduledCancellationGeneration
+                eventType: delivery.eventType,
+                paths: delivery.paths,
+                cancellationGeneration: delivery.cancellationGeneration
             )
         }
     }
@@ -205,9 +203,9 @@ final class RepositoryRefreshCoordinator: NSObject { // swiftlint:disable:this u
         paths: [String],
         cancellationGeneration scheduledCancellationGeneration: UInt64
     ) {
-        lock.lock()
-        let wasCancelled = scheduledCancellationGeneration != cancellationGeneration
-        lock.unlock()
+        let wasCancelled = state.withLock {
+            scheduledCancellationGeneration != $0.cancellationGeneration
+        }
 
         if !wasCancelled {
             deliveryHandler(eventType, paths)

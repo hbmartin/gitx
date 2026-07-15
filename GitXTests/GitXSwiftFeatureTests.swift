@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
 
+@MainActor
 final class GitXSwiftFeatureTests: XCTestCase {
     func testCommitRenderInputFreezesPlainMetadataAndImageRevisions() {
         let input = PBCommitRenderInput(

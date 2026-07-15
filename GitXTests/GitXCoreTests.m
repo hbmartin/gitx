@@ -3,7 +3,6 @@
 #import <ObjectiveGit/GTOID.h>
 #import <ObjectiveGit/GTRepository.h>
 #import "MAKVONotificationCenter.h"
-
 #import "PBMacros.h"
 #import "PBChangedFile.h"
 #import "PBGraphCellInfo.h"
@@ -29,6 +28,11 @@
 						   selectedIndexes:(NSIndexSet *)selectedIndexes
 								   reverse:(BOOL)reverse;
 - (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines;
+@end
+
+@interface PBGitSidebarController (GitXCoreTests)
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldEditTableColumn:(nullable NSTableColumn *)tableColumn item:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldSelectItem:(id)item;
 @end
 
 @interface GitXTestRepository : NSObject
@@ -247,6 +251,35 @@
 	XCTAssertTrue(PBGitRevSpecifier.localBranchesRevSpec.isLocalBranchesRev);
 }
 
+- (void)testSourceViewHierarchySortsFindsAndPrunesChildren
+{
+	PBSourceViewItem *root = [PBSourceViewItem groupItemWithTitle:@"Root"];
+	PBSourceViewItem *folder = [PBSourceViewItem itemWithTitle:@"Folder"];
+	PBSourceViewItem *bravo = [PBSourceViewItem itemWithTitle:@"Bravo"];
+	PBSourceViewItem *alpha = [PBSourceViewItem itemWithTitle:@"Alpha"];
+	PBGitRevSpecifier *revision = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"refs/heads/topic" ]];
+	PBSourceViewItem *revisionItem = [PBSourceViewItem itemWithRevSpec:revision];
+
+	[root addChild:folder];
+	[folder addChild:bravo];
+	[folder addChild:alpha];
+	[folder addChild:revisionItem];
+
+	XCTAssertEqualObjects([folder.sortedChildren valueForKey:@"title"], (@[ @"Alpha", @"Bravo", @"topic" ]));
+	XCTAssertTrue([[folder description] containsString:@"Folder"]);
+	XCTAssertEqualObjects([alpha valueForKey:@"stringValue"], @"Alpha");
+	XCTAssertEqual([root findRev:revision], revisionItem);
+
+	NSUInteger childCount = folder.sortedChildren.count;
+	[folder removeChild:nil];
+	XCTAssertEqual(folder.sortedChildren.count, childCount, @"Removing a nil child should be a no-op");
+
+	[folder removeChild:alpha];
+	[folder removeChild:bravo];
+	[folder removeChild:revisionItem];
+	XCTAssertEqual(root.sortedChildren.count, (NSUInteger)0, @"An empty non-group folder should prune itself");
+}
+
 @end
 
 
@@ -263,6 +296,13 @@
 	XCTAssertEqualObjects(self.repository.workingDirectory.stringByResolvingSymlinksInPath,
 						  self.fixture.path.stringByResolvingSymlinksInPath);
 	XCTAssertEqualObjects(self.repository.projectName, self.fixture.path.lastPathComponent);
+	XCTAssertEqualObjects(self.repository.getIndexURL.path.stringByResolvingSymlinksInPath,
+						  [[self.fixture.path stringByAppendingPathComponent:@".git/index"] stringByResolvingSymlinksInPath]);
+	XCTAssertEqualObjects(self.repository.gitIgnoreFilename.lastPathComponent, @".gitignore");
+	XCTAssertEqualObjects(self.repository.gitIgnoreFilename.stringByDeletingLastPathComponent.stringByResolvingSymlinksInPath,
+						  self.fixture.path.stringByResolvingSymlinksInPath);
+	XCTAssertFalse(self.repository.hasSVNRemote);
+	XCTAssertFalse(self.repository.hasSVNRemote, @"The cached SVN result should remain stable");
 	XCTAssertNotNil(self.repository.headOID);
 	XCTAssertEqualObjects(self.repository.headRef.ref.ref, @"refs/heads/main");
 	XCTAssertTrue([self.repository revisionExists:@"HEAD"]);
@@ -359,6 +399,10 @@
 		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
 		PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
 		(void)sidebar.view;
+		[sidebar selectCurrentBranch];
+		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
+		XCTAssertFalse([sidebar outlineView:sidebar.sourceView shouldSelectItem:sidebar.remotes]);
+		XCTAssertFalse([sidebar outlineView:sidebar.sourceView shouldEditTableColumn:nil item:sidebar.remotes]);
 		XCTAssertFalse([[[sidebar.remotes.sortedChildren valueForKey:@"title"] copy] containsObject:@"cli-added"]);
 
 		XCTAssertNotNil(([self.fixture git:@[ @"remote", @"add", @"cli-added", remotePath ] error:&error]), @"%@", error);
@@ -975,6 +1019,38 @@
 	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
 	XCTAssertEqual(failureCount, 0);
 	XCTAssertNotNil([self changedFileAtPath:@"tracked.txt"]);
+}
+
+- (void)testRefreshReportsFailureWhenUntrackedScanCannotReadExcludes
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"untracked\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	PBChangedFile *untracked = [self changedFileAtPath:@"untracked.txt"];
+	XCTAssertNotNil(untracked);
+
+	NSString *gitDirectory = [self.fixture.path stringByAppendingPathComponent:@".git"];
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.excludesFile", gitDirectory ] error:&error]), @"%@", error);
+	NSMutableArray<NSString *> *failureDescriptions = [NSMutableArray array];
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexIndexRefreshFailed
+					object:self.repository.index
+					 queue:NSOperationQueue.mainQueue
+				usingBlock:^(NSNotification *notification) {
+					[failureDescriptions addObject:notification.userInfo[@"description"]];
+				}];
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"--unset", @"core.excludesFile" ] error:&error]), @"%@", error);
+	XCTAssertTrue([failureDescriptions containsObject:@"ls-files failed"]);
+	XCTAssertEqual([self changedFileAtPath:@"untracked.txt"], untracked,
+				   @"A failed refresh must preserve the last coherent untracked snapshot");
 }
 
 - (void)testWholeFileUnstageFailureLeavesIndexUntouched

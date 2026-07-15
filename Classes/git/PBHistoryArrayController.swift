@@ -3,7 +3,7 @@ import Cocoa // swiftlint:disable:this unused_import
 
 /// Keeps the mutable Working State row pinned above the arranged commit list.
 @objc(PBHistoryArrayController)
-final class PBHistoryArrayController: NSArrayController { // swiftlint:disable:this unused_declaration
+final nonisolated class PBHistoryArrayController: NSArrayController { // swiftlint:disable:this unused_declaration
     private var storedPinnedObject: Any?
 
     @objc dynamic var pinnedObject: Any? {
