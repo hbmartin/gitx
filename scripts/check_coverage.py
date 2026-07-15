@@ -63,7 +63,19 @@ def evaluate_coverage(
             failures.append(
                 f"{relative_path} coverage regressed to {actual:.2%}; minimum is {minimum:.2%}"
             )
+    for relative_path in sorted(file_coverage.keys() - policy.files.keys()):
+        if is_first_party_source(relative_path):
+            failures.append(f"Coverage policy is missing {relative_path}")
     return failures
+
+
+def is_first_party_source(relative_path: str) -> bool:
+    path = pathlib.PurePosixPath(relative_path)
+    return (
+        bool(path.parts)
+        and path.parts[0] == "Classes"
+        and path.suffix in {".c", ".cc", ".cpp", ".m", ".mm", ".swift"}
+    )
 
 
 def ratchet_policy(
@@ -76,6 +88,9 @@ def ratchet_policy(
         path: max(minimum, coverage_floor(file_coverage.get(path, minimum)))
         for path, minimum in policy.files.items()
     }
+    for path, actual in file_coverage.items():
+        if path not in files and is_first_party_source(path):
+            files[path] = coverage_floor(actual)
     return CoveragePolicy(
         target=policy.target,
         minimum_line_coverage=max(
