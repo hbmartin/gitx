@@ -1,5 +1,6 @@
 #import <XCTest/XCTest.h>
 #import <ObjectiveGit/GTRepository.h>
+#import <CoreServices/CoreServices.h>
 
 #import "PBGitRepository.h"
 #import "PBGitRepositoryWatcher.h"
@@ -28,6 +29,17 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBGitRepositoryWatcher (GitXTests)
 - (nullable NSDate *)fileModificationDateAtPath:(NSString *)path;
 @end
+
+@interface PBGitRepositoryWatcherCallbackContext : NSObject
+- (instancetype)initWithWatcher:(PBGitRepositoryWatcher *)watcher;
+@end
+
+extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
+										   void *clientCallBackInfo,
+										   size_t numEvents,
+										   void *eventPaths,
+										   const FSEventStreamEventFlags eventFlags[],
+										   const FSEventStreamEventId eventIds[]);
 
 @interface PBThreadCheckedRepository : PBGitRepository
 
@@ -181,6 +193,30 @@ NS_ASSUME_NONNULL_BEGIN
 
 	XCTAssertNotNil([watcher fileModificationDateAtPath:trackedPath]);
 	XCTAssertNil([watcher fileModificationDateAtPath:missingPath]);
+}
+
+- (void)testWatcherCallbackIgnoresGitLockFiles
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	PBGitRepositoryWatcherCallbackContext *context =
+		[[PBGitRepositoryWatcherCallbackContext alloc] initWithWatcher:watcher];
+	NSString *lockPath = [[watcher valueForKey:@"gitDir"] stringByAppendingPathComponent:@"index.lock"];
+	NSArray<NSString *> *eventPaths = @[ lockPath ];
+	FSEventStreamEventFlags eventFlags[] = {kFSEventStreamEventFlagNone};
+	FSEventStreamEventId eventIds[] = {1};
+	XCTestExpectation *notification = [self expectationForNotification:PBGitRepositoryEventNotification
+																object:self.repository
+															   handler:nil];
+	notification.inverted = YES;
+
+	PBGitRepositoryWatcherCallback(NULL,
+								   (__bridge void *)context,
+								   eventPaths.count,
+								   (__bridge void *)eventPaths,
+								   eventFlags,
+								   eventIds);
+
+	[self waitForExpectations:@[ notification ] timeout:0.2];
 }
 
 - (void)testLinkedWorktreeWatcherOpensStatusRepositoryFromWorktree
