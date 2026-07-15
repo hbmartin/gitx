@@ -63,3 +63,34 @@ final class HistoryRefreshSelectionPolicy: NSObject { // swiftlint:disable:this 
         !stageSelected && viewedRef != nil && viewedRef == previousHeadRef
     }
 }
+
+/// Keeps reference-action eligibility and menu wording out of AppKit controllers.
+@objc(PBReferenceActionPolicy)
+final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_declaration
+    @objc(canPushRefishTypeToNamedRemote:)
+    static func canPushToNamedRemote(refishType: String?) -> Bool { // swiftlint:disable:this unused_declaration
+        refishType == kGitXBranchType
+    }
+
+    @objc(canDeleteRefishType:)
+    static func canDelete(refishType: String?) -> Bool { // swiftlint:disable:this unused_declaration
+        [kGitXBranchType, kGitXRemoteType, kGitXTagType].contains(refishType)
+    }
+
+    @objc(deletionMenuTitleForRefName:isRemote:)
+    static func deletionMenuTitle(
+        refName: String,
+        isRemote: Bool
+    ) -> String { // swiftlint:disable:this unused_declaration
+        let format = isRemote
+            ? NSLocalizedString(
+                "Delete “%@”…",
+                comment: "Contextual Menu Item to delete a local ref (e.g. branch)"
+            )
+            : NSLocalizedString(
+                "Remove “%@”…",
+                comment: "Contextual Menu Item to remove a remote"
+            )
+        return String(format: format, refName)
+    }
+}

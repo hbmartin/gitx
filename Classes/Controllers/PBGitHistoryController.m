@@ -31,6 +31,10 @@
 #import "PBUncommittedChanges.h"
 #import "PBGitIndex.h"
 
+@interface PBReferenceActionPolicy : NSObject
++ (NSString *)deletionMenuTitleForRefName:(NSString *)refName isRemote:(BOOL)isRemote;
+@end
+
 #define kHistorySelectedDetailIndexKey @"PBHistorySelectedDetailIndex"
 #define kHistoryDetailViewIndex 0
 #define kHistoryTreeViewIndex 1
@@ -1173,8 +1177,7 @@
 	BOOL isStash = [[ref ref] hasPrefix:@"refs/stash"];
 	BOOL isDeleteEnabled = !(isDetachedHead || isHead || isStash);
 	if (isDeleteEnabled) {
-		NSString *deleteFormat = ref.isRemote ? NSLocalizedString(@"Delete “%@”…", @"Contextual Menu Item to delete a local ref (e.g. branch)") : NSLocalizedString(@"Remove “%@”…", @"Contextual Menu Item to remove a remote");
-		NSString *deleteItemTitle = [NSString stringWithFormat:deleteFormat, refName];
+		NSString *deleteItemTitle = [PBReferenceActionPolicy deletionMenuTitleForRefName:refName isRemote:ref.isRemote];
 		NSMenuItem *deleteItem = [NSMenuItem pb_itemWithTitle:deleteItemTitle action:@selector(deleteRef:) enabled:YES];
 		[items addObject:deleteItem];
 	}

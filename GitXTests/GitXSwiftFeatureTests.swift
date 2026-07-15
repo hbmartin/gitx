@@ -251,6 +251,30 @@ final class GitXSwiftFeatureTests: XCTestCase {
         environment["PATH"]?.split(separator: ":").map(String.init) ?? []
     }
 
+    func testReferenceActionPolicyCharacterizesCurrentPushEligibility() {
+        XCTAssertTrue(PBReferenceActionPolicy.canPush(refishType: "branch"))
+        XCTAssertFalse(PBReferenceActionPolicy.canPush(refishType: "tag"))
+        XCTAssertFalse(PBReferenceActionPolicy.canPush(refishType: "remote branch"))
+    }
+
+    func testReferenceActionPolicyCharacterizesCurrentDeletionEligibility() {
+        XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "branch"))
+        XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "remote"))
+        XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "tag"))
+        XCTAssertFalse(PBReferenceActionPolicy.canDelete(refishType: "remote branch"))
+    }
+
+    func testReferenceActionPolicyCharacterizesCurrentDeletionMenuTitles() {
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionMenuTitle(refName: "origin/topic", isRemote: true),
+            "Delete “origin/topic”…"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionMenuTitle(refName: "topic", isRemote: false),
+            "Remove “topic”…"
+        )
+    }
+
     func testLargeNativeDiffProducesScrollableDocument() throws {
         let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
         view.layoutSubtreeIfNeeded()

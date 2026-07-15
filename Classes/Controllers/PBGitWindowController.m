@@ -627,8 +627,9 @@
 
 - (IBAction)deleteRef:(id)sender
 {
-	id<PBGitRefish> refish = [self refishForSender:sender refishTypes:@[ kGitXBranchType, kGitXRemoteType, kGitXTagType ]];
-	if (!refish || ![refish isKindOfClass:[PBGitRef class]])
+	id<PBGitRefish> refish = [self refishForSender:sender refishTypes:nil];
+	if (!refish || ![refish isKindOfClass:[PBGitRef class]] ||
+		![PBReferenceActionPolicy canDeleteRefishType:refish.refishType])
 		return;
 
 	PBGitRef *ref = (PBGitRef *)refish;
@@ -729,8 +730,9 @@
 	NSMenuItem *remoteSubmenu = sender;
 	if (![remoteSubmenu isKindOfClass:[NSMenuItem class]]) return;
 
-	id<PBGitRefish> ref = [self refishForSender:remoteSubmenu.parentItem refishTypes:@[ kGitXBranchType ]];
-	if (!ref || ![ref isKindOfClass:[PBGitRef class]])
+	id<PBGitRefish> ref = [self refishForSender:remoteSubmenu.parentItem refishTypes:nil];
+	if (!ref || ![ref isKindOfClass:[PBGitRef class]] ||
+		![PBReferenceActionPolicy canPushRefishTypeToNamedRemote:ref.refishType])
 		return;
 
 	id<PBGitRefish> remoteRef = [self refishForSender:sender refishTypes:@[ kGitXRemoteType ]];

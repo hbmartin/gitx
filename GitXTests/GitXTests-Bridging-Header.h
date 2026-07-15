@@ -7,4 +7,15 @@
 #import "PBProcessEnvironment.h"
 
 NS_ASSUME_NONNULL_BEGIN
+
+@interface PBReferenceActionPolicy : NSObject
++ (BOOL)canPushRefishTypeToNamedRemote:(nullable NSString *)refishType
+    NS_SWIFT_NAME(canPush(refishType:));
++ (BOOL)canDeleteRefishType:(nullable NSString *)refishType
+    NS_SWIFT_NAME(canDelete(refishType:));
++ (NSString *)deletionMenuTitleForRefName:(NSString *)refName
+                                 isRemote:(BOOL)isRemote
+    NS_SWIFT_NAME(deletionMenuTitle(refName:isRemote:));
+@end
+
 NS_ASSUME_NONNULL_END
