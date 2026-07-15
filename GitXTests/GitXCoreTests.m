@@ -1050,7 +1050,7 @@
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"--unset", @"core.excludesFile" ] error:&error]), @"%@", error);
 	XCTAssertTrue([failureDescriptions containsObject:@"ls-files failed"]);
 	XCTAssertEqual([self changedFileAtPath:@"untracked.txt"], untracked,
-		@"A failed refresh must preserve the last coherent untracked snapshot");
+				   @"A failed refresh must preserve the last coherent untracked snapshot");
 }
 
 - (void)testWholeFileUnstageFailureLeavesIndexUntouched

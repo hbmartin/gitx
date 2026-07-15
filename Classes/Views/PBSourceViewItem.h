@@ -24,7 +24,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)init NS_UNAVAILABLE;
 
 - (void)addChild:(PBSourceViewItem *)child;
-- (void)removeChild:(PBSourceViewItem *)child;
+- (void)removeChild:(nullable PBSourceViewItem *)child;
 
 // This adds the ref to the path, which should match the item's title,
 // so "refs/heads/pu/pb/sidebar" would have the path [@"pu", @"pb", @"sidebare"]
