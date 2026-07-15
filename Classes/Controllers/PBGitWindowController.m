@@ -223,6 +223,7 @@
 		@"for-each-ref",
 		@"--format=%(refname)%00%(objectname)%00",
 	]];
+	[commands addObject:@[ @"remote" ]];
 	if (![self.repository isBareRepository]) {
 		[commands addObject:@[ @"status", @"--porcelain=v2", @"--branch", @"-z", @"--untracked-files=normal" ]];
 	}

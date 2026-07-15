@@ -26,4 +26,13 @@ NS_ASSUME_NONNULL_BEGIN
     NS_SWIFT_NAME(deletionConfirmationButtonTitle(refishType:));
 @end
 
+@interface PBRemoteSidebarSyncPlan : NSObject
+@property (nonatomic, copy, readonly) NSArray<NSString *> *namesToAdd;
+@property (nonatomic, copy, readonly) NSArray<NSString *> *namesToRemove;
++ (instancetype)planWithConfiguredRemoteNames:(NSArray<NSString *> *)configuredRemoteNames
+                           existingRemoteNames:(NSArray<NSString *> *)existingRemoteNames
+                           nonEmptyRemoteNames:(NSArray<NSString *> *)nonEmptyRemoteNames
+    NS_SWIFT_NAME(plan(configuredRemoteNames:existingRemoteNames:nonEmptyRemoteNames:));
+@end
+
 NS_ASSUME_NONNULL_END

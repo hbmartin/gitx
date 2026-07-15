@@ -4,6 +4,7 @@
 #import <ObjectiveGit/GTRepository.h>
 #import "MAKVONotificationCenter.h"
 
+#import "PBMacros.h"
 #import "PBChangedFile.h"
 #import "PBGraphCellInfo.h"
 #import "PBGitBinary.h"
@@ -15,7 +16,9 @@
 #import "PBGitRepository.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitRevSpecifier.h"
+#import "PBGitSidebarController.h"
 #import "PBNativeContentView.h"
+#import "PBSourceViewItem.h"
 #import "PBUncommittedChanges.h"
 #import "PBWorkingTree.h"
 #import "PBTask.h"
@@ -343,6 +346,27 @@
 
 		XCTAssertEqualObjects(self.repository.remotes, (@[ @"cli-added" ]));
 		XCTAssertNil([self.repository refForName:@"cli-added/main"], @"An unfetched remote should not need tracking refs to be discoverable");
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
+- (void)testSidebarIncludesExternallyConfiguredRemoteBeforeFetch
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-sidebar-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
+		(void)sidebar.view;
+		XCTAssertFalse([[[sidebar.remotes.sortedChildren valueForKey:@"title"] copy] containsObject:@"cli-added"]);
+
+		XCTAssertNotNil(([self.fixture git:@[ @"remote", @"add", @"cli-added", remotePath ] error:&error]), @"%@", error);
+		XCTAssertNil([self.repository refForName:@"cli-added/main"]);
+		[self.repository reloadRefs];
+		NSArray<NSString *> *remoteNames = [sidebar.remotes.sortedChildren valueForKey:@"title"];
+		XCTAssertTrue([remoteNames containsObject:@"cli-added"], @"The sidebar should not require fetched tracking refs to show a configured remote");
+		[sidebar closeView];
 	} @finally {
 		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
 	}

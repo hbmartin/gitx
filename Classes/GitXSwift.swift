@@ -133,3 +133,34 @@ final class ReferenceActionPolicy: NSObject { // swiftlint:disable:this unused_d
         [kGitXRemoteType, kGitXRemoteBranchType].contains(refishType)
     }
 }
+
+/// Plans configured-remote changes while preserving nodes backed by tracking refs.
+@objc(PBRemoteSidebarSyncPlan)
+final class RemoteSidebarSyncPlan: NSObject { // swiftlint:disable:this unused_declaration
+    @objc let namesToAdd: [String]
+    @objc let namesToRemove: [String]
+
+    private init(namesToAdd: [String], namesToRemove: [String]) {
+        self.namesToAdd = namesToAdd
+        self.namesToRemove = namesToRemove
+    }
+
+    @objc(planWithConfiguredRemoteNames:existingRemoteNames:nonEmptyRemoteNames:)
+    static func make(
+        configuredRemoteNames: [String],
+        existingRemoteNames: [String],
+        nonEmptyRemoteNames: [String]
+    ) -> RemoteSidebarSyncPlan { // swiftlint:disable:this unused_declaration
+        let configured = Set(configuredRemoteNames)
+        let existing = Set(existingRemoteNames)
+        let nonEmpty = Set(nonEmptyRemoteNames)
+        return RemoteSidebarSyncPlan(
+            namesToAdd: sorted(configured.subtracting(existing)),
+            namesToRemove: sorted(existing.subtracting(configured).subtracting(nonEmpty))
+        )
+    }
+
+    private static func sorted(_ names: Set<String>) -> [String] {
+        names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+}

@@ -340,6 +340,39 @@ final class GitXSwiftFeatureTests: XCTestCase {
         )
     }
 
+    func testRemoteSidebarSyncAddsConfiguredOnlyRemote() {
+        let plan = PBRemoteSidebarSyncPlan.plan(
+            configuredRemoteNames: ["origin"],
+            existingRemoteNames: [],
+            nonEmptyRemoteNames: []
+        )
+
+        XCTAssertEqual(plan.namesToAdd, ["origin"])
+        XCTAssertEqual(plan.namesToRemove, [])
+    }
+
+    func testRemoteSidebarSyncPreservesTrackingOnlyRemote() {
+        let plan = PBRemoteSidebarSyncPlan.plan(
+            configuredRemoteNames: [],
+            existingRemoteNames: ["archived"],
+            nonEmptyRemoteNames: ["archived"]
+        )
+
+        XCTAssertEqual(plan.namesToAdd, [])
+        XCTAssertEqual(plan.namesToRemove, [])
+    }
+
+    func testRemoteSidebarSyncRemovesOnlyEmptyUnconfiguredRemotes() {
+        let plan = PBRemoteSidebarSyncPlan.plan(
+            configuredRemoteNames: ["zulu", "origin", "zulu"],
+            existingRemoteNames: ["upstream", "origin", "stale"],
+            nonEmptyRemoteNames: ["upstream"]
+        )
+
+        XCTAssertEqual(plan.namesToAdd, ["zulu"])
+        XCTAssertEqual(plan.namesToRemove, ["stale"])
+    }
+
     func testLargeNativeDiffProducesScrollableDocument() throws {
         let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
         view.layoutSubtreeIfNeeded()

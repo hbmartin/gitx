@@ -658,6 +658,24 @@
 	[self saveWindowScreenshotNamed:@"manual-refresh-updated-branch"];
 }
 
+- (void)testManualRefreshRevealsExternallyConfiguredRemoteBeforeFetch
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	NSString *remotePath = [fixture stringByAppendingString:@"-cli-added-remote.git"];
+	[self.temporaryRepositoryPaths addObject:remotePath];
+	XCTAssertTrue(([self runGit:@[ @"init", @"--bare", @"--quiet", remotePath ] inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow]);
+
+	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"cli-added", remotePath ] inDirectory:fixture]));
+	[self.app.windows.firstMatch typeKey:@"r" modifierFlags:XCUIKeyModifierCommand];
+	XCUIElement *remote = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'cli-added'"]].firstMatch;
+	XCTAssertTrue([remote waitForExistenceWithTimeout:15], @"Manual refresh should show a configured remote before its first fetch");
+	[self saveWindowScreenshotNamed:@"manual-refresh-cli-added-remote"];
+}
+
 - (void)testJumpToCheckedOutBranchToolbarButtonAndHotkey
 {
 	[self.app terminate];
