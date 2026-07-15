@@ -724,6 +724,34 @@
 	XCTAssertFalse(added.hasUnstagedChanges);
 }
 
+- (void)testAmendingOrdinaryCommitPreservesItsParent
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"second commit\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"ordinary commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"commit.gpgSign", @"false" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
+
+	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	NSString *originalParent = [[self.fixture git:@[ @"rev-parse", @"HEAD^" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		self.repository.index.amend = YES;
+	}];
+	[self.repository.index commitWithMessage:@"amended ordinary commit" andVerify:NO];
+
+	NSString *amendedHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	NSString *amendedParents = [[self.fixture git:@[ @"show", @"-s", @"--format=%P", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotEqualObjects(amendedHead, originalHead);
+	XCTAssertEqualObjects(amendedParents, originalParent);
+}
+
 - (void)testAmendCanUnstageModifiedFileAddedByLastCommit
 {
 	NSError *error = nil;
