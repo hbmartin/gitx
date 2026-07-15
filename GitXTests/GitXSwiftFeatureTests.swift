@@ -1,6 +1,30 @@
+import AppKit
 import XCTest
 
 final class GitXSwiftFeatureTests: XCTestCase {
+    private func largeDiff(lineCount: Int) -> String {
+        var diff = """
+        diff --git a/Large.swift b/Large.swift
+        --- a/Large.swift
+        +++ b/Large.swift
+        @@ -1,\(lineCount) +1,\(lineCount) @@
+
+        """
+        for index in 0 ..< lineCount {
+            diff += "-let oldValue\(index) = \(index)\n"
+            diff += "+let newValue\(index) = \(index + 1)\n"
+        }
+        return diff
+    }
+
+    private func waitForDiff(_ tail: String, in view: PBNativeContentView) {
+        let rendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in view.textView.string.contains(tail) },
+            object: view.textView
+        )
+        wait(for: [rendered], timeout: 10)
+    }
+
     private func runGit(_ arguments: [String], in directory: URL) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -104,5 +128,33 @@ final class GitXSwiftFeatureTests: XCTestCase {
             XCTAssertEqual(process.terminationReason, .exit)
             XCTAssertEqual(process.terminationStatus, 0)
         }
+    }
+
+    func testLargeNativeDiffProducesScrollableDocument() throws {
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
+        view.layoutSubtreeIfNeeded()
+        let diff = largeDiff(lineCount: 600)
+
+        view.showDiffSections([
+            [
+                PBNativeSectionTextKey: diff,
+                PBNativeSectionPathKey: "Large.swift",
+                PBNativeSectionContextKey: "readOnly",
+            ],
+        ])
+        waitForDiff("+let newValue599 = 600", in: view)
+        view.layoutSubtreeIfNeeded()
+
+        let scrollView = try XCTUnwrap(view.textView.enclosingScrollView)
+        let documentView = try XCTUnwrap(scrollView.documentView)
+        XCTAssertGreaterThan(documentView.frame.height, scrollView.contentView.bounds.height)
+
+        let clipView = scrollView.contentView
+        let maximumY = max(0, documentView.frame.height - clipView.bounds.height)
+        clipView.scroll(to: NSPoint(x: 0, y: maximumY))
+        scrollView.reflectScrolledClipView(clipView)
+
+        XCTAssertGreaterThan(clipView.bounds.origin.y, 0)
+        XCTAssertLessThanOrEqual(clipView.bounds.origin.y, maximumY)
     }
 }
