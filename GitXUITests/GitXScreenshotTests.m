@@ -15,7 +15,7 @@
 - (NSString *)makeDirtyRepositoryFixture;
 - (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
 - (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
-- (void)openPreferences;
+- (void)openPreferencesWaitingForElement:(XCUIElement *)element;
 - (void)openStagingView;
 @end
 
@@ -30,7 +30,8 @@
 		@"-ApplePersistenceIgnoreState", @"YES",
 		@"-AppleLanguages", @"(en)",
 		@"-AppleLocale", @"en_US_POSIX",
-		@"-NSAutomaticWindowAnimationsEnabled", @"NO"
+		@"-NSAutomaticWindowAnimationsEnabled", @"NO",
+		@"-PBGitXPreferenceViewIdentifier", @"General"
 	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
 
@@ -119,12 +120,15 @@
 	[self waitForExpectations:@[ expectation ] timeout:timeout];
 }
 
-- (void)openPreferences
+- (void)openPreferencesWaitingForElement:(XCUIElement *)element
 {
 	XCTAssertTrue([self waitForWindow], @"Preferences require the application to finish launching");
-	[self.app activate];
-	[self.app.windows.firstMatch typeKey:@"," modifierFlags:XCUIKeyModifierCommand];
-	XCTAssertTrue([self.app.dialogs.firstMatch waitForExistenceWithTimeout:5]);
+	for (NSUInteger attempt = 0; attempt < 2; attempt++) {
+		[self.app activate];
+		[self.app.windows.firstMatch typeKey:@"," modifierFlags:XCUIKeyModifierCommand];
+		if ([element waitForExistenceWithTimeout:5]) return;
+	}
+	XCTFail(@"The requested preferences pane should expose %@", element);
 }
 
 - (BOOL)runGit:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
@@ -252,6 +256,58 @@
 	[self openStagingView];
 
 	[self saveWindowScreenshotNamed:@"staging-view"];
+}
+
+- (void)testPartiallyStagedAdditionShowsOnlyTheIndexedContent
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
+	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
+	NSString *newPath = [fixture stringByAppendingPathComponent:@"partial.txt"];
+	XCTAssertTrue([@"staged line\n" writeToFile:newPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	XCTAssertTrue(([self runGit:@[ @"add", @"partial.txt" ] inDirectory:fixture]));
+	XCTAssertTrue([@"staged line\nunstaged line\n" writeToFile:newPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	[self openStagingView];
+
+	XCUIElement *stagedTable = self.app.tables[@"StagedFiles"];
+	XCUIElement *unstagedTable = self.app.tables[@"UnstagedFiles"];
+	XCUIElement *stagedFile = stagedTable.staticTexts[@"partial.txt"];
+	if (![stagedFile waitForExistenceWithTimeout:10]) {
+		[self.app.windows.firstMatch typeKey:@"r" modifierFlags:XCUIKeyModifierCommand];
+	}
+	XCTAssertTrue([stagedFile waitForExistenceWithTimeout:15]);
+	XCTAssertTrue([unstagedTable.staticTexts[@"partial.txt"] waitForExistenceWithTimeout:10]);
+	[stagedFile click];
+	XCUIElement *diff = self.app.textViews.firstMatch;
+	NSPredicate *indexedContent = [NSPredicate predicateWithFormat:@"value CONTAINS 'staged line' AND NOT value CONTAINS 'unstaged line'"];
+	XCTNSPredicateExpectation *diffExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:indexedContent object:diff];
+	[self waitForExpectations:@[ diffExpectation ] timeout:15];
+	[self saveWindowScreenshotNamed:@"partially-staged-addition-index-diff"];
+}
+
+- (void)testHistoryRemainsUsableAfterResizingWhileHidden
+{
+	XCTAssertTrue([self waitForWindow]);
+	[self openStagingView];
+	XCUIElement *window = self.app.windows.firstMatch;
+	CGRect originalFrame = window.frame;
+	XCUIElement *resizeButton = window.buttons[XCUIIdentifierFullScreenWindow];
+	if (!resizeButton.exists) resizeButton = window.buttons[XCUIIdentifierZoomWindow];
+	XCTAssertTrue([resizeButton waitForExistenceWithTimeout:5]);
+	[resizeButton click];
+	NSPredicate *frameChanged = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return !CGSizeEqualToSize(window.frame.size, originalFrame.size);
+	}];
+	XCTNSPredicateExpectation *resizeExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:frameChanged object:window];
+	[self waitForExpectations:@[ resizeExpectation ] timeout:5];
+
+	XCUIElement *history = [self selectHistoryForCurrentBranch];
+	XCTAssertTrue([history.tableRows.firstMatch waitForExistenceWithTimeout:15]);
+	XCTAssertTrue(self.app.textViews.firstMatch.exists, @"The restored history view should retain its native diff renderer");
+	[self saveWindowScreenshotNamed:@"history-after-hidden-resize"];
 }
 
 - (void)testSpaceStagesFilesAndSuccessfulCommitPushesWithoutASecondConfirmation
@@ -382,6 +438,30 @@
 	[self saveWindowScreenshotNamed:@"uncommitted-changes-row"];
 }
 
+- (void)testWorkingStateInsertionPreservesAnOlderCommitSelection
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
+	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow]);
+	XCUIElement *table = [self selectHistoryForCurrentBranch];
+	XCUIElement *initialRow = [table.tableRows containingType:XCUIElementTypeStaticText identifier:@"Initial"].firstMatch;
+	XCTAssertTrue([initialRow waitForExistenceWithTimeout:15]);
+	[initialRow click];
+	XCTAssertTrue(initialRow.isSelected);
+
+	NSString *trackedPath = [fixture stringByAppendingPathComponent:@"tracked.swift"];
+	XCTAssertTrue([@"tracked\nsecond\nthird\nexternal edit\n" writeToFile:trackedPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	XCUIElement *workingState = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == '0 staged, 1 unstaged, 0 untracked'"]].firstMatch;
+	XCTAssertTrue([workingState waitForExistenceWithTimeout:15]);
+	XCUIElement *currentInitialRow = [table.tableRows containingType:XCUIElementTypeStaticText identifier:@"Initial"].firstMatch;
+	XCTAssertTrue(currentInitialRow.isSelected, @"Adding Working State must not jump an older selection to HEAD. %@", table.debugDescription);
+	[self saveWindowScreenshotNamed:@"working-state-preserves-old-selection"];
+}
+
 - (void)testMultipleCommitSelectionShowsDiffPresentationControl
 {
 	XCTAssertTrue([self waitForWindow], @"Commit selection requires a repository window");
@@ -403,36 +483,22 @@
 
 - (void)testHistoryAndFetchPreferencesAreAvailable
 {
-	[self openPreferences];
-	XCUIElement *preferences = self.app.dialogs.firstMatch;
-	XCUIElement *pane = preferences.toolbars.buttons[@"History & Fetch"];
-	if (pane.exists) {
-		[pane click];
-	} else {
-		XCUIElement *more = preferences.popUpButtons[@"more toolbar items"];
-		XCTAssertTrue([more waitForExistenceWithTimeout:5]);
-		[more click];
-		XCUIElement *menuItem = self.app.menuItems[@"History & Fetch"];
-		XCTAssertTrue([menuItem waitForExistenceWithTimeout:5]);
-		[menuItem click];
-	}
-	XCTAssertTrue([preferences.checkBoxes[@"Allow commit columns to sort history"] waitForExistenceWithTimeout:5]);
-	XCTAssertTrue(preferences.popUpButtons.firstMatch.exists);
+	[self.app terminate];
+	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
+	arguments[arguments.count - 1] = @"History & Fetch";
+	self.app.launchArguments = arguments;
+	[self.app launch];
+	XCUIElement *historySorting = self.app.checkBoxes[@"Allow commit columns to sort history"];
+	[self openPreferencesWaitingForElement:historySorting];
+	XCTAssertTrue(self.app.popUpButtons.firstMatch.exists);
 	[self saveWindowScreenshotNamed:@"history-fetch-preferences"];
 }
 
 - (void)testGeneralPreferencesOfferRefreshOnFocus
 {
-	[self openPreferences];
-	XCUIElement *preferences = self.app.dialogs.firstMatch;
-
-	XCUIElement *generalPane = preferences.toolbars.buttons[@"General"];
-	XCTAssertTrue([generalPane waitForExistenceWithTimeout:5]);
-	[generalPane click];
-
-	XCUIElement *continuousWatch = preferences.checkBoxes[@"Watch for changes in repositories"];
-	XCUIElement *refreshOnFocus = preferences.checkBoxes[@"Refresh repositories when GitX regains focus"];
-	XCTAssertTrue([continuousWatch waitForExistenceWithTimeout:5]);
+	XCUIElement *continuousWatch = self.app.checkBoxes[@"Watch for changes in repositories"];
+	[self openPreferencesWaitingForElement:continuousWatch];
+	XCUIElement *refreshOnFocus = self.app.checkBoxes.firstMatch;
 	XCTAssertTrue([refreshOnFocus waitForExistenceWithTimeout:5]);
 	BOOL watchedOriginally = [continuousWatch.value boolValue];
 	BOOL focusedOriginally = [refreshOnFocus.value boolValue];
@@ -459,32 +525,23 @@
 
 - (void)testAppearancePreferenceOffersAutomaticLightAndDark
 {
-	[self openPreferences];
-	XCUIElement *preferences = self.app.dialogs.firstMatch;
-
-	XCUIElement *generalPane = preferences.toolbars.buttons[@"General"];
-	XCTAssertTrue([generalPane waitForExistenceWithTimeout:5]);
-	[generalPane click];
-
-	XCUIElement *appearance = preferences.popUpButtons[@"AppearancePreference"];
-	XCTAssertTrue([appearance waitForExistenceWithTimeout:5]);
+	XCUIElement *appearance = self.app.popUpButtons[@"AppearancePreference"];
+	[self openPreferencesWaitingForElement:appearance];
 	NSString *originalValue = appearance.value;
 
 	@try {
 		for (NSString *title in @[ @"Dark", @"Light", @"Automatic (System)" ]) {
 			[appearance click];
-			XCUIElement *choice = self.app.menuItems[title];
-			XCTAssertTrue([choice waitForExistenceWithTimeout:5]);
-			[choice click];
+			[appearance typeKey:[title substringToIndex:1].lowercaseString modifierFlags:0];
+			[appearance typeKey:XCUIKeyboardKeyEnter modifierFlags:0];
 			[self waitForElement:appearance toHaveValue:title timeout:5];
 			[self saveWindowScreenshotNamed:[NSString stringWithFormat:@"appearance-%@", title.lowercaseString]];
 		}
 	} @finally {
 		if (originalValue.length && ![appearance.value isEqual:originalValue]) {
 			[appearance click];
-			XCUIElement *originalChoice = self.app.menuItems[originalValue];
-			XCTAssertTrue([originalChoice waitForExistenceWithTimeout:5]);
-			[originalChoice click];
+			[appearance typeKey:[originalValue substringToIndex:1].lowercaseString modifierFlags:0];
+			[appearance typeKey:XCUIKeyboardKeyEnter modifierFlags:0];
 			[self waitForElement:appearance toHaveValue:originalValue timeout:5];
 		}
 	}
@@ -492,22 +549,56 @@
 
 - (void)testCommitContextMenuScreenshot
 {
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
+	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"The context menu requires a repository window");
 	XCUIElement *table = [self selectHistoryForCurrentBranch];
 	XCUIElement *window = self.app.windows.firstMatch;
-	XCUIElement *firstRow = [table.tableRows elementBoundByIndex:0];
-	XCTAssertTrue([firstRow waitForExistenceWithTimeout:15], @"The commit list should contain a row");
+	XCUIElement *selectedRow = [table.tableRows containingType:XCUIElementTypeStaticText identifier:@"Third"].firstMatch;
+	XCUIElement *clickedRow = [table.tableRows containingType:XCUIElementTypeStaticText identifier:@"Initial"].firstMatch;
+	XCTAssertTrue([selectedRow waitForExistenceWithTimeout:15]);
+	XCTAssertTrue([clickedRow waitForExistenceWithTimeout:15]);
+	[selectedRow click];
+	XCTAssertTrue(selectedRow.isSelected);
 
-	// Right-click to open the context menu
-	[firstRow rightClick];
+	[clickedRow rightClick];
 
 	XCUIElement *menu = self.app.menus.firstMatch;
 	XCTAssertTrue([menu waitForExistenceWithTimeout:5], @"Right-clicking a commit should open its context menu");
 	XCTAssertTrue([menu.menuItems.firstMatch waitForExistenceWithTimeout:5], @"The commit context menu should finish populating");
+	XCTAssertTrue(clickedRow.isSelected, @"The context menu and table selection should target the same commit");
+	XCTAssertFalse(selectedRow.isSelected);
 	[self saveWindowScreenshotNamed:@"commit-context-menu"];
 
 	// Dismiss the menu
 	[window typeKey:XCUIKeyboardKeyEscape modifierFlags:0];
+}
+
+- (void)testManualRefreshUpdatesCheckedOutBranchAndSidebar
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
+	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow]);
+	XCUIElement *currentBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'main'"]].firstMatch;
+	XCTAssertTrue([currentBranch waitForExistenceWithTimeout:10]);
+	XCTAssertTrue(([self runGit:@[ @"checkout", @"--quiet", @"-b", @"feature/manual-ui-refresh" ] inDirectory:fixture]));
+
+	XCUIElement *window = self.app.windows.firstMatch;
+	[window typeKey:@"r" modifierFlags:XCUIKeyModifierCommand];
+	XCUIElement *newBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'manual-ui-refresh'"]].firstMatch;
+	XCTAssertTrue([newBranch waitForExistenceWithTimeout:15], @"Manual refresh should reveal externally created branches");
+	NSPredicate *updatedTitle = [NSPredicate predicateWithFormat:@"title CONTAINS 'feature/manual-ui-refresh'"];
+	XCTNSPredicateExpectation *titleExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:updatedTitle object:window];
+	[self waitForExpectations:@[ titleExpectation ] timeout:15];
+	[self saveWindowScreenshotNamed:@"manual-refresh-updated-branch"];
 }
 
 @end

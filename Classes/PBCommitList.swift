@@ -159,12 +159,18 @@ import Cocoa
 
     // MARK: - Context Menu
 
+    @objc(shouldReplaceSelectionForContextClickAtRow:selectedRows:)
+    static func shouldReplaceSelectionForContextClick(at clickedRow: Int, selectedRows: IndexSet) -> Bool {
+        clickedRow >= 0 && !selectedRows.contains(clickedRow)
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         super.menu(for: event)
         let index = clickedRow
 
         let column = self.column(withIdentifier: NSUserInterfaceItemIdentifier("SubjectColumn"))
-        guard column != -1,
+        guard index >= 0,
+              column != -1,
               let cell = view(atColumn: column, row: index, makeIfNecessary: false) as? PBGitRevisionCell
         else {
             return nil
@@ -174,6 +180,11 @@ import Cocoa
         // commit, so commit/ref actions do not apply to it.
         if commit.sha.isEmpty {
             return nil
+        }
+
+        if Self.shouldReplaceSelectionForContextClick(at: index, selectedRows: selectedRowIndexes) {
+            NSLog("[GitX] Context-click selected commit row %ld", index)
+            selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         }
 
         let point = window?.contentView?.convert(event.locationInWindow, to: cell) ?? .zero

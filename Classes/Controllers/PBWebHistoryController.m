@@ -191,7 +191,8 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	NSMutableString *unstaged = [unstagedOutput mutableCopy];
 	for (PBChangedFile *file in changes) {
 		if (![self isGenerationCurrent:generation]) return nil;
-		if (file.status == NEW && file.hasUnstagedChanges) [unstaged appendString:[self syntheticUntrackedDiffForFile:file]];
+		BOOL untracked = file.status == NEW && !file.hasStagedChanges;
+		if (untracked && file.hasUnstagedChanges) [unstaged appendString:[self syntheticUntrackedDiffForFile:file]];
 	}
 	return @[
 		@{PBNativeSectionTitleKey : @"Staged Changes", PBNativeSectionTextKey : staged, PBNativeSectionContextKey : @"readOnly"},

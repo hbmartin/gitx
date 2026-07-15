@@ -484,6 +484,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			   context:(NSString *)context
 			   section:(NSUInteger)sectionIndex
 				  path:(NSString *)fallbackPath
+	   highlightSyntax:(BOOL)shouldHighlightSyntax
 		collapsedFiles:(NSSet<NSString *> *)collapsedFiles
 		expandedImages:(NSSet<NSString *> *)expandedImages
 		  linkPayloads:(NSMutableDictionary<NSString *, NSDictionary *> *)linkPayloads
@@ -530,7 +531,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			NSString *patch = [[patchLines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
 			currentHunkStart = index;
 			currentHunkEnd = end;
-			currentHunkSyntax = [self syntaxHighlightsForHunkLines:currentHunkLines path:currentPath];
+			currentHunkSyntax = shouldHighlightSyntax ? [self syntaxHighlightsForHunkLines:currentHunkLines path:currentPath] : @{};
 			[self appendDiffLine:line toString:rendered];
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"  "]];
 			if ([context isEqualToString:@"staged"]) {
@@ -632,6 +633,19 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NSMutableAttributedString *rendered = [[NSMutableAttributedString alloc] init];
 		NSMutableDictionary<NSString *, NSDictionary *> *linkPayloads = [NSMutableDictionary dictionary];
+		NSUInteger diffByteCount = 0;
+		for (NSDictionary *section in copiedSections) {
+			NSString *diff = section[PBNativeSectionTextKey] ?: @"";
+			NSUInteger sectionByteCount = [diff lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+			if (NSUIntegerMax - diffByteCount < sectionByteCount) {
+				diffByteCount = NSUIntegerMax;
+				break;
+			}
+			diffByteCount += sectionByteCount;
+		}
+		BOOL shouldHighlightSyntax = [PBHighlighting shouldHighlightDiffWithByteCount:diffByteCount];
+		if (!shouldHighlightSyntax)
+			NSLog(@"[GitX] Rendering %lu-byte diff document with lightweight coloring for responsive scrolling", (unsigned long)diffByteCount);
 		NSUInteger sectionIndex = 0;
 		for (NSDictionary *section in copiedSections) {
 			NSString *title = section[PBNativeSectionTitleKey] ?: @"";
@@ -640,7 +654,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			if (diff.length == 0) {
 				[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"There are no differences.\n" attributes:@{NSForegroundColorAttributeName : NSColor.secondaryLabelColor}]];
 			} else {
-				[self renderDiffText:diff context:section[PBNativeSectionContextKey] ?: @"readOnly" section:sectionIndex path:section[PBNativeSectionPathKey] ?: @"" collapsedFiles:collapsedFiles expandedImages:expandedImages linkPayloads:linkPayloads toString:rendered];
+				[self renderDiffText:diff context:section[PBNativeSectionContextKey] ?: @"readOnly" section:sectionIndex path:section[PBNativeSectionPathKey] ?: @"" highlightSyntax:shouldHighlightSyntax collapsedFiles:collapsedFiles expandedImages:expandedImages linkPayloads:linkPayloads toString:rendered];
 			}
 			sectionIndex++;
 		}

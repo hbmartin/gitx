@@ -1,6 +1,62 @@
+import AppKit
 import XCTest
 
 final class GitXSwiftFeatureTests: XCTestCase {
+    private func largeDiff(
+        lineCount: Int,
+        path: String = "Large.swift",
+        startingAt firstIndex: Int = 0
+    ) -> String {
+        var diff = """
+        diff --git a/\(path) b/\(path)
+        --- a/\(path)
+        +++ b/\(path)
+        @@ -1,\(lineCount) +1,\(lineCount) @@
+
+        """
+        for index in firstIndex ..< firstIndex + lineCount {
+            diff += "-let oldValue\(index) = \(index)\n"
+            diff += "+let newValue\(index) = \(index + 1)\n"
+        }
+        return diff
+    }
+
+    private func waitForDiff(_ tail: String, in view: PBNativeContentView) {
+        let rendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in view.textView.string.contains(tail) },
+            object: view.textView
+        )
+        wait(for: [rendered], timeout: 10)
+    }
+
+    private func assertLightweightColoring(
+        of lineText: String,
+        in view: PBNativeContentView,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let storage = try XCTUnwrap(view.textView.textStorage, file: file, line: line)
+        let range = try XCTUnwrap(storage.string.range(of: lineText), file: file, line: line)
+        let lineRange = NSRange(range, in: storage.string)
+        let prefixColor = storage.attribute(
+            .foregroundColor,
+            at: lineRange.location,
+            effectiveRange: nil
+        ) as? NSColor
+        let bodyColor = storage.attribute(
+            .foregroundColor,
+            at: lineRange.location + 1,
+            effectiveRange: nil
+        ) as? NSColor
+
+        XCTAssertEqual(prefixColor, bodyColor, file: file, line: line)
+        XCTAssertNotNil(
+            storage.attribute(.backgroundColor, at: lineRange.location + 1, effectiveRange: nil),
+            file: file,
+            line: line
+        )
+    }
+
     private func runGit(_ arguments: [String], in directory: URL) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -104,5 +160,81 @@ final class GitXSwiftFeatureTests: XCTestCase {
             XCTAssertEqual(process.terminationReason, .exit)
             XCTAssertEqual(process.terminationStatus, 0)
         }
+    }
+
+    func testLargeNativeDiffProducesScrollableDocument() throws {
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
+        view.layoutSubtreeIfNeeded()
+        let diff = largeDiff(lineCount: 600)
+
+        view.showDiffSections([
+            [
+                PBNativeSectionTextKey: diff,
+                PBNativeSectionPathKey: "Large.swift",
+                PBNativeSectionContextKey: "readOnly",
+            ],
+        ])
+        waitForDiff("+let newValue599 = 600", in: view)
+        view.layoutSubtreeIfNeeded()
+
+        let scrollView = try XCTUnwrap(view.textView.enclosingScrollView)
+        let documentView = try XCTUnwrap(scrollView.documentView)
+        XCTAssertGreaterThan(documentView.frame.height, scrollView.contentView.bounds.height)
+
+        let clipView = scrollView.contentView
+        let maximumY = max(0, documentView.frame.height - clipView.bounds.height)
+        clipView.scroll(to: NSPoint(x: 0, y: maximumY))
+        scrollView.reflectScrolledClipView(clipView)
+
+        XCTAssertGreaterThan(clipView.bounds.origin.y, 0)
+        XCTAssertLessThanOrEqual(clipView.bounds.origin.y, maximumY)
+    }
+
+    func testLargeNativeDiffUsesLightweightColoring() throws {
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
+        let diff = largeDiff(lineCount: 4500)
+
+        view.showDiffSections([
+            [
+                PBNativeSectionTextKey: diff,
+                PBNativeSectionPathKey: "Large.swift",
+                PBNativeSectionContextKey: "readOnly",
+            ],
+        ])
+        waitForDiff("+let newValue4499 = 4500", in: view)
+        try assertLightweightColoring(of: "+let newValue4499 = 4500", in: view)
+    }
+
+    func testCombinedLargeNativeDiffUsesLightweightColoring() throws {
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
+        let firstDiff = largeDiff(lineCount: 2500, path: "First.swift")
+        let secondDiff = largeDiff(lineCount: 2500, path: "Second.swift", startingAt: 2500)
+        let byteBudget = 200 * 1024
+
+        XCTAssertLessThan(firstDiff.utf8.count, byteBudget)
+        XCTAssertLessThan(secondDiff.utf8.count, byteBudget)
+        XCTAssertGreaterThan(firstDiff.utf8.count + secondDiff.utf8.count, byteBudget)
+
+        view.showDiffSections([
+            [
+                PBNativeSectionTextKey: firstDiff,
+                PBNativeSectionPathKey: "First.swift",
+                PBNativeSectionContextKey: "readOnly",
+            ],
+            [
+                PBNativeSectionTextKey: secondDiff,
+                PBNativeSectionPathKey: "Second.swift",
+                PBNativeSectionContextKey: "readOnly",
+            ],
+        ])
+        waitForDiff("+let newValue4999 = 5000", in: view)
+        try assertLightweightColoring(of: "+let newValue2499 = 2500", in: view)
+        try assertLightweightColoring(of: "+let newValue4999 = 5000", in: view)
+    }
+
+    func testDiffSyntaxHighlightingByteBudgetIncludesItsBoundary() {
+        XCTAssertTrue(PBHighlighting.shouldHighlightDiff(withByteCount: 0))
+        XCTAssertTrue(PBHighlighting.shouldHighlightDiff(withByteCount: 200 * 1024))
+        XCTAssertFalse(PBHighlighting.shouldHighlightDiff(withByteCount: 200 * 1024 + 1))
     }
 }

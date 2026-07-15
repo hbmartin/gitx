@@ -2,12 +2,14 @@
 #import <ObjectiveGit/GTCommit.h>
 #import <ObjectiveGit/GTOID.h>
 #import <ObjectiveGit/GTRepository.h>
+#import "MAKVONotificationCenter.h"
 
 #import "PBChangedFile.h"
 #import "PBGraphCellInfo.h"
 #import "PBGitBinary.h"
 #import "PBGitCommit.h"
 #import "PBGitGrapher.h"
+#import "PBGitHistoryList.h"
 #import "PBGitIndex.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
@@ -23,6 +25,7 @@
 								 hunkLines:(NSArray<NSString *> *)hunkLines
 						   selectedIndexes:(NSIndexSet *)selectedIndexes
 								   reverse:(BOOL)reverse;
+- (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines;
 @end
 
 @interface GitXTestRepository : NSObject
@@ -89,6 +92,7 @@
 @property (nonatomic, strong) PBGitRepository *repository;
 
 - (void)refreshIndexAfterPerforming:(dispatch_block_t)operation;
+- (void)waitForHistoryUpdate;
 - (nullable PBChangedFile *)changedFileAtPath:(NSString *)path;
 - (nullable PBGitTree *)treeAtPath:(NSString *)path inRoot:(PBGitTree *)root;
 
@@ -129,6 +133,17 @@
 	operation();
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
+}
+
+- (void)waitForHistoryUpdate
+{
+	PBGitHistoryList *history = self.repository.revisionList;
+	if (!history.isUpdating) return;
+	NSPredicate *finished = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return !history.isUpdating;
+	}];
+	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:finished object:history];
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
 }
 
 - (nullable PBChangedFile *)changedFileAtPath:(NSString *)path
@@ -274,6 +289,36 @@
 	XCTAssertTrue([self.repository deleteRef:tag error:&error], @"%@", error);
 	XCTAssertFalse([self.repository refExists:branch]);
 	XCTAssertFalse([self.repository refExists:tag]);
+}
+
+- (void)testManualRevisionRefreshReloadsExternallyChangedHeadAndBranches
+{
+	NSError *error = nil;
+	[self.repository readCurrentBranch];
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"-b", @"feature/manual-refresh" ] error:&error]), @"%@", error);
+
+	[self.repository forceUpdateRevisions];
+
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/feature/manual-refresh");
+	XCTAssertNotNil([self.repository refForName:@"feature/manual-refresh"]);
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
+}
+
+- (void)testManualRevisionRefreshReloadsRefsWhileViewingComplexRevision
+{
+	NSError *error = nil;
+	self.repository.currentBranch = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~0" ]];
+	XCTAssertFalse(self.repository.currentBranch.isSimpleRef);
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/main");
+	XCTAssertNil([self.repository refForName:@"feature/complex-refresh"]);
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"-b", @"feature/complex-refresh" ] error:&error]), @"%@", error);
+
+	[self.repository forceUpdateRevisions];
+
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/feature/complex-refresh");
+	XCTAssertNotNil([self.repository refForName:@"feature/complex-refresh"]);
+	XCTAssertFalse(self.repository.currentBranch.isSimpleRef);
 }
 
 - (void)testRemoteDiscoveryUsesLocalFixture
@@ -423,6 +468,87 @@
 	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
 }
 
+- (void)testNormalHistoryLoadPublishesEveryCommitOnce
+{
+	NSError *error = nil;
+	for (NSUInteger index = 0; index < 4; index++) {
+		NSString *path = [NSString stringWithFormat:@"history-%lu.txt", (unsigned long)index];
+		XCTAssertTrue([self.fixture writeText:path toPath:path error:&error], @"%@", error);
+		XCTAssertTrue([self.fixture commitAllWithMessage:path error:&error], @"%@", error);
+	}
+	NSString *expectedText = [self.fixture git:@[ @"rev-list", @"--count", @"HEAD" ] error:&error];
+	NSUInteger expectedCount = expectedText.integerValue;
+
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+
+	NSArray<PBGitCommit *> *commits = self.repository.revisionList.commits;
+	NSSet<NSString *> *uniqueSHAs = [NSSet setWithArray:[commits valueForKey:@"SHA"]];
+	XCTAssertEqual(commits.count, expectedCount);
+	XCTAssertEqual(uniqueSHAs.count, expectedCount);
+}
+
+- (void)testRapidHistoryRefreshKeepsAUniqueNonemptySnapshot
+{
+	NSError *error = nil;
+	for (NSUInteger index = 0; index < 12; index++) {
+		NSString *path = [NSString stringWithFormat:@"rapid-history-%lu.txt", (unsigned long)index];
+		XCTAssertTrue([self.fixture writeText:path toPath:path error:&error], @"%@", error);
+		XCTAssertTrue([self.fixture commitAllWithMessage:path error:&error], @"%@", error);
+	}
+	NSUInteger expectedCount = [[self.fixture git:@[ @"rev-list", @"--count", @"HEAD" ] error:&error] integerValue];
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+
+	PBGitHistoryList *history = self.repository.revisionList;
+	XCTAssertEqual(history.commits.count, expectedCount);
+	NSMutableArray<NSNumber *> *publishedCounts = [NSMutableArray array];
+	__weak PBGitHistoryList *weakHistory = history;
+	id<MAKVOObservation> observation = [history addObserver:self
+													keyPath:@"commits"
+													options:0
+													  block:^(__unused MAKVONotification *notification) {
+														  [publishedCounts addObject:@(weakHistory.commits.count)];
+													  }];
+
+	[self.repository forceUpdateRevisions];
+	XCTAssertEqual(history.commits.count, expectedCount, @"Refresh should retain the previous snapshot until replacement data is ready");
+	[self.repository forceUpdateRevisions];
+	[self waitForHistoryUpdate];
+	[observation remove];
+
+	NSArray<PBGitCommit *> *commits = history.commits;
+	NSSet<NSString *> *uniqueSHAs = [NSSet setWithArray:[commits valueForKey:@"SHA"]];
+	XCTAssertFalse([publishedCounts containsObject:@0], @"A nonempty refresh should not flash an empty commit list");
+	XCTAssertEqual(commits.count, expectedCount);
+	XCTAssertEqual(uniqueSHAs.count, expectedCount);
+}
+
+- (void)testUnchangedSymlinkRenameUsesRenameMetadata
+{
+	NSError *error = nil;
+	NSString *oldPath = [self.fixture.path stringByAppendingPathComponent:@"linked.json"];
+	NSString *newPath = [self.fixture.path stringByAppendingPathComponent:@"moved-link.json"];
+	XCTAssertTrue([[NSFileManager defaultManager] createSymbolicLinkAtPath:oldPath withDestinationPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"add symlink" error:&error], @"%@", error);
+	XCTAssertTrue([[NSFileManager defaultManager] moveItemAtPath:oldPath toPath:newPath error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"rename symlink" error:&error], @"%@", error);
+
+	NSString *diff = [self.fixture git:@[ @"diff", @"--find-renames", @"--no-ext-diff", @"HEAD^", @"HEAD" ] error:&error];
+	XCTAssertNotNil(diff, @"%@", error);
+	XCTAssertTrue([diff containsString:@"similarity index 100%"]);
+	XCTAssertTrue([diff containsString:@"rename from linked.json"]);
+	XCTAssertTrue([diff containsString:@"rename to moved-link.json"]);
+	XCTAssertFalse([diff containsString:@"deleted file mode"]);
+	XCTAssertFalse([diff containsString:@"new file mode"]);
+
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSArray<NSString *> *lines = [diff componentsSeparatedByString:@"\n"];
+	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:lines], @"moved-link.json");
+}
+
 @end
 
 
@@ -509,6 +635,47 @@
 	XCTAssertTrue([stagedDiff containsString:@"+staged line"]);
 	XCTAssertFalse([stagedDiff containsString:@"unstaged line"]);
 	XCTAssertTrue([unstagedDiff containsString:@"+unstaged line"]);
+}
+
+- (void)testRefreshDistinguishesPartiallyStagedAdditionFromUntrackedFile
+{
+	NSError *error = nil;
+	NSString *partiallyStagedPath = @"folder/spaced ünicode.txt";
+	XCTAssertTrue([self.fixture writeText:@"first staged line\n" toPath:partiallyStagedPath error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"add", @"--", partiallyStagedPath ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"first staged line\nsecond unstaged line\n" toPath:partiallyStagedPath error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"never staged\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	PBChangedFile *partiallyStaged = [self changedFileAtPath:partiallyStagedPath];
+	XCTAssertNotNil(partiallyStaged);
+	XCTAssertEqual(partiallyStaged.status, NEW);
+	XCTAssertTrue(partiallyStaged.hasStagedChanges);
+	XCTAssertTrue(partiallyStaged.hasUnstagedChanges);
+
+	PBChangedFile *untracked = [self changedFileAtPath:@"untracked.txt"];
+	XCTAssertNotNil(untracked);
+	XCTAssertEqual(untracked.status, NEW);
+	XCTAssertFalse(untracked.hasStagedChanges);
+	XCTAssertTrue(untracked.hasUnstagedChanges);
+	XCTAssertEqualObjects([self.repository.index diffForFile:untracked staged:NO contextLines:3], @"never staged\n");
+
+	NSString *cached = [self.fixture git:@[ @"diff", @"--cached", @"--", partiallyStagedPath ] error:&error];
+	NSString *working = [self.fixture git:@[ @"diff", @"--", partiallyStagedPath ] error:&error];
+	XCTAssertTrue([cached containsString:@"+first staged line"]);
+	XCTAssertFalse([cached containsString:@"second unstaged line"]);
+	XCTAssertTrue([working containsString:@" first staged line"]);
+	XCTAssertTrue([working containsString:@"+second unstaged line"]);
+
+	NSString *stagedDiff = [self.repository.index diffForFile:partiallyStaged staged:YES contextLines:3];
+	NSString *unstagedDiff = [self.repository.index diffForFile:partiallyStaged staged:NO contextLines:3];
+	XCTAssertTrue([stagedDiff containsString:@"+first staged line"]);
+	XCTAssertFalse([stagedDiff containsString:@"second unstaged line"]);
+	XCTAssertTrue([unstagedDiff containsString:@" first staged line"]);
+	XCTAssertTrue([unstagedDiff containsString:@"+second unstaged line"]);
+	XCTAssertFalse([unstagedDiff containsString:@"+first staged line"]);
 }
 
 - (void)testWholeFileUnstageAfterPartialStageIgnoresStaleIndexMetadata

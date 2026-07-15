@@ -1,17 +1,17 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.2216,
+  "minimumLineCoverage": 0.2765,
   "files": {
     "Classes/GitXRelativeDateFormatter.m": 0.6666,
     "Classes/Util/PBTask.m": 0.9143,
     "Classes/Views/PBHighlighting.swift": 1.0,
-    "Classes/Views/PBNativeContentView.m": 0.5706,
+    "Classes/Views/PBNativeContentView.m": 0.5916,
     "Classes/git/PBGitBinary.m": 0.6105,
-    "Classes/git/PBGitGrapher.mm": 0.875,
-    "Classes/git/PBGitIndex.m": 0.6962,
-    "Classes/git/PBGitRef.m": 0.8586,
-    "Classes/git/PBGitRepository.m": 0.3314,
+    "Classes/git/PBGitGrapher.mm": 0.9062,
+    "Classes/git/PBGitIndex.m": 0.7093,
+    "Classes/git/PBGitRef.m": 0.8695,
+    "Classes/git/PBGitRepository.m": 0.344,
     "Classes/git/PBGitRevSpecifier.m": 0.8453,
     "Classes/git/PBWorkingTree.m": 0.563
   }

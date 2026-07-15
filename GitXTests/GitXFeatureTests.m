@@ -1,5 +1,6 @@
 #import <XCTest/XCTest.h>
 #import <dlfcn.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
 
 #import "PBGitDefaults.h"
@@ -9,6 +10,7 @@
 #import "PBFileChangesTableView.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
+#import "PBWebController.h"
 #import "NSAppearance+PBDarkMode.h"
 
 @interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
@@ -185,6 +187,61 @@
 	XCTAssertEqualObjects(arranged[1][@"subject"], @"A");
 }
 
+- (void)testPinnedWorkingStatePreservesAnExistingCommitSelection
+{
+	NSObject *olderCommit = [[NSObject alloc] init];
+	NSObject *newerCommit = [[NSObject alloc] init];
+	PBHistoryArrayController *controller = [[PBHistoryArrayController alloc] initWithContent:@[ newerCommit, olderCommit ]];
+	[controller setSelectedObjects:@[ olderCommit ]];
+
+	controller.pinnedObject = [[NSObject alloc] init];
+	XCTAssertEqualObjects(controller.selectedObjects, (@[ olderCommit ]));
+	controller.pinnedObject = nil;
+	XCTAssertEqualObjects(controller.selectedObjects, (@[ olderCommit ]));
+}
+
+- (void)testReplacingPinnedWorkingStateDoesNotDuplicateIt
+{
+	NSObject *commit = [[NSObject alloc] init];
+	PBHistoryArrayController *controller = [[PBHistoryArrayController alloc] initWithContent:@[ commit ]];
+	NSObject *firstWorkingState = [[NSObject alloc] init];
+	NSObject *replacementWorkingState = [[NSObject alloc] init];
+	controller.pinnedObject = firstWorkingState;
+	XCTAssertEqualObjects(controller.arrangedObjects, (@[ firstWorkingState, commit ]));
+
+	controller.pinnedObject = replacementWorkingState;
+	XCTAssertEqualObjects(controller.arrangedObjects, (@[ replacementWorkingState, commit ]));
+	controller.pinnedObject = nil;
+	XCTAssertEqualObjects(controller.arrangedObjects, (@[ commit ]));
+}
+
+- (void)testContextClickSelectsOnlyAnUnselectedCommit
+{
+	Class commitListClass = NSClassFromString(@"GitX.PBCommitList");
+	XCTAssertNotNil(commitListClass);
+	SEL selector = NSSelectorFromString(@"shouldReplaceSelectionForContextClickAtRow:selectedRows:");
+	XCTAssertTrue([commitListClass respondsToSelector:selector]);
+	BOOL (*shouldReplaceSelection)(id, SEL, NSInteger, NSIndexSet *) = (void *)objc_msgSend;
+	NSMutableIndexSet *selected = [NSMutableIndexSet indexSetWithIndex:1];
+	[selected addIndex:2];
+	XCTAssertTrue(shouldReplaceSelection(commitListClass, selector, 4, selected));
+	XCTAssertFalse(shouldReplaceSelection(commitListClass, selector, 2, selected));
+	XCTAssertFalse(shouldReplaceSelection(commitListClass, selector, -1, selected));
+}
+
+- (void)testHistoryRefreshFollowsHeadOnlyWhenItWasAlreadyViewed
+{
+	Class policyClass = NSClassFromString(@"PBHistoryRefreshSelectionPolicy");
+	XCTAssertNotNil(policyClass);
+	SEL selector = NSSelectorFromString(@"shouldFollowCheckedOutBranchWithStageSelected:viewedRef:previousHeadRef:");
+	XCTAssertTrue([policyClass respondsToSelector:selector]);
+	BOOL (*shouldFollowHead)(id, SEL, BOOL, NSString *, NSString *) = (void *)objc_msgSend;
+	XCTAssertTrue(shouldFollowHead(policyClass, selector, NO, @"refs/heads/main", @"refs/heads/main"));
+	XCTAssertFalse(shouldFollowHead(policyClass, selector, YES, @"refs/heads/main", @"refs/heads/main"));
+	XCTAssertFalse(shouldFollowHead(policyClass, selector, NO, @"refs/heads/topic", @"refs/heads/main"));
+	XCTAssertFalse(shouldFollowHead(policyClass, selector, NO, nil, @"refs/heads/main"));
+}
+
 - (void)testDisablingHistorySortingClearsNewDescriptors
 {
 	PBHistoryArrayController *controller = [[PBHistoryArrayController alloc] initWithContent:@[]];
@@ -246,6 +303,24 @@
 	NSColor *textBody = [storage attribute:NSForegroundColorAttributeName atIndex:textLine.location + 1 effectiveRange:nil];
 	XCTAssertEqualObjects(textPrefix, textBody);
 	XCTAssertNotNil([storage attribute:NSBackgroundColorAttributeName atIndex:textLine.location + 1 effectiveRange:nil]);
+}
+
+- (void)testNativeHistoryContentTracksHostBoundsWhileResizing
+{
+	NSView *host = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 700, 420)];
+	PBWebController *controller = [[PBWebController alloc] init];
+	controller.view = host;
+	[controller awakeFromNib];
+	[controller.nativeView showMessage:@"Resize-safe history content"];
+
+	for (NSValue *sizeValue in @[ [NSValue valueWithSize:NSMakeSize(360, 240)], [NSValue valueWithSize:NSMakeSize(980, 640)], [NSValue valueWithSize:NSMakeSize(520, 300)] ]) {
+		host.frameSize = sizeValue.sizeValue;
+		[host layoutSubtreeIfNeeded];
+		XCTAssertTrue(NSEqualRects(controller.nativeView.frame, host.bounds));
+		XCTAssertTrue([controller.nativeView.textView.string containsString:@"Resize-safe history content"]);
+	}
+
+	[controller closeView];
 }
 
 - (void)testNativeDiffAlwaysRendersLargePatches
@@ -359,6 +434,8 @@
 	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:spaced], @"Folder/file name.txt");
 	NSArray *renamed = @[ @"diff --git a/old.txt b/new name.txt", @"similarity index 100%", @"rename from old.txt", @"rename to new name.txt" ];
 	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:renamed], @"new name.txt");
+	NSArray *sameInitial = @[ @"diff --git a/app/assets/variables.json b/assets/variables.json", @"similarity index 100%", @"rename from app/assets/variables.json", @"rename to assets/variables.json" ];
+	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:sameInitial], @"assets/variables.json");
 }
 
 - (void)testTaskSupportsShortConfigurableTimeouts

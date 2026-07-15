@@ -20,7 +20,6 @@
     "Classes/Controllers/PBWebController.h",
     "Classes/Controllers/PBWebDiffController.h",
     "Classes/Controllers/PBWebHistoryController.h",
-    "Classes/GitX-Bridging-Header.h",
     "Classes/GitXRelativeDateFormatter.h",
     "Classes/GitXScriptingConstants.h",
     "Classes/NSColor+RGB.h",

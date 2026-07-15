@@ -184,7 +184,7 @@
 		BF42F1331E025403004769FF /* GitXTextView.m in Sources */ = {isa = PBXBuildFile; fileRef = BF42F1321E025403004769FF /* GitXTextView.m */; };
 		C0DE10000000000000000011 /* PBHighlighting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000002 /* PBHighlighting.swift */; };
 		C0DE10000000000000000012 /* PBNativeContentView.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000004 /* PBNativeContentView.m */; };
-		C0DE10000000000000000013 /* PBHistoryArrayController.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000006 /* PBHistoryArrayController.m */; };
+		C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000006 /* PBHistoryArrayController.swift */; };
 		C0DE10000000000000000014 /* PBWorkingTree.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000008 /* PBWorkingTree.m */; };
 		C0DE10000000000000000015 /* PBUncommittedChanges.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE1000000000000000000A /* PBUncommittedChanges.m */; };
 		C0DE10000000000000000016 /* HighlightKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0DE10000000000000000018 /* HighlightKit */; };
@@ -712,7 +712,7 @@
 		C0DE10000000000000000003 /* PBNativeContentView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBNativeContentView.h; sourceTree = "<group>"; };
 		C0DE10000000000000000004 /* PBNativeContentView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBNativeContentView.m; sourceTree = "<group>"; };
 		C0DE10000000000000000005 /* PBHistoryArrayController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBHistoryArrayController.h; sourceTree = "<group>"; };
-		C0DE10000000000000000006 /* PBHistoryArrayController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBHistoryArrayController.m; sourceTree = "<group>"; };
+		C0DE10000000000000000006 /* PBHistoryArrayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBHistoryArrayController.swift; sourceTree = "<group>"; };
 		C0DE10000000000000000007 /* PBWorkingTree.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBWorkingTree.h; sourceTree = "<group>"; };
 		C0DE10000000000000000008 /* PBWorkingTree.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBWorkingTree.m; sourceTree = "<group>"; };
 		C0DE10000000000000000009 /* PBUncommittedChanges.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBUncommittedChanges.h; sourceTree = "<group>"; };
@@ -1064,7 +1064,7 @@
 			isa = PBXGroup;
 			children = (
 				C0DE10000000000000000005 /* PBHistoryArrayController.h */,
-				C0DE10000000000000000006 /* PBHistoryArrayController.m */,
+				C0DE10000000000000000006 /* PBHistoryArrayController.swift */,
 				C0DE10000000000000000009 /* PBUncommittedChanges.h */,
 				C0DE1000000000000000000A /* PBUncommittedChanges.m */,
 				C0DE10000000000000000007 /* PBWorkingTree.h */,
@@ -1696,7 +1696,7 @@
 				C0DE10000000000000000011 /* PBHighlighting.swift in Sources */,
 				C0DE70000000000000000001 /* RepositoryRefreshCoordinator.swift in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
-				C0DE10000000000000000013 /* PBHistoryArrayController.m in Sources */,
+				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
 				C0DE10000000000000000014 /* PBWorkingTree.m in Sources */,
 				C0DE10000000000000000015 /* PBUncommittedChanges.m in Sources */,
 				4A5D76E114A9A9CC00DF6C68 /* ApplicationController.m in Sources */,
