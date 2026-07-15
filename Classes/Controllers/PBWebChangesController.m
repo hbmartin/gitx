@@ -4,15 +4,10 @@
 #import "PBGitRepository.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBTask.h"
+#import "GitX-Swift.h"
 
 static void *const UnstagedFileSelectedContext = @"UnstagedFileSelectedContext";
 static void *const CachedFileSelectedContext = @"CachedFileSelectedContext";
-
-@interface PBRefreshCoalescer : NSObject
-- (instancetype)initWithDeliveryHandler:(void (^)(void))deliveryHandler;
-- (void)requestRefresh;
-- (void)cancel;
-@end
 
 @interface PBWebChangesController () <PBNativeContentViewDelegate>
 @property (nonatomic) NSUInteger contextLines;

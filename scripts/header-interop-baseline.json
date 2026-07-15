@@ -25,7 +25,6 @@
     "Classes/NSColor+RGB.h",
     "Classes/NSSplitView+GitX.h",
     "Classes/PBCLIProxy.h",
-    "Classes/PBChangedFile.h",
     "Classes/PBCommitList.h",
     "Classes/PBGraphCellInfo.h",
     "Classes/PBMacros.h",
