@@ -15,6 +15,7 @@
 - (NSString *)makeDirtyRepositoryFixture;
 - (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
 - (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
+- (nullable NSURL *)commandLineToolURL;
 - (void)openPreferencesWaitingForElement:(XCUIElement *)element;
 - (void)openStagingView;
 @end
@@ -191,6 +192,22 @@
 	return remotePath;
 }
 
+- (NSURL *)commandLineToolURL
+{
+	NSString *builtProductsDirectory = NSProcessInfo.processInfo.environment[@"BUILT_PRODUCTS_DIR"];
+	if (!builtProductsDirectory.length) {
+		builtProductsDirectory = NSBundle.mainBundle.bundleURL.URLByDeletingLastPathComponent.path;
+	}
+	NSURL *toolURL = [NSURL fileURLWithPathComponents:@[
+		builtProductsDirectory,
+		@"GitX.app",
+		@"Contents",
+		@"Resources",
+		@"gitx",
+	]];
+	return [NSFileManager.defaultManager isExecutableFileAtPath:toolURL.path] ? toolURL : nil;
+}
+
 - (NSString *)makeDirtyRepositoryFixture
 {
 	NSString *repositoryPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"gitx-dirty-%@", NSUUID.UUID.UUIDString]];
@@ -242,6 +259,46 @@
 	XCTAssertTrue([self waitForWindow],
 				  @"Main window should appear within 30 seconds");
 	[self saveWindowScreenshotNamed:@"main-window"];
+}
+
+- (void)testCommandLinePipeDisplaysDiff
+{
+	XCTAssertTrue([self waitForWindow]);
+	NSURL *toolURL = [self commandLineToolURL];
+	XCTAssertNotNil(toolURL, @"The UI test build must embed its matching gitx CLI");
+	NSString *sentinel = @"PIPE_SENTINEL_544";
+	NSString *diff = [NSString stringWithFormat:
+		@"diff --git a/pipe.txt b/pipe.txt\n"
+		 "--- a/pipe.txt\n"
+		 "+++ b/pipe.txt\n"
+		 "@@ -1 +1 @@\n"
+		 "-before\n"
+		 "+%@\n",
+		sentinel];
+	NSTask *task = [[NSTask alloc] init];
+	NSPipe *input = [NSPipe pipe];
+	NSPipe *errorOutput = [NSPipe pipe];
+	task.executableURL = toolURL;
+	task.standardInput = input;
+	task.standardOutput = NSFileHandle.fileHandleWithNullDevice;
+	task.standardError = errorOutput;
+	NSError *launchError = nil;
+	XCTAssertTrue([task launchAndReturnError:&launchError], @"%@", launchError);
+	[input.fileHandleForWriting writeData:[diff dataUsingEncoding:NSUTF8StringEncoding]];
+	[input.fileHandleForWriting closeFile];
+	[task waitUntilExit];
+	NSData *errorData = [errorOutput.fileHandleForReading readDataToEndOfFile];
+	NSString *errorText = [[NSString alloc] initWithData:errorData encoding:NSUTF8StringEncoding];
+	XCTAssertEqual(task.terminationStatus, 0, @"gitx pipe delivery failed: %@", errorText);
+
+	XCUIElement *diffWindow = self.app.windows[@"GitX Diff"];
+	XCTAssertTrue([diffWindow waitForExistenceWithTimeout:15], @"Piped input should open the GitX Diff window");
+	XCUIElement *diffText = diffWindow.textViews.firstMatch;
+	NSPredicate *containsSentinel = [NSPredicate predicateWithFormat:@"value CONTAINS %@", sentinel];
+	[self waitForExpectations:@[
+		[[XCTNSPredicateExpectation alloc] initWithPredicate:containsSentinel object:diffText],
+	] timeout:15];
+	[self saveWindowScreenshotNamed:@"command-line-pipe-diff"];
 }
 
 - (void)testHistoryTabScreenshot

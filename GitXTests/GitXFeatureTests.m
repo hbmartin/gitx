@@ -1,4 +1,5 @@
 #import <XCTest/XCTest.h>
+#import <Security/Security.h>
 #import <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -163,6 +164,31 @@
 
 	XCTAssertEqual(repository.reloadRefsCount, 1);
 	XCTAssertEqual(repository.readCurrentBranchCount, 1);
+}
+
+- (void)testEmbeddedCommandLineToolDeclaresAppleEventsAuthorization
+{
+	NSURL *commandLineToolURL = [NSBundle.mainBundle URLForResource:@"gitx" withExtension:nil];
+	XCTAssertNotNil(commandLineToolURL);
+
+	SecStaticCodeRef staticCode = NULL;
+	OSStatus status = SecStaticCodeCreateWithPath((__bridge CFURLRef)commandLineToolURL, kSecCSDefaultFlags, &staticCode);
+	XCTAssertEqual(status, errSecSuccess);
+	XCTAssertNotEqual(staticCode, NULL);
+
+	CFDictionaryRef signingInformation = NULL;
+	status = SecCodeCopySigningInformation(staticCode, kSecCSSigningInformation, &signingInformation);
+	if (staticCode) CFRelease(staticCode);
+	XCTAssertEqual(status, errSecSuccess);
+	NSDictionary *information = CFBridgingRelease(signingInformation);
+	NSDictionary *infoPlist = information[(__bridge NSString *)kSecCodeInfoPList];
+	NSDictionary *entitlements = information[(__bridge NSString *)kSecCodeInfoEntitlementsDict];
+
+	NSString *usageDescription = infoPlist[@"NSAppleEventsUsageDescription"];
+	XCTAssertGreaterThan(usageDescription.length, 0,
+					 @"The CLI must explain its Apple-events use before macOS can authorize delivery to GitX");
+	XCTAssertEqualObjects(entitlements[@"com.apple.security.automation.apple-events"], @YES,
+					  @"The hardened CLI must be entitled to send its piped diff to the GitX app");
 }
 
 - (void)testSpaceKeyRoutesSelectedFileRowsToStageAndUnstageActions

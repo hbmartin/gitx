@@ -18,5 +18,7 @@
 	<string>${CURRENT_PROJECT_VERSION}</string>
 	<key>CFBundleVersion</key>
 	<string>${CURRENT_PROJECT_VERSION}</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>GitX uses Apple events to send repository and diff commands from its gitx command-line tool to the GitX app.</string>
 </dict>
 </plist>

@@ -102,7 +102,14 @@ void handleSTDINDiff(void)
 		GitXApplication *gitXApp = [SBApplication applicationWithBundleIdentifier:kGitXBundleIdentifier];
 		[gitXApp setSendMode:kAENoReply];
 		[gitXApp activate];
+		[gitXApp setSendMode:(kAEWaitReply | kAECanInteract)];
 		[gitXApp showDiff:diff];
+		NSError *deliveryError = [gitXApp lastError];
+		if (deliveryError) {
+			const char *message = deliveryError.localizedDescription.UTF8String ?: "Unknown Apple-event delivery error";
+			fprintf(stderr, "gitx: could not send piped diff to GitX: %s\n", message);
+			exit(3);
+		}
 		exit(0);
 	}
 }
