@@ -1,8 +1,9 @@
-import Cocoa
+// NSArrayController is resolved through the Objective-C runtime when the nib loads.
+import Cocoa // swiftlint:disable:this unused_import
 
 /// Keeps the mutable Working State row pinned above the arranged commit list.
 @objc(PBHistoryArrayController)
-final class PBHistoryArrayController: NSArrayController {
+final class PBHistoryArrayController: NSArrayController { // swiftlint:disable:this unused_declaration
     private var storedPinnedObject: Any?
 
     @objc dynamic var pinnedObject: Any? {

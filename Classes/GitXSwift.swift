@@ -53,11 +53,13 @@ final class RepositoryFocusRefreshTracker: NSObject { // swiftlint:disable:this 
 @objc(PBHistoryRefreshSelectionPolicy)
 final class HistoryRefreshSelectionPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(shouldFollowCheckedOutBranchWithStageSelected:viewedRef:previousHeadRef:)
+    // Called through PBHistoryRefreshSelectionPolicy's Objective-C selector.
+    // swiftlint:disable:next unused_declaration
     static func shouldFollowCheckedOutBranch(
         stageSelected: Bool,
         viewedRef: String?,
         previousHeadRef: String?
-    ) -> Bool { // swiftlint:disable:this unused_declaration
+    ) -> Bool {
         !stageSelected && viewedRef != nil && viewedRef == previousHeadRef
     }
 }
