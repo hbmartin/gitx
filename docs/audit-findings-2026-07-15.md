@@ -80,16 +80,27 @@ The final committed production code was exercised through the repository's share
 | Verification | Result |
 | --- | --- |
 | Correctness (`GitX` test plan) | **117/117 passed** at the stabilized production-code HEAD. Result: `build/AuditFinalGitX.xcresult`. |
-| Coverage policy | **Passed** at 34.57% project coverage, up from the previous 34.54% floor. Relevant implementation coverage is `PBTask.m` 93.43%, `PBGitRepositoryWatcher.m` 86.31%, `PBNativeContentView.m` 63.33%, and the Swift policy/render seams 99.09%. The checked-in floors were ratcheted upward. |
+| Coverage policy | **Passed**. Application coverage rose from 33.17% before this audit batch to **34.57%**. Relevant final measurements include `PBTask.m` 93.43%, `PBGitRepositoryWatcher.m` 86.31%, `PBNativeContentView.m` 63.33%, `GitXSwift.swift` 99.09%, and `PBGitDefaults.m` 52.84%. All checked-in floors were ratcheted; none were lowered. |
 | Thread Sanitizer | **117/117 passed**, with no TSan reports. Result: `build/AuditFullThreadSanitizer.xcresult`. |
 | Address/Undefined Sanitizers | **117/117 passed**, with no ASan or UBSan reports. Result: `build/AuditFullAddressUndefined.xcresult`. |
 | Complete UI plan | **17/17 passed**. Result: `build/AuditGitXUI.xcresult`. |
-| Focused final real-app pass | **6/6 passed** against the final production code. It launched and interacted with the actual GitX Debug app to verify history rendering, staged-new-file rendering, preservation of an older selection when Working State appears, multi-commit presentation controls, staging layout, and commit context-menu targeting. Result: `build/AuditFinalUIFocused.xcresult`. |
-| Performance plan | **3/3 passed**. Large-diff rendering averaged 0.053 seconds; revision parsing averaged 0.008 seconds; language classification averaged 0.027 seconds. Result: `build/AuditGitXPerformance.xcresult`. |
+| Focused final real-app plan | **6/6 passed** against the final production code. It launched the actual Debug app and exercised history rendering, staged-new-file rendering, Working State insertion, multi-commit controls, staging layout, and context-menu targeting. Result: `build/AuditFinalUIFocused.xcresult`. |
+| Performance plan | **3/3 passed**. Large-diff rendering averaged 0.053 seconds, revision parsing 0.008 seconds, and language classification 0.027 seconds. Result: `build/AuditGitXPerformance.xcresult`. The measurements were noisy (relative standard deviation above 10%), so they are regression guards rather than benchmark-quality estimates. |
 | Static verification | **Passed**: pinned SwiftFormat 0.62.1, pinned SwiftLint 0.63.2, changed-line Objective-C formatting, header interoperability, plist checks, and all 28 verification-tool tests. |
 | Analyzer | **Passed** with no first-party analyzer findings, no SwiftLint analyzer violations, and the exact checked-in baseline of 16 legacy deprecation warnings. |
 | Final app | **Build succeeded** and refreshed `/Volumes/ExtStor/gitx/build/GitX.app`. |
 
-Six current diagnostic screenshots were extracted to `build/AuditFinalUIFocusedScreenshots`. Inspection confirmed that the selected commit remains the right-click target, Sequential/Combined controls appear for multiple commits, a staged new file renders as an all-additions patch containing only indexed content, and inserting Working State preserves an older commit selection. The screenshots are diagnostic artifacts and are intentionally not committed.
+The UI, performance, and sanitizer plans completed before the final analyzer-only source annotation and coverage-floor ratchet. Those last changes do not alter runtime control flow. The final correctness plan, coverage check, Debug build, focused UI plan, and hands-on pass used the stabilized production source.
 
-Direct desktop automation could not attach because macOS presented a new screen-recording/privacy prompt for the Codex Computer Use helper. That same system prompt partially overlays the diagnostic screenshots, but it did not block GitX's accessibility assertions or actions; the real-app XCUITest interaction completed successfully. No claim above relies only on visual appearance: each accepted defect also has focused behavioral coverage or sanitizer evidence.
+### Hands-on app observations
+
+The final Debug product was launched directly from `/Volumes/ExtStor/gitx/build/GitX.app` and driven through a disposable two-commit repository using the running AppKit UI:
+
+- Stage view showed `staged-new.txt` in both lists after staging two lines and adding a third. Selecting the staged entry rendered a two-line all-additions patch; selecting the unstaged entry rendered only `+unstaged third line` against the staged blob.
+- Editing `README.md` outside the running app caused the watcher to add it to Unstaged Changes immediately. The selected staged file and its rendered diff remained valid, and the app did not crash or stall.
+- Selecting Working State rendered the staged and unstaged sections together. After scrolling and invoking toolbar Refresh with no further changes, the Working State selection and native-content viewport were preserved.
+- Right-clicking an unselected real commit while Working State was selected moved the selection to that commit and produced the expected commit-specific menu. No empty-cell or stale-selection action was observed.
+- Advancing past the last history-search match wrapped to the first match and displayed one rounded rewind overlay surface; the previous `NSBox`/layer double border was not present.
+- Rapidly switching between commit history, Working State, and Stage continued to render complete native diffs while the watcher was active.
+
+Six XCUITest screenshots were extracted to `build/AuditFinalUIFocusedScreenshots`. Additional hands-on diagnostics were captured at `build/audit-real-app-staging.jpg`, `build/audit-real-app-working-state.jpg`, and `build/audit-real-app-rewind-overlay.jpg`. These are diagnostic artifacts and are intentionally not committed. No accepted defect relies only on appearance: each also has focused behavioral coverage or sanitizer evidence.
