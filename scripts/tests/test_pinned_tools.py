@@ -34,9 +34,12 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertNotIn("SWIFT_VERSION = 5.0", project)
         self.assertEqual(project.count("SWIFT_VERSION = 6.0"), 4)
         self.assertEqual(project.count("SWIFT_STRICT_CONCURRENCY = complete"), 4)
+        self.assertEqual(project.count("SWIFT_TREAT_WARNINGS_AS_ERRORS = YES"), 4)
         self.assertEqual(project.count("SWIFT_APPROACHABLE_CONCURRENCY = YES"), 4)
         self.assertEqual(project.count("SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor"), 2)
         self.assertEqual(project.count("-enable-actor-data-race-checks"), 2)
+        self.assertEqual(project.count("-Wno-error=incomplete-umbrella"), 4)
+        self.assertEqual(project.count("-Wno-error=quoted-include-in-framework-header"), 4)
 
     def test_ci_pins_the_swift_6_2_toolchain(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
