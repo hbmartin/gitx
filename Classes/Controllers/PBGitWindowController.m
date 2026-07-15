@@ -49,6 +49,7 @@
 
 	__weak IBOutlet NSTextField *statusField;
 	__weak IBOutlet NSProgressIndicator *progressIndicator;
+	__weak IBOutlet NSButton *jumpToCheckedOutBranchButton;
 }
 @end
 
@@ -180,6 +181,7 @@
 
 	[[statusField cell] setBackgroundStyle:NSBackgroundStyleRaised];
 	[progressIndicator setUsesThreadedAnimation:YES];
+	jumpToCheckedOutBranchButton.accessibilityIdentifier = @"JumpToCheckedOutBranchButton";
 
 	[[NSNotificationCenter defaultCenter] addObserver:self
 											 selector:@selector(applicationDidBecomeActive:)
@@ -221,6 +223,7 @@
 		@"for-each-ref",
 		@"--format=%(refname)%00%(objectname)%00",
 	]];
+	[commands addObject:@[ @"remote" ]];
 	if (![self.repository isBareRepository]) {
 		[commands addObject:@[ @"status", @"--porcelain=v2", @"--branch", @"-z", @"--untracked-files=normal" ]];
 	}
@@ -625,18 +628,19 @@
 
 - (IBAction)deleteRef:(id)sender
 {
-	id<PBGitRefish> refish = [self refishForSender:sender refishTypes:@[ kGitXBranchType, kGitXRemoteType, kGitXTagType ]];
-	if (!refish || ![refish isKindOfClass:[PBGitRef class]])
+	id<PBGitRefish> refish = [self refishForSender:sender refishTypes:nil];
+	if (!refish || ![refish isKindOfClass:[PBGitRef class]] ||
+		![PBReferenceActionPolicy canDeleteRefishType:refish.refishType])
 		return;
 
 	PBGitRef *ref = (PBGitRef *)refish;
-
-	NSString *ref_desc = [NSString stringWithFormat:@"%@ '%@'", [ref refishType], [ref shortName]];
+	NSString *refishType = ref.refishType;
+	NSString *shortName = ref.shortName;
 
 	NSAlert *alert = [[NSAlert alloc] init];
-	alert.messageText = [NSString stringWithFormat:@"Delete %@?", ref_desc];
-	alert.informativeText = [NSString stringWithFormat:@"Are you sure you want to remove the %@?", ref_desc];
-	[alert addButtonWithTitle:NSLocalizedString(@"Delete", @"Delete ref alert - default button")];
+	alert.messageText = [PBReferenceActionPolicy deletionConfirmationTitleForRefishType:refishType shortName:shortName];
+	alert.informativeText = [PBReferenceActionPolicy deletionConfirmationMessageForRefishType:refishType shortName:shortName];
+	[alert addButtonWithTitle:[PBReferenceActionPolicy deletionConfirmationButtonTitleForRefishType:refishType]];
 	[alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Delete ref alert - cancel button")];
 
 	[self confirmDialog:alert
@@ -727,8 +731,9 @@
 	NSMenuItem *remoteSubmenu = sender;
 	if (![remoteSubmenu isKindOfClass:[NSMenuItem class]]) return;
 
-	id<PBGitRefish> ref = [self refishForSender:remoteSubmenu.parentItem refishTypes:@[ kGitXBranchType ]];
-	if (!ref || ![ref isKindOfClass:[PBGitRef class]])
+	id<PBGitRefish> ref = [self refishForSender:remoteSubmenu.parentItem refishTypes:nil];
+	if (!ref || ![ref isKindOfClass:[PBGitRef class]] ||
+		![PBReferenceActionPolicy canPushRefishTypeToNamedRemote:ref.refishType])
 		return;
 
 	id<PBGitRefish> remoteRef = [self refishForSender:sender refishTypes:@[ kGitXRemoteType ]];
@@ -900,6 +905,14 @@
 - (IBAction)refresh:(id)sender
 {
 	[contentController refresh:self];
+}
+
+- (IBAction)jumpToCheckedOutBranch:(id)sender
+{
+	NSLog(@"[GitX] Jumping to the repository's checked-out branch");
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	[_sidebarController selectCurrentBranch];
 }
 
 - (IBAction)createBranch:(id)sender

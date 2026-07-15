@@ -6,6 +6,18 @@ NSString *const PBNativeSectionTextKey = @"text";
 NSString *const PBNativeSectionPathKey = @"path";
 NSString *const PBNativeSectionContextKey = @"context";
 NSString *const PBNativeSectionEntriesKey = @"entries";
+NSString *const PBNativeSectionImageSourceKey = @"imageSource";
+NSString *const PBNativeImageSourceRevisionsKey = @"revisions";
+NSString *const PBNativeImageSourceWorkingTreeKey = @"workingTree";
+NSString *const PBNativeImageSourceWorkingTreeURLKey = @"workingTreeURL";
+NSString *const PBNativeImageSourceGitLaunchPathKey = @"gitLaunchPath";
+NSString *const PBNativeImageSourceGitDirectoryKey = @"gitDirectory";
+NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
+
+__attribute__((annotate("returns_localized_nsstring"))) static inline NSString *PBDisplayReadyString(NSString *string)
+{
+	return string;
+}
 
 @interface PBNativeContentView ()
 @property (nonatomic) NSStackView *rootStack;
@@ -238,8 +250,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 	NSString *token = NSUUID.UUID.UUIDString;
 	NSURL *URL = [NSURL URLWithString:[NSString stringWithFormat:@"gitx-action://%@", token]];
 	linkPayloads[URL.absoluteString] = payload;
-	NSString *localizedTitle = NSLocalizedString(title, @"Native content action title");
-	NSMutableAttributedString *link = [[NSMutableAttributedString alloc] initWithString:localizedTitle
+	NSMutableAttributedString *link = [[NSMutableAttributedString alloc] initWithString:PBDisplayReadyString(title)
 																			 attributes:@{
 																				 NSFontAttributeName : [NSFont systemFontOfSize:11 weight:NSFontWeightMedium],
 																				 NSLinkAttributeName : URL,
@@ -487,6 +498,8 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 	   highlightSyntax:(BOOL)shouldHighlightSyntax
 		collapsedFiles:(NSSet<NSString *> *)collapsedFiles
 		expandedImages:(NSSet<NSString *> *)expandedImages
+		   imageSource:(NSDictionary<NSString *, id> *)imageSource
+			  delegate:(id<PBNativeContentViewDelegate>)delegate
 		  linkPayloads:(NSMutableDictionary<NSString *, NSDictionary *> *)linkPayloads
 			  toString:(NSMutableAttributedString *)rendered
 {
@@ -535,11 +548,11 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			[self appendDiffLine:line toString:rendered];
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"  "]];
 			if ([context isEqualToString:@"staged"]) {
-				[self appendLinkWithTitle:@"Unstage hunk" payload:@{@"type" : @"diff", @"action" : @"unstage", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
+				[self appendLinkWithTitle:NSLocalizedString(@"Unstage hunk", @"Action to unstage all lines in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"unstage", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
 			} else if ([context isEqualToString:@"unstaged"]) {
-				[self appendLinkWithTitle:@"Stage hunk" payload:@{@"type" : @"diff", @"action" : @"stage", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
+				[self appendLinkWithTitle:NSLocalizedString(@"Stage hunk", @"Action to stage all lines in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"stage", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
 				[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"   "]];
-				[self appendLinkWithTitle:@"Discard hunk" payload:@{@"type" : @"diff", @"action" : @"discard", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
+				[self appendLinkWithTitle:NSLocalizedString(@"Discard hunk", @"Action to discard all changes in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"discard", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
 			}
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
 			continue;
@@ -552,17 +565,23 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			[self appendDiffLine:line toString:rendered];
 			NSString *imageKey = [NSString stringWithFormat:@"%lu:%@", (unsigned long)sectionIndex, currentPath];
 			if (![expandedImages containsObject:imageKey]) {
-				[self appendLinkWithTitle:@"Show image" payload:@{@"type" : @"image", @"key" : imageKey, @"path" : currentPath, @"section" : @(sectionIndex)} linkPayloads:linkPayloads toString:rendered];
+				[self appendLinkWithTitle:NSLocalizedString(@"Show image", @"Action to expand an image changed by a diff") payload:@{@"type" : @"image", @"key" : imageKey, @"path" : currentPath, @"section" : @(sectionIndex)} linkPayloads:linkPayloads toString:rendered];
 				[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:self.baseAttributes]];
-			} else if ([self.delegate respondsToSelector:@selector(nativeContentView:imageForPath:section:)]) {
-				NSImage *image = [self.delegate nativeContentView:self imageForPath:currentPath section:sectionIndex];
-				if (image) {
-					NSSize size = image.size;
-					CGFloat scale = MIN(1.0, MIN(800.0 / MAX(1.0, size.width), 500.0 / MAX(1.0, size.height)));
-					image.size = NSMakeSize(size.width * scale, size.height * scale);
-					NSTextAttachment *attachment = [[NSTextAttachment alloc] init];
-					attachment.image = image;
-					[rendered appendAttributedString:[NSAttributedString attributedStringWithAttachment:attachment]];
+			} else if ([delegate respondsToSelector:@selector(nativeContentView:imageDataForPath:section:imageSource:)]) {
+				NSData *imageData = [delegate nativeContentView:self imageDataForPath:currentPath section:sectionIndex imageSource:imageSource ?: @{}];
+				if (imageData.length) {
+					__block NSAttributedString *imageString = nil;
+					dispatch_sync(dispatch_get_main_queue(), ^{
+						NSImage *image = [[NSImage alloc] initWithData:imageData];
+						if (!image) return;
+						NSSize size = image.size;
+						CGFloat scale = MIN(1.0, MIN(800.0 / MAX(1.0, size.width), 500.0 / MAX(1.0, size.height)));
+						image.size = NSMakeSize(size.width * scale, size.height * scale);
+						NSTextAttachment *attachment = [[NSTextAttachment alloc] init];
+						attachment.image = image;
+						imageString = [NSAttributedString attributedStringWithAttachment:attachment];
+					});
+					if (imageString) [rendered appendAttributedString:imageString];
 					[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:self.baseAttributes]];
 				}
 			}
@@ -591,7 +610,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			@"selectedIndexes" : lineIndexes,
 			@"reverse" : @([context isEqualToString:@"staged"]),
 		};
-		NSString *primaryTitle = [context isEqualToString:@"staged"] ? @"Unstage line" : @"Stage line";
+		NSString *primaryTitle = [context isEqualToString:@"staged"] ? NSLocalizedString(@"Unstage line", @"Action to unstage one changed line") : NSLocalizedString(@"Stage line", @"Action to stage one changed line");
 		NSString *primaryAction = [context isEqualToString:@"staged"] ? @"unstage" : @"stage";
 		NSMutableDictionary *primaryPayload = [linePayload mutableCopy];
 		primaryPayload[@"action"] = primaryAction;
@@ -611,13 +630,14 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			blockPayload[@"action"] = primaryAction;
 			blockPayload[@"selectedIndexes"] = [blockIndexes copy];
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"   " attributes:self.baseAttributes]];
-			[self appendLinkWithTitle:[context isEqualToString:@"staged"] ? @"Unstage block" : @"Stage block" payload:blockPayload linkPayloads:linkPayloads toString:rendered];
+			NSString *blockTitle = [context isEqualToString:@"staged"] ? NSLocalizedString(@"Unstage block", @"Action to unstage a contiguous block of changed lines") : NSLocalizedString(@"Stage block", @"Action to stage a contiguous block of changed lines");
+			[self appendLinkWithTitle:blockTitle payload:blockPayload linkPayloads:linkPayloads toString:rendered];
 		}
 		if ([context isEqualToString:@"unstaged"]) {
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"   " attributes:self.baseAttributes]];
 			NSMutableDictionary *discardPayload = [linePayload mutableCopy];
 			discardPayload[@"action"] = @"discard";
-			[self appendLinkWithTitle:@"Discard line" payload:discardPayload linkPayloads:linkPayloads toString:rendered];
+			[self appendLinkWithTitle:NSLocalizedString(@"Discard line", @"Action to discard one changed line") payload:discardPayload linkPayloads:linkPayloads toString:rendered];
 		}
 		[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n" attributes:self.baseAttributes]];
 	}
@@ -630,6 +650,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 	NSArray *copiedSections = [sections copy];
 	NSSet<NSString *> *collapsedFiles = [self.collapsedFiles copy];
 	NSSet<NSString *> *expandedImages = [self.expandedImages copy];
+	id<PBNativeContentViewDelegate> delegate = self.delegate;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NSMutableAttributedString *rendered = [[NSMutableAttributedString alloc] init];
 		NSMutableDictionary<NSString *, NSDictionary *> *linkPayloads = [NSMutableDictionary dictionary];
@@ -654,7 +675,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			if (diff.length == 0) {
 				[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"There are no differences.\n" attributes:@{NSForegroundColorAttributeName : NSColor.secondaryLabelColor}]];
 			} else {
-				[self renderDiffText:diff context:section[PBNativeSectionContextKey] ?: @"readOnly" section:sectionIndex path:section[PBNativeSectionPathKey] ?: @"" highlightSyntax:shouldHighlightSyntax collapsedFiles:collapsedFiles expandedImages:expandedImages linkPayloads:linkPayloads toString:rendered];
+				[self renderDiffText:diff context:section[PBNativeSectionContextKey] ?: @"readOnly" section:sectionIndex path:section[PBNativeSectionPathKey] ?: @"" highlightSyntax:shouldHighlightSyntax collapsedFiles:collapsedFiles expandedImages:expandedImages imageSource:section[PBNativeSectionImageSourceKey] ?: @{} delegate:delegate linkPayloads:linkPayloads toString:rendered];
 			}
 			sectionIndex++;
 		}

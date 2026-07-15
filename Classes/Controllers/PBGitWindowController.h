@@ -49,6 +49,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)revealInFinder:(id)sender;
 - (IBAction)openInTerminal:(id)sender;
 - (IBAction)refresh:(id)sender;
+- (IBAction)jumpToCheckedOutBranch:(id)sender;
 - (IBAction)showRepositorySettings:(id)sender;
 
 - (IBAction)checkout:(id)sender;

@@ -7,6 +7,13 @@ extern NSString *const PBNativeSectionTextKey;
 extern NSString *const PBNativeSectionPathKey;
 extern NSString *const PBNativeSectionContextKey;
 extern NSString *const PBNativeSectionEntriesKey;
+extern NSString *const PBNativeSectionImageSourceKey;
+extern NSString *const PBNativeImageSourceRevisionsKey;
+extern NSString *const PBNativeImageSourceWorkingTreeKey;
+extern NSString *const PBNativeImageSourceWorkingTreeURLKey;
+extern NSString *const PBNativeImageSourceGitLaunchPathKey;
+extern NSString *const PBNativeImageSourceGitDirectoryKey;
+extern NSString *const PBNativeImageSourceTaskDirectoryKey;
 
 @class PBNativeContentView;
 
@@ -14,7 +21,10 @@ extern NSString *const PBNativeSectionEntriesKey;
 @optional
 - (void)nativeContentView:(PBNativeContentView *)view performDiffAction:(NSString *)action patch:(NSString *)patch;
 - (void)nativeContentView:(PBNativeContentView *)view selectCommit:(NSString *)sha;
-- (nullable NSImage *)nativeContentView:(PBNativeContentView *)view imageForPath:(NSString *)path section:(NSUInteger)sectionIndex;
+- (nullable NSData *)nativeContentView:(PBNativeContentView *)view
+					  imageDataForPath:(NSString *)path
+							   section:(NSUInteger)sectionIndex
+						   imageSource:(NSDictionary<NSString *, id> *)imageSource;
 @end
 
 /// Shared, selectable AppKit renderer for source, blame, history, and diff content.

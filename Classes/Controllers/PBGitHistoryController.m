@@ -31,6 +31,10 @@
 #import "PBUncommittedChanges.h"
 #import "PBGitIndex.h"
 
+@interface PBReferenceActionPolicy : NSObject
++ (NSString *)deletionMenuTitleForRefName:(NSString *)refName isRemote:(BOOL)isRemote;
+@end
+
 #define kHistorySelectedDetailIndexKey @"PBHistorySelectedDetailIndex"
 #define kHistoryDetailViewIndex 0
 #define kHistoryTreeViewIndex 1
@@ -222,9 +226,23 @@
 	BOOL wasSelected = [self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class];
 	BOOL isDirty = self.repository.index.indexChanges.count > 0;
 	if (isDirty) {
-		uncommittedChanges = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
-		((PBHistoryArrayController *)commitController).pinnedObject = uncommittedChanges;
-		if (wasSelected) [commitController setSelectedObjects:@[ uncommittedChanges ]];
+		if (!uncommittedChanges) {
+			uncommittedChanges = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+			((PBHistoryArrayController *)commitController).pinnedObject = uncommittedChanges;
+			if (wasSelected) [commitController setSelectedObjects:@[ uncommittedChanges ]];
+		} else {
+			[uncommittedChanges refreshFromRepository];
+			NSArray *arrangedCommits = commitController.arrangedObjects;
+			NSUInteger row = [arrangedCommits indexOfObjectIdenticalTo:uncommittedChanges];
+			if (row != NSNotFound)
+				[commitList reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row] columnIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, commitList.numberOfColumns)]];
+			if (wasSelected) {
+				if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex)
+					[self updateKeys];
+				else
+					[webHistoryController refreshDisplayedContent];
+			}
+		}
 	} else {
 		uncommittedChanges = nil;
 		((PBHistoryArrayController *)commitController).pinnedObject = nil;
@@ -1012,7 +1030,7 @@
 	if (!isEnabled)
 		selector = nil;
 
-	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(title, @"Commit context menu item") action:selector keyEquivalent:@""];
+	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:selector keyEquivalent:@""];
 	[item setEnabled:isEnabled];
 	return item;
 }
@@ -1036,7 +1054,7 @@
 	[items addObject:[NSMenuItem pb_itemWithTitle:stashApplyTitle action:@selector(stashApply:) enabled:YES]];
 
 	// view diff
-	NSString *stashDiffTitle = @"View Diff";
+	NSString *stashDiffTitle = NSLocalizedString(@"View Diff", @"Contextual Menu Item to view the selected stash diff");
 	[items addObject:[NSMenuItem pb_itemWithTitle:stashDiffTitle action:@selector(stashViewDiff:) enabled:YES]];
 
 	[items addObject:[NSMenuItem separatorItem]];
@@ -1111,7 +1129,7 @@
 		[items addObject:[NSMenuItem separatorItem]];
 
 		// merge ref
-		NSString *mergeTitle = isOnHeadBranch ? NSLocalizedString(@"Merge", @"Inactive Contextual Menu Item for merging") : [NSString stringWithFormat:@"Merge %@ into %@", refName, headRefName];
+		NSString *mergeTitle = isOnHeadBranch ? NSLocalizedString(@"Merge", @"Inactive Contextual Menu Item for merging") : [NSString stringWithFormat:NSLocalizedString(@"Merge %@ into %@", @"Contextual Menu Item to merge the selected ref into HEAD"), refName, headRefName];
 		[items addObject:[NSMenuItem pb_itemWithTitle:mergeTitle action:@selector(merge:) enabled:!isOnHeadBranch]];
 
 		// rebase
@@ -1173,8 +1191,7 @@
 	BOOL isStash = [[ref ref] hasPrefix:@"refs/stash"];
 	BOOL isDeleteEnabled = !(isDetachedHead || isHead || isStash);
 	if (isDeleteEnabled) {
-		NSString *deleteFormat = ref.isRemote ? NSLocalizedString(@"Delete “%@”…", @"Contextual Menu Item to delete a local ref (e.g. branch)") : NSLocalizedString(@"Remove “%@”…", @"Contextual Menu Item to remove a remote");
-		NSString *deleteItemTitle = [NSString stringWithFormat:deleteFormat, refName];
+		NSString *deleteItemTitle = [PBReferenceActionPolicy deletionMenuTitleForRefName:refName isRemote:ref.isRemote];
 		NSMenuItem *deleteItem = [NSMenuItem pb_itemWithTitle:deleteItemTitle action:@selector(deleteRef:) enabled:YES];
 		[items addObject:deleteItem];
 	}

@@ -2,6 +2,53 @@ import AppKit
 import XCTest
 
 final class GitXSwiftFeatureTests: XCTestCase {
+    func testCommitRenderInputFreezesPlainMetadataAndImageRevisions() {
+        let input = PBCommitRenderInput(
+            sha: "abcdef0123456789",
+            parentSHA: "1234567890abcdef",
+            shortName: "abcdef0",
+            subject: "Render safely",
+            author: "Ada",
+            authorDate: "Today"
+        )
+
+        XCTAssertEqual(input.sha, "abcdef0123456789")
+        XCTAssertEqual(input.parentSHA, "1234567890abcdef")
+        XCTAssertEqual(input.shortName, "abcdef0")
+        XCTAssertEqual(input.title, "abcdef0  Render safely\nAda — Today")
+        XCTAssertEqual(input.imageRevisions, ["abcdef0123456789", "1234567890abcdef"])
+    }
+
+    func testCommitRenderInputOmitsMissingRootParentFromImageRevisions() {
+        let input = PBCommitRenderInput(
+            sha: "abcdef0123456789",
+            parentSHA: nil,
+            shortName: "abcdef0",
+            subject: "Root",
+            author: "Ada",
+            authorDate: "Today"
+        )
+
+        XCTAssertEqual(input.imageRevisions, ["abcdef0123456789"])
+    }
+
+    func testWorkingStateRefreshPolicyPreservesAnEqualDisplayedDiff() {
+        XCTAssertFalse(PBWorkingStateRefreshPolicy.shouldReplaceDisplayedDiff("same", renderedDiff: "same"))
+        XCTAssertTrue(PBWorkingStateRefreshPolicy.shouldReplaceDisplayedDiff(nil, renderedDiff: "same"))
+        XCTAssertTrue(PBWorkingStateRefreshPolicy.shouldReplaceDisplayedDiff("old", renderedDiff: "new"))
+    }
+
+    func testRewindOverlayUsesOneLayerBackedSurface() throws {
+        let overlay = PBRewindOverlayView(frame: NSRect(x: 0, y: 0, width: 125, height: 125))
+
+        XCTAssertFalse(overlay.isKind(of: NSBox.self))
+        let layer = try XCTUnwrap(overlay.layer)
+        XCTAssertEqual(layer.borderWidth, 1)
+        XCTAssertEqual(layer.cornerRadius, 12)
+        XCTAssertNotNil(layer.backgroundColor)
+        XCTAssertNotNil(layer.borderColor)
+    }
+
     private func largeDiff(
         lineCount: Int,
         path: String = "Large.swift",
@@ -89,12 +136,40 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let now = Date()
 
         XCTAssertNil(formatter.string(for: "not a date"))
-        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(30)), "In the future!")
-        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-30)), "seconds ago")
-        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-90)), "1 minute ago")
+        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(3600)), "In the future!")
+        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-10)), "seconds ago")
+        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-80)), "1 minute ago")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-600)), "10 minutes ago")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-5400)), "1 hour ago")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-10800)), "3 hours ago")
+    }
+
+    func testAutoFetchScopeSetterStoresAValidatedValue() throws {
+        let invalidScope = try XCTUnwrap(PBAutoFetchScope(rawValue: .max))
+        PBGitDefaults.setAutoFetchScope(invalidScope)
+
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "PBAutoFetchScope"), PBAutoFetchScope.none.rawValue)
+        XCTAssertEqual(PBGitDefaults.autoFetchScope(), .none)
+    }
+
+    func testRepositoryNotificationDefaultsTreatSymlinksAsTheSameRepository() throws {
+        try withTemporaryDirectory { root in
+            let repository = root.appendingPathComponent("repository", isDirectory: true)
+            let symlink = root.appendingPathComponent("repository-link", isDirectory: true)
+            try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: repository)
+
+            PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: repository)
+            PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: symlink)
+            defer {
+                PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: repository)
+                PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: symlink)
+            }
+
+            PBGitDefaults.setNotifyAboutFetchedCommits(true, forRepositoryURL: symlink)
+
+            XCTAssertTrue(PBGitDefaults.notifyAboutFetchedCommits(forRepositoryURL: repository))
+        }
     }
 
     func testRepositoryFinderDiscoversWorktreesNestedPathsAndBareRepositories() throws {
@@ -160,6 +235,217 @@ final class GitXSwiftFeatureTests: XCTestCase {
             XCTAssertEqual(process.terminationReason, .exit)
             XCTAssertEqual(process.terminationStatus, 0)
         }
+    }
+
+    func testTaskAppliesCallerEnvironmentOverridesAtLaunch() {
+        let task = PBTask(launchPath: "/usr/bin/env", arguments: [], inDirectory: nil)
+        task.additionalEnvironment = ["GITX_ENVIRONMENT_OVERRIDE": "configured-after-initialization"]
+        let completed = expectation(description: "environment task completed")
+
+        task.perform(on: .main) { data, error in
+            XCTAssertNil(error)
+            let output = data.flatMap { String(data: $0, encoding: .utf8) }
+            XCTAssertTrue(output?.contains(
+                "GITX_ENVIRONMENT_OVERRIDE=configured-after-initialization"
+            ) == true)
+            completed.fulfill()
+        }
+
+        wait(for: [completed], timeout: 5)
+    }
+
+    func testProcessEnvironmentPreservesPathOrderAndDeduplicatesEntries() {
+        let prepared = PBProcessEnvironment.preparedEnvironment(
+            [
+                "PATH": "/custom/bin:/usr/bin:/custom/bin",
+                "KEEP": "yes",
+            ],
+            homeDirectory: "/Users/example"
+        )
+
+        XCTAssertEqual(prepared["KEEP"], "yes")
+        XCTAssertEqual(pathEntries(in: prepared), [
+            "/custom/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/opt/local/bin",
+            "/sw/bin",
+            "/Users/example/.local/bin",
+            "/Users/example/bin",
+        ])
+    }
+
+    func testProcessEnvironmentBuildsPathWhenMissingOrEmpty() {
+        let expected = [
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/opt/local/bin",
+            "/sw/bin",
+            "/Users/example/.local/bin",
+            "/Users/example/bin",
+        ]
+
+        XCTAssertEqual(
+            pathEntries(in: PBProcessEnvironment.preparedEnvironment(
+                [:],
+                homeDirectory: "/Users/example"
+            )),
+            expected
+        )
+        XCTAssertEqual(
+            pathEntries(in: PBProcessEnvironment.preparedEnvironment(
+                ["PATH": ""],
+                homeDirectory: "/Users/example"
+            )),
+            expected
+        )
+    }
+
+    func testProcessEnvironmentExpandsAndDeduplicatesHomeDirectories() {
+        let prepared = PBProcessEnvironment.preparedEnvironment(
+            ["PATH": "/Users/example/bin::/Users/example/.local/bin:/Users/example/bin"],
+            homeDirectory: "/Users/example"
+        )
+        let entries = pathEntries(in: prepared)
+
+        XCTAssertEqual(entries.first, "/Users/example/bin")
+        XCTAssertEqual(entries.filter { $0 == "/Users/example/bin" }.count, 1)
+        XCTAssertEqual(entries.filter { $0 == "/Users/example/.local/bin" }.count, 1)
+        XCTAssertFalse(entries.contains(""))
+    }
+
+    private func pathEntries(in environment: [String: String]) -> [String] {
+        environment["PATH"]?.split(separator: ":").map(String.init) ?? []
+    }
+
+    func testReferenceActionPolicyAllowsBranchesAndTagsToPush() {
+        XCTAssertTrue(PBReferenceActionPolicy.canPush(refishType: "branch"))
+        XCTAssertTrue(PBReferenceActionPolicy.canPush(refishType: "tag"))
+        XCTAssertFalse(PBReferenceActionPolicy.canPush(refishType: "remote branch"))
+    }
+
+    func testReferenceActionPolicyAllowsRemoteTrackingBranchRemoval() {
+        XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "branch"))
+        XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "remote"))
+        XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "tag"))
+        XCTAssertTrue(PBReferenceActionPolicy.canDelete(refishType: "remote branch"))
+    }
+
+    func testReferenceActionPolicyDistinguishesDeleteFromLocalRemoval() {
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionMenuTitle(refName: "origin/topic", isRemote: true),
+            "Remove “origin/topic”…"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionMenuTitle(refName: "topic", isRemote: false),
+            "Delete “topic”…"
+        )
+    }
+
+    func testRemoteTrackingBranchConfirmationExplainsLocalRemoval() {
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationTitle(
+                refishType: "remote branch",
+                shortName: "origin/topic"
+            ),
+            "Remove remote branch 'origin/topic'?"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationMessage(
+                refishType: "remote branch",
+                shortName: "origin/topic"
+            ),
+            "This removes only the local remote-tracking branch. "
+                + "The branch on the remote server is left unchanged."
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationButtonTitle(refishType: "remote branch"),
+            "Remove"
+        )
+    }
+
+    func testRemoteConfigurationConfirmationUsesRemovalTerminology() {
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationTitle(
+                refishType: "remote",
+                shortName: "origin"
+            ),
+            "Remove remote 'origin'?"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationMessage(
+                refishType: "remote",
+                shortName: "origin"
+            ),
+            "This removes the remote configuration and its local remote-tracking branches. "
+                + "Branches on the remote server are left unchanged."
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationButtonTitle(refishType: "remote"),
+            "Remove"
+        )
+    }
+
+    func testLocalBranchConfirmationUsesDeletionTerminology() {
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationTitle(
+                refishType: "branch",
+                shortName: "topic"
+            ),
+            "Delete branch 'topic'?"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationMessage(
+                refishType: "branch",
+                shortName: "topic"
+            ),
+            "Are you sure you want to delete the branch 'topic'?"
+        )
+        XCTAssertEqual(
+            PBReferenceActionPolicy.deletionConfirmationButtonTitle(refishType: "branch"),
+            "Delete"
+        )
+    }
+
+    func testRemoteSidebarSyncAddsConfiguredOnlyRemote() {
+        let plan = PBRemoteSidebarSyncPlan.plan(
+            configuredRemoteNames: ["origin"],
+            existingRemoteNames: [],
+            nonEmptyRemoteNames: []
+        )
+
+        XCTAssertEqual(plan.namesToAdd, ["origin"])
+        XCTAssertEqual(plan.namesToRemove, [])
+    }
+
+    func testRemoteSidebarSyncPreservesTrackingOnlyRemote() {
+        let plan = PBRemoteSidebarSyncPlan.plan(
+            configuredRemoteNames: [],
+            existingRemoteNames: ["archived"],
+            nonEmptyRemoteNames: ["archived"]
+        )
+
+        XCTAssertEqual(plan.namesToAdd, [])
+        XCTAssertEqual(plan.namesToRemove, [])
+    }
+
+    func testRemoteSidebarSyncRemovesOnlyEmptyUnconfiguredRemotes() {
+        let plan = PBRemoteSidebarSyncPlan.plan(
+            configuredRemoteNames: ["zulu", "origin", "zulu"],
+            existingRemoteNames: ["upstream", "origin", "stale"],
+            nonEmptyRemoteNames: ["upstream"]
+        )
+
+        XCTAssertEqual(plan.namesToAdd, ["zulu"])
+        XCTAssertEqual(plan.namesToRemove, ["stale"])
     }
 
     func testLargeNativeDiffProducesScrollableDocument() throws {

@@ -14,6 +14,8 @@ typedef enum {
 	DELETED
 } PBChangedFileStatus;
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBChangedFile : NSObject {
 	NSString *path;
 	BOOL hasStagedChanges;
@@ -27,12 +29,15 @@ typedef enum {
 }
 
 
-@property (copy) NSString *path, *commitBlobSHA, *commitBlobMode;
+@property (copy) NSString *path;
+@property (copy, nullable) NSString *commitBlobSHA;
+@property (copy, nullable) NSString *commitBlobMode;
 @property (assign) PBChangedFileStatus status;
 @property (assign) BOOL hasStagedChanges, hasUnstagedChanges;
 
-- (NSImage *)icon;
-- (NSString *)indexInfo;
+- (nullable NSImage *)icon;
 
-- (id)initWithPath:(NSString *)p;
+- (instancetype)initWithPath:(NSString *)p;
 @end
+
+NS_ASSUME_NONNULL_END

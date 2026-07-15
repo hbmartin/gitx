@@ -6,6 +6,8 @@
 #import "PBGitIndex.h"
 #import "PBChangedFile.h"
 #import "PBTask.h"
+#import "PBGitBinary.h"
+#import "GitX-Swift.h"
 
 static NSString *const PBMultiCommitDiffPresentationKey = @"PBMultiCommitDiffPresentation";
 static NSString *const PBEmptyTreeSHA = @"4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -18,7 +20,6 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 @interface PBWebHistoryController () <PBNativeContentViewDelegate>
 @property (nonatomic) NSSegmentedControl *presentationControl;
 @property (nonatomic) NSArray<PBGitCommit *> *displayedCommits;
-@property (nonatomic) NSArray<PBGitCommit *> *renderedCommits;
 @property (nonatomic) dispatch_queue_t renderQueue;
 @property (nonatomic) NSUInteger contentGeneration;
 @property (nonatomic) PBTask *activeTask;
@@ -71,6 +72,40 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	return commits.reverseObjectEnumerator.allObjects;
 }
 
+- (PBCommitRenderInput *)renderInputForCommit:(PBGitCommit *)commit
+{
+	NSAssert(NSThread.isMainThread, @"Commit render metadata must be captured on the main thread");
+	return [[PBCommitRenderInput alloc] initWithSHA:commit.SHA ?: @""
+										  parentSHA:commit.parents.firstObject.SHA
+										  shortName:commit.shortName ?: @""
+											subject:commit.subject ?: @""
+											 author:commit.author ?: @""
+										 authorDate:commit.authorDate ?: @""];
+}
+
+- (NSArray<PBCommitRenderInput *> *)renderInputsForCommits:(NSArray<PBGitCommit *> *)commits
+{
+	NSMutableArray<PBCommitRenderInput *> *inputs = [NSMutableArray arrayWithCapacity:commits.count];
+	for (PBGitCommit *commit in commits)
+		[inputs addObject:[self renderInputForCommit:commit]];
+	return inputs;
+}
+
+- (NSDictionary<NSString *, id> *)imageSourceForRevisions:(NSArray<NSString *> *)revisions workingTree:(BOOL)workingTree
+{
+	NSAssert(NSThread.isMainThread, @"Image source state must be captured on the main thread");
+	PBGitRepository *currentRepository = historyController.repository;
+	NSMutableDictionary<NSString *, id> *source = [@{
+		PBNativeImageSourceRevisionsKey : revisions,
+		PBNativeImageSourceWorkingTreeKey : @(workingTree),
+	} mutableCopy];
+	if (currentRepository.workingDirectoryURL) source[PBNativeImageSourceWorkingTreeURLKey] = currentRepository.workingDirectoryURL;
+	if (PBGitBinary.path) source[PBNativeImageSourceGitLaunchPathKey] = PBGitBinary.path;
+	if (currentRepository.gitURL.path) source[PBNativeImageSourceGitDirectoryKey] = currentRepository.gitURL.path;
+	if (currentRepository.workingDirectory) source[PBNativeImageSourceTaskDirectoryKey] = currentRepository.workingDirectory;
+	return source;
+}
+
 - (BOOL)isGenerationCurrent:(NSUInteger)generation
 {
 	@synchronized(self) {
@@ -108,17 +143,17 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	return task.standardOutputString ?: @"";
 }
 
-- (NSString *)diffForCommit:(PBGitCommit *)commit generation:(NSUInteger)generation
+- (NSString *)diffForInput:(PBCommitRenderInput *)input generation:(NSUInteger)generation
 {
-	NSString *base = commit.parents.firstObject.SHA ?: PBEmptyTreeSHA;
-	return [self runGitArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, commit.SHA ] generation:generation error:nil] ?: @"";
+	NSString *base = input.parentSHA ?: PBEmptyTreeSHA;
+	return [self runGitArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, input.sha ] generation:generation error:nil] ?: @"";
 }
 
-- (BOOL)commitsShareAncestryPath:(NSArray<PBGitCommit *> *)commits generation:(NSUInteger)generation
+- (BOOL)inputsShareAncestryPath:(NSArray<PBCommitRenderInput *> *)inputs generation:(NSUInteger)generation
 {
-	for (NSUInteger index = 1; index < commits.count; index++) {
-		NSString *oldSHA = commits[index - 1].SHA;
-		NSString *newSHA = commits[index].SHA;
+	for (NSUInteger index = 1; index < inputs.count; index++) {
+		NSString *oldSHA = inputs[index - 1].sha;
+		NSString *newSHA = inputs[index].sha;
 		NSString *range = [NSString stringWithFormat:@"%@..%@", oldSHA, newSHA];
 		NSString *lineage = [self runGitArguments:@[ @"rev-list", @"--first-parent", @"--parents", range ] generation:generation error:nil];
 		if (!lineage || ![self isGenerationCurrent:generation]) return NO;
@@ -139,33 +174,38 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	return YES;
 }
 
-- (nullable NSArray<NSDictionary *> *)sequentialSectionsForCommits:(NSArray<PBGitCommit *> *)commits generation:(NSUInteger)generation
+- (nullable NSArray<NSDictionary *> *)sequentialSectionsForInputs:(NSArray<PBCommitRenderInput *> *)inputs
+													 imageSources:(NSArray<NSDictionary<NSString *, id> *> *)imageSources
+													   generation:(NSUInteger)generation
 {
 	NSMutableArray *sections = [NSMutableArray array];
-	for (PBGitCommit *commit in commits) {
+	for (NSUInteger index = 0; index < inputs.count; index++) {
+		PBCommitRenderInput *input = inputs[index];
 		if (![self isGenerationCurrent:generation]) return nil;
-		NSString *shortSHA = commit.shortName ?: @"";
-		NSString *title = [NSString stringWithFormat:@"%@  %@\n%@ — %@", shortSHA, commit.subject ?: @"", commit.author ?: @"", commit.authorDate ?: @""];
 		[sections addObject:@{
-			PBNativeSectionTitleKey : title,
-			PBNativeSectionTextKey : [self diffForCommit:commit generation:generation],
+			PBNativeSectionTitleKey : input.title,
+			PBNativeSectionTextKey : [self diffForInput:input generation:generation],
 			PBNativeSectionContextKey : @"readOnly",
+			PBNativeSectionImageSourceKey : imageSources[index],
 		}];
 	}
 	return [self isGenerationCurrent:generation] ? sections : nil;
 }
 
-- (nullable NSArray<NSDictionary *> *)combinedSectionsForCommits:(NSArray<PBGitCommit *> *)commits generation:(NSUInteger)generation
+- (nullable NSArray<NSDictionary *> *)combinedSectionsForInputs:(NSArray<PBCommitRenderInput *> *)inputs
+													imageSource:(NSDictionary<NSString *, id> *)imageSource
+													 generation:(NSUInteger)generation
 {
-	PBGitCommit *oldest = commits.firstObject;
-	PBGitCommit *newest = commits.lastObject;
-	NSString *base = oldest.parents.firstObject.SHA ?: PBEmptyTreeSHA;
-	NSString *combined = [self runGitArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, newest.SHA ] generation:generation error:nil];
+	PBCommitRenderInput *oldest = inputs.firstObject;
+	PBCommitRenderInput *newest = inputs.lastObject;
+	NSString *base = oldest.parentSHA ?: PBEmptyTreeSHA;
+	NSString *combined = [self runGitArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, newest.sha ] generation:generation error:nil];
 	if (!combined || ![self isGenerationCurrent:generation]) return nil;
 	return @[ @{
 		PBNativeSectionTitleKey : [NSString stringWithFormat:@"Combined Diff — %@ through %@", oldest.shortName, newest.shortName],
 		PBNativeSectionTextKey : combined,
 		PBNativeSectionContextKey : @"readOnly",
+		PBNativeSectionImageSourceKey : imageSource,
 	} ];
 }
 
@@ -182,7 +222,9 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	return [NSString stringWithFormat:@"diff --git a/%@ b/%@\nnew file mode 100644\n--- /dev/null\n+++ b/%@\n@@ -0,0 +1,%lu @@\n%@", file.path, file.path, file.path, (unsigned long)lines.count, added];
 }
 
-- (nullable NSArray<NSDictionary *> *)workingStateSectionsForChanges:(NSArray<PBChangedFile *> *)changes generation:(NSUInteger)generation
+- (nullable NSArray<NSDictionary *> *)workingStateSectionsForChanges:(NSArray<PBChangedFile *> *)changes
+														 imageSource:(NSDictionary<NSString *, id> *)imageSource
+														  generation:(NSUInteger)generation
 {
 	NSString *staged = [self runGitArguments:@[ @"diff", @"--cached", @"--find-renames", @"--no-ext-diff" ] generation:generation error:nil];
 	if (!staged || ![self isGenerationCurrent:generation]) return nil;
@@ -195,8 +237,8 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 		if (untracked && file.hasUnstagedChanges) [unstaged appendString:[self syntheticUntrackedDiffForFile:file]];
 	}
 	return @[
-		@{PBNativeSectionTitleKey : @"Staged Changes", PBNativeSectionTextKey : staged, PBNativeSectionContextKey : @"readOnly"},
-		@{PBNativeSectionTitleKey : @"Unstaged Changes", PBNativeSectionTextKey : unstaged, PBNativeSectionContextKey : @"readOnly"},
+		@{PBNativeSectionTitleKey : @"Staged Changes", PBNativeSectionTextKey : staged, PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource},
+		@{PBNativeSectionTitleKey : @"Unstaged Changes", PBNativeSectionTextKey : unstaged, PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource},
 	];
 }
 
@@ -204,10 +246,11 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 {
 	NSArray<PBGitCommit *> *requestedCommits = [commits copy] ?: @[];
 	NSUInteger generation = [self beginContentGeneration];
+	BOOL refreshingDisplayedWorkingState = [requestedCommits.firstObject isKindOfClass:PBUncommittedChanges.class] &&
+		self.displayedCommits.firstObject == requestedCommits.firstObject && self->diff != nil;
 	self.displayedCommits = requestedCommits;
 	self.presentationControl.superview.hidden = requestedCommits.count <= 1;
 	if (requestedCommits.count == 0) {
-		self.renderedCommits = @[];
 		self->diff = @"";
 		[self.nativeView showMessage:@"No commit selected"];
 		return;
@@ -215,66 +258,84 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	if ([requestedCommits.firstObject isKindOfClass:PBUncommittedChanges.class]) {
 		self.presentationControl.superview.hidden = YES;
 		NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
-		[self.nativeView showMessage:@"Loading changes…"];
+		NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:@[ @":" ] workingTree:YES];
+		if (!refreshingDisplayedWorkingState) [self.nativeView showMessage:@"Loading changes…"];
 		dispatch_async(self.renderQueue, ^{
-			NSArray<NSDictionary *> *sections = [self workingStateSectionsForChanges:changes generation:generation];
+			NSArray<NSDictionary *> *sections = [self workingStateSectionsForChanges:changes imageSource:imageSource generation:generation];
 			if (!sections) return;
 			dispatch_async(dispatch_get_main_queue(), ^{
 				if (![self isGenerationCurrent:generation]) return;
-				self.renderedCommits = @[];
-				self->diff = [[sections valueForKey:PBNativeSectionTextKey] componentsJoinedByString:@"\n"];
-				[self.nativeView showDiffSections:sections];
+				NSString *renderedDiff = [[sections valueForKey:PBNativeSectionTextKey] componentsJoinedByString:@"\n"];
+				BOOL shouldReplace = [PBWorkingStateRefreshPolicy shouldReplaceDisplayedDiff:self->diff renderedDiff:renderedDiff];
+				self->diff = renderedDiff;
+				if (shouldReplace) [self.nativeView showDiffSections:sections];
 			});
 		});
 		return;
 	}
 
 	NSArray<PBGitCommit *> *ordered = [self oldestFirst:requestedCommits];
+	NSArray<PBCommitRenderInput *> *inputs = [self renderInputsForCommits:ordered];
+	NSMutableArray<NSDictionary<NSString *, id> *> *imageSources = [NSMutableArray arrayWithCapacity:inputs.count];
+	for (PBCommitRenderInput *input in inputs)
+		[imageSources addObject:[self imageSourceForRevisions:input.imageRevisions workingTree:NO]];
 	PBMultiCommitDiffPresentation requestedMode = self.presentationControl.selectedSegment;
 	[self.nativeView showMessage:@"Loading diff…"];
 	dispatch_async(self.renderQueue, ^{
-		BOOL combinedEnabled = requestedCommits.count > 1 && [self commitsShareAncestryPath:ordered generation:generation];
+		BOOL combinedEnabled = inputs.count > 1 && [self inputsShareAncestryPath:inputs generation:generation];
 		if (![self isGenerationCurrent:generation]) return;
 		PBMultiCommitDiffPresentation mode = requestedMode;
 		if (mode == PBMultiCommitDiffPresentationCombined && !combinedEnabled) mode = PBMultiCommitDiffPresentationSequential;
-		NSArray<NSDictionary *> *sections = mode == PBMultiCommitDiffPresentationCombined ? [self combinedSectionsForCommits:ordered generation:generation] : [self sequentialSectionsForCommits:ordered generation:generation];
+		NSArray<NSDictionary *> *sections = mode == PBMultiCommitDiffPresentationCombined ? [self combinedSectionsForInputs:inputs imageSource:imageSources.lastObject generation:generation] : [self sequentialSectionsForInputs:inputs imageSources:imageSources generation:generation];
 		if (!sections || ![self isGenerationCurrent:generation]) return;
 		dispatch_async(dispatch_get_main_queue(), ^{
 			if (![self isGenerationCurrent:generation]) return;
 			[self.presentationControl setEnabled:combinedEnabled forSegment:PBMultiCommitDiffPresentationCombined];
 			self.presentationControl.selectedSegment = mode;
 			self.presentationControl.toolTip = requestedMode == PBMultiCommitDiffPresentationCombined && !combinedEnabled ? NSLocalizedString(@"Combined Diff requires commits on one ancestry path.", @"Explanation shown when selected commits cannot produce one combined diff") : nil;
-			self.renderedCommits = mode == PBMultiCommitDiffPresentationCombined ? @[ ordered.lastObject ] : ordered;
 			self->diff = [[sections valueForKey:PBNativeSectionTextKey] componentsJoinedByString:@"\n"];
 			[self.nativeView showDiffSections:sections];
 		});
 	});
 }
 
-- (nullable NSData *)dataForGitObject:(NSString *)object
+- (nullable NSData *)dataForGitObject:(NSString *)object imageSource:(NSDictionary<NSString *, id> *)imageSource
 {
-	PBTask *task = [historyController.repository taskWithArguments:@[ @"show", object ]];
+	NSString *launchPath = imageSource[PBNativeImageSourceGitLaunchPathKey];
+	NSString *gitDirectory = imageSource[PBNativeImageSourceGitDirectoryKey];
+	if (!launchPath.length || !gitDirectory.length) return nil;
+	NSArray<NSString *> *arguments = @[ [@"--git-dir=" stringByAppendingString:gitDirectory], @"show", object ];
+	PBTask *task = [PBTask taskWithLaunchPath:launchPath arguments:arguments inDirectory:imageSource[PBNativeImageSourceTaskDirectoryKey]];
 	if (![task launchTask:nil]) return nil;
 	return task.standardOutputData;
 }
 
-- (NSImage *)nativeContentView:(PBNativeContentView *)view imageForPath:(NSString *)path section:(NSUInteger)sectionIndex
+- (nullable NSData *)nativeContentView:(PBNativeContentView *)view
+					  imageDataForPath:(NSString *)path
+							   section:(NSUInteger)sectionIndex
+						   imageSource:(NSDictionary<NSString *, id> *)imageSource
 {
-	NSData *data = nil;
-	if (sectionIndex < self.renderedCommits.count) {
-		PBGitCommit *commit = self.renderedCommits[sectionIndex];
-		data = [self dataForGitObject:[NSString stringWithFormat:@"%@:%@", commit.SHA, path]];
-		if (!data.length && commit.parents.firstObject) data = [self dataForGitObject:[NSString stringWithFormat:@"%@:%@", commit.parents.firstObject.SHA, path]];
-	} else {
-		data = [NSData dataWithContentsOfURL:[historyController.repository.workingDirectoryURL URLByAppendingPathComponent:path]];
-		if (!data.length) data = [self dataForGitObject:[@":" stringByAppendingString:path]];
+	if ([imageSource[PBNativeImageSourceWorkingTreeKey] boolValue]) {
+		NSURL *workingTreeURL = imageSource[PBNativeImageSourceWorkingTreeURLKey];
+		NSData *data = [NSData dataWithContentsOfURL:[workingTreeURL URLByAppendingPathComponent:path]];
+		if (data.length) return data;
 	}
-	return data.length ? [[NSImage alloc] initWithData:data] : nil;
+	for (NSString *revision in imageSource[PBNativeImageSourceRevisionsKey] ?: @[]) {
+		NSString *object = [revision isEqualToString:@":"] ? [@":" stringByAppendingString:path] : [NSString stringWithFormat:@"%@:%@", revision, path];
+		NSData *data = [self dataForGitObject:object imageSource:imageSource];
+		if (data.length) return data;
+	}
+	return nil;
 }
 
 - (void)presentationChanged:(NSSegmentedControl *)sender
 {
 	[[NSUserDefaults standardUserDefaults] setInteger:sender.selectedSegment forKey:PBMultiCommitDiffPresentationKey];
+	[self changeContentTo:self.displayedCommits];
+}
+
+- (void)refreshDisplayedContent
+{
 	[self changeContentTo:self.displayedCommits];
 }
 

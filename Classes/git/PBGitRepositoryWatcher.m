@@ -25,6 +25,38 @@ NSString *kPBGitRepositoryEventPathsUserInfoKey = @"kPBGitRepositoryEventPathsUs
 @implementation PBGitRepositoryWatcherEventPath
 @end
 
+@interface PBGitRepositoryWatcherCallbackContext : NSObject
+
+@property (nonatomic, weak, readonly) PBGitRepositoryWatcher *watcher;
+
+- (instancetype)initWithWatcher:(PBGitRepositoryWatcher *)watcher;
+
+@end
+
+
+@implementation PBGitRepositoryWatcherCallbackContext
+
+- (instancetype)initWithWatcher:(PBGitRepositoryWatcher *)watcher
+{
+	self = [super init];
+	if (self) {
+		_watcher = watcher;
+	}
+	return self;
+}
+
+@end
+
+static const void *PBGitRepositoryWatcherRetainCallbackContext(const void *info)
+{
+	return (__bridge_retained const void *)((__bridge id)info);
+}
+
+static void PBGitRepositoryWatcherReleaseCallbackContext(const void *info)
+{
+	(void)CFBridgingRelease(info);
+}
+
 @interface PBGitRepositoryWatcher () {
 	FSEventStreamRef eventStream;
 	dispatch_queue_t eventQueue;
@@ -35,8 +67,9 @@ NSString *kPBGitRepositoryEventPathsUserInfoKey = @"kPBGitRepositoryEventPathsUs
 	BOOL _running;
 }
 
-@property (readonly) NSString *gitDir;
-@property (readonly) NSString *workDir;
+@property (nonatomic, copy, readonly) NSString *gitDir;
+@property (nonatomic, copy, readonly, nullable) NSString *workDir;
+@property (nonatomic, strong, readonly, nullable) GTRepository *statusRepository;
 
 @property (nonatomic, strong) NSMutableDictionary *statusCache;
 
@@ -52,10 +85,14 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 									const FSEventStreamEventFlags eventFlags[],
 									const FSEventStreamEventId eventIds[])
 {
-	PBGitRepositoryWatcher *watcher = (__bridge PBGitRepositoryWatcher *)clientCallBackInfo;
+	PBGitRepositoryWatcherCallbackContext *context = (__bridge PBGitRepositoryWatcherCallbackContext *)clientCallBackInfo;
+	PBGitRepositoryWatcher *watcher = context.watcher;
+	if (!watcher) return;
 
 	NSMutableArray *gitDirEvents = [NSMutableArray array];
 	NSMutableArray *workDirEvents = [NSMutableArray array];
+	NSString *gitDir = watcher.gitDir;
+	NSString *workDir = watcher.workDir;
 	NSArray *eventPaths = (__bridge NSArray *)_eventPaths;
 	for (int i = 0; i < numEvents; ++i) {
 		NSString *path = [eventPaths objectAtIndex:i];
@@ -64,13 +101,13 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 		ep.flag = eventFlags[i];
 
 
-		if ([ep.path hasPrefix:watcher.gitDir]) {
+		if ([ep.path hasPrefix:gitDir]) {
 			// exclude all changes to .lock files
 			if ([ep.path hasSuffix:@".lock"]) {
 				continue;
 			}
 			[gitDirEvents addObject:ep];
-		} else if ([ep.path hasPrefix:watcher.workDir]) {
+		} else if (workDir && [ep.path hasPrefix:workDir]) {
 			[workDirEvents addObject:ep];
 		}
 	}
@@ -96,6 +133,16 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 	_repository = theRepository;
 	_statusCache = [NSMutableDictionary new];
+	GTRepository *sharedRepository = theRepository.gtRepo;
+	_gitDir = [sharedRepository.gitDirectoryURL.path stringByStandardizingPath];
+	_workDir = !sharedRepository.isBare ? [sharedRepository.fileURL.path stringByStandardizingPath] : nil;
+	NSError *statusRepositoryError = nil;
+	NSURL *statusRepositoryURL = sharedRepository.isBare ? sharedRepository.gitDirectoryURL : sharedRepository.fileURL;
+	_statusRepository = [GTRepository repositoryWithURL:statusRepositoryURL error:&statusRepositoryError];
+	if (!_statusRepository) {
+		NSLog(@"Repository watcher could not open an isolated status handle for %@: %@. File events will refresh conservatively.",
+			  _gitDir, statusRepositoryError);
+	}
 	eventQueue = dispatch_queue_create("org.gitx.repositoryWatcher", DISPATCH_QUEUE_SERIAL);
 
 	__weak typeof(self) weakSelf = self;
@@ -142,7 +189,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 - (BOOL)indexChanged
 {
-	if (self.repository.isBareRepository) {
+	if (!self.workDir) {
 		return NO;
 	}
 
@@ -158,7 +205,8 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 - (BOOL)gitDirectoryChanged
 {
 	NSArray *properties = @[ NSURLIsDirectoryKey, NSURLContentModificationDateKey ];
-	NSArray<NSURL *> *urls = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:self.repository.gitURL
+	NSURL *gitDirectoryURL = [NSURL fileURLWithPath:self.gitDir isDirectory:YES];
+	NSArray<NSURL *> *urls = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:gitDirectoryURL
 														   includingPropertiesForKeys:properties
 																			  options:0
 																				error:nil];
@@ -225,6 +273,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 	PBGitRepositoryWatcherEventType event = 0x0;
 
 	NSMutableArray *paths = [NSMutableArray array];
+	git_repository *statusGitRepository = self.statusRepository.git_repository;
 	for (PBGitRepositoryWatcherEventPath *eventPath in eventPaths) {
 		unsigned int fileStatus = 0;
 		if (![eventPath.path hasPrefix:self.workDir]) {
@@ -235,9 +284,16 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 			[paths addObject:eventPath.path];
 			continue;
 		}
+		if (!statusGitRepository) {
+			// If the isolated handle could not be opened, preserve correctness by
+			// refreshing for the path instead of consulting the shared repository.
+			event |= PBGitRepositoryWatcherEventTypeWorkingDirectory;
+			[paths addObject:eventPath.path];
+			continue;
+		}
 		NSString *eventRepoRelativePath = [eventPath.path substringFromIndex:(self.workDir.length + 1)];
 		int ignoreResult = 0;
-		int ignoreError = git_status_should_ignore(&ignoreResult, self.repository.gtRepo.git_repository, eventRepoRelativePath.UTF8String);
+		int ignoreError = git_status_should_ignore(&ignoreResult, statusGitRepository, eventRepoRelativePath.UTF8String);
 		if (ignoreError == GIT_OK && ignoreResult) {
 			// file is covered by ignore rules
 			NSNumber *oldStatus = self.statusCache[eventPath.path];
@@ -246,7 +302,7 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 				continue;
 			}
 		}
-		int statusError = git_status_file(&fileStatus, self.repository.gtRepo.git_repository, eventRepoRelativePath.UTF8String);
+		int statusError = git_status_file(&fileStatus, statusGitRepository, eventRepoRelativePath.UTF8String);
 		if (statusError == GIT_OK) {
 			NSNumber *newStatus = @(fileStatus);
 			self.statusCache[eventPath.path] = newStatus;
@@ -261,16 +317,6 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 	}
 }
 
-- (NSString *)gitDir
-{
-	return [self.repository.gtRepo.gitDirectoryURL.path stringByStandardizingPath];
-}
-
-- (NSString *)workDir
-{
-	return !self.repository.gtRepo.isBare ? [self.repository.gtRepo.fileURL.path stringByStandardizingPath] : nil;
-}
-
 - (void)_initializeStream
 {
 	if (eventStream) return;
@@ -281,7 +327,9 @@ void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef streamRef,
 
 	if (!array.count) return;
 
-	FSEventStreamContext gitDirWatcherContext = {0, (__bridge void *)(self), NULL, NULL, NULL};
+	PBGitRepositoryWatcherCallbackContext *callbackContext = [[PBGitRepositoryWatcherCallbackContext alloc] initWithWatcher:self];
+	FSEventStreamContext gitDirWatcherContext = {0, (__bridge void *)(callbackContext),
+												 PBGitRepositoryWatcherRetainCallbackContext, PBGitRepositoryWatcherReleaseCallbackContext, NULL};
 	eventStream = FSEventStreamCreate(kCFAllocatorDefault, PBGitRepositoryWatcherCallback, &gitDirWatcherContext,
 									  (__bridge CFArrayRef)array,
 									  kFSEventStreamEventIdSinceNow, 1.0,

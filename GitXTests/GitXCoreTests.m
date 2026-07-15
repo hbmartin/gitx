@@ -4,6 +4,7 @@
 #import <ObjectiveGit/GTRepository.h>
 #import "MAKVONotificationCenter.h"
 
+#import "PBMacros.h"
 #import "PBChangedFile.h"
 #import "PBGraphCellInfo.h"
 #import "PBGitBinary.h"
@@ -15,7 +16,9 @@
 #import "PBGitRepository.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitRevSpecifier.h"
+#import "PBGitSidebarController.h"
 #import "PBNativeContentView.h"
+#import "PBSourceViewItem.h"
 #import "PBUncommittedChanges.h"
 #import "PBWorkingTree.h"
 #import "PBTask.h"
@@ -333,6 +336,67 @@
 	XCTAssertNotNil([self.repository refForName:@"origin/main"]);
 }
 
+- (void)testRepositoryDiscoversExternallyConfiguredRemoteBeforeFetch
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-configured-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		XCTAssertNotNil(([self.fixture git:@[ @"remote", @"add", @"cli-added", remotePath ] error:&error]), @"%@", error);
+
+		XCTAssertEqualObjects(self.repository.remotes, (@[ @"cli-added" ]));
+		XCTAssertNil([self.repository refForName:@"cli-added/main"], @"An unfetched remote should not need tracking refs to be discoverable");
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
+- (void)testSidebarIncludesExternallyConfiguredRemoteBeforeFetch
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-sidebar-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
+		(void)sidebar.view;
+		XCTAssertFalse([[[sidebar.remotes.sortedChildren valueForKey:@"title"] copy] containsObject:@"cli-added"]);
+
+		XCTAssertNotNil(([self.fixture git:@[ @"remote", @"add", @"cli-added", remotePath ] error:&error]), @"%@", error);
+		XCTAssertNil([self.repository refForName:@"cli-added/main"]);
+		[self.repository reloadRefs];
+		NSArray<NSString *> *remoteNames = [sidebar.remotes.sortedChildren valueForKey:@"title"];
+		XCTAssertTrue([remoteNames containsObject:@"cli-added"], @"The sidebar should not require fetched tracking refs to show a configured remote");
+		[sidebar closeView];
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
+- (void)testDeletingRemoteBranchRemovesOnlyLocalTrackingReference
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-tracking-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		XCTAssertTrue([self.repository addRemote:@"origin" withURL:remotePath error:&error], @"%@", error);
+		XCTAssertNotNil(([self.fixture git:@[ @"push", @"--quiet", @"--set-upstream", @"origin", @"main" ] error:&error]), @"%@", error);
+		[self.repository reloadRefs];
+
+		PBGitRef *trackingBranch = [self.repository refForName:@"origin/main"];
+		XCTAssertNotNil(trackingBranch);
+		XCTAssertEqualObjects(trackingBranch.refishType, kGitXRemoteBranchType);
+		NSString *remoteHeadBefore = [self.fixture git:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] error:&error];
+		XCTAssertNotNil(remoteHeadBefore, @"%@", error);
+
+		XCTAssertTrue([self.repository deleteRef:trackingBranch error:&error], @"%@", error);
+		XCTAssertNil([self.repository refForName:@"origin/main"]);
+		NSString *remoteHeadAfter = [self.fixture git:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] error:&error];
+		XCTAssertEqualObjects(remoteHeadAfter, remoteHeadBefore, @"Removing a tracking ref must not delete the server branch");
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
 - (void)testPushToSelectedRemoteAndFailurePreservesLocalHead
 {
 	NSError *error = nil;
@@ -358,6 +422,28 @@
 		XCTAssertFalse([self.repository pushBranch:branchRef toRemote:remoteRef error:&error]);
 		XCTAssertNotNil(error);
 		XCTAssertEqualObjects(([self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]), headBeforeFailure);
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
+- (void)testPushTagToSelectedRemote
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-tag-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		XCTAssertTrue([self.repository addRemote:@"origin" withURL:remotePath error:&error], @"%@", error);
+		XCTAssertTrue([self.repository createTag:@"v-selected" message:@"" atRefish:self.repository.headRef.ref error:&error], @"%@", error);
+		PBGitRef *tag = [self.repository refForName:@"v-selected"];
+		PBGitRef *remote = [PBGitRef refFromString:@"refs/remotes/origin"];
+		XCTAssertNotNil(tag);
+		XCTAssertEqualObjects(tag.refishType, kGitXTagType);
+
+		XCTAssertTrue([self.repository pushBranch:tag toRemote:remote error:&error], @"%@", error);
+		NSString *localTag = [self.fixture git:@[ @"rev-parse", @"refs/tags/v-selected" ] error:&error];
+		NSString *remoteTag = [self.fixture git:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/tags/v-selected" ] error:&error];
+		XCTAssertEqualObjects(remoteTag, localTag);
 	} @finally {
 		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
 	}
@@ -549,6 +635,35 @@
 	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:lines], @"moved-link.json");
 }
 
+- (void)testConfiguredRelativeHooksPathRunsExecutablePreCommitHook
+{
+	NSError *error = nil;
+	NSString *marker = @"configured pre-commit hook ran";
+	NSString *hook = [NSString stringWithFormat:@"#!/bin/sh\nprintf '%@\\n'\nexit 23\n", marker];
+	XCTAssertTrue([self.fixture writeText:hook toPath:@".githooks/pre-commit" error:&error], @"%@", error);
+	NSString *hookPath = [self.fixture.path stringByAppendingPathComponent:@".githooks/pre-commit"];
+	NSDictionary *attributes = @{NSFilePosixPermissions : @0755};
+	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:attributes ofItemAtPath:hookPath error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @".githooks" ] error:&error]), @"%@", error);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+	XCTAssertTrue([self.repository hookExists:@"pre-commit"]);
+
+	NSError *hookError = nil;
+	XCTAssertFalse([self.repository executeHook:@"pre-commit" error:&hookError]);
+	XCTAssertEqualObjects(hookError.userInfo[PBHookNameErrorKey], @"pre-commit");
+	NSError *taskError = hookError.userInfo[NSUnderlyingErrorKey];
+	XCTAssertEqualObjects(taskError.userInfo[PBTaskTerminationStatusKey], @23);
+	XCTAssertTrue([taskError.userInfo[PBTaskTerminationOutputKey] containsString:marker]);
+	XCTAssertTrue([hookError.localizedFailureReason containsString:marker]);
+
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
+	XCTAssertFalse([self.repository hookExists:@"pre-commit"]);
+	NSError *disabledHookError = nil;
+	XCTAssertTrue([self.repository executeHook:@"pre-commit" error:&disabledHookError]);
+	XCTAssertNil(disabledHookError);
+}
+
 @end
 
 
@@ -724,6 +839,63 @@
 	XCTAssertFalse(added.hasUnstagedChanges);
 }
 
+- (void)testAmendingOrdinaryCommitPreservesItsParent
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"second commit\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"ordinary commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"commit.gpgSign", @"false" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
+
+	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	NSString *originalParent = [[self.fixture git:@[ @"rev-parse", @"HEAD^" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		self.repository.index.amend = YES;
+	}];
+	[self.repository.index commitWithMessage:@"amended ordinary commit" andVerify:NO];
+
+	NSString *amendedHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	NSString *amendedParents = [[self.fixture git:@[ @"show", @"-s", @"--format=%P", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotEqualObjects(amendedHead, originalHead);
+	XCTAssertEqualObjects(amendedParents, originalParent);
+}
+
+- (void)testAmendingMergeCommitPreservesAllParents
+{
+	NSError *error = nil;
+	XCTAssertNotNil(([self.fixture git:@[ @"switch", @"--quiet", @"-c", @"side" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"side\n" toPath:@"side.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"side commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"switch", @"--quiet", @"main" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"main\n" toPath:@"main.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"main commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"merge", @"--quiet", @"--no-ff", @"side", @"-m", @"merge side" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"commit.gpgSign", @"false" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
+
+	NSString *originalParents = [[self.fixture git:@[ @"show", @"-s", @"--format=%P", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertEqual([originalParents componentsSeparatedByString:@" "].count, 2);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		self.repository.index.amend = YES;
+	}];
+	[self.repository.index commitWithMessage:@"amended merge commit" andVerify:NO];
+
+	NSString *amendedParents = [[self.fixture git:@[ @"show", @"-s", @"--format=%P", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertEqualObjects(amendedParents, originalParents);
+}
+
 - (void)testAmendCanUnstageModifiedFileAddedByLastCommit
 {
 	NSError *error = nil;
@@ -872,7 +1044,9 @@
 	XCTAssertEqualObjects(binary.textContents, @"This file cannot be displayed as text.");
 
 	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
-	XCTAssertEqual(changes.tree, changes.tree);
+	PBGitTree *firstTree = changes.tree;
+	XCTAssertNotNil(firstTree);
+	XCTAssertEqual(firstTree, changes.tree);
 }
 
 - (void)testUncommittedChangesSubjectShowsOnlyStats
@@ -888,6 +1062,32 @@
 	XCTAssertEqualObjects(changes.subject, @"0 staged, 1 unstaged, 1 untracked");
 	XCTAssertEqualObjects(changes.message, changes.subject);
 	XCTAssertEqualObjects(changes.details, changes.subject);
+}
+
+- (void)testUncommittedChangesRefreshesStatsAndInvalidatesCachedTree
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+	PBGitTree *unstagedTree = changes.tree;
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	XCTAssertEqual(changes.stagedCount, 0);
+	XCTAssertEqual(changes.unstagedCount, 1);
+
+	XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	[changes refreshFromRepository];
+
+	XCTAssertEqual(changes.stagedCount, 1);
+	XCTAssertEqual(changes.unstagedCount, 0);
+	XCTAssertNotEqual(changes.tree, unstagedTree);
 }
 
 @end

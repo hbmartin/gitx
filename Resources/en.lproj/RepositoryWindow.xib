@@ -9,6 +9,7 @@
         <customObject id="-2" userLabel="File's Owner" customClass="PBGitWindowController">
             <connections>
                 <outlet property="contentSplitView" destination="352" id="356"/>
+                <outlet property="jumpToCheckedOutBranchButton" destination="jump-to-checked-out-branch" id="jump-to-checked-out-branch-outlet"/>
                 <outlet property="progressIndicator" destination="399" id="400"/>
                 <outlet property="sourceListControlsView" destination="393" id="395"/>
                 <outlet property="sourceSplitView" destination="353" id="355"/>
@@ -83,6 +84,17 @@
                     <customView wantsLayer="YES" translatesAutoresizingMaskIntoConstraints="NO" id="443" userLabel="RefreshTermFind View">
                         <rect key="frame" x="624" y="0.0" width="246" height="31"/>
                         <subviews>
+                            <button toolTip="Jump to Checked-Out Branch (⌥⌘J)" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="jump-to-checked-out-branch">
+                                <rect key="frame" x="77" y="3" width="25" height="25"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
+                                <buttonCell key="cell" type="roundTextured" bezelStyle="texturedRounded" image="BranchTemplate" imagePosition="only" alignment="center" state="on" borderStyle="border" imageScaling="proportionallyDown" inset="2" id="jump-to-checked-out-branch-cell">
+                                    <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
+                                    <font key="font" metaFont="system"/>
+                                </buttonCell>
+                                <connections>
+                                    <action selector="jumpToCheckedOutBranch:" target="-2" id="jump-to-checked-out-branch-action"/>
+                                </connections>
+                            </button>
                             <button verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="430">
                                 <rect key="frame" x="110" y="3" width="25" height="25"/>
                                 <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
@@ -142,6 +154,7 @@
         </window>
     </objects>
     <resources>
+        <image name="BranchTemplate" width="16" height="16"/>
         <image name="NSRefreshTemplate" width="11" height="15"/>
         <image name="NSRevealFreestandingTemplate" width="14" height="14"/>
     </resources>

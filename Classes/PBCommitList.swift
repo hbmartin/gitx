@@ -171,11 +171,11 @@ import Cocoa
         let column = self.column(withIdentifier: NSUserInterfaceItemIdentifier("SubjectColumn"))
         guard index >= 0,
               column != -1,
-              let cell = view(atColumn: column, row: index, makeIfNecessary: false) as? PBGitRevisionCell
+              let cell = view(atColumn: column, row: index, makeIfNecessary: false) as? PBGitRevisionCell,
+              let commit = cell.objectValue
         else {
             return nil
         }
-        let commit = cell.objectValue
         // The Working State row is a navigation surface, not an immutable
         // commit, so commit/ref actions do not apply to it.
         if commit.sha.isEmpty {

@@ -1,6 +1,6 @@
 # Diff view scrolling performance investigation
 
-Date: 2026-07-15  
+Date: 2026-07-15
 Branch: `codex/streamline-patch-rendering`
 
 ## Executive summary

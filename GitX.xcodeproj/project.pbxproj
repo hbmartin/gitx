@@ -183,6 +183,7 @@
 		AABBCC0300000003 /* GitXSwift.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC0200000002 /* GitXSwift.swift */; };
 		BF42F1331E025403004769FF /* GitXTextView.m in Sources */ = {isa = PBXBuildFile; fileRef = BF42F1321E025403004769FF /* GitXTextView.m */; };
 		C0DE10000000000000000011 /* PBHighlighting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000002 /* PBHighlighting.swift */; };
+		C0DE44300000000000000001 /* PBProcessEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE44300000000000000003 /* PBProcessEnvironment.swift */; };
 		C0DE10000000000000000012 /* PBNativeContentView.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000004 /* PBNativeContentView.m */; };
 		C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000006 /* PBHistoryArrayController.swift */; };
 		C0DE10000000000000000014 /* PBWorkingTree.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000008 /* PBWorkingTree.m */; };
@@ -198,6 +199,7 @@
 		C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */; };
 		C0DE70000000000000000001 /* RepositoryRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000003 /* RepositoryRefreshCoordinator.swift */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
+		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
 		D87127011229A21C00012334 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D87127001229A21C00012334 /* QuartzCore.framework */; };
 		D89E9B141218BA260097A90B /* ScriptingBridge.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D89E9AB21218A9DA0097A90B /* ScriptingBridge.framework */; };
@@ -709,6 +711,8 @@
 		BF42F1431E025411004769FF /* GitXTextView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GitXTextView.h; sourceTree = "<group>"; };
 		C0DE10000000000000000001 /* PBHighlighting.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBHighlighting.h; sourceTree = "<group>"; };
 		C0DE10000000000000000002 /* PBHighlighting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBHighlighting.swift; sourceTree = "<group>"; };
+		C0DE44300000000000000002 /* PBProcessEnvironment.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBProcessEnvironment.h; sourceTree = "<group>"; };
+		C0DE44300000000000000003 /* PBProcessEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBProcessEnvironment.swift; sourceTree = "<group>"; };
 		C0DE10000000000000000003 /* PBNativeContentView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBNativeContentView.h; sourceTree = "<group>"; };
 		C0DE10000000000000000004 /* PBNativeContentView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBNativeContentView.m; sourceTree = "<group>"; };
 		C0DE10000000000000000005 /* PBHistoryArrayController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBHistoryArrayController.h; sourceTree = "<group>"; };
@@ -729,6 +733,7 @@
 		C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "GitXTests-Bridging-Header.h"; sourceTree = "<group>"; };
 		C0DE70000000000000000003 /* RepositoryRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRefreshCoordinator.swift; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
+		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
 		CC0000020000002 /* GitXScreenshotTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXScreenshotTests.m; sourceTree = "<group>"; };
 		CC0000030000003 /* GitXUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitXUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D87127001229A21C00012334 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
@@ -1156,6 +1161,8 @@
 				4DECFBB11E662962004C3A6F /* ObjectiveGit+PBCategories.m */,
 				4D843B1D1E5D27C3004C3A6F /* PBTask.h */,
 				4D843B1E1E5D27C3004C3A6F /* PBTask.m */,
+				C0DE44300000000000000002 /* PBProcessEnvironment.h */,
+				C0DE44300000000000000003 /* PBProcessEnvironment.swift */,
 			);
 			path = Util;
 			sourceTree = "<group>";
@@ -1268,6 +1275,7 @@
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
+				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
 				C0DE50000000000000000002 /* GitXPerformanceTests.swift */,
 			);
 			path = GitXTests;
@@ -1694,6 +1702,7 @@
 			files = (
 				C0DE10000000000000000019 /* PBAutoFetchManager.m in Sources */,
 				C0DE10000000000000000011 /* PBHighlighting.swift in Sources */,
+				C0DE44300000000000000001 /* PBProcessEnvironment.swift in Sources */,
 				C0DE70000000000000000001 /* RepositoryRefreshCoordinator.swift in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
@@ -1815,6 +1824,7 @@
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
+				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
 				C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -44,6 +44,7 @@
 - (void)updateActionMenu;
 - (void)updateRemoteControls;
 - (void)reloadSidebarAfterReferencesChange;
+- (void)synchronizeConfiguredRemotes;
 
 @property (nonatomic) PBGitRevSpecifier *lastKnownHeadRef;
 @end
@@ -221,6 +222,7 @@
 
 - (void)reloadSidebarAfterReferencesChange
 {
+	[self synchronizeConfiguredRemotes];
 	BOOL stageSelected = [PBGitDefaults showStageView];
 	PBGitRevSpecifier *viewedRev = self.repository.currentBranch;
 	PBGitRevSpecifier *newHead = self.repository.headRef;
@@ -250,6 +252,34 @@
 		  self.lastKnownHeadRef.simpleRef ?: @"(none)", newHead.simpleRef ?: @"(none)",
 		  followHead ? @"yes" : @"no", stageSelected ? @"yes" : @"no");
 	self.lastKnownHeadRef = newHead;
+}
+
+- (void)synchronizeConfiguredRemotes
+{
+	NSArray<PBSourceViewItem *> *remoteItems = remotes.sortedChildren;
+	NSMutableArray<NSString *> *existingNames = [NSMutableArray array];
+	NSMutableArray<NSString *> *nonEmptyNames = [NSMutableArray array];
+	NSMutableDictionary<NSString *, PBSourceViewItem *> *itemsByName = [NSMutableDictionary dictionary];
+	for (PBSourceViewItem *item in remoteItems) {
+		if (![item isKindOfClass:[PBSourceViewGitRemoteItem class]]) continue;
+		[existingNames addObject:item.title];
+		itemsByName[item.title] = item;
+		if (item.sortedChildren.count > 0) [nonEmptyNames addObject:item.title];
+	}
+
+	NSArray<NSString *> *configuredRemotes = self.repository.remotes ?: @[];
+	PBRemoteSidebarSyncPlan *plan = [PBRemoteSidebarSyncPlan planWithConfiguredRemoteNames:configuredRemotes
+																	   existingRemoteNames:existingNames
+																	   nonEmptyRemoteNames:nonEmptyNames];
+	for (NSString *name in plan.namesToAdd) {
+		[remotes addChild:[PBSourceViewGitRemoteItem remoteItemWithTitle:name]];
+	}
+	for (NSString *name in plan.namesToRemove) {
+		[remotes removeChild:itemsByName[name]];
+	}
+	if (plan.namesToAdd.count > 0 || plan.namesToRemove.count > 0) {
+		NSLog(@"[GitX] Synchronized configured remotes: added=%@ removed=%@", plan.namesToAdd, plan.namesToRemove);
+	}
 }
 
 - (void)removeRevSpec:(PBGitRevSpecifier *)rev
@@ -413,6 +443,7 @@
 	for (PBGitRevSpecifier *rev in repository.branches) {
 		[self addRevSpec:rev];
 	}
+	[self synchronizeConfiguredRemotes];
 
 	for (GTSubmodule *sub in repository.submodules) {
 		[submodules addChild:[PBSourceViewGitSubmoduleItem itemWithSubmodule:sub]];

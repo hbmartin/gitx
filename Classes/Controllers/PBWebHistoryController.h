@@ -12,21 +12,21 @@
 #import "PBGitCommit.h"
 #import "PBGitHistoryController.h"
 
-
-@class GTOID;
-
+NS_ASSUME_NONNULL_BEGIN
 
 @interface PBWebHistoryController : PBWebController {
-	__weak IBOutlet PBGitHistoryController *historyController;
+	__weak IBOutlet PBGitHistoryController *_Nullable historyController;
 
-	GTOID *currentOID;
-	NSString *diff;
+	NSString *_Nullable diff;
 }
 
 - (void)sendKey:(NSString *)key;
 - (void)scrollPageUp;
 - (void)scrollPageDown;
+- (void)refreshDisplayedContent;
 
-@property (readonly) NSString *diff;
+@property (readonly, nullable) NSString *diff;
 
 @end
+
+NS_ASSUME_NONNULL_END

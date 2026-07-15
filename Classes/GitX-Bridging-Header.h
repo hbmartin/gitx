@@ -16,7 +16,7 @@
 #import <ObjectiveGit/ObjectiveGit.h>
 
 // ── Converted files: headers kept so ObjC callers continue to compile ────────
-// NSAppearance+PBDarkMode.swift owns the implementations; .m only defines the constant.
+// Swift callers use the Objective-C dark-mode compatibility category.
 #import "NSAppearance+PBDarkMode.h"
 // NSColor+RGB.swift owns the implementation.
 #import "NSColor+RGB.h"

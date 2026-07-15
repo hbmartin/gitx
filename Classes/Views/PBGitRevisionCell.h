@@ -14,16 +14,16 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface PBGitRevisionCell : NSTableCellView {
-	PBGitCommit *objectValue;
-	PBGraphCellInfo *cellInfo;
-	__weak IBOutlet PBGitHistoryController *controller;
+	PBGitCommit *_Nullable objectValue;
+	PBGraphCellInfo *_Nullable cellInfo;
+	__weak IBOutlet PBGitHistoryController *_Nullable controller;
 }
 
 - (int)indexAtX:(CGFloat)x;
 - (NSRect)rectAtIndex:(int)index;
 - (void)drawLabelAtIndex:(int)index inRect:(NSRect)rect;
 
-@property (strong) PBGitCommit *objectValue;
+@property (strong, nullable) PBGitCommit *objectValue;
 
 @end
 

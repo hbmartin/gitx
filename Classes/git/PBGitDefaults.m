@@ -8,6 +8,7 @@
 
 #import "PBGitDefaults.h"
 #import "PBHistorySearchController.h"
+#import "GitX-Swift.h"
 
 #define kDefaultVerticalLineLength 50
 #define kCommitMessageViewVerticalLineLength @"PBCommitMessageViewVerticalLineLength"
@@ -280,7 +281,8 @@ NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePref
 
 + (void)setAutoFetchScope:(PBAutoFetchScope)scope
 {
-	[[NSUserDefaults standardUserDefaults] setInteger:scope forKey:kAutoFetchScope];
+	PBAutoFetchScope validatedScope = (PBAutoFetchScope)[PBGitDefaultsPolicy validatedAutoFetchScopeRawValue:scope];
+	[[NSUserDefaults standardUserDefaults] setInteger:validatedScope forKey:kAutoFetchScope];
 	[[NSNotificationCenter defaultCenter] postNotificationName:PBAutoFetchPreferencesDidChangeNotification object:nil];
 }
 
@@ -298,7 +300,7 @@ NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePref
 
 + (NSString *)repositoryDefaultsKeyForURL:(NSURL *)repositoryURL
 {
-	return repositoryURL.URLByStandardizingPath.path ?: repositoryURL.path ?: @"";
+	return [PBGitDefaultsPolicy repositoryDefaultsKeyForURL:repositoryURL];
 }
 
 + (BOOL)notifyAboutFetchedCommitsForRepositoryURL:(NSURL *)repositoryURL

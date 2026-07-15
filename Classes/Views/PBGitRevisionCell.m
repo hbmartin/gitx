@@ -319,7 +319,7 @@ const BOOL SHUFFLE_COLORS = NO;
 		[self drawRefsInRect:rect];
 }
 
-- (void)setObjectValue:(PBGitCommit *)object
+- (void)setObjectValue:(nullable PBGitCommit *)object
 {
 	[super setObjectValue:object];
 
@@ -364,7 +364,7 @@ const BOOL SHUFFLE_COLORS = NO;
 	}
 }
 
-- (PBGitCommit *)objectValue
+- (nullable PBGitCommit *)objectValue
 {
 	return [super objectValue];
 }

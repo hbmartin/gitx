@@ -20,12 +20,24 @@
 	self = [super init];
 	if (!self) return nil;
 	_workingRepository = repository;
-	for (PBChangedFile *file in repository.index.indexChanges) {
-		if (file.hasStagedChanges) _stagedCount++;
-		if (file.hasUnstagedChanges && file.status != NEW) _unstagedCount++;
-		if (file.hasUnstagedChanges && file.status == NEW) _untrackedCount++;
-	}
+	[self refreshFromRepository];
 	return self;
+}
+
+- (void)refreshFromRepository
+{
+	NSUInteger stagedCount = 0;
+	NSUInteger unstagedCount = 0;
+	NSUInteger untrackedCount = 0;
+	for (PBChangedFile *file in self.workingRepository.index.indexChanges) {
+		if (file.hasStagedChanges) stagedCount++;
+		if (file.hasUnstagedChanges && file.status != NEW) unstagedCount++;
+		if (file.hasUnstagedChanges && file.status == NEW) untrackedCount++;
+	}
+	self.stagedCount = stagedCount;
+	self.unstagedCount = unstagedCount;
+	self.untrackedCount = untrackedCount;
+	self.workingTree = nil;
 }
 
 - (BOOL)isWorkingState

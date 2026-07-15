@@ -1,4 +1,9 @@
 #import <XCTest/XCTest.h>
+#import <ObjectiveGit/GTRepository.h>
+
+#import "PBGitRepository.h"
+#import "PBGitRepositoryWatcher.h"
+#import "PBTask.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -7,6 +12,191 @@ NS_ASSUME_NONNULL_BEGIN
 			  deliveryHandler:(void (^)(NSUInteger eventType, NSArray<NSString *> *paths))deliveryHandler;
 - (void)recordEventType:(NSUInteger)eventType paths:(NSArray<NSString *> *)paths;
 - (void)cancel;
+@end
+
+@interface PBThreadCheckedRepository : PBGitRepository
+
+@property (nonatomic, readonly) NSUInteger offMainGTRepositoryAccessCount;
+
+- (void)resetOffMainGTRepositoryAccessCount;
+
+@end
+
+@implementation PBThreadCheckedRepository {
+	NSUInteger _offMainGTRepositoryAccessCount;
+}
+
+- (GTRepository *)gtRepo
+{
+	if (!NSThread.isMainThread) {
+		@synchronized(self) {
+			_offMainGTRepositoryAccessCount++;
+		}
+	}
+	return [super gtRepo];
+}
+
+- (NSUInteger)offMainGTRepositoryAccessCount
+{
+	@synchronized(self) {
+		return _offMainGTRepositoryAccessCount;
+	}
+}
+
+- (void)resetOffMainGTRepositoryAccessCount
+{
+	@synchronized(self) {
+		_offMainGTRepositoryAccessCount = 0;
+	}
+}
+
+@end
+
+@interface PBGitRepositoryWatcherTests : XCTestCase
+
+@property (nonatomic, strong) NSURL *repositoryURL;
+@property (nonatomic, strong, nullable) PBThreadCheckedRepository *repository;
+@property (nonatomic, strong, nullable) id previousUseWatcherPreference;
+@property (nonatomic, strong, nullable) id previousFocusRefreshPreference;
+
+@end
+
+
+@implementation PBGitRepositoryWatcherTests
+
+- (void)setUp
+{
+	[super setUp];
+
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	self.previousUseWatcherPreference = [defaults objectForKey:@"PBUseRepositoryWatcher"];
+	self.previousFocusRefreshPreference = [defaults objectForKey:@"PBRefreshOnApplicationFocus"];
+	[defaults setBool:YES forKey:@"PBUseRepositoryWatcher"];
+	[defaults setBool:NO forKey:@"PBRefreshOnApplicationFocus"];
+
+	self.repositoryURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+													stringByAppendingPathComponent:[NSString stringWithFormat:@"GitXWatcherTests-%@", NSUUID.UUID.UUIDString]]
+									isDirectory:YES];
+	NSError *error = nil;
+	NSString *gitOutput = [PBTask outputForCommand:@"/usr/bin/git"
+										 arguments:@[ @"init", @"--quiet", self.repositoryURL.path ]
+									   inDirectory:nil
+											 error:&error];
+	XCTAssertNotNil(gitOutput, @"%@", error);
+	NSString *trackedPath = [self.repositoryURL.path stringByAppendingPathComponent:@"changed.txt"];
+	XCTAssertTrue([@"initial\n" writeToFile:trackedPath atomically:NO encoding:NSUTF8StringEncoding error:&error], @"%@", error);
+	gitOutput = [PBTask outputForCommand:@"/usr/bin/git"
+							   arguments:@[ @"add", @"changed.txt" ]
+							 inDirectory:self.repositoryURL.path
+								   error:&error];
+	XCTAssertNotNil(gitOutput, @"%@", error);
+	gitOutput = [PBTask outputForCommand:@"/usr/bin/git"
+							   arguments:@[ @"-c", @"user.name=GitX Tests", @"-c", @"user.email=gitx-tests@example.com", @"commit", @"--quiet", @"-m", @"Initial" ]
+							 inDirectory:self.repositoryURL.path
+								   error:&error];
+	XCTAssertNotNil(gitOutput, @"%@", error);
+	self.repository = [[PBThreadCheckedRepository alloc] initWithURL:self.repositoryURL error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+	[self.repository resetOffMainGTRepositoryAccessCount];
+}
+
+- (void)tearDown
+{
+	self.repository = nil;
+	[[NSFileManager defaultManager] removeItemAtURL:self.repositoryURL error:nil];
+
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	if (self.previousUseWatcherPreference) {
+		[defaults setObject:self.previousUseWatcherPreference forKey:@"PBUseRepositoryWatcher"];
+	} else {
+		[defaults removeObjectForKey:@"PBUseRepositoryWatcher"];
+	}
+	if (self.previousFocusRefreshPreference) {
+		[defaults setObject:self.previousFocusRefreshPreference forKey:@"PBRefreshOnApplicationFocus"];
+	} else {
+		[defaults removeObjectForKey:@"PBRefreshOnApplicationFocus"];
+	}
+
+	[super tearDown];
+}
+
+- (void)testWorkingTreeEditDeliversRepositoryNotificationOnMainThread
+{
+	XCTestExpectation *delivered = [self expectationWithDescription:@"Watcher delivered working-tree edit"];
+	NSString *changedPath = [self.repositoryURL.path stringByAppendingPathComponent:@"changed.txt"];
+	id notificationToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitRepositoryEventNotification
+					object:self.repository
+					 queue:NSOperationQueue.mainQueue
+				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
+					NSUInteger eventType = [notification.userInfo[kPBGitRepositoryEventTypeUserInfoKey] unsignedIntegerValue];
+					XCTAssertNotEqual(eventType & PBGitRepositoryWatcherEventTypeWorkingDirectory, (NSUInteger)0);
+					NSArray<NSString *> *paths = notification.userInfo[kPBGitRepositoryEventPathsUserInfoKey];
+					XCTAssertTrue([paths containsObject:changedPath]);
+					[delivered fulfill];
+				}];
+
+	NSError *error = nil;
+	NSString *output = [PBTask outputForCommand:@"/bin/sh"
+									  arguments:@[ @"-c", @"printf 'changed\\n' > changed.txt" ]
+									inDirectory:self.repositoryURL.path
+										  error:&error];
+	XCTAssertNotNil(output, @"%@", error);
+	[self waitForExpectations:@[ delivered ] timeout:5.0];
+	[[NSNotificationCenter defaultCenter] removeObserver:notificationToken];
+	XCTAssertEqual(self.repository.offMainGTRepositoryAccessCount, (NSUInteger)0);
+}
+
+- (void)testWatcherOwnsDistinctRepositoryAndLibgit2Handles
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	GTRepository *statusRepository = [watcher valueForKey:@"statusRepository"];
+
+	XCTAssertNotNil(statusRepository);
+	XCTAssertNotEqual(statusRepository, self.repository.gtRepo);
+	XCTAssertNotEqual(statusRepository.git_repository, self.repository.gtRepo.git_repository);
+}
+
+- (void)testLinkedWorktreeWatcherOpensStatusRepositoryFromWorktree
+{
+	NSURL *worktreeURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+													stringByAppendingPathComponent:[NSString stringWithFormat:@"GitXWatcherWorktree-%@", NSUUID.UUID.UUIDString]]
+									isDirectory:YES];
+	NSError *error = nil;
+	NSString *output = [PBTask outputForCommand:@"/usr/bin/git"
+									  arguments:@[ @"worktree", @"add", @"--quiet", @"-b", @"watcher-linked", worktreeURL.path, @"HEAD" ]
+									inDirectory:self.repositoryURL.path
+										  error:&error];
+	XCTAssertNotNil(output, @"%@", error);
+
+	PBThreadCheckedRepository *worktreeRepository = [[PBThreadCheckedRepository alloc] initWithURL:worktreeURL error:&error];
+	XCTAssertNotNil(worktreeRepository, @"%@", error);
+	PBGitRepositoryWatcher *watcher = [worktreeRepository valueForKey:@"watcher"];
+	GTRepository *statusRepository = [watcher valueForKey:@"statusRepository"];
+	XCTAssertEqualObjects([statusRepository.fileURL.path stringByStandardizingPath], [worktreeURL.path stringByStandardizingPath]);
+	XCTAssertNotEqual(statusRepository.git_repository, worktreeRepository.gtRepo.git_repository);
+
+	worktreeRepository = nil;
+	output = [PBTask outputForCommand:@"/usr/bin/git"
+							arguments:@[ @"worktree", @"remove", @"--force", worktreeURL.path ]
+						  inDirectory:self.repositoryURL.path
+								error:&error];
+	XCTAssertNotNil(output, @"%@", error);
+	[[NSFileManager defaultManager] removeItemAtURL:worktreeURL error:nil];
+}
+
+- (void)testScheduledStreamDoesNotRetainWatcher
+{
+	__weak PBGitRepositoryWatcher *weakWatcher = nil;
+	@autoreleasepool {
+		PBGitRepositoryWatcher *watcher = [[PBGitRepositoryWatcher alloc] initWithRepository:self.repository];
+		weakWatcher = watcher;
+	}
+
+	XCTAssertNil(weakWatcher);
+}
+
 @end
 
 @interface PBRepositoryRefreshPolicy : NSObject
