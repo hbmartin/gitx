@@ -200,6 +200,21 @@
 	XCTAssertEqualObjects(controller.selectedObjects, (@[ olderCommit ]));
 }
 
+- (void)testReplacingPinnedWorkingStateDoesNotDuplicateIt
+{
+	NSObject *commit = [[NSObject alloc] init];
+	PBHistoryArrayController *controller = [[PBHistoryArrayController alloc] initWithContent:@[ commit ]];
+	NSObject *firstWorkingState = [[NSObject alloc] init];
+	NSObject *replacementWorkingState = [[NSObject alloc] init];
+	controller.pinnedObject = firstWorkingState;
+	XCTAssertEqualObjects(controller.arrangedObjects, (@[ firstWorkingState, commit ]));
+
+	controller.pinnedObject = replacementWorkingState;
+	XCTAssertEqualObjects(controller.arrangedObjects, (@[ replacementWorkingState, commit ]));
+	controller.pinnedObject = nil;
+	XCTAssertEqualObjects(controller.arrangedObjects, (@[ commit ]));
+}
+
 - (void)testContextClickSelectsOnlyAnUnselectedCommit
 {
 	Class commitListClass = NSClassFromString(@"GitX.PBCommitList");
