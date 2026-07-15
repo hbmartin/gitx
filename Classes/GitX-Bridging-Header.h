@@ -39,3 +39,9 @@
 #import "PBGitRef.h"
 #import "PBHighlighting.h"
 #import "PBGitDefaults.h"
+
+// The bridging header declares no APIs of its own, but retain an explicit
+// nullability region so it follows the same interoperability contract as
+// first-party declaration headers.
+NS_ASSUME_NONNULL_BEGIN
+NS_ASSUME_NONNULL_END
