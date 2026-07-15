@@ -18,6 +18,7 @@
 #import "PBSourceViewGitStashItem.h"
 #import "PBSidebarTableViewCell.h"
 #import "PBGitRef.h"
+#import "GitX-Swift.h"
 
 #define PBSidebarCellIdentifier @"PBSidebarCellIdentifier"
 
@@ -42,6 +43,9 @@
 - (void)removeRevSpec:(PBGitRevSpecifier *)rev;
 - (void)updateActionMenu;
 - (void)updateRemoteControls;
+- (void)reloadSidebarAfterReferencesChange;
+
+@property (nonatomic) PBGitRevSpecifier *lastKnownHeadRef;
 @end
 
 @implementation PBGitSidebarController
@@ -69,6 +73,7 @@
 	[self populateList];
 
 	PBGitRepository *repository = self.repository;
+	self.lastKnownHeadRef = repository.headRef;
 
 	[repository addObserver:self
 					keyPath:@"currentBranch"
@@ -97,6 +102,14 @@
 							  for (PBGitRevSpecifier *rev in removedRevSpecs)
 								  [observer removeRevSpec:rev];
 						  }
+					  }];
+
+	[repository addObserver:self
+					keyPath:@"refs"
+					options:0
+					  block:^(MAKVONotification *notification) {
+						  PBGitSidebarController *observer = notification.observer;
+						  [observer reloadSidebarAfterReferencesChange];
 					  }];
 
 	[repository addObserver:self
@@ -188,20 +201,56 @@
 			return item;
 
 	if (![rev isSimpleRef]) {
-		[others addChild:[PBSourceViewItem itemWithRevSpec:rev]];
+		item = [PBSourceViewItem itemWithRevSpec:rev];
+		[others addChild:item];
 		return item;
 	}
 
 	NSArray *pathComponents = [[rev simpleRef] componentsSeparatedByString:@"/"];
-	if ([pathComponents count] < 2)
-		[branches addChild:[PBSourceViewItem itemWithRevSpec:rev]];
+	if ([pathComponents count] < 2) {
+		item = [PBSourceViewItem itemWithRevSpec:rev];
+		[branches addChild:item];
+	}
 	else if ([[pathComponents objectAtIndex:1] isEqualToString:@"heads"])
 		[branches addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
 	else if ([[rev simpleRef] hasPrefix:@"refs/tags/"])
 		[tags addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
 	else if ([[rev simpleRef] hasPrefix:@"refs/remotes/"])
 		[remotes addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
-	return item;
+	return item ?: [self itemForRev:rev];
+}
+
+- (void)reloadSidebarAfterReferencesChange
+{
+	BOOL stageSelected = [PBGitDefaults showStageView];
+	PBGitRevSpecifier *viewedRev = self.repository.currentBranch;
+	PBGitRevSpecifier *newHead = self.repository.headRef;
+	BOOL followHead = [PBHistoryRefreshSelectionPolicy shouldFollowCheckedOutBranchWithStageSelected:stageSelected
+																	viewedRef:viewedRev.simpleRef
+															  previousHeadRef:self.lastKnownHeadRef.simpleRef];
+	if (followHead && newHead && ![viewedRev isEqual:newHead]) {
+		self.repository.currentBranch = newHead;
+		viewedRev = newHead;
+	}
+
+	[sourceView reloadData];
+	[sourceView expandItem:items.firstObject];
+	[sourceView expandItem:branches expandChildren:YES];
+	[sourceView expandItem:remotes];
+	if (stageSelected) {
+		[self selectStage];
+	} else {
+		PBSourceViewItem *item = [self itemForRev:viewedRev];
+		if (item) {
+			[sourceView PBExpandItem:item expandParents:YES];
+			[sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:[sourceView rowForItem:item]] byExtendingSelection:NO];
+		}
+	}
+
+	NSLog(@"[GitX] Refreshed sidebar refs: HEAD %@ -> %@, followed=%@, stage=%@",
+		  self.lastKnownHeadRef.simpleRef ?: @"(none)", newHead.simpleRef ?: @"(none)",
+		  followHead ? @"yes" : @"no", stageSelected ? @"yes" : @"no");
+	self.lastKnownHeadRef = newHead;
 }
 
 - (void)removeRevSpec:(PBGitRevSpecifier *)rev

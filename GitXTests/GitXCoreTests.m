@@ -291,6 +291,22 @@
 	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
 }
 
+- (void)testManualRevisionRefreshReloadsRefsWhileViewingComplexRevision
+{
+	NSError *error = nil;
+	self.repository.currentBranch = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~0" ]];
+	XCTAssertFalse(self.repository.currentBranch.isSimpleRef);
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/main");
+	XCTAssertNil([self.repository refForName:@"feature/complex-refresh"]);
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"-b", @"feature/complex-refresh" ] error:&error]), @"%@", error);
+
+	[self.repository forceUpdateRevisions];
+
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/feature/complex-refresh");
+	XCTAssertNotNil([self.repository refForName:@"feature/complex-refresh"]);
+	XCTAssertFalse(self.repository.currentBranch.isSimpleRef);
+}
+
 - (void)testRemoteDiscoveryUsesLocalFixture
 {
 	NSError *error = nil;

@@ -48,3 +48,16 @@ final class RepositoryFocusRefreshTracker: NSObject { // swiftlint:disable:this 
         previousSnapshotComponents = nil
     }
 }
+
+/// Decides whether a refs refresh should keep following the checked-out branch.
+@objc(PBHistoryRefreshSelectionPolicy)
+final class HistoryRefreshSelectionPolicy: NSObject { // swiftlint:disable:this unused_declaration
+    @objc(shouldFollowCheckedOutBranchWithStageSelected:viewedRef:previousHeadRef:)
+    static func shouldFollowCheckedOutBranch(
+        stageSelected: Bool,
+        viewedRef: String?,
+        previousHeadRef: String?
+    ) -> Bool { // swiftlint:disable:this unused_declaration
+        !stageSelected && viewedRef != nil && viewedRef == previousHeadRef
+    }
+}

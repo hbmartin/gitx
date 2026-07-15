@@ -201,6 +201,19 @@
 	XCTAssertFalse(shouldReplaceSelection(commitListClass, selector, -1, selected));
 }
 
+- (void)testHistoryRefreshFollowsHeadOnlyWhenItWasAlreadyViewed
+{
+	Class policyClass = NSClassFromString(@"PBHistoryRefreshSelectionPolicy");
+	XCTAssertNotNil(policyClass);
+	SEL selector = NSSelectorFromString(@"shouldFollowCheckedOutBranchWithStageSelected:viewedRef:previousHeadRef:");
+	XCTAssertTrue([policyClass respondsToSelector:selector]);
+	BOOL (*shouldFollowHead)(id, SEL, BOOL, NSString *, NSString *) = (void *)objc_msgSend;
+	XCTAssertTrue(shouldFollowHead(policyClass, selector, NO, @"refs/heads/main", @"refs/heads/main"));
+	XCTAssertFalse(shouldFollowHead(policyClass, selector, YES, @"refs/heads/main", @"refs/heads/main"));
+	XCTAssertFalse(shouldFollowHead(policyClass, selector, NO, @"refs/heads/topic", @"refs/heads/main"));
+	XCTAssertFalse(shouldFollowHead(policyClass, selector, NO, nil, @"refs/heads/main"));
+}
+
 - (void)testDisablingHistorySortingClearsNewDescriptors
 {
 	PBHistoryArrayController *controller = [[PBHistoryArrayController alloc] initWithContent:@[]];

@@ -62,8 +62,12 @@
 
 - (void)forceUpdate
 {
-	if ([repository.currentBranch isSimpleRef])
+	if ([repository.currentBranch isSimpleRef]) {
 		shouldReloadProjectHistory = YES;
+	} else {
+		NSLog(@"[GitX] Manual history refresh reloading refs for a complex revision");
+		[repository reloadRefs];
+	}
 
 	[self updateHistory];
 }
