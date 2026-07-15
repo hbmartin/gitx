@@ -348,6 +348,31 @@
 	}
 }
 
+- (void)testDeletingRemoteBranchRemovesOnlyLocalTrackingReference
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-tracking-remote.git"];
+	@try {
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		XCTAssertTrue([self.repository addRemote:@"origin" withURL:remotePath error:&error], @"%@", error);
+		XCTAssertNotNil(([self.fixture git:@[ @"push", @"--quiet", @"--set-upstream", @"origin", @"main" ] error:&error]), @"%@", error);
+		[self.repository reloadRefs];
+
+		PBGitRef *trackingBranch = [self.repository refForName:@"origin/main"];
+		XCTAssertNotNil(trackingBranch);
+		XCTAssertEqualObjects(trackingBranch.refishType, kGitXRemoteBranchType);
+		NSString *remoteHeadBefore = [self.fixture git:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] error:&error];
+		XCTAssertNotNil(remoteHeadBefore, @"%@", error);
+
+		XCTAssertTrue([self.repository deleteRef:trackingBranch error:&error], @"%@", error);
+		XCTAssertNil([self.repository refForName:@"origin/main"]);
+		NSString *remoteHeadAfter = [self.fixture git:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] error:&error];
+		XCTAssertEqualObjects(remoteHeadAfter, remoteHeadBefore, @"Removing a tracking ref must not delete the server branch");
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
 - (void)testPushToSelectedRemoteAndFailurePreservesLocalHead
 {
 	NSError *error = nil;
