@@ -516,22 +516,56 @@
 
 - (void)testCommitContextMenuScreenshot
 {
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
+	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"The context menu requires a repository window");
 	XCUIElement *table = [self selectHistoryForCurrentBranch];
 	XCUIElement *window = self.app.windows.firstMatch;
-	XCUIElement *firstRow = [table.tableRows elementBoundByIndex:0];
-	XCTAssertTrue([firstRow waitForExistenceWithTimeout:15], @"The commit list should contain a row");
+	XCUIElement *selectedRow = [table.tableRows containingType:XCUIElementTypeStaticText identifier:@"Third"].firstMatch;
+	XCUIElement *clickedRow = [table.tableRows containingType:XCUIElementTypeStaticText identifier:@"Initial"].firstMatch;
+	XCTAssertTrue([selectedRow waitForExistenceWithTimeout:15]);
+	XCTAssertTrue([clickedRow waitForExistenceWithTimeout:15]);
+	[selectedRow click];
+	XCTAssertTrue(selectedRow.isSelected);
 
-	// Right-click to open the context menu
-	[firstRow rightClick];
+	[clickedRow rightClick];
 
 	XCUIElement *menu = self.app.menus.firstMatch;
 	XCTAssertTrue([menu waitForExistenceWithTimeout:5], @"Right-clicking a commit should open its context menu");
 	XCTAssertTrue([menu.menuItems.firstMatch waitForExistenceWithTimeout:5], @"The commit context menu should finish populating");
+	XCTAssertTrue(clickedRow.isSelected, @"The context menu and table selection should target the same commit");
+	XCTAssertFalse(selectedRow.isSelected);
 	[self saveWindowScreenshotNamed:@"commit-context-menu"];
 
 	// Dismiss the menu
 	[window typeKey:XCUIKeyboardKeyEscape modifierFlags:0];
+}
+
+- (void)testManualRefreshUpdatesCheckedOutBranchAndSidebar
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
+	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow]);
+	XCUIElement *currentBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'main'"]].firstMatch;
+	XCTAssertTrue([currentBranch waitForExistenceWithTimeout:10]);
+	XCTAssertTrue(([self runGit:@[ @"checkout", @"--quiet", @"-b", @"feature/manual-ui-refresh" ] inDirectory:fixture]));
+
+	XCUIElement *window = self.app.windows.firstMatch;
+	[window typeKey:@"r" modifierFlags:XCUIKeyModifierCommand];
+	XCUIElement *newBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'manual-ui-refresh'"]].firstMatch;
+	XCTAssertTrue([newBranch waitForExistenceWithTimeout:15], @"Manual refresh should reveal externally created branches");
+	NSPredicate *updatedTitle = [NSPredicate predicateWithFormat:@"title CONTAINS 'feature/manual-ui-refresh'"];
+	XCTNSPredicateExpectation *titleExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:updatedTitle object:window];
+	[self waitForExpectations:@[ titleExpectation ] timeout:15];
+	[self saveWindowScreenshotNamed:@"manual-refresh-updated-branch"];
 }
 
 @end
