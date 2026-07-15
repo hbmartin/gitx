@@ -38,6 +38,7 @@ final class GitXPerformanceTests: XCTestCase {
         window.layoutIfNeeded()
         let path = "Large.swift"
         let diff = largeDiff(path: path, lineCount: 4500)
+        XCTAssertFalse(PBHighlighting.shouldHighlightDiff(withByteCount: UInt(diff.utf8.count)))
         view.showDiffSections([
             [
                 PBNativeSectionTextKey: diff,
