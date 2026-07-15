@@ -11,7 +11,7 @@ Migrate gitx production code toward Swift without treating compilation as proof 
 
 - Re-read the repository `AGENTS.md` and obey its testing, controller, header, commit, fork, and stable-build rules.
 - Apply this workflow to first-party production code, normally under `Classes/`.
-- Exclude `GitXTests/` and `GitXUITests/` from conversion. Add every new test in Swift; never convert an existing test merely because it is touched.
+- Exclude `GitXTests/` and `GitXUITests/` from production conversion. Add new tests in Swift when the production API bridges cleanly. Preserve or add Objective-C XCTest for Objective-C exceptions, non-bridging C or macro surfaces, private declarations that should not become production API, or disproportionate Swift-interoperability churn. Never convert an existing test merely because it is touched.
 - Exclude `External/` and generated code.
 - Announce an automatic conversion in the working plan before editing. Proceed without separate approval only when it remains low risk and low churn.
 - Ask for explicit confirmation before combining a conversion with API redesign, concurrency migration, or broad refactoring. State the proposed scope, benefit, and compatibility impact. If the user declines, keep the conversion behavior-preserving.
@@ -50,7 +50,7 @@ Check whether existing tests actually execute the behavior being moved; do not i
 
 When coverage is missing:
 
-1. Add characterization tests to a new or existing Swift test source without converting Objective-C test sources.
+1. Add characterization tests to a new or existing Swift test source when the production API bridges cleanly. Use Objective-C XCTest for Objective-C exceptions, non-bridging C or macro surfaces, private declarations that should not become production API, or disproportionate Swift-interoperability churn. Do not convert existing Objective-C test sources merely because they are touched.
 2. Exercise current Objective-C behavior, including relevant nil, empty, Unicode, numeric-boundary, wrong-type dynamic input, error, ordering, ownership, and serialization cases.
 3. Add frozen archives or serialized fixtures before touching archive-sensitive code. Without a fixture, exclude that implementation from conversion.
 4. Modernize the affected first-party header in the same preparation change:

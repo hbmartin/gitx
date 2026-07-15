@@ -14,7 +14,21 @@ from collections.abc import Iterable
 
 RAW_COLLECTION = re.compile(r"\b(?:NSArray|NSDictionary|NSSet|NSOrderedSet)\s*\*")
 ERROR_OUT_PARAMETER = re.compile(r"\bNSError\s*\*\s*(?:__autoreleasing\s*)?\*")
-NULLABILITY_MARKERS = ("nullable", "_Nullable")
+NULLABILITY_MARKERS = (
+    "nullable",
+    "nonnull",
+    "null_unspecified",
+    "_Nullable",
+    "_Nonnull",
+    "_Null_unspecified",
+)
+DECLARATION = re.compile(
+    r"^\s*(?:[-+]\s*\(|@property\b|(?:FOUNDATION_EXPORT|extern)\b|"
+    r"(?:[A-Za-z_]\w*(?:\s+|\s*\*)+)+[A-Za-z_]\w*\s*\()"
+)
+HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+AddedLine = tuple[int, str]
 
 
 def run(*args: str, cwd: pathlib.Path) -> str:
@@ -28,8 +42,30 @@ def load_baseline(path: pathlib.Path) -> tuple[set[str], set[str]]:
     return set(payload["unannotatedHeaders"]), set(payload.get("excludedHeaders", []))
 
 
+def nullability_regions(contents: str) -> tuple[list[tuple[int, int]], bool]:
+    regions: list[tuple[int, int]] = []
+    open_line: int | None = None
+    invalid_order = False
+    for line_number, line in enumerate(contents.splitlines(), start=1):
+        if "NS_ASSUME_NONNULL_BEGIN" in line:
+            if open_line is not None:
+                invalid_order = True
+            else:
+                open_line = line_number
+        if "NS_ASSUME_NONNULL_END" in line:
+            if open_line is None:
+                invalid_order = True
+            else:
+                regions.append((open_line, line_number))
+                open_line = None
+    if open_line is not None:
+        invalid_order = True
+    return regions, invalid_order
+
+
 def has_nullability_region(contents: str) -> bool:
-    return "NS_ASSUME_NONNULL_BEGIN" in contents and "NS_ASSUME_NONNULL_END" in contents
+    regions, invalid_order = nullability_regions(contents)
+    return bool(regions) and not invalid_order
 
 
 def evaluate_headers(
@@ -37,10 +73,11 @@ def evaluate_headers(
     headers: dict[str, str],
     baseline: set[str],
     changed_headers: set[str],
-    added_lines: dict[str, list[str]],
+    added_lines: dict[str, list[AddedLine]],
 ) -> list[str]:
     failures: list[str] = []
     current_debt = {path for path, contents in headers.items() if not has_nullability_region(contents)}
+    regions_by_path = {path: nullability_regions(contents) for path, contents in headers.items()}
 
     for path in sorted(current_debt - baseline):
         failures.append(f"{path} adds untracked nullability debt; add an NS_ASSUME_NONNULL region")
@@ -50,17 +87,31 @@ def evaluate_headers(
         failures.append(f"{path} was modified and must add NS_ASSUME_NONNULL_BEGIN/END")
 
     for path in sorted(changed_headers):
-        for line in added_lines.get(path, []):
+        regions, invalid_order = regions_by_path[path]
+        if invalid_order:
+            failures.append(
+                f"{path} must keep NS_ASSUME_NONNULL_BEGIN/END correctly ordered and non-overlapping"
+            )
+        for line_number, line in added_lines.get(path, []):
             clean_line = line.split("//", 1)[0]
+            explicitly_annotated = any(marker in clean_line for marker in NULLABILITY_MARKERS)
+            inside_region = any(start < line_number < end for start, end in regions)
+            if DECLARATION.search(clean_line) and not explicitly_annotated and not inside_region:
+                failures.append(
+                    f"{path}:{line_number} added a declaration outside a nullability region "
+                    f"({line.strip()}); move it inside NS_ASSUME_NONNULL_BEGIN/END or annotate it explicitly"
+                )
             if RAW_COLLECTION.search(clean_line):
                 failures.append(
-                    f"{path} added a raw collection declaration ({line.strip()}); add lightweight generics"
+                    f"{path}:{line_number} added a raw collection declaration ({line.strip()}); "
+                    "add lightweight generics"
                 )
             if ERROR_OUT_PARAMETER.search(clean_line) and not any(
                 marker in clean_line for marker in NULLABILITY_MARKERS
             ):
                 failures.append(
-                    f"{path} added an error out-parameter without explicit nullable annotations ({line.strip()})"
+                    f"{path}:{line_number} added an error out-parameter without explicit nullable "
+                    f"annotations ({line.strip()})"
                 )
 
     return failures
@@ -79,7 +130,7 @@ def changed_paths(root: pathlib.Path, merge_base: str) -> set[str]:
     return {path for path in tracked + untracked if path}
 
 
-def added_source_lines(root: pathlib.Path, merge_base: str, path: str) -> list[str]:
+def added_source_lines(root: pathlib.Path, merge_base: str, path: str) -> list[AddedLine]:
     file_path = root / path
     tracked = subprocess.run(
         ["git", "ls-files", "--error-unmatch", path],
@@ -89,17 +140,29 @@ def added_source_lines(root: pathlib.Path, merge_base: str, path: str) -> list[s
         text=True,
     ).returncode == 0
     if not tracked:
-        return file_path.read_text(errors="replace").splitlines() if file_path.is_file() else []
+        return (
+            list(enumerate(file_path.read_text(errors="replace").splitlines(), start=1))
+            if file_path.is_file()
+            else []
+        )
 
     diff = run("git", "diff", "--unified=0", merge_base, "--", path, cwd=root)
-    lines: list[str] = []
-    in_hunk = False
+    lines: list[AddedLine] = []
+    new_line_number: int | None = None
     for line in diff.splitlines():
         if line.startswith("@@ "):
-            in_hunk = True
+            match = HUNK_HEADER.match(line)
+            new_line_number = int(match.group(1)) if match else None
             continue
-        if in_hunk and line.startswith("+"):
-            lines.append(line[1:])
+        if new_line_number is None:
+            continue
+        if line.startswith("+"):
+            lines.append((new_line_number, line[1:]))
+            new_line_number += 1
+        elif line.startswith("-") or line.startswith("\\"):
+            continue
+        else:
+            new_line_number += 1
     return lines
 
 

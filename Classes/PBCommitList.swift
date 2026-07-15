@@ -5,8 +5,6 @@
 //  Converted from PBCommitList.m
 //
 
-import Cocoa
-
 @objc class PBCommitList: NSTableView {
     // MARK: - Properties
 

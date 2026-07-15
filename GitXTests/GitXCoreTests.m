@@ -924,8 +924,11 @@
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"commit.gpgSign", @"false" ] error:&error]), @"%@", error);
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
 
+	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	NSString *originalParents = [[self.fixture git:@[ @"show", @"-s", @"--format=%P", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(originalHead, @"%@", error);
 	XCTAssertEqual([originalParents componentsSeparatedByString:@" "].count, 2);
 	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
 	XCTAssertNotNil(self.repository, @"%@", error);
@@ -935,8 +938,12 @@
 	}];
 	[self.repository.index commitWithMessage:@"amended merge commit" andVerify:NO];
 
+	NSString *amendedHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	NSString *amendedParents = [[self.fixture git:@[ @"show", @"-s", @"--format=%P", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(amendedHead, @"%@", error);
+	XCTAssertNotEqualObjects(amendedHead, originalHead);
 	XCTAssertEqualObjects(amendedParents, originalParents);
 }
 

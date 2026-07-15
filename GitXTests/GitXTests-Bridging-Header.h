@@ -9,6 +9,13 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBImageRevisionPolicy : NSObject
++ (NSArray<NSString *> *)revisionsForCommitSHA:(NSString *)commitSHA
+                                     parentSHA:(nullable NSString *)parentSHA
+                                  workingState:(BOOL)workingState
+    NS_SWIFT_NAME(revisions(commitSHA:parentSHA:workingState:));
+@end
+
 @interface PBReferenceActionPolicy : NSObject
 + (BOOL)canPushRefishTypeToNamedRemote:(nullable NSString *)refishType
     NS_SWIFT_NAME(canPush(refishType:));
