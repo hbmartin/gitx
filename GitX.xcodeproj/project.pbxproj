@@ -1989,6 +1989,7 @@
 				PRODUCT_NAME = GitX;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OBJC_BRIDGING_HEADER = "Classes/GitX-Bridging-Header.h";
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 				VALID_ARCHS = "x86_64 arm64";
 				VERSIONING_SYSTEM = "apple-generic";
@@ -2024,6 +2025,7 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_INSTALLED_PRODUCT = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "Classes/GitX-Bridging-Header.h";
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 				VALID_ARCHS = "x86_64 arm64";
 				VERSIONING_SYSTEM = "apple-generic";
@@ -2224,6 +2226,7 @@
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
 				SWIFT_OBJC_BRIDGING_HEADER = "GitXTests/GitXTests-Bridging-Header.h";
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GitX.app/Contents/MacOS/GitX";
 			};
@@ -2247,6 +2250,7 @@
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
 				SWIFT_OBJC_BRIDGING_HEADER = "GitXTests/GitXTests-Bridging-Header.h";
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GitX.app/Contents/MacOS/GitX";
 			};

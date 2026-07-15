@@ -313,6 +313,36 @@ NS_ASSUME_NONNULL_END
 	XCTAssertEqual(deliveryCount, (NSUInteger)1);
 }
 
+- (void)testConcurrentEventsAreCoalescedWithoutDroppingPaths
+{
+	XCTestExpectation *delivered = [self expectationWithDescription:@"concurrent batch delivered"];
+	__block NSUInteger deliveredEventType = 0;
+	__block NSArray<NSString *> *deliveredPaths = nil;
+	PBRepositoryRefreshCoordinator *coordinator = [[PBRepositoryRefreshCoordinator alloc]
+		initWithDelay:0.1
+		deliveryHandler:^(NSUInteger eventType, NSArray<NSString *> *paths) {
+			deliveredEventType = eventType;
+			deliveredPaths = paths;
+			[delivered fulfill];
+		}];
+
+	dispatch_queue_t eventQueue = dispatch_queue_create(
+		"org.gitx.tests.concurrentRepositoryEvents",
+		DISPATCH_QUEUE_CONCURRENT
+	);
+	dispatch_apply(64, eventQueue, ^(size_t index) {
+		NSUInteger eventType = (NSUInteger)1 << (index % 4);
+		NSString *path = [NSString stringWithFormat:@"/repository/path-%zu", index];
+		[coordinator recordEventType:eventType paths:@[ path ]];
+	});
+
+	[self waitForExpectations:@[ delivered ] timeout:2.0];
+	XCTAssertEqual(deliveredEventType, (NSUInteger)0xF);
+	XCTAssertEqual(deliveredPaths.count, (NSUInteger)64);
+	XCTAssertEqualObjects(deliveredPaths.firstObject, @"/repository/path-0");
+	XCTAssertEqualObjects(deliveredPaths.lastObject, @"/repository/path-9");
+}
+
 - (void)testCancellationDropsPendingBatch
 {
 	XCTestExpectation *delivery = [self expectationWithDescription:@"Cancelled batch is not delivered"];
