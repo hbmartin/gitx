@@ -484,7 +484,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 			   context:(NSString *)context
 			   section:(NSUInteger)sectionIndex
 				  path:(NSString *)fallbackPath
-		 highlightSyntax:(BOOL)shouldHighlightSyntax
+	   highlightSyntax:(BOOL)shouldHighlightSyntax
 		collapsedFiles:(NSSet<NSString *> *)collapsedFiles
 		expandedImages:(NSSet<NSString *> *)expandedImages
 		  linkPayloads:(NSMutableDictionary<NSString *, NSDictionary *> *)linkPayloads
