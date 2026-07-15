@@ -101,6 +101,41 @@
 
 @end
 
+@interface PBManualRefreshContentSpy : NSObject
+
+@property (nonatomic) NSUInteger refreshCount;
+
+@end
+
+@implementation PBManualRefreshContentSpy
+
+- (void)refresh:(id)sender
+{
+	self.refreshCount++;
+}
+
+@end
+
+@interface PBManualRefreshWindowControllerSpy : PBGitWindowController
+
+@property (nonatomic) NSUInteger titleSynchronizationCount;
+
+@end
+
+@implementation PBManualRefreshWindowControllerSpy
+
+- (void)synchronizeWindowTitleWithDocumentName
+{
+	self.titleSynchronizationCount++;
+}
+
+- (NSWindow *)window
+{
+	return nil;
+}
+
+@end
+
 @interface GitXFeatureTests : XCTestCase
 
 @property (nonatomic) BOOL originalHistorySortingEnabled;
@@ -219,6 +254,18 @@
 
 	XCTAssertEqual(repository.reloadRefsCount, 1);
 	XCTAssertEqual(repository.readCurrentBranchCount, 1);
+}
+
+- (void)testManualRefreshForwardsToContentAndSynchronizesWindowTitle
+{
+	PBManualRefreshContentSpy *content = [[PBManualRefreshContentSpy alloc] init];
+	PBManualRefreshWindowControllerSpy *controller = [[PBManualRefreshWindowControllerSpy alloc] init];
+	[controller setValue:content forKey:@"contentController"];
+
+	[controller refresh:self];
+
+	XCTAssertEqual(content.refreshCount, (NSUInteger)1);
+	XCTAssertEqual(controller.titleSynchronizationCount, (NSUInteger)1);
 }
 
 - (void)testEmbeddedCommandLineToolDeclaresAppleEventsAuthorization
