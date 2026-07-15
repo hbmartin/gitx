@@ -89,12 +89,40 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let now = Date()
 
         XCTAssertNil(formatter.string(for: "not a date"))
-        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(30)), "In the future!")
-        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-30)), "seconds ago")
-        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-90)), "1 minute ago")
+        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(3_600)), "In the future!")
+        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-10)), "seconds ago")
+        XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-80)), "1 minute ago")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-600)), "10 minutes ago")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-5400)), "1 hour ago")
         XCTAssertEqual(formatter.string(for: now.addingTimeInterval(-10800)), "3 hours ago")
+    }
+
+    func testAutoFetchScopeSetterStoresAValidatedValue() throws {
+        let invalidScope = try XCTUnwrap(PBAutoFetchScope(rawValue: .max))
+        PBGitDefaults.setAutoFetchScope(invalidScope)
+
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "PBAutoFetchScope"), PBAutoFetchScope.none.rawValue)
+        XCTAssertEqual(PBGitDefaults.autoFetchScope(), .none)
+    }
+
+    func testRepositoryNotificationDefaultsTreatSymlinksAsTheSameRepository() throws {
+        try withTemporaryDirectory { root in
+            let repository = root.appendingPathComponent("repository", isDirectory: true)
+            let symlink = root.appendingPathComponent("repository-link", isDirectory: true)
+            try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: repository)
+
+            PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: repository)
+            PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: symlink)
+            defer {
+                PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: repository)
+                PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: symlink)
+            }
+
+            PBGitDefaults.setNotifyAboutFetchedCommits(true, forRepositoryURL: symlink)
+
+            XCTAssertTrue(PBGitDefaults.notifyAboutFetchedCommits(forRepositoryURL: repository))
+        }
     }
 
     func testRepositoryFinderDiscoversWorktreesNestedPathsAndBareRepositories() throws {

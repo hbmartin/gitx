@@ -169,3 +169,22 @@ final class RemoteSidebarSyncPlan: NSObject { // swiftlint:disable:this unused_d
         names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
 }
+
+/// Canonicalizes persisted Git defaults before the Objective-C facade stores them.
+@objc(PBGitDefaultsPolicy)
+final class GitDefaultsPolicy: NSObject { // swiftlint:disable:this unused_declaration
+    @objc(validatedAutoFetchScopeRawValue:)
+    static func validatedAutoFetchScope(
+        rawValue: Int
+    ) -> Int { // swiftlint:disable:this unused_declaration
+        let validRange = PBAutoFetchScope.none.rawValue ... PBAutoFetchScope.openAndRecentRepositories.rawValue
+        return validRange.contains(rawValue) ? rawValue : PBAutoFetchScope.none.rawValue
+    }
+
+    @objc(repositoryDefaultsKeyForURL:)
+    static func repositoryDefaultsKey(
+        for repositoryURL: URL
+    ) -> String { // swiftlint:disable:this unused_declaration
+        repositoryURL.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+}

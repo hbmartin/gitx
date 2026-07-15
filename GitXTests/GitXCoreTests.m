@@ -1044,7 +1044,9 @@
 	XCTAssertEqualObjects(binary.textContents, @"This file cannot be displayed as text.");
 
 	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
-	XCTAssertEqual(changes.tree, changes.tree);
+	PBGitTree *firstTree = changes.tree;
+	XCTAssertNotNil(firstTree);
+	XCTAssertEqual(firstTree, changes.tree);
 }
 
 - (void)testUncommittedChangesSubjectShowsOnlyStats

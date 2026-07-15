@@ -1,6 +1,7 @@
 #import "GitXRelativeDateFormatter.h"
 #import "PBRepositoryFinder.h"
 #import "PBGitRevSpecifier.h"
+#import "PBGitDefaults.h"
 #import "PBHighlighting.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
