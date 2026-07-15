@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.3259,
+  "minimumLineCoverage": 0.326,
   "files": {
     "Classes/GitXRelativeDateFormatter.m": 0.6666,
     "Classes/Util/PBTask.m": 0.9148,
@@ -11,7 +11,7 @@
     "Classes/git/PBGitGrapher.mm": 0.9062,
     "Classes/git/PBGitIndex.m": 0.7988,
     "Classes/git/PBGitRef.m": 0.8695,
-    "Classes/git/PBGitRepository.m": 0.4297,
+    "Classes/git/PBGitRepository.m": 0.4342,
     "Classes/git/PBGitRevSpecifier.m": 0.8453,
     "Classes/git/PBWorkingTree.m": 0.563
   }
