@@ -269,8 +269,8 @@
 
 	NSArray<NSString *> *configuredRemotes = self.repository.remotes ?: @[];
 	PBRemoteSidebarSyncPlan *plan = [PBRemoteSidebarSyncPlan planWithConfiguredRemoteNames:configuredRemotes
-													 existingRemoteNames:existingNames
-													 nonEmptyRemoteNames:nonEmptyNames];
+																	   existingRemoteNames:existingNames
+																	   nonEmptyRemoteNames:nonEmptyNames];
 	for (NSString *name in plan.namesToAdd) {
 		[remotes addChild:[PBSourceViewGitRemoteItem remoteItemWithTitle:name]];
 	}

@@ -268,13 +268,13 @@
 	XCTAssertNotNil(toolURL, @"The UI test build must embed its matching gitx CLI");
 	NSString *sentinel = @"PIPE_SENTINEL_544";
 	NSString *diff = [NSString stringWithFormat:
-		@"diff --git a/pipe.txt b/pipe.txt\n"
-		 "--- a/pipe.txt\n"
-		 "+++ b/pipe.txt\n"
-		 "@@ -1 +1 @@\n"
-		 "-before\n"
-		 "+%@\n",
-		sentinel];
+								   @"diff --git a/pipe.txt b/pipe.txt\n"
+									"--- a/pipe.txt\n"
+									"+++ b/pipe.txt\n"
+									"@@ -1 +1 @@\n"
+									"-before\n"
+									"+%@\n",
+								   sentinel];
 	NSTask *task = [[NSTask alloc] init];
 	NSPipe *input = [NSPipe pipe];
 	NSPipe *errorOutput = [NSPipe pipe];
@@ -296,8 +296,10 @@
 	XCUIElement *diffText = diffWindow.textViews.firstMatch;
 	NSPredicate *containsSentinel = [NSPredicate predicateWithFormat:@"value CONTAINS %@", sentinel];
 	[self waitForExpectations:@[
-		[[XCTNSPredicateExpectation alloc] initWithPredicate:containsSentinel object:diffText],
-	] timeout:15];
+		[[XCTNSPredicateExpectation alloc] initWithPredicate:containsSentinel
+													  object:diffText],
+	]
+					  timeout:15];
 	[self saveWindowScreenshotNamed:@"command-line-pipe-diff"];
 }
 

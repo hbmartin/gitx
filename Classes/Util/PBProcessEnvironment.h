@@ -5,7 +5,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBProcessEnvironment : NSObject
 
 + (NSDictionary<NSString *, NSString *> *)preparedEnvironment:(NSDictionary<NSString *, NSString *> *)environment
-                                                homeDirectory:(NSString *)homeDirectory;
+												homeDirectory:(NSString *)homeDirectory;
 
 @end
 

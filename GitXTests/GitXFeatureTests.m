@@ -186,9 +186,9 @@
 
 	NSString *usageDescription = infoPlist[@"NSAppleEventsUsageDescription"];
 	XCTAssertGreaterThan(usageDescription.length, 0,
-					 @"The CLI must explain its Apple-events use before macOS can authorize delivery to GitX");
+						 @"The CLI must explain its Apple-events use before macOS can authorize delivery to GitX");
 	XCTAssertEqualObjects(entitlements[@"com.apple.security.automation.apple-events"], @YES,
-					  @"The hardened CLI must be entitled to send its piped diff to the GitX app");
+						  @"The hardened CLI must be entitled to send its piped diff to the GitX app");
 }
 
 - (void)testSpaceKeyRoutesSelectedFileRowsToStageAndUnstageActions

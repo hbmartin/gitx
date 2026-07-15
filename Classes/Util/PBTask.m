@@ -63,7 +63,7 @@ const BOOL PBTaskDebugEnable = NO;
 	// Prepare ourselves a nicer environment
 	NSMutableDictionary *env = [[PBProcessEnvironment
 		preparedEnvironment:[[NSProcessInfo processInfo] environment]
-		     homeDirectory:NSHomeDirectory()] mutableCopy];
+			  homeDirectory:NSHomeDirectory()] mutableCopy];
 	[env removeObjectsForKeys:@[
 		@"DYLD_INSERT_LIBRARIES", @"DYLD_LIBRARY_PATH",
 		@"MallocGuardEdges", @"MallocNanoZone", @"MallocScribble", @"MallocStackLogging", @"MallocStackLoggingNoCompact",
