@@ -210,8 +210,7 @@
 	if ([pathComponents count] < 2) {
 		item = [PBSourceViewItem itemWithRevSpec:rev];
 		[branches addChild:item];
-	}
-	else if ([[pathComponents objectAtIndex:1] isEqualToString:@"heads"])
+	} else if ([[pathComponents objectAtIndex:1] isEqualToString:@"heads"])
 		[branches addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
 	else if ([[rev simpleRef] hasPrefix:@"refs/tags/"])
 		[tags addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
@@ -226,8 +225,8 @@
 	PBGitRevSpecifier *viewedRev = self.repository.currentBranch;
 	PBGitRevSpecifier *newHead = self.repository.headRef;
 	BOOL followHead = [PBHistoryRefreshSelectionPolicy shouldFollowCheckedOutBranchWithStageSelected:stageSelected
-																	viewedRef:viewedRev.simpleRef
-															  previousHeadRef:self.lastKnownHeadRef.simpleRef];
+																						   viewedRef:viewedRev.simpleRef
+																					 previousHeadRef:self.lastKnownHeadRef.simpleRef];
 	if (followHead && newHead && ![viewedRev isEqual:newHead]) {
 		self.repository.currentBranch = newHead;
 		viewedRev = newHead;

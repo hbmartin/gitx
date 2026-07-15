@@ -506,11 +506,11 @@
 	XCTAssertEqual(history.commits.count, expectedCount);
 	NSMutableArray<NSNumber *> *publishedCounts = [NSMutableArray array];
 	id<MAKVOObservation> observation = [history addObserver:self
-								keyPath:@"commits"
-								options:0
-								  block:^(__unused MAKVONotification *notification) {
-		[publishedCounts addObject:@(history.commits.count)];
-	}];
+													keyPath:@"commits"
+													options:0
+													  block:^(__unused MAKVONotification *notification) {
+														  [publishedCounts addObject:@(history.commits.count)];
+													  }];
 
 	[self.repository forceUpdateRevisions];
 	XCTAssertEqual(history.commits.count, expectedCount, @"Refresh should retain the previous snapshot until replacement data is ready");
