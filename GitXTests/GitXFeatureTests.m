@@ -359,6 +359,8 @@
 	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:spaced], @"Folder/file name.txt");
 	NSArray *renamed = @[ @"diff --git a/old.txt b/new name.txt", @"similarity index 100%", @"rename from old.txt", @"rename to new name.txt" ];
 	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:renamed], @"new name.txt");
+	NSArray *sameInitial = @[ @"diff --git a/app/assets/variables.json b/assets/variables.json", @"similarity index 100%", @"rename from app/assets/variables.json", @"rename to assets/variables.json" ];
+	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:sameInitial], @"assets/variables.json");
 }
 
 - (void)testTaskSupportsShortConfigurableTimeouts

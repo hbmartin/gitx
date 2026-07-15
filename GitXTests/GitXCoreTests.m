@@ -23,6 +23,7 @@
 								 hunkLines:(NSArray<NSString *> *)hunkLines
 						   selectedIndexes:(NSIndexSet *)selectedIndexes
 								   reverse:(BOOL)reverse;
+- (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines;
 @end
 
 @interface GitXTestRepository : NSObject
@@ -423,6 +424,29 @@
 	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
 }
 
+- (void)testUnchangedSymlinkRenameUsesRenameMetadata
+{
+	NSError *error = nil;
+	NSString *oldPath = [self.fixture.path stringByAppendingPathComponent:@"linked.json"];
+	NSString *newPath = [self.fixture.path stringByAppendingPathComponent:@"moved-link.json"];
+	XCTAssertTrue([[NSFileManager defaultManager] createSymbolicLinkAtPath:oldPath withDestinationPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"add symlink" error:&error], @"%@", error);
+	XCTAssertTrue([[NSFileManager defaultManager] moveItemAtPath:oldPath toPath:newPath error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"rename symlink" error:&error], @"%@", error);
+
+	NSString *diff = [self.fixture git:@[ @"diff", @"--find-renames", @"--no-ext-diff", @"HEAD^", @"HEAD" ] error:&error];
+	XCTAssertNotNil(diff, @"%@", error);
+	XCTAssertTrue([diff containsString:@"similarity index 100%"]);
+	XCTAssertTrue([diff containsString:@"rename from linked.json"]);
+	XCTAssertTrue([diff containsString:@"rename to moved-link.json"]);
+	XCTAssertFalse([diff containsString:@"deleted file mode"]);
+	XCTAssertFalse([diff containsString:@"new file mode"]);
+
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSArray<NSString *> *lines = [diff componentsSeparatedByString:@"\n"];
+	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:lines], @"moved-link.json");
+}
+
 @end
 
 
@@ -509,6 +533,39 @@
 	XCTAssertTrue([stagedDiff containsString:@"+staged line"]);
 	XCTAssertFalse([stagedDiff containsString:@"unstaged line"]);
 	XCTAssertTrue([unstagedDiff containsString:@"+unstaged line"]);
+}
+
+- (void)testRefreshDistinguishesPartiallyStagedAdditionFromUntrackedFile
+{
+	NSError *error = nil;
+	NSString *partiallyStagedPath = @"folder/spaced ünicode.txt";
+	XCTAssertTrue([self.fixture writeText:@"first staged line\n" toPath:partiallyStagedPath error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"add", @"--", partiallyStagedPath ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"first staged line\nsecond unstaged line\n" toPath:partiallyStagedPath error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"never staged\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	PBChangedFile *partiallyStaged = [self changedFileAtPath:partiallyStagedPath];
+	XCTAssertNotNil(partiallyStaged);
+	XCTAssertEqual(partiallyStaged.status, NEW);
+	XCTAssertTrue(partiallyStaged.hasStagedChanges);
+	XCTAssertTrue(partiallyStaged.hasUnstagedChanges);
+
+	PBChangedFile *untracked = [self changedFileAtPath:@"untracked.txt"];
+	XCTAssertNotNil(untracked);
+	XCTAssertEqual(untracked.status, NEW);
+	XCTAssertFalse(untracked.hasStagedChanges);
+	XCTAssertTrue(untracked.hasUnstagedChanges);
+	XCTAssertEqualObjects([self.repository.index diffForFile:untracked staged:NO contextLines:3], @"never staged\n");
+
+	NSString *cached = [self.fixture git:@[ @"diff", @"--cached", @"--", partiallyStagedPath ] error:&error];
+	NSString *working = [self.fixture git:@[ @"diff", @"--", partiallyStagedPath ] error:&error];
+	XCTAssertTrue([cached containsString:@"+first staged line"]);
+	XCTAssertFalse([cached containsString:@"second unstaged line"]);
+	XCTAssertTrue([working containsString:@" first staged line"]);
+	XCTAssertTrue([working containsString:@"+second unstaged line"]);
 }
 
 - (void)testWholeFileUnstageAfterPartialStageIgnoresStaleIndexMetadata
