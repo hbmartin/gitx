@@ -44,7 +44,7 @@ final class PBHighlighting: NSObject {
     }
 
     @objc(shouldHighlightDiffWithByteCount:)
-    static func shouldHighlightDiff(byteCount: UInt) -> Bool {
+    static func shouldHighlightDiff(byteCount: UInt) -> Bool { // swiftlint:disable:this unused_declaration
         byteCount <= maximumHighlightedDiffByteCount
     }
 
