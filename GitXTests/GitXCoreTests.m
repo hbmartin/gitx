@@ -549,6 +549,35 @@
 	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:lines], @"moved-link.json");
 }
 
+- (void)testConfiguredRelativeHooksPathRunsExecutablePreCommitHook
+{
+	NSError *error = nil;
+	NSString *marker = @"configured pre-commit hook ran";
+	NSString *hook = [NSString stringWithFormat:@"#!/bin/sh\nprintf '%@\\n'\nexit 23\n", marker];
+	XCTAssertTrue([self.fixture writeText:hook toPath:@".githooks/pre-commit" error:&error], @"%@", error);
+	NSString *hookPath = [self.fixture.path stringByAppendingPathComponent:@".githooks/pre-commit"];
+	NSDictionary *attributes = @{NSFilePosixPermissions : @0755};
+	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:attributes ofItemAtPath:hookPath error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @".githooks" ] error:&error]), @"%@", error);
+	self.repository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(self.repository, @"%@", error);
+	XCTAssertTrue([self.repository hookExists:@"pre-commit"]);
+
+	NSError *hookError = nil;
+	XCTAssertFalse([self.repository executeHook:@"pre-commit" error:&hookError]);
+	XCTAssertEqualObjects(hookError.userInfo[PBHookNameErrorKey], @"pre-commit");
+	NSError *taskError = hookError.userInfo[NSUnderlyingErrorKey];
+	XCTAssertEqualObjects(taskError.userInfo[PBTaskTerminationStatusKey], @23);
+	XCTAssertTrue([taskError.userInfo[PBTaskTerminationOutputKey] containsString:marker]);
+	XCTAssertTrue([hookError.localizedFailureReason containsString:marker]);
+
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
+	XCTAssertFalse([self.repository hookExists:@"pre-commit"]);
+	NSError *disabledHookError = nil;
+	XCTAssertTrue([self.repository executeHook:@"pre-commit" error:&disabledHookError]);
+	XCTAssertNil(disabledHookError);
+}
+
 @end
 
 
