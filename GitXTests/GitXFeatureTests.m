@@ -53,8 +53,8 @@
 
 - (NSData *)nativeContentView:(PBNativeContentView *)view
 			 imageDataForPath:(NSString *)path
-					section:(NSUInteger)sectionIndex
-				 imageSource:(NSDictionary<NSString *, id> *)imageSource
+					  section:(NSUInteger)sectionIndex
+				  imageSource:(NSDictionary<NSString *, id> *)imageSource
 {
 	self.callbackWasOnMainThread = NSThread.isMainThread;
 	self.capturedImageSource = imageSource;
@@ -256,15 +256,15 @@
 - (void)testNativeDiffLoadsImageDataOffMainAndInstallsAttachment
 {
 	NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
-													pixelsWide:2
-													pixelsHigh:2
-												 bitsPerSample:8
-										   samplesPerPixel:4
-												hasAlpha:YES
-												isPlanar:NO
-										  colorSpaceName:NSCalibratedRGBColorSpace
-											 bytesPerRow:0
-											bitsPerPixel:0];
+																	   pixelsWide:2
+																	   pixelsHigh:2
+																	bitsPerSample:8
+																  samplesPerPixel:4
+																		 hasAlpha:YES
+																		 isPlanar:NO
+																   colorSpaceName:NSCalibratedRGBColorSpace
+																	  bytesPerRow:0
+																	 bitsPerPixel:0];
 	memset(bitmap.bitmapData, 0x7f, bitmap.bytesPerRow * bitmap.pixelsHigh);
 	NSData *imageData = [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
 	XCTAssertGreaterThan(imageData.length, 0);
@@ -283,23 +283,23 @@
 	NSString *diff = @"diff --git a/image.png b/image.png\n"
 					 @"Binary files a/image.png and b/image.png differ\n";
 	[view showDiffSections:@[ @{
-		PBNativeSectionTextKey : diff,
-		PBNativeSectionContextKey : @"readOnly",
-		PBNativeSectionImageSourceKey : imageSource,
-	} ]];
+			  PBNativeSectionTextKey : diff,
+			  PBNativeSectionContextKey : @"readOnly",
+			  PBNativeSectionImageSourceKey : imageSource,
+		  } ]];
 
 	NSPredicate *hasAttachment = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 		NSAttributedString *storage = view.textView.textStorage;
 		__block BOOL foundAttachment = NO;
 		[storage enumerateAttribute:NSAttachmentAttributeName
-						 inRange:NSMakeRange(0, storage.length)
-						  options:0
-					 usingBlock:^(id value, __unused NSRange range, BOOL *stop) {
-						 if (value) {
-							 foundAttachment = YES;
-							 *stop = YES;
-						 }
-					 }];
+							inRange:NSMakeRange(0, storage.length)
+							options:0
+						 usingBlock:^(id value, __unused NSRange range, BOOL *stop) {
+							 if (value) {
+								 foundAttachment = YES;
+								 *stop = YES;
+							 }
+						 }];
 		return foundAttachment;
 	}];
 	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:hasAttachment object:view];

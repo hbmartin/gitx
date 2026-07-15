@@ -513,9 +513,9 @@
 	NSImage *rewindImage = [NSImage imageNamed:@"rewindImage"];
 	NSSize imageSize = [rewindImage size];
 	NSRect imageViewFrame = NSMakeRect((NSWidth(overlay.bounds) - imageSize.width) / 2.0f,
-		(NSHeight(overlay.bounds) - imageSize.height) / 2.0f,
-		imageSize.width,
-		imageSize.height);
+									   (NSHeight(overlay.bounds) - imageSize.height) / 2.0f,
+									   imageSize.width,
+									   imageSize.height);
 	NSImageView *rewindImageView = [[NSImageView alloc] initWithFrame:imageViewFrame];
 	[rewindImageView setTag:kRewindPanelImageViewTag];
 	[overlay addSubview:rewindImageView];

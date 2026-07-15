@@ -493,8 +493,8 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	   highlightSyntax:(BOOL)shouldHighlightSyntax
 		collapsedFiles:(NSSet<NSString *> *)collapsedFiles
 		expandedImages:(NSSet<NSString *> *)expandedImages
-			 imageSource:(NSDictionary<NSString *, id> *)imageSource
-				 delegate:(id<PBNativeContentViewDelegate>)delegate
+		   imageSource:(NSDictionary<NSString *, id> *)imageSource
+			  delegate:(id<PBNativeContentViewDelegate>)delegate
 		  linkPayloads:(NSMutableDictionary<NSString *, NSDictionary *> *)linkPayloads
 			  toString:(NSMutableAttributedString *)rendered
 {

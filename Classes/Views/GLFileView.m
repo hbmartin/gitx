@@ -128,11 +128,11 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 }
 
 - (NSArray<NSDictionary *> *)diffSectionsForTrees:(NSArray<PBGitTree *> *)trees
-								 workingState:(BOOL)workingState
-									 commitSHA:(NSString *)commitSHA
-									 parentSHA:(nullable NSString *)parentSHA
+									 workingState:(BOOL)workingState
+										commitSHA:(NSString *)commitSHA
+										parentSHA:(nullable NSString *)parentSHA
 										  changes:(NSArray<PBChangedFile *> *)changes
-									 imageSource:(NSDictionary<NSString *, id> *)imageSource
+									  imageSource:(NSDictionary<NSString *, id> *)imageSource
 									   generation:(NSUInteger)generation
 {
 	NSMutableArray *sections = [NSMutableArray array];
@@ -227,9 +227,9 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 }
 
 - (nullable NSData *)nativeContentView:(PBNativeContentView *)view
-				 imageDataForPath:(NSString *)path
-						section:(NSUInteger)sectionIndex
-					 imageSource:(NSDictionary<NSString *, id> *)imageSource
+					  imageDataForPath:(NSString *)path
+							   section:(NSUInteger)sectionIndex
+						   imageSource:(NSDictionary<NSString *, id> *)imageSource
 {
 	if ([imageSource[PBNativeImageSourceWorkingTreeKey] boolValue]) {
 		NSURL *workingTreeURL = imageSource[PBNativeImageSourceWorkingTreeURLKey];

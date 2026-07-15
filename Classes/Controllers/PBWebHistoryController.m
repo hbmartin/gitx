@@ -76,11 +76,11 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 {
 	NSAssert(NSThread.isMainThread, @"Commit render metadata must be captured on the main thread");
 	return [[PBCommitRenderInput alloc] initWithSHA:commit.SHA ?: @""
-									   parentSHA:commit.parents.firstObject.SHA
-									   shortName:commit.shortName ?: @""
-										 subject:commit.subject ?: @""
-										  author:commit.author ?: @""
-									  authorDate:commit.authorDate ?: @""];
+										  parentSHA:commit.parents.firstObject.SHA
+										  shortName:commit.shortName ?: @""
+											subject:commit.subject ?: @""
+											 author:commit.author ?: @""
+										 authorDate:commit.authorDate ?: @""];
 }
 
 - (NSArray<PBCommitRenderInput *> *)renderInputsForCommits:(NSArray<PBGitCommit *> *)commits
@@ -175,8 +175,8 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 }
 
 - (nullable NSArray<NSDictionary *> *)sequentialSectionsForInputs:(NSArray<PBCommitRenderInput *> *)inputs
-									 imageSources:(NSArray<NSDictionary<NSString *, id> *> *)imageSources
-									   generation:(NSUInteger)generation
+													 imageSources:(NSArray<NSDictionary<NSString *, id> *> *)imageSources
+													   generation:(NSUInteger)generation
 {
 	NSMutableArray *sections = [NSMutableArray array];
 	for (NSUInteger index = 0; index < inputs.count; index++) {
@@ -193,8 +193,8 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 }
 
 - (nullable NSArray<NSDictionary *> *)combinedSectionsForInputs:(NSArray<PBCommitRenderInput *> *)inputs
-									  imageSource:(NSDictionary<NSString *, id> *)imageSource
-									   generation:(NSUInteger)generation
+													imageSource:(NSDictionary<NSString *, id> *)imageSource
+													 generation:(NSUInteger)generation
 {
 	PBCommitRenderInput *oldest = inputs.firstObject;
 	PBCommitRenderInput *newest = inputs.lastObject;
@@ -223,8 +223,8 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 }
 
 - (nullable NSArray<NSDictionary *> *)workingStateSectionsForChanges:(NSArray<PBChangedFile *> *)changes
-										 imageSource:(NSDictionary<NSString *, id> *)imageSource
-										  generation:(NSUInteger)generation
+														 imageSource:(NSDictionary<NSString *, id> *)imageSource
+														  generation:(NSUInteger)generation
 {
 	NSString *staged = [self runGitArguments:@[ @"diff", @"--cached", @"--find-renames", @"--no-ext-diff" ] generation:generation error:nil];
 	if (!staged || ![self isGenerationCurrent:generation]) return nil;
@@ -311,9 +311,9 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 }
 
 - (nullable NSData *)nativeContentView:(PBNativeContentView *)view
-				 imageDataForPath:(NSString *)path
-						section:(NSUInteger)sectionIndex
-					 imageSource:(NSDictionary<NSString *, id> *)imageSource
+					  imageDataForPath:(NSString *)path
+							   section:(NSUInteger)sectionIndex
+						   imageSource:(NSDictionary<NSString *, id> *)imageSource
 {
 	if ([imageSource[PBNativeImageSourceWorkingTreeKey] boolValue]) {
 		NSURL *workingTreeURL = imageSource[PBNativeImageSourceWorkingTreeURLKey];

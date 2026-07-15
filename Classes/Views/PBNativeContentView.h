@@ -22,9 +22,9 @@ extern NSString *const PBNativeImageSourceTaskDirectoryKey;
 - (void)nativeContentView:(PBNativeContentView *)view performDiffAction:(NSString *)action patch:(NSString *)patch;
 - (void)nativeContentView:(PBNativeContentView *)view selectCommit:(NSString *)sha;
 - (nullable NSData *)nativeContentView:(PBNativeContentView *)view
-				 imageDataForPath:(NSString *)path
-						section:(NSUInteger)sectionIndex
-					 imageSource:(NSDictionary<NSString *, id> *)imageSource;
+					  imageDataForPath:(NSString *)path
+							   section:(NSUInteger)sectionIndex
+						   imageSource:(NSDictionary<NSString *, id> *)imageSource;
 @end
 
 /// Shared, selectable AppKit renderer for source, blame, history, and diff content.
