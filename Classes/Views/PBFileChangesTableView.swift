@@ -34,7 +34,7 @@ final class PBFileChangesTableView: NSTableView {
         let actionModifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
         let isPlainSpace = event.keyCode == 49 && event.modifierFlags.intersection(actionModifiers).isEmpty
 
-        guard isPlainSpace, numberOfSelectedRows > 0 else {
+        guard isPlainSpace, numberOfSelectedRows > 0, let delegate else {
             super.keyDown(with: event)
             return
         }

@@ -1030,7 +1030,7 @@
 	if (!isEnabled)
 		selector = nil;
 
-	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(title, @"Commit context menu item") action:selector keyEquivalent:@""];
+	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:selector keyEquivalent:@""];
 	[item setEnabled:isEnabled];
 	return item;
 }
@@ -1054,7 +1054,7 @@
 	[items addObject:[NSMenuItem pb_itemWithTitle:stashApplyTitle action:@selector(stashApply:) enabled:YES]];
 
 	// view diff
-	NSString *stashDiffTitle = @"View Diff";
+	NSString *stashDiffTitle = NSLocalizedString(@"View Diff", @"Contextual Menu Item to view the selected stash diff");
 	[items addObject:[NSMenuItem pb_itemWithTitle:stashDiffTitle action:@selector(stashViewDiff:) enabled:YES]];
 
 	[items addObject:[NSMenuItem separatorItem]];
@@ -1129,7 +1129,7 @@
 		[items addObject:[NSMenuItem separatorItem]];
 
 		// merge ref
-		NSString *mergeTitle = isOnHeadBranch ? NSLocalizedString(@"Merge", @"Inactive Contextual Menu Item for merging") : [NSString stringWithFormat:@"Merge %@ into %@", refName, headRefName];
+		NSString *mergeTitle = isOnHeadBranch ? NSLocalizedString(@"Merge", @"Inactive Contextual Menu Item for merging") : [NSString stringWithFormat:NSLocalizedString(@"Merge %@ into %@", @"Contextual Menu Item to merge the selected ref into HEAD"), refName, headRefName];
 		[items addObject:[NSMenuItem pb_itemWithTitle:mergeTitle action:@selector(merge:) enabled:!isOnHeadBranch]];
 
 		// rebase

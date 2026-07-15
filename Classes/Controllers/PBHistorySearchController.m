@@ -505,21 +505,20 @@
 	[panel setHasShadow:NO];
 	[panel setAlphaValue:0.0f];
 
-	NSBox *box = [[NSBox alloc] initWithFrame:[[panel contentView] frame]];
-	[box setBoxType:NSBoxCustom];
-	box.wantsLayer = YES;
-	box.layer.backgroundColor = [NSColor colorWithCalibratedWhite:0.0f alpha:0.5f].CGColor;
-	box.layer.borderColor = [NSColor colorWithCalibratedWhite:0.5f alpha:0.5f].CGColor;
-	box.layer.borderWidth = 1.0f;
-	box.layer.cornerRadius = 12.0f;
-	[[panel contentView] addSubview:box];
+	Class overlayClass = NSClassFromString(@"PBRewindOverlayView");
+	NSAssert(overlayClass != nil, @"PBRewindOverlayView must be linked into GitX");
+	NSView *overlay = [[overlayClass alloc] initWithFrame:[[panel contentView] frame]];
+	[[panel contentView] addSubview:overlay];
 
 	NSImage *rewindImage = [NSImage imageNamed:@"rewindImage"];
 	NSSize imageSize = [rewindImage size];
-	NSRect imageViewFrame = NSMakeRect(21.0f, 5.0f, imageSize.width, imageSize.height);
+	NSRect imageViewFrame = NSMakeRect((NSWidth(overlay.bounds) - imageSize.width) / 2.0f,
+		(NSHeight(overlay.bounds) - imageSize.height) / 2.0f,
+		imageSize.width,
+		imageSize.height);
 	NSImageView *rewindImageView = [[NSImageView alloc] initWithFrame:imageViewFrame];
 	[rewindImageView setTag:kRewindPanelImageViewTag];
-	[[box contentView] addSubview:rewindImageView];
+	[overlay addSubview:rewindImageView];
 
 	return panel;
 }
