@@ -77,7 +77,7 @@
     "Classes/git/PBGitGrapher.mm": 0.9062,
     "Classes/git/PBGitHistoryGrapher.m": 0.7924,
     "Classes/git/PBGitHistoryList.m": 0.7609,
-    "Classes/git/PBGitIndex.m": 0.8044,
+    "Classes/git/PBGitIndex.m": 0.8057,
     "Classes/git/PBGitLane.mm": 1.0,
     "Classes/git/PBGitRef.m": 0.8695,
     "Classes/git/PBGitRepository.m": 0.488,
