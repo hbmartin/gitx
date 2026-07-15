@@ -1,12 +1,12 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.3509,
+  "minimumLineCoverage": 0.3514,
   "files": {
     "Classes/Controllers/ApplicationController.m": 0.284,
     "Classes/Controllers/DBPrefsWindowController.m": 0.0,
     "Classes/Controllers/OpenRecentController.m": 0.0,
-    "Classes/Controllers/PBAutoFetchManager.m": 0.1825,
+    "Classes/Controllers/PBAutoFetchManager.m": 0.1875,
     "Classes/Controllers/PBDiffWindowController.m": 0.0,
     "Classes/Controllers/PBGitCommitController.m": 0.0,
     "Classes/Controllers/PBGitHistoryController.m": 0.0,
@@ -77,7 +77,7 @@
     "Classes/git/PBGitGrapher.mm": 0.9062,
     "Classes/git/PBGitHistoryGrapher.m": 0.7924,
     "Classes/git/PBGitHistoryList.m": 0.7609,
-    "Classes/git/PBGitIndex.m": 0.7988,
+    "Classes/git/PBGitIndex.m": 0.8044,
     "Classes/git/PBGitLane.mm": 1.0,
     "Classes/git/PBGitRef.m": 0.8695,
     "Classes/git/PBGitRepository.m": 0.488,
