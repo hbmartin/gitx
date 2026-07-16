@@ -208,6 +208,9 @@
 		C0DE90000000000000000008 /* PBGitRepository+ServiceForwarding.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */; };
 		C0DEE0000000000000000001 /* IndexSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEE0000000000000000011 /* IndexSnapshot.swift */; };
 		C0DEE0000000000000000002 /* IndexSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEE0000000000000000012 /* IndexSnapshotTests.swift */; };
+		C0DEE0000000000000000003 /* IndexCommandRunning.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEE0000000000000000013 /* IndexCommandRunning.swift */; };
+		C0DEE0000000000000000004 /* IndexMutationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEE0000000000000000014 /* IndexMutationService.swift */; };
+		C0DEE0000000000000000005 /* IndexMutationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEE0000000000000000015 /* IndexMutationServiceTests.swift */; };
 		C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA0000000000000000002 /* HistoryControllerTests.swift */; };
 		C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */; };
 		C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */; };
@@ -769,6 +772,9 @@
 		C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitRepository+ServiceForwarding.m"; sourceTree = "<group>"; };
 		C0DEE0000000000000000011 /* IndexSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexSnapshot.swift; sourceTree = "<group>"; };
 		C0DEE0000000000000000012 /* IndexSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexSnapshotTests.swift; sourceTree = "<group>"; };
+		C0DEE0000000000000000013 /* IndexCommandRunning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexCommandRunning.swift; sourceTree = "<group>"; };
+		C0DEE0000000000000000014 /* IndexMutationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationService.swift; sourceTree = "<group>"; };
+		C0DEE0000000000000000015 /* IndexMutationServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationServiceTests.swift; sourceTree = "<group>"; };
 		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
 		C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryActionContextResolver.swift; sourceTree = "<group>"; };
@@ -1164,6 +1170,8 @@
 				C0DE90000000000000000016 /* RepositoryHookRunner.swift */,
 				C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */,
 				C0DEE0000000000000000011 /* IndexSnapshot.swift */,
+				C0DEE0000000000000000013 /* IndexCommandRunning.swift */,
+				C0DEE0000000000000000014 /* IndexMutationService.swift */,
 				C0DE70000000000000000003 /* RepositoryRefreshCoordinator.swift */,
 				4A5D766B14A9A9CC00DF6C68 /* PBGitRevList.h */,
 				4A5D766C14A9A9CC00DF6C68 /* PBGitRevList.m */,
@@ -1341,6 +1349,7 @@
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
 				C0DE90000000000000000017 /* RepositoryServiceTests.swift */,
 				C0DEE0000000000000000012 /* IndexSnapshotTests.swift */,
+				C0DEE0000000000000000015 /* IndexMutationServiceTests.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
 				C0DEC0000000000000000002 /* WindowControllerTests.m */,
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
@@ -1781,6 +1790,8 @@
 				C0DE90000000000000000006 /* RepositoryHookRunner.swift in Sources */,
 				C0DE90000000000000000008 /* PBGitRepository+ServiceForwarding.m in Sources */,
 				C0DEE0000000000000000001 /* IndexSnapshot.swift in Sources */,
+				C0DEE0000000000000000003 /* IndexCommandRunning.swift in Sources */,
+				C0DEE0000000000000000004 /* IndexMutationService.swift in Sources */,
 				C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */,
 				C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */,
 				C0DEB0000000000000000003 /* HistoryTableInteractionCoordinator.swift in Sources */,
@@ -1913,6 +1924,7 @@
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
 				C0DEE0000000000000000002 /* IndexSnapshotTests.swift in Sources */,
+				C0DEE0000000000000000005 /* IndexMutationServiceTests.swift in Sources */,
 				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
 				C0DEC0000000000000000001 /* WindowControllerTests.m in Sources */,
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,

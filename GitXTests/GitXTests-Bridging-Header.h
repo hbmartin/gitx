@@ -144,6 +144,28 @@ NS_ASSUME_NONNULL_BEGIN
 											   untracked:(nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)untracked;
 @end
 
+@protocol PBIndexCommandRunning <NSObject>
+- (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments
+												 input:(nullable NSString *)input
+										 environment:(nullable NSDictionary<NSString *, NSString *> *)environment
+												 error:(NSError * _Nullable * _Nullable)error;
+@end
+
+@interface PBIndexMutationService : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner;
+- (BOOL)stagePaths:(NSArray<NSString *> *)paths error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (BOOL)unstagePaths:(NSArray<NSString *> *)paths parentTree:(NSString *)parentTree error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (BOOL)discardPaths:(NSArray<NSString *> *)paths error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (BOOL)applyPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (nullable NSString *)diffForPath:(NSString *)path
+										status:(NSInteger)status
+					 hasStagedChanges:(BOOL)hasStagedChanges
+										staged:(BOOL)staged
+								parentTree:(NSString *)parentTree
+							  contextLines:(NSUInteger)contextLines
+										 error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+@end
+
 @interface PBCommitList : NSTableView
 @property (nonatomic) BOOL useAdjustScroll;
 @property (nonatomic, readonly) NSPoint mouseDownPoint;

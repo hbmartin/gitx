@@ -1305,6 +1305,34 @@
 	XCTAssertEqualObjects(cachedAfterUnstage, @"");
 }
 
+- (void)testRepositoryCommandInputWrappersForwardStandardInput
+{
+	NSError *error = nil;
+	NSString *expected = @"e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+	NSString *output = [self.repository outputOfTaskWithArguments:@[ @"hash-object", @"--stdin" ]
+																	input:@""
+																	error:&error];
+	XCTAssertEqualObjects(output, expected);
+	BOOL launched = [self.repository launchTaskWithArguments:@[ @"hash-object", @"-w", @"--stdin" ]
+													  input:@"stored through stdin"
+													  error:&error];
+	XCTAssertTrue(launched, @"%@", error);
+}
+
+- (void)testRefreshStatCacheCompletesWithARefreshedSnapshot
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"stat cache refresh\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refreshStatCache];
+	}];
+
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	XCTAssertTrue(tracked.hasUnstagedChanges);
+}
+
 - (void)testDiffAndPatchRoundTrip
 {
 	NSError *error = nil;
@@ -1885,6 +1913,18 @@
 			   XCTAssertTrue([output hasSuffix:@"10000\n"]);
 			   [expectation fulfill];
 		   }];
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
+- (void)testMainQueueTerminationConvenienceCompletesOnMainThread
+{
+	XCTestExpectation *expectation = [self expectationWithDescription:@"main queue termination"];
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+	[task performTaskWithTerminationHandler:^(NSError *error) {
+		XCTAssertTrue(NSThread.isMainThread);
+		XCTAssertNil(error);
+		[expectation fulfill];
+	}];
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
 }
 

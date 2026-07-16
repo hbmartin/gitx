@@ -45,6 +45,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (retain) NSMutableArray<PBChangedFile *> *files;
 @property (retain) PBIndexStatusParser *statusParser;
 @property (retain) PBIndexSnapshotReducer *snapshotReducer;
+@property (retain) PBIndexMutationService *mutationService;
 @end
 
 @implementation PBGitIndex
@@ -61,6 +62,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	_files = [NSMutableArray array];
 	_statusParser = [[PBIndexStatusParser alloc] init];
 	_snapshotReducer = [[PBIndexSnapshotReducer alloc] init];
+	_mutationService = [[PBIndexMutationService alloc] initWithRepository:theRepository];
 
 	_indexRefreshGroup = dispatch_group_create();
 	_indexRefreshQueue = dispatch_queue_create("org.gitx.indexRefresh", DISPATCH_QUEUE_SERIAL);
@@ -548,63 +550,16 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (BOOL)performStageOrUnstage:(BOOL)stage withFiles:(NSArray *)files
 {
-	// Do staging files by chunks of 1000 files each, to prevent program freeze (because NSPipe has limited capacity)
-
-	NSUInteger filesCount = files.count;
-	const NSUInteger MAX_FILES_PER_STAGE = 1000;
-
-	// Prepare first iteration
-	NSUInteger loopFrom = 0;
-	NSUInteger loopTo = MAX_FILES_PER_STAGE;
-	if (loopTo > filesCount)
-		loopTo = filesCount;
-	NSUInteger loopCount = 0;
-
-	// Staging
-	while (loopCount < filesCount) {
-		NSError *error = nil;
-		BOOL success = NO;
-		if (stage) {
-			NSLog(@"[GitX] Staging paths %lu-%lu of %lu", (unsigned long)loopFrom, (unsigned long)loopTo, (unsigned long)filesCount);
-			// Input is a NUL-delimited list of paths, equivalent to git add.
-			NSMutableString *input = [NSMutableString string];
-			for (NSUInteger i = loopFrom; i < loopTo; i++) {
-				PBChangedFile *file = [files objectAtIndex:i];
-				[input appendFormat:@"%@\0", file.path];
-			}
-			success = [self.repository launchTaskWithArguments:@[ @"update-index", @"--add", @"--remove", @"-z", @"--stdin" ]
-														 input:input
-														 error:&error];
-		} else {
-			NSString *parentTree = [self parentTree];
-			NSLog(@"[GitX] Unstaging paths %lu-%lu of %lu from %@", (unsigned long)loopFrom, (unsigned long)loopTo, (unsigned long)filesCount, parentTree);
-			// Reset paths from the comparison tree instead of trusting cached
-			// PBChangedFile blob metadata, which can lag behind partial staging.
-			NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:@"reset", @"--quiet", parentTree, @"--", nil];
-			for (NSUInteger i = loopFrom; i < loopTo; i++) {
-				PBChangedFile *file = [files objectAtIndex:i];
-				[arguments addObject:file.path];
-			}
-			success = [self.repository launchTaskWithArguments:arguments error:&error];
-		}
-		if (!success) {
-			[self postOperationFailed:[NSString stringWithFormat:@"Error in %@ files. Return value: %@", (stage ? @"staging" : @"unstaging"), error.userInfo[PBTaskTerminationStatusKey]]];
-			return NO;
-		}
-
-		loopCount = loopTo;
-
-		for (NSUInteger i = loopFrom; i < loopTo; i++) {
-			PBChangedFile *file = [files objectAtIndex:i];
-			file.hasStagedChanges = stage;
-			file.hasUnstagedChanges = !stage;
-		}
-
-		// Prepare next iteration
-		loopFrom = loopCount;
-		loopTo = loopFrom + MAX_FILES_PER_STAGE;
-		if (loopTo > filesCount)
-			loopTo = filesCount;
+	NSArray<NSString *> *paths = [files valueForKey:@"path"];
+	NSError *error = nil;
+	BOOL success = stage ? [self.mutationService stagePaths:paths error:&error] : [self.mutationService unstagePaths:paths parentTree:self.parentTree error:&error];
+	if (!success) {
+		[self postOperationFailed:[NSString stringWithFormat:@"Error in %@ files. Return value: %@", (stage ? @"staging" : @"unstaging"), error.userInfo[PBTaskTerminationStatusKey]]];
+		return NO;
+	}
+	for (PBChangedFile *file in files) {
+		file.hasStagedChanges = stage;
+		file.hasUnstagedChanges = !stage;
 	}
 
 	[self postIndexUpdated];
@@ -624,19 +579,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)discardFiles
 {
-	NSArray *paths = [discardFiles valueForKey:@"path"];
-	NSString *input = [paths componentsJoinedByString:@"\0"];
-
-	NSArray *arguments = @[ @"checkout-index", @"--index", @"--quiet", @"--force", @"-z", @"--stdin" ];
-
-	PBTask *task = [PBTask taskWithLaunchPath:[PBGitBinary path]
-									arguments:arguments
-								  inDirectory:self.repository.workingDirectoryURL.path];
-	task.standardInputData = [input dataUsingEncoding:NSUTF8StringEncoding];
-
+	NSArray<NSString *> *paths = [discardFiles valueForKey:@"path"];
 	NSError *error = nil;
-	BOOL success = [task launchTask:&error];
-	if (!success) {
+	if (![self.mutationService discardPaths:paths error:&error]) {
 		[self postOperationFailed:[NSString stringWithFormat:@"Discarding changes failed with return value %@", error.userInfo[PBTaskTerminationStatusKey]]];
 		return;
 	}
@@ -650,21 +595,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;
 {
-	if (![hunk hasSuffix:@"\n"])
-		hunk = [hunk stringByAppendingString:@"\n"];
-
-	NSMutableArray *array = [NSMutableArray arrayWithObjects:@"apply", @"--unidiff-zero", nil];
-	if (stage)
-		[array addObject:@"--cached"];
-	if (reverse)
-		[array addObject:@"--reverse"];
-
 	NSError *error = nil;
-	NSString *output = [self.repository outputOfTaskWithArguments:array
-															input:hunk
-															error:&error];
-
-	if (!output) {
+	if (![self.mutationService applyPatch:hunk stage:stage reverse:reverse error:&error]) {
 		NSString *message = [NSString stringWithFormat:@"Applying patch failed with return value %@. Error: %@", error.userInfo[PBTaskTerminationStatusKey], error.userInfo[PBTaskTerminationOutputKey]];
 		[self postOperationFailed:message];
 		return NO;
@@ -678,39 +610,16 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context
 {
-	NSString *parameter = [NSString stringWithFormat:@"-U%lu", context];
-	if (staged) {
-		NSLog(@"[GitX] Rendering staged %@ for %@", file.status == NEW ? @"addition" : @"change", file.path);
-		NSArray *arguments = @[ @"diff-index", parameter, @"--cached", self.parentTree, @"--", file.path ];
-
-		NSError *error = nil;
-		NSString *output = [self.repository outputOfTaskWithArguments:arguments error:&error];
-		if (!output) {
-			PBLogError(error);
-		}
-		return output;
-	}
-
-	// unstaged
-	BOOL untracked = file.status == NEW && !file.hasStagedChanges;
-	if (untracked) {
-		NSLog(@"[GitX] Rendering untracked contents for %@", file.path);
-		NSStringEncoding encoding;
-		NSError *error = nil;
-		NSURL *fileURL = [self.repository.workingDirectoryURL URLByAppendingPathComponent:file.path];
-		NSString *contents = [NSString stringWithContentsOfURL:fileURL
-												  usedEncoding:&encoding
-														 error:&error];
-		return contents;
-	}
-
-	NSLog(@"[GitX] Rendering tracked worktree delta for %@", file.path);
 	NSError *error = nil;
-	NSString *output = [self.repository outputOfTaskWithArguments:@[ @"diff-files", parameter, @"--", file.path ]
-															error:&error];
-	if (!output) {
+	NSString *output = [self.mutationService diffForPath:file.path
+															status:file.status
+											hasStagedChanges:file.hasStagedChanges
+														  staged:staged
+													  parentTree:self.parentTree
+													contextLines:context
+														   error:&error];
+	if (!output)
 		PBLogError(error);
-	}
 	return output;
 }
 
