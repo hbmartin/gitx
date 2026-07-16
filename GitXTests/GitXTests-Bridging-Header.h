@@ -146,9 +146,51 @@ NS_ASSUME_NONNULL_BEGIN
 
 @protocol PBIndexCommandRunning <NSObject>
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments
-												 input:(nullable NSString *)input
-										 environment:(nullable NSDictionary<NSString *, NSString *> *)environment
-												 error:(NSError * _Nullable * _Nullable)error;
+										 input:(nullable NSString *)input
+								 environment:(nullable NSDictionary<NSString *, id> *)environment
+										 error:(NSError * _Nullable * _Nullable)error;
+@end
+
+@protocol PBIndexHookRunning <NSObject>
+- (BOOL)executeHook:(NSString *)name
+          arguments:(NSArray<NSString *> *)arguments
+              error:(NSError * _Nullable * _Nullable)error;
+@end
+
+typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
+    PBIndexCommitResultKindSuccess,
+    PBIndexCommitResultKindFailure,
+    PBIndexCommitResultKindHookFailure,
+};
+
+@interface PBIndexCommitRequest : NSObject
+- (instancetype)initWithMessage:(NSString *)message
+                         verify:(BOOL)verify
+                        gpgSign:(BOOL)gpgSign
+                          amend:(BOOL)amend
+                    environment:(nullable NSDictionary<NSString *, id> *)environment
+                     parentSHAs:(NSArray<NSString *> *)parentSHAs
+                        hasHead:(BOOL)hasHead;
+@end
+
+@interface PBIndexCommitResult : NSObject
+@property (nonatomic, readonly) PBIndexCommitResultKind kind;
+@property (nonatomic, readonly) NSString *message;
+@property (nonatomic, readonly, nullable) NSString *sha;
+@property (nonatomic, readonly) BOOL postCommitHookSucceeded;
+@end
+
+@interface PBIndexCommitService : NSObject
+- (instancetype)initWithRunner:(id<PBIndexCommandRunning>)runner
+                     hookRunner:(id<PBIndexHookRunning>)hookRunner
+                   gitDirectory:(NSURL *)gitDirectory
+             temporaryDirectory:(NSURL *)temporaryDirectory;
+- (nullable NSString *)prepareCommitMessageForAmend:(BOOL)amend
+                                            headSHA:(nullable NSString *)headSHA
+                                    existingMessage:(nullable NSString *)existingMessage
+                                              error:(NSError * _Nullable * _Nullable)error;
+- (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request
+                                  progress:(void (^)(NSString *message))progress;
 @end
 
 @interface PBIndexMutationService : NSObject

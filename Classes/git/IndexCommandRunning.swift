@@ -5,7 +5,7 @@ protocol IndexCommandRunning: AnyObject {
     nonisolated func output(
         arguments: [String],
         input: String?,
-        environment: [String: String]?
+        environment: [String: Any]?
     ) throws -> String
 }
 
@@ -20,7 +20,7 @@ final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexCommandRunn
     func output(
         arguments: [String],
         input: String?,
-        environment: [String: String]?
+        environment: [String: Any]?
     ) throws -> String {
         let task = repository.task(withArguments: arguments)
         if let input {

@@ -46,6 +46,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (retain) PBIndexStatusParser *statusParser;
 @property (retain) PBIndexSnapshotReducer *snapshotReducer;
 @property (retain) PBIndexMutationService *mutationService;
+@property (retain) PBIndexCommitService *commitService;
 @end
 
 @implementation PBGitIndex
@@ -63,6 +64,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	_statusParser = [[PBIndexStatusParser alloc] init];
 	_snapshotReducer = [[PBIndexSnapshotReducer alloc] init];
 	_mutationService = [[PBIndexMutationService alloc] initWithRepository:theRepository];
+	_commitService = [[PBIndexCommitService alloc] initWithRepository:theRepository];
 
 	_indexRefreshGroup = dispatch_group_create();
 	_indexRefreshQueue = dispatch_queue_create("org.gitx.indexRefresh", DISPATCH_QUEUE_SERIAL);
@@ -342,45 +344,23 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (NSString *)createPrepareCommitMessage
 {
-	NSError *error;
-	NSString *messagePath = [NSTemporaryDirectory() stringByAppendingPathComponent:[@"commit-" stringByAppendingString:[[NSUUID UUID] UUIDString]]];
-	NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObject:messagePath];
-	PBGitRepository *repository = [self repository];
-
-	if ([[repository index] isAmend]) {
-		// git itself seems to pass HEAD when doing a plain 'git commit --amend', but git's documentation says the third argument can be a commit hash
-		[arguments addObject:@"commit"];
-		[arguments addObject:self.repository.headOID.SHA];
-
-		// Write the message of the commit we're amending to a file so we can run the prepare-commit-msg hook on it
+	NSString *headSHA = nil;
+	NSString *existingMessage = nil;
+	if (self.amend) {
+		headSHA = self.repository.headOID.SHA;
 		GTReference *headRef = [self.repository.gtRepo headReferenceWithError:NULL];
 		GTCommit *commit = [headRef resolvedTarget];
-
-		[commit.message writeToFile:messagePath atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+		existingMessage = commit.message;
 	}
 
-	NSString *prepareCommitMessage;
-
-	if ([repository executeHook:@"prepare-commit-msg" arguments:arguments error:&error]) {
-		prepareCommitMessage = [NSString stringWithContentsOfFile:messagePath usedEncoding:NULL error:&error];
-
-		// Trim the last newline from the string (to make this match how git presents the results)
-		if ([prepareCommitMessage length] > 0 && [prepareCommitMessage characterAtIndex:[prepareCommitMessage length] - 1] == '\n') {
-			prepareCommitMessage = [prepareCommitMessage substringToIndex:[prepareCommitMessage length] - 1];
-		}
-
-		[[NSFileManager defaultManager] removeItemAtPath:messagePath error:NULL];
-	} else {
-		NSError *taskError = error.userInfo[NSUnderlyingErrorKey];
-		NSString *hookOutput = taskError.userInfo[PBTaskTerminationOutputKey];
-		NSString *hookFailureMessage = [NSString stringWithFormat:@"prepare-commit-msg hook failed%@%@",
-																  hookOutput && [hookOutput length] > 0 ? @":\n" : @"",
-																  hookOutput];
-
-		[self postCommitHookFailure:hookFailureMessage];
-	}
-
-	return prepareCommitMessage;
+	NSError *error = nil;
+	NSString *message = [self.commitService prepareCommitMessageForAmend:self.amend
+																 headSHA:headSHA
+														 existingMessage:existingMessage
+																   error:&error];
+	if (!message && [error.domain isEqualToString:@"PBGitIndexCommitError"])
+		[self postCommitHookFailure:error.localizedDescription];
+	return message;
 }
 
 // TODO: make Asynchronous
@@ -394,121 +374,46 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		return;
 	}
 
-	NSMutableString *commitSubject = [@"commit: " mutableCopy];
-	NSRange newLine = [commitMessage rangeOfString:@"\n"];
-	if (newLine.location == NSNotFound)
-		[commitSubject appendString:commitMessage];
-	else
-		[commitSubject appendString:[commitMessage substringToIndex:newLine.location]];
-
-	NSString *commitMessageFile;
-	commitMessageFile = [self.repository.gitURL.path stringByAppendingPathComponent:@"COMMIT_EDITMSG"];
-
-	[commitMessage writeToFile:commitMessageFile atomically:YES encoding:NSUTF8StringEncoding error:nil];
-
-
-	[self postCommitUpdate:@"Creating tree"];
-	NSString *tree = [self.repository outputOfTaskWithArguments:@[ @"write-tree" ] error:&error];
-	if (!tree) {
-		PBLogError(error);
-		return [self postCommitFailure:@"Failed to lookup tree"];
-	}
-	tree = [tree stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-	if ([tree length] != 40)
-		return [self postCommitFailure:@"Creating tree failed"];
-
-
-	NSMutableArray *arguments = [NSMutableArray arrayWithObjects:@"commit-tree", tree, nil];
+	NSMutableArray<NSString *> *parentSHAs = [NSMutableArray array];
 	if (self.amend) {
 		GTReference *headRef = [self.repository.gtRepo headReferenceWithError:NULL];
 		GTCommit *headCommit = [headRef resolvedTarget];
 		NSLog(@"[GitX] Amending commit with %lu preserved parent(s)", (unsigned long)headCommit.parentOIDs.count);
-		for (GTOID *parentOID in headCommit.parentOIDs) {
-			[arguments addObject:@"-p"];
-			[arguments addObject:parentOID.SHA];
-		}
-	} else if ([self.repository revisionExists:@"HEAD"]) {
-		[arguments addObject:@"-p"];
-		[arguments addObject:@"HEAD"];
+		for (GTOID *parentOID in headCommit.parentOIDs)
+			[parentSHAs addObject:parentOID.SHA];
 	}
 
 	BOOL gpgSign = [config boolForKey:@"commit.gpgSign"];
-	if (gpgSign) {
-		[arguments addObject:@"--gpg-sign"];
+	PBIndexCommitRequest *request = [[PBIndexCommitRequest alloc] initWithMessage:commitMessage
+																		   verify:doVerify
+																		  gpgSign:gpgSign
+																			amend:self.amend
+																	  environment:self.amendEnvironment
+																	   parentSHAs:parentSHAs
+																		  hasHead:[self.repository revisionExists:@"HEAD"]];
+	PBIndexCommitResult *result = [self.commitService commitWithRequest:request
+															   progress:^(NSString *progress) {
+																   [self postCommitUpdate:progress];
+															   }];
+	if (result.kind == PBIndexCommitResultKindFailure) {
+		[self postCommitFailure:result.message];
+		return;
 	}
-
-	[self postCommitUpdate:@"Creating commit"];
-
-	if (doVerify) {
-		[self postCommitUpdate:@"Running hooks"];
-		NSString *hookFailureMessage = nil;
-		NSError *error = nil;
-		BOOL success = [self.repository executeHook:@"pre-commit" error:&error];
-		if (!success) {
-			NSError *taskError = error.userInfo[NSUnderlyingErrorKey];
-			NSString *hookOutput = taskError.userInfo[PBTaskTerminationOutputKey];
-			hookFailureMessage = [NSString stringWithFormat:@"Pre-commit hook failed%@%@",
-															hookOutput && [hookOutput length] > 0 ? @":\n" : @"",
-															hookOutput];
-			[self postCommitHookFailure:hookFailureMessage];
-			return;
-		}
-
-		success = [self.repository executeHook:@"commit-msg" arguments:@[ commitMessageFile ] error:&error];
-		if (!success) {
-			NSError *taskError = error.userInfo[NSUnderlyingErrorKey];
-			NSString *hookOutput = taskError.userInfo[PBTaskTerminationOutputKey];
-			hookFailureMessage = [NSString stringWithFormat:@"Commit-msg hook failed%@%@",
-															hookOutput && [hookOutput length] > 0 ? @":\n" : @"",
-															hookOutput];
-			[self postCommitHookFailure:hookFailureMessage];
-			return;
-		}
-	}
-
-	commitMessage = [NSString stringWithContentsOfFile:commitMessageFile encoding:NSUTF8StringEncoding error:nil];
-
-	PBTask *task = [self.repository taskWithArguments:arguments];
-	task.additionalEnvironment = self.amendEnvironment;
-	task.standardInputData = [commitMessage dataUsingEncoding:NSUTF8StringEncoding];
-
-	BOOL success = [task launchTask:&error];
-	NSString *commit = [[task standardOutputString] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-	if (!success || commit.length != 40) {
-		PBLogError(error);
-		NSString *taskOutput = error.userInfo[PBTaskTerminationOutputKey];
-		if (gpgSign && [taskOutput hasPrefix:@"error: cannot run gpg"]) {
-			[self postCommitFailure:@"GPG signing seems to have failed.\n\nMake sure you have configured your environment correctly and have set gpg.program to point at your gpg binary."];
-		} else {
-			[self postCommitFailure:@"Could not create a commit object"];
-		}
+	if (result.kind == PBIndexCommitResultKindHookFailure) {
+		[self postCommitHookFailure:result.message];
 		return;
 	}
 
-	[self postCommitUpdate:@"Updating HEAD"];
-	success = [self.repository launchTaskWithArguments:@[ @"update-ref", @"-m", commitSubject, @"HEAD", commit ] error:&error];
-	if (!success) {
-		PBLogError(error);
-		return [self postCommitFailure:@"Could not update HEAD"];
-	}
-
-	[self postCommitUpdate:@"Running post-commit hook"];
-
-	success = [self.repository executeHook:@"post-commit" error:NULL];
-	NSMutableDictionary *userInfo = [NSMutableDictionary dictionaryWithObject:[NSNumber numberWithBool:success] forKey:@"success"];
-	NSString *description;
-	if (success)
-		description = [NSString stringWithFormat:@"Successfully created commit %@", commit];
-	else
-		description = [NSString stringWithFormat:@"Post-commit hook failed, but successfully created commit %@", commit];
-
-	[userInfo setObject:description forKey:@"description"];
-	[userInfo setObject:commit forKey:@"sha"];
+	NSDictionary *userInfo = @{
+		@"success" : @(result.postCommitHookSucceeded),
+		@"description" : result.message,
+		@"sha" : result.sha ?: @"",
+	};
 
 	[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexFinishedCommit
 														object:self
 													  userInfo:userInfo];
-	if (!success)
+	if (!result.postCommitHookSucceeded)
 		return;
 
 	self.repository.hasChanged = YES;
