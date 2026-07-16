@@ -506,6 +506,25 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.webCommits.isEmpty)
     }
 
+    func testPathMenuDisablesCommitActionsWithoutSelection() throws {
+        historyController.selectedCommits = []
+
+        let items = try XCTUnwrap(historyController.menuItems(forPaths: ["nested/tracked.txt"]) as? [NSMenuItem])
+        let diff = try XCTUnwrap(items.first { $0.title.hasPrefix("Diff file") })
+        let checkout = try XCTUnwrap(items.first { $0.title == "Checkout file" })
+        let history = try XCTUnwrap(items.first { $0.title == "Show history of file" })
+        let finder = try XCTUnwrap(items.first { $0.title == "Reveal in Finder" })
+        let open = try XCTUnwrap(items.first { $0.title == "Open File" })
+
+        XCTAssertFalse(diff.isEnabled)
+        XCTAssertNil(diff.action)
+        XCTAssertFalse(checkout.isEnabled)
+        XCTAssertNil(checkout.action)
+        XCTAssertTrue(history.isEnabled)
+        XCTAssertTrue(finder.isEnabled)
+        XCTAssertTrue(open.isEnabled)
+    }
+
     func testTablePasteboardDropCheckoutAndResponderInteractions() throws {
         repository.reloadRefs()
         let commits = loadedCommits()

@@ -1,10 +1,12 @@
 import AppKit
+import OSLog // swiftlint:disable:this unused_import
 
 // SwiftLint's analyzer cannot see these entry points through GitX-Swift.h.
 // swiftlint:disable unused_declaration
 @objc(PBHistoryMenuBuilder)
 final class HistoryMenuBuilder: NSObject {
     private let repository: PBGitRepository
+    private let logger = Logger(subsystem: "com.gitx.gitx", category: "HistoryMenuBuilder")
 
     @objc(initWithRepository:)
     init(repository: PBGitRepository) {
@@ -21,11 +23,15 @@ final class HistoryMenuBuilder: NSObject {
     func menuItems(for paths: [String], selectedCommit: PBGitCommit?) -> [NSMenuItem] {
         let filePaths = paths.map { $0.trimmingCharacters(in: .whitespaces) }
         let multiple = filePaths.count != 1
+        let hasCommit = selectedCommit != nil
+        if !hasCommit {
+            logger.debug("Disabling commit-dependent path menu actions without a selected commit")
+        }
         let history = item(multiple ? "Show history of files" : "Show history of file", action: NSSelectorFromString("showCommitsFromTree:"))
         let headName = repository.headRef()?.ref()?.shortName() ?? "HEAD"
         let isHead = selectedCommit?.oid == repository.headOID()
-        let diff = item("\(multiple ? "Diff files" : "Diff file") with \(headName)", action: NSSelectorFromString("diffFilesAction:"), enabled: !isHead)
-        let checkout = item(multiple ? "Checkout files" : "Checkout file", action: NSSelectorFromString("checkoutFiles:"))
+        let diff = item("\(multiple ? "Diff files" : "Diff file") with \(headName)", action: NSSelectorFromString("diffFilesAction:"), enabled: hasCommit && !isHead)
+        let checkout = item(multiple ? "Checkout files" : "Checkout file", action: NSSelectorFromString("checkoutFiles:"), enabled: hasCommit)
         let finder = item("Reveal in Finder", action: #selector(PBGitWindowController.revealInFinder(_:)))
         let open = item(multiple ? "Open Files" : "Open File", action: #selector(PBGitWindowController.openFiles(_:)))
         let items = [history, diff, checkout, finder, open]
