@@ -92,7 +92,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSArray<NSString *> *)remotes;
 - (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 - (BOOL)fetchRemoteForRef:(nullable PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
-- (BOOL)pullBranch:(PBGitRef *)branchRef fromRemote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (BOOL)pullBranch:(nullable PBGitRef *)branchRef fromRemote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 - (BOOL)pushBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 - (BOOL)deleteRemote:(nullable PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 @end
@@ -130,6 +130,8 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @property (nonatomic, readonly) NSString *displayPath;
 - (long long)fileSize;
 - (NSString *)textContents;
+- (NSString *)blame;
+- (NSString *)log:(NSString *)format;
 - (NSString *)tmpFileNameForContents;
 @end
 

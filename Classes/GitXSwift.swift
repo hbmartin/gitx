@@ -107,24 +107,6 @@ final nonisolated class RepositoryRefreshPolicy: NSObject { // swiftlint:disable
     }
 }
 
-/// Tracks repository snapshots for Objective-C window controllers.
-@objc(PBRepositoryFocusRefreshTracker)
-final class RepositoryFocusRefreshTracker: NSObject { // swiftlint:disable:this unused_declaration
-    private var previousSnapshotComponents: [Data]?
-
-    @objc(shouldRefreshForSnapshotComponents:)
-    func shouldRefresh(for snapshotComponents: [Data]) -> Bool { // swiftlint:disable:this unused_declaration
-        defer { previousSnapshotComponents = snapshotComponents }
-        guard let previousSnapshotComponents else { return false }
-        return previousSnapshotComponents != snapshotComponents
-    }
-
-    @objc
-    func reset() {
-        previousSnapshotComponents = nil
-    }
-}
-
 /// Decides whether a refs refresh should keep following the checked-out branch.
 @objc(PBHistoryRefreshSelectionPolicy)
 final nonisolated class HistoryRefreshSelectionPolicy: NSObject { // swiftlint:disable:this unused_declaration

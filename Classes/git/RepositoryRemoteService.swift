@@ -160,7 +160,7 @@ final class RepositoryRemoteService: NSObject {
 
     @objc(pullBranch:fromRemote:rebase:error:)
     func pullBranch(
-        _ branchRef: PBGitRef,
+        _ branchRef: PBGitRef?,
         fromRemote remoteRef: PBGitRef?,
         rebase: Bool,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
@@ -194,7 +194,7 @@ final class RepositoryRemoteService: NSObject {
                         comment: "PBGitRepository - pull error reason"
                     ),
                     remoteName,
-                    branchRef.shortName()
+                    branchRef?.shortName() ?? "(null)"
                 ),
                 underlyingError: error
             )

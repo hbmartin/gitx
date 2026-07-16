@@ -12,20 +12,26 @@
 
 @class PBGitWindowController;
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBAddRemoteSheet : RJModalRepoSheet
 
-+ (void)beginSheetWithWindowController:(PBGitWindowController *)windowController completionHandler:(RJSheetCompletionHandler)handler;
++ (void)beginSheetWithWindowController:(PBGitWindowController *)windowController
+					 completionHandler:(nullable RJSheetCompletionHandler)handler
+	NS_SWIFT_NAME(begin(windowController:completionHandler:));
 
-- (IBAction)browseFolders:(id)sender;
-- (IBAction)addRemote:(id)sender;
-- (IBAction)showHideHiddenFiles:(id)sender;
-- (IBAction)cancelOperation:(id)sender;
+- (IBAction)browseFolders:(nullable id)sender;
+- (IBAction)addRemote:(nullable id)sender;
+- (IBAction)showHideHiddenFiles:(nullable id)sender;
+- (IBAction)cancelOperation:(nullable id)sender;
 
-@property (readwrite, weak) IBOutlet NSTextField *remoteName;
-@property (readwrite, weak) IBOutlet NSTextField *remoteURL;
-@property (readwrite, weak) IBOutlet NSTextField *errorMessage;
+@property (nullable, readwrite, weak) IBOutlet NSTextField *remoteName;
+@property (nullable, readwrite, weak) IBOutlet NSTextField *remoteURL;
+@property (nullable, readwrite, weak) IBOutlet NSTextField *errorMessage;
 
-@property (readwrite, strong) NSOpenPanel *browseSheet;
-@property (readwrite, strong) IBOutlet NSView *browseAccessoryView;
+@property (nullable, readwrite, strong) NSOpenPanel *browseSheet;
+@property (nullable, readwrite, strong) IBOutlet NSView *browseAccessoryView;
 
 @end
+
+NS_ASSUME_NONNULL_END

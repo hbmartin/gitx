@@ -212,6 +212,13 @@
 		C0DEB0000000000000000003 /* HistoryTableInteractionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000013 /* HistoryTableInteractionCoordinator.swift */; };
 		C0DEB0000000000000000004 /* PBGitHistoryController+UI.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */; };
 		C0DEC0000000000000000001 /* WindowControllerTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC0000000000000000002 /* WindowControllerTests.m */; };
+		C0DED0000000000000000001 /* RepositoryActionContextResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */; };
+		C0DED0000000000000000002 /* RepositoryFocusRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */; };
+		C0DED0000000000000000003 /* RepositoryRemoteActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */; };
+		C0DED0000000000000000004 /* RepositoryReferenceActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000014 /* RepositoryReferenceActionCoordinator.swift */; };
+		C0DED0000000000000000005 /* RepositoryStashActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */; };
+		C0DED0000000000000000006 /* WorkspaceActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */; };
+		C0DED0000000000000000007 /* PBGitWindowController+Dialogs.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
@@ -760,6 +767,13 @@
 		C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitRepository+ServiceForwarding.m"; sourceTree = "<group>"; };
 		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
+		C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryActionContextResolver.swift; sourceTree = "<group>"; };
+		C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryFocusRefreshCoordinator.swift; sourceTree = "<group>"; };
+		C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRemoteActionCoordinator.swift; sourceTree = "<group>"; };
+		C0DED0000000000000000014 /* RepositoryReferenceActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryReferenceActionCoordinator.swift; sourceTree = "<group>"; };
+		C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryStashActionCoordinator.swift; sourceTree = "<group>"; };
+		C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceActionCoordinator.swift; sourceTree = "<group>"; };
+		C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitWindowController+Dialogs.m"; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
 		CC0000020000002 /* GitXScreenshotTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXScreenshotTests.m; sourceTree = "<group>"; };
@@ -1069,6 +1083,13 @@
 				4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */,
 				4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */,
 				4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.m */,
+				C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */,
+				C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */,
+				C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */,
+				C0DED0000000000000000014 /* RepositoryReferenceActionCoordinator.swift */,
+				C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */,
+				C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */,
+				C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */,
 				4A5D763814A9A9CC00DF6C68 /* PBHistorySearchController.h */,
 				4A5D763914A9A9CC00DF6C68 /* PBHistorySearchController.m */,
 				6C5244021E00C33F0051DE20 /* PBHistorySearchMode.h */,
@@ -1757,6 +1778,13 @@
 				C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */,
 				C0DEB0000000000000000003 /* HistoryTableInteractionCoordinator.swift in Sources */,
 				C0DEB0000000000000000004 /* PBGitHistoryController+UI.m in Sources */,
+				C0DED0000000000000000001 /* RepositoryActionContextResolver.swift in Sources */,
+				C0DED0000000000000000002 /* RepositoryFocusRefreshCoordinator.swift in Sources */,
+				C0DED0000000000000000003 /* RepositoryRemoteActionCoordinator.swift in Sources */,
+				C0DED0000000000000000004 /* RepositoryReferenceActionCoordinator.swift in Sources */,
+				C0DED0000000000000000005 /* RepositoryStashActionCoordinator.swift in Sources */,
+				C0DED0000000000000000006 /* WorkspaceActionCoordinator.swift in Sources */,
+				C0DED0000000000000000007 /* PBGitWindowController+Dialogs.m in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
 				C0DE10000000000000000014 /* PBWorkingTree.m in Sources */,

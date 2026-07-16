@@ -1478,6 +1478,69 @@
 	XCTAssertEqual(firstTree, changes.tree);
 }
 
+- (void)testWorkingStateCompatibilitySurfaceAndCommittedTreeExport
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"changed working contents\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"new working contents\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+
+	PBUncommittedChanges *changes = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
+	XCTAssertEqual(changes.repository, self.repository);
+	XCTAssertEqualObjects(changes.authorEmail, @"");
+	XCTAssertEqualObjects(changes.authorDate, @"");
+	XCTAssertEqualObjects(changes.committer, @"");
+	XCTAssertEqualObjects(changes.committerEmail, @"");
+	XCTAssertEqualObjects(changes.committerDate, @"");
+	XCTAssertEqualObjects(changes.SHA, @"");
+	XCTAssertNil(changes.SVNRevision);
+	XCTAssertEqual(changes.parents.count, (NSUInteger)0);
+	XCTAssertFalse(changes.isOnHeadBranch);
+	XCTAssertEqualObjects(changes.refishName, @"WORKING_STATE");
+	XCTAssertEqualObjects(changes.refishType, @"working-state");
+	XCTAssertTrue([changes.patch containsString:@"+changed working contents"]);
+
+	PBWorkingTree *workingRoot = (PBWorkingTree *)changes.tree;
+	XCTAssertEqualObjects(changes.treeContents, workingRoot.children);
+	XCTAssertEqualObjects(workingRoot.contents, @"");
+	XCTAssertEqualObjects(workingRoot.blame, @"");
+	XCTAssertEqualObjects([workingRoot log:@"%H"], @"");
+
+	PBWorkingTree *tracked = (PBWorkingTree *)[self treeAtPath:@"tracked.txt" inRoot:workingRoot];
+	XCTAssertNotNil(tracked);
+	XCTAssertTrue([tracked.displayPath containsString:@"[M]"]);
+	XCTAssertEqualObjects(tracked.contents, @"changed working contents\n");
+	XCTAssertEqualObjects(tracked.textContents, tracked.contents);
+	XCTAssertFalse(tracked.blame.length == 0);
+	XCTAssertFalse([tracked log:@"%H"].length == 0);
+	XCTAssertGreaterThan(tracked.fileSize, (long long)0);
+	XCTAssertEqualObjects(tracked.tmpFileNameForContents.stringByResolvingSymlinksInPath,
+						  [self.fixture.path stringByAppendingPathComponent:@"tracked.txt"].stringByResolvingSymlinksInPath);
+
+	PBWorkingTree *untracked = (PBWorkingTree *)[self treeAtPath:@"untracked.txt" inRoot:workingRoot];
+	XCTAssertNotNil(untracked);
+	XCTAssertTrue([untracked.displayPath containsString:@"[?]"]);
+	XCTAssertTrue([untracked.blame containsString:@"Not Committed Yet"]);
+
+	NSString *headSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	GTCommit *gtCommit = [self.repository.gtRepo lookUpObjectBySHA:headSHA objectType:GTObjectTypeCommit error:&error];
+	XCTAssertNotNil(gtCommit, @"%@", error);
+	PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:gtCommit];
+	PBGitTree *committedRoot = commit.tree;
+	PBGitTree *committedTracked = [self treeAtPath:@"tracked.txt" inRoot:committedRoot];
+	NSString *cachedFile = committedTracked.tmpFileNameForContents;
+	XCTAssertEqualObjects(committedTracked.tmpFileNameForContents, cachedFile);
+	NSString *exportedDirectory = committedRoot.tmpFileNameForContents;
+	XCTAssertTrue([[NSFileManager defaultManager] fileExistsAtPath:exportedDirectory]);
+	NSString *exportedContents = [NSString stringWithContentsOfFile:[exportedDirectory stringByAppendingPathComponent:@"tracked.txt"]
+														   encoding:NSUTF8StringEncoding
+															  error:&error];
+	XCTAssertEqualObjects(exportedContents, @"first line\n", @"%@", error);
+}
+
 - (void)testUncommittedChangesSubjectShowsOnlyStats
 {
 	NSError *error = nil;

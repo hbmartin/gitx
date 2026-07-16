@@ -65,7 +65,7 @@ typedef enum branchFilterTypes {
 
 - (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError *_Nullable *_Nullable)error;
 - (BOOL)fetchRemoteForRef:(nullable PBGitRef *)ref error:(NSError *_Nullable *_Nullable)error;
-- (BOOL)pullBranch:(PBGitRef *)branchRef fromRemote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)pullBranch:(nullable PBGitRef *)branchRef fromRemote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError *_Nullable *_Nullable)error;
 - (BOOL)pushBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef error:(NSError *_Nullable *_Nullable)error;
 
 - (BOOL)checkoutRefish:(id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;

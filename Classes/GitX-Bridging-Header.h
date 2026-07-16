@@ -48,6 +48,13 @@
 #import "PBGitWindowController.h"
 #import "PBError.h"
 #import "PBTask.h"
+#import "PBAddRemoteSheet.h"
+#import "PBAutoFetchManager.h"
+#import "PBCreateBranchSheet.h"
+#import "PBCreateTagSheet.h"
+#import "PBDiffWindowController.h"
+#import "PBRemoteProgressSheet.h"
+#import "PBTerminalUtil.h"
 
 // The bridging header declares no APIs of its own, but retain an explicit
 // nullability region so it follows the same interoperability contract as

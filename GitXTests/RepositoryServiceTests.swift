@@ -64,7 +64,7 @@ final class RepositoryServiceTests: XCTestCase {
         let repository = PBGitRepository()
         let runner = CommandRunnerFake()
         runner.outputResults = [.success("origin"), .success("")]
-        runner.launchResults = [.success(()), .success(()), .failure(commandError)]
+        runner.launchResults = [.success(()), .success(()), .success(()), .failure(commandError)]
         let service = PBRepositoryRemoteService(repository: repository, runner: runner)
 
         XCTAssertEqual(service.remotes(), ["origin"])
@@ -73,11 +73,13 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertTrue(service.fetchRemote(for: nil, error: nil))
         var error: NSError?
         let remote = PBGitRef(string: "refs/remotes/origin")
+        XCTAssertTrue(service.pullBranch(nil, fromRemote: remote, rebase: true, error: &error))
         XCTAssertFalse(service.pushBranch(nil, toRemote: remote, error: &error))
         XCTAssertEqual(error?.localizedDescription, "Push failed")
         XCTAssertEqual(runner.launchArguments, [
             ["remote", "add", "-f", "origin", "/tmp/remote"],
             ["fetch", "--all"],
+            ["pull", "--rebase", "origin"],
             ["push", "origin"],
         ])
     }
@@ -86,7 +88,7 @@ final class RepositoryServiceTests: XCTestCase {
         let repository = PBGitRepository()
         let runner = CommandRunnerFake()
         runner.outputResults = [.failure(commandError), .failure(commandError)]
-        runner.launchResults = [.failure(commandError)]
+        runner.launchResults = [.failure(commandError), .failure(commandError)]
         let service = PBRepositoryRemoteService(repository: repository, runner: runner)
         let branch = PBGitRef(string: "refs/heads/main")
         let remote = PBGitRef(string: "refs/remotes/origin")
@@ -96,9 +98,15 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertFalse(service.pullBranch(branch, fromRemote: remote, rebase: true, error: &error))
         XCTAssertEqual(error?.localizedDescription, "Pull failed")
         error = nil
+        XCTAssertFalse(service.pullBranch(nil, fromRemote: remote, rebase: false, error: &error))
+        XCTAssertTrue(error?.localizedFailureReason?.contains("(null)") == true)
+        error = nil
         XCTAssertFalse(service.deleteRemote(remote, error: &error))
         XCTAssertEqual(error?.localizedDescription, "Delete remote failed!")
-        XCTAssertEqual(runner.launchArguments, [["pull", "--rebase", "origin"]])
+        XCTAssertEqual(runner.launchArguments, [
+            ["pull", "--rebase", "origin"],
+            ["pull", "origin"],
+        ])
         XCTAssertEqual(runner.outputArguments, [["remote"], ["remote", "rm", "origin"]])
     }
 

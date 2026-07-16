@@ -520,13 +520,13 @@ final class GitXSwiftFeatureTests: XCTestCase {
 
     func testRemoteSidebarSyncRemovesOnlyEmptyUnconfiguredRemotes() {
         let plan = PBRemoteSidebarSyncPlan.plan(
-            configuredRemoteNames: ["zulu", "origin", "zulu"],
-            existingRemoteNames: ["upstream", "origin", "stale"],
+            configuredRemoteNames: ["zulu", "alpha", "origin", "zulu"],
+            existingRemoteNames: ["upstream", "origin", "stale", "unused"],
             nonEmptyRemoteNames: ["upstream"]
         )
 
-        XCTAssertEqual(plan.namesToAdd, ["zulu"])
-        XCTAssertEqual(plan.namesToRemove, ["stale"])
+        XCTAssertEqual(plan.namesToAdd, ["alpha", "zulu"])
+        XCTAssertEqual(plan.namesToRemove, ["stale", "unused"])
     }
 
     func testLargeNativeDiffProducesScrollableDocument() throws {

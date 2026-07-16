@@ -124,10 +124,23 @@ static void PBWindowPerformPull(PBGitWindowController *controller, PBGitRef *bra
 @interface PBWindowProgressSheet : PBRemoteProgressSheet
 @end
 
+static BOOL PBWindowRunProgressInBackground;
+static XCTestExpectation *PBWindowProgressExpectation;
+
 @implementation PBWindowProgressSheet
 
 - (void)beginProgressSheetForBlock:(PBProgressSheetExecutionHandler)executionBlock completionHandler:(void (^)(NSError *))completionHandler
 {
+	if (PBWindowRunProgressInBackground) {
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			NSError *error = executionBlock();
+			dispatch_async(dispatch_get_main_queue(), ^{
+				completionHandler(error);
+				[PBWindowProgressExpectation fulfill];
+			});
+		});
+		return;
+	}
 	completionHandler(executionBlock());
 }
 
@@ -628,7 +641,6 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	_shownErrors = [NSMutableArray array];
 	_confirmations = [NSMutableArray array];
 	_shouldConfirm = YES;
-	[self setValue:[[NSClassFromString(@"PBRepositoryFocusRefreshTracker") alloc] init] forKey:@"_focusRefreshTracker"];
 	return self;
 }
 
@@ -824,6 +836,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowUseSnapshotTaskFake = NO;
 	PBWindowSnapshotData = nil;
 	PBWindowSnapshotError = nil;
+	PBWindowRunProgressInBackground = NO;
+	PBWindowProgressExpectation = nil;
 
 	PBWindowAddRemoteTestSheet = [[PBWindowAddRemoteSheet alloc] initWithWindow:nil];
 	PBWindowAddRemoteTestSheet.testRemoteName = [NSTextField labelWithString:NSLocalizedString(@"origin", nil)];
@@ -1026,6 +1040,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowPerformPull(self.controller, nil, self.remoteRef, YES);
 	[self.controller performPullForBranch:self.branchRef remote:self.remoteRef rebase:NO];
 	XCTAssertTrue([PBWindowLastProgressDescription containsString:@"origin"]);
+	PBWindowPerformPull(self.controller, nil, self.branchRef, NO);
+	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF BEGINSWITH 'pull'"]].count, (NSUInteger)4);
+	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'pullRebase'"]].count, (NSUInteger)1);
 
 	[self.controller performPushForBranch:self.branchRef toRemote:self.remoteRef requiresConfirmation:NO];
 	[self.controller performPushForBranch:self.branchRef toRemote:nil requiresConfirmation:NO];
@@ -1073,6 +1090,17 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)2);
 	XCTAssertEqual(self.controller.pullRouteCount, (NSUInteger)4);
 	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)3);
+}
+
+- (void)testRemoteProgressExecutionRunsSafelyOffTheMainQueue
+{
+	PBWindowRunProgressInBackground = YES;
+	PBWindowProgressExpectation = [self expectationWithDescription:@"background push completed"];
+
+	[self.controller performPushForBranch:self.branchRef toRemote:self.remoteRef requiresConfirmation:NO];
+	[self waitForExpectations:@[ PBWindowProgressExpectation ] timeout:5.0];
+
+	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'push'"]].count, (NSUInteger)1);
 }
 
 - (void)testRemoteAddAndMenuValidationMatrices

@@ -307,9 +307,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertGreaterThanOrEqual(commits.count, 3)
         let tree = commits[0].tree
         let files = flattenedTree(tree).filter(\.leaf)
-        let file = try XCTUnwrap(files.first)
+        let file = try XCTUnwrap(files.first { $0.fullPath == "nested/tracked.txt" })
         XCTAssertFalse(file.contents.isEmpty)
         XCTAssertNotNil(file.textContents())
+        XCTAssertFalse(file.blame().isEmpty)
+        XCTAssertFalse(file.log("%H").isEmpty)
         XCTAssertGreaterThan(file.fileSize(), 0)
         XCTAssertFalse(file.fullPath.isEmpty)
         XCTAssertFalse(file.displayPath.isEmpty)
