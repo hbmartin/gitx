@@ -88,6 +88,7 @@ final class NativeContentRendererTests: XCTestCase {
 
         XCTAssertTrue(result.attributedString.string.contains("Stage hunk"))
         XCTAssertTrue(result.attributedString.string.contains("Discard line"))
+        XCTAssertTrue(result.attributedString.string.contains("index 1111111..2222222 100644"))
         XCTAssertTrue(result.linkPayloads.values.contains { $0["action"] as? String == "stage" })
         XCTAssertTrue(result.linkPayloads.values.contains { $0["selectedIndexes"] is IndexSet })
 

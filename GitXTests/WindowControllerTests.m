@@ -35,6 +35,7 @@
 #import "PBSourceViewItem.h"
 #import "PBTask.h"
 #import "PBTerminalUtil.h"
+#import "PBPrefsWindowController.h"
 #import "PBViewController.h"
 
 @interface PBGitWindowController (WindowControllerTests)
@@ -2001,6 +2002,21 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	self.repository.testSubmodule = submodule;
 	[directController openURLs:@[ [self.repository.workingDirectoryURL URLByAppendingPathComponent:@"Submodule"] ]];
 	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)1);
+}
+
+- (void)testPreferencesWindowCharacterizesExistingToolbarAndSizing
+{
+	PBPrefsWindowController *preferences = [[PBPrefsWindowController alloc] initWithWindowNibName:@"Preferences"];
+	[preferences showWindow:nil];
+	NSArray<NSToolbarItemIdentifier> *identifiers = [preferences toolbarAllowedItemIdentifiers:preferences.window.toolbar];
+
+	XCTAssertEqual(identifiers.count, (NSUInteger)4);
+	XCTAssertEqualObjects(identifiers, (@[ @"General", @"Integration", @"Updates", @"History & Fetch" ]));
+	XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
+	XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
+	XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
+
+	[preferences close];
 }
 
 - (void)testDialogsErrorsSettingsHookAndSuppressionBehavior
