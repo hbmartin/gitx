@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.6958,
+  "minimumLineCoverage": 0.6982,
   "files": {
     "Classes/Controllers/ApplicationController.m": 0.284,
     "Classes/Controllers/DBPrefsWindowController.m": 0.0,
@@ -62,6 +62,7 @@
     "Classes/Util/RJModalRepoSheet.m": 0.0,
     "Classes/Views/GLFileView.m": 0.6715,
     "Classes/Views/GitXTextView.m": 0.44,
+    "Classes/Views/NativeContentModels.swift": 1.0,
     "Classes/Views/PBAddRemoteSheet.m": 0.0,
     "Classes/Views/PBCloneRepositoryPanel.m": 0.0,
     "Classes/Views/PBCommitHookFailedSheet.m": 0.0,
@@ -75,7 +76,7 @@
     "Classes/Views/PBGitRevisionRow.m": 0.8684,
     "Classes/Views/PBGitXMessageSheet.m": 0.0,
     "Classes/Views/PBHighlighting.swift": 1.0,
-    "Classes/Views/PBNativeContentView.m": 0.9918,
+    "Classes/Views/PBNativeContentView.m": 0.9934,
     "Classes/Views/PBQLOutlineView.m": 0.283,
     "Classes/Views/PBQLTextView.m": 0.0,
     "Classes/Views/PBRemoteProgressSheet.m": 0.0,

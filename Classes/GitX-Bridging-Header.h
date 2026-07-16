@@ -55,6 +55,7 @@
 #import "PBDiffWindowController.h"
 #import "PBRemoteProgressSheet.h"
 #import "PBTerminalUtil.h"
+#import "PBNativeContentView.h"
 
 // The bridging header declares no APIs of its own, but retain an explicit
 // nullability region so it follows the same interoperability contract as

@@ -144,6 +144,55 @@ NS_ASSUME_NONNULL_BEGIN
 											   untracked:(nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)untracked;
 @end
 
+@interface PBNativeContentSection : NSObject
+@property (nonatomic, readonly) NSString *title;
+@property (nonatomic, readonly) NSString *text;
+@property (nonatomic, readonly) NSString *path;
+@property (nonatomic, readonly) NSString *context;
+@property (nonatomic, readonly) NSArray<NSDictionary<NSString *, id> *> *entries;
+@property (nonatomic, readonly) NSDictionary<NSString *, id> *imageSource;
+@property (nonatomic, readonly) NSString *displayTitle;
+@property (nonatomic, readonly) NSString *highlightingPath;
+- (instancetype)initWithDictionary:(NSDictionary<NSString *, id> *)dictionary;
++ (NSArray<PBNativeContentSection *> *)sectionsWithDictionaries:(NSArray<NSDictionary<NSString *, id> *> *)dictionaries;
+@end
+
+@class PBNativeDiffDocument;
+
+@interface PBDiffDocumentParser : NSObject
+- (PBNativeDiffDocument *)parseText:(NSString *)text fallbackPath:(NSString *)fallbackPath;
+- (NSString *)pathForDiffHeaderAtIndex:(NSInteger)headerIndex lines:(NSArray<NSString *> *)lines;
+@end
+
+@interface PBNativeDiffFile : NSObject
+@property (nonatomic, readonly) NSInteger startIndex;
+@property (nonatomic, readonly) NSString *path;
+@property (nonatomic, readonly) NSArray<NSString *> *headerLines;
+@end
+
+@interface PBNativeDiffHunk : NSObject
+@property (nonatomic, readonly) NSInteger startIndex;
+@property (nonatomic, readonly) NSInteger endIndex;
+@property (nonatomic, readonly) NSArray<NSString *> *lines;
+@property (nonatomic, readonly) NSArray<NSString *> *fileHeader;
+@property (nonatomic, readonly) NSString *patch;
+- (NSIndexSet *)blockIndexesStartingAtIndex:(NSInteger)index;
+@end
+
+@interface PBNativeDiffDocument : NSObject
+@property (nonatomic, readonly) NSArray<NSString *> *lines;
+@property (nonatomic, readonly) NSString *fallbackPath;
+@property (nonatomic, readonly) NSDictionary<NSNumber *, PBNativeDiffFile *> *filesByStartIndex;
+@property (nonatomic, readonly) NSDictionary<NSNumber *, PBNativeDiffHunk *> *hunksByStartIndex;
+@end
+
+@interface PBPartialPatchBuilder : NSObject
+- (nullable NSString *)patchWithFileHeader:(NSArray<NSString *> *)fileHeader
+                                 hunkLines:(NSArray<NSString *> *)hunkLines
+                           selectedIndexes:(NSIndexSet *)selectedIndexes
+                                   reverse:(BOOL)reverse;
+@end
+
 @protocol PBIndexCommandRunning <NSObject>
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments
 										 input:(nullable NSString *)input

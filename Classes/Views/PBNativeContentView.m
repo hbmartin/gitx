@@ -1,5 +1,5 @@
 #import "PBNativeContentView.h"
-#import "PBHighlighting.h"
+#import "GitX-Swift.h"
 
 NSString *const PBNativeSectionTitleKey = @"title";
 NSString *const PBNativeSectionTextKey = @"text";
@@ -31,6 +31,8 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 @property (nonatomic) NSUInteger renderGeneration;
 @property (nonatomic) NSDictionary<NSAttributedStringKey, id> *baseTextAttributes;
 @property (nonatomic) NSDictionary<NSAttributedStringKey, id> *titleTextAttributes;
+@property (nonatomic) PBDiffDocumentParser *diffParser;
+@property (nonatomic) PBPartialPatchBuilder *partialPatchBuilder;
 @end
 
 @implementation PBNativeContentView
@@ -44,6 +46,8 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 	_linkPayloads = [NSMutableDictionary dictionary];
 	_collapsedFiles = [NSMutableSet set];
 	_expandedImages = [NSMutableSet set];
+	_diffParser = [[PBDiffDocumentParser alloc] init];
+	_partialPatchBuilder = [[PBPartialPatchBuilder alloc] init];
 	_baseTextAttributes = @{NSFontAttributeName : [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular],
 							NSForegroundColorAttributeName : NSColor.textColor};
 	_titleTextAttributes = @{NSFontAttributeName : [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
@@ -153,15 +157,12 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 - (void)showSourceSections:(NSArray<NSDictionary *> *)sections
 {
 	NSUInteger generation = ++self.renderGeneration;
-	NSArray *copiedSections = [sections copy];
+	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sections];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NSMutableAttributedString *rendered = [[NSMutableAttributedString alloc] init];
-		for (NSDictionary *section in copiedSections) {
-			NSString *title = section[PBNativeSectionTitleKey] ?: section[PBNativeSectionPathKey] ?: @"";
-			NSString *path = section[PBNativeSectionPathKey] ?: title;
-			NSString *text = section[PBNativeSectionTextKey] ?: @"";
-			[self appendSectionTitle:title toString:rendered];
-			[rendered appendAttributedString:[PBHighlighting highlightedStringForText:text path:path]];
+		for (PBNativeContentSection *section in copiedSections) {
+			[self appendSectionTitle:section.displayTitle toString:rendered];
+			[rendered appendAttributedString:[PBHighlighting highlightedStringForText:section.text path:section.highlightingPath]];
 		}
 		dispatch_async(dispatch_get_main_queue(), ^{
 			[self setRenderedString:rendered generation:generation linkPayloads:nil];
@@ -190,9 +191,9 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 			author = [line substringFromIndex:7];
 		} else if ([line hasPrefix:@"summary "]) {
 			summary = [line substringFromIndex:8];
-			if (sha.length) metadata[sha] = @{ @"author" : author ?: @"", @"summary" : summary ?: @"" };
+			if (sha.length) metadata[sha] = @{@"author" : author ?: @"", @"summary" : summary ?: @""};
 		} else if ([line hasPrefix:@"\t"]) {
-			[result addObject:@{ @"sha" : sha ?: @"", @"author" : author ?: @"", @"summary" : summary ?: @"", @"code" : [line substringFromIndex:1] }];
+			[result addObject:@{@"sha" : sha ?: @"", @"author" : author ?: @"", @"summary" : summary ?: @"", @"code" : [line substringFromIndex:1]}];
 		}
 	}
 	return result;
@@ -201,17 +202,15 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 - (void)showBlameSections:(NSArray<NSDictionary *> *)sections
 {
 	NSUInteger generation = ++self.renderGeneration;
-	NSArray *copiedSections = [sections copy];
+	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sections];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NSMutableAttributedString *rendered = [[NSMutableAttributedString alloc] init];
-		for (NSDictionary *section in copiedSections) {
-			NSString *title = section[PBNativeSectionTitleKey] ?: section[PBNativeSectionPathKey] ?: @"";
-			NSString *path = section[PBNativeSectionPathKey] ?: title;
-			NSArray<NSDictionary *> *records = [self blameLinesFromPorcelain:section[PBNativeSectionTextKey] ?: @""];
+		for (PBNativeContentSection *section in copiedSections) {
+			NSArray<NSDictionary *> *records = [self blameLinesFromPorcelain:section.text];
 			NSMutableString *code = [NSMutableString string];
 			for (NSDictionary *record in records) [code appendFormat:@"%@\n", record[@"code"] ?: @""];
-			NSAttributedString *highlighted = [PBHighlighting highlightedStringForText:code path:path];
-			[self appendSectionTitle:title toString:rendered];
+			NSAttributedString *highlighted = [PBHighlighting highlightedStringForText:code path:section.highlightingPath];
+			[self appendSectionTitle:section.displayTitle toString:rendered];
 			NSUInteger codeLocation = 0;
 			for (NSDictionary *record in records) {
 				NSString *line = [NSString stringWithFormat:@"%@\n", record[@"code"] ?: @""];
@@ -228,11 +227,7 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 																					 NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
 																					 NSBackgroundColorAttributeName : NSColor.controlBackgroundColor,
 																				 }]];
-				if (codeLocation + line.length <= highlighted.length) {
-					[rendered appendAttributedString:[highlighted attributedSubstringFromRange:NSMakeRange(codeLocation, line.length)]];
-				} else {
-					[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:line attributes:self.baseAttributes]];
-				}
+				[rendered appendAttributedString:[highlighted attributedSubstringFromRange:NSMakeRange(codeLocation, line.length)]];
 				codeLocation += line.length;
 			}
 		}
@@ -264,15 +259,13 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 - (void)showHistorySections:(NSArray<NSDictionary *> *)sections
 {
 	NSUInteger generation = ++self.renderGeneration;
-	NSArray *copiedSections = [sections copy];
+	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sections];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NSMutableAttributedString *rendered = [[NSMutableAttributedString alloc] init];
 		NSMutableDictionary<NSString *, NSDictionary *> *linkPayloads = [NSMutableDictionary dictionary];
-		for (NSDictionary *section in copiedSections) {
-			[self appendSectionTitle:section[PBNativeSectionTitleKey] ?: section[PBNativeSectionPathKey] ?:
-																										   @""
-							toString:rendered];
-			for (NSDictionary *entry in section[PBNativeSectionEntriesKey] ?: @[]) {
+		for (PBNativeContentSection *section in copiedSections) {
+			[self appendSectionTitle:section.displayTitle toString:rendered];
+			for (NSDictionary *entry in section.entries) {
 				NSString *subject = entry[@"subject"] ?: @"";
 				[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:[subject stringByAppendingString:@"\n"] attributes:self.titleAttributes]];
 				NSString *detail = [NSString stringWithFormat:@"%@  •  %@  •  ", entry[@"author"] ?: @"", entry[@"date"] ?: @""];
@@ -295,34 +288,9 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 	});
 }
 
-- (NSString *)normalizedDiffPath:(NSString *)path
-{
-	if ([path hasPrefix:@"\""] && [path hasSuffix:@"\""] && path.length >= 2)
-		path = [path substringWithRange:NSMakeRange(1, path.length - 2)];
-	path = [path stringByReplacingOccurrencesOfString:@"\\\"" withString:@"\""];
-	path = [path stringByReplacingOccurrencesOfString:@"\\\\" withString:@"\\"];
-	if ([path hasPrefix:@"a/"] || [path hasPrefix:@"b/"]) path = [path substringFromIndex:2];
-	return path;
-}
-
 - (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines
 {
-	NSString *oldPath = nil;
-	for (NSUInteger index = headerIndex + 1; index < lines.count && ![lines[index] hasPrefix:@"diff --git "]; index++) {
-		NSString *line = lines[index];
-		if ([line hasPrefix:@"rename to "]) return [self normalizedDiffPath:[line substringFromIndex:10]];
-		if ([line hasPrefix:@"copy to "]) return [self normalizedDiffPath:[line substringFromIndex:8]];
-		if ([line hasPrefix:@"+++ "] && ![line isEqualToString:@"+++ /dev/null"])
-			return [self normalizedDiffPath:[line substringFromIndex:4]];
-		if ([line hasPrefix:@"--- "] && ![line isEqualToString:@"--- /dev/null"])
-			oldPath = [self normalizedDiffPath:[line substringFromIndex:4]];
-	}
-	if (oldPath.length) return oldPath;
-	NSString *header = lines[headerIndex];
-	NSRange destination = [header rangeOfString:@" b/" options:NSBackwardsSearch];
-	if (destination.location != NSNotFound)
-		return [self normalizedDiffPath:[header substringFromIndex:NSMaxRange(destination) - 2]];
-	return header;
+	return [self.diffParser pathForDiffHeaderAtIndex:headerIndex lines:lines];
 }
 
 - (NSDictionary<NSNumber *, NSAttributedString *> *)syntaxHighlightsForHunkLines:(NSArray<NSString *> *)hunkLines path:(NSString *)path
@@ -408,9 +376,7 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 		while (suffix < limit - prefix && [left characterAtIndex:left.length - 1 - suffix] == [right characterAtIndex:right.length - 1 - suffix]) suffix++;
 		NSUInteger changedLength = left.length - prefix - suffix;
 		if (changedLength) {
-			NSColor *emphasis = [line hasPrefix:@"+"]
-				? [NSColor colorWithRed:0.15 green:0.66 blue:0.25 alpha:0.30]
-				: [NSColor colorWithRed:0.90 green:0.18 blue:0.18 alpha:0.27];
+			NSColor *emphasis = [line hasPrefix:@"+"] ? [NSColor colorWithRed:0.15 green:0.66 blue:0.25 alpha:0.30] : [NSColor colorWithRed:0.90 green:0.18 blue:0.18 alpha:0.27];
 			[result addAttribute:NSBackgroundColorAttributeName value:emphasis range:NSMakeRange(1 + prefix, changedLength)];
 		}
 	}
@@ -437,58 +403,7 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 						   selectedIndexes:(NSIndexSet *)selectedIndexes
 								   reverse:(BOOL)reverse
 {
-	if (hunkLines.count < 2 || ![hunkLines.firstObject hasPrefix:@"@@"]) return nil;
-	NSRegularExpression *expression = [NSRegularExpression regularExpressionWithPattern:@"^@@ -(\\d+)(?:,\\d+)? \\+(\\d+)(?:,\\d+)? @@(.*)$" options:0 error:nil];
-	NSTextCheckingResult *match = [expression firstMatchInString:hunkLines.firstObject options:0 range:NSMakeRange(0, hunkLines.firstObject.length)];
-	if (!match || match.numberOfRanges < 4) return nil;
-	NSString *oldStart = [hunkLines.firstObject substringWithRange:[match rangeAtIndex:1]];
-	NSString *newStart = [hunkLines.firstObject substringWithRange:[match rangeAtIndex:2]];
-	NSString *suffix = [hunkLines.firstObject substringWithRange:[match rangeAtIndex:3]];
-
-	NSMutableArray<NSString *> *body = [NSMutableArray array];
-	NSUInteger oldCount = 0;
-	NSUInteger newCount = 0;
-	BOOL previousLineWasEmittedVerbatim = NO;
-	for (NSUInteger index = 1; index < hunkLines.count; index++) {
-		NSString *line = hunkLines[index];
-		if (!line.length) continue;
-		unichar prefix = [line characterAtIndex:0];
-		BOOL marker = prefix == '\\';
-		if (marker) {
-			if (previousLineWasEmittedVerbatim) [body addObject:line];
-			continue;
-		}
-		BOOL selected = [selectedIndexes containsIndex:index];
-		BOOL emittedVerbatim = YES;
-		if (!selected) {
-			unichar contextualChange = reverse ? '+' : '-';
-			unichar omittedChange = reverse ? '-' : '+';
-			if (prefix == contextualChange) {
-				line = [@" " stringByAppendingString:[line substringFromIndex:1]];
-				prefix = ' ';
-				emittedVerbatim = NO;
-			}
-			if (prefix == omittedChange) {
-				previousLineWasEmittedVerbatim = NO;
-				continue;
-			}
-		}
-		[body addObject:line];
-		previousLineWasEmittedVerbatim = emittedVerbatim;
-		if (prefix == '-')
-			oldCount++;
-		else if (prefix == '+')
-			newCount++;
-		else {
-			oldCount++;
-			newCount++;
-		}
-	}
-	if (!oldCount && !newCount) return nil;
-	NSMutableArray<NSString *> *patch = [fileHeader mutableCopy];
-	[patch addObject:[NSString stringWithFormat:@"@@ -%@,%lu +%@,%lu @@%@", oldStart, (unsigned long)oldCount, newStart, (unsigned long)newCount, suffix]];
-	[patch addObjectsFromArray:body];
-	return [[[patch componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"] copy];
+	return [self.partialPatchBuilder patchWithFileHeader:fileHeader hunkLines:hunkLines selectedIndexes:selectedIndexes reverse:reverse];
 }
 
 - (void)renderDiffText:(NSString *)diff
@@ -503,26 +418,19 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 		  linkPayloads:(NSMutableDictionary<NSString *, NSDictionary *> *)linkPayloads
 			  toString:(NSMutableAttributedString *)rendered
 {
-	NSArray<NSString *> *lines = [diff componentsSeparatedByString:@"\n"];
-	NSMutableArray<NSString *> *fileHeader = [NSMutableArray array];
+	PBNativeDiffDocument *document = [self.diffParser parseText:diff fallbackPath:fallbackPath ?: @""];
+	NSArray<NSString *> *lines = document.lines;
 	NSString *fileKey;
-	NSString *currentPath = fallbackPath ?: @"";
+	NSString *currentPath = document.fallbackPath;
 	BOOL collapsed = NO;
-	NSUInteger currentHunkStart = NSNotFound;
-	NSUInteger currentHunkEnd = NSNotFound;
-	NSArray<NSString *> *currentHunkLines = nil;
-	NSArray<NSString *> *currentFileHeader = nil;
+	PBNativeDiffHunk *currentHunk = nil;
 	NSDictionary<NSNumber *, NSAttributedString *> *currentHunkSyntax = @{};
 	for (NSUInteger index = 0; index < lines.count; index++) {
 		NSString *line = lines[index];
-		if ([line hasPrefix:@"diff --git "]) {
-			[fileHeader removeAllObjects];
-			[fileHeader addObject:line];
-			currentPath = [self pathForDiffHeaderAtIndex:index lines:lines];
-			currentHunkStart = NSNotFound;
-			currentHunkEnd = NSNotFound;
-			currentHunkLines = nil;
-			currentFileHeader = nil;
+		PBNativeDiffFile *file = document.filesByStartIndex[@(index)];
+		if (file) {
+			currentPath = file.path;
+			currentHunk = nil;
 			currentHunkSyntax = @{};
 			fileKey = [NSString stringWithFormat:@"%lu:%@", (unsigned long)sectionIndex, currentPath];
 			collapsed = [collapsedFiles containsObject:fileKey];
@@ -534,31 +442,21 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 			continue;
 		}
 		if (collapsed) continue;
-		if ([line hasPrefix:@"@@"]) {
-			NSUInteger end = index + 1;
-			while (end < lines.count && ![lines[end] hasPrefix:@"@@"] && ![lines[end] hasPrefix:@"diff --git "]) end++;
-			currentHunkLines = [lines subarrayWithRange:NSMakeRange(index, end - index)];
-			currentFileHeader = [fileHeader copy];
-			NSMutableArray<NSString *> *patchLines = [currentFileHeader mutableCopy];
-			[patchLines addObjectsFromArray:currentHunkLines];
-			NSString *patch = [[patchLines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
-			currentHunkStart = index;
-			currentHunkEnd = end;
-			currentHunkSyntax = shouldHighlightSyntax ? [self syntaxHighlightsForHunkLines:currentHunkLines path:currentPath] : @{};
+		PBNativeDiffHunk *hunk = document.hunksByStartIndex[@(index)];
+		if (hunk) {
+			currentHunk = hunk;
+			currentHunkSyntax = shouldHighlightSyntax ? [self syntaxHighlightsForHunkLines:hunk.lines path:currentPath] : @{};
 			[self appendDiffLine:line toString:rendered];
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"  "]];
 			if ([context isEqualToString:@"staged"]) {
-				[self appendLinkWithTitle:NSLocalizedString(@"Unstage hunk", @"Action to unstage all lines in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"unstage", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
+				[self appendLinkWithTitle:NSLocalizedString(@"Unstage hunk", @"Action to unstage all lines in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"unstage", @"patch" : hunk.patch} linkPayloads:linkPayloads toString:rendered];
 			} else if ([context isEqualToString:@"unstaged"]) {
-				[self appendLinkWithTitle:NSLocalizedString(@"Stage hunk", @"Action to stage all lines in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"stage", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
+				[self appendLinkWithTitle:NSLocalizedString(@"Stage hunk", @"Action to stage all lines in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"stage", @"patch" : hunk.patch} linkPayloads:linkPayloads toString:rendered];
 				[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"   "]];
-				[self appendLinkWithTitle:NSLocalizedString(@"Discard hunk", @"Action to discard all changes in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"discard", @"patch" : patch} linkPayloads:linkPayloads toString:rendered];
+				[self appendLinkWithTitle:NSLocalizedString(@"Discard hunk", @"Action to discard all changes in a diff hunk") payload:@{@"type" : @"diff", @"action" : @"discard", @"patch" : hunk.patch} linkPayloads:linkPayloads toString:rendered];
 			}
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"\n"]];
 			continue;
-		}
-		if (fileHeader.count && ([line hasPrefix:@"index "] || [line hasPrefix:@"new file "] || [line hasPrefix:@"deleted file "] || [line hasPrefix:@"--- "] || [line hasPrefix:@"+++ "])) {
-			[fileHeader addObject:line];
 		}
 		BOOL binaryImage = ([line hasPrefix:@"Binary files "] || [line isEqualToString:@"GIT binary patch"]) && [@[ @"png", @"jpg", @"jpeg", @"gif", @"tiff", @"tif", @"bmp", @"icns", @"webp" ] containsObject:currentPath.pathExtension.lowercaseString];
 		if (binaryImage && currentPath.length) {
@@ -593,20 +491,20 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 			counterpart = lines[index + 1];
 		else if ([line hasPrefix:@"+"] && index > 0 && [lines[index - 1] hasPrefix:@"-"])
 			counterpart = lines[index - 1];
-		NSAttributedString *syntaxBody = currentHunkStart != NSNotFound && index < currentHunkEnd ? currentHunkSyntax[@(index - currentHunkStart)] : nil;
-		if (!changedLine || [context isEqualToString:@"readOnly"] || currentHunkStart == NSNotFound) {
+		NSAttributedString *syntaxBody = currentHunk && index < currentHunk.endIndex ? currentHunkSyntax[@(index - currentHunk.startIndex)] : nil;
+		if (!changedLine || [context isEqualToString:@"readOnly"] || !currentHunk) {
 			[self appendDiffLine:line counterpart:counterpart syntaxBody:syntaxBody newline:YES toString:rendered];
 			continue;
 		}
 
 		[self appendDiffLine:line counterpart:counterpart syntaxBody:syntaxBody newline:NO toString:rendered];
 		[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"   " attributes:self.baseAttributes]];
-		NSUInteger relativeIndex = index - currentHunkStart;
+		NSUInteger relativeIndex = index - currentHunk.startIndex;
 		NSIndexSet *lineIndexes = [NSIndexSet indexSetWithIndex:relativeIndex];
 		NSDictionary *linePayload = @{
 			@"type" : @"diff",
-			@"fileHeader" : currentFileHeader,
-			@"hunkLines" : currentHunkLines,
+			@"fileHeader" : currentHunk.fileHeader,
+			@"hunkLines" : currentHunk.lines,
 			@"selectedIndexes" : lineIndexes,
 			@"reverse" : @([context isEqualToString:@"staged"]),
 		};
@@ -616,19 +514,11 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 		primaryPayload[@"action"] = primaryAction;
 		[self appendLinkWithTitle:primaryTitle payload:primaryPayload linkPayloads:linkPayloads toString:rendered];
 
-		BOOL blockStart = index == currentHunkStart + 1;
-		if (!blockStart && index > currentHunkStart + 1) {
-			NSString *previous = lines[index - 1];
-			blockStart = ![previous hasPrefix:@"+"] && ![previous hasPrefix:@"-"];
-		}
-		if (blockStart) {
-			NSUInteger blockEnd = index;
-			while (blockEnd + 1 < currentHunkEnd && ([lines[blockEnd + 1] hasPrefix:@"+"] || [lines[blockEnd + 1] hasPrefix:@"-"] || [lines[blockEnd + 1] hasPrefix:@"\\"])) blockEnd++;
-			NSMutableIndexSet *blockIndexes = [NSMutableIndexSet indexSet];
-			for (NSUInteger absolute = index; absolute <= blockEnd; absolute++) [blockIndexes addIndex:absolute - currentHunkStart];
+		NSIndexSet *blockIndexes = [currentHunk blockIndexesStartingAtIndex:relativeIndex];
+		if (blockIndexes.count) {
 			NSMutableDictionary *blockPayload = [linePayload mutableCopy];
 			blockPayload[@"action"] = primaryAction;
-			blockPayload[@"selectedIndexes"] = [blockIndexes copy];
+			blockPayload[@"selectedIndexes"] = blockIndexes;
 			[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"   " attributes:self.baseAttributes]];
 			NSString *blockTitle = [context isEqualToString:@"staged"] ? NSLocalizedString(@"Unstage block", @"Action to unstage a contiguous block of changed lines") : NSLocalizedString(@"Stage block", @"Action to stage a contiguous block of changed lines");
 			[self appendLinkWithTitle:blockTitle payload:blockPayload linkPayloads:linkPayloads toString:rendered];
@@ -647,7 +537,7 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 {
 	self.currentDiffSections = [sections copy];
 	NSUInteger generation = ++self.renderGeneration;
-	NSArray *copiedSections = [sections copy];
+	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sections];
 	NSSet<NSString *> *collapsedFiles = [self.collapsedFiles copy];
 	NSSet<NSString *> *expandedImages = [self.expandedImages copy];
 	id<PBNativeContentViewDelegate> delegate = self.delegate;
@@ -655,9 +545,8 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 		NSMutableAttributedString *rendered = [[NSMutableAttributedString alloc] init];
 		NSMutableDictionary<NSString *, NSDictionary *> *linkPayloads = [NSMutableDictionary dictionary];
 		NSUInteger diffByteCount = 0;
-		for (NSDictionary *section in copiedSections) {
-			NSString *diff = section[PBNativeSectionTextKey] ?: @"";
-			NSUInteger sectionByteCount = [diff lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+		for (PBNativeContentSection *section in copiedSections) {
+			NSUInteger sectionByteCount = [section.text lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
 			if (NSUIntegerMax - diffByteCount < sectionByteCount) {
 				diffByteCount = NSUIntegerMax;
 				break;
@@ -668,14 +557,12 @@ __attribute__((annotate("returns_localized_nsstring"))) static inline NSString *
 		if (!shouldHighlightSyntax)
 			NSLog(@"[GitX] Rendering %lu-byte diff document with lightweight coloring for responsive scrolling", (unsigned long)diffByteCount);
 		NSUInteger sectionIndex = 0;
-		for (NSDictionary *section in copiedSections) {
-			NSString *title = section[PBNativeSectionTitleKey] ?: @"";
-			NSString *diff = section[PBNativeSectionTextKey] ?: @"";
-			[self appendSectionTitle:title toString:rendered];
-			if (diff.length == 0) {
+		for (PBNativeContentSection *section in copiedSections) {
+			[self appendSectionTitle:section.title toString:rendered];
+			if (section.text.length == 0) {
 				[rendered appendAttributedString:[[NSAttributedString alloc] initWithString:@"There are no differences.\n" attributes:@{NSForegroundColorAttributeName : NSColor.secondaryLabelColor}]];
 			} else {
-				[self renderDiffText:diff context:section[PBNativeSectionContextKey] ?: @"readOnly" section:sectionIndex path:section[PBNativeSectionPathKey] ?: @"" highlightSyntax:shouldHighlightSyntax collapsedFiles:collapsedFiles expandedImages:expandedImages imageSource:section[PBNativeSectionImageSourceKey] ?: @{} delegate:delegate linkPayloads:linkPayloads toString:rendered];
+				[self renderDiffText:section.text context:section.context section:sectionIndex path:section.path highlightSyntax:shouldHighlightSyntax collapsedFiles:collapsedFiles expandedImages:expandedImages imageSource:section.imageSource delegate:delegate linkPayloads:linkPayloads toString:rendered];
 			}
 			sectionIndex++;
 		}
