@@ -15,6 +15,8 @@
 #import "PBNativeContentView.h"
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
+#import "PBGitRevisionCell.h"
+#import "PBHistorySearchController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -121,9 +123,45 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @end
 
 @interface PBGitTree : NSObject
+@property (nonatomic, readonly) BOOL leaf;
+@property (nonatomic, readonly) NSArray<PBGitTree *> *children;
+@property (nonatomic, readonly) NSString *contents;
+@property (nonatomic, readonly) NSString *fullPath;
+@property (nonatomic, readonly) NSString *displayPath;
+- (long long)fileSize;
+- (NSString *)textContents;
+- (NSString *)tmpFileNameForContents;
 @end
 
 @interface PBQLTextView : NSTextView
+@end
+
+@interface PBGitRevisionCell (GitXTests)
++ (NSColor *)shadowColor;
++ (NSColor *)lineShadowColor;
+@end
+
+@interface PBHistorySearchController (GitXTests)
+- (BOOL)hasSearchResults;
+@end
+
+@interface PBHistoryTableInteractionCoordinator : NSObject <NSTableViewDelegate, NSTableViewDataSource>
+@property (nonatomic) BOOL hasWorkingState;
+- (nullable NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row;
+- (NSIndexSet *)tableView:(NSTableView *)tableView
+    selectionIndexesForProposedSelection:(NSIndexSet *)proposedSelectionIndexes;
+- (BOOL)tableView:(NSTableView *)tableView
+    writeRowsWithIndexes:(NSIndexSet *)rowIndexes
+            toPasteboard:(NSPasteboard *)pasteboard;
+- (NSDragOperation)tableView:(NSTableView *)tableView
+                validateDrop:(id<NSDraggingInfo>)draggingInfo
+                 proposedRow:(NSInteger)row
+       proposedDropOperation:(NSTableViewDropOperation)operation;
+- (BOOL)tableView:(NSTableView *)tableView
+       acceptDrop:(id<NSDraggingInfo>)draggingInfo
+              row:(NSInteger)row
+    dropOperation:(NSTableViewDropOperation)operation;
+- (void)didDoubleClickCommitList:(nullable id)sender;
 @end
 
 @interface PBGitHistoryController (GitXTests)
@@ -139,22 +177,7 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (void)_repositoryUpdatedNotification:(NSNotification *)notification;
 - (void)performFindPanelAction:(id)sender;
 - (BOOL)isCommitSelected;
-- (BOOL)tableView:(NSTableView *)tableView
-    writeRowsWithIndexes:(NSIndexSet *)rowIndexes
-            toPasteboard:(NSPasteboard *)pasteboard;
-- (NSDragOperation)tableView:(NSTableView *)tableView
-                validateDrop:(id<NSDraggingInfo>)draggingInfo
-                 proposedRow:(NSInteger)row
-       proposedDropOperation:(NSTableViewDropOperation)operation;
-- (BOOL)tableView:(NSTableView *)tableView
-       acceptDrop:(id<NSDraggingInfo>)draggingInfo
-              row:(NSInteger)row
-    dropOperation:(NSTableViewDropOperation)operation;
-- (void)didDoubleClickCommitList:(id)sender;
 - (void)checkoutFiles:(id)sender;
-- (NSIndexSet *)tableView:(NSTableView *)tableView
-    selectionIndexesForProposedSelection:(NSIndexSet *)proposedSelectionIndexes;
-- (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row;
 - (NSInteger)numberOfPreviewItemsInPreviewPanel:(nullable id)panel;
 - (nullable id<QLPreviewItem>)previewPanel:(nullable id)panel previewItemAtIndex:(NSInteger)index;
 - (BOOL)previewPanel:(nullable id)panel handleEvent:(NSEvent *)event;

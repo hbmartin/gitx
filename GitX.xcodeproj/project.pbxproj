@@ -207,6 +207,10 @@
 		C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000017 /* RepositoryServiceTests.swift */; };
 		C0DE90000000000000000008 /* PBGitRepository+ServiceForwarding.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */; };
 		C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA0000000000000000002 /* HistoryControllerTests.swift */; };
+		C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */; };
+		C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */; };
+		C0DEB0000000000000000003 /* HistoryTableInteractionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000013 /* HistoryTableInteractionCoordinator.swift */; };
+		C0DEB0000000000000000004 /* PBGitHistoryController+UI.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
@@ -491,6 +495,10 @@
 		4A5D762F14A9A9CC00DF6C68 /* PBGitCommitController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitCommitController.m; sourceTree = "<group>"; };
 		4A5D763014A9A9CC00DF6C68 /* PBGitHistoryController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; lineEnding = 0; path = PBGitHistoryController.h; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objcpp; };
 		4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = PBGitHistoryController.m; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
+		C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryStateCoordinator.swift; sourceTree = "<group>"; };
+		C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryMenuBuilder.swift; sourceTree = "<group>"; };
+		C0DEB0000000000000000013 /* HistoryTableInteractionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryTableInteractionCoordinator.swift; sourceTree = "<group>"; };
+		C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitHistoryController+UI.m"; sourceTree = "<group>"; };
 		4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarController.h; sourceTree = "<group>"; };
 		4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitSidebarController.m; sourceTree = "<group>"; };
 		4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitWindowController.h; sourceTree = "<group>"; };
@@ -1051,6 +1059,10 @@
 				4A5D762F14A9A9CC00DF6C68 /* PBGitCommitController.m */,
 				4A5D763014A9A9CC00DF6C68 /* PBGitHistoryController.h */,
 				4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */,
+				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
+				C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */,
+				C0DEB0000000000000000013 /* HistoryTableInteractionCoordinator.swift */,
+				C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */,
 				4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */,
 				4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */,
 				4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */,
@@ -1738,6 +1750,10 @@
 				C0DE90000000000000000005 /* RepositoryReferenceStore.swift in Sources */,
 				C0DE90000000000000000006 /* RepositoryHookRunner.swift in Sources */,
 				C0DE90000000000000000008 /* PBGitRepository+ServiceForwarding.m in Sources */,
+				C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */,
+				C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */,
+				C0DEB0000000000000000003 /* HistoryTableInteractionCoordinator.swift in Sources */,
+				C0DEB0000000000000000004 /* PBGitHistoryController+UI.m in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
 				C0DE10000000000000000014 /* PBWorkingTree.m in Sources */,

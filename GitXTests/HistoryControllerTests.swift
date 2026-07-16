@@ -52,6 +52,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         var referenceIndex: Int32 = -1
 
         @objc(indexAtX:)
+        // swiftlint:disable:next unused_declaration
         func referenceIndex(atX x: CGFloat) -> Int32 {
             referenceIndex
         }
@@ -251,7 +252,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     func testRealNibLifecycleModesFiltersAndValidation() throws {
         XCTAssertEqual(historyController.commitList.accessibilityIdentifier(), "CommitList")
         XCTAssertTrue(historyController.commitList.allowsMultipleSelection)
-        XCTAssertTrue(historyController.commitList.delegate === historyController)
+        XCTAssertTrue(historyController.commitList.delegate is PBHistoryTableInteractionCoordinator)
+        XCTAssertTrue(historyController.commitList.delegate === historyController.commitList.dataSource)
+        XCTAssertNotNil(PBGitRevisionCell.shadowColor())
+        XCTAssertNotNil(PBGitRevisionCell.lineShadowColor())
+        _ = historyController.searchController.hasSearchResults()
+        XCTAssertTrue(PBTask(launchPath: "/usr/bin/true", arguments: [], inDirectory: nil).description.contains("command:"))
         XCTAssertTrue(historyController.firstResponder() === historyController.commitList)
         XCTAssertEqual(historyController.tableColumnMenu().items.count, historyController.commitList.tableColumns.count)
 
@@ -293,12 +299,21 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         waitForHistory()
         historyController.updateView()
         XCTAssertFalse(historyController.status.isEmpty)
-        XCTAssertNotNil(historyController.tableView(historyController.commitList, rowViewForRow: 0))
+        XCTAssertNotNil(tableCoordinator.tableView(historyController.commitList, rowViewForRow: 0))
     }
 
     func testSelectionReconciliationWorkingStateStatusAndTreeRestoration() throws {
         let commits = loadedCommits()
         XCTAssertGreaterThanOrEqual(commits.count, 3)
+        let tree = commits[0].tree
+        let files = flattenedTree(tree).filter(\.leaf)
+        let file = try XCTUnwrap(files.first)
+        XCTAssertFalse(file.contents.isEmpty)
+        XCTAssertNotNil(file.textContents())
+        XCTAssertGreaterThan(file.fileSize(), 0)
+        XCTAssertFalse(file.fullPath.isEmpty)
+        XCTAssertFalse(file.displayPath.isEmpty)
+        XCTAssertFalse(file.tmpFileNameForContents().isEmpty)
         historyController.commitController.setSelectedObjects([commits[0]])
         historyController.updateKeys()
         XCTAssertEqual(historyController.selectedCommits, [commits[0]])
@@ -322,8 +337,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.gitTree = commits[0].tree
         historyController.selectedCommitDetailsIndex = 1
         pumpRunLoop()
-        if let firstPath = historyController.treeController.arrangedObjects.children?.first?.indexPath {
-            historyController.treeController.setSelectionIndexPath(firstPath)
+        if let leafNode = firstLeafNode(in: historyController.treeController.arrangedObjects) {
+            historyController.treeController.setSelectionIndexPath(leafNode.indexPath)
+            (historyController.value(forKey: "fileView") as? NSObject)?
+                .perform(NSSelectorFromString("showFile"))
+            (historyController.value(forKey: "fileView") as? NSObject)?
+                .perform(NSSelectorFromString("modeChanged:"), with: NSSegmentedControl())
+            pumpRunLoop(for: 0.5)
             historyController.saveFileBrowserSelection()
             historyController.treeController.setSelectionIndexPaths([])
             historyController.restoreFileBrowserSelection()
@@ -340,7 +360,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.updateKeys()
         let proposed = IndexSet(integersIn: 0 ... 1)
         XCTAssertEqual(
-            historyController.tableView(historyController.commitList, selectionIndexesForProposedSelection: proposed),
+            tableCoordinator.tableView(historyController.commitList, selectionIndexesForProposedSelection: proposed),
             IndexSet(integer: 0)
         )
 
@@ -428,8 +448,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.selectedCommitDetailsIndex = 1
         historyController.gitTree = child.tree
         pumpRunLoop()
-        if let firstPath = historyController.treeController.arrangedObjects.children?.first?.indexPath {
-            historyController.treeController.setSelectionIndexPath(firstPath)
+        if let leafNode = firstLeafNode(in: historyController.treeController.arrangedObjects) {
+            historyController.treeController.setSelectionIndexPath(leafNode.indexPath)
+            pumpRunLoop(for: 0.5)
             let fileBrowser = try XCTUnwrap(historyController.value(forKey: "fileBrowser") as? NSOutlineView)
             fileBrowser.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
             XCTAssertEqual(historyController.numberOfPreviewItems(inPreviewPanel: nil), 1)
@@ -488,13 +509,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ShortSHAColumn")))
         table.testRow = sourceRow
         table.testColumn = table.column(withIdentifier: NSUserInterfaceItemIdentifier("ShortSHAColumn"))
+        let tableCoordinator = self.tableCoordinator
         let originalCommitList = historyController.commitList
         historyController.setValue(table, forKey: "commitList")
         defer { historyController.setValue(originalCommitList, forKey: "commitList") }
 
         table.revisionCell.referenceIndex = -1
         let shortSHAPasteboard = freshPasteboard()
-        XCTAssertTrue(historyController.tableView(
+        XCTAssertTrue(tableCoordinator.tableView(
             table,
             writeRowsWith: IndexSet(integer: sourceRow),
             to: shortSHAPasteboard
@@ -503,7 +525,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         table.testColumn = table.column(withIdentifier: NSUserInterfaceItemIdentifier("SubjectColumn"))
         let subjectPasteboard = freshPasteboard()
-        XCTAssertTrue(historyController.tableView(
+        XCTAssertTrue(tableCoordinator.tableView(
             table,
             writeRowsWith: IndexSet(integer: sourceRow),
             to: subjectPasteboard
@@ -512,7 +534,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         table.revisionCell.referenceIndex = Int32(featureIndex)
         let referencePasteboard = freshPasteboard()
-        XCTAssertTrue(historyController.tableView(
+        XCTAssertTrue(tableCoordinator.tableView(
             table,
             writeRowsWith: IndexSet(integer: sourceRow),
             to: referencePasteboard
@@ -521,7 +543,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         let draggingInfo = DraggingInfoFake(pasteboard: referencePasteboard)
         XCTAssertEqual(
-            historyController.tableView(
+            tableCoordinator.tableView(
                 table,
                 validateDrop: draggingInfo,
                 proposedRow: destinationRow,
@@ -530,7 +552,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             []
         )
         XCTAssertEqual(
-            historyController.tableView(
+            tableCoordinator.tableView(
                 table,
                 validateDrop: draggingInfo,
                 proposedRow: destinationRow,
@@ -540,7 +562,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         let emptyDraggingInfo = DraggingInfoFake(pasteboard: freshPasteboard())
         XCTAssertEqual(
-            historyController.tableView(
+            tableCoordinator.tableView(
                 table,
                 validateDrop: emptyDraggingInfo,
                 proposedRow: destinationRow,
@@ -548,25 +570,25 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             ),
             []
         )
-        XCTAssertFalse(historyController.tableView(
+        XCTAssertFalse(tableCoordinator.tableView(
             table,
             acceptDrop: draggingInfo,
             row: destinationRow,
             dropOperation: .above
         ))
-        XCTAssertFalse(historyController.tableView(
+        XCTAssertFalse(tableCoordinator.tableView(
             table,
             acceptDrop: emptyDraggingInfo,
             row: destinationRow,
             dropOperation: .on
         ))
-        XCTAssertFalse(historyController.tableView(
+        XCTAssertFalse(tableCoordinator.tableView(
             table,
             acceptDrop: draggingInfo,
             row: sourceRow,
             dropOperation: .on
         ))
-        XCTAssertTrue(historyController.tableView(
+        XCTAssertTrue(tableCoordinator.tableView(
             table,
             acceptDrop: draggingInfo,
             row: destinationRow,
@@ -583,7 +605,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             destinationCommit.refs.compactMap { $0 as? PBGitRef }
                 .firstIndex { $0.isEqual(to: missingRef) }
         ))
-        historyController.didDoubleClickCommitList(self)
+        tableCoordinator.didDoubleClickCommitList(table)
         XCTAssertEqual(historyWindowController.shownErrors.count, 1)
 
         historyController.selectedCommits = [destinationCommit]
@@ -652,6 +674,21 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         return repository.revisionList?.commits.compactMap { $0 as? PBGitCommit } ?? []
     }
 
+    private func flattenedTree(_ root: PBGitTree) -> [PBGitTree] {
+        [root] + root.children.flatMap(flattenedTree)
+    }
+
+    private func firstLeafNode(in node: NSTreeNode) -> NSTreeNode? {
+        if (node.representedObject as? PBGitTree)?.leaf == true {
+            return node
+        }
+        return node.children?.lazy.compactMap(firstLeafNode).first
+    }
+
+    private var tableCoordinator: PBHistoryTableInteractionCoordinator {
+        historyController.commitList.delegate as! PBHistoryTableInteractionCoordinator
+    }
+
     private func waitForHistory(file: StaticString = #filePath, line: UInt = #line) {
         guard repository != nil else { return }
         let deadline = Date().addingTimeInterval(10)
@@ -681,6 +718,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     private func pumpRunLoop() {
         RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    }
+
+    private func pumpRunLoop(for interval: TimeInterval) {
+        RunLoop.main.run(until: Date().addingTimeInterval(interval))
     }
 
     private func menuItems(selector: String, argument: Any?) -> [NSMenuItem]? {

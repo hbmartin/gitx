@@ -43,6 +43,9 @@
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitStash.h"
+#import "PBUncommittedChanges.h"
+#import "PBGitRevisionRow.h"
+#import "PBGitWindowController.h"
 #import "PBError.h"
 #import "PBTask.h"
 
