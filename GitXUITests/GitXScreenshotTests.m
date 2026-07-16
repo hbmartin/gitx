@@ -498,7 +498,7 @@
 {
 	XCUIElement *continuousWatch = self.app.checkBoxes[@"Watch for changes in repositories"];
 	[self openPreferencesWaitingForElement:continuousWatch];
-	XCUIElement *refreshOnFocus = self.app.checkBoxes.firstMatch;
+	XCUIElement *refreshOnFocus = self.app.checkBoxes[@"Refresh repositories when GitX regains focus"];
 	XCTAssertTrue([refreshOnFocus waitForExistenceWithTimeout:5]);
 	BOOL watchedOriginally = [continuousWatch.value boolValue];
 	BOOL focusedOriginally = [refreshOnFocus.value boolValue];

@@ -5,8 +5,6 @@
 //  Converted from PBFileChangesTableView.m.
 //
 
-import Cocoa
-
 @objc(PBFileChangesTableView)
 final class PBFileChangesTableView: NSTableView {
     override func menu(for event: NSEvent) -> NSMenu? {

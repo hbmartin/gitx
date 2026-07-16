@@ -18,7 +18,7 @@ class HeaderInteropTests(unittest.TestCase):
             headers={"Classes/Legacy.h": "@interface Legacy : NSObject\n@end\n"},
             baseline={"Classes/Legacy.h"},
             changed_headers={"Classes/Legacy.h"},
-            added_lines={"Classes/Legacy.h": ["- (void)refresh;"]},
+            added_lines={"Classes/Legacy.h": [(2, "- (void)refresh;")]},
         )
 
         self.assertTrue(any("NS_ASSUME_NONNULL" in failure for failure in failures))
@@ -52,7 +52,7 @@ class HeaderInteropTests(unittest.TestCase):
             headers={"Classes/Modern.h": header},
             baseline=set(),
             changed_headers={"Classes/Modern.h"},
-            added_lines={"Classes/Modern.h": ["- (NSArray *)items;"]},
+            added_lines={"Classes/Modern.h": [(3, "- (NSArray *)items;")]},
         )
 
         self.assertTrue(any("lightweight generics" in failure for failure in failures))
@@ -69,7 +69,7 @@ class HeaderInteropTests(unittest.TestCase):
             headers={"Classes/Modern.h": header},
             baseline=set(),
             changed_headers={"Classes/Modern.h"},
-            added_lines={"Classes/Modern.h": ["- (BOOL)load:(NSError **)error;"]},
+            added_lines={"Classes/Modern.h": [(3, "- (BOOL)load:(NSError **)error;")]},
         )
 
         self.assertTrue(any("error out-parameter" in failure for failure in failures))
@@ -96,7 +96,7 @@ class HeaderInteropTests(unittest.TestCase):
                 "Classes/Modern.h",
             )
 
-        self.assertEqual(lines, ["++index;"])
+        self.assertEqual(lines, [(2, "++index;")])
 
     def test_line_comment_does_not_trigger_raw_collection_check(self) -> None:
         header = (
@@ -112,7 +112,7 @@ class HeaderInteropTests(unittest.TestCase):
             baseline=set(),
             changed_headers={"Classes/Modern.h"},
             added_lines={
-                "Classes/Modern.h": ["// Legacy implementation returned NSArray * here."]
+                "Classes/Modern.h": [(3, "// Legacy implementation returned NSArray * here.")]
             },
         )
 
@@ -133,12 +133,69 @@ class HeaderInteropTests(unittest.TestCase):
             changed_headers={"Classes/Modern.h"},
             added_lines={
                 "Classes/Modern.h": [
-                    "- (BOOL)load:(NSError **)error; // nullable error in legacy code"
+                    (3, "- (BOOL)load:(NSError **)error; // nullable error in legacy code")
                 ]
             },
         )
 
         self.assertTrue(any("error out-parameter" in failure for failure in failures))
+
+    def test_added_declaration_must_be_inside_nullability_region(self) -> None:
+        header = (
+            "NS_ASSUME_NONNULL_BEGIN\n"
+            "@interface Modern : NSObject\n"
+            "@end\n"
+            "NS_ASSUME_NONNULL_END\n"
+            "- (NSString *)lateTitle;\n"
+        )
+
+        failures = self.module.evaluate_headers(
+            headers={"Classes/Modern.h": header},
+            baseline=set(),
+            changed_headers={"Classes/Modern.h"},
+            added_lines={"Classes/Modern.h": [(5, "- (NSString *)lateTitle;")]},
+        )
+
+        self.assertTrue(any("Classes/Modern.h:5" in failure for failure in failures))
+        self.assertTrue(any("nullability region" in failure for failure in failures))
+
+    def test_explicitly_annotated_declaration_can_be_outside_region(self) -> None:
+        header = (
+            "NS_ASSUME_NONNULL_BEGIN\n"
+            "@interface Modern : NSObject\n"
+            "@end\n"
+            "NS_ASSUME_NONNULL_END\n"
+            "- (NSString * _Nullable)optionalLateTitle;\n"
+        )
+
+        failures = self.module.evaluate_headers(
+            headers={"Classes/Modern.h": header},
+            baseline=set(),
+            changed_headers={"Classes/Modern.h"},
+            added_lines={
+                "Classes/Modern.h": [(5, "- (NSString * _Nullable)optionalLateTitle;")]
+            },
+        )
+
+        self.assertEqual(failures, [])
+
+    def test_reversed_nullability_markers_do_not_form_a_region(self) -> None:
+        header = (
+            "NS_ASSUME_NONNULL_END\n"
+            "@interface Modern : NSObject\n"
+            "- (void)refresh;\n"
+            "@end\n"
+            "NS_ASSUME_NONNULL_BEGIN\n"
+        )
+
+        failures = self.module.evaluate_headers(
+            headers={"Classes/Modern.h": header},
+            baseline=set(),
+            changed_headers={"Classes/Modern.h"},
+            added_lines={"Classes/Modern.h": [(3, "- (void)refresh;")]},
+        )
+
+        self.assertTrue(any("correctly ordered" in failure for failure in failures))
 
 
 if __name__ == "__main__":

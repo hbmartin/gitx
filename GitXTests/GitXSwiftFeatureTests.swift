@@ -3,6 +3,19 @@ import XCTest
 
 @MainActor
 final class GitXSwiftFeatureTests: XCTestCase {
+    private func preservePersistentDefault(forKey key: String) -> () -> Void {
+        let defaults = UserDefaults.standard
+        let originalValue = Bundle.main.bundleIdentifier
+            .flatMap { defaults.persistentDomain(forName: $0)?[key] }
+        return {
+            if let originalValue {
+                defaults.set(originalValue, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+    }
+
     func testCommitRenderInputFreezesPlainMetadataAndImageRevisions() {
         let input = PBCommitRenderInput(
             sha: "abcdef0123456789",
@@ -31,6 +44,44 @@ final class GitXSwiftFeatureTests: XCTestCase {
         )
 
         XCTAssertEqual(input.imageRevisions, ["abcdef0123456789"])
+    }
+
+    func testImageRevisionPolicyFallsBackFromCommitToParent() {
+        XCTAssertEqual(
+            PBImageRevisionPolicy.revisions(
+                commitSHA: "abcdef0123456789",
+                parentSHA: "1234567890abcdef",
+                workingState: false
+            ),
+            ["abcdef0123456789", "1234567890abcdef"]
+        )
+    }
+
+    func testImageRevisionPolicyOmitsUnavailableRepositoryObjects() {
+        XCTAssertEqual(
+            PBImageRevisionPolicy.revisions(
+                commitSHA: "abcdef0123456789",
+                parentSHA: nil,
+                workingState: false
+            ),
+            ["abcdef0123456789"]
+        )
+        XCTAssertEqual(
+            PBImageRevisionPolicy.revisions(
+                commitSHA: "abcdef0123456789",
+                parentSHA: "1234567890abcdef",
+                workingState: true
+            ),
+            []
+        )
+        XCTAssertEqual(
+            PBImageRevisionPolicy.revisions(
+                commitSHA: "",
+                parentSHA: "1234567890abcdef",
+                workingState: false
+            ),
+            []
+        )
     }
 
     func testWorkingStateRefreshPolicyPreservesAnEqualDisplayedDiff() {
@@ -146,6 +197,8 @@ final class GitXSwiftFeatureTests: XCTestCase {
     }
 
     func testAutoFetchScopeSetterStoresAValidatedValue() throws {
+        let restoreDefault = preservePersistentDefault(forKey: "PBAutoFetchScope")
+        defer { restoreDefault() }
         let invalidScope = try XCTUnwrap(PBAutoFetchScope(rawValue: .max))
         PBGitDefaults.setAutoFetchScope(invalidScope)
 
@@ -154,6 +207,8 @@ final class GitXSwiftFeatureTests: XCTestCase {
     }
 
     func testRepositoryNotificationDefaultsTreatSymlinksAsTheSameRepository() throws {
+        let restoreDefault = preservePersistentDefault(forKey: "PBAutoFetchRepositoryNotifications")
+        defer { restoreDefault() }
         try withTemporaryDirectory { root in
             let repository = root.appendingPathComponent("repository", isDirectory: true)
             let symlink = root.appendingPathComponent("repository-link", isDirectory: true)
@@ -162,10 +217,6 @@ final class GitXSwiftFeatureTests: XCTestCase {
 
             PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: repository)
             PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: symlink)
-            defer {
-                PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: repository)
-                PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: symlink)
-            }
 
             PBGitDefaults.setNotifyAboutFetchedCommits(true, forRepositoryURL: symlink)
 

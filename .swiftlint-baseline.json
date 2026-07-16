@@ -1,36 +1,6 @@
 [
   {
     "violation": {
-      "ruleIdentifier": "unused_import",
-      "location": {
-        "file": "Classes/GitXSwift.swift",
-        "line": 12,
-        "character": 1
-      },
-      "ruleDescription": "All imported modules should be required to make the file compile",
-      "severity": "error",
-      "reason": "All imported modules should be required to make the file compile",
-      "ruleName": "Unused Import"
-    },
-    "text": "import Cocoa"
-  },
-  {
-    "violation": {
-      "ruleIdentifier": "unused_import",
-      "location": {
-        "file": "Classes/PBCommitList.swift",
-        "line": 8,
-        "character": 1
-      },
-      "ruleDescription": "All imported modules should be required to make the file compile",
-      "severity": "error",
-      "reason": "All imported modules should be required to make the file compile",
-      "ruleName": "Unused Import"
-    },
-    "text": "import Cocoa"
-  },
-  {
-    "violation": {
       "ruleIdentifier": "unused_declaration",
       "location": {
         "file": "Classes/PBCommitList.swift",
@@ -46,21 +16,6 @@
   },
   {
     "violation": {
-      "ruleIdentifier": "unused_import",
-      "location": {
-        "file": "Classes/Views/PBFileChangesTableView.swift",
-        "line": 8,
-        "character": 1
-      },
-      "ruleDescription": "All imported modules should be required to make the file compile",
-      "severity": "error",
-      "reason": "All imported modules should be required to make the file compile",
-      "ruleName": "Unused Import"
-    },
-    "text": "import Cocoa"
-  },
-  {
-    "violation": {
       "ruleIdentifier": "unused_declaration",
       "location": {
         "file": "Classes/Views/PBFileChangesTableView.swift",
@@ -73,21 +28,6 @@
       "ruleName": "Unused Declaration"
     },
     "text": "final class PBFileChangesTableView: NSTableView {"
-  },
-  {
-    "violation": {
-      "ruleIdentifier": "unused_import",
-      "location": {
-        "file": "Classes/Views/PBHighlighting.swift",
-        "line": 1,
-        "character": 1
-      },
-      "ruleDescription": "All imported modules should be required to make the file compile",
-      "severity": "error",
-      "reason": "All imported modules should be required to make the file compile",
-      "ruleName": "Unused Import"
-    },
-    "text": ""
   },
   {
     "violation": {

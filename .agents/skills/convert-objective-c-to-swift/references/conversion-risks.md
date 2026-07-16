@@ -22,7 +22,7 @@ Assume the most dangerous conversion bugs are silent behavioral regressions. Com
 
 Verify in layers:
 
-1. Capture current Objective-C behavior with Swift characterization tests and frozen fixtures where appropriate.
+1. Capture current Objective-C behavior with Swift characterization tests when the production API bridges cleanly, preserving Objective-C XCTest for Objective-C exceptions, non-bridging C or macro surfaces, private declarations that should not become production API, or disproportionate Swift-interoperability churn; add frozen fixtures where appropriate.
 2. Modernize the imported header and inspect the generated Swift interface.
 3. Compare the old and new implementations line by line at every language seam.
 4. Run the normal build, full tests, static checks, and coverage gates.
@@ -191,7 +191,7 @@ Do not run zombies during leak measurement because zombie retention invalidates 
 ## Manual equivalence checklist
 
 - [ ] Existing behavior is characterized before conversion.
-- [ ] New tests are Swift; existing Objective-C tests were not converted.
+- [ ] New tests use Swift when the production API bridges cleanly; Objective-C XCTest is preserved for Objective-C exceptions, non-bridging C or macro surfaces, private declarations that should not become production API, and disproportionate Swift-interoperability churn; existing Objective-C tests were not converted merely because they were touched.
 - [ ] The header has audited nullability and known collection generics.
 - [ ] `scripts/header-interop-baseline.json` is checked in and ratcheted.
 - [ ] Every imported Objective-C API used by Swift was inspected for its actual generated signature.

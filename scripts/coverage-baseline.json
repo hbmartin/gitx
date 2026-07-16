@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.3517,
+  "minimumLineCoverage": 0.3552,
   "files": {
     "Classes/Controllers/ApplicationController.m": 0.284,
     "Classes/Controllers/DBPrefsWindowController.m": 0.0,
@@ -25,7 +25,7 @@
     "Classes/Controllers/PBWebDiffController.m": 0.0,
     "Classes/Controllers/PBWebHistoryController.m": 0.0,
     "Classes/GitXRelativeDateFormatter.m": 0.6666,
-    "Classes/GitXSwift.swift": 0.9909,
+    "Classes/GitXSwift.swift": 0.9925,
     "Classes/NSAppearance+PBDarkMode.m": 0.9473,
     "Classes/NSColor+RGB.m": 0.0,
     "Classes/NSSplitView+GitX.m": 0.0,
@@ -46,7 +46,7 @@
     "Classes/Util/PBEasyFS.m": 0.0,
     "Classes/Util/PBError.m": 0.7142,
     "Classes/Util/PBProcessEnvironment.swift": 1.0,
-    "Classes/Util/PBTask.m": 0.9342,
+    "Classes/Util/PBTask.m": 0.9405,
     "Classes/Util/PBTerminalUtil.m": 0.0,
     "Classes/Util/RJModalRepoSheet.m": 0.0,
     "Classes/Views/GLFileView.m": 0.0,

@@ -9,7 +9,19 @@
 // Objective-C can call any Swift symbol that is visible in
 // GitX-Swift.h  (generated automatically by the build system)
 
-import Cocoa
+/// Chooses repository revisions in the order used to resolve image content.
+@objc(PBImageRevisionPolicy)
+final nonisolated class ImageRevisionPolicy: NSObject, Sendable { // swiftlint:disable:this unused_declaration
+    @objc(revisionsForCommitSHA:parentSHA:workingState:)
+    static func revisions( // swiftlint:disable:this unused_declaration
+        commitSHA: String,
+        parentSHA: String?,
+        workingState: Bool
+    ) -> [String] {
+        guard !workingState, !commitSHA.isEmpty else { return [] }
+        return [commitSHA, parentSHA].compactMap { $0 }
+    }
+}
 
 /// Immutable commit metadata captured before history rendering leaves the main thread.
 @objc(PBCommitRenderInput)
@@ -33,7 +45,11 @@ final nonisolated class CommitRenderInput: NSObject, Sendable { // swiftlint:dis
         self.parentSHA = parentSHA
         self.shortName = shortName
         title = "\(shortName)  \(subject)\n\(author) — \(authorDate)"
-        imageRevisions = [sha, parentSHA].compactMap { $0 }
+        imageRevisions = ImageRevisionPolicy.revisions(
+            commitSHA: sha,
+            parentSHA: parentSHA,
+            workingState: false
+        )
     }
 }
 
@@ -161,8 +177,16 @@ final nonisolated class ReferenceActionPolicy: NSObject { // swiftlint:disable:t
         refishType: String,
         shortName: String
     ) -> String {
-        let verb = usesRemovalTerminology(refishType: refishType) ? "Remove" : "Delete"
-        return "\(verb) \(refishType) '\(shortName)'?"
+        let format = usesRemovalTerminology(refishType: refishType)
+            ? NSLocalizedString(
+                "Remove %@ '%@'?",
+                comment: "Confirmation title for removing a local remote or remote-tracking ref"
+            )
+            : NSLocalizedString(
+                "Delete %@ '%@'?",
+                comment: "Confirmation title for deleting a local branch or tag"
+            )
+        return String(format: format, refishType, shortName)
     }
 
     @objc(deletionConfirmationMessageForRefishType:shortName:)
@@ -173,13 +197,21 @@ final nonisolated class ReferenceActionPolicy: NSObject { // swiftlint:disable:t
     ) -> String {
         switch refishType {
         case kGitXRemoteBranchType:
-            return "This removes only the local remote-tracking branch. "
-                + "The branch on the remote server is left unchanged."
+            return NSLocalizedString(
+                "This removes only the local remote-tracking branch. The branch on the remote server is left unchanged.",
+                comment: "Explanation shown before removing a remote-tracking branch"
+            )
         case kGitXRemoteType:
-            return "This removes the remote configuration and its local remote-tracking branches. "
-                + "Branches on the remote server are left unchanged."
+            return NSLocalizedString(
+                "This removes the remote configuration and its local remote-tracking branches. Branches on the remote server are left unchanged.",
+                comment: "Explanation shown before removing a remote configuration"
+            )
         default:
-            return "Are you sure you want to delete the \(refishType) '\(shortName)'?"
+            let format = NSLocalizedString(
+                "Are you sure you want to delete the %@ '%@'?",
+                comment: "Explanation shown before deleting a local branch or tag"
+            )
+            return String(format: format, refishType, shortName)
         }
     }
 
