@@ -53,7 +53,7 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 	NSUInteger _offMainGTRepositoryAccessCount;
 }
 
-- (GTRepository *)gtRepo
+- (nullable GTRepository *)gtRepo
 {
 	if (!NSThread.isMainThread) {
 		@synchronized(self) {

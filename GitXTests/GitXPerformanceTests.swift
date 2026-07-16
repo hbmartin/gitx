@@ -114,7 +114,7 @@ final class GitXPerformanceTests: XCTestCase {
                 autoreleasepool {
                     let specifier = PBGitRevSpecifier(
                         parameters: parameterSets[iteration % parameterSets.count]
-                    )!
+                    )
                     classifiedCount += specifier.isSimpleRef ? 1 : 0
                     classifiedCount += specifier.hasPathLimiter() ? 1 : 0
                     _ = specifier.title()

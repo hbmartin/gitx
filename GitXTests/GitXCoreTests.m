@@ -16,6 +16,7 @@
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitSidebarController.h"
+#import "PBGitStash.h"
 #import "PBNativeContentView.h"
 #import "PBSourceViewItem.h"
 #import "PBUncommittedChanges.h"
@@ -706,6 +707,306 @@
 	NSError *disabledHookError = nil;
 	XCTAssertTrue([self.repository executeHook:@"pre-commit" error:&disabledHookError]);
 	XCTAssertNil(disabledHookError);
+}
+
+- (void)testHeadCommitAncestryAndBranchFilterBoundaries
+{
+	NSError *error = nil;
+	NSString *initialSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(initialSHA, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"second\n" toPath:@"second.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"second commit" error:&error], @"%@", error);
+
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+
+	PBGitCommit *head = self.repository.headCommit;
+	PBGitCommit *initialCommit = nil;
+	for (PBGitCommit *commit in self.repository.revisionList.projectCommits) {
+		if ([commit.SHA isEqualToString:initialSHA]) {
+			initialCommit = commit;
+			break;
+		}
+	}
+	GTOID *initialOID = initialCommit.OID;
+	XCTAssertNotNil(head);
+	XCTAssertNotNil(initialOID);
+	XCTAssertTrue([self.repository isOIDOnSameBranch:head.OID asOID:initialOID]);
+	XCTAssertTrue([self.repository isOIDOnSameBranch:head.OID asOID:head.OID]);
+	XCTAssertFalse([self.repository isOIDOnSameBranch:nil asOID:head.OID]);
+	XCTAssertTrue([self.repository isOIDOnHeadBranch:initialOID]);
+	XCTAssertFalse([self.repository isOIDOnHeadBranch:nil]);
+	XCTAssertTrue([self.repository isRefOnHeadBranch:self.repository.headRef.ref]);
+	XCTAssertFalse([self.repository isRefOnHeadBranch:nil]);
+	XCTAssertNil([self.repository OIDForRef:nil]);
+	XCTAssertNil([self.repository commitForRef:nil]);
+	XCTAssertNil([self.repository commitForOID:nil]);
+
+	self.repository.currentBranchFilter = kGitXAllBranchesFilter;
+	self.repository.currentBranchFilter = kGitXSelectedBranchFilter;
+	self.repository.hasChanged = NO;
+	[self.repository lazyReload];
+	self.repository.hasChanged = YES;
+	[self.repository lazyReload];
+}
+
+- (void)testStashLifecycleAndNewIgnoreFile
+{
+	NSError *error = nil;
+	XCTAssertEqual(self.repository.stashes.count, (NSUInteger)0);
+	XCTAssertNil([self.repository stashForRef:[PBGitRef refFromString:@"refs/stash@{0}"]]);
+
+	XCTAssertTrue([self.fixture writeText:@"working change\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.repository stashSave:&error], @"%@", error);
+	PBGitStash *stash = self.repository.stashes.firstObject;
+	XCTAssertNotNil(stash);
+	XCTAssertTrue([[self.repository stashForRef:stash.ref].ref isEqualToRef:stash.ref]);
+	XCTAssertTrue([self.repository stashApply:stash error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.repository stashPop:stash error:&error], @"%@", error);
+	XCTAssertEqual(self.repository.stashes.count, (NSUInteger)0);
+
+	XCTAssertNotNil(([self.fixture git:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"staged change\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"add", @"tracked.txt" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"unstaged\n" toPath:@"untracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.repository stashSaveWithKeepIndex:YES error:&error], @"%@", error);
+	stash = self.repository.stashes.firstObject;
+	XCTAssertNotNil(stash);
+	XCTAssertTrue([self.repository stashDrop:stash error:&error], @"%@", error);
+	XCTAssertEqual(self.repository.stashes.count, (NSUInteger)0);
+
+	NSArray<NSString *> *ignoredPaths = @[ @"build/", @"*.temporary" ];
+	XCTAssertTrue([self.repository ignoreFilePaths:ignoredPaths error:&error], @"%@", error);
+	NSString *ignoreContents = [NSString stringWithContentsOfFile:self.repository.gitIgnoreFilename
+		encoding:NSUTF8StringEncoding
+		error:&error];
+	XCTAssertEqualObjects(ignoreContents, [ignoredPaths componentsJoinedByString:@"\n"]);
+}
+
+- (void)testRemoteTrackingFetchPullAndDeletionWorkflows
+{
+	NSError *error = nil;
+	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-workflow-remote.git"];
+	@try {
+		PBGitRef *main = self.repository.headRef.ref;
+		NSError *missingTrackingError = nil;
+		XCTAssertNil([self.repository remoteRefForBranch:main error:&missingTrackingError]);
+		XCTAssertNotNil(missingTrackingError);
+
+		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
+		XCTAssertTrue([self.repository addRemote:@"origin" withURL:remotePath error:&error], @"%@", error);
+		XCTAssertNotNil(([self.fixture git:@[ @"push", @"--quiet", @"--set-upstream", @"origin", @"main" ] error:&error]), @"%@", error);
+		[self.repository reloadRefs];
+
+		PBGitRef *tracking = [self.repository remoteRefForBranch:main error:&error];
+		XCTAssertEqualObjects(tracking.ref, @"refs/remotes/origin/main");
+		XCTAssertEqualObjects([self.repository remoteRefForBranch:tracking error:&error].ref, @"refs/remotes/origin");
+		XCTAssertTrue([self.repository fetchRemoteForRef:nil error:&error], @"%@", error);
+		XCTAssertTrue([self.repository fetchRemoteForRef:main error:&error], @"%@", error);
+		XCTAssertTrue([self.repository pullBranch:main fromRemote:nil rebase:NO error:&error], @"%@", error);
+		XCTAssertTrue([self.repository pullBranch:main fromRemote:tracking.remoteRef rebase:YES error:&error], @"%@", error);
+
+		PBGitRef *remote = [PBGitRef refFromString:@"refs/remotes/origin"];
+		XCTAssertTrue([self.repository deleteRemote:remote error:&error], @"%@", error);
+		XCTAssertFalse(self.repository.hasRemotes);
+		XCTAssertFalse([self.repository deleteRemote:main error:&error]);
+		XCTAssertFalse([self.repository deleteRemote:nil error:&error]);
+	} @finally {
+		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
+- (void)testCheckoutFilesMergeAndExpectedMutationFailures
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.repository createBranch:@"topic" atRefish:self.repository.headRef.ref error:&error], @"%@", error);
+	PBGitRef *topic = [self.repository refForName:@"topic"];
+	XCTAssertTrue([self.repository checkoutRefish:topic error:&error], @"%@", error);
+	XCTAssertEqualObjects(self.repository.headRef.ref.branchName, @"topic");
+
+	XCTAssertTrue([self.fixture writeText:@"topic work\n" toPath:@"topic.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"topic work" error:&error], @"%@", error);
+	PBGitRef *main = [self.repository refForName:@"main"];
+	XCTAssertTrue([self.repository checkoutRefish:main error:&error], @"%@", error);
+	XCTAssertTrue([self.repository mergeWithRefish:topic error:&error], @"%@", error);
+	XCTAssertTrue([[NSFileManager defaultManager] fileExistsAtPath:[self.fixture.path stringByAppendingPathComponent:@"topic.txt"]]);
+
+	XCTAssertTrue([self.fixture writeText:@"local edit\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.repository checkoutFiles:@[ @"tracked.txt" ] fromRefish:self.repository.headRef.ref error:&error], @"%@", error);
+	XCTAssertFalse([self.repository checkoutFiles:@[] fromRefish:self.repository.headRef.ref error:&error]);
+	XCTAssertFalse([self.repository checkoutFiles:nil fromRefish:self.repository.headRef.ref error:&error]);
+	XCTAssertFalse([self.repository cherryPickRefish:nil error:&error]);
+	XCTAssertFalse([self.repository resetRefish:GTRepositoryResetTypeHard to:nil error:&error]);
+	XCTAssertFalse([self.repository createBranch:nil atRefish:self.repository.headRef.ref error:&error]);
+	XCTAssertFalse([self.repository createBranch:@"missing-target" atRefish:nil error:&error]);
+	XCTAssertFalse([self.repository createTag:nil message:@"" atRefish:self.repository.headRef.ref error:&error]);
+	XCTAssertFalse([self.repository deleteRef:nil error:&error]);
+
+	NSError *checkoutError = nil;
+	PBGitRef *missing = [PBGitRef refFromString:@"refs/heads/does-not-exist"];
+	XCTAssertFalse([self.repository checkoutRefish:missing error:&checkoutError]);
+	XCTAssertNotNil(checkoutError);
+
+	error = nil;
+	XCTAssertTrue([self.repository createTag:@"checkout-point" message:@"" atRefish:self.repository.headRef.ref error:&error], @"%@", error);
+	PBGitRef *tag = [self.repository refForName:@"checkout-point"];
+	XCTAssertTrue([self.repository checkoutRefish:tag error:&error], @"%@", error);
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"HEAD");
+}
+
+- (void)testCherryPickResetAndRebaseWorkflows
+{
+	NSError *error = nil;
+	NSString *initialSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"-b", @"cherry-source" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"cherry\n" toPath:@"cherry.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"cherry source" error:&error], @"%@", error);
+	NSString *cherrySHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"main" ] error:&error]), @"%@", error);
+	[self.repository reloadRefs];
+
+	PBGitRef *cherry = [PBGitRef refFromString:@"refs/heads/cherry-source"];
+	XCTAssertTrue([self.repository cherryPickRefish:cherry error:&error], @"%@", error);
+	PBGitRef *initial = [PBGitRef refFromString:initialSHA];
+	XCTAssertTrue([self.repository resetRefish:GTRepositoryResetTypeSoft to:initial error:&error], @"%@", error);
+	PBGitRef *cherryCommit = [PBGitRef refFromString:cherrySHA];
+	XCTAssertTrue([self.repository resetRefish:GTRepositoryResetTypeMixed to:cherryCommit error:&error], @"%@", error);
+	XCTAssertTrue([self.repository resetRefish:GTRepositoryResetTypeHard to:initial error:&error], @"%@", error);
+
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"-B", @"main", initialSHA ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"upstream\n" toPath:@"upstream.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"upstream" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"-B", @"rebasing", initialSHA ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"topic\n" toPath:@"rebasing.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"rebasing" error:&error], @"%@", error);
+	[self.repository reloadRefs];
+	PBGitRef *main = [self.repository refForName:@"main"];
+	XCTAssertTrue([self.repository rebaseBranch:nil onRefish:main error:&error], @"%@", error);
+}
+
+- (void)testDiffReferenceUpdateMissingSubmoduleAndSuccessfulHookOutput
+{
+	NSError *error = nil;
+	NSString *initialSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertTrue([self.fixture writeText:@"second line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"second" error:&error], @"%@", error);
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+
+	PBGitCommit *head = self.repository.headCommit;
+	PBGitCommit *initial = nil;
+	for (PBGitCommit *commit in self.repository.revisionList.projectCommits) {
+		if ([commit.SHA isEqualToString:initialSHA]) {
+			initial = commit;
+			break;
+		}
+	}
+	XCTAssertNotNil(head);
+	XCTAssertNotNil(initial);
+	NSString *diff = [self.repository performDiff:initial against:head forFiles:@[ @"tracked.txt" ]];
+	XCTAssertTrue([diff containsString:@"tracked.txt"]);
+	XCTAssertEqualObjects([self.repository performDiff:head against:nil forFiles:nil], @"");
+
+	XCTAssertTrue([self.repository createBranch:@"movable" atRefish:initial error:&error], @"%@", error);
+	PBGitRef *movable = [self.repository refForName:@"movable"];
+	XCTAssertTrue([self.repository updateReference:movable toPointAtCommit:head error:&error], @"%@", error);
+	NSString *movedSHA = [[self.fixture git:@[ @"rev-parse", @"refs/heads/movable" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertEqualObjects(movedSHA, head.SHA);
+
+	NSError *submoduleError = nil;
+	XCTAssertNil([self.repository submoduleAtPath:@"Missing/Child" error:&submoduleError]);
+	XCTAssertNotNil(submoduleError);
+
+	NSString *hook = @"#!/bin/sh\nprintf 'hook:%s' \"$1\"\n";
+	XCTAssertTrue([self.fixture writeText:hook toPath:@".git/hooks/gitx-success" error:&error], @"%@", error);
+	NSString *hookPath = [self.fixture.path stringByAppendingPathComponent:@".git/hooks/gitx-success"];
+	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755}
+		ofItemAtPath:hookPath
+		error:&error], @"%@", error);
+	NSString *output = nil;
+	XCTAssertTrue([self.repository executeHook:@"gitx-success" arguments:@[ @"argument" ] output:&output error:&error], @"%@", error);
+	XCTAssertEqualObjects(output, @"hook:argument");
+}
+
+- (void)testRepositoryInitializationAndRemoteFailureErrors
+{
+	NSError *error = nil;
+	NSString *notARepository = [NSTemporaryDirectory() stringByAppendingPathComponent:
+		[NSString stringWithFormat:@"GitXNotARepository-%@", NSUUID.UUID.UUIDString]];
+	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtPath:notARepository
+		withIntermediateDirectories:YES
+		attributes:nil
+		error:&error]);
+	PBGitRepository *invalid = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:notARepository] error:&error];
+	XCTAssertNil(invalid);
+	XCTAssertNotNil(error);
+	[[NSFileManager defaultManager] removeItemAtPath:notARepository error:nil];
+
+	error = nil;
+	PBGitRef *missingRemote = [PBGitRef refFromString:@"refs/remotes/missing"];
+	XCTAssertFalse([self.repository fetchRemoteForRef:missingRemote error:&error]);
+	XCTAssertNotNil(error);
+	XCTAssertFalse([self.repository addRemote:@"origin" withURL:@"/path/that/does/not/exist" error:&error]);
+}
+
+- (void)testMutationFailuresReturnStructuredErrors
+{
+	NSError *error = nil;
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+	PBGitCommit *head = self.repository.headCommit;
+	PBGitRef *missing = [PBGitRef refFromString:@"refs/heads/does-not-exist"];
+	XCTAssertNotNil(head);
+
+	XCTAssertFalse([self.repository checkoutFiles:@[ @"tracked.txt" ] fromRefish:missing error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertFalse([self.repository mergeWithRefish:missing error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertFalse([self.repository cherryPickRefish:missing error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertFalse([self.repository resetRefish:GTRepositoryResetTypeHard to:missing error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertFalse([self.repository rebaseBranch:nil onRefish:missing error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertFalse([self.repository rebaseBranch:self.repository.headRef.ref onRefish:missing error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertFalse([self.repository createBranch:@"invalid branch name" atRefish:self.repository.headRef.ref error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	PBGitRef *invalid = [PBGitRef refFromString:@"refs/heads/invalid branch name"];
+	XCTAssertFalse([self.repository updateReference:invalid toPointAtCommit:head error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	PBGitRef *empty = [PBGitRef refFromString:@""];
+	XCTAssertFalse([self.repository deleteRef:empty error:&error]);
+	XCTAssertNotNil(error);
+
+	error = nil;
+	XCTAssertTrue([self.fixture writeText:@"stashed once\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.repository stashSave:&error], @"%@", error);
+	PBGitStash *stash = self.repository.stashes.firstObject;
+	XCTAssertTrue([self.repository stashDrop:stash error:&error], @"%@", error);
+	error = nil;
+	XCTAssertFalse([self.repository stashDrop:stash error:&error]);
+	XCTAssertNotNil(error);
+
+	error = nil;
+	XCTAssertNil([self.repository remoteRefForBranch:missing error:&error]);
+	XCTAssertNotNil(error);
 }
 
 @end
