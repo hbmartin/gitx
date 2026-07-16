@@ -1058,10 +1058,225 @@
 
 
 @interface GitXIndexIntegrationTests : GitXRepositoryTestCase
+
+- (NSString *)installHookNamed:(NSString *)name contents:(NSString *)contents error:(NSError **)error;
+- (PBChangedFile *)stageTrackedText:(NSString *)text error:(NSError **)error;
+
 @end
 
 
 @implementation GitXIndexIntegrationTests
+
+- (NSString *)installHookNamed:(NSString *)name contents:(NSString *)contents error:(NSError **)error
+{
+	NSString *relativePath = [@".git/hooks" stringByAppendingPathComponent:name];
+	XCTAssertTrue([self.fixture writeText:contents toPath:relativePath error:error], @"%@", *error);
+	NSString *path = [self.fixture.path stringByAppendingPathComponent:relativePath];
+	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755}
+											  ofItemAtPath:path
+													 error:error], @"%@", *error);
+	return path;
+}
+
+- (PBChangedFile *)stageTrackedText:(NSString *)text error:(NSError **)error
+{
+	XCTAssertTrue([self.fixture writeText:text toPath:@"tracked.txt" error:error], @"%@", *error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTAssertNotNil(tracked);
+	XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	return tracked;
+}
+
+- (void)testPrepareCommitMessageRunsHookAndTrimsOneTrailingNewline
+{
+	NSError *error = nil;
+	[self installHookNamed:@"prepare-commit-msg"
+				 contents:@"#!/bin/sh\nprintf 'prepared message\\n' > \"$1\"\n"
+					error:&error];
+
+	NSString *message = [self.repository.index createPrepareCommitMessage];
+
+	XCTAssertEqualObjects(message, @"prepared message");
+}
+
+- (void)testPrepareCommitMessageFailurePublishesHookOutput
+{
+	NSError *error = nil;
+	[self installHookNamed:@"prepare-commit-msg"
+				 contents:@"#!/bin/sh\nprintf 'prepare was blocked\\n' >&2\nexit 17\n"
+					error:&error];
+	__block NSNotification *failure = nil;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitHookFailed
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					failure = notification;
+				}];
+
+	NSString *message = [self.repository.index createPrepareCommitMessage];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	XCTAssertNil(message);
+	XCTAssertTrue([failure.userInfo[@"description"] containsString:@"prepare was blocked"]);
+}
+
+- (void)testPrepareCommitMessageForAmendPassesCommitAndHeadSHA
+{
+	NSError *error = nil;
+	NSString *argumentsPath = [self.fixture.path stringByAppendingPathComponent:@"prepare-arguments.txt"];
+	NSString *hook = [NSString stringWithFormat:@"#!/bin/sh\nprintf '%%s|%%s' \"$2\" \"$3\" > '%@'\nprintf 'amended message\\n' > \"$1\"\n", argumentsPath];
+	[self installHookNamed:@"prepare-commit-msg" contents:hook error:&error];
+	NSString *headSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	self.repository.index.amend = YES;
+
+	NSString *message = [self.repository.index createPrepareCommitMessage];
+	NSString *arguments = [NSString stringWithContentsOfFile:argumentsPath encoding:NSUTF8StringEncoding error:&error];
+	NSString *expectedArguments = [NSString stringWithFormat:@"commit|%@", headSHA];
+
+	XCTAssertEqualObjects(message, @"amended message");
+	XCTAssertEqualObjects(arguments, expectedArguments);
+}
+
+- (void)testVerifiedCommitRunsHooksAndPublishesSuccess
+{
+	NSError *error = nil;
+	[self stageTrackedText:@"verified contents\n" error:&error];
+	NSString *markerPath = [self.fixture.path stringByAppendingPathComponent:@"hook-order.txt"];
+	[self installHookNamed:@"pre-commit"
+				 contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'pre\\n' >> '%@'\n", markerPath]
+					error:&error];
+	[self installHookNamed:@"commit-msg"
+				 contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'message:%%s\\n' \"$(head -n 1 \"$1\")\" >> '%@'\n", markerPath]
+					error:&error];
+	[self installHookNamed:@"post-commit"
+				 contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'post\\n' >> '%@'\n", markerPath]
+					error:&error];
+	__block NSNotification *finished = nil;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexFinishedCommit
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					finished = notification;
+				}];
+
+	[self.repository.index commitWithMessage:@"verified subject\nbody" andVerify:YES];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	NSString *message = [self.fixture git:@[ @"show", @"-s", @"--format=%B", @"HEAD" ] error:&error];
+	NSString *hookOrder = [NSString stringWithContentsOfFile:markerPath encoding:NSUTF8StringEncoding error:&error];
+	XCTAssertEqualObjects(message, @"verified subject\nbody\n");
+	XCTAssertEqualObjects(hookOrder, @"pre\nmessage:verified subject\npost\n");
+	XCTAssertEqualObjects(finished.userInfo[@"success"], @YES);
+	XCTAssertEqual([finished.userInfo[@"sha"] length], 40);
+}
+
+- (void)testPreCommitFailurePublishesOutputAndDoesNotMoveHead
+{
+	NSError *error = nil;
+	[self stageTrackedText:@"blocked contents\n" error:&error];
+	[self installHookNamed:@"pre-commit"
+				 contents:@"#!/bin/sh\nprintf 'pre-commit denied\\n' >&2\nexit 19\n"
+					error:&error];
+	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	__block NSNotification *failure = nil;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitHookFailed
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					failure = notification;
+				}];
+
+	[self.repository.index commitWithMessage:@"blocked commit" andVerify:YES];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	NSString *currentHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertEqualObjects(currentHead, originalHead);
+	XCTAssertTrue([failure.userInfo[@"description"] containsString:@"pre-commit denied"]);
+}
+
+- (void)testCommitMessageFailurePublishesOutputAndDoesNotMoveHead
+{
+	NSError *error = nil;
+	[self stageTrackedText:@"message blocked contents\n" error:&error];
+	[self installHookNamed:@"commit-msg"
+				 contents:@"#!/bin/sh\nprintf 'message denied\\n' >&2\nexit 21\n"
+					error:&error];
+	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	__block NSNotification *failure = nil;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitHookFailed
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					failure = notification;
+				}];
+
+	[self.repository.index commitWithMessage:@"blocked message" andVerify:YES];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	NSString *currentHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertEqualObjects(currentHead, originalHead);
+	XCTAssertTrue([failure.userInfo[@"description"] containsString:@"message denied"]);
+}
+
+- (void)testSigningFailurePublishesCommitObjectFailure
+{
+	NSError *error = nil;
+	[self stageTrackedText:@"signed contents\n" error:&error];
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"commit.gpgSign", @"true" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"gpg.program", @"gitx-missing-gpg" ] error:&error]), @"%@", error);
+	__block NSNotification *failure = nil;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitFailed
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					failure = notification;
+				}];
+
+	[self.repository.index commitWithMessage:@"signed commit" andVerify:NO];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	XCTAssertEqualObjects(failure.userInfo[@"description"], @"Could not create a commit object");
+}
+
+- (void)testRefUpdateFailurePublishesFailureAndLeavesHeadUnchanged
+{
+	NSError *error = nil;
+	[self stageTrackedText:@"locked ref contents\n" error:&error];
+	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	NSString *lockPath = [self.fixture.path stringByAppendingPathComponent:@".git/refs/heads/main.lock"];
+	XCTAssertTrue([NSData.data writeToFile:lockPath options:NSDataWritingAtomic error:&error], @"%@", error);
+	__block NSNotification *failure = nil;
+	id token = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitFailed
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					failure = notification;
+				}];
+
+	[self.repository.index commitWithMessage:@"locked ref commit" andVerify:NO];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
+	NSString *currentHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertEqualObjects(currentHead, originalHead);
+	XCTAssertEqualObjects(failure.userInfo[@"description"], @"Could not update HEAD");
+}
 
 - (void)testRefreshStageAndUnstageTrackedAndUnicodePaths
 {
