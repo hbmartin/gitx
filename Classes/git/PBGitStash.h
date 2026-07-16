@@ -25,9 +25,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) PBGitCommit *ancestorCommit;
 
 - (instancetype)initWithRepository:(PBGitRepository *)repo
-					  stashOID:(GTOID *)stashOID
-						 index:(NSInteger)index
-					   message:(NSString *)message;
+						  stashOID:(GTOID *)stashOID
+							 index:(NSInteger)index
+						   message:(NSString *)message;
 
 @end
 

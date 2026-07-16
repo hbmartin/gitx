@@ -4,6 +4,7 @@
 #import <ObjectiveGit/GTRepository.h>
 #import "MAKVONotificationCenter.h"
 #import "PBMacros.h"
+#import "PBError.h"
 #import "PBChangedFile.h"
 #import "PBGraphCellInfo.h"
 #import "PBGitBinary.h"
@@ -123,6 +124,13 @@
 
 - (void)tearDown
 {
+	// Successful repository mutations schedule asynchronous revision parsing.
+	// Keep the temporary repository alive until that work is fully published so
+	// a following test cannot inherit an ObjectiveGit operation with a nil repo.
+	if (self.repository != nil) {
+		[self waitForHistoryUpdate];
+		[self.repository.revisionList cleanup];
+	}
 	self.repository = nil;
 	self.fixture = nil;
 	[super tearDown];
@@ -279,6 +287,38 @@
 	[folder removeChild:bravo];
 	[folder removeChild:revisionItem];
 	XCTAssertEqual(root.sortedChildren.count, (NSUInteger)0, @"An empty non-group folder should prune itself");
+}
+
+- (void)testErrorAndLoggingCompatibilityHelpers
+{
+	NSError *underlying = [NSError errorWithDomain:@"GitXTests" code:7 userInfo:nil];
+	NSDictionary *customInfo = @{@"custom" : @"value"};
+	XCTAssertNotNil([NSError pb_errorWithDescription:@"description" failureReason:@"reason"]);
+	XCTAssertEqualObjects([NSError pb_errorWithDescription:@"description" failureReason:@"reason" userInfo:customInfo].userInfo[@"custom"], @"value");
+	XCTAssertEqualObjects([NSError pb_errorWithDescription:@"description" failureReason:@"reason" underlyingError:underlying].userInfo[NSUnderlyingErrorKey], underlying);
+	XCTAssertEqualObjects([NSError pb_errorWithDescription:@"description" failureReason:@"reason" underlyingError:underlying userInfo:customInfo].domain, PBGitXErrorDomain);
+
+	NSError *error = nil;
+	XCTAssertFalse(PBReturnError(&error, @"description", @"reason", underlying));
+	XCTAssertNotNil(error);
+	XCTAssertFalse(PBReturnError(NULL, @"description", @"reason", underlying));
+	error = nil;
+	XCTAssertFalse(PBReturnErrorWithUserInfo(&error, @"description", @"reason", customInfo));
+	XCTAssertNotNil(error);
+	XCTAssertFalse(PBReturnErrorWithUserInfo(NULL, @"description", @"reason", customInfo));
+	error = nil;
+	XCTAssertFalse(PBReturnErrorWithBuilder(&error, ^{
+		return underlying;
+	}));
+	XCTAssertEqualObjects(error, underlying);
+	XCTAssertFalse(PBReturnErrorWithBuilder(NULL, ^{
+		return underlying;
+	}));
+
+	PBLogFunctionImpl(__FUNCTION__, nil);
+	PBLogFunctionImpl(__FUNCTION__, @"formatted %@", @"message");
+	PBLogErrorImpl(__FUNCTION__, nil);
+	PBLogErrorImpl(__FUNCTION__, underlying);
 }
 
 @end
@@ -781,8 +821,8 @@
 	NSArray<NSString *> *ignoredPaths = @[ @"build/", @"*.temporary" ];
 	XCTAssertTrue([self.repository ignoreFilePaths:ignoredPaths error:&error], @"%@", error);
 	NSString *ignoreContents = [NSString stringWithContentsOfFile:self.repository.gitIgnoreFilename
-		encoding:NSUTF8StringEncoding
-		error:&error];
+														 encoding:NSUTF8StringEncoding
+															error:&error];
 	XCTAssertEqualObjects(ignoreContents, [ignoredPaths componentsJoinedByString:@"\n"]);
 }
 
@@ -910,6 +950,10 @@
 	}
 	XCTAssertNotNil(head);
 	XCTAssertNotNil(initial);
+	if (head == nil || initial == nil) {
+		XCTFail(@"Expected both initial and HEAD commits before testing the diff");
+		return;
+	}
 	NSString *diff = [self.repository performDiff:initial against:head forFiles:@[ @"tracked.txt" ]];
 	XCTAssertTrue([diff containsString:@"tracked.txt"]);
 	XCTAssertEqualObjects([self.repository performDiff:head against:nil forFiles:nil], @"");
@@ -929,8 +973,9 @@
 	XCTAssertTrue([self.fixture writeText:hook toPath:@".git/hooks/gitx-success" error:&error], @"%@", error);
 	NSString *hookPath = [self.fixture.path stringByAppendingPathComponent:@".git/hooks/gitx-success"];
 	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755}
-		ofItemAtPath:hookPath
-		error:&error], @"%@", error);
+												   ofItemAtPath:hookPath
+														  error:&error],
+				  @"%@", error);
 	NSString *output = nil;
 	XCTAssertTrue([self.repository executeHook:@"gitx-success" arguments:@[ @"argument" ] output:&output error:&error], @"%@", error);
 	XCTAssertEqualObjects(output, @"hook:argument");
@@ -940,11 +985,11 @@
 {
 	NSError *error = nil;
 	NSString *notARepository = [NSTemporaryDirectory() stringByAppendingPathComponent:
-		[NSString stringWithFormat:@"GitXNotARepository-%@", NSUUID.UUID.UUIDString]];
+														   [NSString stringWithFormat:@"GitXNotARepository-%@", NSUUID.UUID.UUIDString]];
 	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtPath:notARepository
-		withIntermediateDirectories:YES
-		attributes:nil
-		error:&error]);
+											withIntermediateDirectories:YES
+															 attributes:nil
+																  error:&error]);
 	PBGitRepository *invalid = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:notARepository] error:&error];
 	XCTAssertNil(invalid);
 	XCTAssertNotNil(error);

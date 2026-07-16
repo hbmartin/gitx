@@ -23,7 +23,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (NSString *)refishName;
 - (NSString *)shortName;
-- (NSString *)refishType;
+- (nullable NSString *)refishType;
 
 @end
 

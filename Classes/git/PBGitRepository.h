@@ -61,40 +61,40 @@ typedef enum branchFilterTypes {
 @property (readonly, strong) PBGitIndex *index;
 
 // Designated initializer
-- (nullable instancetype)initWithURL:(NSURL *)repositoryURL error:(NSError * _Nullable * _Nullable)error;
+- (nullable instancetype)initWithURL:(NSURL *)repositoryURL error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)fetchRemoteForRef:(nullable PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)pullBranch:(PBGitRef *)branchRef fromRemote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)pushBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)fetchRemoteForRef:(nullable PBGitRef *)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)pullBranch:(PBGitRef *)branchRef fromRemote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)pushBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)checkoutRefish:(id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)checkoutFiles:(nullable NSArray<NSString *> *)files fromRefish:(id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)mergeWithRefish:(id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)cherryPickRefish:(nullable id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)resetRefish:(GTRepositoryResetType)mode to:(nullable id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)rebaseBranch:(nullable id<PBGitRefish>)branch onRefish:(id<PBGitRefish>)upstream error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)createBranch:(nullable NSString *)branchName atRefish:(nullable id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)createTag:(nullable NSString *)tagName message:(NSString *)message atRefish:(id<PBGitRefish>)commitSHA error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)deleteRemote:(nullable PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)deleteRef:(nullable PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)checkoutRefish:(id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)checkoutFiles:(nullable NSArray<NSString *> *)files fromRefish:(id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)mergeWithRefish:(id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)cherryPickRefish:(nullable id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)resetRefish:(GTRepositoryResetType)mode to:(nullable id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)rebaseBranch:(nullable id<PBGitRefish>)branch onRefish:(id<PBGitRefish>)upstream error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)createBranch:(nullable NSString *)branchName atRefish:(nullable id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)createTag:(nullable NSString *)tagName message:(NSString *)message atRefish:(id<PBGitRefish>)commitSHA error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)deleteRemote:(nullable PBGitRef *)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)deleteRef:(nullable PBGitRef *)ref error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)stashPop:(PBGitStash *)stash error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)stashApply:(PBGitStash *)stash error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)stashDrop:(PBGitStash *)stash error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)stashSave:(NSError * _Nullable * _Nullable)error;
-- (BOOL)stashSaveWithKeepIndex:(BOOL)keepIndex error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)stashPop:(PBGitStash *)stash error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)stashApply:(PBGitStash *)stash error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)stashDrop:(PBGitStash *)stash error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)stashSave:(NSError *_Nullable *_Nullable)error;
+- (BOOL)stashSaveWithKeepIndex:(BOOL)keepIndex error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)ignoreFilePaths:(NSArray<NSString *> *)filePaths error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)ignoreFilePaths:(NSArray<NSString *> *)filePaths error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)updateReference:(PBGitRef *)ref toPointAtCommit:(PBGitCommit *)newCommit error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)updateReference:(PBGitRef *)ref toPointAtCommit:(PBGitCommit *)newCommit error:(NSError *_Nullable *_Nullable)error;
 - (NSString *)performDiff:(PBGitCommit *)startCommit against:(nullable PBGitCommit *)diffCommit forFiles:(nullable NSArray<NSString *> *)filePaths;
 
 - (nullable NSURL *)gitURL;
 
-- (BOOL)executeHook:(NSString *)name error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)executeHook:(NSString *)name arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
-- (BOOL)executeHook:(NSString *)name arguments:(NSArray<NSString *> *)arguments output:(NSString * _Nullable * _Nullable)outputPtr error:(NSError * _Nullable * _Nullable)error;
+- (BOOL)executeHook:(NSString *)name error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)executeHook:(NSString *)name arguments:(NSArray<NSString *> *)arguments error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)executeHook:(NSString *)name arguments:(NSArray<NSString *> *)arguments output:(NSString *_Nullable *_Nullable)outputPtr error:(NSError *_Nullable *_Nullable)error;
 - (BOOL)hookExists:(NSString *)name;
 
 - (nullable NSString *)workingDirectory;
@@ -124,7 +124,7 @@ typedef enum branchFilterTypes {
 
 - (nullable NSArray<NSString *> *)remotes;
 - (BOOL)hasRemotes;
-- (nullable PBGitRef *)remoteRefForBranch:(PBGitRef *)branch error:(NSError * _Nullable * _Nullable)error;
+- (nullable PBGitRef *)remoteRefForBranch:(PBGitRef *)branch error:(NSError *_Nullable *_Nullable)error;
 
 - (void)readCurrentBranch;
 - (nullable PBGitRevSpecifier *)addBranch:(PBGitRevSpecifier *)rev;
@@ -135,7 +135,7 @@ typedef enum branchFilterTypes {
 - (void)forceUpdateRevisions;
 - (nullable NSURL *)getIndexURL;
 
-- (nullable GTSubmodule *)submoduleAtPath:(NSString *)path error:(NSError * _Nullable * _Nullable)error;
+- (nullable GTSubmodule *)submoduleAtPath:(NSString *)path error:(NSError *_Nullable *_Nullable)error;
 
 @end
 
