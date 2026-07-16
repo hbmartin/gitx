@@ -193,6 +193,29 @@ NS_ASSUME_NONNULL_BEGIN
                                    reverse:(BOOL)reverse;
 @end
 
+@interface PBNativeRenderResult : NSObject
+@property (nonatomic, readonly) NSAttributedString *attributedString;
+@property (nonatomic, readonly) NSDictionary<NSString *, NSDictionary<NSString *, id> *> *linkPayloads;
+@end
+
+@interface PBNativeTextRenderer : NSObject
+- (instancetype)initWithBaseAttributes:(NSDictionary<NSAttributedStringKey, id> *)baseAttributes
+					titleAttributes:(NSDictionary<NSAttributedStringKey, id> *)titleAttributes;
+- (PBNativeRenderResult *)renderSourceSections:(NSArray<PBNativeContentSection *> *)sections;
+- (PBNativeRenderResult *)renderBlameSections:(NSArray<PBNativeContentSection *> *)sections;
+- (PBNativeRenderResult *)renderHistorySections:(NSArray<PBNativeContentSection *> *)sections;
+@end
+
+@interface PBNativeDiffRenderer : NSObject
+- (instancetype)initWithBaseAttributes:(NSDictionary<NSAttributedStringKey, id> *)baseAttributes
+					titleAttributes:(NSDictionary<NSAttributedStringKey, id> *)titleAttributes
+							parser:(PBDiffDocumentParser *)parser;
+- (PBNativeRenderResult *)renderSections:(NSArray<PBNativeContentSection *> *)sections
+						  collapsedFiles:(NSSet<NSString *> *)collapsedFiles
+						  expandedImages:(NSSet<NSString *> *)expandedImages
+					   imageDataProvider:(nullable NSData * (^)(NSString *path, NSInteger section, NSDictionary<NSString *, id> *imageSource))imageDataProvider;
+@end
+
 @protocol PBIndexCommandRunning <NSObject>
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments
 										 input:(nullable NSString *)input

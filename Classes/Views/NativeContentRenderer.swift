@@ -1,0 +1,674 @@
+import AppKit
+import OSLog
+
+// Objective-C callers are not visible to SwiftLint's analyzer.
+// swiftlint:disable unused_declaration
+
+@objc(PBNativeRenderResult)
+final nonisolated class NativeRenderResult: NSObject {
+    @objc let attributedString: NSAttributedString
+    @objc let linkPayloads: [String: [String: Any]]
+
+    init(attributedString: NSAttributedString, linkPayloads: [String: [String: Any]] = [:]) {
+        self.attributedString = NSAttributedString(attributedString: attributedString)
+        self.linkPayloads = linkPayloads
+        super.init()
+    }
+}
+
+private nonisolated enum NativeLinkAction {
+    case commit(sha: String)
+    case collapse(key: String)
+    case image(key: String, path: String, section: Int)
+    case diff(action: String, patch: String)
+    case partialDiff(
+        action: String,
+        fileHeader: [String],
+        hunkLines: [String],
+        selectedIndexes: IndexSet,
+        reverse: Bool
+    )
+
+    var payload: [String: Any] {
+        switch self {
+        case let .commit(sha):
+            ["type": "commit", "sha": sha]
+        case let .collapse(key):
+            ["type": "collapse", "key": key]
+        case let .image(key, path, section):
+            ["type": "image", "key": key, "path": path, "section": section]
+        case let .diff(action, patch):
+            ["type": "diff", "action": action, "patch": patch]
+        case let .partialDiff(action, fileHeader, hunkLines, selectedIndexes, reverse):
+            [
+                "type": "diff",
+                "action": action,
+                "fileHeader": fileHeader,
+                "hunkLines": hunkLines,
+                "selectedIndexes": selectedIndexes,
+                "reverse": reverse,
+            ]
+        }
+    }
+}
+
+private nonisolated struct NativeRenderingSupport {
+    let baseAttributes: [NSAttributedString.Key: Any]
+    let titleAttributes: [NSAttributedString.Key: Any]
+
+    func appendSectionTitle(_ title: String, to result: NSMutableAttributedString) {
+        guard !title.isEmpty else { return }
+        if result.length > 0 {
+            result.append(NSAttributedString(string: "\n\n"))
+        }
+        result.append(NSAttributedString(string: title + "\n", attributes: titleAttributes))
+    }
+
+    @discardableResult
+    func appendLink(
+        title: String,
+        action: NativeLinkAction,
+        linkPayloads: inout [String: [String: Any]],
+        to result: NSMutableAttributedString
+    ) -> URL {
+        let url = URL(string: "gitx-action://\(UUID().uuidString)")!
+        linkPayloads[url.absoluteString] = action.payload
+        result.append(NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                .link: url,
+                .foregroundColor: NSColor.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+            ]
+        ))
+        return url
+    }
+}
+
+private struct NativeBlameRecord {
+    let sha: String
+    let author: String
+    let summary: String
+    let code: String
+}
+
+@objc(PBNativeTextRenderer)
+final nonisolated class NativeTextRenderer: NSObject {
+    private let support: NativeRenderingSupport
+
+    @objc(initWithBaseAttributes:titleAttributes:)
+    init(
+        baseAttributes: [NSAttributedString.Key: Any],
+        titleAttributes: [NSAttributedString.Key: Any]
+    ) {
+        support = NativeRenderingSupport(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes
+        )
+        super.init()
+    }
+
+    @objc(renderSourceSections:)
+    func renderSource(sections: [NativeContentSection]) -> NativeRenderResult {
+        let rendered = NSMutableAttributedString(string: "")
+        for section in sections {
+            support.appendSectionTitle(section.displayTitle, to: rendered)
+            rendered.append(PBHighlighting.highlightedString(
+                forText: section.text,
+                path: section.highlightingPath
+            ))
+        }
+        return NativeRenderResult(attributedString: rendered)
+    }
+
+    @objc(renderBlameSections:)
+    func renderBlame(sections: [NativeContentSection]) -> NativeRenderResult {
+        let rendered = NSMutableAttributedString(string: "")
+        for section in sections {
+            let records = blameRecords(from: section.text)
+            let code = records.map(\.code).joined(separator: "\n") + (records.isEmpty ? "" : "\n")
+            let highlighted = PBHighlighting.highlightedString(
+                forText: code,
+                path: section.highlightingPath
+            )
+            support.appendSectionTitle(section.displayTitle, to: rendered)
+            var codeLocation = 0
+            for record in records {
+                let line = record.code + "\n"
+                let sha = record.sha as NSString
+                var shortSHA = sha.length >= 8 ? sha.substring(to: 8) : record.sha
+                var author = record.author
+                if (author as NSString).length > 18 {
+                    author = (author as NSString).substring(to: 17) + "…"
+                }
+                shortSHA = (shortSHA as NSString).padding(
+                    toLength: 8,
+                    withPad: " ",
+                    startingAt: 0
+                )
+                author = (author as NSString).padding(
+                    toLength: 18,
+                    withPad: " ",
+                    startingAt: 0
+                )
+                let gutter = "\(shortSHA)  \(author) │ "
+                rendered.append(NSAttributedString(
+                    string: gutter,
+                    attributes: [
+                        .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                        .backgroundColor: NSColor.controlBackgroundColor,
+                    ]
+                ))
+                let range = NSRange(location: codeLocation, length: (line as NSString).length)
+                rendered.append(highlighted.attributedSubstring(from: range))
+                codeLocation += range.length
+            }
+        }
+        return NativeRenderResult(attributedString: rendered)
+    }
+
+    @objc(renderHistorySections:)
+    func renderHistory(sections: [NativeContentSection]) -> NativeRenderResult {
+        let rendered = NSMutableAttributedString(string: "")
+        var linkPayloads: [String: [String: Any]] = [:]
+        for section in sections {
+            support.appendSectionTitle(section.displayTitle, to: rendered)
+            for entry in section.entries {
+                let subject = entry["subject"] as? String ?? ""
+                rendered.append(NSAttributedString(
+                    string: subject + "\n",
+                    attributes: support.titleAttributes
+                ))
+                let author = entry["author"] as? String ?? ""
+                let date = entry["date"] as? String ?? ""
+                rendered.append(NSAttributedString(
+                    string: "\(author)  •  \(date)  •  ",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                    ]
+                ))
+                let sha = entry["sha"] as? String ?? ""
+                let shortSHA = (sha as NSString).length > 12
+                    ? (sha as NSString).substring(to: 12)
+                    : sha
+                support.appendLink(
+                    title: shortSHA,
+                    action: .commit(sha: sha),
+                    linkPayloads: &linkPayloads,
+                    to: rendered
+                )
+                rendered.append(NSAttributedString(string: "\n\n"))
+            }
+        }
+        return NativeRenderResult(attributedString: rendered, linkPayloads: linkPayloads)
+    }
+
+    private func blameRecords(from porcelain: String) -> [NativeBlameRecord] {
+        var metadata: [String: (author: String, summary: String)] = [:]
+        var result: [NativeBlameRecord] = []
+        var sha = ""
+        var author = ""
+        var summary = ""
+        for line in porcelain.components(separatedBy: "\n") {
+            let parts = line.components(separatedBy: " ")
+            if parts.count >= 3, (parts[0] as NSString).length == 40 {
+                sha = parts[0]
+                if let cached = metadata[sha] {
+                    author = cached.author
+                    summary = cached.summary
+                }
+            } else if line.hasPrefix("author ") {
+                author = String(line.dropFirst(7))
+            } else if line.hasPrefix("summary ") {
+                summary = String(line.dropFirst(8))
+                if !sha.isEmpty {
+                    metadata[sha] = (author, summary)
+                }
+            } else if line.hasPrefix("\t") {
+                result.append(NativeBlameRecord(
+                    sha: sha,
+                    author: author,
+                    summary: summary,
+                    code: String(line.dropFirst())
+                ))
+            }
+        }
+        return result
+    }
+}
+
+typealias NativeImageDataProvider = (String, Int, [String: Any]) -> Data?
+
+@objc(PBNativeDiffRenderer)
+final nonisolated class NativeDiffRenderer: NSObject {
+    private static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "tiff", "tif", "bmp", "icns", "webp",
+    ]
+
+    private let support: NativeRenderingSupport
+    private let parser: DiffDocumentParser
+    private let logger = Logger(subsystem: "com.gitx.gitx", category: "NativeDiffRenderer")
+
+    @objc(initWithBaseAttributes:titleAttributes:parser:)
+    init(
+        baseAttributes: [NSAttributedString.Key: Any],
+        titleAttributes: [NSAttributedString.Key: Any],
+        parser: DiffDocumentParser
+    ) {
+        support = NativeRenderingSupport(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes
+        )
+        self.parser = parser
+        super.init()
+    }
+
+    @objc(renderSections:collapsedFiles:expandedImages:imageDataProvider:)
+    func render(
+        sections: [NativeContentSection],
+        collapsedFiles: Set<String>,
+        expandedImages: Set<String>,
+        imageDataProvider: NativeImageDataProvider?
+    ) -> NativeRenderResult {
+        let rendered = NSMutableAttributedString(string: "")
+        var linkPayloads: [String: [String: Any]] = [:]
+        var diffByteCount = 0
+        for section in sections {
+            let sectionByteCount = section.text.lengthOfBytes(using: .utf8)
+            let (sum, overflow) = diffByteCount.addingReportingOverflow(sectionByteCount)
+            if overflow {
+                diffByteCount = Int.max
+                break
+            }
+            diffByteCount = sum
+        }
+        let shouldHighlightSyntax = PBHighlighting.shouldHighlightDiff(byteCount: UInt(diffByteCount))
+        if !shouldHighlightSyntax {
+            logger.debug("Rendering large diff document with lightweight coloring")
+        }
+
+        for (sectionIndex, section) in sections.enumerated() {
+            support.appendSectionTitle(section.title, to: rendered)
+            if section.text.isEmpty {
+                rendered.append(NSAttributedString(
+                    string: "There are no differences.\n",
+                    attributes: [.foregroundColor: NSColor.secondaryLabelColor]
+                ))
+            } else {
+                renderDiffText(
+                    section.text,
+                    context: section.context,
+                    sectionIndex: sectionIndex,
+                    fallbackPath: section.path,
+                    shouldHighlightSyntax: shouldHighlightSyntax,
+                    collapsedFiles: collapsedFiles,
+                    expandedImages: expandedImages,
+                    imageSource: section.imageSource,
+                    imageDataProvider: imageDataProvider,
+                    linkPayloads: &linkPayloads,
+                    rendered: rendered
+                )
+            }
+        }
+        return NativeRenderResult(attributedString: rendered, linkPayloads: linkPayloads)
+    }
+
+    private func renderDiffText(
+        _ diff: String,
+        context: String,
+        sectionIndex: Int,
+        fallbackPath: String,
+        shouldHighlightSyntax: Bool,
+        collapsedFiles: Set<String>,
+        expandedImages: Set<String>,
+        imageSource: [String: Any],
+        imageDataProvider: NativeImageDataProvider?,
+        linkPayloads: inout [String: [String: Any]],
+        rendered: NSMutableAttributedString
+    ) {
+        let document = parser.parse(text: diff, fallbackPath: fallbackPath)
+        let lines = document.lines
+        var currentPath = document.fallbackPath
+        var collapsed = false
+        var currentHunk: NativeDiffHunk?
+        var currentHunkSyntax: [Int: NSAttributedString] = [:]
+
+        for (index, line) in lines.enumerated() {
+            if let file = document.filesByStartIndex[NSNumber(value: index)] {
+                currentPath = file.path
+                currentHunk = nil
+                currentHunkSyntax = [:]
+                let fileKey = "\(sectionIndex):\(currentPath)"
+                collapsed = collapsedFiles.contains(fileKey)
+                support.appendLink(
+                    title: collapsed ? "▸ " : "▾ ",
+                    action: .collapse(key: fileKey),
+                    linkPayloads: &linkPayloads,
+                    to: rendered
+                )
+                rendered.append(NSAttributedString(
+                    string: currentPath + "\n",
+                    attributes: support.titleAttributes
+                ))
+                continue
+            }
+            if collapsed {
+                continue
+            }
+            if let hunk = document.hunksByStartIndex[NSNumber(value: index)] {
+                currentHunk = hunk
+                currentHunkSyntax = shouldHighlightSyntax
+                    ? syntaxHighlights(for: hunk.lines, path: currentPath)
+                    : [:]
+                appendDiffLine(line, to: rendered)
+                rendered.append(NSAttributedString(string: "  "))
+                if context == "staged" {
+                    support.appendLink(
+                        title: NSLocalizedString(
+                            "Unstage hunk",
+                            comment: "Action to unstage all lines in a diff hunk"
+                        ),
+                        action: .diff(action: "unstage", patch: hunk.patch),
+                        linkPayloads: &linkPayloads,
+                        to: rendered
+                    )
+                } else if context == "unstaged" {
+                    support.appendLink(
+                        title: NSLocalizedString(
+                            "Stage hunk",
+                            comment: "Action to stage all lines in a diff hunk"
+                        ),
+                        action: .diff(action: "stage", patch: hunk.patch),
+                        linkPayloads: &linkPayloads,
+                        to: rendered
+                    )
+                    rendered.append(NSAttributedString(string: "   "))
+                    support.appendLink(
+                        title: NSLocalizedString(
+                            "Discard hunk",
+                            comment: "Action to discard all changes in a diff hunk"
+                        ),
+                        action: .diff(action: "discard", patch: hunk.patch),
+                        linkPayloads: &linkPayloads,
+                        to: rendered
+                    )
+                }
+                rendered.append(NSAttributedString(string: "\n"))
+                continue
+            }
+
+            if isBinaryImageLine(line, path: currentPath), !currentPath.isEmpty {
+                appendDiffLine(line, to: rendered)
+                let imageKey = "\(sectionIndex):\(currentPath)"
+                if !expandedImages.contains(imageKey) {
+                    support.appendLink(
+                        title: NSLocalizedString(
+                            "Show image",
+                            comment: "Action to expand an image changed by a diff"
+                        ),
+                        action: .image(key: imageKey, path: currentPath, section: sectionIndex),
+                        linkPayloads: &linkPayloads,
+                        to: rendered
+                    )
+                    rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
+                } else if let imageData = imageDataProvider?(currentPath, sectionIndex, imageSource),
+                          !imageData.isEmpty
+                {
+                    if let imageString = imageAttributedString(data: imageData) {
+                        rendered.append(imageString)
+                    }
+                    rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
+                }
+                continue
+            }
+
+            let changedLine = (line.hasPrefix("+") && !line.hasPrefix("+++")) ||
+                (line.hasPrefix("-") && !line.hasPrefix("---"))
+            let counterpart: String?
+            if line.hasPrefix("-"), lines.indices.contains(index + 1), lines[index + 1].hasPrefix("+") {
+                counterpart = lines[index + 1]
+            } else if line.hasPrefix("+"), index > 0, lines[index - 1].hasPrefix("-") {
+                counterpart = lines[index - 1]
+            } else {
+                counterpart = nil
+            }
+            let syntaxBody: NSAttributedString? = if let currentHunk, index < currentHunk.endIndex {
+                currentHunkSyntax[index - currentHunk.startIndex]
+            } else {
+                nil
+            }
+            guard changedLine, context != "readOnly", let currentHunk else {
+                appendDiffLine(
+                    line,
+                    counterpart: counterpart,
+                    syntaxBody: syntaxBody,
+                    newline: true,
+                    to: rendered
+                )
+                continue
+            }
+
+            appendDiffLine(
+                line,
+                counterpart: counterpart,
+                syntaxBody: syntaxBody,
+                newline: false,
+                to: rendered
+            )
+            rendered.append(NSAttributedString(string: "   ", attributes: support.baseAttributes))
+            let relativeIndex = index - currentHunk.startIndex
+            let reverse = context == "staged"
+            let primaryAction = reverse ? "unstage" : "stage"
+            support.appendLink(
+                title: reverse
+                    ? NSLocalizedString("Unstage line", comment: "Action to unstage one changed line")
+                    : NSLocalizedString("Stage line", comment: "Action to stage one changed line"),
+                action: .partialDiff(
+                    action: primaryAction,
+                    fileHeader: currentHunk.fileHeader,
+                    hunkLines: currentHunk.lines,
+                    selectedIndexes: IndexSet(integer: relativeIndex),
+                    reverse: reverse
+                ),
+                linkPayloads: &linkPayloads,
+                to: rendered
+            )
+
+            let blockIndexes = currentHunk.blockIndexes(startingAt: relativeIndex)
+            if !blockIndexes.isEmpty {
+                rendered.append(NSAttributedString(string: "   ", attributes: support.baseAttributes))
+                support.appendLink(
+                    title: reverse
+                        ? NSLocalizedString(
+                            "Unstage block",
+                            comment: "Action to unstage a contiguous block of changed lines"
+                        )
+                        : NSLocalizedString(
+                            "Stage block",
+                            comment: "Action to stage a contiguous block of changed lines"
+                        ),
+                    action: .partialDiff(
+                        action: primaryAction,
+                        fileHeader: currentHunk.fileHeader,
+                        hunkLines: currentHunk.lines,
+                        selectedIndexes: blockIndexes,
+                        reverse: reverse
+                    ),
+                    linkPayloads: &linkPayloads,
+                    to: rendered
+                )
+            }
+            if context == "unstaged" {
+                rendered.append(NSAttributedString(string: "   ", attributes: support.baseAttributes))
+                support.appendLink(
+                    title: NSLocalizedString(
+                        "Discard line",
+                        comment: "Action to discard one changed line"
+                    ),
+                    action: .partialDiff(
+                        action: "discard",
+                        fileHeader: currentHunk.fileHeader,
+                        hunkLines: currentHunk.lines,
+                        selectedIndexes: IndexSet(integer: relativeIndex),
+                        reverse: false
+                    ),
+                    linkPayloads: &linkPayloads,
+                    to: rendered
+                )
+            }
+            rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
+        }
+    }
+
+    private func syntaxHighlights(for hunkLines: [String], path: String) -> [Int: NSAttributedString] {
+        guard PBHighlighting.languageName(forPath: path) != nil else { return [:] }
+
+        let oldText = NSMutableString()
+        let newText = NSMutableString()
+        var oldRanges: [Int: NSRange] = [:]
+        var newRanges: [Int: NSRange] = [:]
+        for index in 1 ..< hunkLines.count {
+            let line = hunkLines[index]
+            guard let prefix = line.first, prefix == " " || prefix == "+" || prefix == "-" else {
+                continue
+            }
+            let body = String(line.dropFirst())
+            let bodyLength = (body as NSString).length
+            if prefix != "+" {
+                let range = NSRange(location: oldText.length, length: bodyLength)
+                oldText.append(body + "\n")
+                if prefix == "-" {
+                    oldRanges[index] = range
+                }
+            }
+            if prefix != "-" {
+                let range = NSRange(location: newText.length, length: bodyLength)
+                newText.append(body + "\n")
+                newRanges[index] = range
+            }
+        }
+
+        var highlights: [Int: NSAttributedString] = [:]
+        if !oldRanges.isEmpty {
+            let highlighted = PBHighlighting.highlightedString(forText: oldText as String, path: path)
+            for (index, range) in oldRanges where NSMaxRange(range) <= highlighted.length {
+                highlights[index] = highlighted.attributedSubstring(from: range)
+            }
+        }
+        if !newRanges.isEmpty {
+            let highlighted = PBHighlighting.highlightedString(forText: newText as String, path: path)
+            for (index, range) in newRanges where NSMaxRange(range) <= highlighted.length {
+                highlights[index] = highlighted.attributedSubstring(from: range)
+            }
+        }
+        return highlights
+    }
+
+    private func attributedDiffLine(
+        _ line: String,
+        counterpart: String?,
+        syntaxBody: NSAttributedString?
+    ) -> NSMutableAttributedString {
+        var attributes = support.baseAttributes
+        if line.hasPrefix("+"), !line.hasPrefix("+++") {
+            attributes[.foregroundColor] = NSColor(red: 0.08, green: 0.46, blue: 0.18, alpha: 1)
+            attributes[.backgroundColor] = NSColor(red: 0.20, green: 0.70, blue: 0.30, alpha: 0.13)
+        } else if line.hasPrefix("-"), !line.hasPrefix("---") {
+            attributes[.foregroundColor] = NSColor(red: 0.72, green: 0.12, blue: 0.13, alpha: 1)
+            attributes[.backgroundColor] = NSColor(red: 0.90, green: 0.20, blue: 0.20, alpha: 0.12)
+        } else if line.hasPrefix("@@") {
+            attributes[.foregroundColor] = NSColor.systemBlue
+            attributes[.backgroundColor] = NSColor(red: 0.20, green: 0.45, blue: 0.90, alpha: 0.10)
+        } else if line.hasPrefix("index ") || line.hasPrefix("--- ") || line.hasPrefix("+++ ") {
+            attributes[.foregroundColor] = NSColor.secondaryLabelColor
+        }
+
+        let result: NSMutableAttributedString
+        if let syntaxBody,
+           (line as NSString).length > 0,
+           syntaxBody.length == (line as NSString).length - 1
+        {
+            result = NSMutableAttributedString(
+                string: (line as NSString).substring(to: 1),
+                attributes: attributes
+            )
+            result.append(syntaxBody)
+            if let background = attributes[.backgroundColor] {
+                result.addAttribute(.backgroundColor, value: background, range: NSRange(location: 0, length: result.length))
+            }
+        } else {
+            result = NSMutableAttributedString(string: line, attributes: attributes)
+        }
+
+        if let counterpart, (counterpart as NSString).length > 1, (line as NSString).length > 1 {
+            let left = (line as NSString).substring(from: 1) as NSString
+            let right = (counterpart as NSString).substring(from: 1) as NSString
+            var prefix = 0
+            let limit = min(left.length, right.length)
+            while prefix < limit, left.character(at: prefix) == right.character(at: prefix) {
+                prefix += 1
+            }
+            var suffix = 0
+            while suffix < limit - prefix,
+                  left.character(at: left.length - 1 - suffix) == right.character(at: right.length - 1 - suffix)
+            {
+                suffix += 1
+            }
+            let changedLength = left.length - prefix - suffix
+            if changedLength > 0 {
+                let emphasis = line.hasPrefix("+")
+                    ? NSColor(red: 0.15, green: 0.66, blue: 0.25, alpha: 0.30)
+                    : NSColor(red: 0.90, green: 0.18, blue: 0.18, alpha: 0.27)
+                result.addAttribute(
+                    .backgroundColor,
+                    value: emphasis,
+                    range: NSRange(location: 1 + prefix, length: changedLength)
+                )
+            }
+        }
+        return result
+    }
+
+    private func appendDiffLine(
+        _ line: String,
+        counterpart: String? = nil,
+        syntaxBody: NSAttributedString? = nil,
+        newline: Bool = true,
+        to rendered: NSMutableAttributedString
+    ) {
+        rendered.append(attributedDiffLine(line, counterpart: counterpart, syntaxBody: syntaxBody))
+        if newline {
+            rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
+        }
+    }
+
+    private func isBinaryImageLine(_ line: String, path: String) -> Bool {
+        guard line.hasPrefix("Binary files ") || line == "GIT binary patch" else { return false }
+        let pathExtension = (path as NSString).pathExtension.lowercased()
+        return Self.imageExtensions.contains(pathExtension)
+    }
+
+    private func imageAttributedString(data: Data) -> NSAttributedString? {
+        var imageString: NSAttributedString?
+        let createImageString = {
+            guard let image = NSImage(data: data) else { return }
+            let size = image.size
+            let scale = min(1, min(800 / max(1, size.width), 500 / max(1, size.height)))
+            image.size = NSSize(width: size.width * scale, height: size.height * scale)
+            let attachment = NSTextAttachment()
+            attachment.image = image
+            imageString = NSAttributedString(attachment: attachment)
+        }
+        if Thread.isMainThread {
+            createImageString()
+        } else {
+            DispatchQueue.main.sync(execute: createImageString)
+        }
+        return imageString
+    }
+}
+
+// swiftlint:enable unused_declaration
