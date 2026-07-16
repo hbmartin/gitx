@@ -192,16 +192,16 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		NSMutableArray<PBIndexFileSnapshot *> *previous = [NSMutableArray arrayWithCapacity:self.files.count];
 		for (PBChangedFile *file in self.files) {
 			[previous addObject:[[PBIndexFileSnapshot alloc] initWithPath:file.path
-														 status:file.status
-												commitBlobMode:file.commitBlobMode
-												 commitBlobSHA:file.commitBlobSHA
-										hasStagedChanges:file.hasStagedChanges
-									  hasUnstagedChanges:file.hasUnstagedChanges]];
+																   status:file.status
+														   commitBlobMode:file.commitBlobMode
+															commitBlobSHA:file.commitBlobSHA
+														 hasStagedChanges:file.hasStagedChanges
+													   hasUnstagedChanges:file.hasUnstagedChanges]];
 		}
 		NSArray<PBIndexFileSnapshot *> *snapshots = [self.snapshotReducer reducePrevious:previous
-																			 staged:stagedDictionary
-																			unstaged:unstagedDictionary
-																		   untracked:untrackedDictionary];
+																				  staged:stagedDictionary
+																				unstaged:unstagedDictionary
+																			   untracked:untrackedDictionary];
 		NSMutableDictionary<NSString *, PBChangedFile *> *existing = [NSMutableDictionary dictionaryWithCapacity:self.files.count];
 		for (PBChangedFile *file in self.files)
 			existing[file.path] = file;
@@ -263,7 +263,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 					NSError *parseError = nil;
 					untrackedDictionary = [self.statusParser parseUntrackedData:readData error:&parseError];
 					[self postIndexRefreshSuccess:untrackedDictionary != nil
-											  message:untrackedDictionary ? @"ls-files success" : @"ls-files failed"];
+										  message:untrackedDictionary ? @"ls-files success" : @"ls-files failed"];
 				}
 
 				dispatch_group_leave(self->_indexRefreshGroup);
@@ -283,7 +283,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 					NSError *parseError = nil;
 					stagedDictionary = [self.statusParser parseTrackedData:readData error:&parseError];
 					[self postIndexRefreshSuccess:stagedDictionary != nil
-											  message:stagedDictionary ? @"diff-index success" : @"diff-index failed"];
+										  message:stagedDictionary ? @"diff-index success" : @"diff-index failed"];
 				}
 
 				dispatch_group_leave(self->_indexRefreshGroup);
@@ -303,7 +303,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 					NSError *parseError = nil;
 					unstagedDictionary = [self.statusParser parseTrackedData:readData error:&parseError];
 					[self postIndexRefreshSuccess:unstagedDictionary != nil
-											  message:unstagedDictionary ? @"diff-files success" : @"diff-files failed"];
+										  message:unstagedDictionary ? @"diff-files success" : @"diff-files failed"];
 				}
 
 				dispatch_group_leave(self->_indexRefreshGroup);
@@ -320,11 +320,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	if ([self.repository isBareRepository]) return;
 
 	[PBTask launchTask:[PBGitBinary path]
-			 arguments:@[ @"update-index", @"-q", @"--unmerged", @"--ignore-missing", @"--refresh" ]
-		   inDirectory:self.repository.workingDirectoryURL.path
-	 completionHandler:^(NSData *readData, NSError *error) {
-		[self refresh];
-	}];
+				arguments:@[ @"update-index", @"-q", @"--unmerged", @"--ignore-missing", @"--refresh" ]
+			  inDirectory:self.repository.workingDirectoryURL.path
+		completionHandler:^(NSData *readData, NSError *error) {
+			[self refresh];
+		}];
 }
 
 // Returns the tree to compare the index to, based
@@ -374,8 +374,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		NSError *taskError = error.userInfo[NSUnderlyingErrorKey];
 		NSString *hookOutput = taskError.userInfo[PBTaskTerminationOutputKey];
 		NSString *hookFailureMessage = [NSString stringWithFormat:@"prepare-commit-msg hook failed%@%@",
-										hookOutput && [hookOutput length] > 0 ? @":\n" : @"",
-										hookOutput];
+																  hookOutput && [hookOutput length] > 0 ? @":\n" : @"",
+																  hookOutput];
 
 		[self postCommitHookFailure:hookFailureMessage];
 	}
@@ -612,12 +612,12 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 {
 	NSError *error = nil;
 	NSString *output = [self.mutationService diffForPath:file.path
-															status:file.status
-											hasStagedChanges:file.hasStagedChanges
-														  staged:staged
-													  parentTree:self.parentTree
-													contextLines:context
-														   error:&error];
+												  status:file.status
+										hasStagedChanges:file.hasStagedChanges
+												  staged:staged
+											  parentTree:self.parentTree
+											contextLines:context
+												   error:&error];
 	if (!output)
 		PBLogError(error);
 	return output;

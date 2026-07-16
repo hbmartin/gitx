@@ -1073,8 +1073,9 @@
 	XCTAssertTrue([self.fixture writeText:contents toPath:relativePath error:error], @"%@", *error);
 	NSString *path = [self.fixture.path stringByAppendingPathComponent:relativePath];
 	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755}
-											  ofItemAtPath:path
-													 error:error], @"%@", *error);
+												   ofItemAtPath:path
+														  error:error],
+				  @"%@", *error);
 	return path;
 }
 
@@ -1094,8 +1095,8 @@
 {
 	NSError *error = nil;
 	[self installHookNamed:@"prepare-commit-msg"
-				 contents:@"#!/bin/sh\nprintf 'prepared message\\n' > \"$1\"\n"
-					error:&error];
+				  contents:@"#!/bin/sh\nprintf 'prepared message\\n' > \"$1\"\n"
+					 error:&error];
 
 	NSString *message = [self.repository.index createPrepareCommitMessage];
 
@@ -1106,8 +1107,8 @@
 {
 	NSError *error = nil;
 	[self installHookNamed:@"prepare-commit-msg"
-				 contents:@"#!/bin/sh\nprintf 'prepare was blocked\\n' >&2\nexit 17\n"
-					error:&error];
+				  contents:@"#!/bin/sh\nprintf 'prepare was blocked\\n' >&2\nexit 17\n"
+					 error:&error];
 	__block NSNotification *failure = nil;
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitHookFailed
@@ -1148,14 +1149,14 @@
 	[self stageTrackedText:@"verified contents\n" error:&error];
 	NSString *markerPath = [self.fixture.path stringByAppendingPathComponent:@"hook-order.txt"];
 	[self installHookNamed:@"pre-commit"
-				 contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'pre\\n' >> '%@'\n", markerPath]
-					error:&error];
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'pre\\n' >> '%@'\n", markerPath]
+					 error:&error];
 	[self installHookNamed:@"commit-msg"
-				 contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'message:%%s\\n' \"$(head -n 1 \"$1\")\" >> '%@'\n", markerPath]
-					error:&error];
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'message:%%s\\n' \"$(head -n 1 \"$1\")\" >> '%@'\n", markerPath]
+					 error:&error];
 	[self installHookNamed:@"post-commit"
-				 contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'post\\n' >> '%@'\n", markerPath]
-					error:&error];
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'post\\n' >> '%@'\n", markerPath]
+					 error:&error];
 	__block NSNotification *finished = nil;
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexFinishedCommit
@@ -1181,8 +1182,8 @@
 	NSError *error = nil;
 	[self stageTrackedText:@"blocked contents\n" error:&error];
 	[self installHookNamed:@"pre-commit"
-				 contents:@"#!/bin/sh\nprintf 'pre-commit denied\\n' >&2\nexit 19\n"
-					error:&error];
+				  contents:@"#!/bin/sh\nprintf 'pre-commit denied\\n' >&2\nexit 19\n"
+					 error:&error];
 	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	__block NSNotification *failure = nil;
@@ -1208,8 +1209,8 @@
 	NSError *error = nil;
 	[self stageTrackedText:@"message blocked contents\n" error:&error];
 	[self installHookNamed:@"commit-msg"
-				 contents:@"#!/bin/sh\nprintf 'message denied\\n' >&2\nexit 21\n"
-					error:&error];
+				  contents:@"#!/bin/sh\nprintf 'message denied\\n' >&2\nexit 21\n"
+					 error:&error];
 	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	__block NSNotification *failure = nil;
@@ -1310,12 +1311,12 @@
 	NSError *error = nil;
 	NSString *expected = @"e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
 	NSString *output = [self.repository outputOfTaskWithArguments:@[ @"hash-object", @"--stdin" ]
-																	input:@""
-																	error:&error];
+															input:@""
+															error:&error];
 	XCTAssertEqualObjects(output, expected);
 	BOOL launched = [self.repository launchTaskWithArguments:@[ @"hash-object", @"-w", @"--stdin" ]
-													  input:@"stored through stdin"
-													  error:&error];
+													   input:@"stored through stdin"
+													   error:&error];
 	XCTAssertTrue(launched, @"%@", error);
 }
 

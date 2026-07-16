@@ -1,5 +1,8 @@
 import Foundation
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
+
+// Objective-C callers are not visible to SwiftLint's analyzer.
+// swiftlint:disable unused_declaration
 
 private enum IndexSnapshotError {
     nonisolated static func malformed(_ description: String) -> NSError {
@@ -239,3 +242,5 @@ final nonisolated class IndexSnapshotReducer: NSObject {
         )
     }
 }
+
+// swiftlint:enable unused_declaration
