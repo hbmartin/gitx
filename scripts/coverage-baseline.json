@@ -4,6 +4,9 @@
   "minimumLineCoverage": 0.739,
   "files": {
     "Classes/Controllers/ApplicationController.m": 0.284,
+    "Classes/Controllers/CommitControllerPolicies.swift": 1.0,
+    "Classes/Controllers/CommitMenuPresenter.swift": 1.0,
+    "Classes/Controllers/CommitTableInteractionCoordinator.swift": 0.9818,
     "Classes/Controllers/DBPrefsWindowController.m": 0.0,
     "Classes/Controllers/HistoryMenuBuilder.swift": 0.9607,
     "Classes/Controllers/HistoryStateCoordinator.swift": 0.9574,

@@ -40,6 +40,8 @@
 #import "PBHighlighting.h"
 #import "PBGitDefaults.h"
 #import "PBGitRepository.h"
+#import "PBGitIndex.h"
+#import "PBChangedFile.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitStash.h"

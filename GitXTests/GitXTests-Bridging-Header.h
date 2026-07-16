@@ -374,6 +374,40 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 	NS_SWIFT_NAME(selectionIndex(currentIndex:arrangedCount:));
 @end
 
+@interface PBCommitMenuFile : NSObject
+@property (nonatomic, copy, readonly) NSString *path;
+@property (nonatomic, readonly) NSInteger status;
+@property (nonatomic, readonly) BOOL hasUnstagedChanges;
+- (instancetype)initWithPath:(NSString *)path
+					  status:(NSInteger)status
+		  hasUnstagedChanges:(BOOL)hasUnstagedChanges;
+@end
+
+@interface PBCommitMenuPresentation : NSObject
+@property (nonatomic, copy, readonly, nullable) NSString *title;
+@property (nonatomic, readonly) BOOL enabled;
+@property (nonatomic, readonly) BOOL updatesHidden;
+@property (nonatomic, readonly) BOOL hidden;
+@property (nonatomic, readonly) BOOL updatesAlternate;
+@property (nonatomic, readonly) BOOL alternate;
+@property (nonatomic, readonly) BOOL updatesState;
+@property (nonatomic, readonly) NSInteger state;
+@end
+
+@interface PBCommitMenuPresenter : NSObject
++ (PBCommitMenuPresentation *)presentationForAction:(SEL _Nullable)action
+									  unstagedFiles:(NSArray<PBCommitMenuFile *> *)unstagedFiles
+										stagedFiles:(NSArray<PBCommitMenuFile *> *)stagedFiles
+									isStagedContext:(BOOL)isStagedContext
+										allowsTrash:(BOOL)allowsTrash
+								   isContextualMenu:(BOOL)isContextualMenu
+						 singleSelectionIsSubmodule:(BOOL)singleSelectionIsSubmodule
+											isAmend:(BOOL)isAmend
+								  prepareHookExists:(BOOL)prepareHookExists
+									fallbackEnabled:(BOOL)fallbackEnabled
+	NS_SWIFT_NAME(presentation(action:unstagedFiles:stagedFiles:isStagedContext:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:));
+@end
+
 @interface PBCommitList : NSTableView
 @property (nonatomic) BOOL useAdjustScroll;
 @property (nonatomic, readonly) NSPoint mouseDownPoint;

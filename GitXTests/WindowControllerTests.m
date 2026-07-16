@@ -1249,7 +1249,6 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[controller forceCommit:self];
 	XCTAssertEqual(index.commitCount, (NSUInteger)2);
 	XCTAssertFalse(index.lastCommitVerification);
-	XCTAssertEqualObjects([controller valueForKey:@"pendingPushRemoteName"], @"origin");
 
 	self.controller.interceptRemoteRouting = YES;
 	[controller commitFinished:[NSNotification notificationWithName:PBGitIndexFinishedCommit
@@ -1261,12 +1260,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
 	XCTAssertEqualObjects(self.controller.lastRemote.remoteName, @"origin");
 	XCTAssertFalse(self.controller.lastPushRequiresConfirmation);
-	XCTAssertNil([controller valueForKey:@"pendingPushRemoteName"]);
 
+	messageView.string = NSLocalizedString(@"failed push commit", nil);
+	pushAfterCommitButton.state = NSControlStateValueOn;
+	[controller forceCommit:self];
 	controller.isBusy = YES;
 	messageView.editable = NO;
-	[controller setValue:self.branchRef forKey:@"pendingPushBranchRef"];
-	[controller setValue:@"origin" forKey:@"pendingPushRemoteName"];
 	[controller commitFailed:[NSNotification notificationWithName:PBGitIndexCommitFailed
 														   object:index
 														 userInfo:@{@"description" : @"rejected"}]];
@@ -1274,8 +1273,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue(messageView.editable);
 	XCTAssertEqualObjects(controller.status, @"Commit failed: rejected");
 	XCTAssertEqualObjects(PBWindowLastMessage, @"Commit failed");
-	XCTAssertNil([controller valueForKey:@"pendingPushBranchRef"]);
+	[controller commitFinished:[NSNotification notificationWithName:PBGitIndexFinishedCommit object:index]];
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
 
+	messageView.string = NSLocalizedString(@"hook failure commit", nil);
+	pushAfterCommitButton.state = NSControlStateValueOn;
+	[controller forceCommit:self];
 	controller.isBusy = YES;
 	messageView.editable = NO;
 	[controller commitHookFailed:[NSNotification notificationWithName:PBGitIndexCommitHookFailed
@@ -1285,6 +1288,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue(messageView.editable);
 	XCTAssertEqualObjects(controller.status, @"Commit hook failed: hook rejected");
 	XCTAssertEqual(PBWindowHookCount, (NSUInteger)1);
+	[controller commitFinished:[NSNotification notificationWithName:PBGitIndexFinishedCommit object:index]];
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
 
 	controller.isBusy = YES;
 	[controller refreshFinished:[NSNotification notificationWithName:PBGitIndexFinishedIndexRefresh object:index]];
@@ -1375,7 +1380,13 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[controller fileChangesTableViewDidRequestStagingToggle:(PBFileChangesTableView *)stagedTable];
 	XCTAssertEqual(index.stageCount, (NSUInteger)2);
 	XCTAssertEqual(index.unstageCount, (NSUInteger)2);
-	[self pumpRunLoopFor:0.01];
+	XCTestExpectation *reselectionFinished = [self expectationWithDescription:@"commit table reselection finished"];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[reselectionFinished fulfill];
+	});
+	[self waitForExpectations:@[ reselectionFinished ] timeout:1.0];
+	XCTAssertEqual(unstagedController.selectionIndex, (NSUInteger)0);
+	XCTAssertEqual(stagedController.selectionIndex, (NSUInteger)0);
 
 	self.controller.shouldConfirm = NO;
 	[controller discardFiles:self];
@@ -1587,6 +1598,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[invalidPasteboard declareTypes:@[ @"GitFileChangedType" ] owner:nil];
 	[invalidPasteboard setData:[@"invalid" dataUsingEncoding:NSUTF8StringEncoding] forType:@"GitFileChangedType"];
 	dragInfo.testPasteboard = invalidPasteboard;
+	XCTAssertFalse([controller tableView:stagedTable
+							  acceptDrop:(id<NSDraggingInfo>)dragInfo
+									 row:0
+						   dropOperation:NSTableViewDropOn]);
+	NSPasteboard *missingRowsPasteboard = [NSPasteboard pasteboardWithUniqueName];
+	dragInfo.testPasteboard = missingRowsPasteboard;
 	XCTAssertFalse([controller tableView:stagedTable
 							  acceptDrop:(id<NSDraggingInfo>)dragInfo
 									 row:0
