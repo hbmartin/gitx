@@ -1,11 +1,11 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.7022,
+  "minimumLineCoverage": 0.7023,
   "files": {
     "Classes/Controllers/ApplicationController.m": 0.284,
     "Classes/Controllers/DBPrefsWindowController.m": 0.0,
-    "Classes/Controllers/HistoryMenuBuilder.swift": 0.9591,
+    "Classes/Controllers/HistoryMenuBuilder.swift": 0.9607,
     "Classes/Controllers/HistoryStateCoordinator.swift": 0.9574,
     "Classes/Controllers/HistoryTableInteractionCoordinator.swift": 0.9305,
     "Classes/Controllers/OpenRecentController.m": 0.0,
