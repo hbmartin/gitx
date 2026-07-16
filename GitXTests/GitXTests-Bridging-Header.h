@@ -1,9 +1,16 @@
+#import <Quartz/Quartz.h>
 #import "GitXRelativeDateFormatter.h"
 #import "PBRepositoryFinder.h"
+#import "PBMacros.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitDefaults.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
+#import "PBGitHistoryController.h"
+#import "PBGitCommit.h"
+#import "PBGitIndex.h"
+#import "PBGitStash.h"
+#import "PBUncommittedChanges.h"
 #import "PBHighlighting.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
@@ -97,6 +104,61 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBRepositoryStashService : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
 - (BOOL)saveWithKeepIndex:(BOOL)keepIndex error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+@end
+
+@interface PBCommitList : NSTableView
+@property (nonatomic) BOOL useAdjustScroll;
+@property (nonatomic, readonly) NSPoint mouseDownPoint;
+@end
+
+extern NSString *PBGitRepositoryEventNotification;
+extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
+
+@interface PBGitHistoryList : NSObject
+@property (nonatomic, strong) NSMutableArray<PBGitCommit *> *commits;
+@property (nonatomic, assign) BOOL isUpdating;
+- (void)cleanup;
+@end
+
+@interface PBGitTree : NSObject
+@end
+
+@interface PBQLTextView : NSTextView
+@end
+
+@interface PBGitHistoryController (GitXTests)
+- (void)updateUncommittedChanges;
+- (void)reselectCommitAfterUpdate;
+- (void)updateKeys;
+- (void)updateBranchFilterMatrix;
+- (nullable PBGitCommit *)firstCommit;
+- (void)updateStatus;
+- (void)restoreFileBrowserSelection;
+- (void)saveFileBrowserSelection;
+- (void)historySortingPreferenceChanged:(NSNotification *)notification;
+- (void)_repositoryUpdatedNotification:(NSNotification *)notification;
+- (void)performFindPanelAction:(id)sender;
+- (BOOL)isCommitSelected;
+- (BOOL)tableView:(NSTableView *)tableView
+    writeRowsWithIndexes:(NSIndexSet *)rowIndexes
+            toPasteboard:(NSPasteboard *)pasteboard;
+- (NSDragOperation)tableView:(NSTableView *)tableView
+                validateDrop:(id<NSDraggingInfo>)draggingInfo
+                 proposedRow:(NSInteger)row
+       proposedDropOperation:(NSTableViewDropOperation)operation;
+- (BOOL)tableView:(NSTableView *)tableView
+       acceptDrop:(id<NSDraggingInfo>)draggingInfo
+              row:(NSInteger)row
+    dropOperation:(NSTableViewDropOperation)operation;
+- (void)didDoubleClickCommitList:(id)sender;
+- (void)checkoutFiles:(id)sender;
+- (NSIndexSet *)tableView:(NSTableView *)tableView
+    selectionIndexesForProposedSelection:(NSIndexSet *)proposedSelectionIndexes;
+- (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row;
+- (NSInteger)numberOfPreviewItemsInPreviewPanel:(nullable id)panel;
+- (nullable id<QLPreviewItem>)previewPanel:(nullable id)panel previewItemAtIndex:(NSInteger)index;
+- (BOOL)previewPanel:(nullable id)panel handleEvent:(NSEvent *)event;
+- (NSRect)previewPanel:(nullable id)panel sourceFrameOnScreenForPreviewItem:(id<QLPreviewItem>)item;
 @end
 
 NS_ASSUME_NONNULL_END

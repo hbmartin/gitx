@@ -206,6 +206,7 @@
 		C0DE90000000000000000006 /* RepositoryHookRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000016 /* RepositoryHookRunner.swift */; };
 		C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000017 /* RepositoryServiceTests.swift */; };
 		C0DE90000000000000000008 /* PBGitRepository+ServiceForwarding.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */; };
+		C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA0000000000000000002 /* HistoryControllerTests.swift */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
@@ -748,6 +749,7 @@
 		C0DE90000000000000000016 /* RepositoryHookRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryHookRunner.swift; sourceTree = "<group>"; };
 		C0DE90000000000000000017 /* RepositoryServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryServiceTests.swift; sourceTree = "<group>"; };
 		C0DE90000000000000000018 /* PBGitRepository+ServiceForwarding.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitRepository+ServiceForwarding.m"; sourceTree = "<group>"; };
+		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
 		CC0000020000002 /* GitXScreenshotTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXScreenshotTests.m; sourceTree = "<group>"; };
@@ -1298,6 +1300,7 @@
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
 				C0DE90000000000000000017 /* RepositoryServiceTests.swift */,
+				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
 				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
 				C0DE50000000000000000002 /* GitXPerformanceTests.swift */,
@@ -1855,6 +1858,7 @@
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
+				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
 				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
 				C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */,
