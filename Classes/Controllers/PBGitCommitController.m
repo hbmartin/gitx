@@ -7,6 +7,7 @@
 //
 
 #import "PBGitCommitController.h"
+#import "GitX-Swift.h"
 #import "NSFileHandleExt.h"
 #import "PBChangedFile.h"
 #import "PBWebChangesController.h"
@@ -15,7 +16,6 @@
 #import "PBGitRevSpecifier.h"
 #import "PBGitRepositoryWatcher.h"
 #import "PBCommitMessageView.h"
-#import "PBFileChangesTableView.h"
 #import "PBTask.h"
 #import "NSSplitView+GitX.h"
 
@@ -28,11 +28,7 @@
 
 #define FileChangesTableViewType @"GitFileChangedType"
 
-@interface PBRepositoryRefreshPolicy : NSObject
-+ (BOOL)shouldRefreshStatCacheAfterApplicationActivation;
-@end
-
-@interface PBGitCommitController () <NSTextViewDelegate, NSMenuDelegate, PBFileChangesTableViewStagingDelegate> {
+@interface PBGitCommitController () <NSTextViewDelegate, NSMenuDelegate> {
 	IBOutlet PBCommitMessageView *commitMessageView;
 
 	IBOutlet NSArrayController *unstagedFilesController;
@@ -52,6 +48,7 @@
 @property (weak) IBOutlet NSTableView *stagedTable;
 @property (nonatomic, strong) PBGitRef *pendingPushBranchRef;
 @property (nonatomic, copy) NSString *pendingPushRemoteName;
+@property (nonatomic, strong) PBCommitWorkflowState *commitWorkflowState;
 
 - (nullable NSString *)selectedPushRemoteName;
 - (void)reloadPushRemotes;
@@ -69,6 +66,7 @@
 		return nil;
 
 	PBGitIndex *index = theRepository.index;
+	_commitWorkflowState = [[PBCommitWorkflowState alloc] init];
 
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshFinished:) name:PBGitIndexFinishedIndexRefresh object:index];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(commitStatusUpdated:) name:PBGitIndexCommitStatus object:index];
@@ -189,6 +187,26 @@
 	return self.repository.index;
 }
 
+- (PBGitRef *)pendingPushBranchRef
+{
+	return self.commitWorkflowState.pendingBranchRef;
+}
+
+- (void)setPendingPushBranchRef:(PBGitRef *)pendingPushBranchRef
+{
+	self.commitWorkflowState.pendingBranchRef = pendingPushBranchRef;
+}
+
+- (NSString *)pendingPushRemoteName
+{
+	return self.commitWorkflowState.pendingRemoteName;
+}
+
+- (void)setPendingPushRemoteName:(NSString *)pendingPushRemoteName
+{
+	self.commitWorkflowState.pendingRemoteName = pendingPushRemoteName;
+}
+
 - (NSString *)selectedPushRemoteName
 {
 	id representedObject = pushRemotePopUpButton.selectedItem.representedObject;
@@ -198,42 +216,55 @@
 - (void)reloadPushRemotes
 {
 	NSString *previousSelection = [self selectedPushRemoteName];
-	NSArray<NSString *> *remotes = [self.repository.remotes sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+	NSArray<NSString *> *remotes = [PBCommitRemotePresentationPolicy sortedRemoteNames:self.repository.remotes];
 	PBGitRef *headRef = self.repository.headRef.ref;
-	BOOL canPush = headRef.isBranch && remotes.count > 0;
+	NSString *trackingRemoteName = nil;
+	if ([PBCommitRemotePresentationPolicy shouldResolveTrackingRemoteForRemoteNames:remotes
+																  previousSelection:previousSelection
+																		   isBranch:headRef.isBranch]) {
+		trackingRemoteName = [self.repository remoteRefForBranch:headRef error:NULL].remoteName;
+	}
+	PBCommitRemotePresentation *presentation = [PBCommitRemotePresentationPolicy presentationForRemoteNames:remotes
+																						  previousSelection:previousSelection
+																						 trackingRemoteName:trackingRemoteName
+																								   isBranch:headRef.isBranch];
 
 	[pushRemotePopUpButton removeAllItems];
-	if (remotes.count == 0) {
+	if (presentation.remoteNames.count == 0) {
 		[pushRemotePopUpButton addItemWithTitle:NSLocalizedString(@"No Remotes", @"Placeholder in the commit push remote popup when no remotes are configured")];
 		pushRemotePopUpButton.lastItem.enabled = NO;
 	} else {
-		for (NSString *remoteName in remotes) {
+		for (NSString *remoteName in presentation.remoteNames) {
 			[pushRemotePopUpButton addItemWithTitle:remoteName];
 			pushRemotePopUpButton.lastItem.representedObject = remoteName;
 		}
-
-		NSString *selection = nil;
-		if ([remotes containsObject:previousSelection]) {
-			selection = previousSelection;
-		} else if (headRef.isBranch) {
-			selection = [self.repository remoteRefForBranch:headRef error:NULL].remoteName;
-		}
-		if (![remotes containsObject:selection]) {
-			selection = [remotes containsObject:@"origin"] ? @"origin" : remotes.firstObject;
-		}
-		[pushRemotePopUpButton selectItemAtIndex:[remotes indexOfObject:selection]];
+		[pushRemotePopUpButton selectItemWithTitle:presentation.selectedRemoteName];
 	}
 
-	pushAfterCommitButton.enabled = canPush;
-	pushRemotePopUpButton.enabled = canPush;
-	if (!canPush) {
+	pushAfterCommitButton.enabled = presentation.canPush;
+	pushRemotePopUpButton.enabled = presentation.canPush;
+	if (!presentation.canPush) {
 		pushAfterCommitButton.state = NSControlStateValueOff;
 	}
+	NSLog(@"[GitX] Reloaded commit push controls (remote count: %lu, can push: %@)",
+		  presentation.remoteNames.count,
+		  presentation.canPush ? @"yes" : @"no");
 }
 
 - (void)commitWithVerification:(BOOL)doVerify
 {
-	if ([[NSFileManager defaultManager] fileExistsAtPath:[self.repository.gitURL.path stringByAppendingPathComponent:@"MERGE_HEAD"]]) {
+	BOOL mergeInProgress = [[NSFileManager defaultManager] fileExistsAtPath:[self.repository.gitURL.path stringByAppendingPathComponent:@"MERGE_HEAD"]];
+	NSInteger stagedCount = [[stagedFilesController arrangedObjects] count];
+	NSString *commitMessage = [commitMessageView string];
+	PBCommitSubmissionPlan *validationPlan = [PBCommitSubmissionPolicy planForMergeInProgress:mergeInProgress
+																				  stagedCount:stagedCount
+																				messageLength:commitMessage.length
+																				  pushEnabled:NO
+																				pushRequested:NO
+																					 isBranch:NO
+																				   remoteName:nil];
+
+	if (validationPlan.disposition == PBCommitSubmissionDispositionMergeInProgress) {
 		NSString *message = NSLocalizedString(@"Cannot commit merges",
 											  @"Title for sheet that GitX cannot create merge commits");
 		NSString *info = NSLocalizedString(@"GitX cannot commit merges yet. Please commit your changes from the command line.",
@@ -243,7 +274,7 @@
 		return;
 	}
 
-	if ([[stagedFilesController arrangedObjects] count] == 0) {
+	if (validationPlan.disposition == PBCommitSubmissionDispositionNoStagedChanges) {
 		NSString *message = NSLocalizedString(@"No changes to commit",
 											  @"Title for sheet that you need to stage changes before creating a commit");
 		NSString *info = NSLocalizedString(@"You need to stage some changed files before committing by moving them to the list of Staged Changes.",
@@ -253,8 +284,7 @@
 		return;
 	}
 
-	NSString *commitMessage = [commitMessageView string];
-	if (commitMessage.length < kMinimalCommitMessageLength) {
+	if (validationPlan.disposition == PBCommitSubmissionDispositionMessageTooShort) {
 		NSString *message = NSLocalizedString(@"Missing commit message",
 											  @"Title for sheet that you need to enter a commit message before creating a commit");
 		NSString *info = [NSString stringWithFormat:
@@ -265,15 +295,18 @@
 		return;
 	}
 
-	self.pendingPushBranchRef = nil;
-	self.pendingPushRemoteName = nil;
-	if (pushAfterCommitButton.enabled && pushAfterCommitButton.state == NSControlStateValueOn) {
-		PBGitRef *headRef = self.repository.headRef.ref;
-		NSString *remoteName = [self selectedPushRemoteName];
-		if (headRef.isBranch && remoteName.length > 0) {
-			self.pendingPushBranchRef = headRef;
-			self.pendingPushRemoteName = remoteName;
-		}
+	[self.commitWorkflowState clear];
+	PBGitRef *headRef = self.repository.headRef.ref;
+	NSString *remoteName = [self selectedPushRemoteName];
+	PBCommitSubmissionPlan *submissionPlan = [PBCommitSubmissionPolicy planForMergeInProgress:NO
+																				  stagedCount:stagedCount
+																				messageLength:commitMessage.length
+																				  pushEnabled:pushAfterCommitButton.enabled
+																				pushRequested:pushAfterCommitButton.state == NSControlStateValueOn
+																					 isBranch:headRef.isBranch
+																				   remoteName:remoteName];
+	if (submissionPlan.shouldArmPendingPush) {
+		[self.commitWorkflowState armWithBranchRef:headRef remoteName:remoteName];
 	}
 
 	[stagedFilesController setSelectionIndexes:[NSIndexSet indexSet]];
@@ -321,14 +354,12 @@
 																		 @"Information text for sheet that the user’s name is not set in the git configuration")];
 	}
 
-	NSString *SOBline = [NSString stringWithFormat:NSLocalizedString(@"Signed-off-by: %@ <%@>",
-																	 @"Signed off message format. Most likely this should not be localised."),
-												   userName,
-												   userEmail];
-
-	if ([commitMessageView.string rangeOfString:SOBline].location == NSNotFound) {
+	PBCommitMessageResult *result = [PBCommitMessagePolicy messageByAddingSignOffToMessage:commitMessageView.string
+																				  userName:userName
+																				 userEmail:userEmail];
+	if (result.didAddSignOff) {
 		NSArray *selectedRanges = [commitMessageView selectedRanges];
-		commitMessageView.string = [NSString stringWithFormat:@"%@\n\n%@", commitMessageView.string, SOBline];
+		commitMessageView.string = result.message;
 		[commitMessageView setSelectedRanges:selectedRanges];
 	}
 }
@@ -470,7 +501,8 @@ static void reselectNextFile(NSArrayController *controller)
 {
 	NSUInteger currentSelectionIndex = controller.selectionIndex;
 	dispatch_async(dispatch_get_main_queue(), ^{
-		NSUInteger newSelectionIndex = MIN(currentSelectionIndex, [controller.arrangedObjects count] - 1);
+		NSUInteger newSelectionIndex = [PBCommitSelectionPolicy selectionIndexForCurrentIndex:currentSelectionIndex
+																				arrangedCount:[controller.arrangedObjects count]];
 		controller.selectionIndex = newSelectionIndex;
 	});
 }
@@ -529,15 +561,12 @@ static void reselectNextFile(NSArrayController *controller)
 	commitMessageView.string = @"";
 	[webController setStateMessage:notification.userInfo[kNotificationDictionaryDescriptionKey]];
 
-	PBGitRef *branchRef = self.pendingPushBranchRef;
-	NSString *remoteName = self.pendingPushRemoteName;
-	self.pendingPushBranchRef = nil;
-	self.pendingPushRemoteName = nil;
+	PBCommitPushPlan *pushPlan = [self.commitWorkflowState consumePendingPush];
 	pushAfterCommitButton.state = NSControlStateValueOff;
 
-	if (branchRef.isBranch && remoteName.length > 0) {
-		PBGitRef *remoteRef = [PBGitRef refFromString:[kGitXRemoteRefPrefix stringByAppendingString:remoteName]];
-		[self.windowController performPushForBranch:branchRef toRemote:remoteRef requiresConfirmation:NO];
+	if (pushPlan.branchRef.isBranch && pushPlan.remoteName.length > 0) {
+		PBGitRef *remoteRef = [PBGitRef refFromString:[kGitXRemoteRefPrefix stringByAppendingString:pushPlan.remoteName]];
+		[self.windowController performPushForBranch:pushPlan.branchRef toRemote:remoteRef requiresConfirmation:NO];
 	}
 }
 
@@ -545,8 +574,7 @@ static void reselectNextFile(NSArrayController *controller)
 {
 	self.isBusy = NO;
 	commitMessageView.editable = YES;
-	self.pendingPushBranchRef = nil;
-	self.pendingPushRemoteName = nil;
+	[self.commitWorkflowState clear];
 
 	NSString *reason = notification.userInfo[kNotificationDictionaryDescriptionKey];
 	self.status = [NSString stringWithFormat:
@@ -561,8 +589,7 @@ static void reselectNextFile(NSArrayController *controller)
 {
 	self.isBusy = NO;
 	commitMessageView.editable = YES;
-	self.pendingPushBranchRef = nil;
-	self.pendingPushRemoteName = nil;
+	[self.commitWorkflowState clear];
 
 	NSString *reason = notification.userInfo[kNotificationDictionaryDescriptionKey];
 	self.status = [NSString stringWithFormat:
@@ -576,9 +603,7 @@ static void reselectNextFile(NSArrayController *controller)
 
 - (void)amendCommit:(NSNotification *)notification
 {
-	// Replace commit message with the old one if it's less than 3 characters long.
-	// This is just a random number.
-	if ([[commitMessageView string] length] > kMinimalCommitMessageLength) {
+	if (![PBCommitMessagePolicy shouldReplaceMessageForAmendWithCurrentMessage:[commitMessageView string]]) {
 		return;
 	}
 

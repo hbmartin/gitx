@@ -219,6 +219,8 @@
 		C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAF000000000000000012 /* NativeContentModelsTests.swift */; };
 		C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAE000000000000000011 /* NativeContentRenderer.swift */; };
 		C0DEAE000000000000000002 /* NativeContentRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAE000000000000000012 /* NativeContentRendererTests.swift */; };
+		C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000011 /* CommitControllerPolicies.swift */; };
+		C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */; };
 		C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA0000000000000000002 /* HistoryControllerTests.swift */; };
 		C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */; };
 		C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */; };
@@ -791,6 +793,8 @@
 		C0DEAF000000000000000012 /* NativeContentModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentModelsTests.swift; sourceTree = "<group>"; };
 		C0DEAE000000000000000011 /* NativeContentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentRenderer.swift; sourceTree = "<group>"; };
 		C0DEAE000000000000000012 /* NativeContentRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentRendererTests.swift; sourceTree = "<group>"; };
+		C0DECF000000000000000011 /* CommitControllerPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitControllerPolicies.swift; sourceTree = "<group>"; };
+		C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitControllerPoliciesTests.swift; sourceTree = "<group>"; };
 		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
 		C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryActionContextResolver.swift; sourceTree = "<group>"; };
@@ -1099,6 +1103,7 @@
 				4A5D762D14A9A9CC00DF6C68 /* PBDiffWindowController.m */,
 				4A5D762E14A9A9CC00DF6C68 /* PBGitCommitController.h */,
 				4A5D762F14A9A9CC00DF6C68 /* PBGitCommitController.m */,
+				C0DECF000000000000000011 /* CommitControllerPolicies.swift */,
 				4A5D763014A9A9CC00DF6C68 /* PBGitHistoryController.h */,
 				4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */,
 				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
@@ -1374,6 +1379,7 @@
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
 				C0DEAF000000000000000012 /* NativeContentModelsTests.swift */,
 				C0DEAE000000000000000012 /* NativeContentRendererTests.swift */,
+				C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
 				C0DEC0000000000000000002 /* WindowControllerTests.m */,
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
@@ -1820,6 +1826,7 @@
 				C0DEE0000000000000000008 /* IndexRefreshCoordinator.swift in Sources */,
 				C0DEAF000000000000000001 /* NativeContentModels.swift in Sources */,
 				C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */,
+				C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */,
 				C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */,
 				C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */,
 				C0DEB0000000000000000003 /* HistoryTableInteractionCoordinator.swift in Sources */,
@@ -1957,6 +1964,7 @@
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
 				C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */,
 				C0DEAE000000000000000002 /* NativeContentRendererTests.swift in Sources */,
+				C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */,
 				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
 				C0DEC0000000000000000001 /* WindowControllerTests.m in Sources */,
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,

@@ -285,17 +285,93 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 
 @interface PBIndexMutationService : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner;
-- (BOOL)stagePaths:(NSArray<NSString *> *)paths error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
-- (BOOL)unstagePaths:(NSArray<NSString *> *)paths parentTree:(NSString *)parentTree error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
-- (BOOL)discardPaths:(NSArray<NSString *> *)paths error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
-- (BOOL)applyPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (BOOL)stagePaths:(NSArray<NSString *> *)paths error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (BOOL)unstagePaths:(NSArray<NSString *> *)paths parentTree:(NSString *)parentTree error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (BOOL)discardPaths:(NSArray<NSString *> *)paths error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (BOOL)applyPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
 - (nullable NSString *)diffForPath:(NSString *)path
-										status:(NSInteger)status
-					 hasStagedChanges:(BOOL)hasStagedChanges
-										staged:(BOOL)staged
-								parentTree:(NSString *)parentTree
-							  contextLines:(NSUInteger)contextLines
-										 error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+							status:(NSInteger)status
+				  hasStagedChanges:(BOOL)hasStagedChanges
+							staged:(BOOL)staged
+						parentTree:(NSString *)parentTree
+					  contextLines:(NSUInteger)contextLines
+							 error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+@end
+
+@interface PBCommitRemotePresentation : NSObject
+@property (nonatomic, copy, readonly) NSArray<NSString *> *remoteNames;
+@property (nonatomic, copy, readonly, nullable) NSString *selectedRemoteName;
+@property (nonatomic, readonly) BOOL canPush;
+@end
+
+@interface PBCommitRemotePresentationPolicy : NSObject
++ (NSArray<NSString *> *)sortedRemoteNames:(NSArray<NSString *> *)remoteNames
+	NS_SWIFT_NAME(sortedRemoteNames(_:));
++ (BOOL)shouldResolveTrackingRemoteForRemoteNames:(NSArray<NSString *> *)remoteNames
+								previousSelection:(nullable NSString *)previousSelection
+										 isBranch:(BOOL)isBranch
+	NS_SWIFT_NAME(shouldResolveTrackingRemote(remoteNames:previousSelection:isBranch:));
++ (PBCommitRemotePresentation *)presentationForRemoteNames:(NSArray<NSString *> *)remoteNames
+										 previousSelection:(nullable NSString *)previousSelection
+										trackingRemoteName:(nullable NSString *)trackingRemoteName
+												  isBranch:(BOOL)isBranch
+	NS_SWIFT_NAME(presentation(remoteNames:previousSelection:trackingRemoteName:isBranch:));
+@end
+
+typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
+	PBCommitSubmissionDispositionAccepted,
+	PBCommitSubmissionDispositionMergeInProgress,
+	PBCommitSubmissionDispositionNoStagedChanges,
+	PBCommitSubmissionDispositionMessageTooShort,
+};
+
+@interface PBCommitSubmissionPlan : NSObject
+@property (nonatomic, readonly) PBCommitSubmissionDisposition disposition;
+@property (nonatomic, readonly) BOOL shouldArmPendingPush;
+@end
+
+@interface PBCommitSubmissionPolicy : NSObject
++ (PBCommitSubmissionPlan *)planForMergeInProgress:(BOOL)mergeInProgress
+									   stagedCount:(NSInteger)stagedCount
+									 messageLength:(NSInteger)messageLength
+									   pushEnabled:(BOOL)pushEnabled
+									 pushRequested:(BOOL)pushRequested
+										  isBranch:(BOOL)isBranch
+										remoteName:(nullable NSString *)remoteName
+	NS_SWIFT_NAME(plan(mergeInProgress:stagedCount:messageLength:pushEnabled:pushRequested:isBranch:remoteName:));
+@end
+
+@interface PBCommitPushPlan : NSObject
+@property (nonatomic, strong, readonly) PBGitRef *branchRef;
+@property (nonatomic, copy, readonly) NSString *remoteName;
+@end
+
+@interface PBCommitWorkflowState : NSObject
+@property (nonatomic, strong, nullable) PBGitRef *pendingBranchRef;
+@property (nonatomic, copy, nullable) NSString *pendingRemoteName;
+- (void)armWithBranchRef:(PBGitRef *)branchRef remoteName:(NSString *)remoteName
+	NS_SWIFT_NAME(arm(branchRef:remoteName:));
+- (void)clear;
+- (nullable PBCommitPushPlan *)consumePendingPush;
+@end
+
+@interface PBCommitMessageResult : NSObject
+@property (nonatomic, copy, readonly) NSString *message;
+@property (nonatomic, readonly) BOOL didAddSignOff;
+@end
+
+@interface PBCommitMessagePolicy : NSObject
++ (PBCommitMessageResult *)messageByAddingSignOffToMessage:(NSString *)message
+												  userName:(NSString *)userName
+												 userEmail:(NSString *)userEmail
+	NS_SWIFT_NAME(messageByAddingSignOff(to:userName:userEmail:));
++ (BOOL)shouldReplaceMessageForAmendWithCurrentMessage:(NSString *)currentMessage
+	NS_SWIFT_NAME(shouldReplaceMessageForAmend(currentMessage:));
+@end
+
+@interface PBCommitSelectionPolicy : NSObject
++ (NSInteger)selectionIndexForCurrentIndex:(NSInteger)currentIndex arrangedCount:(NSInteger)arrangedCount
+	NS_SWIFT_NAME(selectionIndex(currentIndex:arrangedCount:));
 @end
 
 @interface PBCommitList : NSTableView
