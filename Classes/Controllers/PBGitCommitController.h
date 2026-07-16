@@ -11,14 +11,18 @@
 
 @class PBGitIndex;
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBGitCommitController : PBViewController <NSMenuItemValidation>
 
-- (IBAction)refresh:(id)sender;
-- (IBAction)prepareCommitMessage:(id)sender;
-- (IBAction)commit:(id)sender;
-- (IBAction)forceCommit:(id)sender;
-- (IBAction)signOff:(id)sender;
+- (IBAction)refresh:(nullable id)sender;
+- (IBAction)prepareCommitMessage:(nullable id)sender;
+- (IBAction)commit:(nullable id)sender;
+- (IBAction)forceCommit:(nullable id)sender;
+- (IBAction)signOff:(nullable id)sender;
 
 - (PBGitIndex *)index;
 
 @end
+
+NS_ASSUME_NONNULL_END
