@@ -37,6 +37,7 @@
 @end
 
 @interface PBGitSidebarController (GitXCoreTests)
+- (PBSourceViewItem *)addRevSpec:(PBGitRevSpecifier *)rev;
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldEditTableColumn:(nullable NSTableColumn *)tableColumn item:(id)item;
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldSelectItem:(id)item;
 @end
@@ -272,6 +273,9 @@
 	PBSourceViewItem *alpha = [PBSourceViewItem itemWithTitle:@"Alpha"];
 	PBGitRevSpecifier *revision = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"refs/heads/topic" ]];
 	PBSourceViewItem *revisionItem = [PBSourceViewItem itemWithRevSpec:revision];
+	PBGitRevSpecifier *otherRevision = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~1" ]];
+	PBSourceViewItem *otherRevisionItem = [PBSourceViewItem itemWithRevSpec:otherRevision];
+	XCTAssertEqualObjects(otherRevisionItem.revSpecifier, otherRevision);
 
 	[root addChild:folder];
 	[folder addChild:bravo];
@@ -444,6 +448,9 @@
 		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
 		PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
 		(void)sidebar.view;
+		PBGitRevSpecifier *otherRevision = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~1" ]];
+		PBSourceViewItem *otherRevisionItem = [sidebar addRevSpec:otherRevision];
+		XCTAssertEqualObjects(otherRevisionItem.revSpecifier, otherRevision);
 		[sidebar selectCurrentBranch];
 		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
 		XCTAssertFalse([sidebar outlineView:sidebar.sourceView shouldSelectItem:sidebar.remotes]);
@@ -1821,6 +1828,7 @@
 	XCTAssertNotNil(gtCommit, @"%@", error);
 	PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:gtCommit];
 	PBGitTree *committedRoot = commit.tree;
+	XCTAssertTrue([committedRoot.contents hasPrefix:@"This is a tree with path"]);
 	PBGitTree *committedTracked = [self treeAtPath:@"tracked.txt" inRoot:committedRoot];
 	NSString *cachedFile = committedTracked.tmpFileNameForContents;
 	XCTAssertEqualObjects(committedTracked.tmpFileNameForContents, cachedFile);

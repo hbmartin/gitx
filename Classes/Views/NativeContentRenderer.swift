@@ -1,5 +1,5 @@
 import AppKit
-import OSLog
+import OSLog // swiftlint:disable:this unused_import -- Logger requires OSLog despite analyzer's false positive.
 
 // Objective-C callers are not visible to SwiftLint's analyzer.
 // swiftlint:disable unused_declaration
