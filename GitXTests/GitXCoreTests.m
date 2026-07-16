@@ -2375,6 +2375,17 @@
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
 }
 
+- (void)testTerminationBeforeLaunchReportsCancellation
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+	[task terminate];
+
+	NSError *error = nil;
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, NSCocoaErrorDomain);
+	XCTAssertEqual(error.code, NSUserCancelledError);
+}
+
 - (void)testAsyncTimeoutCompletesExactlyOnce
 {
 	static void *queueKey = &queueKey;
