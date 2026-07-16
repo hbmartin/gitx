@@ -149,6 +149,24 @@ NS_ASSUME_NONNULL_BEGIN
 										 input:(nullable NSString *)input
 								 environment:(nullable NSDictionary<NSString *, id> *)environment
 										 error:(NSError * _Nullable * _Nullable)error;
+- (void)dataWithArguments:(NSArray<NSString *> *)arguments
+                completion:(void (^)(NSData * _Nullable data, NSError * _Nullable error))completion;
+@end
+
+@interface PBIndexRefreshResult : NSObject
+@property (nonatomic, readonly, nullable) NSDictionary<NSString *, PBIndexStatusEntry *> *staged;
+@property (nonatomic, readonly, nullable) NSDictionary<NSString *, PBIndexStatusEntry *> *unstaged;
+@property (nonatomic, readonly, nullable) NSDictionary<NSString *, PBIndexStatusEntry *> *untracked;
+@end
+
+@interface PBIndexRefreshCoordinator : NSObject
+- (instancetype)initWithRunner:(id<PBIndexCommandRunning>)runner
+                         parser:(PBIndexStatusParser *)parser
+                  statusHandler:(void (^)(BOOL success, NSString *message))statusHandler
+                  resultHandler:(void (^)(PBIndexRefreshResult *result))resultHandler
+                    idleHandler:(void (^)(void))idleHandler;
+- (void)refreshBareRepository:(BOOL)bareRepository parentTree:(NSString *)parentTree;
+- (void)refreshStatCacheForBareRepository:(BOOL)bareRepository completion:(void (^)(void))completion;
 @end
 
 @protocol PBIndexHookRunning <NSObject>

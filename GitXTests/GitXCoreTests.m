@@ -32,6 +32,10 @@
 - (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines;
 @end
 
+@interface PBGitHistoryList (GitXCoreTests)
+- (NSSet<GTOID *> *)baseCommits;
+@end
+
 @interface PBGitSidebarController (GitXCoreTests)
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldEditTableColumn:(nullable NSTableColumn *)tableColumn item:(id)item;
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldSelectItem:(id)item;
@@ -790,6 +794,18 @@
 	[self.repository lazyReload];
 	self.repository.hasChanged = YES;
 	[self.repository lazyReload];
+}
+
+- (void)testSelectedBranchBaseCommitsUseTheCurrentBranchTip
+{
+	[self.repository readCurrentBranch];
+	self.repository.currentBranchFilter = kGitXSelectedBranchFilter;
+	GTOID *expectedOID = [self.repository OIDForRef:self.repository.currentBranch.ref];
+	XCTAssertNotNil(expectedOID);
+
+	PBGitHistoryList *history = [[PBGitHistoryList alloc] initWithRepository:self.repository];
+	XCTAssertEqualObjects([history baseCommits], [NSSet setWithObject:expectedOID]);
+	[history cleanup];
 }
 
 - (void)testStashLifecycleAndNewIgnoreFile
@@ -1685,6 +1701,37 @@
 	XCTAssertTrue([[NSFileManager defaultManager] fileExistsAtPath:[self.fixture.path stringByAppendingPathComponent:@"untracked.txt"]]);
 }
 
+- (void)testDiscardTrackedFileClearsUnstagedStateAndPublishesUpdate
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"modified\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	[self refreshIndexAfterPerforming:^{
+		[self.repository.index refresh];
+	}];
+	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
+	XCTestExpectation *updated = [self expectationForNotification:PBGitIndexIndexUpdated
+														   object:self.repository.index
+														  handler:nil];
+
+	[self.repository.index discardChangesForFiles:@[ tracked ]];
+
+	[self waitForExpectations:@[ updated ] timeout:2.0];
+	NSString *trackedText = [NSString stringWithContentsOfFile:[self.fixture.path stringByAppendingPathComponent:@"tracked.txt"]
+													  encoding:NSUTF8StringEncoding
+														 error:&error];
+	XCTAssertEqualObjects(trackedText, @"first line\n");
+	XCTAssertFalse(tracked.hasUnstagedChanges);
+}
+
+- (void)testDiffForMissingUntrackedFileReturnsNil
+{
+	PBChangedFile *missing = [[PBChangedFile alloc] initWithPath:@"missing-untracked.txt"];
+	missing.status = NEW;
+	missing.hasUnstagedChanges = YES;
+
+	XCTAssertNil([self.repository.index diffForFile:missing staged:NO contextLines:3]);
+}
+
 - (void)testPartialPatchDoesNotCarryNoNewlineMarkerFromOmittedLine
 {
 	NSError *error = nil;
@@ -1834,6 +1881,31 @@
 
 
 @implementation PBTaskCoreTests
+
+- (void)testClassAsyncLaunchReturnsCommandOutput
+{
+	XCTestExpectation *completion = [self expectationWithDescription:@"async task completed"];
+	[PBTask launchTask:@"/bin/echo"
+				arguments:@[ @"async output" ]
+			  inDirectory:nil
+		completionHandler:^(NSData *data, NSError *error) {
+			XCTAssertNil(error);
+			XCTAssertEqualObjects([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding], @"async output\n");
+			[completion fulfill];
+		}];
+	[self waitForExpectations:@[ completion ] timeout:5.0];
+}
+
+- (void)testTerminationBeforeLaunchReturnsCancellationError
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+	[task terminate];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, NSCocoaErrorDomain);
+	XCTAssertEqual(error.code, NSUserCancelledError);
+}
 
 - (void)testStandardInputRoundTrip
 {

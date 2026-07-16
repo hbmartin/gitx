@@ -19,6 +19,13 @@ final class IndexMutationServiceTests: XCTestCase {
             calls.append(Call(arguments: arguments, input: input, environment: environment))
             return try results.isEmpty ? "" : results.removeFirst().get()
         }
+
+        func data(
+            withArguments _: [String],
+            completion: @escaping (Data?, Error?) -> Void
+        ) {
+            completion(nil, nil)
+        }
     }
 
     private let commandError = NSError(

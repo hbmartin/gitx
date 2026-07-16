@@ -481,9 +481,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             Notification(
                 name: .PBGitRepositoryEvent,
                 object: repository,
-                userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: 0)]
+                userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: 1 << 1)]
             )
         )
+        waitForHistory()
         historyController.commitController.setSelectedObjects([])
         historyController.updateKeys()
         XCTAssertNil(historyController.gitTree)

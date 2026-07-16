@@ -8,8 +8,6 @@
 
 #import "PBGitIndex.h"
 #import "PBGitRepository.h"
-#import "PBGitRepository_PBGitBinarySupport.h"
-#import "PBGitBinary.h"
 #import "PBTask.h"
 #import "PBChangedFile.h"
 #import "GitX-Swift.h"
@@ -34,11 +32,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 };
 
 @interface PBGitIndex () {
-	dispatch_queue_t _indexRefreshQueue;
-	dispatch_group_t _indexRefreshGroup;
 	BOOL _amend;
-	BOOL _refreshInProgress;
-	BOOL _refreshPending;
 }
 
 @property (retain) NSDictionary *amendEnvironment;
@@ -47,6 +41,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (retain) PBIndexSnapshotReducer *snapshotReducer;
 @property (retain) PBIndexMutationService *mutationService;
 @property (retain) PBIndexCommitService *commitService;
+@property (retain) PBIndexRefreshCoordinator *refreshCoordinator;
 @end
 
 @implementation PBGitIndex
@@ -65,9 +60,18 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	_snapshotReducer = [[PBIndexSnapshotReducer alloc] init];
 	_mutationService = [[PBIndexMutationService alloc] initWithRepository:theRepository];
 	_commitService = [[PBIndexCommitService alloc] initWithRepository:theRepository];
-
-	_indexRefreshGroup = dispatch_group_create();
-	_indexRefreshQueue = dispatch_queue_create("org.gitx.indexRefresh", DISPATCH_QUEUE_SERIAL);
+	__weak PBGitIndex *weakSelf = self;
+	_refreshCoordinator = [[PBIndexRefreshCoordinator alloc] initWithRepository:theRepository
+		parser:_statusParser
+		statusHandler:^(BOOL success, NSString *message) {
+			[weakSelf postIndexRefreshSuccess:success message:message];
+		}
+		resultHandler:^(PBIndexRefreshResult *result) {
+			[weakSelf applyRefreshResult:result];
+		}
+		idleHandler:^{
+			[weakSelf postIndexRefreshFinished];
+		}];
 
 	return self;
 }
@@ -128,7 +132,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 // TODO: make -refresh take a completion handler, an NSError or *anything else*
 - (void)postIndexRefreshSuccess:(BOOL)success message:(nullable NSString *)message
 {
-	dispatch_async(dispatch_get_main_queue(), ^{
+	void (^postNotification)(void) = ^{
 		if (!success) {
 			[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexIndexRefreshFailed
 																object:self
@@ -138,7 +142,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 																object:self
 															  userInfo:@{@"description" : message}];
 		}
-	});
+	};
+	if (NSThread.isMainThread)
+		postNotification();
+	else
+		dispatch_async(dispatch_get_main_queue(), postNotification);
 }
 
 - (void)postIndexUpdated
@@ -150,167 +158,58 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)refresh
 {
-	//
-	// Guard against concurrent refresh calls — skip if one is already running
-	__block BOOL shouldSkip = NO;
-	dispatch_sync(_indexRefreshQueue, ^{
-		if (self->_refreshInProgress) {
-			self->_refreshPending = YES;
-			shouldSkip = YES;
-			return;
-		}
-		self->_refreshInProgress = YES;
-	});
+	[self.refreshCoordinator refreshBareRepository:self.repository.isBareRepository
+										parentTree:self.parentTree];
+}
 
-	if (shouldSkip) {
-		return;
+- (void)applyRefreshResult:(PBIndexRefreshResult *)result
+{
+	NSUInteger stagedCount = result.staged.count;
+	NSUInteger unstagedCount = result.unstaged.count;
+	NSUInteger untrackedCount = result.untracked.count;
+
+	NSMutableArray<PBIndexFileSnapshot *> *previous = [NSMutableArray arrayWithCapacity:self.files.count];
+	for (PBChangedFile *file in self.files) {
+		[previous addObject:[[PBIndexFileSnapshot alloc] initWithPath:file.path
+															   status:file.status
+													   commitBlobMode:file.commitBlobMode
+														commitBlobSHA:file.commitBlobSHA
+													 hasStagedChanges:file.hasStagedChanges
+												   hasUnstagedChanges:file.hasUnstagedChanges]];
 	}
-
-	__block NSDictionary<NSString *, PBIndexStatusEntry *> *untrackedDictionary = nil;
-	__block NSDictionary<NSString *, PBIndexStatusEntry *> *stagedDictionary = nil;
-	__block NSDictionary<NSString *, PBIndexStatusEntry *> *unstagedDictionary = nil;
-
-	// Enter the group for ALL tasks upfront, before launching any of them.
-	// This prevents dispatch_group_notify from firing prematurely if an
-	// early task completes before later tasks have called group_enter.
-	BOOL isBare = [self.repository isBareRepository];
-	if (!isBare) {
-		dispatch_group_enter(_indexRefreshGroup); // ls-files
-		dispatch_group_enter(_indexRefreshGroup); // diff-index
-		dispatch_group_enter(_indexRefreshGroup); // diff-files
+	NSArray<PBIndexFileSnapshot *> *snapshots = [self.snapshotReducer reducePrevious:previous
+																			  staged:result.staged
+																			unstaged:result.unstaged
+																		   untracked:result.untracked];
+	NSMutableDictionary<NSString *, PBChangedFile *> *existing = [NSMutableDictionary dictionaryWithCapacity:self.files.count];
+	for (PBChangedFile *file in self.files)
+		existing[file.path] = file;
+	NSMutableArray<PBChangedFile *> *reconciled = [NSMutableArray arrayWithCapacity:snapshots.count];
+	BOOL membershipChanged = snapshots.count != self.files.count;
+	for (PBIndexFileSnapshot *snapshot in snapshots) {
+		PBChangedFile *file = existing[snapshot.path];
+		if (!file) {
+			file = [[PBChangedFile alloc] initWithPath:snapshot.path];
+			membershipChanged = YES;
+		}
+		file.status = (PBChangedFileStatus)snapshot.status;
+		file.commitBlobMode = snapshot.commitBlobMode;
+		file.commitBlobSHA = snapshot.commitBlobSHA;
+		file.hasStagedChanges = snapshot.hasStagedChanges;
+		file.hasUnstagedChanges = snapshot.hasUnstagedChanges;
+		[reconciled addObject:file];
 	}
+	if (membershipChanged)
+		[self willChangeValueForKey:@"indexChanges"];
+	[self.files setArray:reconciled];
+	if (membershipChanged)
+		[self didChangeValueForKey:@"indexChanges"];
+	NSLog(@"[GitX] Merged index refresh snapshots: %lu staged, %lu unstaged, %lu untracked",
+		  (unsigned long)stagedCount,
+		  (unsigned long)unstagedCount,
+		  (unsigned long)untrackedCount);
 
-	// Register the notify block AFTER all group_enter calls.
-	// This block runs once all tasks have called group_leave.
-	dispatch_group_notify(_indexRefreshGroup, dispatch_get_main_queue(), ^{
-		// At this point, all index operations have finished.
-		// Merge the three snapshots in Git-semantic order. The staged snapshot
-		// owns the parent-tree metadata used by whole-file unstage; the unstaged
-		// snapshot must not replace it with the current index entry.
-		NSUInteger stagedCount = stagedDictionary.count;
-		NSUInteger unstagedCount = unstagedDictionary.count;
-		NSUInteger untrackedCount = untrackedDictionary.count;
-
-		NSMutableArray<PBIndexFileSnapshot *> *previous = [NSMutableArray arrayWithCapacity:self.files.count];
-		for (PBChangedFile *file in self.files) {
-			[previous addObject:[[PBIndexFileSnapshot alloc] initWithPath:file.path
-																   status:file.status
-														   commitBlobMode:file.commitBlobMode
-															commitBlobSHA:file.commitBlobSHA
-														 hasStagedChanges:file.hasStagedChanges
-													   hasUnstagedChanges:file.hasUnstagedChanges]];
-		}
-		NSArray<PBIndexFileSnapshot *> *snapshots = [self.snapshotReducer reducePrevious:previous
-																				  staged:stagedDictionary
-																				unstaged:unstagedDictionary
-																			   untracked:untrackedDictionary];
-		NSMutableDictionary<NSString *, PBChangedFile *> *existing = [NSMutableDictionary dictionaryWithCapacity:self.files.count];
-		for (PBChangedFile *file in self.files)
-			existing[file.path] = file;
-		NSMutableArray<PBChangedFile *> *reconciled = [NSMutableArray arrayWithCapacity:snapshots.count];
-		BOOL membershipChanged = snapshots.count != self.files.count;
-		for (PBIndexFileSnapshot *snapshot in snapshots) {
-			PBChangedFile *file = existing[snapshot.path];
-			if (!file) {
-				file = [[PBChangedFile alloc] initWithPath:snapshot.path];
-				membershipChanged = YES;
-			}
-			file.status = (PBChangedFileStatus)snapshot.status;
-			file.commitBlobMode = snapshot.commitBlobMode;
-			file.commitBlobSHA = snapshot.commitBlobSHA;
-			file.hasStagedChanges = snapshot.hasStagedChanges;
-			file.hasUnstagedChanges = snapshot.hasUnstagedChanges;
-			[reconciled addObject:file];
-		}
-		if (membershipChanged)
-			[self willChangeValueForKey:@"indexChanges"];
-		[self.files setArray:reconciled];
-		if (membershipChanged)
-			[self didChangeValueForKey:@"indexChanges"];
-		NSLog(@"[GitX] Merged index refresh snapshots: %lu staged, %lu unstaged, %lu untracked",
-			  (unsigned long)stagedCount,
-			  (unsigned long)unstagedCount,
-			  (unsigned long)untrackedCount);
-
-		[self postIndexUpdated];
-
-		__block BOOL shouldReplay = NO;
-		dispatch_sync(self->_indexRefreshQueue, ^{
-			self->_refreshInProgress = NO;
-			shouldReplay = self->_refreshPending;
-			self->_refreshPending = NO;
-		});
-
-		if (shouldReplay) {
-			[self refresh];
-		} else {
-			[self postIndexRefreshFinished];
-		}
-	});
-
-	if (isBare) {
-		return;
-	}
-
-	// Other files (untracked)
-	[PBTask launchTask:[PBGitBinary path]
-				arguments:@[ @"ls-files", @"--others", @"--exclude-standard", @"-z" ]
-			  inDirectory:self.repository.workingDirectoryURL.path
-		completionHandler:^(NSData *readData, NSError *error) {
-			// Serialize access to self.files via _indexRefreshQueue
-			dispatch_async(self->_indexRefreshQueue, ^{
-				if (error) {
-					[self postIndexRefreshSuccess:NO message:@"ls-files failed"];
-				} else {
-					NSError *parseError = nil;
-					untrackedDictionary = [self.statusParser parseUntrackedData:readData error:&parseError];
-					[self postIndexRefreshSuccess:untrackedDictionary != nil
-										  message:untrackedDictionary ? @"ls-files success" : @"ls-files failed"];
-				}
-
-				dispatch_group_leave(self->_indexRefreshGroup);
-			});
-		}];
-
-	// Staged files
-	[PBTask launchTask:[PBGitBinary path]
-				arguments:@[ @"diff-index", @"--cached", @"-z", [self parentTree] ]
-			  inDirectory:self.repository.workingDirectoryURL.path
-		completionHandler:^(NSData *readData, NSError *error) {
-			// Serialize access to self.files via _indexRefreshQueue
-			dispatch_async(self->_indexRefreshQueue, ^{
-				if (error) {
-					[self postIndexRefreshSuccess:NO message:@"diff-index failed"];
-				} else {
-					NSError *parseError = nil;
-					stagedDictionary = [self.statusParser parseTrackedData:readData error:&parseError];
-					[self postIndexRefreshSuccess:stagedDictionary != nil
-										  message:stagedDictionary ? @"diff-index success" : @"diff-index failed"];
-				}
-
-				dispatch_group_leave(self->_indexRefreshGroup);
-			});
-		}];
-
-	// Unstaged files
-	[PBTask launchTask:[PBGitBinary path]
-				arguments:@[ @"diff-files", @"-z" ]
-			  inDirectory:self.repository.workingDirectoryURL.path
-		completionHandler:^(NSData *readData, NSError *error) {
-			// Serialize access to self.files via _indexRefreshQueue
-			dispatch_async(self->_indexRefreshQueue, ^{
-				if (error) {
-					[self postIndexRefreshSuccess:NO message:@"diff-files failed"];
-				} else {
-					NSError *parseError = nil;
-					unstagedDictionary = [self.statusParser parseTrackedData:readData error:&parseError];
-					[self postIndexRefreshSuccess:unstagedDictionary != nil
-										  message:unstagedDictionary ? @"diff-files success" : @"diff-files failed"];
-				}
-
-				dispatch_group_leave(self->_indexRefreshGroup);
-			});
-		}];
+	[self postIndexUpdated];
 }
 
 // Refreshes the stat cache in the index by running git update-index --refresh.
@@ -319,14 +218,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 // to avoid holding index.lock constantly.
 - (void)refreshStatCache
 {
-	if ([self.repository isBareRepository]) return;
-
-	[PBTask launchTask:[PBGitBinary path]
-				arguments:@[ @"update-index", @"-q", @"--unmerged", @"--ignore-missing", @"--refresh" ]
-			  inDirectory:self.repository.workingDirectoryURL.path
-		completionHandler:^(NSData *readData, NSError *error) {
-			[self refresh];
-		}];
+	__weak PBGitIndex *weakSelf = self;
+	[self.refreshCoordinator refreshStatCacheForBareRepository:self.repository.isBareRepository
+													completion:^{
+														[weakSelf refresh];
+													}];
 }
 
 // Returns the tree to compare the index to, based

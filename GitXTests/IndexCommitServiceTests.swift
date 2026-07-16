@@ -19,6 +19,13 @@ final class IndexCommitServiceTests: XCTestCase {
             calls.append(Call(arguments: arguments, input: input, environment: environment))
             return try results.removeFirst().get()
         }
+
+        func data(
+            withArguments _: [String],
+            completion: @escaping (Data?, Error?) -> Void
+        ) {
+            completion(nil, nil)
+        }
     }
 
     private final class HookRunnerFake: NSObject, PBIndexHookRunning {
