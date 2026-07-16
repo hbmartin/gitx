@@ -108,6 +108,42 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)saveWithKeepIndex:(BOOL)keepIndex error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 @end
 
+@interface PBIndexStatusEntry : NSObject
+@property (nonatomic, readonly) NSString *path;
+@property (nonatomic, readonly) NSInteger status;
+@property (nonatomic, readonly, nullable) NSString *commitBlobMode;
+@property (nonatomic, readonly, nullable) NSString *commitBlobSHA;
+@end
+
+@interface PBIndexStatusParser : NSObject
+- (nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)parseTrackedData:(nullable NSData *)data
+															 error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)parseUntrackedData:(nullable NSData *)data
+															   error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+@end
+
+@interface PBIndexFileSnapshot : NSObject
+@property (nonatomic, readonly) NSString *path;
+@property (nonatomic) NSInteger status;
+@property (nonatomic, nullable) NSString *commitBlobMode;
+@property (nonatomic, nullable) NSString *commitBlobSHA;
+@property (nonatomic) BOOL hasStagedChanges;
+@property (nonatomic) BOOL hasUnstagedChanges;
+- (instancetype)initWithPath:(NSString *)path
+					  status:(NSInteger)status
+			  commitBlobMode:(nullable NSString *)commitBlobMode
+			   commitBlobSHA:(nullable NSString *)commitBlobSHA
+		 hasStagedChanges:(BOOL)hasStagedChanges
+	  hasUnstagedChanges:(BOOL)hasUnstagedChanges;
+@end
+
+@interface PBIndexSnapshotReducer : NSObject
+- (NSArray<PBIndexFileSnapshot *> *)reducePrevious:(NSArray<PBIndexFileSnapshot *> *)previous
+												 staged:(nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)staged
+												unstaged:(nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)unstaged
+											   untracked:(nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)untracked;
+@end
+
 @interface PBCommitList : NSTableView
 @property (nonatomic) BOOL useAdjustScroll;
 @property (nonatomic, readonly) NSPoint mouseDownPoint;
