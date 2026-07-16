@@ -8,6 +8,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <ObjectiveGit/GTRepository+Reset.h>
+#import "PBGitRefish.h"
 
 @class PBGitHistoryList;
 @class PBGitRevSpecifier;
@@ -17,6 +18,8 @@
 @class PBGitRepositoryDocument;
 @class GTRepository;
 @class GTConfiguration;
+
+NS_ASSUME_NONNULL_BEGIN
 
 extern NSString *PBGitRepositoryDocumentType;
 
@@ -38,100 +41,103 @@ typedef enum branchFilterTypes {
 
 @interface PBGitRepository : NSObject
 
-@property (nonatomic, weak) PBGitRepositoryDocument *document; // Backward-compatibility while PBGitRepository gets "modelized";
+@property (nullable, nonatomic, weak) PBGitRepositoryDocument *document; // Backward-compatibility while PBGitRepository gets "modelized";
 
 @property (nonatomic, assign) BOOL hasChanged;
 @property (nonatomic, assign) NSInteger currentBranchFilter;
 
-@property (readonly, getter=getIndexURL) NSURL *indexURL;
+@property (nullable, readonly, getter=getIndexURL) NSURL *indexURL;
 
-@property (nonatomic, strong) PBGitHistoryList *revisionList;
+@property (nullable, nonatomic, strong) PBGitHistoryList *revisionList;
 @property (nonatomic, readonly, strong) NSArray<PBGitStash *> *stashes;
 @property (nonatomic, readonly, strong) NSArray<PBGitRevSpecifier *> *branches;
 @property (nonatomic, strong) NSMutableOrderedSet<PBGitRevSpecifier *> *branchesSet;
-@property (nonatomic, strong) PBGitRevSpecifier *currentBranch;
-@property (nonatomic, strong) NSMutableDictionary<GTOID *, NSMutableArray<PBGitRef *> *> *refs;
-@property (readonly, strong) GTRepository *gtRepo;
+@property (nullable, nonatomic, strong) PBGitRevSpecifier *currentBranch;
+@property (nullable, nonatomic, strong) NSMutableDictionary<GTOID *, NSMutableArray<PBGitRef *> *> *refs;
+@property (nullable, readonly, strong) GTRepository *gtRepo;
 @property (nonatomic, readonly) BOOL isShallowRepository;
 
 @property (nonatomic, strong) NSMutableArray<GTSubmodule *> *submodules;
 @property (readonly, strong) PBGitIndex *index;
 
 // Designated initializer
-- (id)initWithURL:(NSURL *)repositoryURL error:(NSError **)error;
+- (nullable instancetype)initWithURL:(NSURL *)repositoryURL error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError **)error;
-- (BOOL)fetchRemoteForRef:(PBGitRef *)ref error:(NSError **)error;
-- (BOOL)pullBranch:(PBGitRef *)branchRef fromRemote:(PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError **)error;
-- (BOOL)pushBranch:(PBGitRef *)branchRef toRemote:(PBGitRef *)remoteRef error:(NSError **)error;
+- (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)fetchRemoteForRef:(nullable PBGitRef *)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)pullBranch:(nullable PBGitRef *)branchRef fromRemote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)pushBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)checkoutRefish:(id<PBGitRefish>)ref error:(NSError **)error;
-- (BOOL)checkoutFiles:(NSArray *)files fromRefish:(id<PBGitRefish>)ref error:(NSError **)error;
-- (BOOL)mergeWithRefish:(id<PBGitRefish>)ref error:(NSError **)error;
-- (BOOL)cherryPickRefish:(id<PBGitRefish>)ref error:(NSError **)error;
-- (BOOL)resetRefish:(GTRepositoryResetType)mode to:(id<PBGitRefish>)ref error:(NSError **)error;
-- (BOOL)rebaseBranch:(id<PBGitRefish>)branch onRefish:(id<PBGitRefish>)upstream error:(NSError **)error;
-- (BOOL)createBranch:(NSString *)branchName atRefish:(id<PBGitRefish>)ref error:(NSError **)error;
-- (BOOL)createTag:(NSString *)tagName message:(NSString *)message atRefish:(id<PBGitRefish>)commitSHA error:(NSError **)error;
-- (BOOL)deleteRemote:(PBGitRef *)ref error:(NSError **)error;
-- (BOOL)deleteRef:(PBGitRef *)ref error:(NSError **)error;
+- (BOOL)checkoutRefish:(id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)checkoutFiles:(nullable NSArray<NSString *> *)files fromRefish:(id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)mergeWithRefish:(id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)cherryPickRefish:(nullable id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)resetRefish:(GTRepositoryResetType)mode to:(nullable id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)rebaseBranch:(nullable id<PBGitRefish>)branch onRefish:(id<PBGitRefish>)upstream error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)createBranch:(nullable NSString *)branchName atRefish:(nullable id<PBGitRefish>)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)createTag:(nullable NSString *)tagName message:(NSString *)message atRefish:(id<PBGitRefish>)commitSHA error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)deleteRemote:(nullable PBGitRef *)ref error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)deleteRef:(nullable PBGitRef *)ref error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)stashPop:(PBGitStash *)stash error:(NSError **)error;
-- (BOOL)stashApply:(PBGitStash *)stash error:(NSError **)error;
-- (BOOL)stashDrop:(PBGitStash *)stash error:(NSError **)error;
-- (BOOL)stashSave:(NSError **)error;
-- (BOOL)stashSaveWithKeepIndex:(BOOL)keepIndex error:(NSError **)error;
+- (BOOL)stashPop:(PBGitStash *)stash error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)stashApply:(PBGitStash *)stash error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)stashDrop:(PBGitStash *)stash error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)stashSave:(NSError *_Nullable *_Nullable)error;
+- (BOOL)stashSaveWithKeepIndex:(BOOL)keepIndex error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)ignoreFilePaths:(NSArray *)filePaths error:(NSError **)error;
+- (BOOL)ignoreFilePaths:(NSArray<NSString *> *)filePaths error:(NSError *_Nullable *_Nullable)error;
 
-- (BOOL)updateReference:(PBGitRef *)ref toPointAtCommit:(PBGitCommit *)newCommit error:(NSError **)error;
-- (NSString *)performDiff:(PBGitCommit *)startCommit against:(PBGitCommit *)diffCommit forFiles:(NSArray *)filePaths;
+- (BOOL)updateReference:(PBGitRef *)ref toPointAtCommit:(PBGitCommit *)newCommit error:(NSError *_Nullable *_Nullable)error;
+- (NSString *)performDiff:(PBGitCommit *)startCommit against:(nullable PBGitCommit *)diffCommit forFiles:(nullable NSArray<NSString *> *)filePaths;
 
-- (NSURL *)gitURL;
+- (nullable NSURL *)gitURL;
 
-- (BOOL)executeHook:(NSString *)name error:(NSError **)error;
-- (BOOL)executeHook:(NSString *)name arguments:(NSArray *)arguments error:(NSError **)error;
-- (BOOL)executeHook:(NSString *)name arguments:(NSArray *)arguments output:(NSString **)outputPtr error:(NSError **)error;
+- (BOOL)executeHook:(NSString *)name error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)executeHook:(NSString *)name arguments:(NSArray<NSString *> *)arguments error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)executeHook:(NSString *)name arguments:(NSArray<NSString *> *)arguments output:(NSString *_Nullable *_Nullable)outputPtr error:(NSError *_Nullable *_Nullable)error;
 - (BOOL)hookExists:(NSString *)name;
 
-- (NSString *)workingDirectory;
-- (NSURL *)workingDirectoryURL;
-- (NSString *)projectName;
+- (nullable NSString *)workingDirectory;
+- (nullable NSURL *)workingDirectoryURL;
+- (nullable NSString *)projectName;
 
-- (NSString *)gitIgnoreFilename;
+- (nullable NSString *)gitIgnoreFilename;
 - (BOOL)isBareRepository;
 
 - (BOOL)hasSVNRemote;
 
 - (void)reloadRefs;
 - (void)lazyReload;
-- (PBGitRevSpecifier *)headRef;
-- (GTOID *)headOID;
-- (PBGitCommit *)headCommit;
-- (GTOID *)OIDForRef:(PBGitRef *)ref;
-- (PBGitCommit *)commitForRef:(PBGitRef *)ref;
-- (PBGitCommit *)commitForOID:(GTOID *)sha;
-- (BOOL)isOIDOnSameBranch:(GTOID *)baseOID asOID:(GTOID *)testOID;
-- (BOOL)isOIDOnHeadBranch:(GTOID *)testOID;
-- (PBGitStash *)stashForRef:(PBGitRef *)ref;
-- (BOOL)isRefOnHeadBranch:(PBGitRef *)testRef;
+- (nullable PBGitRevSpecifier *)headRef;
+- (nullable GTOID *)headOID;
+- (nullable PBGitCommit *)headCommit;
+- (nullable GTOID *)OIDForRef:(nullable PBGitRef *)ref;
+- (nullable PBGitCommit *)commitForRef:(nullable PBGitRef *)ref;
+- (nullable PBGitCommit *)commitForOID:(nullable GTOID *)sha;
+- (BOOL)isOIDOnSameBranch:(nullable GTOID *)baseOID asOID:(nullable GTOID *)testOID;
+- (BOOL)isOIDOnHeadBranch:(nullable GTOID *)testOID;
+- (nullable PBGitStash *)stashForRef:(PBGitRef *)ref;
+- (BOOL)isRefOnHeadBranch:(nullable PBGitRef *)testRef;
 - (BOOL)checkRefFormat:(NSString *)refName;
-- (BOOL)refExists:(PBGitRef *)ref;
-- (PBGitRef *)refForName:(NSString *)name;
+- (BOOL)refExists:(nullable PBGitRef *)ref;
+- (nullable PBGitRef *)refForName:(nullable NSString *)name;
 
-- (NSArray<NSString *> *)remotes;
+- (nullable NSArray<NSString *> *)remotes;
 - (BOOL)hasRemotes;
-- (PBGitRef *)remoteRefForBranch:(PBGitRef *)branch error:(NSError **)error;
+- (nullable PBGitRef *)remoteRefForBranch:(PBGitRef *)branch error:(NSError *_Nullable *_Nullable)error;
 
 - (void)readCurrentBranch;
-- (PBGitRevSpecifier *)addBranch:(PBGitRevSpecifier *)rev;
+- (nullable PBGitRevSpecifier *)addBranch:(PBGitRevSpecifier *)rev;
 - (BOOL)removeBranch:(PBGitRevSpecifier *)rev;
 
 - (BOOL)revisionExists:(NSString *)spec;
 
 - (void)forceUpdateRevisions;
-- (NSURL *)getIndexURL;
+- (nullable NSURL *)getIndexURL;
 
-- (GTSubmodule *)submoduleAtPath:(NSString *)path error:(NSError **)error;
+- (nullable GTSubmodule *)submoduleAtPath:(NSString *)path error:(NSError *_Nullable *_Nullable)error;
 
 @end
+
+
+NS_ASSUME_NONNULL_END

@@ -8,6 +8,8 @@
 
 #import <Foundation/Foundation.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBTerminalUtil : NSObject
 
 /*
@@ -17,3 +19,5 @@
 + (void)runCommand:(NSString *)command inDirectory:(NSURL *)directory;
 
 @end
+
+NS_ASSUME_NONNULL_END

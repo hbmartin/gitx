@@ -176,6 +176,35 @@ final class GitXSwiftFeatureTests: XCTestCase {
         try body(directory)
     }
 
+    func testRepositoryBridgePreservesInitializationAndPathMetadata() throws {
+        try withTemporaryDirectory { repositoryURL in
+            try runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL)
+            try runGit(["config", "user.name", "GitX Test"], in: repositoryURL)
+            try runGit(["config", "user.email", "gitx-tests@example.invalid"], in: repositoryURL)
+            try "tracked\n".write(
+                to: repositoryURL.appendingPathComponent("tracked.txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+            try runGit(["add", "--all"], in: repositoryURL)
+            try runGit(["commit", "--quiet", "-m", "initial"], in: repositoryURL)
+
+            let repository = try PBGitRepository(url: repositoryURL)
+
+            XCTAssertEqual(
+                repository.workingDirectory().map {
+                    URL(fileURLWithPath: $0).resolvingSymlinksInPath().path
+                },
+                repositoryURL.resolvingSymlinksInPath().path
+            )
+            XCTAssertEqual(repository.projectName(), repositoryURL.lastPathComponent)
+            XCTAssertEqual(repository.indexURL?.lastPathComponent, "index")
+            XCTAssertEqual(repository.headRef()?.ref()?.branchName, "main")
+            XCTAssertTrue(repository.revisionExists("HEAD"))
+            XCTAssertFalse(repository.hasRemotes())
+        }
+    }
+
     func testLanguageNameClassification() {
         XCTAssertEqual(PBHighlighting.languageName(forPath: "Dockerfile"), "dockerfile")
         XCTAssertEqual(PBHighlighting.languageName(forPath: "GNUmakefile"), "makefile")
@@ -491,13 +520,13 @@ final class GitXSwiftFeatureTests: XCTestCase {
 
     func testRemoteSidebarSyncRemovesOnlyEmptyUnconfiguredRemotes() {
         let plan = PBRemoteSidebarSyncPlan.plan(
-            configuredRemoteNames: ["zulu", "origin", "zulu"],
-            existingRemoteNames: ["upstream", "origin", "stale"],
+            configuredRemoteNames: ["zulu", "alpha", "origin", "zulu"],
+            existingRemoteNames: ["upstream", "origin", "stale", "unused"],
             nonEmptyRemoteNames: ["upstream"]
         )
 
-        XCTAssertEqual(plan.namesToAdd, ["zulu"])
-        XCTAssertEqual(plan.namesToRemove, ["stale"])
+        XCTAssertEqual(plan.namesToAdd, ["alpha", "zulu"])
+        XCTAssertEqual(plan.namesToRemove, ["stale", "unused"])
     }
 
     func testLargeNativeDiffProducesScrollableDocument() throws {

@@ -19,6 +19,26 @@ final class PBTaskLifecycleTests: XCTestCase {
         XCTAssertEqual(task.standardOutputString(), "parent-complete")
     }
 
+    func testTerminationHandlerUsesRequestedQueue() {
+        let completion = expectation(description: "termination callback")
+        let queue = DispatchQueue(label: "org.gitx.tests.pbtask-termination")
+        let queueKey = DispatchSpecificKey<Bool>()
+        queue.setSpecific(key: queueKey, value: true)
+        let task = PBTask(
+            launchPath: "/usr/bin/true",
+            arguments: [],
+            inDirectory: nil
+        )
+
+        task.perform(on: queue) { error in
+            XCTAssertNil(error)
+            XCTAssertEqual(DispatchQueue.getSpecific(key: queueKey), true)
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 5)
+    }
+
     func testParentFailureWinsWhenDescendantKeepsOutputPipeOpen() {
         let task = PBTask(
             launchPath: "/bin/sh",

@@ -14,14 +14,16 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class PBGitWindowController;
 
-typedef NSError *_Nullable (^PBProgressSheetExecutionHandler)(void);
+typedef NSError *_Nullable(NS_SWIFT_SENDABLE ^ PBProgressSheetExecutionHandler)(void);
 
 @interface PBRemoteProgressSheet : RJModalRepoSheet
 
 + (instancetype)progressSheetWithTitle:(NSString *)title description:(NSString *)description windowController:(PBGitWindowController *)windowController;
 + (instancetype)progressSheetWithTitle:(NSString *)title description:(NSString *)description;
 
-- (void)beginProgressSheetForBlock:(PBProgressSheetExecutionHandler)executionBlock completionHandler:(void (^)(NSError *))completionHandler;
+- (void)beginProgressSheetForBlock:(PBProgressSheetExecutionHandler)executionBlock
+				 completionHandler:(void (^)(NSError *_Nullable))completionHandler
+	NS_SWIFT_NAME(begin(execution:completion:));
 
 @end
 

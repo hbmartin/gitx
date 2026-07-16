@@ -12,6 +12,7 @@
 #import "PBGitBinary.h"
 #import "PBTask.h"
 #import "PBChangedFile.h"
+#import "GitX-Swift.h"
 
 NSString *PBGitIndexIndexRefreshStatus = @"PBGitIndexIndexRefreshStatus";
 NSString *PBGitIndexIndexRefreshFailed = @"PBGitIndexIndexRefreshFailed";
@@ -32,15 +33,6 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	PBGitIndexUnstageFiles,
 };
 
-@interface PBGitIndex (IndexRefreshMethods)
-
-- (NSMutableDictionary *)dictionaryForLines:(NSArray *)lines;
-- (void)addFilesFromDictionary:(NSMutableDictionary *)dictionary staged:(BOOL)staged tracked:(BOOL)tracked;
-
-- (NSArray *)linesFromData:(NSData *)data;
-
-@end
-
 @interface PBGitIndex () {
 	dispatch_queue_t _indexRefreshQueue;
 	dispatch_group_t _indexRefreshGroup;
@@ -51,6 +43,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 @property (retain) NSDictionary *amendEnvironment;
 @property (retain) NSMutableArray<PBChangedFile *> *files;
+@property (retain) PBIndexStatusParser *statusParser;
+@property (retain) PBIndexSnapshotReducer *snapshotReducer;
+@property (retain) PBIndexMutationService *mutationService;
 @end
 
 @implementation PBGitIndex
@@ -65,6 +60,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	_repository = theRepository;
 
 	_files = [NSMutableArray array];
+	_statusParser = [[PBIndexStatusParser alloc] init];
+	_snapshotReducer = [[PBIndexSnapshotReducer alloc] init];
+	_mutationService = [[PBIndexMutationService alloc] initWithRepository:theRepository];
 
 	_indexRefreshGroup = dispatch_group_create();
 	_indexRefreshQueue = dispatch_queue_create("org.gitx.indexRefresh", DISPATCH_QUEUE_SERIAL);
@@ -166,9 +164,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		return;
 	}
 
-	__block NSMutableDictionary *untrackedDictionary = nil;
-	__block NSMutableDictionary *stagedDictionary = nil;
-	__block NSMutableDictionary *unstagedDictionary = nil;
+	__block NSDictionary<NSString *, PBIndexStatusEntry *> *untrackedDictionary = nil;
+	__block NSDictionary<NSString *, PBIndexStatusEntry *> *stagedDictionary = nil;
+	__block NSDictionary<NSString *, PBIndexStatusEntry *> *unstagedDictionary = nil;
 
 	// Enter the group for ALL tasks upfront, before launching any of them.
 	// This prevents dispatch_group_notify from firing prematurely if an
@@ -191,40 +189,46 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		NSUInteger unstagedCount = unstagedDictionary.count;
 		NSUInteger untrackedCount = untrackedDictionary.count;
 
-		if (stagedDictionary) {
-			for (PBChangedFile *file in self.files)
-				file.hasStagedChanges = NO;
+		NSMutableArray<PBIndexFileSnapshot *> *previous = [NSMutableArray arrayWithCapacity:self.files.count];
+		for (PBChangedFile *file in self.files) {
+			[previous addObject:[[PBIndexFileSnapshot alloc] initWithPath:file.path
+																   status:file.status
+														   commitBlobMode:file.commitBlobMode
+															commitBlobSHA:file.commitBlobSHA
+														 hasStagedChanges:file.hasStagedChanges
+													   hasUnstagedChanges:file.hasUnstagedChanges]];
 		}
-		if (unstagedDictionary && untrackedDictionary) {
-			for (PBChangedFile *file in self.files)
-				file.hasUnstagedChanges = NO;
+		NSArray<PBIndexFileSnapshot *> *snapshots = [self.snapshotReducer reducePrevious:previous
+																				  staged:stagedDictionary
+																				unstaged:unstagedDictionary
+																			   untracked:untrackedDictionary];
+		NSMutableDictionary<NSString *, PBChangedFile *> *existing = [NSMutableDictionary dictionaryWithCapacity:self.files.count];
+		for (PBChangedFile *file in self.files)
+			existing[file.path] = file;
+		NSMutableArray<PBChangedFile *> *reconciled = [NSMutableArray arrayWithCapacity:snapshots.count];
+		BOOL membershipChanged = snapshots.count != self.files.count;
+		for (PBIndexFileSnapshot *snapshot in snapshots) {
+			PBChangedFile *file = existing[snapshot.path];
+			if (!file) {
+				file = [[PBChangedFile alloc] initWithPath:snapshot.path];
+				membershipChanged = YES;
+			}
+			file.status = (PBChangedFileStatus)snapshot.status;
+			file.commitBlobMode = snapshot.commitBlobMode;
+			file.commitBlobSHA = snapshot.commitBlobSHA;
+			file.hasStagedChanges = snapshot.hasStagedChanges;
+			file.hasUnstagedChanges = snapshot.hasUnstagedChanges;
+			[reconciled addObject:file];
 		}
-		if (stagedDictionary)
-			[self addFilesFromDictionary:stagedDictionary staged:YES tracked:YES];
-		if (unstagedDictionary)
-			[self addFilesFromDictionary:unstagedDictionary staged:NO tracked:YES];
-		if (untrackedDictionary)
-			[self addFilesFromDictionary:untrackedDictionary staged:NO tracked:NO];
+		if (membershipChanged)
+			[self willChangeValueForKey:@"indexChanges"];
+		[self.files setArray:reconciled];
+		if (membershipChanged)
+			[self didChangeValueForKey:@"indexChanges"];
 		NSLog(@"[GitX] Merged index refresh snapshots: %lu staged, %lu unstaged, %lu untracked",
 			  (unsigned long)stagedCount,
 			  (unsigned long)unstagedCount,
 			  (unsigned long)untrackedCount);
-
-		// We need to find all files that don't have either
-		// staged or unstaged files, and delete them
-
-		NSMutableArray *deleteFiles = [NSMutableArray array];
-		for (PBChangedFile *file in self.files) {
-			if (!file.hasStagedChanges && !file.hasUnstagedChanges)
-				[deleteFiles addObject:file];
-		}
-
-		if ([deleteFiles count]) {
-			[self willChangeValueForKey:@"indexChanges"];
-			for (PBChangedFile *file in deleteFiles)
-				[self.files removeObject:file];
-			[self didChangeValueForKey:@"indexChanges"];
-		}
 
 		[self postIndexUpdated];
 
@@ -256,19 +260,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 				if (error) {
 					[self postIndexRefreshSuccess:NO message:@"ls-files failed"];
 				} else {
-					NSArray *lines = [self linesFromData:readData];
-					NSMutableDictionary *dictionary = [[NSMutableDictionary alloc] initWithCapacity:[lines count]];
-					// Other files are untracked, so we don't have any real index information. Instead, we can just fake it.
-					// The line below is not used at all, as for these files the commitBlob isn't set
-					NSArray *fileStatus = [NSArray arrayWithObjects:@":000000", @"100644", @"0000000000000000000000000000000000000000", @"0000000000000000000000000000000000000000", @"A", nil];
-					for (NSString *path in lines) {
-						if ([path length] == 0)
-							continue;
-						[dictionary setObject:fileStatus forKey:path];
-					}
-
-					untrackedDictionary = dictionary;
-					[self postIndexRefreshSuccess:YES message:@"ls-files success"];
+					NSError *parseError = nil;
+					untrackedDictionary = [self.statusParser parseUntrackedData:readData error:&parseError];
+					[self postIndexRefreshSuccess:untrackedDictionary != nil
+										  message:untrackedDictionary ? @"ls-files success" : @"ls-files failed"];
 				}
 
 				dispatch_group_leave(self->_indexRefreshGroup);
@@ -285,9 +280,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 				if (error) {
 					[self postIndexRefreshSuccess:NO message:@"diff-index failed"];
 				} else {
-					NSArray *lines = [self linesFromData:readData];
-					stagedDictionary = [self dictionaryForLines:lines];
-					[self postIndexRefreshSuccess:YES message:@"diff-index success"];
+					NSError *parseError = nil;
+					stagedDictionary = [self.statusParser parseTrackedData:readData error:&parseError];
+					[self postIndexRefreshSuccess:stagedDictionary != nil
+										  message:stagedDictionary ? @"diff-index success" : @"diff-index failed"];
 				}
 
 				dispatch_group_leave(self->_indexRefreshGroup);
@@ -304,9 +300,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 				if (error) {
 					[self postIndexRefreshSuccess:NO message:@"diff-files failed"];
 				} else {
-					NSArray *lines = [self linesFromData:readData];
-					unstagedDictionary = [self dictionaryForLines:lines];
-					[self postIndexRefreshSuccess:YES message:@"diff-files success"];
+					NSError *parseError = nil;
+					unstagedDictionary = [self.statusParser parseTrackedData:readData error:&parseError];
+					[self postIndexRefreshSuccess:unstagedDictionary != nil
+										  message:unstagedDictionary ? @"diff-files success" : @"diff-files failed"];
 				}
 
 				dispatch_group_leave(self->_indexRefreshGroup);
@@ -323,11 +320,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	if ([self.repository isBareRepository]) return;
 
 	[PBTask launchTask:[PBGitBinary path]
-			 arguments:@[ @"update-index", @"-q", @"--unmerged", @"--ignore-missing", @"--refresh" ]
-		   inDirectory:self.repository.workingDirectoryURL.path
-	 completionHandler:^(NSData *readData, NSError *error) {
-		[self refresh];
-	}];
+				arguments:@[ @"update-index", @"-q", @"--unmerged", @"--ignore-missing", @"--refresh" ]
+			  inDirectory:self.repository.workingDirectoryURL.path
+		completionHandler:^(NSData *readData, NSError *error) {
+			[self refresh];
+		}];
 }
 
 // Returns the tree to compare the index to, based
@@ -377,8 +374,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		NSError *taskError = error.userInfo[NSUnderlyingErrorKey];
 		NSString *hookOutput = taskError.userInfo[PBTaskTerminationOutputKey];
 		NSString *hookFailureMessage = [NSString stringWithFormat:@"prepare-commit-msg hook failed%@%@",
-										hookOutput && [hookOutput length] > 0 ? @":\n" : @"",
-										hookOutput];
+																  hookOutput && [hookOutput length] > 0 ? @":\n" : @"",
+																  hookOutput];
 
 		[self postCommitHookFailure:hookFailureMessage];
 	}
@@ -553,63 +550,16 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (BOOL)performStageOrUnstage:(BOOL)stage withFiles:(NSArray *)files
 {
-	// Do staging files by chunks of 1000 files each, to prevent program freeze (because NSPipe has limited capacity)
-
-	NSUInteger filesCount = files.count;
-	const NSUInteger MAX_FILES_PER_STAGE = 1000;
-
-	// Prepare first iteration
-	NSUInteger loopFrom = 0;
-	NSUInteger loopTo = MAX_FILES_PER_STAGE;
-	if (loopTo > filesCount)
-		loopTo = filesCount;
-	NSUInteger loopCount = 0;
-
-	// Staging
-	while (loopCount < filesCount) {
-		NSError *error = nil;
-		BOOL success = NO;
-		if (stage) {
-			NSLog(@"[GitX] Staging paths %lu-%lu of %lu", (unsigned long)loopFrom, (unsigned long)loopTo, (unsigned long)filesCount);
-			// Input is a NUL-delimited list of paths, equivalent to git add.
-			NSMutableString *input = [NSMutableString string];
-			for (NSUInteger i = loopFrom; i < loopTo; i++) {
-				PBChangedFile *file = [files objectAtIndex:i];
-				[input appendFormat:@"%@\0", file.path];
-			}
-			success = [self.repository launchTaskWithArguments:@[ @"update-index", @"--add", @"--remove", @"-z", @"--stdin" ]
-														 input:input
-														 error:&error];
-		} else {
-			NSString *parentTree = [self parentTree];
-			NSLog(@"[GitX] Unstaging paths %lu-%lu of %lu from %@", (unsigned long)loopFrom, (unsigned long)loopTo, (unsigned long)filesCount, parentTree);
-			// Reset paths from the comparison tree instead of trusting cached
-			// PBChangedFile blob metadata, which can lag behind partial staging.
-			NSMutableArray<NSString *> *arguments = [NSMutableArray arrayWithObjects:@"reset", @"--quiet", parentTree, @"--", nil];
-			for (NSUInteger i = loopFrom; i < loopTo; i++) {
-				PBChangedFile *file = [files objectAtIndex:i];
-				[arguments addObject:file.path];
-			}
-			success = [self.repository launchTaskWithArguments:arguments error:&error];
-		}
-		if (!success) {
-			[self postOperationFailed:[NSString stringWithFormat:@"Error in %@ files. Return value: %@", (stage ? @"staging" : @"unstaging"), error.userInfo[PBTaskTerminationStatusKey]]];
-			return NO;
-		}
-
-		loopCount = loopTo;
-
-		for (NSUInteger i = loopFrom; i < loopTo; i++) {
-			PBChangedFile *file = [files objectAtIndex:i];
-			file.hasStagedChanges = stage;
-			file.hasUnstagedChanges = !stage;
-		}
-
-		// Prepare next iteration
-		loopFrom = loopCount;
-		loopTo = loopFrom + MAX_FILES_PER_STAGE;
-		if (loopTo > filesCount)
-			loopTo = filesCount;
+	NSArray<NSString *> *paths = [files valueForKey:@"path"];
+	NSError *error = nil;
+	BOOL success = stage ? [self.mutationService stagePaths:paths error:&error] : [self.mutationService unstagePaths:paths parentTree:self.parentTree error:&error];
+	if (!success) {
+		[self postOperationFailed:[NSString stringWithFormat:@"Error in %@ files. Return value: %@", (stage ? @"staging" : @"unstaging"), error.userInfo[PBTaskTerminationStatusKey]]];
+		return NO;
+	}
+	for (PBChangedFile *file in files) {
+		file.hasStagedChanges = stage;
+		file.hasUnstagedChanges = !stage;
 	}
 
 	[self postIndexUpdated];
@@ -629,19 +579,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)discardFiles
 {
-	NSArray *paths = [discardFiles valueForKey:@"path"];
-	NSString *input = [paths componentsJoinedByString:@"\0"];
-
-	NSArray *arguments = @[ @"checkout-index", @"--index", @"--quiet", @"--force", @"-z", @"--stdin" ];
-
-	PBTask *task = [PBTask taskWithLaunchPath:[PBGitBinary path]
-									arguments:arguments
-								  inDirectory:self.repository.workingDirectoryURL.path];
-	task.standardInputData = [input dataUsingEncoding:NSUTF8StringEncoding];
-
+	NSArray<NSString *> *paths = [discardFiles valueForKey:@"path"];
 	NSError *error = nil;
-	BOOL success = [task launchTask:&error];
-	if (!success) {
+	if (![self.mutationService discardPaths:paths error:&error]) {
 		[self postOperationFailed:[NSString stringWithFormat:@"Discarding changes failed with return value %@", error.userInfo[PBTaskTerminationStatusKey]]];
 		return;
 	}
@@ -655,21 +595,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;
 {
-	if (![hunk hasSuffix:@"\n"])
-		hunk = [hunk stringByAppendingString:@"\n"];
-
-	NSMutableArray *array = [NSMutableArray arrayWithObjects:@"apply", @"--unidiff-zero", nil];
-	if (stage)
-		[array addObject:@"--cached"];
-	if (reverse)
-		[array addObject:@"--reverse"];
-
 	NSError *error = nil;
-	NSString *output = [self.repository outputOfTaskWithArguments:array
-															input:hunk
-															error:&error];
-
-	if (!output) {
+	if (![self.mutationService applyPatch:hunk stage:stage reverse:reverse error:&error]) {
 		NSString *message = [NSString stringWithFormat:@"Applying patch failed with return value %@. Error: %@", error.userInfo[PBTaskTerminationStatusKey], error.userInfo[PBTaskTerminationOutputKey]];
 		[self postOperationFailed:message];
 		return NO;
@@ -683,172 +610,17 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context
 {
-	NSString *parameter = [NSString stringWithFormat:@"-U%lu", context];
-	if (staged) {
-		NSLog(@"[GitX] Rendering staged %@ for %@", file.status == NEW ? @"addition" : @"change", file.path);
-		NSArray *arguments = @[ @"diff-index", parameter, @"--cached", self.parentTree, @"--", file.path ];
-
-		NSError *error = nil;
-		NSString *output = [self.repository outputOfTaskWithArguments:arguments error:&error];
-		if (!output) {
-			PBLogError(error);
-		}
-		return output;
-	}
-
-	// unstaged
-	BOOL untracked = file.status == NEW && !file.hasStagedChanges;
-	if (untracked) {
-		NSLog(@"[GitX] Rendering untracked contents for %@", file.path);
-		NSStringEncoding encoding;
-		NSError *error = nil;
-		NSURL *fileURL = [self.repository.workingDirectoryURL URLByAppendingPathComponent:file.path];
-		NSString *contents = [NSString stringWithContentsOfURL:fileURL
-												  usedEncoding:&encoding
-														 error:&error];
-		return contents;
-	}
-
-	NSLog(@"[GitX] Rendering tracked worktree delta for %@", file.path);
 	NSError *error = nil;
-	NSString *output = [self.repository outputOfTaskWithArguments:@[ @"diff-files", parameter, @"--", file.path ]
-															error:&error];
-	if (!output) {
+	NSString *output = [self.mutationService diffForPath:file.path
+												  status:file.status
+										hasStagedChanges:file.hasStagedChanges
+												  staged:staged
+											  parentTree:self.parentTree
+											contextLines:context
+												   error:&error];
+	if (!output)
 		PBLogError(error);
-	}
 	return output;
-}
-
-@end
-
-@implementation PBGitIndex (IndexRefreshMethods)
-
-- (void)addFilesFromDictionary:(NSMutableDictionary *)dictionary staged:(BOOL)staged tracked:(BOOL)tracked
-{
-	// Iterate over all existing files
-	for (PBChangedFile *file in self.files) {
-		NSArray *fileStatus = [dictionary objectForKey:file.path];
-		// Object found, this is still a cached / uncached thing
-		if (fileStatus) {
-			if (tracked) {
-				BOOL preserveStagedIdentity = !staged && file.hasStagedChanges;
-				if (!preserveStagedIdentity) {
-					NSString *mode = [[fileStatus objectAtIndex:0] substringFromIndex:1];
-					NSString *sha = [fileStatus objectAtIndex:2];
-					file.commitBlobSHA = sha;
-					file.commitBlobMode = mode;
-
-					if ([[fileStatus objectAtIndex:4] isEqualToString:@"D"])
-						file.status = DELETED;
-					else if ([[fileStatus objectAtIndex:0] isEqualToString:@":000000"])
-						file.status = NEW;
-					else
-						file.status = MODIFIED;
-				}
-
-				if (staged)
-					file.hasStagedChanges = YES;
-				else
-					file.hasUnstagedChanges = YES;
-			} else {
-				// Untracked file, set status to NEW, only unstaged changes
-				file.hasStagedChanges = NO;
-				file.hasUnstagedChanges = YES;
-				file.status = NEW;
-			}
-
-			// We handled this file, remove it from the dictionary
-			[dictionary removeObjectForKey:file.path];
-		} else {
-			// Object not found in the dictionary, so let's reset its appropriate
-			// change (stage or untracked) if necessary.
-
-			// Staged dictionary, so file does not have staged changes
-			if (staged)
-				file.hasStagedChanges = NO;
-			// Tracked file does not have unstaged changes, file is not new,
-			// so we can set it to No. (If it would be new, it would not
-			// be in this dictionary, but in the "other dictionary").
-			else if (tracked && file.status != NEW)
-				file.hasUnstagedChanges = NO;
-			// Unstaged, untracked dictionary ("Other" files), and file
-			// is indicated as new (which would be untracked), so let's
-			// remove it
-			else if (!tracked && file.status == NEW && file.commitBlobSHA == nil)
-				file.hasUnstagedChanges = NO;
-		}
-	}
-
-	// Do new files only if necessary
-	if (![[dictionary allKeys] count])
-		return;
-
-	// All entries left in the dictionary haven't been accounted for
-	// above, so we need to add them to the "files" array
-	[self willChangeValueForKey:@"indexChanges"];
-	for (NSString *path in [dictionary allKeys]) {
-		NSArray *fileStatus = [dictionary objectForKey:path];
-
-		PBChangedFile *file = [[PBChangedFile alloc] initWithPath:path];
-		if ([[fileStatus objectAtIndex:4] isEqualToString:@"D"])
-			file.status = DELETED;
-		else if ([[fileStatus objectAtIndex:0] isEqualToString:@":000000"])
-			file.status = NEW;
-		else
-			file.status = MODIFIED;
-
-		if (tracked) {
-			file.commitBlobMode = [[fileStatus objectAtIndex:0] substringFromIndex:1];
-			file.commitBlobSHA = [fileStatus objectAtIndex:2];
-		}
-
-		file.hasStagedChanges = staged;
-		file.hasUnstagedChanges = !staged;
-
-		[self.files addObject:file];
-	}
-	[self didChangeValueForKey:@"indexChanges"];
-}
-
-#pragma mark Utility methods
-- (NSArray *)linesFromData:(NSData *)data
-{
-	if (!data)
-		return [NSArray array];
-
-	NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-	// FIXME: throw an error?
-	if (!string)
-		return [NSArray array];
-
-	// Strip trailing null
-	if ([string hasSuffix:@"\0"])
-		string = [string substringToIndex:[string length] - 1];
-
-	if ([string length] == 0)
-		return [NSArray array];
-
-	return [string componentsSeparatedByString:@"\0"];
-}
-
-- (NSMutableDictionary *)dictionaryForLines:(NSArray *)lines
-{
-	NSMutableDictionary *dictionary = [NSMutableDictionary dictionaryWithCapacity:[lines count] / 2];
-
-	// Fill the dictionary with the new information. These lines are in the form of:
-	// :00000 :0644 OTHER INDEX INFORMATION
-	// Filename
-
-	NSAssert1([lines count] % 2 == 0, @"Lines must have an even number of lines: %@", lines);
-
-	NSEnumerator *enumerator = [lines objectEnumerator];
-	NSString *fileStatus;
-	while (fileStatus = [enumerator nextObject]) {
-		NSString *fileName = [enumerator nextObject];
-		[dictionary setObject:[fileStatus componentsSeparatedByString:@" "] forKey:fileName];
-	}
-
-	return dictionary;
 }
 
 @end

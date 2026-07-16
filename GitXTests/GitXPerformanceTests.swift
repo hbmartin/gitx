@@ -114,7 +114,7 @@ final class GitXPerformanceTests: XCTestCase {
                 autoreleasepool {
                     let specifier = PBGitRevSpecifier(
                         parameters: parameterSets[iteration % parameterSets.count]
-                    )!
+                    )
                     classifiedCount += specifier.isSimpleRef ? 1 : 0
                     classifiedCount += specifier.hasPathLimiter() ? 1 : 0
                     _ = specifier.title()
@@ -157,6 +157,38 @@ final class GitXPerformanceTests: XCTestCase {
         }
 
         XCTAssertNotNil(lastLanguage)
+    }
+
+    func testLargeIndexSnapshotParsingAndReductionPerformance() {
+        let parser = PBIndexStatusParser()
+        let reducer = PBIndexSnapshotReducer()
+        var stagedOutput = ""
+        var unstagedOutput = ""
+        for index in 0 ..< 5000 {
+            let path = "folder/file-\(index).txt"
+            stagedOutput += ":100644 100644 old\(index) staged\(index) M\0\(path)\0"
+            unstagedOutput += ":100644 100644 staged\(index) working\(index) M\0\(path)\0"
+        }
+        let stagedData = stagedOutput.data(using: .utf8)
+        let unstagedData = unstagedOutput.data(using: .utf8)
+        var resultCount = 0
+        let workload = {
+            let staged = parser.parseTrackedData(stagedData, error: nil)
+            let unstaged = parser.parseTrackedData(unstagedData, error: nil)
+            resultCount = reducer.reducePrevious(
+                [],
+                staged: staged,
+                unstaged: unstaged,
+                untracked: [:]
+            ).count
+        }
+        workload()
+
+        measure {
+            workload()
+        }
+
+        XCTAssertEqual(resultCount, 5000)
     }
 
     func testLargeNativeDiffScrollingPerformance() throws {

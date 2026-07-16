@@ -53,7 +53,7 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 	NSUInteger _offMainGTRepositoryAccessCount;
 }
 
-- (GTRepository *)gtRepo
+- (nullable GTRepository *)gtRepo
 {
 	if (!NSThread.isMainThread) {
 		@synchronized(self) {
@@ -265,9 +265,12 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 + (BOOL)shouldRefreshStatCacheAfterApplicationActivation;
 @end
 
-@interface PBRepositoryFocusRefreshTracker : NSObject
+@interface PBRepositoryFocusRefreshCoordinator : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository
+				 gitExecutablePath:(NSString *)gitExecutablePath
+					refreshHandler:(void (^)(void))refreshHandler;
 - (BOOL)shouldRefreshForSnapshotComponents:(NSArray<NSData *> *)snapshotComponents;
-- (void)reset;
+- (void)resetSnapshot;
 @end
 
 @interface NSObject (PBRefreshCoalescerTesting)
@@ -535,19 +538,24 @@ NS_ASSUME_NONNULL_END
 	}
 }
 
-- (void)testFocusRefreshTrackerOnlyRefreshesForChangedSnapshots
+- (void)testFocusRefreshCoordinatorOnlyRefreshesForChangedSnapshots
 {
-	PBRepositoryFocusRefreshTracker *tracker = [[PBRepositoryFocusRefreshTracker alloc] init];
+	PBGitRepository *repository = [[PBGitRepository alloc] init];
+	PBRepositoryFocusRefreshCoordinator *coordinator = [[PBRepositoryFocusRefreshCoordinator alloc]
+		initWithRepository:repository
+		 gitExecutablePath:@"/usr/bin/git"
+			refreshHandler:^{
+			}];
 	NSArray<NSData *> *initialSnapshot = @[ [@"a" dataUsingEncoding:NSUTF8StringEncoding], [@"bc" dataUsingEncoding:NSUTF8StringEncoding] ];
 	NSArray<NSData *> *changedAtComponentBoundary = @[ [@"ab" dataUsingEncoding:NSUTF8StringEncoding], [@"c" dataUsingEncoding:NSUTF8StringEncoding] ];
 
-	XCTAssertFalse([tracker shouldRefreshForSnapshotComponents:initialSnapshot]);
-	XCTAssertFalse([tracker shouldRefreshForSnapshotComponents:initialSnapshot]);
-	XCTAssertTrue([tracker shouldRefreshForSnapshotComponents:changedAtComponentBoundary]);
-	XCTAssertFalse([tracker shouldRefreshForSnapshotComponents:changedAtComponentBoundary]);
+	XCTAssertFalse([coordinator shouldRefreshForSnapshotComponents:initialSnapshot]);
+	XCTAssertFalse([coordinator shouldRefreshForSnapshotComponents:initialSnapshot]);
+	XCTAssertTrue([coordinator shouldRefreshForSnapshotComponents:changedAtComponentBoundary]);
+	XCTAssertFalse([coordinator shouldRefreshForSnapshotComponents:changedAtComponentBoundary]);
 
-	[tracker reset];
-	XCTAssertFalse([tracker shouldRefreshForSnapshotComponents:initialSnapshot]);
+	[coordinator resetSnapshot];
+	XCTAssertFalse([coordinator shouldRefreshForSnapshotComponents:initialSnapshot]);
 }
 
 @end

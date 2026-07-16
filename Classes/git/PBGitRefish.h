@@ -8,6 +8,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+NS_ASSUME_NONNULL_BEGIN
 
 //  Several git commands can take a ref "refs/heads/master" or an SHA.
 //  Use <PBGitRefish> to accept a PBGitRef or a PBGitCommit without having to write
@@ -22,6 +23,8 @@
 
 - (NSString *)refishName;
 - (NSString *)shortName;
-- (NSString *)refishType;
+- (nullable NSString *)refishType;
 
 @end
+
+NS_ASSUME_NONNULL_END

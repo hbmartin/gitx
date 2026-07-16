@@ -531,8 +531,6 @@
                                                 </tableColumns>
                                                 <connections>
                                                     <outlet property="controller" destination="-2" id="111"/>
-                                                    <outlet property="dataSource" destination="-2" id="Gol-fU-kRr"/>
-                                                    <outlet property="delegate" destination="-2" id="444"/>
                                                     <outlet property="menu" destination="eTP-cx-OCg" id="xzi-Ng-ecd"/>
                                                     <outlet property="searchController" destination="423" id="436"/>
                                                     <outlet property="webController" destination="40" id="95"/>
