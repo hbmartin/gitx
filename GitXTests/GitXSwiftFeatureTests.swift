@@ -6,9 +6,9 @@ final class GitXSwiftFeatureTests: XCTestCase {
     private final class TreeFixture: NSObject {
         @objc dynamic let fullPath: String
         @objc dynamic let path: String
-        @objc dynamic let children: [TreeFixture]
+        @objc dynamic let children: [TreeFixture]?
 
-        init(fullPath: String, path: String, children: [TreeFixture] = []) {
+        init(fullPath: String, path: String, children: [TreeFixture]? = nil) {
             self.fullPath = fullPath
             self.path = path
             self.children = children

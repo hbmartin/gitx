@@ -33,6 +33,7 @@
 #import "PBGitXMessageSheet.h"
 #import "PBError.h"
 #import "PBFileChangesTableView.h"
+#import "GLFileView.h"
 #import "PBNativeContentView.h"
 #import "PBRemoteProgressSheet.h"
 #import "PBSourceViewItem.h"
@@ -79,6 +80,10 @@
 - (nullable NSIndexPath *)treeSelectionIndexPathForChildren:(NSArray<NSObject *> *)children treeMode:(BOOL)treeMode;
 @end
 
+@interface GLFileView (WindowControllerTests)
+- (NSArray<NSDictionary *> *)historyEntriesForTree:(PBGitTree *)file;
+@end
+
 @interface PBApplicationSettings : NSObject
 + (BOOL)changedFilesOnly;
 + (void)setChangedFilesOnly:(BOOL)value;
@@ -89,6 +94,61 @@
 
 @interface PBNativeDiffSectionSettings : NSObject
 + (NSArray<NSDictionary *> *)applyToSections:(NSArray<NSDictionary *> *)sections repository:(PBGitRepository *)repository;
+@end
+
+@interface PBWindowHistoryTreeLogStub : PBGitTree
+@end
+
+@interface PBWindowRepositoryWithoutGitURLs : PBGitRepository
+@end
+
+@interface PBWelcomeWindowController : NSWindowController
++ (instancetype)shared;
+- (void)searchChanged:(nullable id)sender;
+- (void)closeWelcome;
+@end
+
+@interface PBRepositoryUISettings : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+@end
+
+@implementation PBWindowHistoryTreeLogStub
+
+- (NSString *)log:(NSString *)format
+{
+	NSDictionary<NSString *, NSString *> *replacements = @{
+		@"%h" : @"abc1234",
+		@"%s" : @"Toolbar history",
+		@"%aN" : @"Ada",
+		@"%ar" : @"now",
+		@"%H" : @"abc123456789",
+	};
+	NSString *output = format;
+	for (NSString *placeholder in replacements) {
+		output = [output stringByReplacingOccurrencesOfString:placeholder withString:replacements[placeholder]];
+	}
+	return [output stringByAppendingString:@"malformed trailing record"];
+}
+
+@end
+
+@implementation PBWindowRepositoryWithoutGitURLs
+
+- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray *)arguments error:(NSError **)error
+{
+	return @"";
+}
+
+- (nullable NSURL *)gitURL
+{
+	return nil;
+}
+
+- (nullable NSURL *)workingDirectoryURL
+{
+	return nil;
+}
+
 @end
 
 @interface PBGitWindowController (WindowControllerTests)
@@ -2172,6 +2232,34 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 						  @"https://gitlab.example/acme/repo/-/tree/main");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"https://bitbucket.org/acme/repo.git" branch:@"" sha:@"abc123"].absoluteString,
 						  @"https://bitbucket.org/acme/repo/src/abc123");
+}
+
+- (void)testFileHistoryEntriesParseStructuredGitLogOutput
+{
+	GLFileView *fileView = [GLFileView new];
+	NSArray<NSDictionary *> *entries = [fileView historyEntriesForTree:[PBWindowHistoryTreeLogStub new]];
+
+	XCTAssertEqual(entries.count, (NSUInteger)1);
+	XCTAssertEqualObjects(entries.firstObject[@"subject"], @"Toolbar history");
+	XCTAssertEqualObjects(entries.firstObject[@"author"], @"Ada");
+	XCTAssertEqualObjects(entries.firstObject[@"date"], @"now");
+	XCTAssertEqualObjects(entries.firstObject[@"sha"], @"abc123456789");
+}
+
+- (void)testWelcomeWindowSearchAndCloseActions
+{
+	PBWelcomeWindowController *welcome = PBWelcomeWindowController.shared;
+	[welcome searchChanged:nil];
+	[welcome closeWelcome];
+
+	XCTAssertFalse(welcome.window.isVisible);
+}
+
+- (void)testRepositoryUISettingsAcceptRepositoryWithoutGitURLs
+{
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:[PBWindowRepositoryWithoutGitURLs new]];
+
+	XCTAssertNotNil(settings);
 }
 
 - (void)testChangedFileTreeUsesFlatFullPathsAndStatusTitles

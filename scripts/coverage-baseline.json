@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.7589,
+  "minimumLineCoverage": 0.7591,
   "files": {
     "Classes/Controllers/ApplicationController.m": 0.308,
     "Classes/Controllers/ApplicationSettings.swift": 0.8244,
@@ -39,10 +39,10 @@
     "Classes/Controllers/PBWebHistoryController.m": 0.6136,
     "Classes/Controllers/RepositoryActionContextResolver.swift": 1.0,
     "Classes/Controllers/RepositoryFocusRefreshCoordinator.swift": 0.9934,
-    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.5063,
+    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.5077,
     "Classes/Controllers/RepositoryReferenceActionCoordinator.swift": 0.947,
     "Classes/Controllers/RepositoryRemoteActionCoordinator.swift": 0.9663,
-    "Classes/Controllers/RepositorySettingsController.swift": 0.6781,
+    "Classes/Controllers/RepositorySettingsController.swift": 0.6809,
     "Classes/Controllers/RepositoryStashActionCoordinator.swift": 1.0,
     "Classes/Controllers/RepositoryToolbarController.swift": 0.9062,
     "Classes/Controllers/WorkspaceActionCoordinator.swift": 0.95,
