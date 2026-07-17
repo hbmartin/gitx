@@ -2250,6 +2250,22 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 {
 	PBWelcomeWindowController *welcome = PBWelcomeWindowController.shared;
 	[welcome searchChanged:nil];
+	NSArray<NSView *> *descendants = welcome.window.contentView.subviews;
+	NSTableView *recentsTable = nil;
+	while (descendants.count > 0 && !recentsTable) {
+		NSView *view = descendants.firstObject;
+		descendants = [descendants subarrayWithRange:NSMakeRange(1, descendants.count - 1)];
+		if ([view isKindOfClass:NSTableView.class] &&
+			[view.accessibilityIdentifier isEqualToString:@"WelcomeRecents"]) {
+			recentsTable = (NSTableView *)view;
+		} else {
+			descendants = [descendants arrayByAddingObjectsFromArray:view.subviews];
+		}
+	}
+
+	XCTAssertNotNil(recentsTable);
+	XCTAssertEqual(recentsTable.target, welcome);
+	XCTAssertEqual(recentsTable.doubleAction, NSSelectorFromString(@"openSelected:"));
 	[welcome closeWelcome];
 
 	XCTAssertFalse(welcome.window.isVisible);

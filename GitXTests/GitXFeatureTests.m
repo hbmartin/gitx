@@ -214,6 +214,19 @@
 							 keyCode:49];
 }
 
+- (NSEvent *)rightMouseEventAtLocation:(NSPoint)location windowNumber:(NSInteger)windowNumber
+{
+	return [NSEvent mouseEventWithType:NSEventTypeRightMouseDown
+							  location:location
+						 modifierFlags:0
+							 timestamp:0
+						  windowNumber:windowNumber
+							   context:nil
+						   eventNumber:1
+							clickCount:1
+							  pressure:1];
+}
+
 - (void)setUp
 {
 	[super setUp];
@@ -356,6 +369,31 @@
 	table.delegate = nil;
 	[table keyDown:[self spaceKeyEventWithModifiers:0]];
 	XCTAssertEqual(target.stagingToggleCount, 2, @"Space without a staging delegate must not route through the responder chain");
+}
+
+- (void)testContextClickOnSelectedFilePreservesMultipleSelection
+{
+	PBFileChangesActionTarget *target = [[PBFileChangesActionTarget alloc] init];
+	PBFileChangesTableView *table = [[PBFileChangesTableView alloc] initWithFrame:NSMakeRect(0, 0, 300, 120)];
+	table.dataSource = target;
+	table.delegate = target;
+	table.allowsMultipleSelection = YES;
+	table.menu = [[NSMenu alloc] initWithTitle:@"Files"];
+	[table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"Files"]];
+
+	NSWindow *window = [[NSWindow alloc] initWithContentRect:table.frame
+												   styleMask:NSWindowStyleMaskBorderless
+													 backing:NSBackingStoreBuffered
+													   defer:NO];
+	window.contentView = table;
+	[table reloadData];
+	[table selectRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)] byExtendingSelection:NO];
+
+	NSPoint tableLocation = NSMakePoint(10, NSMidY([table rectOfRow:1]));
+	NSPoint windowLocation = [table convertPoint:tableLocation toView:nil];
+	XCTAssertEqual([table rowAtPoint:tableLocation], (NSInteger)1);
+	XCTAssertNotNil([table menuForEvent:[self rightMouseEventAtLocation:windowLocation windowNumber:window.windowNumber]]);
+	XCTAssertEqualObjects(table.selectedRowIndexes, [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)]);
 }
 
 - (void)testRevisionCellObjectValueIsNullableBeforeTableConfiguration
