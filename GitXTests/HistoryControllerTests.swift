@@ -4,6 +4,14 @@ import XCTest
 @MainActor
 // swift6-safety-justification: XCTest owns the test case lifetime, while every mutable access is confined to the main actor.
 final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
+    private final class UncheckedSendableBox<Value>: @unchecked Sendable {
+        let value: Value
+
+        init(_ value: Value) {
+            self.value = value
+        }
+    }
+
     private final class HistoryWindowController: PBGitWindowController {
         private var fixedRepository: PBGitRepository!
         private(set) var shownErrors: [NSError] = []
@@ -431,6 +439,111 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(historyController.commitController.selectedObjects.isEmpty)
         historyController.updateStatus()
         XCTAssertTrue(historyController.status.contains("commits loaded"))
+    }
+
+    func testGitTreeFileSizeSupportsConcurrentPreviewLoads() throws {
+        let commits = loadedCommits()
+        let file = try XCTUnwrap(
+            flattenedTree(commits[0].tree).first {
+                $0.leaf && $0.fullPath == "nested/tracked.txt"
+            }
+        )
+        let previewCount = 8
+        let startGate = DispatchSemaphore(value: 0)
+        let completion = DispatchGroup()
+        let fileBox = UncheckedSendableBox(file)
+
+        for _ in 0 ..< previewCount {
+            completion.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                startGate.wait()
+                _ = fileBox.value.fileSize()
+                completion.leave()
+            }
+        }
+        for _ in 0 ..< previewCount {
+            startGate.signal()
+        }
+
+        XCTAssertEqual(completion.wait(timeout: .now() + 10), .success)
+        XCTAssertGreaterThan(file.fileSize(), 0)
+    }
+
+    func testHistoryListPublishesUniqueBatchesAndFinishesEmptyLoads() throws {
+        let historyList = try XCTUnwrap(repository.revisionList)
+        let commits = loadedCommits()
+        let addCommits = NSSelectorFromString("addCommitsFromArray:")
+
+        historyList.setValue(true, forKey: "resetCommits")
+        historyList.setValue(NSMutableSet(), forKey: "publishedCommitSHAs")
+        _ = historyList.perform(addCommits, with: [commits[0], commits[0]])
+        XCTAssertEqual(historyList.commits.count, 1)
+
+        _ = historyList.perform(addCommits, with: [commits[0]])
+        XCTAssertEqual(historyList.commits.count, 1)
+
+        _ = historyList.perform(addCommits, with: [commits[1]])
+        XCTAssertEqual(historyList.commits.count, 2)
+
+        let currentRevList = try XCTUnwrap(
+            historyList.value(forKey: "currentRevList") as? NSObject
+        )
+        let currentCommits = currentRevList.value(forKey: "commits")
+        currentRevList.setValue(NSMutableArray(), forKey: "commits")
+        historyList.commits = [commits[0]]
+        historyList.setValue(true, forKey: "resetCommits")
+        historyList.isUpdating = true
+        _ = historyList.perform(NSSelectorFromString("finishedGraphing"))
+        XCTAssertEqual(historyList.commits.count, 0)
+        XCTAssertFalse(historyList.isUpdating)
+        currentRevList.setValue(currentCommits, forKey: "commits")
+    }
+
+    func testHistoryFirstCommitAndScrollBoundaries() {
+        let commits = loadedCommits()
+        let workingState = PBUncommittedChanges(repository: repository)
+        historyController.commitController.content = [workingState]
+        historyController.commitController.rearrangeObjects()
+        XCTAssertNil(historyController.value(forKey: "firstCommit"))
+
+        historyController.commitController.content = [workingState] + Array(commits.prefix(3))
+        historyController.commitController.rearrangeObjects()
+        XCTAssertTrue(historyController.value(forKey: "firstCommit") as AnyObject === commits[0])
+        historyController.commitController.setSelectedObjects([commits[2]])
+
+        let selector = NSSelectorFromString("scrollSelectionToTopOfViewFrom:")
+        typealias ScrollImplementation = @convention(c) (AnyObject, Selector, Int) -> Void
+        // swift6-safety-justification: This private Objective-C test seam has the declared id/SEL/NSInteger ABI.
+        let scroll = unsafeBitCast(
+            historyController.method(for: selector),
+            to: ScrollImplementation.self
+        )
+        scroll(historyController, selector, NSNotFound)
+        scroll(historyController, selector, 0)
+    }
+
+    func testRepositoryUISettingsPersistCommitAndSidebarChoices() {
+        let defaultsKey = "PBRepositoryUISettings"
+        let defaults = UserDefaults.standard
+        let originalSettings = defaults.object(forKey: defaultsKey)
+        defer {
+            if let originalSettings {
+                defaults.set(originalSettings, forKey: defaultsKey)
+            } else {
+                defaults.removeObject(forKey: defaultsKey)
+            }
+        }
+
+        let settings = PBRepositoryUISettings(repository: repository)
+        settings.pushAfterCommit = true
+        settings.hideContainedBranches = true
+        settings.sidebarVisibility = ["Stage": false]
+
+        let reloaded = PBRepositoryUISettings(repository: repository)
+        XCTAssertTrue(reloaded.pushAfterCommit)
+        XCTAssertTrue(reloaded.hideContainedBranches)
+        XCTAssertFalse(reloaded.isSidebarGroupVisible("Stage"))
+        XCTAssertTrue(reloaded.isSidebarGroupVisible("Remotes"))
     }
 
     func testWorkingStateDiffRefreshesInBackgroundAndReusesCachedRendering() throws {

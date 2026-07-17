@@ -96,11 +96,13 @@ final class WorkingStateDiffCache: NSObject { // swiftlint:disable:this unused_d
     private var snapshots: [Int: WorkingStateDiffSnapshot] = [:]
 
     @objc(snapshotForLayout:)
+    // swiftlint:disable:next unused_declaration
     func snapshot(forLayout layout: Int) -> WorkingStateDiffSnapshot? {
         snapshots[layout]
     }
 
     @objc(storeSections:renderedDiff:layout:)
+    // swiftlint:disable:next unused_declaration
     func store(sections: [[String: Any]], renderedDiff: String, layout: Int) {
         snapshots[layout] = WorkingStateDiffSnapshot(
             sections: sections,

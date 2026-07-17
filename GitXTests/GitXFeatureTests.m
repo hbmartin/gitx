@@ -378,7 +378,7 @@
 	table.dataSource = target;
 	table.delegate = target;
 	table.allowsMultipleSelection = YES;
-	table.menu = [[NSMenu alloc] initWithTitle:@"Files"];
+	table.menu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Files", nil)];
 	[table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"Files"]];
 
 	NSWindow *window = [[NSWindow alloc] initWithContentRect:table.frame
@@ -403,7 +403,7 @@
 	table.dataSource = target;
 	table.delegate = target;
 	table.allowsMultipleSelection = YES;
-	table.menu = [[NSMenu alloc] initWithTitle:@"Files"];
+	table.menu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Files", nil)];
 	[table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"Files"]];
 
 	NSWindow *window = [[NSWindow alloc] initWithContentRect:table.frame

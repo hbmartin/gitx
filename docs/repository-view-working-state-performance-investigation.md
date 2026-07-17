@@ -5,11 +5,11 @@ Branch: `codex/comprehensive-settings-toolbar`
 
 ## Outcome
 
-History and Commit now remain mounted for the lifetime of their repository window. Switching hides one retained view and reveals the other, restores that view's responder, reuses its toolbar, and does not call `updateView` again. The measured warm switch is **3.51 ms p95**, below both the 50 ms interaction budget and the stricter 16 ms main-thread frame budget.
+History and Commit now remain mounted for the lifetime of their repository window. Switching hides one retained view and reveals the other, restores that view's responder, reuses its toolbar, and does not call `updateView` again. The measured warm switch is **3.73 ms p95**, below both the 50 ms interaction budget and the stricter 16 ms main-thread frame budget.
 
-History's **Uncommitted Changes** row now keeps one memory-only rendered snapshot per diff layout in its repository window. Revisiting it displays cached content synchronously, restores its scroll position, and refreshes Git content in the background. Cached feedback is **1.86 ms p95** against a 50 ms budget.
+History's **Uncommitted Changes** row now keeps one memory-only rendered snapshot per diff layout in its repository window. Revisiting it displays cached content synchronously, restores its scroll position, and refreshes Git content in the background. Cached feedback is **1.93 ms p95** against a 50 ms budget.
 
-The representative fresh pipeline runs both Git diff commands and renders 500 changed files producing at least 1 MiB of patch text. It measures **152.51 ms p95** against a 250 ms budget. The separate cold observation is 155.26 ms. A 5,000-file, 10 MiB render measures **788.76 ms** and is report-only.
+The representative fresh pipeline runs both Git diff commands and renders 500 changed files producing at least 1 MiB of patch text. It measures **155.49 ms p95** against a 250 ms budget. The separate cold observation is 147.72 ms. A 5,000-file, 10 MiB render measures **787.26 ms** and is report-only.
 
 ## Performance budgets
 
@@ -29,7 +29,7 @@ The constants live in `PBPerformanceBudgets`. `GitXPerformanceTests` calculates 
 
 **Evidence:** The old implementation constructed a new `NSToolbar`, rebuilt every item and status view, assigned it to the window, and triggered AppKit layout on every mode change. Pre-change instrumentation observed approximately 10.9–14.7 ms in the isolated toolbar replacement and 17.8–21.6 ms for representative complete switches. This alone could consume most or all of a 16 ms frame.
 
-**Result:** Confirmed as a major contributor. Each mode now owns one retained toolbar and status view. The focused test proves returning to History installs the identical toolbar object. Warm complete switches now measure 3.51 ms p95.
+**Result:** Confirmed as a major contributor. Each mode now owns one retained toolbar and status view. The focused test proves returning to History installs the identical toolbar object. Warm complete switches now measure 3.73 ms p95.
 
 ### 2. Removing and re-adding the controller view
 
@@ -47,7 +47,7 @@ The constants live in `PBPerformanceBudgets`. `GitXPerformanceTests` calculates 
 
 **Evidence:** These operations remain in the optimized path, including KVO status wiring and first-responder changes.
 
-**Result:** Not a meaningful bottleneck for this workload. With those operations retained, warm switching remains 3.51 ms p95.
+**Result:** Not a meaningful bottleneck for this workload. With those operations retained, warm switching remains 3.73 ms p95.
 
 ## Uncommitted Changes hypotheses
 
@@ -55,17 +55,17 @@ The constants live in `PBPerformanceBudgets`. `GitXPerformanceTests` calculates 
 
 **Evidence:** The old path displayed “Loading changes…”, launched fresh staged and unstaged Git diff tasks, rebuilt sections, and rendered a new attributed document whenever Uncommitted Changes was selected after another history row.
 
-**Result:** Confirmed as the cause of slow revisits. A repository-window cache now retains the last sections, rendered-diff identity, and native attributed result for each layout. Cached feedback is 1.86 ms p95. The cache is not persisted and is cleared with the repository window.
+**Result:** Confirmed as the cause of slow revisits. A repository-window cache now retains the last sections, rendered-diff identity, and native attributed result for each layout. Cached feedback is 1.93 ms p95. The cache is not persisted and is cleared with the repository window.
 
 ### 2. Git acquisition dominates every refresh
 
-**Evidence:** Working State runs staged and unstaged Git diff commands sequentially. The representative native render alone is 76.81 ms p95, while the Git-plus-render pipeline is 152.51 ms p95. Git acquisition and process overhead therefore account for roughly half of this tracked-file fixture.
+**Evidence:** Working State runs staged and unstaged Git diff commands sequentially. The representative native render alone is 77.19 ms p95, while the Git-plus-render pipeline is 155.49 ms p95. Git acquisition and process overhead therefore account for roughly half of this tracked-file fixture.
 
 **Result:** Confirmed for fresh loads, but already within the 250 ms budget. The commands remain off the main thread. Parallelizing or replacing them would add concurrency and cancellation complexity without being necessary to meet the accepted budget.
 
 ### 3. Native diff rendering is too slow for the fresh budget
 
-**Evidence:** The deterministic 500-file, at-least-1-MiB renderer fixture measures 76.81 ms p95 after a separate 77.83 ms cold observation.
+**Evidence:** The deterministic 500-file, at-least-1-MiB renderer fixture measures 77.19 ms p95 after a separate 77.95 ms cold observation.
 
 **Result:** Rejected for the representative workload. Rendering has headroom inside the end-to-end 250 ms budget.
 
@@ -73,11 +73,11 @@ The constants live in `PBPerformanceBudgets`. `GitXPerformanceTests` calculates 
 
 **Evidence:** The cache test alternates a loading message with immediate restoration of the complete 500-file document, including TextKit installation and saved scroll restoration.
 
-**Result:** Rejected as a bottleneck. That work measures 1.86 ms p95.
+**Result:** Rejected as a bottleneck. That work measures 1.93 ms p95.
 
 ### 5. Very large documents need a different architecture
 
-**Evidence:** The 5,000-file, at-least-10-MiB renderer fixture takes 788.76 ms.
+**Evidence:** The 5,000-file, at-least-10-MiB renderer fixture takes 787.26 ms.
 
 **Result:** Plausible beyond the representative budget, but not addressed by this change. The result is intentionally report-only. Cached revisits remain fast after the first render; future work can consider incremental or viewport-oriented rendering if real repositories show this shape frequently.
 
@@ -87,18 +87,19 @@ All final measurements were recorded on the same Mac mini running macOS 26.5.1 w
 
 | Measurement | Cold | p95 |
 | --- | ---: | ---: |
-| Warm History ↔ Commit | Excluded; cold toolbar creation is logged separately | 3.51 ms |
-| Cached 500-file / 1-MiB feedback | Cache populated before samples | 1.86 ms |
-| Fresh 500-file / 1-MiB native render | 77.83 ms | 76.81 ms |
-| Fresh 500-file / 1-MiB Git-plus-render pipeline | 155.26 ms | 152.51 ms |
-| Stress 5,000-file / 10-MiB native render | — | 788.76 ms, report-only |
+| Warm History ↔ Commit | Excluded; cold toolbar creation is logged separately | 3.73 ms |
+| Cached 500-file / 1-MiB feedback | Cache populated before samples | 1.93 ms |
+| Fresh 500-file / 1-MiB native render | 77.95 ms | 77.19 ms |
+| Fresh 500-file / 1-MiB Git-plus-render pipeline | 147.72 ms | 155.49 ms |
+| Stress 5,000-file / 10-MiB native render | — | 787.26 ms, report-only |
 
 The warm-switch log also observed a 104 ms first History toolbar construction and a 10.47 ms first Commit mount. Those cold costs are intentionally separate from the warm interaction gate.
 
 Local result bundles:
 
-- `build/NewPerformanceBudgets.xcresult`
-- `build/FreshPipelineBudget.xcresult`
+- `build/RepositoryPerformancePlanFinal.xcresult`
+- `build/RepositoryCorrectnessCoverageStable.xcresult`
+- `build/RepositoryThreadSanitizerFinalPass.xcresult`
 
 ## Correctness and state preservation
 
@@ -114,8 +115,12 @@ Focused coverage proves:
 - an unavailable Push control displays off without erasing the stored choice;
 - double-clicking a reachable recent repository opens it, while a missing entry routes to Locate Missing.
 
+The final correctness plan passed 268 tests with 76.82% aggregate `GitX.app` line coverage. The full Thread Sanitizer plan passed 265 tests with no race report; focused sanitizer coverage then passed the three concurrency and deterministic-history tests added during final verification. The pinned static checks and clean-derived analyzer also pass.
+
+The `GitXUI` plan could not initialize its runner on this host: three attempts ended before test discovery with `Timed out while enabling automation mode`. The same macOS automation-service failure prevented the accessibility-driven manual fallback from starting. The app-hosted layout and behavior tests pass, and the UI screenshot attachment remains in the scenario for the next healthy UI-test host; no interactive UI-test pass is claimed here.
+
 ## Objective-C-to-Swift assessment
 
 The nib-owning Objective-C controllers remain in Objective-C. `PBGitWindowController.m`, `PBGitCommitController.m`, `PBWebHistoryController.m`, and `PBNativeContentView.m` retain AppKit wiring, responder-chain behavior, cancellation, and rendering installation. Focused decisions were extracted into Swift seams for the memory cache, layout coordination, recent activation, menu policy, settings, and performance budgets.
 
-`PBWebHistoryController.m` remains below the conversion skill's 90% line-coverage prerequisite, so a full conversion would be unsafe in this change. The high-coverage controllers also were not converted because retaining their nib and responder wiring was the lower-churn design approved for this work.
+`PBWebHistoryController.m` and `PBGitTree.m` remain below the conversion skill's 90% line-coverage prerequisite, so full conversions would be unsafe in this change. The high-coverage controllers also were not converted because retaining their nib and responder wiring was the lower-churn design approved for this work.

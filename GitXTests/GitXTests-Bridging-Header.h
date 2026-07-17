@@ -697,4 +697,12 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (NSRect)previewPanel:(nullable id)panel sourceFrameOnScreenForPreviewItem:(id<QLPreviewItem>)item;
 @end
 
+@interface PBRepositoryUISettings : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+@property (nonatomic) BOOL hideContainedBranches;
+@property (nonatomic) BOOL pushAfterCommit;
+@property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *sidebarVisibility;
+- (BOOL)isSidebarGroupVisible:(NSString *)group;
+@end
+
 NS_ASSUME_NONNULL_END
