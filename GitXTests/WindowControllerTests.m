@@ -1963,6 +1963,28 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual(sidebar.branchSelectionCount, (NSUInteger)2);
 }
 
+- (void)testContentObservationDoesNotRetainWindowController
+{
+	NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 400, 300)
+												   styleMask:NSWindowStyleMaskTitled
+													 backing:NSBackingStoreBuffered
+													   defer:NO];
+	PBWindowContentSpy *content = [PBWindowContentSpy new];
+	__weak PBGitWindowController *weakController = nil;
+	@autoreleasepool {
+		PBGitWindowController *controller = [[PBGitWindowController alloc] initWithWindow:window];
+		NSView *container = [[NSView alloc] initWithFrame:window.contentView.bounds];
+		[controller setValue:container forKey:@"contentSplitView"];
+		[controller changeContentController:content];
+		weakController = controller;
+		controller = nil;
+	}
+
+	XCTAssertNil(weakController);
+	[window orderOut:nil];
+	[window close];
+}
+
 - (void)testActionContextResolutionFromMenusSidebarAndHistory
 {
 	XCTAssertEqual([self.controller refishForSender:[self menuItemWithObject:self.branchRef] refishTypes:@[ kGitXBranchType ]], self.branchRef);

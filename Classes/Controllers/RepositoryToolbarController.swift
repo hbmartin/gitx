@@ -180,7 +180,11 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         if itemIdentifier == Item.refreshStatus {
-            return statusItem(identifier: itemIdentifier, mode: mode(for: toolbar))
+            return statusItem(
+                identifier: itemIdentifier,
+                mode: mode(for: toolbar),
+                isActualInsertion: flag
+            )
         }
         if itemIdentifier == Item.actions {
             return actionsItem(identifier: itemIdentifier)
@@ -217,7 +221,11 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         return item
     }
 
-    private func statusItem(identifier: NSToolbarItem.Identifier, mode: Mode) -> NSToolbarItem {
+    private func statusItem(
+        identifier: NSToolbarItem.Identifier,
+        mode: Mode,
+        isActualInsertion: Bool
+    ) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = "Refresh"
         item.paletteLabel = "Refresh & Status"
@@ -257,7 +265,12 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         view.widthAnchor.constraint(greaterThanOrEqualToConstant: 118).isActive = true
         view.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         item.view = view
-        statusViews[mode] = StatusViews(label: label, spinner: spinner)
+        if isActualInsertion {
+            statusViews[mode] = StatusViews(label: label, spinner: spinner)
+        }
+        logger.debug(
+            "Created repository status item, actual insertion: \(isActualInsertion, privacy: .public)"
+        )
         label.stringValue = currentStatus.isEmpty ? "Ready" : currentStatus
         if currentBusy {
             spinner.startAnimation(nil)

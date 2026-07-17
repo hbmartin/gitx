@@ -63,6 +63,17 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn("runs-on: [self-hosted, macOS, ARM64]", performance_job)
         self.assertIn("-testPlan GitXPerformance", performance_job)
 
+    def test_performance_suite_rejects_pull_requests_on_self_hosted_runner(self) -> None:
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        performance_job = verify_workflow.split("\n  performance:\n", maxsplit=1)[1]
+        condition = next(
+            line.strip()
+            for line in performance_job.splitlines()
+            if line.lstrip().startswith("if:")
+        )
+
+        self.assertNotIn("github.event_name == 'pull_request'", condition)
+
 
 if __name__ == "__main__":
     unittest.main()

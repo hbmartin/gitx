@@ -163,6 +163,57 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(window.title, "Repository — Fetching updates")
     }
 
+    func testRepositoryToolbarPaletteStatusItemDoesNotReplaceInsertedStatusViews() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let windowController = PBGitWindowController(window: window)
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+        let identifier = NSToolbarItem.Identifier("GitX.Toolbar.RefreshStatus")
+        let insertedItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: identifier,
+            willBeInsertedIntoToolbar: true
+        ))
+        let insertedStack = try XCTUnwrap(insertedItem.view as? NSStackView)
+        let insertedLabels: [NSTextField] = insertedStack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let insertedLabel = try XCTUnwrap(insertedLabels.first)
+        let paletteItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: identifier,
+            willBeInsertedIntoToolbar: false
+        ))
+        let paletteStack = try XCTUnwrap(paletteItem.view as? NSStackView)
+        let paletteLabels: [NSTextField] = paletteStack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let paletteLabel = try XCTUnwrap(paletteLabels.first)
+
+        toolbarController.update(
+            withStatus: "Fetching updates",
+            busy: false,
+            baseWindowTitle: "Repository"
+        )
+
+        XCTAssertEqual(insertedLabel.stringValue, "Fetching updates")
+        XCTAssertEqual(paletteLabel.stringValue, "Ready")
+
+        insertedStack.frame = NSRect(origin: .zero, size: insertedStack.fittingSize)
+        insertedStack.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(
+            insertedStack.bitmapImageRepForCachingDisplay(in: insertedStack.bounds)
+        )
+        insertedStack.cacheDisplay(in: insertedStack.bounds, to: representation)
+        let screenshot = NSImage(size: insertedStack.bounds.size)
+        screenshot.addRepresentation(representation)
+        let attachment = XCTAttachment(image: screenshot)
+        attachment.name = "Active repository status after toolbar palette request"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     private func largeDiff(
         lineCount: Int,
         path: String = "Large.swift",
