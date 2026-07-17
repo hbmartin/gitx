@@ -201,11 +201,15 @@
 
 - (void)showCommitView:(id)sender
 {
+	NSLog(@"Switching repository window to Commit view");
 	[_sidebarController selectStage];
+	[self changeContentController:_commitViewController];
 }
 - (void)showHistoryView:(id)sender
 {
+	NSLog(@"Switching repository window to History view");
 	[_sidebarController selectCurrentBranch];
+	[self changeContentController:_historyViewController];
 }
 
 - (BOOL)isShowingCommitView
