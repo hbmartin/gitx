@@ -4,11 +4,12 @@ import OSLog // swiftlint:disable:this unused_import
 // SwiftLint's analyzer cannot see these entry points through GitX-Swift.h.
 // swiftlint:disable unused_declaration
 @objc(PBRepositoryRemoteService)
-final class RepositoryRemoteService: NSObject {
+final nonisolated class RepositoryRemoteService: NSObject {
     private unowned let repository: PBGitRepository
     private let runner: GitCommandRunning
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryRemoteService")
     @objc private(set) var commandWasLaunched = false
+    @objc private(set) var lastPushOutput: String?
 
     @objc(initWithRepository:)
     init(repository: PBGitRepository) {
@@ -210,6 +211,7 @@ final class RepositoryRemoteService: NSObject {
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         commandWasLaunched = false
+        lastPushOutput = nil
         logger.debug("Pushing repository reference")
         guard let resolvedRemote = resolvedRemote(remoteRef, for: branchRef, error: outputError) else {
             return false
@@ -231,6 +233,7 @@ final class RepositoryRemoteService: NSObject {
         do {
             commandWasLaunched = true
             try runner.launch(arguments: arguments)
+            lastPushOutput = runner.lastOutput
             logger.debug("Repository reference push completed")
             return true
         } catch {

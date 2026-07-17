@@ -50,10 +50,24 @@ final nonisolated class PBHighlighting: NSObject {
     @objc(highlightedStringForText:path:)
     static func highlightedString(forText text: String, path: String) -> NSAttributedString {
         let language = languageName(forPath: path)
+        if ApplicationSettings.syntaxTheme == .plain {
+            let font = NSFont(
+                name: ApplicationSettings.diffFontName,
+                size: ApplicationSettings.diffFontSize
+            ) ?? NSFont.monospacedSystemFont(
+                ofSize: ApplicationSettings.diffFontSize,
+                weight: .regular
+            )
+            return NSAttributedString(string: text, attributes: [
+                .font: font,
+                .foregroundColor: NSColor.textColor,
+            ])
+        }
+        let theme: HighlightTheme = ApplicationSettings.syntaxTheme == .github ? .github : .xcode
         let attributed = Highlighter.shared.attributedString(
             for: text,
             language: language,
-            theme: .xcode
+            theme: theme
         ).mutableCopy() as! NSMutableAttributedString
 
         let paragraph = NSMutableParagraphStyle()

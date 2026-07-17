@@ -56,6 +56,7 @@ typedef enum branchFilterTypes {
 @property (nullable, nonatomic, strong) NSMutableDictionary<GTOID *, NSMutableArray<PBGitRef *> *> *refs;
 @property (nullable, readonly, strong) GTRepository *gtRepo;
 @property (nonatomic, readonly) BOOL isShallowRepository;
+@property (nullable, nonatomic, readonly, copy) NSString *lastPushOutput;
 
 @property (nonatomic, strong) NSMutableArray<GTSubmodule *> *submodules;
 @property (readonly, strong) PBGitIndex *index;

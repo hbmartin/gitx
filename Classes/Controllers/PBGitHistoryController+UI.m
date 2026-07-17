@@ -53,7 +53,7 @@
 		return YES;
 	}
 
-	if (action == @selector(copy:) || action == @selector(copySHA:) || action == @selector(copyShortName:) || action == @selector(copyPatch:)) {
+	if (action == @selector(copy:) || action == @selector(copySHA:) || action == @selector(copyShortName:) || action == @selector(copyPatch:) || action == @selector(createPatch:)) {
 		return self.commitController.selectedObjects.count > 0;
 	}
 
@@ -120,6 +120,12 @@
 - (IBAction)copyPatch:(id)sender
 {
 	[GitXCommitCopier putStringToPasteboard:[GitXCommitCopier toPatch:self.commitController.selectedObjects]];
+}
+
+- (IBAction)createPatch:(id)sender
+{
+	PBCommitPatchExportCoordinator *coordinator = [[PBCommitPatchExportCoordinator alloc] init];
+	[coordinator exportCommits:self.commitController.selectedObjects fromWindow:self.view.window];
 }
 
 - (IBAction)toggleQLPreviewPanel:(id)sender

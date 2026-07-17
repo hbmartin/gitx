@@ -26,12 +26,7 @@
                             <menuItem isSeparatorItem="YES" id="196">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Enable Terminal Usage…" id="909">
-                                <connections>
-                                    <action selector="installCliTool:" target="-1" id="A89-7Z-hf3"/>
-                                </connections>
-                            </menuItem>
-                            <menuItem title="Preferences…" keyEquivalent="," id="129">
+                            <menuItem title="Settings…" keyEquivalent="," id="129">
                                 <connections>
                                     <action selector="openPreferencesWindow:" target="-1" id="wRi-Ra-7Ua"/>
                                 </connections>
@@ -114,12 +109,6 @@
                             <menuItem title="Close" keyEquivalent="w" id="73">
                                 <connections>
                                     <action selector="performClose:" target="-1" id="193"/>
-                                </connections>
-                            </menuItem>
-                            <menuItem title="Repository Settings…" id="codex-repo-settings">
-                                <modifierMask key="keyEquivalentModifierMask"/>
-                                <connections>
-                                    <action selector="showRepositorySettings:" target="-1" id="codex-repo-settings-action"/>
                                 </connections>
                             </menuItem>
                             <menuItem title="Clone To…" id="954">
@@ -380,6 +369,19 @@
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="Repository" id="937">
                         <items>
+                            <menuItem title="Commit…" keyEquivalent="2" id="codex-repository-commit">
+                                <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                                <connections>
+                                    <action selector="showCommitView:" target="-1" id="codex-repository-commit-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Repository Settings…" id="codex-repository-settings">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="showRepositorySettings:" target="-1" id="codex-repository-settings-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem isSeparatorItem="YES" id="codex-repository-settings-separator"/>
                             <menuItem title="Create Tag…" keyEquivalent="t" id="949">
                                 <connections>
                                     <action selector="createTag:" target="-1" id="950"/>

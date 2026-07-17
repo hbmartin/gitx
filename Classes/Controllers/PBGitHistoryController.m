@@ -58,6 +58,7 @@
 	NSArray<PBGitCommit *> *selectedCommits;
 	PBUncommittedChanges *uncommittedChanges;
 	PBHistoryStateCoordinator *stateCoordinator;
+	PBHistoryTreePresentation *treePresentation;
 	PBHistoryMenuBuilder *menuBuilder;
 	PBHistoryTableInteractionCoordinator *tableInteractionCoordinator;
 }
@@ -99,6 +100,7 @@
 
 	PBGitRepository *repository = self.repository;
 	stateCoordinator = [PBHistoryStateCoordinator new];
+	treePresentation = [[PBHistoryTreePresentation alloc] initWithRepository:repository];
 	menuBuilder = [[PBHistoryMenuBuilder alloc] initWithRepository:repository];
 	tableInteractionCoordinator = [[PBHistoryTableInteractionCoordinator alloc] initWithOwner:self commitList:commitList stateCoordinator:stateCoordinator];
 	commitList.delegate = tableInteractionCoordinator;
@@ -177,7 +179,12 @@
 	commitList.accessibilityIdentifier = @"CommitList";
 	[fileBrowser setTarget:self];
 	[fileBrowser setDoubleAction:@selector(openSelectedFile:)];
+	fileBrowser.delegate = (id<NSOutlineViewDelegate>)self;
 	fileBrowser.allowsMultipleSelection = YES;
+	[[NSNotificationCenter defaultCenter] addObserver:self
+											 selector:@selector(historyTreeSettingsDidChange:)
+												 name:@"PBHistoryTreeSettingsDidChangeNotification"
+											   object:nil];
 
 	if (!repository.currentBranch) {
 		[repository reloadRefs];
@@ -309,7 +316,7 @@
 	self.selectedCommitDetailsIndex = [stateCoordinator detailIndexForCurrentIndex:self.selectedCommitDetailsIndex selectionCount:self.selectedCommits.count];
 
 	if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex) {
-		self.gitTree = firstSelectedCommit.tree;
+		self.gitTree = [treePresentation treeForCommit:firstSelectedCommit];
 		[self restoreFileBrowserSelection];
 	} else {
 		// kHistoryDetailViewIndex
@@ -317,6 +324,39 @@
 			self.webCommits = self.selectedCommits;
 		}
 	}
+}
+
+- (void)historyTreeSettingsDidChange:(NSNotification *)notification
+{
+	if (self.selectedCommitDetailsIndex != kHistoryTreeViewIndex) return;
+	PBGitCommit *commit = self.selectedCommits.firstObject;
+	if (!commit) return;
+	self.gitTree = [treePresentation treeForCommit:commit];
+	[self restoreFileBrowserSelection];
+}
+
+- (void)outlineView:(NSOutlineView *)outlineView
+	willDisplayCell:(NSTextFieldCell *)cell
+	 forTableColumn:(NSTableColumn *)tableColumn
+			   item:(id)item
+{
+	if (outlineView != fileBrowser || ![item isKindOfClass:NSTreeNode.class]) return;
+	PBGitTree *tree = [(NSTreeNode *)item representedObject];
+	if (![tree isKindOfClass:PBGitTree.class]) return;
+	cell.stringValue = [treePresentation displayTitleForTree:tree];
+	cell.lineBreakMode = NSLineBreakByTruncatingHead;
+}
+
+- (NSString *)outlineView:(NSOutlineView *)outlineView
+		   toolTipForCell:(NSCell *)cell
+					 rect:(NSRectPointer)rect
+			  tableColumn:(NSTableColumn *)tableColumn
+					 item:(id)item
+			mouseLocation:(NSPoint)mouseLocation
+{
+	if (outlineView != fileBrowser || ![item isKindOfClass:NSTreeNode.class]) return nil;
+	PBGitTree *tree = [(NSTreeNode *)item representedObject];
+	return [tree isKindOfClass:PBGitTree.class] ? [treePresentation toolTipForTree:tree] : nil;
 }
 
 - (BOOL)singleCommitSelected

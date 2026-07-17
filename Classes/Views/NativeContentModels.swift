@@ -14,6 +14,8 @@ final nonisolated class NativeContentSection: NSObject {
     @objc let imageSource: [String: Any]
     @objc let displayTitle: String
     @objc let highlightingPath: String
+    @objc let diffLayout: Int
+    @objc let suppressionPatterns: [String]
 
     @objc(initWithDictionary:)
     init(dictionary: [String: Any]) {
@@ -26,6 +28,9 @@ final nonisolated class NativeContentSection: NSObject {
         displayTitle = dictionary[PBNativeSectionTitleKey] as? String ??
             dictionary[PBNativeSectionPathKey] as? String ?? ""
         highlightingPath = dictionary[PBNativeSectionPathKey] as? String ?? displayTitle
+        diffLayout = (dictionary[PBNativeSectionDiffLayoutKey] as? NSNumber)?.intValue ??
+            ApplicationSettings.diffLayout.rawValue
+        suppressionPatterns = dictionary[PBNativeSectionSuppressionPatternsKey] as? [String] ?? []
         super.init()
     }
 

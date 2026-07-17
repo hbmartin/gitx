@@ -4,7 +4,7 @@ import OSLog // swiftlint:disable:this unused_import
 // SwiftLint's analyzer cannot see these entry points through GitX-Swift.h.
 // swiftlint:disable unused_declaration
 @objc(PBRepositoryHookRunner)
-final class RepositoryHookRunner: NSObject {
+final nonisolated class RepositoryHookRunner: NSObject {
     private unowned let repository: PBGitRepository
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryHookRunner")
 

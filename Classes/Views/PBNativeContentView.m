@@ -7,6 +7,8 @@ NSString *const PBNativeSectionPathKey = @"path";
 NSString *const PBNativeSectionContextKey = @"context";
 NSString *const PBNativeSectionEntriesKey = @"entries";
 NSString *const PBNativeSectionImageSourceKey = @"imageSource";
+NSString *const PBNativeSectionDiffLayoutKey = @"diffLayout";
+NSString *const PBNativeSectionSuppressionPatternsKey = @"suppressionPatterns";
 NSString *const PBNativeImageSourceRevisionsKey = @"revisions";
 NSString *const PBNativeImageSourceWorkingTreeKey = @"workingTree";
 NSString *const PBNativeImageSourceWorkingTreeURLKey = @"workingTreeURL";
@@ -43,8 +45,11 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	_expandedImages = [NSMutableSet set];
 	_diffParser = [[PBDiffDocumentParser alloc] init];
 	_partialPatchBuilder = [[PBPartialPatchBuilder alloc] init];
+	NSFont *configuredFont = [NSFont fontWithName:PBApplicationSettings.diffFontName size:PBApplicationSettings.diffFontSize] ?:
+																																[NSFont monospacedSystemFontOfSize:PBApplicationSettings.diffFontSize
+									weight:NSFontWeightRegular];
 	NSDictionary<NSAttributedStringKey, id> *baseAttributes = @{
-		NSFontAttributeName : [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular],
+		NSFontAttributeName : configuredFont,
 		NSForegroundColorAttributeName : NSColor.textColor,
 	};
 	NSDictionary<NSAttributedStringKey, id> *titleAttributes = @{
@@ -240,6 +245,9 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 			[self.collapsedFiles removeObject:fileKey];
 		else
 			[self.collapsedFiles addObject:fileKey];
+		[self showDiffSections:self.currentDiffSections];
+	} else if ([type isEqualToString:@"reveal-suppressed"]) {
+		[self.expandedImages addObject:[@"suppression:" stringByAppendingString:payload[@"key"]]];
 		[self showDiffSections:self.currentDiffSections];
 	} else if ([type isEqualToString:@"image"]) {
 		[self.expandedImages addObject:payload[@"key"]];

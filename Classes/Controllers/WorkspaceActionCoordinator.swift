@@ -48,10 +48,10 @@ final class WorkspaceActionCoordinator: NSObject {
                 continue
             }
             let submoduleURL = parentURL.appendingPathComponent(submodule.path, isDirectory: true)
-            NSDocumentController.shared.openDocument(
-                withContentsOf: submoduleURL,
-                display: true
-            ) { _, _, _ in }
+            RepositoryOpenCoordinator.shared.open(
+                urls: [submoduleURL],
+                sourceWindow: NSApp.keyWindow
+            ) { _, _ in }
         }
 
         let configuration = NSWorkspace.OpenConfiguration()
@@ -75,7 +75,7 @@ final class WorkspaceActionCoordinator: NSObject {
     func openRepositoryInTerminal() {
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
         logger.debug("Opening repository in terminal")
-        PBTerminalUtil.runCommand("git status", inDirectory: workingDirectoryURL)
+        TerminalLauncher.shared.open(directory: workingDirectoryURL, presenting: NSApp.keyWindow)
     }
 }
 

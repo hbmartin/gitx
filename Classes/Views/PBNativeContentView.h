@@ -8,6 +8,8 @@ extern NSString *const PBNativeSectionPathKey;
 extern NSString *const PBNativeSectionContextKey;
 extern NSString *const PBNativeSectionEntriesKey;
 extern NSString *const PBNativeSectionImageSourceKey;
+extern NSString *const PBNativeSectionDiffLayoutKey;
+extern NSString *const PBNativeSectionSuppressionPatternsKey;
 extern NSString *const PBNativeImageSourceRevisionsKey;
 extern NSString *const PBNativeImageSourceWorkingTreeKey;
 extern NSString *const PBNativeImageSourceWorkingTreeURLKey;

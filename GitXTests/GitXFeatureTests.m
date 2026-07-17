@@ -173,6 +173,7 @@
 						   selectedIndexes:(NSIndexSet *)selectedIndexes
 								   reverse:(BOOL)reverse;
 - (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines;
+- (BOOL)textView:(NSTextView *)textView clickedOnLink:(id)link atIndex:(NSUInteger)charIndex;
 @end
 
 @interface PBAutoFetchManager (GitXFeatureTests)
@@ -481,7 +482,11 @@
 					 @"-old\n"
 					 @"+new\n"
 					 @" tail\n";
-	NSDictionary *unstaged = @{PBNativeSectionTextKey : diff, PBNativeSectionContextKey : @"unstaged"};
+	NSDictionary *unstaged = @{
+		PBNativeSectionTextKey : diff,
+		PBNativeSectionContextKey : @"unstaged",
+		PBNativeSectionDiffLayoutKey : @0,
+	};
 	[view showDiffSections:@[ unstaged ]];
 	[self waitForNativeView:view toContainString:@"Discard line"];
 
@@ -501,7 +506,11 @@
 	XCTAssertTrue([view textView:view.textView clickedOnLink:expandLink atIndex:linkIndex]);
 	[self waitForNativeView:view toContainString:@"Stage block"];
 
-	[view showDiffSections:@[ @{PBNativeSectionTextKey : diff, PBNativeSectionContextKey : @"staged"} ]];
+	[view showDiffSections:@[ @{
+			  PBNativeSectionTextKey : diff,
+			  PBNativeSectionContextKey : @"staged",
+			  PBNativeSectionDiffLayoutKey : @0,
+		  } ]];
 	[self waitForNativeView:view toContainString:@"Unstage block"];
 	id unstageLink = [self linkInNativeView:view titled:@"Unstage line" index:&linkIndex];
 	XCTAssertTrue([view textView:view.textView clickedOnLink:unstageLink atIndex:linkIndex]);
@@ -699,6 +708,26 @@
 	NSColor *textBody = [storage attribute:NSForegroundColorAttributeName atIndex:textLine.location + 1 effectiveRange:nil];
 	XCTAssertEqualObjects(textPrefix, textBody);
 	XCTAssertNotNil([storage attribute:NSBackgroundColorAttributeName atIndex:textLine.location + 1 effectiveRange:nil]);
+}
+
+- (void)testNativeDiffRevealSuppressedLinkRerendersFile
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSString *diff = @"diff --git a/generated/output.swift b/generated/output.swift\n"
+					  "--- a/generated/output.swift\n"
+					  "+++ b/generated/output.swift\n"
+					  "@@ -1 +1 @@\n-old\n+new\n";
+	[view showDiffSections:@[ @{
+			  PBNativeSectionTextKey : diff,
+			  PBNativeSectionSuppressionPatternsKey : @[ @"^generated/" ],
+		  } ]];
+	[self waitForNativeView:view toContainString:@"Diff hidden by repository setting"];
+	NSUInteger linkIndex = 0;
+	id link = [self linkInNativeView:view titled:@"▸ " index:&linkIndex];
+	XCTAssertNotNil(link);
+	BOOL handled = [view textView:view.textView clickedOnLink:link atIndex:linkIndex];
+	XCTAssertTrue(handled);
+	[self waitForNativeView:view toContainString:@"+new"];
 }
 
 - (void)testNativeHistoryContentTracksHostBoundsWhileResizing

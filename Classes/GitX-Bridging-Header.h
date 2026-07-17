@@ -48,6 +48,8 @@
 #import "PBUncommittedChanges.h"
 #import "PBGitRevisionRow.h"
 #import "PBGitWindowController.h"
+#import "PBGitSidebarController.h"
+#import "PBRepositoryFinder.h"
 #import "PBError.h"
 #import "PBTask.h"
 #import "PBAddRemoteSheet.h"
@@ -58,6 +60,8 @@
 #import "PBRemoteProgressSheet.h"
 #import "PBTerminalUtil.h"
 #import "PBNativeContentView.h"
+#import "PBSourceViewItem.h"
+#import "PBGitTree.h"
 
 // The bridging header declares no APIs of its own, but retain an explicit
 // nullability region so it follows the same interoperability contract as

@@ -82,8 +82,12 @@ final class HistoryStateCoordinator: NSObject {
     func saveFileBrowserSelection(selectedObjects: [NSObject], hasContent: Bool) {
         guard hasContent,
               let fullPath = selectedObjects.first?.value(forKey: "fullPath") as? String
-        else { return }
+        else {
+            NSLog("[GitX] File-browser selection was not saved: content=%@ selected=%lu", hasContent ? "yes" : "no", selectedObjects.count)
+            return
+        }
         savedTreePath = fullPath.components(separatedBy: "/")
+        NSLog("[GitX] Saved file-browser selection: %@", fullPath)
     }
 
     @objc(treeSelectionIndexPathForChildren:treeMode:)
@@ -91,15 +95,26 @@ final class HistoryStateCoordinator: NSObject {
         guard treeMode, !initialChildren.isEmpty else { return nil }
         guard !savedTreePath.isEmpty else { return IndexPath(index: 0) }
 
+        let savedFullPath = savedTreePath.joined(separator: "/")
+        if let index = initialChildren.firstIndex(where: {
+            ($0.value(forKey: "fullPath") as? String) == savedFullPath
+        }) {
+            return IndexPath(index: index)
+        }
+
         var children = initialChildren
         var result = IndexPath()
         for component in savedTreePath {
             guard let index = children.firstIndex(where: {
                 ($0.value(forKey: "path") as? String) == component
-            }) else { return nil }
+            }) else {
+                NSLog("[GitX] Could not restore file-browser selection component: %@", component)
+                return nil
+            }
             result = result.appending(index)
             children = children[index].value(forKey: "children") as? [NSObject] ?? []
         }
+        NSLog("[GitX] Restored file-browser selection: %@", savedTreePath.joined(separator: "/"))
         return result
     }
 
@@ -118,7 +133,7 @@ final class HistoryStateCoordinator: NSObject {
 
     @objc(adjustedScrollRowForSelectionRow:oldRow:visibleRows:contentCount:)
     func adjustedScrollRow(selectionRow: Int, oldRow: Int, visibleRows: Int, contentCount: Int) -> Int {
-        guard selectionRow != NSNotFound, contentCount > 0, selectionRow > oldRow else { return selectionRow }
+        guard contentCount > 0, selectionRow > oldRow else { return selectionRow }
         let offset = max(0, visibleRows - 1)
         guard selectionRow <= Int.max - offset else { return contentCount - 1 }
         return min(selectionRow + offset, contentCount - 1)

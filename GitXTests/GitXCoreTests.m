@@ -1341,6 +1341,8 @@
 													   input:@"stored through stdin"
 													   error:&error];
 	XCTAssertTrue(launched, @"%@", error);
+	BOOL wrapperLaunched = [self.repository launchTaskWithArguments:@[ @"status", @"--porcelain" ] error:&error];
+	XCTAssertTrue(wrapperLaunched, @"%@", error);
 }
 
 - (void)testRefreshStatCacheCompletesWithARefreshedSnapshot

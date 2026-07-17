@@ -19,12 +19,11 @@
 #import "OpenRecentController.h"
 #import "PBGitBinary.h"
 #import "PBAutoFetchManager.h"
+#import "GitX-Swift.h"
 
 #import <Sparkle/SPUStandardUpdaterController.h>
 #import <Sparkle/SPUUpdater.h>
 #import <Sparkle/SPUUpdaterDelegate.h>
-
-static OpenRecentController *recentsDialog = nil;
 
 @interface ApplicationController () <SPUUpdaterDelegate>
 @property (nonatomic, strong) SPUStandardUpdaterController *updaterController;
@@ -119,22 +118,18 @@ static OpenRecentController *recentsDialog = nil;
 
 - (void)application:(NSApplication *)sender openFiles:(NSArray<NSString *> *)filenames
 {
-	PBRepositoryDocumentController *controller = [PBRepositoryDocumentController sharedDocumentController];
-
-	for (NSString *filename in filenames) {
-		NSURL *repository = [NSURL fileURLWithPath:filename];
-		[controller openDocumentWithContentsOfURL:repository
-										  display:YES
-								completionHandler:^void(NSDocument *document, BOOL documentWasAlreadyOpen, NSError *error) {
-									if (!document) {
-										NSLog(@"Error opening repository \"%@\": %@", repository.path, error);
-										[controller presentError:error];
-										[sender replyToOpenOrPrint:NSApplicationDelegateReplyFailure];
-									} else {
-										[sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
-									}
-								}];
-	}
+	NSMutableArray<NSURL *> *URLs = [NSMutableArray arrayWithCapacity:filenames.count];
+	for (NSString *filename in filenames) [URLs addObject:[NSURL fileURLWithPath:filename]];
+	[[PBRepositoryOpenCoordinator shared] openURLs:URLs
+									  sourceWindow:NSApp.keyWindow
+										completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+											if (errors.count > 0) {
+												for (NSError *error in errors) [sender presentError:error];
+												[sender replyToOpenOrPrint:NSApplicationDelegateReplyFailure];
+											} else {
+												[sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
+											}
+										}];
 }
 
 - (BOOL)applicationShouldOpenUntitledFile:(NSApplication *)sender
@@ -150,13 +145,8 @@ static OpenRecentController *recentsDialog = nil;
 
 - (BOOL)applicationOpenUntitledFile:(NSApplication *)theApplication
 {
-	recentsDialog = [[OpenRecentController alloc] init];
-	if ([recentsDialog.possibleResults count] > 0) {
-		[recentsDialog show];
-		return YES;
-	} else {
-		return NO;
-	}
+	[[PBWelcomeWindowController shared] show];
+	return YES;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification
@@ -179,6 +169,10 @@ static OpenRecentController *recentsDialog = nil;
 	[self registerServices];
 	[[PBAutoFetchManager sharedManager] start];
 	started = YES;
+	[[PBWindowSessionCoordinator shared] applicationDidFinishLaunching];
+	NSArray<NSString *> *arguments = NSProcessInfo.processInfo.arguments;
+	if ([arguments containsObject:@"--welcome"]) [[PBWelcomeWindowController shared] show];
+	if ([arguments containsObject:@"--clone"]) [self showCloneRepository:self];
 
 	// UI-test hook: open a repo path passed via environment variable so that
 	// XCUITests always get a document window without relying on recents or
@@ -206,12 +200,23 @@ static OpenRecentController *recentsDialog = nil;
 	}
 }
 
+- (void)applicationDidBecomeActive:(NSNotification *)notification
+{
+	[[PBWelcomeWindowController shared] showIfNeeded];
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification
+{
+	[[PBWindowSessionCoordinator shared] applicationWillTerminate];
+}
+
 - (void)windowWillClose:sender
 {
 	[firstResponder terminate:sender];
+	[[PBWelcomeWindowController shared] showIfNeededAfterDelay];
 }
 
-//Override the default behavior
+// Override the default behavior
 - (IBAction)openDocument:(id)sender
 {
 	NSOpenPanel *panel = [[NSOpenPanel alloc] init];
@@ -221,15 +226,11 @@ static OpenRecentController *recentsDialog = nil;
 
 	[panel beginWithCompletionHandler:^(NSInteger result) {
 		if (result == NSModalResponseOK) {
-			PBRepositoryDocumentController *controller = [PBRepositoryDocumentController sharedDocumentController];
-			[controller openDocumentWithContentsOfURL:panel.URL
-											  display:true
-									completionHandler:^(NSDocument *_Nullable document, BOOL documentWasAlreadyOpen, NSError *_Nullable error) {
-										if (!document) {
-											NSLog(@"Error opening repository \"%@\": %@", panel.URL.path, error);
-											[controller presentError:error];
-										}
-									}];
+			[[PBRepositoryOpenCoordinator shared] openURLs:@[ panel.URL ]
+											  sourceWindow:NSApp.keyWindow
+												completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+													for (NSError *error in errors) [NSApp presentError:error];
+												}];
 		}
 	}];
 }
@@ -279,8 +280,8 @@ static OpenRecentController *recentsDialog = nil;
 
 		// Build shell script with proper error handling
 		NSString *script = [NSString stringWithFormat:
-			@"do shell script \"mkdir -p '%@' && ln -fs '%@' '%@'\" with administrator privileges",
-			escapedInstallPath, escapedToolPath, escapedDestinationPath];
+										 @"do shell script \"mkdir -p '%@' && ln -fs '%@' '%@'\" with administrator privileges",
+										 escapedInstallPath, escapedToolPath, escapedDestinationPath];
 
 		// Execute AppleScript
 		NSAppleScript *appleScript = [[NSAppleScript alloc] initWithSource:script];

@@ -3,8 +3,9 @@ import OSLog // swiftlint:disable:this unused_import
 
 // SwiftLint's analyzer cannot see these entry points through GitX-Swift.h.
 // swiftlint:disable unused_declaration
+/// Objective-C repository services use these immutable snapshots from their existing worker queues.
 @objc(PBRepositoryReferenceSnapshot)
-final class RepositoryReferenceSnapshot: NSObject {
+final nonisolated class RepositoryReferenceSnapshot: NSObject {
     @objc let references: NSMutableDictionary
     @objc let branches: [PBGitRevSpecifier]
     @objc let submodules: [GTSubmodule]
@@ -20,8 +21,9 @@ final class RepositoryReferenceSnapshot: NSObject {
     }
 }
 
+/// This store preserves the pre-Swift synchronous Objective-C API, including background diff callers.
 @objc(PBRepositoryReferenceStore)
-final class RepositoryReferenceStore: NSObject {
+final nonisolated class RepositoryReferenceStore: NSObject {
     private unowned let repository: PBGitRepository
     private let runner: GitCommandRunning
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryReferenceStore")
