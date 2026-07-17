@@ -7,6 +7,8 @@
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
 #import "PBGitHistoryController.h"
+#import "PBGitWindowController.h"
+#import "PBViewController.h"
 #import "PBGitCommit.h"
 #import "PBGitIndex.h"
 #import "PBGitStash.h"
@@ -212,16 +214,52 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 @property (nonatomic, copy, readonly) NSString *title;
 @property (nonatomic, copy, readonly) NSArray<NSString *> *imageRevisions;
 - (instancetype)initWithSHA:(NSString *)sha
-                  parentSHA:(nullable NSString *)parentSHA
-                  shortName:(NSString *)shortName
-                    subject:(NSString *)subject
-                     author:(NSString *)author
-                 authorDate:(NSString *)authorDate;
+				  parentSHA:(nullable NSString *)parentSHA
+				  shortName:(NSString *)shortName
+					subject:(NSString *)subject
+					 author:(NSString *)author
+				 authorDate:(NSString *)authorDate;
 @end
 
 @interface PBWorkingStateRefreshPolicy : NSObject
 + (BOOL)shouldReplaceDisplayedDiff:(nullable NSString *)displayedDiff
-                      renderedDiff:(NSString *)renderedDiff;
+					  renderedDiff:(NSString *)renderedDiff;
+@end
+
+@interface PBPerformanceBudgets : NSObject
+@property (class, nonatomic, readonly) double warmViewSwitchP95Seconds;
+@property (class, nonatomic, readonly) double mainThreadBlockSeconds;
+@property (class, nonatomic, readonly) double cachedWorkingStateFeedbackSeconds;
+@property (class, nonatomic, readonly) double freshWorkingStateP95Seconds;
+@property (class, nonatomic, readonly) NSInteger representativeChangedFileCount;
+@property (class, nonatomic, readonly) NSInteger representativeDiffByteCount;
+@property (class, nonatomic, readonly) NSInteger stressChangedFileCount;
+@property (class, nonatomic, readonly) NSInteger stressDiffByteCount;
+@end
+
+@interface PBWorkingStateDiffSnapshot : NSObject
+@property (nonatomic, copy, readonly) NSArray<NSDictionary<NSString *, id> *> *sections;
+@property (nonatomic, copy, readonly) NSString *renderedDiff;
+@end
+
+@interface PBWorkingStateDiffCache : NSObject
+- (nullable PBWorkingStateDiffSnapshot *)snapshotForLayout:(NSInteger)layout
+	NS_SWIFT_NAME(snapshot(forLayout:));
+- (void)storeSections:(NSArray<NSDictionary<NSString *, id> *> *)sections
+		 renderedDiff:(NSString *)renderedDiff
+			   layout:(NSInteger)layout
+	NS_SWIFT_NAME(store(sections:renderedDiff:layout:));
+- (void)removeAll;
+@end
+
+typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
+	PBRecentRepositoryActivationActionOpen,
+	PBRecentRepositoryActivationActionLocate,
+};
+
+@interface PBRecentRepositoryActivationPolicy : NSObject
++ (PBRecentRepositoryActivationAction)actionForReachable:(BOOL)reachable
+	NS_SWIFT_NAME(action(forReachable:));
 @end
 
 @interface PBRewindOverlayView : NSView
@@ -502,10 +540,19 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 @interface PBCommitWorkflowState : NSObject
 @property (nonatomic, strong, nullable) PBGitRef *pendingBranchRef;
 @property (nonatomic, copy, nullable) NSString *pendingRemoteName;
+@property (nonatomic, strong, nullable) NSNumber *pendingRememberedPushChoice;
+- (void)beginSubmissionWithPushChoice:(BOOL)pushChoice canRemember:(BOOL)canRemember
+	NS_SWIFT_NAME(beginSubmission(pushChoice:canRemember:));
 - (void)armWithBranchRef:(PBGitRef *)branchRef remoteName:(NSString *)remoteName
 	NS_SWIFT_NAME(arm(branchRef:remoteName:));
 - (void)clear;
 - (nullable PBCommitPushPlan *)consumePendingPush;
+@end
+
+@interface PBRepositoryToolbarController : NSObject
+- (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
+- (void)install;
+- (void)setHistoryMode:(BOOL)historyMode;
 @end
 
 @interface PBCommitMessageResult : NSObject

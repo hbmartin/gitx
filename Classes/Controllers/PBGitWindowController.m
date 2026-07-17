@@ -30,6 +30,7 @@
 	PBRepositoryStashActionCoordinator *_stashActionCoordinator;
 	PBWorkspaceActionCoordinator *_workspaceActionCoordinator;
 	PBRepositoryToolbarController *_repositoryToolbarController;
+	NSMapTable<PBViewController *, NSResponder *> *_contentFirstResponders;
 
 	__weak IBOutlet NSView *sourceListControlsView;
 	__weak IBOutlet NSSplitView *splitView;
@@ -145,6 +146,7 @@
 	_historyViewController = [[PBGitHistoryController alloc] initWithRepository:self.repository superController:self];
 	_commitViewController = [[PBGitCommitController alloc] initWithRepository:self.repository superController:self];
 	_repositoryToolbarController = [[PBRepositoryToolbarController alloc] initWithWindowController:self];
+	_contentFirstResponders = [NSMapTable strongToWeakObjectsMapTable];
 	[_repositoryToolbarController install];
 	_sidebarController.view.frame = sourceSplitView.bounds;
 	[sourceSplitView addSubview:_sidebarController.view];
@@ -183,13 +185,29 @@
 - (void)changeContentController:(PBViewController *)controller
 {
 	if (!controller || contentController == controller) return;
-	if (contentController) [contentController removeObserver:self keyPath:@"status"];
-	[self removeAllContentSubViews];
+	CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+	PBViewController *previousController = contentController;
+	if (previousController) {
+		NSResponder *firstResponder = self.window.firstResponder;
+		if ([firstResponder isKindOfClass:NSView.class] &&
+			[(NSView *)firstResponder isDescendantOf:previousController.view]) {
+			[_contentFirstResponders setObject:firstResponder forKey:previousController];
+		}
+		[previousController removeObserver:self keyPath:@"status"];
+		previousController.view.hidden = YES;
+	}
+
 	contentController = controller;
-	controller.view.frame = contentSplitView.bounds;
-	[contentSplitView addSubview:controller.view];
-	[self.window makeFirstResponder:controller.firstResponder];
-	[controller updateView];
+	BOOL firstMount = controller.view.superview != contentSplitView;
+	if (firstMount) {
+		controller.view.frame = contentSplitView.bounds;
+		controller.view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+		[contentSplitView addSubview:controller.view];
+		[controller updateView];
+	}
+	controller.view.hidden = NO;
+	NSResponder *firstResponder = [_contentFirstResponders objectForKey:controller] ?: controller.firstResponder;
+	if (firstResponder) [self.window makeFirstResponder:firstResponder];
 	[_repositoryToolbarController setHistoryMode:controller == _historyViewController];
 	[controller addObserver:self
 					keyPath:@"status"
@@ -197,6 +215,16 @@
 					  block:^(__unused MAKVONotification *note) {
 						  [self updateStatus];
 					  }];
+	CFTimeInterval elapsed = CFAbsoluteTimeGetCurrent() - start;
+	NSLog(@"[GitX][Performance] %@ repository view in %.3f ms (first mount: %@, budget: %.0f ms)",
+		  firstMount ? @"Cold-mounted" : @"Warm-switched",
+		  elapsed * 1000.0,
+		  firstMount ? @"yes" : @"no",
+		  [PBPerformanceBudgets warmViewSwitchP95Seconds] * 1000.0);
+	if (!firstMount && elapsed > [PBPerformanceBudgets mainThreadBlockSeconds]) {
+		NSLog(@"[GitX][Performance] Warm repository view switch exceeded the %.0f ms main-thread budget",
+			  [PBPerformanceBudgets mainThreadBlockSeconds] * 1000.0);
+	}
 }
 
 - (void)showCommitView:(id)sender

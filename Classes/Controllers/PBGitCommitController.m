@@ -46,6 +46,8 @@
 @property (weak) IBOutlet NSTableView *stagedTable;
 @property (nonatomic, strong) PBCommitWorkflowState *commitWorkflowState;
 @property (nonatomic, strong) PBCommitTableInteractionCoordinator *tableInteractionCoordinator;
+@property (nonatomic, strong) PBRepositoryUISettings *repositoryUISettings;
+@property (nonatomic) BOOL pushCapabilityAvailable;
 
 - (nullable NSString *)selectedPushRemoteName;
 - (void)reloadPushRemotes;
@@ -64,6 +66,7 @@
 
 	PBGitIndex *index = theRepository.index;
 	_commitWorkflowState = [[PBCommitWorkflowState alloc] init];
+	_repositoryUISettings = [[PBRepositoryUISettings alloc] initWithRepository:theRepository];
 
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshFinished:) name:PBGitIndexFinishedIndexRefresh object:index];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(commitStatusUpdated:) name:PBGitIndexCommitStatus object:index];
@@ -85,10 +88,14 @@
 	 * and therefore this method is called *really* often. Be sure not to register for listener here as this results
 	 * into multi receptions of notifications! Use method `initWithRepository` instead for register notitifications.
 	 */
-	
+
 	[commitSplitView pb_restoreAutosavedPositions];
 
 	[super awakeFromNib];
+	[PBCommitLayoutCoordinator configureOuterSplitView:commitSplitView
+									 commitMessageView:commitMessageView
+										 unstagedTable:unstagedTable
+										   stagedTable:stagedTable];
 
 	commitMessageView.repository = self.repository;
 	commitMessageView.delegate = self;
@@ -127,6 +134,7 @@
 	stagedTable.accessibilityIdentifier = @"StagedFiles";
 	pushAfterCommitButton.accessibilityIdentifier = @"PushAfterCommit";
 	pushRemotePopUpButton.accessibilityIdentifier = @"PushRemote";
+	pushAfterCommitButton.state = self.repositoryUISettings.pushAfterCommit ? NSControlStateValueOn : NSControlStateValueOff;
 
 	self.tableInteractionCoordinator = [[PBCommitTableInteractionCoordinator alloc] initWithRepository:self.repository
 																								 index:self.index
@@ -196,6 +204,8 @@
 
 - (void)reloadPushRemotes
 {
+	BOOL wasAvailable = self.pushCapabilityAvailable;
+	BOOL livePushChoice = pushAfterCommitButton.state == NSControlStateValueOn;
 	NSString *previousSelection = [self selectedPushRemoteName];
 	NSArray<NSString *> *remotes = [PBCommitRemotePresentationPolicy sortedRemoteNames:self.repository.remotes];
 	PBGitRef *headRef = self.repository.headRef.ref;
@@ -224,9 +234,13 @@
 
 	pushAfterCommitButton.enabled = presentation.canPush;
 	pushRemotePopUpButton.enabled = presentation.canPush;
-	if (!presentation.canPush) {
+	if (presentation.canPush) {
+		BOOL restoredChoice = wasAvailable ? livePushChoice : self.repositoryUISettings.pushAfterCommit;
+		pushAfterCommitButton.state = restoredChoice ? NSControlStateValueOn : NSControlStateValueOff;
+	} else {
 		pushAfterCommitButton.state = NSControlStateValueOff;
 	}
+	self.pushCapabilityAvailable = presentation.canPush;
 	NSLog(@"[GitX] Reloaded commit push controls (remote count: %lu, can push: %@)",
 		  presentation.remoteNames.count,
 		  presentation.canPush ? @"yes" : @"no");
@@ -297,6 +311,8 @@
 	if (submissionPlan.shouldArmPendingPush) {
 		[self.commitWorkflowState armWithBranchRef:headRef remoteName:remoteName];
 	}
+	[self.commitWorkflowState beginSubmissionWithPushChoice:pushAfterCommitButton.state == NSControlStateValueOn
+												canRemember:pushAfterCommitButton.enabled];
 
 	[stagedFilesController setSelectionIndexes:[NSIndexSet indexSet]];
 	[unstagedFilesController setSelectionIndexes:[NSIndexSet indexSet]];
@@ -401,7 +417,8 @@
 
 	if (![sender isKindOfClass:[NSMenuItem class]]) return nil;
 
-	NSTableView *table = (sender == stagedTable.menu ? stagedTable : unstagedTable);
+	NSMenuItem *menuItem = (NSMenuItem *)sender;
+	NSTableView *table = (menuItem.menu == stagedTable.menu ? stagedTable : unstagedTable);
 	NSArrayController *controller = (table.tag == 0 ? unstagedFilesController : stagedFilesController);
 	return controller.selectedObjects;
 }
@@ -534,8 +551,14 @@
 	commitMessageView.string = @"";
 	[webController setStateMessage:notification.userInfo[kNotificationDictionaryDescriptionKey]];
 
+	NSNumber *rememberedPushChoice = self.commitWorkflowState.pendingRememberedPushChoice;
 	PBCommitPushPlan *pushPlan = [self.commitWorkflowState consumePendingPush];
-	pushAfterCommitButton.state = NSControlStateValueOff;
+	if (rememberedPushChoice) {
+		self.repositoryUISettings.pushAfterCommit = rememberedPushChoice.boolValue;
+		pushAfterCommitButton.state = rememberedPushChoice.boolValue ? NSControlStateValueOn : NSControlStateValueOff;
+		NSLog(@"[GitX] Remembered repository Push-after-commit choice: %@",
+			  rememberedPushChoice.boolValue ? @"on" : @"off");
+	}
 
 	if (pushPlan.branchRef.isBranch && pushPlan.remoteName.length > 0) {
 		PBGitRef *remoteRef = [PBGitRef refFromString:[kGitXRemoteRefPrefix stringByAppendingString:pushPlan.remoteName]];

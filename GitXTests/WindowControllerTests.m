@@ -110,6 +110,7 @@
 
 @interface PBRepositoryUISettings : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
+@property (nonatomic) BOOL pushAfterCommit;
 @end
 
 @implementation PBWindowHistoryTreeLogStub
@@ -1275,9 +1276,20 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual(stagedTable.target, controller);
 	XCTAssertEqual(unstagedTable.doubleAction, @selector(didDoubleClickOnTable:));
 	XCTAssertEqual(stagedTable.doubleAction, @selector(didDoubleClickOnTable:));
+	XCTAssertTrue(unstagedTable.allowsMultipleSelection);
+	XCTAssertTrue(stagedTable.allowsMultipleSelection);
 	XCTAssertNotEqual(unstagedTable.menu, stagedTable.menu);
 	XCTAssertEqualObjects([controller firstResponder], messageView);
 	XCTAssertEqualObjects([controller index], index);
+	NSView *messagePane = messageView.enclosingScrollView.superview;
+	NSSplitView *composerSplitView = (NSSplitView *)messagePane.superview;
+	XCTAssertTrue([composerSplitView isKindOfClass:NSSplitView.class]);
+	XCTAssertFalse(composerSplitView.isVertical);
+	XCTAssertEqualObjects(composerSplitView.autosaveName, @"CommitComposer");
+	XCTAssertEqual(composerSplitView.subviews.count, (NSUInteger)2);
+	NSSplitView *fileSplitView = (NSSplitView *)composerSplitView.subviews.firstObject;
+	XCTAssertTrue(fileSplitView.isVertical);
+	XCTAssertEqual(fileSplitView.subviews.count, (NSUInteger)2);
 	XCTAssertEqualObjects(pushRemotePopUpButton.itemTitles, (@[ @"backup", @"origin" ]));
 	XCTAssertEqualObjects([controller selectedPushRemoteName], @"origin");
 
@@ -1290,13 +1302,17 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(pushRemotePopUpButton.itemTitles, (@[ @"No Remotes" ]));
 	XCTAssertFalse(pushRemotePopUpButton.lastItem.enabled);
 	XCTAssertFalse(pushAfterCommitButton.enabled);
+	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOff);
 	XCTAssertNil([controller selectedPushRemoteName]);
 
+	PBRepositoryUISettings *uiSettings = [[PBRepositoryUISettings alloc] initWithRepository:self.repository];
+	uiSettings.pushAfterCommit = YES;
 	self.repository.testRemotes = @[ @"zebra" ];
 	self.repository.trackingRef = nil;
 	[controller reloadPushRemotes];
 	XCTAssertEqualObjects([controller selectedPushRemoteName], @"zebra");
 	XCTAssertTrue(pushAfterCommitButton.enabled);
+	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOn);
 
 	index.refreshStatCacheCount = 0;
 	[controller applicationDidBecomeActive:[NSNotification notificationWithName:NSApplicationDidBecomeActiveNotification object:nil]];
@@ -1385,7 +1401,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 														   userInfo:@{@"description" : @"Committed"}]];
 	XCTAssertEqualObjects(messageView.string, @"");
 	XCTAssertTrue(messageView.editable);
-	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOff);
+	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOn);
+	XCTAssertTrue([[[PBRepositoryUISettings alloc] initWithRepository:self.repository] pushAfterCommit]);
 	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
 	XCTAssertEqualObjects(self.controller.lastRemote.remoteName, @"origin");
 	XCTAssertFalse(self.controller.lastPushRequiresConfirmation);
@@ -1627,8 +1644,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([controller validateMenuItem:revealItem]);
 	XCTAssertEqualObjects(revealItem.title, @"Reveal “new.txt” in Finder");
 	unstagedController.selectionIndexes = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)];
-	XCTAssertFalse([controller validateMenuItem:revealItem]);
-	XCTAssertTrue(revealItem.hidden);
+	XCTAssertTrue([controller validateMenuItem:revealItem]);
+	XCTAssertFalse(revealItem.hidden);
+	XCTAssertEqualObjects(revealItem.title, @"Reveal 2 Files in Finder");
 
 	NSMenuItem *amendItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Amend", nil) action:@selector(toggleAmendCommit:) keyEquivalent:@""];
 	XCTAssertTrue([controller validateMenuItem:amendItem]);
@@ -1805,10 +1823,19 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self.controller setValue:status forKey:@"statusField"];
 	[self.controller setValue:progress forKey:@"progressIndicator"];
 	PBWindowContentSpy *content = [PBWindowContentSpy new];
+	PBWindowContentSpy *secondContent = [PBWindowContentSpy new];
 	content.status = @"Busy";
 	content.isBusy = YES;
 	[self.controller changeContentController:content];
 	XCTAssertEqual(content.updateCount, (NSUInteger)1);
+	[self.controller changeContentController:secondContent];
+	[self.controller changeContentController:content];
+	XCTAssertEqual(content.updateCount, (NSUInteger)1);
+	XCTAssertEqual(secondContent.updateCount, (NSUInteger)1);
+	XCTAssertEqual(content.view.superview, container);
+	XCTAssertEqual(secondContent.view.superview, container);
+	XCTAssertFalse(content.view.hidden);
+	XCTAssertTrue(secondContent.view.hidden);
 	XCTAssertEqualObjects(status.stringValue, @"Busy");
 	XCTAssertFalse(progress.hidden);
 	XCTAssertFalse(self.controller.isShowingCommitView);
@@ -2198,6 +2225,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([commitDefaults containsObject:@"GitX.Toolbar.History"]);
 	XCTAssertTrue([commitDefaults containsObject:@"GitX.Toolbar.Terminal"]);
 	XCTAssertFalse([commitDefaults containsObject:@"GitX.Toolbar.Push"]);
+
+	[toolbarController setHistoryMode:YES];
+	XCTAssertEqual(self.controller.window.toolbar, historyToolbar);
 }
 
 - (void)testRepositoryCommitMessageReplacementRulesAreOrderedAndMultiline
@@ -2276,6 +2306,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:[PBWindowRepositoryWithoutGitURLs new]];
 
 	XCTAssertNotNil(settings);
+	XCTAssertFalse(settings.pushAfterCommit);
 }
 
 - (void)testChangedFileTreeUsesFlatFullPathsAndStatusTitles

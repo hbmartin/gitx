@@ -110,6 +110,19 @@ final class CommitControllerPoliciesTests: XCTestCase {
         XCTAssertNil(state.pendingRemoteName)
     }
 
+    func testWorkflowStateKeepsSuccessfulOnlyPushPreferencePendingWithSubmission() {
+        let state = PBCommitWorkflowState()
+
+        state.beginSubmission(pushChoice: true, canRemember: true)
+        XCTAssertEqual(state.pendingRememberedPushChoice, true)
+
+        state.clear()
+        XCTAssertNil(state.pendingRememberedPushChoice)
+
+        state.beginSubmission(pushChoice: true, canRemember: false)
+        XCTAssertNil(state.pendingRememberedPushChoice)
+    }
+
     func testMessagePolicyAddsDeduplicatesAndPreservesAmendThreshold() {
         let added = PBCommitMessagePolicy.messageByAddingSignOff(
             to: "Subject",

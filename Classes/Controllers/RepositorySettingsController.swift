@@ -20,6 +20,11 @@ final nonisolated class RepositoryUISettings: NSObject {
         set { setValue(newValue, for: "hideContainedBranches") }
     }
 
+    @objc var pushAfterCommit: Bool {
+        get { value(for: "pushAfterCommit") as? Bool ?? false }
+        set { setValue(newValue, for: "pushAfterCommit") }
+    }
+
     @objc var sidebarVisibility: [String: Bool] {
         get {
             value(for: "sidebarVisibility") as? [String: Bool] ?? [

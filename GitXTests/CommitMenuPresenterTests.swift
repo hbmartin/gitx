@@ -88,9 +88,9 @@ final class CommitMenuPresenterTests: XCTestCase {
         XCTAssertEqual(reveal.title, "Reveal “one.txt” in Finder")
         XCTAssertTrue(reveal.enabled)
         let manyReveal = presentation("revealInFinder:", unstaged: [file("one"), file("two")])
-        XCTAssertEqual(manyReveal.title, "Reveal in Finder")
-        XCTAssertFalse(manyReveal.enabled)
-        XCTAssertTrue(manyReveal.hidden)
+        XCTAssertEqual(manyReveal.title, "Reveal 2 Files in Finder")
+        XCTAssertTrue(manyReveal.enabled)
+        XCTAssertFalse(manyReveal.hidden)
     }
 
     func testAmendPrepareAndUnknownActionsReturnExternalState() {

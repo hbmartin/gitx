@@ -6,6 +6,146 @@ import XCTest
 /// correctness and sanitizer plans.
 @MainActor
 final class GitXPerformanceTests: XCTestCase {
+    private struct DiffFixture {
+        let fileCount: Int
+        let byteCount: Int
+        let sections: [[String: Any]]
+        let marker: String
+    }
+
+    private func elapsed(_ work: () -> Void) -> TimeInterval {
+        let start = ProcessInfo.processInfo.systemUptime
+        work()
+        return ProcessInfo.processInfo.systemUptime - start
+    }
+
+    private func percentile95(_ samples: [TimeInterval]) -> TimeInterval {
+        let sorted = samples.sorted()
+        let index = min(sorted.count - 1, Int(ceil(Double(sorted.count) * 0.95)) - 1)
+        return sorted[max(0, index)]
+    }
+
+    private func attachMeasurements(
+        _ name: String,
+        cold: TimeInterval? = nil,
+        samples: [TimeInterval]
+    ) {
+        let milliseconds = samples.map { String(format: "%.2f", $0 * 1000) }.joined(separator: ", ")
+        let coldDescription = cold.map { String(format: "cold=%.2fms, ", $0 * 1000) } ?? ""
+        let attachment = XCTAttachment(
+            string: "\(coldDescription)p95=\(String(format: "%.2f", percentile95(samples) * 1000))ms\n" +
+                "samples(ms)=\(milliseconds)"
+        )
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func diffFixture(fileCount: Int, minimumByteCount: Int) -> DiffFixture {
+        var diff = ""
+        let linePairsPerFile = 8
+        let fixedBytesPerFile = 180
+        let payloadWidth = max(
+            8,
+            (minimumByteCount / fileCount - fixedBytesPerFile) / (linePairsPerFile * 2)
+        )
+        let payload = String(repeating: "x", count: payloadWidth)
+        var marker = ""
+        for fileIndex in 0 ..< fileCount {
+            let path = String(format: "Sources/Feature/File-%05d.swift", fileIndex)
+            diff += """
+            diff --git a/\(path) b/\(path)
+            --- a/\(path)
+            +++ b/\(path)
+            @@ -1,\(linePairsPerFile) +1,\(linePairsPerFile) @@
+
+            """
+            for lineIndex in 0 ..< linePairsPerFile {
+                diff += "-old-\(fileIndex)-\(lineIndex)-\(payload)\n"
+                marker = "new-\(fileIndex)-\(lineIndex)-\(payload)"
+                diff += "+\(marker)\n"
+            }
+        }
+        while diff.utf8.count < minimumByteCount {
+            diff += " context-padding-\(payload)\n"
+        }
+        return DiffFixture(
+            fileCount: fileCount,
+            byteCount: diff.utf8.count,
+            sections: [[
+                PBNativeSectionTextKey: diff,
+                PBNativeSectionContextKey: "readOnly",
+                PBNativeSectionDiffLayoutKey: 0,
+            ]],
+            marker: marker
+        )
+    }
+
+    private func diffRenderer() -> PBNativeDiffRenderer {
+        PBNativeDiffRenderer(
+            baseAttributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                .foregroundColor: NSColor.textColor,
+            ],
+            titleAttributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ],
+            parser: PBDiffDocumentParser()
+        )
+    }
+
+    private func gitOutput(_ arguments: [String], in directory: URL) throws -> String {
+        let task = PBTask(
+            launchPath: "/usr/bin/git",
+            arguments: arguments,
+            inDirectory: directory.path
+        )
+        task.timeout = 30
+        try task.launch()
+        return task.standardOutputString() ?? ""
+    }
+
+    private func makeRepresentativeRepository() throws -> URL {
+        let repositoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gitx-working-state-performance-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: repositoryURL,
+            withIntermediateDirectories: true
+        )
+        _ = try gitOutput(["init", "--quiet"], in: repositoryURL)
+        let originalPayload = String(repeating: "o", count: 1024)
+        for index in 0 ..< PBPerformanceBudgets.representativeChangedFileCount {
+            let fileURL = repositoryURL.appendingPathComponent(
+                String(format: "file-%05d.txt", index)
+            )
+            try "old-\(index)-\(originalPayload)\n".write(
+                to: fileURL,
+                atomically: false,
+                encoding: .utf8
+            )
+        }
+        _ = try gitOutput(["add", "."], in: repositoryURL)
+        _ = try gitOutput([
+            "-c", "user.name=GitX Performance",
+            "-c", "user.email=performance@gitx.invalid",
+            "commit", "--quiet", "-m", "Fixture",
+        ], in: repositoryURL)
+
+        let changedPayload = String(repeating: "n", count: 1024)
+        for index in 0 ..< PBPerformanceBudgets.representativeChangedFileCount {
+            let fileURL = repositoryURL.appendingPathComponent(
+                String(format: "file-%05d.txt", index)
+            )
+            try "new-\(index)-\(changedPayload)\n".write(
+                to: fileURL,
+                atomically: false,
+                encoding: .utf8
+            )
+        }
+        return repositoryURL
+    }
+
     private func largeDiff(path: String, lineCount: Int) -> String {
         var diff = """
         diff --git a/\(path) b/\(path)
@@ -206,5 +346,214 @@ final class GitXPerformanceTests: XCTestCase {
         }
 
         XCTAssertGreaterThan(checksum, 0)
+    }
+
+    func testWarmHistoryCommitSwitchMeetsInteractionBudgets() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = PBGitWindowController(window: window)
+        let container = NSView(frame: window.contentView?.bounds ?? .zero)
+        window.contentView = container
+        controller.setValue(container, forKey: "contentSplitView")
+
+        let repository = PBGitRepository()
+        let history = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
+        let commit = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
+        history.view = NSView(frame: container.bounds)
+        commit.view = NSView(frame: container.bounds)
+        controller.setValue(history, forKey: "historyViewController")
+        controller.setValue(commit, forKey: "commitViewController")
+        let toolbarController = PBRepositoryToolbarController(windowController: controller)
+        controller.setValue(toolbarController, forKey: "repositoryToolbarController")
+        toolbarController.install()
+
+        controller.changeContentController(history)
+        controller.changeContentController(commit)
+        var samples: [TimeInterval] = []
+        for index in 0 ..< 80 {
+            let destination = index.isMultiple(of: 2) ? history : commit
+            samples.append(elapsed {
+                controller.changeContentController(destination)
+            })
+        }
+
+        let p95 = percentile95(samples)
+        attachMeasurements("Warm History-Commit view switch", samples: samples)
+        XCTAssertLessThanOrEqual(p95, PBPerformanceBudgets.warmViewSwitchP95Seconds)
+        XCTAssertLessThanOrEqual(
+            p95,
+            PBPerformanceBudgets.mainThreadBlockSeconds,
+            "Warm switching must fit in one 60 Hz frame at p95"
+        )
+        XCTAssertIdentical(history.view.superview, container)
+        XCTAssertIdentical(commit.view.superview, container)
+    }
+
+    func testCachedWorkingStateFeedbackMeetsBudget() {
+        let fixture = diffFixture(
+            fileCount: PBPerformanceBudgets.representativeChangedFileCount,
+            minimumByteCount: PBPerformanceBudgets.representativeDiffByteCount
+        )
+        XCTAssertEqual(fixture.fileCount, 500)
+        XCTAssertGreaterThanOrEqual(fixture.byteCount, 1_048_576)
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        view.showDiffSections(
+            fixture.sections,
+            cacheIdentifier: "performance-working-state",
+            preserveScrollPosition: true
+        )
+        let rendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in view.textView.string.contains(fixture.marker) },
+            object: view.textView
+        )
+        wait(for: [rendered], timeout: 30)
+
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 20 {
+            view.showMessage("Loading…")
+            samples.append(elapsed {
+                view.showDiffSections(
+                    fixture.sections,
+                    cacheIdentifier: "performance-working-state",
+                    preserveScrollPosition: true
+                )
+            })
+            XCTAssertTrue(view.textView.string.contains(fixture.marker))
+        }
+
+        attachMeasurements("Cached Working State feedback", samples: samples)
+        XCTAssertLessThanOrEqual(
+            percentile95(samples),
+            PBPerformanceBudgets.cachedWorkingStateFeedbackSeconds
+        )
+    }
+
+    func testFreshRepresentativeWorkingStateRenderingMeetsBudget() {
+        let fixture = diffFixture(
+            fileCount: PBPerformanceBudgets.representativeChangedFileCount,
+            minimumByteCount: PBPerformanceBudgets.representativeDiffByteCount
+        )
+        let sections = PBNativeContentSection.sections(withDictionaries: fixture.sections)
+        let renderer = diffRenderer()
+        var latestResult: PBNativeRenderResult?
+        let cold = elapsed {
+            latestResult = renderer.renderSections(
+                sections,
+                collapsedFiles: [],
+                expandedImages: [],
+                imageDataProvider: nil
+            )
+        }
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 12 {
+            samples.append(elapsed {
+                latestResult = renderer.renderSections(
+                    sections,
+                    collapsedFiles: [],
+                    expandedImages: [],
+                    imageDataProvider: nil
+                )
+            })
+        }
+
+        attachMeasurements("Fresh 500-file 1-MiB Working State rendering", cold: cold, samples: samples)
+        XCTAssertTrue(latestResult?.attributedString.string.contains(fixture.marker) == true)
+        XCTAssertLessThanOrEqual(
+            percentile95(samples),
+            PBPerformanceBudgets.freshWorkingStateP95Seconds
+        )
+    }
+
+    func testFreshRepresentativeWorkingStatePipelineMeetsBudget() throws {
+        let repositoryURL = try makeRepresentativeRepository()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        let renderer = diffRenderer()
+        let options = PBDiffCommandOptions.arguments
+        var latestResult: PBNativeRenderResult?
+        var latestByteCount = 0
+        let pipeline = {
+            let staged = try! self.gitOutput(
+                ["diff"] + options + ["--cached", "--find-renames", "--no-ext-diff"],
+                in: repositoryURL
+            )
+            let unstaged = try! self.gitOutput(
+                ["diff"] + options + ["--find-renames", "--no-ext-diff"],
+                in: repositoryURL
+            )
+            latestByteCount = staged.utf8.count + unstaged.utf8.count
+            let sections = PBNativeContentSection.sections(withDictionaries: [
+                [
+                    PBNativeSectionTitleKey: "Staged Changes",
+                    PBNativeSectionTextKey: staged,
+                    PBNativeSectionContextKey: "readOnly",
+                    PBNativeSectionDiffLayoutKey: 0,
+                ],
+                [
+                    PBNativeSectionTitleKey: "Unstaged Changes",
+                    PBNativeSectionTextKey: unstaged,
+                    PBNativeSectionContextKey: "readOnly",
+                    PBNativeSectionDiffLayoutKey: 0,
+                ],
+            ])
+            latestResult = renderer.renderSections(
+                sections,
+                collapsedFiles: [],
+                expandedImages: [],
+                imageDataProvider: nil
+            )
+        }
+        let cold = elapsed(pipeline)
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 10 {
+            samples.append(elapsed(pipeline))
+        }
+
+        attachMeasurements(
+            "Fresh 500-file 1-MiB Working State Git-plus-render pipeline",
+            cold: cold,
+            samples: samples
+        )
+        XCTAssertGreaterThanOrEqual(
+            latestByteCount,
+            PBPerformanceBudgets.representativeDiffByteCount
+        )
+        XCTAssertTrue(latestResult?.attributedString.string.contains("file-00499.txt") == true)
+        XCTAssertLessThanOrEqual(
+            percentile95(samples),
+            PBPerformanceBudgets.freshWorkingStateP95Seconds
+        )
+    }
+
+    func testStressWorkingStateRenderingIsReportedWithoutGate() {
+        let fixture = diffFixture(
+            fileCount: PBPerformanceBudgets.stressChangedFileCount,
+            minimumByteCount: PBPerformanceBudgets.stressDiffByteCount
+        )
+        let sections = PBNativeContentSection.sections(withDictionaries: fixture.sections)
+        var result: PBNativeRenderResult?
+        let duration = elapsed {
+            result = diffRenderer().renderSections(
+                sections,
+                collapsedFiles: [],
+                expandedImages: [],
+                imageDataProvider: nil
+            )
+        }
+
+        attachMeasurements("Stress 5,000-file 10-MiB Working State rendering", samples: [duration])
+        XCTAssertEqual(fixture.fileCount, PBPerformanceBudgets.stressChangedFileCount)
+        XCTAssertGreaterThanOrEqual(fixture.byteCount, PBPerformanceBudgets.stressDiffByteCount)
+        XCTAssertTrue(result?.attributedString.string.contains(fixture.marker) == true)
     }
 }

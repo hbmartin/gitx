@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 // Objective-C controller wiring calls these policies through GitX-Swift.h.
 // swiftlint:disable unused_declaration
@@ -133,6 +133,12 @@ final nonisolated class CommitPushPlan: NSObject {
 final nonisolated class CommitWorkflowState: NSObject {
     @objc var pendingBranchRef: PBGitRef?
     @objc var pendingRemoteName: String?
+    @objc var pendingRememberedPushChoice: NSNumber?
+
+    @objc(beginSubmissionWithPushChoice:canRemember:)
+    func beginSubmission(pushChoice: Bool, canRemember: Bool) {
+        pendingRememberedPushChoice = canRemember ? NSNumber(value: pushChoice) : nil
+    }
 
     @objc(armWithBranchRef:remoteName:)
     func arm(branchRef: PBGitRef, remoteName: String) {
@@ -143,11 +149,12 @@ final nonisolated class CommitWorkflowState: NSObject {
 
     @objc(clear)
     func clear() {
-        if pendingBranchRef != nil || pendingRemoteName != nil {
+        if pendingBranchRef != nil || pendingRemoteName != nil || pendingRememberedPushChoice != nil {
             NSLog("[GitX] Cleared pending commit-and-push workflow")
         }
         pendingBranchRef = nil
         pendingRemoteName = nil
+        pendingRememberedPushChoice = nil
     }
 
     @objc(consumePendingPush)
@@ -159,6 +166,60 @@ final nonisolated class CommitWorkflowState: NSObject {
         else { return nil }
         NSLog("[GitX] Consuming pending commit-and-push workflow")
         return CommitPushPlan(branchRef: pendingBranchRef, remoteName: pendingRemoteName)
+    }
+}
+
+/// Rehosts the nib's lower Commit area into files-above/message-below split views.
+@objc(PBCommitLayoutCoordinator)
+final class CommitLayoutCoordinator: NSObject {
+    private static let autosaveName = "CommitComposer"
+
+    @objc(configureOuterSplitView:commitMessageView:unstagedTable:stagedTable:)
+    static func configure(
+        outerSplitView: NSSplitView,
+        commitMessageView: NSTextView,
+        unstagedTable: NSTableView,
+        stagedTable: NSTableView
+    ) {
+        unstagedTable.allowsMultipleSelection = true
+        stagedTable.allowsMultipleSelection = true
+
+        guard let messagePane = commitMessageView.enclosingScrollView?.superview else {
+            NSLog("[GitX] Commit layout could not find the message pane")
+            return
+        }
+        if let existing = messagePane.superview as? NSSplitView,
+           existing.autosaveName == autosaveName
+        {
+            return
+        }
+        guard let fileSplitView = messagePane.superview as? NSSplitView,
+              outerSplitView.subviews.contains(fileSplitView)
+        else {
+            NSLog("[GitX] Commit layout could not find the staging split view")
+            return
+        }
+
+        let composerSplitView = NSSplitView(frame: fileSplitView.frame)
+        composerSplitView.autosaveName = autosaveName
+        composerSplitView.dividerStyle = .thin
+        composerSplitView.isVertical = false
+        composerSplitView.autoresizingMask = [.width, .height]
+
+        messagePane.removeFromSuperview()
+        outerSplitView.replaceSubview(fileSplitView, with: composerSplitView)
+        composerSplitView.addSubview(fileSplitView)
+        composerSplitView.addSubview(messagePane)
+        composerSplitView.adjustSubviews()
+
+        let savedFramesKey = "NSSplitView Subview Frames \(autosaveName)"
+        if UserDefaults.standard.object(forKey: savedFramesKey) == nil {
+            let fileRowHeight = max(100, composerSplitView.bounds.height * 0.45)
+            composerSplitView.setPosition(fileRowHeight, ofDividerAt: 0)
+        } else {
+            composerSplitView.pb_restoreAutosavedPositions()
+        }
+        NSLog("[GitX] Configured full-width commit message row")
     }
 }
 

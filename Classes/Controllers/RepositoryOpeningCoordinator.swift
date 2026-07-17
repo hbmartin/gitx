@@ -4,6 +4,20 @@ import AppKit
 // swiftlint:disable:next unused_import
 import OSLog
 
+@objc(PBRecentRepositoryActivationAction)
+enum RecentRepositoryActivationAction: Int {
+    case open
+    case locate
+}
+
+@objc(PBRecentRepositoryActivationPolicy)
+final nonisolated class RecentRepositoryActivationPolicy: NSObject {
+    @objc(actionForReachable:)
+    static func action(forReachable reachable: Bool) -> RecentRepositoryActivationAction {
+        reachable ? .open : .locate
+    }
+}
+
 @objc(PBRecentRepositoryStore)
 final class RecentRepositoryStore: NSObject {
     private static let key = "PBRecentRepositories"
@@ -350,7 +364,10 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
     @objc private func openSelected(_ sender: Any?) {
         guard shownEntries.indices.contains(tableView.selectedRow) else { return }
         let entry = shownEntries[tableView.selectedRow]
-        guard entry.isReachable else { return }
+        if RecentRepositoryActivationPolicy.action(forReachable: entry.isReachable) == .locate {
+            locateSelected(sender)
+            return
+        }
         RepositoryOpenCoordinator.shared.open(urls: [entry.url], sourceWindow: window) { _, errors in
             if let error = errors.first {
                 NSApp.presentError(error)
