@@ -352,6 +352,7 @@
 
 	XCUIElement *message = self.app.textViews[@"CommitMessage"];
 	XCTAssertTrue([message waitForExistenceWithTimeout:10]);
+	[self saveWindowScreenshotNamed:@"commit-composer-full-width-message"];
 	[message click];
 	NSTask *pasteTask = [[NSTask alloc] init];
 	pasteTask.executableURL = [NSURL fileURLWithPath:@"/usr/bin/pbcopy"];

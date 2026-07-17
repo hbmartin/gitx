@@ -619,6 +619,11 @@
 	CGFloat expectedY = scrollView.contentView.bounds.origin.y;
 	XCTAssertGreaterThan(expectedY, 0);
 
+	[view showDiffSections:sections cacheIdentifier:@"working-state-0" preserveScrollPosition:YES];
+	XCTAssertEqualWithAccuracy(scrollView.contentView.bounds.origin.y, expectedY, 1.0);
+	((void (*)(id, SEL))objc_msgSend)(view, NSSelectorFromString(@"rerenderCurrentDiffPreservingScrollPosition"));
+	[self waitForNativeView:view toContainString:@"new-199"];
+
 	[view showMessage:@"Loading…"];
 	[view showDiffSections:sections cacheIdentifier:@"working-state-0" preserveScrollPosition:YES];
 

@@ -201,6 +201,8 @@ final class CommitLayoutCoordinator: NSObject {
         }
 
         let composerSplitView = NSSplitView(frame: fileSplitView.frame)
+        let savedFramesKey = "NSSplitView Subview Frames \(autosaveName)"
+        let hadSavedFrames = UserDefaults.standard.object(forKey: savedFramesKey) != nil
         composerSplitView.autosaveName = autosaveName
         composerSplitView.dividerStyle = .thin
         composerSplitView.isVertical = false
@@ -212,8 +214,7 @@ final class CommitLayoutCoordinator: NSObject {
         composerSplitView.addSubview(messagePane)
         composerSplitView.adjustSubviews()
 
-        let savedFramesKey = "NSSplitView Subview Frames \(autosaveName)"
-        if UserDefaults.standard.object(forKey: savedFramesKey) == nil {
+        if !hadSavedFrames {
             let fileRowHeight = max(100, composerSplitView.bounds.height * 0.45)
             composerSplitView.setPosition(fileRowHeight, ofDividerAt: 0)
         } else {

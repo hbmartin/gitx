@@ -221,10 +221,6 @@
 		  elapsed * 1000.0,
 		  firstMount ? @"yes" : @"no",
 		  [PBPerformanceBudgets warmViewSwitchP95Seconds] * 1000.0);
-	if (!firstMount && elapsed > [PBPerformanceBudgets mainThreadBlockSeconds]) {
-		NSLog(@"[GitX][Performance] Warm repository view switch exceeded the %.0f ms main-thread budget",
-			  [PBPerformanceBudgets mainThreadBlockSeconds] * 1000.0);
-	}
 }
 
 - (void)showCommitView:(id)sender

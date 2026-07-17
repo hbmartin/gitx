@@ -418,6 +418,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             tableCoordinator.tableView(historyController.commitList, selectionIndexesForProposedSelection: proposed),
             IndexSet(integer: 0)
         )
+        let regularCommit = try XCTUnwrap(loadedCommits().first)
+        try historyController.commitController.setSelectedObjects([XCTUnwrap(workingState), regularCommit])
+        historyController.updateKeys()
+        XCTAssertEqual(historyController.commitController.selectedObjects.count, 1)
+        XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === workingState)
 
         try fixture.git(["clean", "-fd"])
         refreshIndex()
@@ -426,6 +431,46 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(historyController.commitController.selectedObjects.isEmpty)
         historyController.updateStatus()
         XCTAssertTrue(historyController.status.contains("commits loaded"))
+    }
+
+    func testWorkingStateDiffRefreshesInBackgroundAndReusesCachedRendering() throws {
+        try fixture.write("cached working state\n", to: "cached.txt")
+        refreshIndex()
+        historyController.updateUncommittedChanges()
+        let workingState = try XCTUnwrap(
+            historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
+        )
+        let webController = try XCTUnwrap(
+            historyController.value(forKey: "webHistoryController") as? NSObject
+        )
+        let nativeView = try XCTUnwrap(webController.value(forKey: "nativeView") as? PBNativeContentView)
+        let changeContent = NSSelectorFromString("changeContentTo:")
+
+        _ = webController.perform(changeContent, with: [workingState])
+        XCTAssertTrue(waitForCondition {
+            (webController.value(forKey: "diff") as? String)?.contains("+cached working state") == true &&
+                nativeView.textView.string.contains("cached working state")
+        })
+
+        nativeView.showMessage("Cache sentinel")
+        _ = webController.perform(changeContent, with: [workingState])
+        XCTAssertTrue(
+            nativeView.textView.string.contains("cached working state"),
+            "A repeat Working State selection should synchronously restore its memory cache"
+        )
+        pumpRunLoop(for: 0.5)
+
+        try fixture.write("refreshed working state\n", to: "cached.txt")
+        refreshIndex()
+        historyController.updateUncommittedChanges()
+        let refreshedWorkingState = try XCTUnwrap(
+            historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
+        )
+        _ = webController.perform(changeContent, with: [refreshedWorkingState])
+        XCTAssertTrue(waitForCondition {
+            (webController.value(forKey: "diff") as? String)?.contains("+refreshed working state") == true &&
+                nativeView.textView.string.contains("refreshed working state")
+        })
     }
 
     func testReferenceCommitStashAndPathMenuMatrices() throws {
@@ -795,6 +840,17 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             pumpRunLoop()
         }
         return nil
+    }
+
+    private func waitForCondition(timeout: TimeInterval = 5.0, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() {
+                return true
+            }
+            pumpRunLoop()
+        }
+        return condition()
     }
 
     private func treeNode(fullPath: String, in node: NSTreeNode) -> NSTreeNode? {

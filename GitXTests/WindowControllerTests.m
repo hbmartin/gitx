@@ -50,6 +50,22 @@
 - (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar;
 @end
 
+@interface PBCommitLayoutCoordinator : NSObject
++ (void)configureOuterSplitView:(NSSplitView *)outerSplitView
+			  commitMessageView:(NSTextView *)commitMessageView
+				  unstagedTable:(NSTableView *)unstagedTable
+					stagedTable:(NSTableView *)stagedTable;
+@end
+
+@interface PBRecentRepositoryStore : NSObject
++ (instancetype)shared;
+- (void)record:(NSURL *)url;
+@end
+
+@interface PBGitSidebarController (WindowControllerTests)
+- (void)reloadSidebarAfterReferencesChange;
+@end
+
 @interface PBCommitMessageTransformer : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 - (nullable NSString *)transformMessage:(NSString *)message error:(NSError **)error;
@@ -1341,6 +1357,75 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[controller closeView];
 }
 
+- (void)testCommitLayoutCoordinatorHandlesIncompleteAndFreshViewHierarchies
+{
+	NSSplitView *outerSplitView = [[NSSplitView alloc] initWithFrame:NSMakeRect(0, 0, 600, 400)];
+	NSTableView *unstagedTable = [[NSTableView alloc] initWithFrame:NSZeroRect];
+	NSTableView *stagedTable = [[NSTableView alloc] initWithFrame:NSZeroRect];
+	NSTextView *orphanMessage = [[NSTextView alloc] initWithFrame:NSZeroRect];
+	[PBCommitLayoutCoordinator configureOuterSplitView:outerSplitView
+									 commitMessageView:orphanMessage
+										 unstagedTable:unstagedTable
+										   stagedTable:stagedTable];
+
+	NSTextView *message = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+	NSScrollView *messageScroll = [[NSScrollView alloc] initWithFrame:message.frame];
+	messageScroll.documentView = message;
+	NSView *messagePane = [[NSView alloc] initWithFrame:message.frame];
+	[messagePane addSubview:messageScroll];
+	NSSplitView *fileSplitView = [[NSSplitView alloc] initWithFrame:outerSplitView.bounds];
+	[fileSplitView addSubview:messagePane];
+	[PBCommitLayoutCoordinator configureOuterSplitView:outerSplitView
+									 commitMessageView:message
+										 unstagedTable:unstagedTable
+										   stagedTable:stagedTable];
+	XCTAssertEqual(messagePane.superview, fileSplitView);
+
+	[outerSplitView addSubview:fileSplitView];
+	NSString *autosaveKey = @"NSSplitView Subview Frames CommitComposer";
+	id originalAutosaveFrames = [NSUserDefaults.standardUserDefaults objectForKey:autosaveKey];
+	[NSUserDefaults.standardUserDefaults removeObjectForKey:autosaveKey];
+	@try {
+		[PBCommitLayoutCoordinator configureOuterSplitView:outerSplitView
+										 commitMessageView:message
+											 unstagedTable:unstagedTable
+											   stagedTable:stagedTable];
+		NSSplitView *composer = (NSSplitView *)messagePane.superview;
+		XCTAssertTrue([composer isKindOfClass:NSSplitView.class]);
+		XCTAssertEqualObjects(composer.autosaveName, @"CommitComposer");
+		XCTAssertFalse(composer.isVertical);
+		XCTAssertTrue(unstagedTable.allowsMultipleSelection);
+		XCTAssertTrue(stagedTable.allowsMultipleSelection);
+
+		[PBCommitLayoutCoordinator configureOuterSplitView:outerSplitView
+										 commitMessageView:message
+											 unstagedTable:unstagedTable
+											   stagedTable:stagedTable];
+		XCTAssertEqual(messagePane.superview, composer);
+
+		[NSUserDefaults.standardUserDefaults setObject:@[] forKey:autosaveKey];
+		NSSplitView *savedOuterSplitView = [[NSSplitView alloc] initWithFrame:NSMakeRect(0, 0, 600, 400)];
+		NSTextView *savedMessage = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 600, 100)];
+		NSScrollView *savedMessageScroll = [[NSScrollView alloc] initWithFrame:savedMessage.frame];
+		savedMessageScroll.documentView = savedMessage;
+		NSView *savedMessagePane = [[NSView alloc] initWithFrame:savedMessage.frame];
+		[savedMessagePane addSubview:savedMessageScroll];
+		NSSplitView *savedFileSplitView = [[NSSplitView alloc] initWithFrame:savedOuterSplitView.bounds];
+		[savedFileSplitView addSubview:savedMessagePane];
+		[savedOuterSplitView addSubview:savedFileSplitView];
+		[PBCommitLayoutCoordinator configureOuterSplitView:savedOuterSplitView
+										 commitMessageView:savedMessage
+											 unstagedTable:unstagedTable
+											   stagedTable:stagedTable];
+		XCTAssertEqualObjects(((NSSplitView *)savedMessagePane.superview).autosaveName, @"CommitComposer");
+	} @finally {
+		if (originalAutosaveFrames)
+			[NSUserDefaults.standardUserDefaults setObject:originalAutosaveFrames forKey:autosaveKey];
+		else
+			[NSUserDefaults.standardUserDefaults removeObjectForKey:autosaveKey];
+	}
+}
+
 - (void)testCommitControllerSubmissionValidationAndNotificationTransitions
 {
 	PBCommitIndexSpy *index = [[PBCommitIndexSpy alloc] initWithRepository:self.repository];
@@ -1769,6 +1854,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[document setValue:self.repository forKey:@"_repository"];
 	PBGitWindowController *controller = [[PBGitWindowController alloc] init];
 	controller.document = document;
+	BOOL previousShowStageView = PBGitDefaults.showStageView;
+	[PBGitDefaults setShowStageView:YES];
 	NSWindow *window = controller.window;
 
 	XCTAssertNotNil(window);
@@ -1778,6 +1865,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertNotNil(sidebar);
 	XCTAssertNotNil(history);
 	XCTAssertNotNil(commit);
+	[sidebar reloadSidebarAfterReferencesChange];
+	[PBGitDefaults setShowStageView:previousShowStageView];
 	XCTAssertEqualObjects(window.representedURL, self.repository.workingDirectoryURL);
 	XCTAssertEqualObjects([controller valueForKeyPath:@"jumpToCheckedOutBranchButton.accessibilityIdentifier"], @"JumpToCheckedOutBranchButton");
 
@@ -2279,6 +2368,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (void)testWelcomeWindowSearchAndCloseActions
 {
 	PBWelcomeWindowController *welcome = PBWelcomeWindowController.shared;
+	id originalRecents = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRecentRepositories"];
+	[[PBRecentRepositoryStore shared] record:self.repositoryURL];
+	[welcome showWindow:nil];
 	[welcome searchChanged:nil];
 	NSArray<NSView *> *descendants = welcome.window.contentView.subviews;
 	NSTableView *recentsTable = nil;
@@ -2296,9 +2388,18 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertNotNil(recentsTable);
 	XCTAssertEqual(recentsTable.target, welcome);
 	XCTAssertEqual(recentsTable.doubleAction, NSSelectorFromString(@"openSelected:"));
+	XCTAssertGreaterThan(recentsTable.numberOfRows, (NSInteger)0);
+	[recentsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+	PBWindowDocumentOpenCount = 0;
+	XCTAssertTrue([recentsTable sendAction:recentsTable.doubleAction to:recentsTable.target]);
+	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)1);
 	[welcome closeWelcome];
 
 	XCTAssertFalse(welcome.window.isVisible);
+	if (originalRecents)
+		[NSUserDefaults.standardUserDefaults setObject:originalRecents forKey:@"PBRecentRepositories"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRecentRepositories"];
 }
 
 - (void)testRepositoryUISettingsAcceptRepositoryWithoutGitURLs
