@@ -3,6 +3,7 @@
 //
 
 #import "DBPrefsWindowController.h"
+#import "GitX-Swift.h"
 
 
 static DBPrefsWindowController *_sharedPrefsWindowController = nil;
@@ -159,6 +160,8 @@ static DBPrefsWindowController *_sharedPrefsWindowController = nil;
 	[toolbarViews removeAllObjects];
 	[toolbarItems removeAllObjects];
 	[self setupToolbar];
+	CGFloat minimumWidth = [PBPreferencesWindowLayoutPolicy minimumWidthForItemCount:toolbarIdentifiers.count];
+	[[self window] setMinSize:NSMakeSize(minimumWidth, 300)];
 
 	NSAssert(([toolbarIdentifiers count] > 0),
 			 @"No items were added to the toolbar in -setupToolbar.");
@@ -333,7 +336,7 @@ static DBPrefsWindowController *_sharedPrefsWindowController = nil;
 	CGFloat windowTitleAndToolbarHeight = NSHeight(windowFrame) - NSHeight(contentRect);
 
 	windowFrame.size.height = NSHeight([view frame]) + windowTitleAndToolbarHeight;
-	windowFrame.size.width = NSWidth([view frame]);
+	windowFrame.size.width = MAX(NSWidth([view frame]), self.window.minSize.width);
 	windowFrame.origin.y = NSMaxY([[self window] frame]) - NSHeight(windowFrame);
 
 	return windowFrame;

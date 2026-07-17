@@ -66,6 +66,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)copySHA:(id)sender;
 - (IBAction)copyShortName:(id)sender;
 - (IBAction)copyPatch:(id)sender;
+- (IBAction)createPatch:(id)sender;
 
 @end
 

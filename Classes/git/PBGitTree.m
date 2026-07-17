@@ -179,17 +179,19 @@
 
 - (long long)fileSize
 {
-	if (_fileSize)
+	@synchronized(self) {
+		if (_fileSize)
+			return _fileSize;
+
+		NSString *sizeString = [repository outputOfTaskWithArguments:@[ @"cat-file", @"-s", self.refSpec ] error:NULL];
+
+		if (!sizeString)
+			_fileSize = -1;
+		else
+			_fileSize = [sizeString longLongValue];
+
 		return _fileSize;
-
-	NSString *sizeString = [repository outputOfTaskWithArguments:@[ @"cat-file", @"-s", self.refSpec ] error:NULL];
-
-	if (!sizeString)
-		_fileSize = -1;
-	else
-		_fileSize = [sizeString longLongValue];
-
-	return _fileSize;
+	}
 }
 
 - (NSString *)textContents

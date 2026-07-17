@@ -34,7 +34,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (nullable PBGitRef *)ref;
 
-@property (readonly) NSString *title;
+@property (copy) NSString *title;
 @property (readonly) NSArray *sortedChildren;
 @property (getter=isGroupItem) BOOL groupItem;
 @property (getter=isUncollapsible) BOOL uncollapsible;

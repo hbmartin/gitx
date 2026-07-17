@@ -7,6 +7,8 @@
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
 #import "PBGitHistoryController.h"
+#import "PBGitWindowController.h"
+#import "PBViewController.h"
 #import "PBGitCommit.h"
 #import "PBGitIndex.h"
 #import "PBGitStash.h"
@@ -19,6 +21,157 @@
 #import "PBHistorySearchController.h"
 
 NS_ASSUME_NONNULL_BEGIN
+
+typedef NS_ENUM(NSInteger, PBOpenDisposition) {
+	PBOpenDispositionAlwaysNewWindow,
+	PBOpenDispositionFollowSystem,
+	PBOpenDispositionPreferTab,
+};
+
+typedef NS_ENUM(NSInteger, PBWindowRestorePolicy) {
+	PBWindowRestorePolicyAlways,
+	PBWindowRestorePolicyFollowSystem,
+	PBWindowRestorePolicyNever,
+};
+
+typedef NS_ENUM(NSInteger, PBDiffLayout) {
+	PBDiffLayoutUnified,
+	PBDiffLayoutSideBySide,
+};
+
+typedef NS_ENUM(NSInteger, PBDiffAlgorithm) {
+	PBDiffAlgorithmMyers,
+	PBDiffAlgorithmMinimal,
+	PBDiffAlgorithmPatience,
+	PBDiffAlgorithmHistogram,
+};
+
+typedef NS_ENUM(NSInteger, PBSyntaxTheme) {
+	PBSyntaxThemeXcode,
+	PBSyntaxThemeGithub,
+	PBSyntaxThemePlain,
+};
+
+typedef NS_ENUM(NSInteger, PBBranchSortMode) {
+	PBBranchSortModeAlphabetical,
+	PBBranchSortModeRecentCommit,
+};
+
+typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
+	PBChangedFilesSortModeAlphabetical,
+	PBChangedFilesSortModeGitOrder,
+	PBChangedFilesSortModeStatus,
+};
+
+@interface PBApplicationSettings : NSObject
+@property (class) PBOpenDisposition openDisposition;
+@property (class) PBWindowRestorePolicy restorePolicy;
+@property (class) BOOL changedFilesOnly;
+@property (class) PBChangedFilesSortMode changedFilesSort;
+@property (class) PBBranchSortMode branchSort;
+@property (class) PBDiffLayout diffLayout;
+@property (class) PBDiffAlgorithm diffAlgorithm;
+@property (class) NSInteger diffContextLines;
+@property (class) PBSyntaxTheme syntaxTheme;
+@property (class, copy) NSString *diffFontName;
+@property (class) double diffFontSize;
+@property (class, strong) NSColor *addedTextColor;
+@property (class, strong) NSColor *removedTextColor;
+@property (class, strong) NSColor *addedBackgroundColor;
+@property (class, strong) NSColor *removedBackgroundColor;
+@property (class, copy, nullable) NSString *terminalBundleIdentifier;
+@property (class, copy) NSString *terminalInitialCommand;
+@property (class, copy) NSString *customTerminalExecutable;
+@property (class, copy) NSString *customTerminalArguments;
+@property (class, copy) NSString *raycastScriptsDirectory;
+@property (class) NSInteger patchExportMode;
+@end
+
+@interface PBHistoryTreePresentation : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (PBGitTree *)treeForCommit:(PBGitCommit *)commit;
+- (NSString *)displayTitleForTree:(PBGitTree *)tree;
+- (NSString *)toolTipForTree:(PBGitTree *)tree;
+@end
+
+@interface PBDiffCommandOptions : NSObject
+@property (class, copy, readonly) NSArray<NSString *> *arguments;
+@end
+
+@interface PBSettingsViewFactory : NSObject
++ (NSView *)generalViewWithLegacyView:(NSView *)legacyView NS_SWIFT_NAME(generalView(legacyView:));
++ (NSView *)windowsView;
++ (NSView *)diffAndTextView;
++ (NSView *)terminalView;
+@end
+
+@interface PBTerminalLauncher : NSObject
+@property (class, readonly, strong) PBTerminalLauncher *shared;
+- (void)openDirectory:(NSURL *)directory presentingWindow:(nullable NSWindow *)window
+	NS_SWIFT_NAME(open(directory:presenting:));
+- (NSArray<NSString *> *)launchArgumentsForIdentifier:(NSString *)identifier
+										  directory:(NSString *)directory
+											command:(NSString *)command
+	NS_SWIFT_NAME(launchArguments(identifier:directory:command:));
+- (NSArray<NSString *> *)commandArguments:(NSString *)command;
+- (NSArray<NSString *> *)argumentTokens:(NSString *)string;
+@end
+
+@interface PBIntegrationManager : NSObject
+@property (class, readonly, strong) PBIntegrationManager *shared;
+- (void)installRaycastScriptsWithPresenting:(nullable NSWindow *)window
+	NS_SWIFT_NAME(installRaycastScripts(presenting:));
+- (void)removeRaycastScriptsWithPresenting:(nullable NSWindow *)window
+	NS_SWIFT_NAME(removeRaycastScripts(presenting:));
+@end
+
+@interface PBRecentRepositoryStore : NSObject
+@property (class, readonly, strong) PBRecentRepositoryStore *shared;
+- (void)record:(NSURL *)url;
+- (void)remove:(NSURL *)url;
+- (void)replace:(NSURL *)oldURL with:(NSURL *)newURL;
+@end
+
+@interface PBCommitPatchExportPolicy : NSObject
++ (NSArray<NSString *> *)filenamesForSubjects:(NSArray<NSString *> *)subjects;
++ (NSString *)safeFilenameForSubject:(NSString *)subject;
++ (NSString *)revisionForOldestSHA:(NSString *)oldestSHA
+						 newestSHA:(NSString *)newestSHA
+					oldestIsRoot:(BOOL)oldestIsRoot;
++ (BOOL)seriesOutput:(NSString *)output
+         matchesSHAs:(NSArray<NSString *> *)shas
+    NS_SWIFT_NAME(series(output:matchesSHAs:));
+@end
+
+@interface PBHistoryBranchFilterPresentation : NSObject
+@property (nonatomic, readonly) BOOL allEnabled;
+@property (nonatomic, readonly) BOOL localEnabled;
+@property (nonatomic, readonly) NSControlStateValue allState;
+@property (nonatomic, readonly) NSControlStateValue localState;
+@property (nonatomic, readonly) NSControlStateValue selectedState;
+@property (nonatomic, copy, readonly) NSString *selectedTitle;
+@property (nonatomic, copy, readonly) NSString *localTitle;
+@end
+
+@interface PBHistoryStateCoordinator : NSObject
+- (NSArray<PBGitCommit *> *)normalizedSelection:(NSArray<PBGitCommit *> *)selection;
+- (PBHistoryBranchFilterPresentation *)branchFilterPresentationForSimpleBranch:(BOOL)simpleBranch
+																			 filter:(NSInteger)filter
+															 selectedTitle:(NSString *)selectedTitle
+																			 remote:(BOOL)remote
+	NS_SWIFT_NAME(branchFilterPresentation(simpleBranch:filter:selectedTitle:remote:));
+- (void)saveFileBrowserSelectionFromSelectedObjects:(NSArray<NSObject *> *)selectedObjects
+																	 hasContent:(BOOL)hasContent
+	NS_SWIFT_NAME(saveFileBrowserSelection(selectedObjects:hasContent:));
+- (nullable NSIndexPath *)treeSelectionIndexPathForChildren:(NSArray<NSObject *> *)children
+																			 treeMode:(BOOL)treeMode
+	NS_SWIFT_NAME(treeSelectionIndexPath(children:treeMode:));
+- (NSInteger)adjustedScrollRowForSelectionRow:(NSInteger)selectionRow
+													 oldRow:(NSInteger)oldRow
+											 visibleRows:(NSInteger)visibleRows
+											contentCount:(NSInteger)contentCount
+	NS_SWIFT_NAME(adjustedScrollRow(selectionRow:oldRow:visibleRows:contentCount:));
+@end
 
 @interface PBImageRevisionPolicy : NSObject
 + (NSArray<NSString *> *)revisionsForCommitSHA:(NSString *)commitSHA
@@ -61,16 +214,52 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, readonly) NSString *title;
 @property (nonatomic, copy, readonly) NSArray<NSString *> *imageRevisions;
 - (instancetype)initWithSHA:(NSString *)sha
-                  parentSHA:(nullable NSString *)parentSHA
-                  shortName:(NSString *)shortName
-                    subject:(NSString *)subject
-                     author:(NSString *)author
-                 authorDate:(NSString *)authorDate;
+				  parentSHA:(nullable NSString *)parentSHA
+				  shortName:(NSString *)shortName
+					subject:(NSString *)subject
+					 author:(NSString *)author
+				 authorDate:(NSString *)authorDate;
 @end
 
 @interface PBWorkingStateRefreshPolicy : NSObject
 + (BOOL)shouldReplaceDisplayedDiff:(nullable NSString *)displayedDiff
-                      renderedDiff:(NSString *)renderedDiff;
+					  renderedDiff:(NSString *)renderedDiff;
+@end
+
+@interface PBPerformanceBudgets : NSObject
+@property (class, nonatomic, readonly) double warmViewSwitchP95Seconds;
+@property (class, nonatomic, readonly) double mainThreadBlockSeconds;
+@property (class, nonatomic, readonly) double cachedWorkingStateFeedbackSeconds;
+@property (class, nonatomic, readonly) double freshWorkingStateP95Seconds;
+@property (class, nonatomic, readonly) NSInteger representativeChangedFileCount;
+@property (class, nonatomic, readonly) NSInteger representativeDiffByteCount;
+@property (class, nonatomic, readonly) NSInteger stressChangedFileCount;
+@property (class, nonatomic, readonly) NSInteger stressDiffByteCount;
+@end
+
+@interface PBWorkingStateDiffSnapshot : NSObject
+@property (nonatomic, copy, readonly) NSArray<NSDictionary<NSString *, id> *> *sections;
+@property (nonatomic, copy, readonly) NSString *renderedDiff;
+@end
+
+@interface PBWorkingStateDiffCache : NSObject
+- (nullable PBWorkingStateDiffSnapshot *)snapshotForLayout:(NSInteger)layout
+	NS_SWIFT_NAME(snapshot(forLayout:));
+- (void)storeSections:(NSArray<NSDictionary<NSString *, id> *> *)sections
+		 renderedDiff:(NSString *)renderedDiff
+			   layout:(NSInteger)layout
+	NS_SWIFT_NAME(store(sections:renderedDiff:layout:));
+- (void)removeAll;
+@end
+
+typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
+	PBRecentRepositoryActivationActionOpen,
+	PBRecentRepositoryActivationActionLocate,
+};
+
+@interface PBRecentRepositoryActivationPolicy : NSObject
++ (PBRecentRepositoryActivationAction)actionForReachable:(BOOL)reachable
+	NS_SWIFT_NAME(action(forReachable:));
 @end
 
 @interface PBRewindOverlayView : NSView
@@ -78,6 +267,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @protocol PBGitCommandRunning <NSObject>
+@property (nonatomic, copy, readonly, nullable) NSString *lastOutput;
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)launchWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
 @end
@@ -88,6 +278,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface PBRepositoryRemoteService : NSObject
+@property (nonatomic, copy, readonly, nullable) NSString *lastPushOutput;
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
 - (nullable NSArray<NSString *> *)remotes;
 - (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
@@ -349,10 +540,23 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 @interface PBCommitWorkflowState : NSObject
 @property (nonatomic, strong, nullable) PBGitRef *pendingBranchRef;
 @property (nonatomic, copy, nullable) NSString *pendingRemoteName;
+@property (nonatomic, strong, nullable) NSNumber *pendingRememberedPushChoice;
+- (void)beginSubmissionWithPushChoice:(BOOL)pushChoice canRemember:(BOOL)canRemember
+	NS_SWIFT_NAME(beginSubmission(pushChoice:canRemember:));
 - (void)armWithBranchRef:(PBGitRef *)branchRef remoteName:(NSString *)remoteName
 	NS_SWIFT_NAME(arm(branchRef:remoteName:));
 - (void)clear;
 - (nullable PBCommitPushPlan *)consumePendingPush;
+@end
+
+@interface PBRepositoryToolbarController : NSObject
+- (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
+- (void)install;
+- (void)setHistoryMode:(BOOL)historyMode;
+- (void)updateWithStatus:(NSString *)status busy:(BOOL)busy baseWindowTitle:(NSString *)baseWindowTitle;
+- (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar
+			  itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier
+		  willBeInsertedIntoToolbar:(BOOL)flag;
 @end
 
 @interface PBCommitMessageResult : NSObject
@@ -476,6 +680,17 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (void)restoreFileBrowserSelection;
 - (void)saveFileBrowserSelection;
 - (void)historySortingPreferenceChanged:(NSNotification *)notification;
+- (void)historyTreeSettingsDidChange:(NSNotification *)notification;
+- (void)outlineView:(NSOutlineView *)outlineView
+    willDisplayCell:(NSTextFieldCell *)cell
+     forTableColumn:(nullable NSTableColumn *)tableColumn
+               item:(id)item;
+- (nullable NSString *)outlineView:(NSOutlineView *)outlineView
+                    toolTipForCell:(NSCell *)cell
+                               rect:(nullable NSRectPointer)rect
+                        tableColumn:(nullable NSTableColumn *)tableColumn
+                               item:(id)item
+                      mouseLocation:(NSPoint)mouseLocation;
 - (void)_repositoryUpdatedNotification:(NSNotification *)notification;
 - (void)performFindPanelAction:(id)sender;
 - (BOOL)isCommitSelected;
@@ -484,6 +699,14 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (nullable id<QLPreviewItem>)previewPanel:(nullable id)panel previewItemAtIndex:(NSInteger)index;
 - (BOOL)previewPanel:(nullable id)panel handleEvent:(NSEvent *)event;
 - (NSRect)previewPanel:(nullable id)panel sourceFrameOnScreenForPreviewItem:(id<QLPreviewItem>)item;
+@end
+
+@interface PBRepositoryUISettings : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+@property (nonatomic) BOOL hideContainedBranches;
+@property (nonatomic) BOOL pushAfterCommit;
+@property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *sidebarVisibility;
+- (BOOL)isSidebarGroupVisible:(NSString *)group;
 @end
 
 NS_ASSUME_NONNULL_END

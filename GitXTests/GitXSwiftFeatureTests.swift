@@ -3,6 +3,18 @@ import XCTest
 
 @MainActor
 final class GitXSwiftFeatureTests: XCTestCase {
+    private final class TreeFixture: NSObject {
+        @objc dynamic let fullPath: String
+        @objc dynamic let path: String
+        @objc dynamic let children: [TreeFixture]?
+
+        init(fullPath: String, path: String, children: [TreeFixture]? = nil) {
+            self.fullPath = fullPath
+            self.path = path
+            self.children = children
+        }
+    }
+
     private func preservePersistentDefault(forKey key: String) -> () -> Void {
         let defaults = UserDefaults.standard
         let originalValue = Bundle.main.bundleIdentifier
@@ -90,6 +102,24 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(PBWorkingStateRefreshPolicy.shouldReplaceDisplayedDiff("old", renderedDiff: "new"))
     }
 
+    func testWorkingStateDiffCacheIsMemoryAndLayoutScoped() {
+        let cache = PBWorkingStateDiffCache()
+        let sections = [["title": "Unstaged Changes", "text": "cached"]]
+
+        XCTAssertNil(cache.snapshot(forLayout: 0))
+        cache.store(sections: sections, renderedDiff: "cached", layout: 0)
+        XCTAssertEqual(cache.snapshot(forLayout: 0)?.renderedDiff, "cached")
+        XCTAssertEqual(cache.snapshot(forLayout: 0)?.sections.count, 1)
+        XCTAssertNil(cache.snapshot(forLayout: 1))
+        cache.removeAll()
+        XCTAssertNil(cache.snapshot(forLayout: 0))
+    }
+
+    func testRecentRepositoryActivationRoutesMissingEntriesToLocate() {
+        XCTAssertEqual(PBRecentRepositoryActivationPolicy.action(forReachable: true), .open)
+        XCTAssertEqual(PBRecentRepositoryActivationPolicy.action(forReachable: false), .locate)
+    }
+
     func testRewindOverlayUsesOneLayerBackedSurface() throws {
         let overlay = PBRewindOverlayView(frame: NSRect(x: 0, y: 0, width: 125, height: 125))
 
@@ -99,6 +129,89 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(layer.cornerRadius, 12)
         XCTAssertNotNil(layer.backgroundColor)
         XCTAssertNotNil(layer.borderColor)
+    }
+
+    func testRepositoryToolbarInsertedStatusItemReceivesLiveUpdates() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let windowController = PBGitWindowController(window: window)
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+        let item = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.RefreshStatus"),
+            willBeInsertedIntoToolbar: true
+        ))
+        let stack = try XCTUnwrap(item.view as? NSStackView)
+        let labels: [NSTextField] = stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let spinners: [NSProgressIndicator] = stack.arrangedSubviews.compactMap { $0 as? NSProgressIndicator }
+        let label = try XCTUnwrap(labels.first)
+        let spinner = try XCTUnwrap(spinners.first)
+
+        toolbarController.update(
+            withStatus: "Fetching updates",
+            busy: true,
+            baseWindowTitle: "Repository"
+        )
+
+        XCTAssertEqual(label.stringValue, "Fetching updates")
+        XCTAssertFalse(spinner.isHidden)
+        XCTAssertEqual(window.title, "Repository — Fetching updates")
+    }
+
+    func testRepositoryToolbarPaletteStatusItemDoesNotReplaceInsertedStatusViews() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let windowController = PBGitWindowController(window: window)
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+        let identifier = NSToolbarItem.Identifier("GitX.Toolbar.RefreshStatus")
+        let insertedItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: identifier,
+            willBeInsertedIntoToolbar: true
+        ))
+        let insertedStack = try XCTUnwrap(insertedItem.view as? NSStackView)
+        let insertedLabels: [NSTextField] = insertedStack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let insertedLabel = try XCTUnwrap(insertedLabels.first)
+        let paletteItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: identifier,
+            willBeInsertedIntoToolbar: false
+        ))
+        let paletteStack = try XCTUnwrap(paletteItem.view as? NSStackView)
+        let paletteLabels: [NSTextField] = paletteStack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let paletteLabel = try XCTUnwrap(paletteLabels.first)
+
+        toolbarController.update(
+            withStatus: "Fetching updates",
+            busy: false,
+            baseWindowTitle: "Repository"
+        )
+
+        XCTAssertEqual(insertedLabel.stringValue, "Fetching updates")
+        XCTAssertEqual(paletteLabel.stringValue, "Ready")
+
+        insertedStack.frame = NSRect(origin: .zero, size: insertedStack.fittingSize)
+        insertedStack.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(
+            insertedStack.bitmapImageRepForCachingDisplay(in: insertedStack.bounds)
+        )
+        insertedStack.cacheDisplay(in: insertedStack.bounds, to: representation)
+        let screenshot = NSImage(size: insertedStack.bounds.size)
+        screenshot.addRepresentation(representation)
+        let attachment = XCTAttachment(image: screenshot)
+        attachment.name = "Active repository status after toolbar palette request"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func largeDiff(
@@ -603,5 +716,318 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(PBHighlighting.shouldHighlightDiff(withByteCount: 0))
         XCTAssertTrue(PBHighlighting.shouldHighlightDiff(withByteCount: 200 * 1024))
         XCTAssertFalse(PBHighlighting.shouldHighlightDiff(withByteCount: 200 * 1024 + 1))
+    }
+
+    func testApplicationSettingsRoundTripAndPaneActions() throws {
+        let keys = [
+            "PBOpenDisposition", "PBWindowRestorePolicy", "PBHistoryChangedFilesOnly",
+            "PBHistoryChangedFilesSort", "PBBranchSortMode", "PBDiffLayout",
+            "PBDiffAlgorithm", "PBDiffContextLines", "PBSyntaxTheme", "PBDiffFontName",
+            "PBDiffFontSize", "PBDiffAddedTextColor", "PBDiffRemovedTextColor",
+            "PBDiffAddedBackgroundColor", "PBDiffRemovedBackgroundColor",
+            "PBTerminalBundleIdentifier", "PBTerminalInitialCommand",
+            "PBCustomTerminalExecutable", "PBCustomTerminalArguments",
+            "PBRaycastScriptsDirectory", "PBPatchExportMode",
+        ]
+        let restorers = keys.map { preservePersistentDefault(forKey: $0) }
+        defer { restorers.reversed().forEach { $0() } }
+
+        PBApplicationSettings.openDisposition = .preferTab
+        PBApplicationSettings.restorePolicy = .never
+        PBApplicationSettings.changedFilesOnly = false
+        PBApplicationSettings.changedFilesSort = .status
+        PBApplicationSettings.branchSort = .recentCommit
+        PBApplicationSettings.diffLayout = .unified
+        PBApplicationSettings.diffAlgorithm = .histogram
+        PBApplicationSettings.diffContextLines = 50
+        PBApplicationSettings.syntaxTheme = .github
+        PBApplicationSettings.diffFontName = "Menlo"
+        PBApplicationSettings.diffFontSize = 40
+        PBApplicationSettings.addedTextColor = .systemGreen
+        PBApplicationSettings.removedTextColor = .systemRed
+        PBApplicationSettings.addedBackgroundColor = .systemMint
+        PBApplicationSettings.removedBackgroundColor = .systemPink
+        PBApplicationSettings.terminalBundleIdentifier = "custom"
+        PBApplicationSettings.terminalInitialCommand = "git log -1"
+        PBApplicationSettings.customTerminalExecutable = "/usr/bin/true"
+        PBApplicationSettings.customTerminalArguments = "--working-directory {directory}"
+        PBApplicationSettings.raycastScriptsDirectory = "/tmp/raycast"
+        PBApplicationSettings.patchExportMode = 1
+
+        XCTAssertEqual(PBApplicationSettings.openDisposition, .preferTab)
+        XCTAssertEqual(PBApplicationSettings.restorePolicy, .never)
+        XCTAssertFalse(PBApplicationSettings.changedFilesOnly)
+        XCTAssertEqual(PBApplicationSettings.changedFilesSort, .status)
+        XCTAssertEqual(PBApplicationSettings.branchSort, .recentCommit)
+        XCTAssertEqual(PBApplicationSettings.diffLayout, .unified)
+        XCTAssertEqual(PBApplicationSettings.diffAlgorithm, .histogram)
+        XCTAssertEqual(PBApplicationSettings.diffContextLines, 20)
+        XCTAssertEqual(PBApplicationSettings.syntaxTheme, .github)
+        XCTAssertEqual(PBApplicationSettings.diffFontName, "Menlo")
+        XCTAssertEqual(PBApplicationSettings.diffFontSize, 36)
+        XCTAssertEqual(PBApplicationSettings.addedTextColor, .systemGreen)
+        XCTAssertEqual(PBApplicationSettings.removedTextColor, .systemRed)
+        XCTAssertEqual(PBApplicationSettings.addedBackgroundColor, .systemMint)
+        XCTAssertEqual(PBApplicationSettings.removedBackgroundColor, .systemPink)
+        XCTAssertEqual(PBApplicationSettings.terminalBundleIdentifier, "custom")
+        XCTAssertEqual(PBApplicationSettings.terminalInitialCommand, "git log -1")
+        XCTAssertEqual(PBApplicationSettings.customTerminalExecutable, "/usr/bin/true")
+        XCTAssertEqual(PBApplicationSettings.customTerminalArguments, "--working-directory {directory}")
+        XCTAssertEqual(PBApplicationSettings.raycastScriptsDirectory, "/tmp/raycast")
+        XCTAssertEqual(PBApplicationSettings.patchExportMode, 1)
+
+        for algorithm in [PBDiffAlgorithm.myers, .minimal, .patience, .histogram] {
+            PBApplicationSettings.diffAlgorithm = algorithm
+            XCTAssertEqual(PBDiffCommandOptions.arguments.count, 2)
+        }
+
+        let general = PBSettingsViewFactory.generalView(legacyView: NSView())
+        let windows = PBSettingsViewFactory.windowsView()
+        let diff = PBSettingsViewFactory.diffAndTextView()
+        let terminal = PBSettingsViewFactory.terminalView()
+        try triggerSettingsAction("changedOnlyChanged:", in: general) {
+            ($0 as? NSButton)?.state = .on
+        }
+        try triggerSettingsAction("changedFilesSortChanged:", in: general) {
+            ($0 as? NSPopUpButton)?.selectItem(withTag: PBChangedFilesSortMode.gitOrder.rawValue)
+        }
+        try triggerSettingsAction("branchSortChanged:", in: general) {
+            ($0 as? NSPopUpButton)?.selectItem(withTag: PBBranchSortMode.alphabetical.rawValue)
+        }
+        try triggerSettingsAction("openDispositionChanged:", in: windows) {
+            ($0 as? NSPopUpButton)?.selectItem(withTag: PBOpenDisposition.alwaysNewWindow.rawValue)
+        }
+        try triggerSettingsAction("restorePolicyChanged:", in: windows) {
+            ($0 as? NSPopUpButton)?.selectItem(withTag: PBWindowRestorePolicy.always.rawValue)
+        }
+        try triggerSettingsAction("diffLayoutChanged:", in: diff) {
+            ($0 as? NSPopUpButton)?.selectItem(withTag: PBDiffLayout.sideBySide.rawValue)
+        }
+        try triggerSettingsAction("diffAlgorithmChanged:", in: diff) {
+            ($0 as? NSPopUpButton)?.selectItem(withTag: PBDiffAlgorithm.patience.rawValue)
+        }
+        try triggerSettingsAction("syntaxThemeChanged:", in: diff) {
+            ($0 as? NSPopUpButton)?.selectItem(withTag: PBSyntaxTheme.xcode.rawValue)
+        }
+        try triggerSettingsAction("contextChanged:", in: diff) {
+            ($0 as? NSStepper)?.integerValue = 7
+        }
+        try triggerSettingsAction("fontSizeChanged:", in: diff) {
+            ($0 as? NSStepper)?.doubleValue = 15
+        }
+        try triggerSettingsAction("fontChanged:", in: diff) { _ in }
+        for control in controls(in: diff).filter({ $0.action == NSSelectorFromString("diffColorChanged:") }) {
+            (control as? NSColorWell)?.color = .systemOrange
+            _ = control.target?.perform(control.action, with: control)
+        }
+        try triggerSettingsAction("terminalChanged:", in: terminal) { _ in }
+        try triggerSettingsAction("terminalCommandChanged:", in: terminal) {
+            ($0 as? NSTextField)?.stringValue = "git status --short"
+        }
+        try triggerSettingsAction("customExecutableChanged:", in: terminal) {
+            ($0 as? NSTextField)?.stringValue = "/usr/bin/true"
+        }
+        try triggerSettingsAction("customArgumentsChanged:", in: terminal) {
+            ($0 as? NSTextField)?.stringValue = "--cwd {directory}"
+        }
+
+        XCTAssertTrue(PBApplicationSettings.changedFilesOnly)
+        XCTAssertEqual(PBApplicationSettings.changedFilesSort, .gitOrder)
+        XCTAssertEqual(PBApplicationSettings.branchSort, .alphabetical)
+        XCTAssertEqual(PBApplicationSettings.openDisposition, .alwaysNewWindow)
+        XCTAssertEqual(PBApplicationSettings.restorePolicy, .always)
+        XCTAssertEqual(PBApplicationSettings.diffLayout, .sideBySide)
+        XCTAssertEqual(PBApplicationSettings.diffAlgorithm, .patience)
+        XCTAssertEqual(PBApplicationSettings.diffContextLines, 7)
+        XCTAssertEqual(PBApplicationSettings.diffFontSize, 15)
+    }
+
+    func testTerminalLaunchArgumentsTokenizationAndCustomExecution() throws {
+        let keys = [
+            "PBTerminalBundleIdentifier", "PBTerminalInitialCommand",
+            "PBCustomTerminalExecutable", "PBCustomTerminalArguments",
+        ]
+        let restorers = keys.map { preservePersistentDefault(forKey: $0) }
+        defer { restorers.reversed().forEach { $0() } }
+        let launcher = PBTerminalLauncher.shared
+
+        XCTAssertEqual(
+            launcher.argumentTokens("alpha 'two words' \"three words\" escaped\\ value trailing\\"),
+            ["alpha", "two words", "three words", "escaped value", "trailing\\"]
+        )
+        XCTAssertEqual(
+            launcher.launchArguments(identifier: "com.mitchellh.ghostty", directory: "/tmp/repo", command: "git status"),
+            ["--working-directory=/tmp/repo", "-e", "/bin/zsh", "-lc", "git status"]
+        )
+        XCTAssertEqual(
+            launcher.launchArguments(identifier: "dev.warp.Warp-Stable", directory: "/tmp/repo", command: ""),
+            ["--new-window", "--cwd", "/tmp/repo"]
+        )
+        XCTAssertEqual(
+            launcher.launchArguments(identifier: "com.github.wez.wezterm", directory: "/tmp/repo", command: ""),
+            ["start", "--cwd", "/tmp/repo", "--always-new-process"]
+        )
+        XCTAssertEqual(
+            launcher.launchArguments(identifier: "net.kovidgoyal.kitty", directory: "/tmp/repo", command: ""),
+            ["--directory", "/tmp/repo"]
+        )
+        XCTAssertEqual(
+            launcher.launchArguments(identifier: "org.alacritty", directory: "/tmp/repo", command: ""),
+            ["--working-directory", "/tmp/repo"]
+        )
+        XCTAssertTrue(launcher.launchArguments(identifier: "unknown", directory: "/tmp/repo", command: "").isEmpty)
+
+        PBApplicationSettings.terminalBundleIdentifier = "custom"
+        PBApplicationSettings.terminalInitialCommand = "git status"
+        PBApplicationSettings.customTerminalExecutable = "/usr/bin/true"
+        PBApplicationSettings.customTerminalArguments = "--cwd '{directory}' --command \"{command}\""
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitX terminal repository \(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        launcher.open(directory: directory, presenting: nil)
+    }
+
+    func testRaycastManagedScriptsInstallUpdateAndRemove() throws {
+        let restoreDirectory = preservePersistentDefault(forKey: "PBRaycastScriptsDirectory")
+        defer { restoreDirectory() }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitXRaycast-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        PBApplicationSettings.raycastScriptsDirectory = directory.path
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 240), styleMask: .titled, backing: .buffered, defer: false)
+
+        PBIntegrationManager.shared.installRaycastScripts(presenting: window)
+        dismissAttachedSheet(from: window)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        XCTAssertEqual(files.filter { $0.lastPathComponent.hasPrefix("gitx-raycast-") }.count, 4)
+        for file in files {
+            let contents = try String(contentsOf: file, encoding: .utf8)
+            XCTAssertTrue(contents.contains("# GitX checksum:"))
+            let permissions = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber
+            XCTAssertEqual(permissions?.intValue, 0o755)
+        }
+
+        PBIntegrationManager.shared.installRaycastScripts(presenting: window)
+        dismissAttachedSheet(from: window)
+        PBIntegrationManager.shared.removeRaycastScripts(presenting: window)
+        dismissAttachedSheet(from: window)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+
+        PBApplicationSettings.raycastScriptsDirectory = ""
+        PBIntegrationManager.shared.removeRaycastScripts(presenting: window)
+    }
+
+    func testRecentRepositoryStorePersistsReplacesAndRemovesEntries() {
+        let restore = preservePersistentDefault(forKey: "PBRecentRepositories")
+        defer { restore() }
+        UserDefaults.standard.set([], forKey: "PBRecentRepositories")
+        let first = URL(fileURLWithPath: "/tmp/GitX-Recent-First")
+        let second = URL(fileURLWithPath: "/tmp/GitX-Recent-Second")
+        let store = PBRecentRepositoryStore.shared
+
+        store.record(first)
+        XCTAssertTrue(recentRepositoryPaths().contains(first.path))
+        store.replace(first, with: second)
+        XCTAssertFalse(recentRepositoryPaths().contains(first.path))
+        XCTAssertTrue(recentRepositoryPaths().contains(second.path))
+        store.remove(second)
+        XCTAssertFalse(recentRepositoryPaths().contains(second.path))
+    }
+
+    func testHighlightingThemesAndPlainFallbackFont() {
+        let restoreTheme = preservePersistentDefault(forKey: "PBSyntaxTheme")
+        let restoreFont = preservePersistentDefault(forKey: "PBDiffFontName")
+        let restoreSize = preservePersistentDefault(forKey: "PBDiffFontSize")
+        defer {
+            restoreSize()
+            restoreFont()
+            restoreTheme()
+        }
+        for theme in [PBSyntaxTheme.xcode, .github] {
+            PBApplicationSettings.syntaxTheme = theme
+            XCTAssertEqual(PBHighlighting.highlightedString(forText: "let value = 1", path: "File.swift").string, "let value = 1")
+        }
+        PBApplicationSettings.syntaxTheme = .plain
+        PBApplicationSettings.diffFontName = "Definitely Not A Font"
+        PBApplicationSettings.diffFontSize = 13
+        let plain = PBHighlighting.highlightedString(forText: "plain", path: "File.swift")
+        XCTAssertEqual(plain.string, "plain")
+        XCTAssertNotNil(plain.attribute(.font, at: 0, effectiveRange: nil))
+        XCTAssertNotNil(PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 320, height: 200)).textView.font)
+    }
+
+    func testPatchExportNamingRevisionAndSeriesPolicies() {
+        XCTAssertEqual(
+            PBCommitPatchExportPolicy.filenames(forSubjects: ["Add Café / Toolbar", "!!!"]),
+            ["0001-add-cafe-toolbar.patch", "0002-commit.patch"]
+        )
+        XCTAssertEqual(PBCommitPatchExportPolicy.safeFilename(forSubject: String(repeating: "A", count: 100)).count, 80)
+        XCTAssertEqual(
+            PBCommitPatchExportPolicy.revision(forOldestSHA: "old", newestSHA: "new", oldestIsRoot: false),
+            "old^..new"
+        )
+        XCTAssertEqual(
+            PBCommitPatchExportPolicy.revision(forOldestSHA: "old", newestSHA: "new", oldestIsRoot: true),
+            "new"
+        )
+        XCTAssertTrue(PBCommitPatchExportPolicy.series(output: "old\nnew\n", matchesSHAs: ["old", "new"]))
+        XCTAssertFalse(PBCommitPatchExportPolicy.series(output: "new\nold\n", matchesSHAs: ["old", "new"]))
+    }
+
+    func testHistoryStateNestedSelectionAndOverflowBoundaries() {
+        let coordinator = PBHistoryStateCoordinator()
+        let repository = PBGitRepository()
+        let working = PBUncommittedChanges(repository: repository)
+        XCTAssertTrue(coordinator.normalizedSelection([working, working]).first === working)
+
+        let presentation = coordinator.branchFilterPresentation(
+            simpleBranch: true,
+            filter: 1,
+            selectedTitle: "origin/main",
+            remote: true
+        )
+        XCTAssertEqual(presentation.localTitle, "Remote")
+        XCTAssertTrue(presentation.allEnabled)
+
+        let leaf = TreeFixture(fullPath: "Sources/App.swift", path: "App.swift")
+        let folder = TreeFixture(fullPath: "Sources", path: "Sources", children: [leaf])
+        coordinator.saveFileBrowserSelection(selectedObjects: [leaf], hasContent: true)
+        XCTAssertEqual(coordinator.treeSelectionIndexPath(children: [folder], treeMode: true), IndexPath(indexes: [0, 0]))
+        XCTAssertEqual(
+            coordinator.adjustedScrollRow(selectionRow: Int.max - 1, oldRow: 0, visibleRows: 3, contentCount: 4),
+            3
+        )
+        XCTAssertEqual(coordinator.adjustedScrollRow(selectionRow: 4, oldRow: 1, visibleRows: 3, contentCount: 10), 6)
+    }
+
+    private func controls(in view: NSView) -> [NSControl] {
+        var result = view.subviews.compactMap { $0 as? NSControl }
+        for child in view.subviews {
+            result.append(contentsOf: controls(in: child))
+        }
+        return result
+    }
+
+    private func recentRepositoryPaths() -> [String] {
+        (UserDefaults.standard.array(forKey: "PBRecentRepositories") as? [[String: Any]] ?? [])
+            .compactMap { $0["path"] as? String }
+    }
+
+    private func triggerSettingsAction(
+        _ actionName: String,
+        in view: NSView,
+        configure: (NSControl) -> Void
+    ) throws {
+        let selector = NSSelectorFromString(actionName)
+        let control = try XCTUnwrap(controls(in: view).first { $0.action == selector })
+        configure(control)
+        _ = control.target?.perform(selector, with: control)
+    }
+
+    private func dismissAttachedSheet(from window: NSWindow) {
+        guard let sheet = window.attachedSheet else { return }
+        window.endSheet(sheet)
+        sheet.orderOut(nil)
     }
 }

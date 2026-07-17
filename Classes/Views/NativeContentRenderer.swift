@@ -19,6 +19,7 @@ final nonisolated class NativeRenderResult: NSObject {
 private nonisolated enum NativeLinkAction {
     case commit(sha: String)
     case collapse(key: String)
+    case revealSuppressed(key: String)
     case image(key: String, path: String, section: Int)
     case diff(action: String, patch: String)
     case partialDiff(
@@ -35,6 +36,8 @@ private nonisolated enum NativeLinkAction {
             ["type": "commit", "sha": sha]
         case let .collapse(key):
             ["type": "collapse", "key": key]
+        case let .revealSuppressed(key):
+            ["type": "reveal-suppressed", "key": key]
         case let .image(key, path, section):
             ["type": "image", "key": key, "path": path, "section": section]
         case let .diff(action, patch):
@@ -303,6 +306,8 @@ final nonisolated class NativeDiffRenderer: NSObject {
                     context: section.context,
                     sectionIndex: sectionIndex,
                     fallbackPath: section.path,
+                    diffLayout: section.diffLayout,
+                    suppressionPatterns: section.suppressionPatterns,
                     shouldHighlightSyntax: shouldHighlightSyntax,
                     collapsedFiles: collapsedFiles,
                     expandedImages: expandedImages,
@@ -321,6 +326,8 @@ final nonisolated class NativeDiffRenderer: NSObject {
         context: String,
         sectionIndex: Int,
         fallbackPath: String,
+        diffLayout: Int,
+        suppressionPatterns: [String],
         shouldHighlightSyntax: Bool,
         collapsedFiles: Set<String>,
         expandedImages: Set<String>,
@@ -335,27 +342,40 @@ final nonisolated class NativeDiffRenderer: NSObject {
         var collapsed = false
         var currentHunk: NativeDiffHunk?
         var currentHunkSyntax: [Int: NSAttributedString] = [:]
+        var sideBySideSkipThrough = -1
 
         for (index, line) in lines.enumerated() {
+            if index <= sideBySideSkipThrough {
+                continue
+            }
             if let file = document.filesByStartIndex[NSNumber(value: index)] {
                 currentPath = file.path
                 currentHunk = nil
                 currentHunkSyntax = [:]
                 let fileKey = "\(sectionIndex):\(currentPath)"
-                collapsed = collapsedFiles.contains(fileKey)
+                let suppressed = matchesSuppression(path: currentPath, patterns: suppressionPatterns) &&
+                    !expandedImages.contains("suppression:\(fileKey)")
+                collapsed = collapsedFiles.contains(fileKey) || suppressed
                 support.appendLink(
                     title: collapsed ? "▸ " : "▾ ",
-                    action: .collapse(key: fileKey),
+                    action: suppressed ? .revealSuppressed(key: fileKey) : .collapse(key: fileKey),
                     linkPayloads: &linkPayloads,
                     to: rendered
                 )
                 rendered.append(NSAttributedString(
-                    string: currentPath + "\n",
+                    string: currentPath + (suppressed ? " — Diff hidden by repository setting" : "") + "\n",
                     attributes: support.titleAttributes
                 ))
                 continue
             }
             if collapsed {
+                continue
+            }
+            // The blob-mode metadata is useful in a raw patch, but it is visual
+            // noise in GitX's rendered Detail view. Keep it in the parsed hunk
+            // headers so copying and partial staging continue to use a complete
+            // patch; omit it only from the presentation layer.
+            if line.hasPrefix("index ") {
                 continue
             }
             if let hunk = document.hunksByStartIndex[NSNumber(value: index)] {
@@ -397,6 +417,14 @@ final nonisolated class NativeDiffRenderer: NSObject {
                     )
                 }
                 rendered.append(NSAttributedString(string: "\n"))
+                if diffLayout == DiffLayout.sideBySide.rawValue {
+                    appendSideBySideHunk(
+                        hunk,
+                        syntaxHighlights: currentHunkSyntax,
+                        to: rendered
+                    )
+                    sideBySideSkipThrough = hunk.endIndex - 1
+                }
                 continue
             }
 
@@ -523,8 +551,135 @@ final nonisolated class NativeDiffRenderer: NSObject {
         }
     }
 
+    private func matchesSuppression(path: String, patterns: [String]) -> Bool {
+        let range = NSRange(path.startIndex..., in: path)
+        return patterns.contains { pattern in
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { return false }
+            return expression.firstMatch(in: path, range: range) != nil
+        }
+    }
+
+    private func appendSideBySideHunk(
+        _ hunk: NativeDiffHunk,
+        syntaxHighlights: [Int: NSAttributedString],
+        to rendered: NSMutableAttributedString
+    ) {
+        rendered.append(NSAttributedString(
+            string: "──────────────────────── Before ────────────────────────┬──────────────────────── After ─────────────────────────\n",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .backgroundColor: NSColor.controlBackgroundColor,
+            ]
+        ))
+        let rows = pairedRowIndexes(hunk.lines)
+        for (leftIndex, rightIndex) in rows {
+            let left = leftIndex.map { hunk.lines[$0] }
+            let right = rightIndex.map { hunk.lines[$0] }
+            let leftString = sideColumn(left)
+            let rightString = sideColumn(right)
+            let leftRendered = attributedDiffLine(
+                leftString,
+                counterpart: right.map(sideColumn),
+                syntaxBody: sideSyntaxBody(leftIndex.flatMap { syntaxHighlights[$0] }, originalLine: left)
+            )
+            let rightRendered = attributedDiffLine(
+                rightString,
+                counterpart: left.map(sideColumn),
+                syntaxBody: sideSyntaxBody(rightIndex.flatMap { syntaxHighlights[$0] }, originalLine: right)
+            )
+            rendered.append(leftRendered)
+            rendered.append(NSAttributedString(
+                string: " │ ",
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                    .foregroundColor: NSColor.separatorColor,
+                ]
+            ))
+            rendered.append(rightRendered)
+            rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
+        }
+        rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
+    }
+
+    private func pairedRowIndexes(_ lines: [String]) -> [(Int?, Int?)] {
+        var result: [(Int?, Int?)] = []
+        var index = 1
+        while index < lines.count {
+            let line = lines[index]
+            if line.hasPrefix("-") {
+                var removed: [Int] = []
+                var added: [Int] = []
+                while index < lines.count, lines[index].hasPrefix("-") {
+                    removed.append(index)
+                    index += 1
+                }
+                while index < lines.count, lines[index].hasPrefix("+") {
+                    added.append(index)
+                    index += 1
+                }
+                for row in 0 ..< max(removed.count, added.count) {
+                    result.append((
+                        removed.indices.contains(row) ? removed[row] : nil,
+                        added.indices.contains(row) ? added[row] : nil
+                    ))
+                }
+            } else if line.hasPrefix("+") {
+                result.append((nil, index))
+                index += 1
+            } else if line.hasPrefix("\\") {
+                index += 1
+            } else {
+                result.append((index, index))
+                index += 1
+            }
+        }
+        return result
+    }
+
+    private func sideColumn(_ line: String?) -> String {
+        let width = 58
+        guard let line else { return String(repeating: " ", count: width) }
+        let lineString = line as NSString
+        if lineString.length > width {
+            return lineString.substring(to: width - 1) + "…"
+        }
+        return lineString.padding(toLength: width, withPad: " ", startingAt: 0)
+    }
+
+    private func sideSyntaxBody(
+        _ syntaxBody: NSAttributedString?,
+        originalLine: String?
+    ) -> NSAttributedString? {
+        guard let syntaxBody, let originalLine else { return nil }
+        let targetLength = 57
+        let result = NSMutableAttributedString(attributedString: syntaxBody)
+        if (originalLine as NSString).length > 58 {
+            let retainedLength = min(targetLength - 1, result.length)
+            if result.length > retainedLength {
+                result.deleteCharacters(in: NSRange(
+                    location: retainedLength,
+                    length: result.length - retainedLength
+                ))
+            }
+            let attributes = retainedLength > 0
+                ? result.attributes(at: retainedLength - 1, effectiveRange: nil)
+                : support.baseAttributes
+            result.append(NSAttributedString(string: "…", attributes: attributes))
+        }
+        if result.length < targetLength {
+            result.append(NSAttributedString(
+                string: String(repeating: " ", count: targetLength - result.length),
+                attributes: support.baseAttributes
+            ))
+        }
+        return result
+    }
+
     private func syntaxHighlights(for hunkLines: [String], path: String) -> [Int: NSAttributedString] {
-        guard PBHighlighting.languageName(forPath: path) != nil else { return [:] }
+        guard ApplicationSettings.syntaxTheme != .plain,
+              PBHighlighting.languageName(forPath: path) != nil
+        else { return [:] }
 
         let oldText = NSMutableString()
         let newText = NSMutableString()
@@ -574,11 +729,11 @@ final nonisolated class NativeDiffRenderer: NSObject {
     ) -> NSMutableAttributedString {
         var attributes = support.baseAttributes
         if line.hasPrefix("+"), !line.hasPrefix("+++") {
-            attributes[.foregroundColor] = NSColor(red: 0.08, green: 0.46, blue: 0.18, alpha: 1)
-            attributes[.backgroundColor] = NSColor(red: 0.20, green: 0.70, blue: 0.30, alpha: 0.13)
+            attributes[.foregroundColor] = ApplicationSettings.addedTextColor
+            attributes[.backgroundColor] = ApplicationSettings.addedBackgroundColor
         } else if line.hasPrefix("-"), !line.hasPrefix("---") {
-            attributes[.foregroundColor] = NSColor(red: 0.72, green: 0.12, blue: 0.13, alpha: 1)
-            attributes[.backgroundColor] = NSColor(red: 0.90, green: 0.20, blue: 0.20, alpha: 0.12)
+            attributes[.foregroundColor] = ApplicationSettings.removedTextColor
+            attributes[.backgroundColor] = ApplicationSettings.removedBackgroundColor
         } else if line.hasPrefix("@@") {
             attributes[.foregroundColor] = NSColor.systemBlue
             attributes[.backgroundColor] = NSColor(red: 0.20, green: 0.45, blue: 0.90, alpha: 0.10)

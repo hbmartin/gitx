@@ -1,0 +1,339 @@
+#!/usr/bin/env bash
+#MISE description="Build, Developer ID sign, notarize, verify, and package GitX"
+
+set -euo pipefail
+
+task_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd "$task_dir/.." && pwd)
+cd "$root"
+
+log()
+{
+	printf '[gitx-release] %s %s\n' "$(date '+%H:%M:%S')" "$*"
+}
+
+fail()
+{
+	printf '[gitx-release] ERROR: %s\n' "$*" >&2
+	exit 1
+}
+
+usage()
+{
+	cat <<'EOF'
+Build a directly distributable GitX app using the Apple team configured in Xcode.
+
+Usage:
+  mise run release
+  mise run release -- [arm64|x86_64|universal]
+  mise run release -- --check
+
+The release command:
+  1. Archives GitX with Xcode automatic signing.
+  2. Uploads the archive for Developer ID signing and notarization.
+  3. Waits for Xcode to export the notarized, stapled app.
+  4. Verifies signatures, bundle identifiers, architectures, and Gatekeeper acceptance.
+  5. Writes GitX-<architecture>.zip, GitX-<architecture>.dmg, the exported app,
+     and SHA-256 checksums under release/.
+
+Xcode must have an Apple Developer account with access to the project's team.
+Xcode may create or download a managed Developer ID certificate during export.
+
+Environment overrides:
+  GITX_RELEASE_ARCH
+      arm64, x86_64, or universal. Defaults to the current Mac architecture.
+  GITX_RELEASE_DIR
+      Artifact directory. Defaults to <repository>/release.
+  GITX_RELEASE_WORK_DIR
+      Archive, Derived Data, and log directory. Defaults to
+      <repository>/build/release-<architecture>.
+  GITX_NOTARIZATION_TIMEOUT_SECONDS
+      Maximum wait for notarization. Defaults to 3600.
+  GITX_NOTARIZATION_POLL_SECONDS
+      Delay between notarized-export attempts. Defaults to 30.
+EOF
+}
+
+mode=release
+requested_arch=${GITX_RELEASE_ARCH:-$(uname -m)}
+
+while (( $# > 0 )); do
+	case "$1" in
+		--check)
+			mode=check
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		arm64|x86_64|universal)
+			requested_arch=$1
+			;;
+		*)
+			usage >&2
+			fail "Unknown argument: $1"
+			;;
+	esac
+	shift
+done
+
+case "$requested_arch" in
+	arm64)
+		xcode_archs=arm64
+		artifact_arch=arm64
+		;;
+	x86_64)
+		xcode_archs=x86_64
+		artifact_arch=x86_64
+		;;
+	universal)
+		xcode_archs="arm64 x86_64"
+		artifact_arch=universal
+		;;
+	*)
+		fail "Unsupported architecture '$requested_arch'; use arm64, x86_64, or universal"
+		;;
+esac
+
+timeout_seconds=${GITX_NOTARIZATION_TIMEOUT_SECONDS:-3600}
+poll_seconds=${GITX_NOTARIZATION_POLL_SECONDS:-30}
+[[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] ||
+	fail "GITX_NOTARIZATION_TIMEOUT_SECONDS must be a positive integer"
+[[ "$poll_seconds" =~ ^[1-9][0-9]*$ ]] ||
+	fail "GITX_NOTARIZATION_POLL_SECONDS must be a positive integer"
+
+for command in codesign ditto hdiutil lipo plutil python3 shasum spctl xcodebuild xcrun; do
+	command -v "$command" >/dev/null 2>&1 || fail "Required command '$command' is unavailable"
+done
+
+[[ -d GitX.xcworkspace ]] || fail "GitX.xcworkspace is missing"
+[[ -x scripts/check_bundle_identifiers.py ]] ||
+	fail "scripts/check_bundle_identifiers.py is missing or not executable"
+
+log "Inspecting the GitX Release signing configuration"
+build_settings=$(
+	xcodebuild \
+		-workspace GitX.xcworkspace \
+		-scheme GitX \
+		-configuration Release \
+		-showBuildSettings
+)
+
+build_setting()
+{
+	local key=$1
+	awk -F ' = ' -v key="$key" '
+		$1 ~ "^[[:space:]]*" key "$" {
+			print $2
+			exit
+		}
+	' <<<"$build_settings"
+}
+
+team_id=$(build_setting DEVELOPMENT_TEAM)
+signing_style=$(build_setting CODE_SIGN_STYLE)
+hardened_runtime=$(build_setting ENABLE_HARDENED_RUNTIME)
+bundle_identifier=$(build_setting PRODUCT_BUNDLE_IDENTIFIER)
+
+[[ -n "$team_id" ]] ||
+	fail "Release has no DEVELOPMENT_TEAM; select your team for the GitX target in Xcode"
+[[ "$signing_style" == Automatic ]] ||
+	fail "Release must use Xcode automatic signing; found CODE_SIGN_STYLE=$signing_style"
+[[ "$hardened_runtime" == YES ]] ||
+	fail "Release must enable the hardened runtime"
+[[ "$bundle_identifier" == net.phere.GitX ]] ||
+	fail "Unexpected root bundle identifier: $bundle_identifier"
+
+log "Preflight passed (team $team_id, bundle $bundle_identifier, architecture $artifact_arch)"
+if [[ "$mode" == check ]]; then
+	log "Xcode will validate account access and provision Developer ID signing during export"
+	exit 0
+fi
+
+output_root=${GITX_RELEASE_DIR:-"$root/release"}
+work_root=${GITX_RELEASE_WORK_DIR:-"$root/build/release-$artifact_arch"}
+
+mkdir -p "$output_root" "$work_root"
+output_root=$(cd "$output_root" && pwd -P)
+work_root=$(cd "$work_root" && pwd -P)
+
+[[ "$output_root" != / && "$output_root" != "$root" ]] ||
+	fail "GITX_RELEASE_DIR must be a dedicated artifact directory"
+[[ "$work_root" != / && "$work_root" != "$root" ]] ||
+	fail "GITX_RELEASE_WORK_DIR must be a dedicated work directory"
+[[ "$work_root" != "$output_root" ]] ||
+	fail "GITX_RELEASE_DIR and GITX_RELEASE_WORK_DIR must be different directories"
+
+archive_path="$work_root/GitX.xcarchive"
+derived_data_path="$work_root/DerivedData"
+upload_export_path="$work_root/Upload"
+notarized_export_path="$work_root/Notarized"
+logs_path="$work_root/logs"
+final_app_dir="$output_root/GitX-$artifact_arch"
+final_app_path="$final_app_dir/GitX.app"
+zip_path="$output_root/GitX-$artifact_arch.zip"
+dmg_path="$output_root/GitX-$artifact_arch.dmg"
+checksum_path="$output_root/GitX-$artifact_arch.sha256"
+
+rm -rf \
+	"$work_root" \
+	"$final_app_dir" \
+	"$zip_path" \
+	"$dmg_path" \
+	"$checksum_path"
+mkdir -p "$logs_path" "$upload_export_path"
+
+temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/gitx-release.XXXXXX")
+mounted_dmg=
+
+cleanup()
+{
+	if [[ -n "$mounted_dmg" ]]; then
+		hdiutil detach "$mounted_dmg" -quiet >/dev/null 2>&1 || true
+	fi
+	rm -rf "$temporary_dir"
+}
+trap cleanup EXIT
+
+export_options="$temporary_dir/ExportOptions.plist"
+plutil -create xml "$export_options"
+plutil -insert method -string developer-id "$export_options"
+plutil -insert destination -string upload "$export_options"
+plutil -insert signingStyle -string automatic "$export_options"
+plutil -insert teamID -string "$team_id" "$export_options"
+
+log "Archiving GitX ($artifact_arch)"
+xcodebuild \
+	-workspace GitX.xcworkspace \
+	-scheme GitX \
+	-configuration Release \
+	-destination "generic/platform=macOS" \
+	-derivedDataPath "$derived_data_path" \
+	-archivePath "$archive_path" \
+	-allowProvisioningUpdates \
+	"ARCHS=$xcode_archs" \
+	ONLY_ACTIVE_ARCH=NO \
+	archive 2>&1 | tee "$logs_path/archive.log"
+
+archived_app="$archive_path/Products/Applications/GitX.app"
+[[ -d "$archived_app" ]] || fail "Archive did not contain GitX.app"
+python3 scripts/check_bundle_identifiers.py "$archived_app"
+
+log "Uploading the archive for Developer ID signing and notarization"
+xcodebuild \
+	-exportArchive \
+	-archivePath "$archive_path" \
+	-exportPath "$upload_export_path" \
+	-exportOptionsPlist "$export_options" \
+	-allowProvisioningUpdates 2>&1 | tee "$logs_path/notarization-upload.log"
+
+log "Waiting for Apple notarization (timeout: ${timeout_seconds}s)"
+started_at=$(date +%s)
+attempt=0
+while true; do
+	attempt=$((attempt + 1))
+	rm -rf "$notarized_export_path"
+	if xcodebuild \
+		-exportNotarizedApp \
+		-archivePath "$archive_path" \
+		-exportPath "$notarized_export_path" \
+		>"$logs_path/notarized-export-attempt.log" 2>&1; then
+		cat "$logs_path/notarized-export-attempt.log"
+		break
+	fi
+
+	now=$(date +%s)
+	elapsed=$((now - started_at))
+	if (( elapsed >= timeout_seconds )); then
+		tail -n 20 "$logs_path/notarized-export-attempt.log" >&2 || true
+		fail "Notarization was not ready after ${timeout_seconds}s; inspect the archive in Xcode Organizer"
+	fi
+
+	log "Notarized export is not ready yet (attempt $attempt, ${elapsed}s elapsed)"
+	sleep "$poll_seconds"
+done
+
+exported_app="$notarized_export_path/GitX.app"
+[[ -d "$exported_app" ]] || fail "The notarized export did not contain GitX.app"
+
+verify_app()
+{
+	local app_path=$1
+	local executable_path="$app_path/Contents/MacOS/GitX"
+	local signature_details
+	local actual_archs
+	local expected_arch
+
+	[[ -x "$executable_path" ]] || fail "GitX executable is missing from $app_path"
+	codesign --verify --deep --strict --verbose=2 "$app_path"
+	signature_details=$(codesign --display --verbose=4 "$app_path" 2>&1)
+	grep -q '^Authority=Developer ID Application:' <<<"$signature_details" ||
+		fail "$app_path is not signed with a Developer ID Application certificate"
+	xcrun stapler validate "$app_path"
+	spctl --assess --type execute --verbose=4 "$app_path"
+	python3 scripts/check_bundle_identifiers.py "$app_path"
+
+	actual_archs=$(lipo -archs "$executable_path")
+	for expected_arch in $xcode_archs; do
+		case " $actual_archs " in
+			*" $expected_arch "*) ;;
+			*) fail "$app_path is missing the $expected_arch architecture" ;;
+		esac
+	done
+	log "Verified Developer ID signature, notarization, Gatekeeper, and architectures: $actual_archs"
+}
+
+log "Verifying the exported app"
+verify_app "$exported_app"
+
+mkdir -p "$final_app_dir"
+ditto "$exported_app" "$final_app_path"
+
+log "Creating GitX-$artifact_arch.zip"
+ditto -c -k --sequesterRsrc --keepParent "$final_app_path" "$zip_path"
+
+zip_staging="$temporary_dir/zip"
+mkdir -p "$zip_staging"
+ditto -x -k "$zip_path" "$zip_staging"
+log "Checking the packaged app from the ZIP archive"
+verify_app "$zip_staging/GitX.app"
+
+dmg_staging="$temporary_dir/dmg"
+mkdir -p "$dmg_staging"
+ditto "$final_app_path" "$dmg_staging/GitX.app"
+ln -s /Applications "$dmg_staging/Applications"
+
+log "Creating GitX-$artifact_arch.dmg"
+hdiutil create \
+	-fs HFS+ \
+	-format UDZO \
+	-srcfolder "$dmg_staging" \
+	-volname GitX \
+	"$dmg_path" >/dev/null
+
+log "Checking the packaged app from the disk image"
+mounted_dmg="$temporary_dir/mounted-dmg"
+mkdir -p "$mounted_dmg"
+hdiutil attach \
+	-nobrowse \
+	-readonly \
+	-mountpoint "$mounted_dmg" \
+	"$dmg_path" >/dev/null
+verify_app "$mounted_dmg/GitX.app"
+hdiutil detach "$mounted_dmg" -quiet
+mounted_dmg=
+
+(
+	cd "$output_root"
+	shasum -a 256 \
+		"GitX-$artifact_arch.zip" \
+		"GitX-$artifact_arch.dmg" \
+		>"GitX-$artifact_arch.sha256"
+)
+
+log "Release artifacts are ready:"
+printf '  App:       %s\n' "$final_app_path"
+printf '  ZIP:       %s\n' "$zip_path"
+printf '  DMG:       %s\n' "$dmg_path"
+printf '  Checksums: %s\n' "$checksum_path"
+printf '  Logs:      %s\n' "$logs_path"

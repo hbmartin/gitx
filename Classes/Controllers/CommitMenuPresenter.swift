@@ -199,25 +199,24 @@ final nonisolated class CommitMenuPresenter: NSObject {
                 hidden: contextualValue(isContextualMenu, !isActive)
             )
         case .reveal:
-            let isActive = selectedFiles.count == 1
-            let title: String? = if isContextualMenu {
-                isActive
-                    ? String(
-                        format: NSLocalizedString(
-                            "Reveal “%@” in Finder",
-                            comment: "Reveal File in Finder contextual menu item (single file with name)"
-                        ),
-                        lastPathComponent(selectedFiles[0].path)
-                    )
-                    : NSLocalizedString(
+            let isActive = !selectedFiles.isEmpty
+            mutation = CommitMenuMutation(
+                title: contextualTitle(
+                    isContextualMenu,
+                    files: selectedFiles,
+                    single: NSLocalizedString(
+                        "Reveal “%@” in Finder",
+                        comment: "Reveal File in Finder contextual menu item (single file with name)"
+                    ),
+                    multiple: NSLocalizedString(
+                        "Reveal %i Files in Finder",
+                        comment: "Reveal Files in Finder contextual menu item (multiple files with number)"
+                    ),
+                    empty: NSLocalizedString(
                         "Reveal in Finder",
                         comment: "Reveal File in Finder contextual menu item (empty selection)"
                     )
-            } else {
-                nil
-            }
-            mutation = CommitMenuMutation(
-                title: title,
+                ),
                 enabled: isActive,
                 hidden: contextualValue(isContextualMenu, !isActive)
             )

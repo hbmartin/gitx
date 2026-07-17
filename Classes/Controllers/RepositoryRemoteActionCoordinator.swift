@@ -30,6 +30,10 @@ private final nonisolated class RemoteOperationTarget: @unchecked Sendable {
     func push() throws {
         _ = try repository.pushBranch(branch, toRemote: remote)
     }
+
+    var pushOutput: String {
+        repository.lastPushOutput ?? ""
+    }
 }
 
 // Objective-C actions call this through GitX-Swift.h.
@@ -169,6 +173,14 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                         self?.windowController?.showErrorSheet(error)
                     } else {
                         self?.logger.debug("Push workflow completed")
+                        if let self {
+                            RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
+                                output: operationTarget.pushOutput,
+                                repository: self.repository,
+                                remote: remote,
+                                presenting: self.windowController?.window
+                            )
+                        }
                     }
                 }
             )

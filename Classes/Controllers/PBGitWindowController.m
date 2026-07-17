@@ -29,6 +29,8 @@
 	PBRepositoryReferenceActionCoordinator *_referenceActionCoordinator;
 	PBRepositoryStashActionCoordinator *_stashActionCoordinator;
 	PBWorkspaceActionCoordinator *_workspaceActionCoordinator;
+	PBRepositoryToolbarController *_repositoryToolbarController;
+	NSMapTable<PBViewController *, NSResponder *> *_contentFirstResponders;
 
 	__weak IBOutlet NSView *sourceListControlsView;
 	__weak IBOutlet NSSplitView *splitView;
@@ -95,6 +97,8 @@
 	_sidebarController = nil;
 	_historyViewController = nil;
 	_commitViewController = nil;
+	_repositoryToolbarController = nil;
+	[[PBWelcomeWindowController shared] showIfNeededAfterDelay];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem
@@ -141,6 +145,9 @@
 	_sidebarController = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:self];
 	_historyViewController = [[PBGitHistoryController alloc] initWithRepository:self.repository superController:self];
 	_commitViewController = [[PBGitCommitController alloc] initWithRepository:self.repository superController:self];
+	_repositoryToolbarController = [[PBRepositoryToolbarController alloc] initWithWindowController:self];
+	_contentFirstResponders = [NSMapTable strongToWeakObjectsMapTable];
+	[_repositoryToolbarController install];
 	_sidebarController.view.frame = sourceSplitView.bounds;
 	[sourceSplitView addSubview:_sidebarController.view];
 	[sourceListControlsView addSubview:_sidebarController.sourceListControlsView];
@@ -178,28 +185,61 @@
 - (void)changeContentController:(PBViewController *)controller
 {
 	if (!controller || contentController == controller) return;
-	if (contentController) [contentController removeObserver:self keyPath:@"status"];
-	[self removeAllContentSubViews];
+	CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+	PBViewController *previousController = contentController;
+	if (previousController) {
+		NSResponder *firstResponder = self.window.firstResponder;
+		if ([firstResponder isKindOfClass:NSView.class] &&
+			[(NSView *)firstResponder isDescendantOf:previousController.view]) {
+			[_contentFirstResponders setObject:firstResponder forKey:previousController];
+		}
+		[previousController removeObserver:self keyPath:@"status"];
+		previousController.view.hidden = YES;
+	}
+
 	contentController = controller;
-	controller.view.frame = contentSplitView.bounds;
-	[contentSplitView addSubview:controller.view];
-	[self.window makeFirstResponder:controller.firstResponder];
-	[controller updateView];
+	BOOL firstMount = controller.view.superview != contentSplitView;
+	if (firstMount) {
+		controller.view.frame = contentSplitView.bounds;
+		controller.view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+		[contentSplitView addSubview:controller.view];
+		[controller updateView];
+	}
+	controller.view.hidden = NO;
+	NSResponder *firstResponder = [_contentFirstResponders objectForKey:controller] ?: controller.firstResponder;
+	if (firstResponder) [self.window makeFirstResponder:firstResponder];
+	[_repositoryToolbarController setHistoryMode:controller == _historyViewController];
+	__weak typeof(self) weakSelf = self;
 	[controller addObserver:self
 					keyPath:@"status"
 					options:NSKeyValueObservingOptionInitial
 					  block:^(__unused MAKVONotification *note) {
-						  [self updateStatus];
+						  [weakSelf updateStatus];
 					  }];
+	CFTimeInterval elapsed = CFAbsoluteTimeGetCurrent() - start;
+	NSLog(@"[GitX][Performance] %@ repository view in %.3f ms (first mount: %@, budget: %.0f ms)",
+		  firstMount ? @"Cold-mounted" : @"Warm-switched",
+		  elapsed * 1000.0,
+		  firstMount ? @"yes" : @"no",
+		  [PBPerformanceBudgets warmViewSwitchP95Seconds] * 1000.0);
 }
 
 - (void)showCommitView:(id)sender
 {
+	NSLog(@"Switching repository window to Commit view");
 	[_sidebarController selectStage];
+	[self changeContentController:_commitViewController];
 }
 - (void)showHistoryView:(id)sender
 {
+	NSLog(@"Switching repository window to History view");
 	[_sidebarController selectCurrentBranch];
+	[self changeContentController:_historyViewController];
+}
+
+- (BOOL)isShowingCommitView
+{
+	return contentController == _commitViewController;
 }
 
 - (void)updateStatus
@@ -211,6 +251,8 @@
 		busy = NO;
 	}
 	statusField.stringValue = status;
+	NSString *baseTitle = self.document.displayName ?: self.window.title;
+	[_repositoryToolbarController updateWithStatus:status busy:busy baseWindowTitle:baseTitle];
 	if (busy) {
 		[progressIndicator startAnimation:self];
 		progressIndicator.hidden = NO;
@@ -309,6 +351,7 @@
 {
 	[self performFetchForRef:nil];
 }
+
 - (IBAction)pullRemote:(id)sender
 {
 	[self pullFromSender:sender rebase:NO];

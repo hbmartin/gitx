@@ -8,6 +8,8 @@ extern NSString *const PBNativeSectionPathKey;
 extern NSString *const PBNativeSectionContextKey;
 extern NSString *const PBNativeSectionEntriesKey;
 extern NSString *const PBNativeSectionImageSourceKey;
+extern NSString *const PBNativeSectionDiffLayoutKey;
+extern NSString *const PBNativeSectionSuppressionPatternsKey;
 extern NSString *const PBNativeImageSourceRevisionsKey;
 extern NSString *const PBNativeImageSourceWorkingTreeKey;
 extern NSString *const PBNativeImageSourceWorkingTreeURLKey;
@@ -35,10 +37,13 @@ extern NSString *const PBNativeImageSourceTaskDirectoryKey;
 
 - (void)setAccessoryView:(nullable NSView *)accessoryView;
 - (void)showMessage:(NSString *)message;
-- (void)showSourceSections:(NSArray<NSDictionary *> *)sections;
-- (void)showBlameSections:(NSArray<NSDictionary *> *)sections;
-- (void)showHistorySections:(NSArray<NSDictionary *> *)sections;
-- (void)showDiffSections:(NSArray<NSDictionary *> *)sections;
+- (void)showSourceSections:(NSArray<NSDictionary<NSString *, id> *> *)sections;
+- (void)showBlameSections:(NSArray<NSDictionary<NSString *, id> *> *)sections;
+- (void)showHistorySections:(NSArray<NSDictionary<NSString *, id> *> *)sections;
+- (void)showDiffSections:(NSArray<NSDictionary<NSString *, id> *> *)sections;
+- (void)showDiffSections:(NSArray<NSDictionary<NSString *, id> *> *)sections
+		   cacheIdentifier:(nullable NSString *)cacheIdentifier
+	preserveScrollPosition:(BOOL)preserveScrollPosition;
 - (void)scrollPageUp;
 - (void)scrollPageDown;
 

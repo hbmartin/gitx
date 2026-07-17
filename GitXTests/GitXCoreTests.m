@@ -36,6 +36,11 @@
 - (NSSet<GTOID *> *)baseCommits;
 @end
 
+@interface PBGitTree (GitXCoreTests)
+- (BOOL)hasBinaryHeader:(nullable NSString *)contents;
+- (BOOL)hasBinaryAttributes;
+@end
+
 @interface PBGitSidebarController (GitXCoreTests)
 - (PBSourceViewItem *)addRevSpec:(PBGitRevSpecifier *)rev;
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldEditTableColumn:(nullable NSTableColumn *)tableColumn item:(id)item;
@@ -1341,6 +1346,8 @@
 													   input:@"stored through stdin"
 													   error:&error];
 	XCTAssertTrue(launched, @"%@", error);
+	BOOL wrapperLaunched = [self.repository launchTaskWithArguments:@[ @"status", @"--porcelain" ] error:&error];
+	XCTAssertTrue(wrapperLaunched, @"%@", error);
 }
 
 - (void)testRefreshStatCacheCompletesWithARefreshedSnapshot
@@ -1774,6 +1781,31 @@
 	PBGitTree *firstTree = changes.tree;
 	XCTAssertNotNil(firstTree);
 	XCTAssertEqual(firstTree, changes.tree);
+}
+
+- (void)testGitTreeBinaryHeuristicsAndLocalCacheDecodingAreDeterministic
+{
+	unichar binaryCharacters[] = {'a', 0, 'b'};
+	NSString *binaryHeader = [NSString stringWithCharacters:binaryCharacters length:3];
+	PBGitTree *tree = [[PBGitTree alloc] init];
+	tree.repository = self.repository;
+	tree.path = @"image.png";
+	tree.leaf = YES;
+	PBGitTree *root = [[PBGitTree alloc] init];
+	root.leaf = NO;
+	tree.parent = root;
+	XCTAssertTrue([tree hasBinaryHeader:binaryHeader]);
+	XCTAssertTrue([tree hasBinaryAttributes]);
+
+	NSString *cachePath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"GitXTreeCache-%@", NSUUID.UUID.UUIDString]];
+	unsigned char latin1Byte = 0xE9;
+	XCTAssertTrue([[NSData dataWithBytes:&latin1Byte length:1] writeToFile:cachePath atomically:YES]);
+	NSDate *modificationDate = [[NSFileManager defaultManager] attributesOfItemAtPath:cachePath error:nil][NSFileModificationDate];
+	[tree setValue:cachePath forKey:@"localFileName"];
+	[tree setValue:modificationDate forKey:@"localMtime"];
+	XCTAssertEqualObjects(tree.contents, @"é");
+	[tree setValue:nil forKey:@"localFileName"];
+	[[NSFileManager defaultManager] removeItemAtPath:cachePath error:nil];
 }
 
 - (void)testWorkingStateCompatibilitySurfaceAndCommittedTreeExport

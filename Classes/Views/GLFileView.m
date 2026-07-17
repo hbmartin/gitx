@@ -95,7 +95,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 
 - (NSString *)syntheticDiffForUntrackedFile:(PBChangedFile *)file
 {
-	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:3] ?: @"";
+	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:PBApplicationSettings.diffContextLines] ?: @"";
 	NSMutableArray<NSString *> *lines = [[contents componentsSeparatedByString:@"\n"] mutableCopy];
 	BOOL endsWithNewline = [contents hasSuffix:@"\n"];
 	if (endsWithNewline && [lines.lastObject length] == 0) [lines removeLastObject];
@@ -150,17 +150,20 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 			}
 			if (!change) continue;
 			if (change.hasStagedChanges) {
-				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:3] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:PBApplicationSettings.diffContextLines] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
 			}
 			if (change.hasUnstagedChanges) {
 				BOOL untracked = change.status == NEW && !change.hasStagedChanges;
-				NSString *diffText = untracked ? [self syntheticDiffForUntrackedFile:change] : [historyController.repository.index diffForFile:change staged:NO contextLines:3];
+				NSString *diffText = untracked ? [self syntheticDiffForUntrackedFile:change] : [historyController.repository.index diffForFile:change staged:NO contextLines:PBApplicationSettings.diffContextLines];
 				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
 			}
 		} else {
 			NSString *base = parentSHA ?: PBEmptyTreeSHA;
 			NSError *error = nil;
-			NSString *patch = [historyController.repository outputOfTaskWithArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, commitSHA, @"--", tree.fullPath ] error:&error] ?: @"";
+			NSMutableArray<NSString *> *arguments = [@[ @"diff" ] mutableCopy];
+			[arguments addObjectsFromArray:PBDiffCommandOptions.arguments];
+			[arguments addObjectsFromArray:@[ @"--find-renames", @"--no-ext-diff", base, commitSHA, @"--", tree.fullPath ]];
+			NSString *patch = [historyController.repository outputOfTaskWithArguments:arguments error:&error] ?: @"";
 			[sections addObject:@{PBNativeSectionTitleKey : tree.fullPath, PBNativeSectionTextKey : patch, PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
 		}
 	}
@@ -206,6 +209,8 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		}
 		if (mode == PBFileModeDiff)
 			sections = [[self diffSectionsForTrees:selected workingState:workingState commitSHA:commitSHA parentSHA:parentSHA changes:changes imageSource:imageSource generation:generation] mutableCopy];
+		if (mode == PBFileModeDiff)
+			sections = [[PBNativeDiffSectionSettings applyToSections:sections repository:self->historyController.repository] mutableCopy];
 		if (![self isFileLoadGenerationCurrent:generation]) return;
 		dispatch_async(dispatch_get_main_queue(), ^{
 			if (![self isFileLoadGenerationCurrent:generation]) return;

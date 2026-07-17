@@ -65,6 +65,56 @@ final nonisolated class WorkingStateRefreshPolicy: NSObject { // swiftlint:disab
     }
 }
 
+/// Shared performance budgets for repository view switching and Working State feedback.
+@objc(PBPerformanceBudgets)
+final nonisolated class PerformanceBudgets: NSObject { // swiftlint:disable:this unused_declaration
+    @objc static let warmViewSwitchP95Seconds = 0.050
+    @objc static let mainThreadBlockSeconds = 0.016
+    @objc static let cachedWorkingStateFeedbackSeconds = 0.050
+    @objc static let freshWorkingStateP95Seconds = 0.250
+    @objc static let representativeChangedFileCount = 500
+    @objc static let representativeDiffByteCount = 1_048_576
+    @objc static let stressChangedFileCount = 5000
+    @objc static let stressDiffByteCount = 10_485_760
+}
+
+/// A rendered Working State model retained only by its repository window.
+@objc(PBWorkingStateDiffSnapshot)
+final class WorkingStateDiffSnapshot: NSObject { // swiftlint:disable:this unused_declaration
+    @objc let sections: [[String: Any]]
+    @objc let renderedDiff: String
+
+    init(sections: [[String: Any]], renderedDiff: String) {
+        self.sections = sections
+        self.renderedDiff = renderedDiff
+    }
+}
+
+/// Keeps one memory-only Working State snapshot for each diff layout.
+@objc(PBWorkingStateDiffCache)
+final class WorkingStateDiffCache: NSObject { // swiftlint:disable:this unused_declaration
+    private var snapshots: [Int: WorkingStateDiffSnapshot] = [:]
+
+    @objc(snapshotForLayout:)
+    // swiftlint:disable:next unused_declaration
+    func snapshot(forLayout layout: Int) -> WorkingStateDiffSnapshot? {
+        snapshots[layout]
+    }
+
+    @objc(storeSections:renderedDiff:layout:)
+    // swiftlint:disable:next unused_declaration
+    func store(sections: [[String: Any]], renderedDiff: String, layout: Int) {
+        snapshots[layout] = WorkingStateDiffSnapshot(
+            sections: sections,
+            renderedDiff: renderedDiff
+        )
+    }
+
+    @objc func removeAll() {
+        snapshots.removeAll()
+    }
+}
+
 /// A single layer-backed surface for the transient search-wrap indicator.
 @objc(PBRewindOverlayView)
 final class RewindOverlayView: NSView { // swiftlint:disable:this unused_declaration

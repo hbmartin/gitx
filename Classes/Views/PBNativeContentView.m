@@ -7,6 +7,8 @@ NSString *const PBNativeSectionPathKey = @"path";
 NSString *const PBNativeSectionContextKey = @"context";
 NSString *const PBNativeSectionEntriesKey = @"entries";
 NSString *const PBNativeSectionImageSourceKey = @"imageSource";
+NSString *const PBNativeSectionDiffLayoutKey = @"diffLayout";
+NSString *const PBNativeSectionSuppressionPatternsKey = @"suppressionPatterns";
 NSString *const PBNativeImageSourceRevisionsKey = @"revisions";
 NSString *const PBNativeImageSourceWorkingTreeKey = @"workingTree";
 NSString *const PBNativeImageSourceWorkingTreeURLKey = @"workingTreeURL";
@@ -28,6 +30,10 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 @property (nonatomic) PBPartialPatchBuilder *partialPatchBuilder;
 @property (nonatomic) PBNativeTextRenderer *textRenderer;
 @property (nonatomic) PBNativeDiffRenderer *diffRenderer;
+@property (nonatomic) NSMutableDictionary<NSString *, PBNativeRenderResult *> *cachedDiffResults;
+@property (nonatomic) NSMutableDictionary<NSString *, NSArray<NSDictionary *> *> *cachedDiffSections;
+@property (nonatomic) NSMutableDictionary<NSString *, NSValue *> *cachedDiffScrollOrigins;
+@property (nonatomic, nullable) NSString *currentDiffCacheIdentifier;
 @end
 
 @implementation PBNativeContentView
@@ -41,10 +47,16 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	_linkPayloads = [NSMutableDictionary dictionary];
 	_collapsedFiles = [NSMutableSet set];
 	_expandedImages = [NSMutableSet set];
+	_cachedDiffResults = [NSMutableDictionary dictionary];
+	_cachedDiffSections = [NSMutableDictionary dictionary];
+	_cachedDiffScrollOrigins = [NSMutableDictionary dictionary];
 	_diffParser = [[PBDiffDocumentParser alloc] init];
 	_partialPatchBuilder = [[PBPartialPatchBuilder alloc] init];
+	NSFont *configuredFont = [NSFont fontWithName:PBApplicationSettings.diffFontName size:PBApplicationSettings.diffFontSize] ?:
+																																[NSFont monospacedSystemFontOfSize:PBApplicationSettings.diffFontSize
+									weight:NSFontWeightRegular];
 	NSDictionary<NSAttributedStringKey, id> *baseAttributes = @{
-		NSFontAttributeName : [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular],
+		NSFontAttributeName : configuredFont,
 		NSForegroundColorAttributeName : NSColor.textColor,
 	};
 	NSDictionary<NSAttributedStringKey, id> *titleAttributes = @{
@@ -120,59 +132,81 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 - (void)setRenderedString:(NSAttributedString *)string
 			   generation:(NSUInteger)generation
 			 linkPayloads:(nullable NSDictionary<NSString *, NSDictionary *> *)linkPayloads
+			 scrollOrigin:(nullable NSValue *)scrollOrigin
 {
 	if (generation != self.renderGeneration) return;
 	self.linkPayloads = linkPayloads ? [linkPayloads mutableCopy] : [NSMutableDictionary dictionary];
 	[self.textView.textStorage setAttributedString:string];
-	[self.textView scrollRangeToVisible:NSMakeRange(0, 0)];
+	if (scrollOrigin) {
+		[self.textView layoutSubtreeIfNeeded];
+		[self.scrollView.contentView scrollToPoint:scrollOrigin.pointValue];
+		[self.scrollView reflectScrolledClipView:self.scrollView.contentView];
+	} else {
+		[self.textView scrollRangeToVisible:NSMakeRange(0, 0)];
+	}
+}
+
+- (void)saveCurrentDiffScrollPosition
+{
+	if (!self.currentDiffCacheIdentifier) return;
+	self.cachedDiffScrollOrigins[self.currentDiffCacheIdentifier] =
+		[NSValue valueWithPoint:self.scrollView.contentView.bounds.origin];
 }
 
 - (void)showMessage:(NSString *)message
 {
+	[self saveCurrentDiffScrollPosition];
+	self.currentDiffCacheIdentifier = nil;
 	self.renderGeneration++;
 	NSAttributedString *string = [[NSAttributedString alloc] initWithString:message ?: @""
 																 attributes:@{
 																	 NSFontAttributeName : [NSFont systemFontOfSize:13],
 																	 NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
 																 }];
-	[self setRenderedString:string generation:self.renderGeneration linkPayloads:nil];
+	[self setRenderedString:string generation:self.renderGeneration linkPayloads:nil scrollOrigin:nil];
 }
 
 - (void)showSourceSections:(NSArray<NSDictionary *> *)sections
 {
+	[self saveCurrentDiffScrollPosition];
+	self.currentDiffCacheIdentifier = nil;
 	NSUInteger generation = ++self.renderGeneration;
 	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sections];
 	PBNativeTextRenderer *renderer = self.textRenderer;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		PBNativeRenderResult *result = [renderer renderSourceSections:copiedSections];
 		dispatch_async(dispatch_get_main_queue(), ^{
-			[self setRenderedString:result.attributedString generation:generation linkPayloads:result.linkPayloads];
+			[self setRenderedString:result.attributedString generation:generation linkPayloads:result.linkPayloads scrollOrigin:nil];
 		});
 	});
 }
 
 - (void)showBlameSections:(NSArray<NSDictionary *> *)sections
 {
+	[self saveCurrentDiffScrollPosition];
+	self.currentDiffCacheIdentifier = nil;
 	NSUInteger generation = ++self.renderGeneration;
 	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sections];
 	PBNativeTextRenderer *renderer = self.textRenderer;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		PBNativeRenderResult *result = [renderer renderBlameSections:copiedSections];
 		dispatch_async(dispatch_get_main_queue(), ^{
-			[self setRenderedString:result.attributedString generation:generation linkPayloads:result.linkPayloads];
+			[self setRenderedString:result.attributedString generation:generation linkPayloads:result.linkPayloads scrollOrigin:nil];
 		});
 	});
 }
 
 - (void)showHistorySections:(NSArray<NSDictionary *> *)sections
 {
+	[self saveCurrentDiffScrollPosition];
+	self.currentDiffCacheIdentifier = nil;
 	NSUInteger generation = ++self.renderGeneration;
 	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sections];
 	PBNativeTextRenderer *renderer = self.textRenderer;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		PBNativeRenderResult *result = [renderer renderHistorySections:copiedSections];
 		dispatch_async(dispatch_get_main_queue(), ^{
-			[self setRenderedString:result.attributedString generation:generation linkPayloads:result.linkPayloads];
+			[self setRenderedString:result.attributedString generation:generation linkPayloads:result.linkPayloads scrollOrigin:nil];
 		});
 	});
 }
@@ -192,9 +226,33 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 
 - (void)showDiffSections:(NSArray<NSDictionary *> *)sections
 {
-	self.currentDiffSections = [sections copy];
+	[self showDiffSections:sections cacheIdentifier:nil preserveScrollPosition:NO];
+}
+
+- (void)showDiffSections:(NSArray<NSDictionary *> *)sections
+		   cacheIdentifier:(nullable NSString *)cacheIdentifier
+	preserveScrollPosition:(BOOL)preserveScrollPosition
+{
+	NSArray<NSDictionary *> *sourceSections = [sections copy];
+	[self saveCurrentDiffScrollPosition];
+	NSValue *savedScrollOrigin = cacheIdentifier ? self.cachedDiffScrollOrigins[cacheIdentifier] : nil;
+	BOOL refreshingCurrentCache = cacheIdentifier && [cacheIdentifier isEqualToString:self.currentDiffCacheIdentifier];
+	if (refreshingCurrentCache && preserveScrollPosition) {
+		savedScrollOrigin = [NSValue valueWithPoint:self.scrollView.contentView.bounds.origin];
+	}
+	self.currentDiffCacheIdentifier = [cacheIdentifier copy];
+	self.currentDiffSections = sourceSections;
 	NSUInteger generation = ++self.renderGeneration;
-	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sections];
+	PBNativeRenderResult *cachedResult = cacheIdentifier ? self.cachedDiffResults[cacheIdentifier] : nil;
+	NSArray<NSDictionary *> *cachedSections = cacheIdentifier ? self.cachedDiffSections[cacheIdentifier] : nil;
+	if (cachedResult) {
+		[self setRenderedString:cachedResult.attributedString
+					 generation:generation
+				   linkPayloads:cachedResult.linkPayloads
+				   scrollOrigin:savedScrollOrigin];
+		if ([cachedSections isEqualToArray:sourceSections]) return;
+	}
+	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sourceSections];
 	NSSet<NSString *> *collapsedFiles = [self.collapsedFiles copy];
 	NSSet<NSString *> *expandedImages = [self.expandedImages copy];
 	id<PBNativeContentViewDelegate> delegate = self.delegate;
@@ -210,9 +268,32 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 												 expandedImages:expandedImages
 											  imageDataProvider:imageDataProvider];
 		dispatch_async(dispatch_get_main_queue(), ^{
-			[self setRenderedString:result.attributedString generation:generation linkPayloads:result.linkPayloads];
+			if (generation != self.renderGeneration) return;
+			if (cacheIdentifier) {
+				self.cachedDiffResults[cacheIdentifier] = result;
+				self.cachedDiffSections[cacheIdentifier] = sourceSections;
+			}
+			NSValue *replacementScrollOrigin = preserveScrollPosition ?
+				[NSValue valueWithPoint:self.scrollView.contentView.bounds.origin] :
+				savedScrollOrigin;
+			[self setRenderedString:result.attributedString
+						 generation:generation
+					   linkPayloads:result.linkPayloads
+					   scrollOrigin:replacementScrollOrigin];
 		});
 	});
+}
+
+- (void)rerenderCurrentDiffPreservingScrollPosition
+{
+	NSString *cacheIdentifier = self.currentDiffCacheIdentifier;
+	if (cacheIdentifier) {
+		[self.cachedDiffResults removeObjectForKey:cacheIdentifier];
+		[self.cachedDiffSections removeObjectForKey:cacheIdentifier];
+	}
+	[self showDiffSections:self.currentDiffSections
+			   cacheIdentifier:cacheIdentifier
+		preserveScrollPosition:YES];
 }
 
 - (BOOL)textView:(NSTextView *)textView clickedOnLink:(id)link atIndex:(NSUInteger)charIndex
@@ -240,10 +321,13 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 			[self.collapsedFiles removeObject:fileKey];
 		else
 			[self.collapsedFiles addObject:fileKey];
-		[self showDiffSections:self.currentDiffSections];
+		[self rerenderCurrentDiffPreservingScrollPosition];
+	} else if ([type isEqualToString:@"reveal-suppressed"]) {
+		[self.expandedImages addObject:[@"suppression:" stringByAppendingString:payload[@"key"]]];
+		[self rerenderCurrentDiffPreservingScrollPosition];
 	} else if ([type isEqualToString:@"image"]) {
 		[self.expandedImages addObject:payload[@"key"]];
-		[self showDiffSections:self.currentDiffSections];
+		[self rerenderCurrentDiffPreservingScrollPosition];
 	}
 	return YES;
 }
