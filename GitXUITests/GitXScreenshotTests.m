@@ -352,6 +352,7 @@
 
 	XCUIElement *message = self.app.textViews[@"CommitMessage"];
 	XCTAssertTrue([message waitForExistenceWithTimeout:10]);
+	[self saveWindowScreenshotNamed:@"commit-composer-full-width-message"];
 	[message click];
 	NSTask *pasteTask = [[NSTask alloc] init];
 	pasteTask.executableURL = [NSURL fileURLWithPath:@"/usr/bin/pbcopy"];
@@ -379,9 +380,9 @@
 	XCTAssertTrue([@"#!/bin/sh\nexit 1\n" writeToFile:postCommitHookPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
 	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:postCommitHookPath error:nil]);
 	[self.app.buttons[@"Commit"] click];
-	NSPredicate *checkboxReset = [NSPredicate predicateWithFormat:@"value == 0"];
-	XCTNSPredicateExpectation *resetExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:checkboxReset object:pushCheckbox];
-	[self waitForExpectations:@[ resetExpectation ] timeout:15];
+	NSPredicate *checkboxRemembered = [NSPredicate predicateWithFormat:@"value == 1"];
+	XCTNSPredicateExpectation *rememberedExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:checkboxRemembered object:pushCheckbox];
+	[self waitForExpectations:@[ rememberedExpectation ] timeout:15];
 
 	NSPredicate *remoteUpdated = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 		NSString *localHead = [self gitOutput:@[ @"rev-parse", @"HEAD" ] inDirectory:repositoryPath];
@@ -391,7 +392,7 @@
 	XCTNSPredicateExpectation *pushExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:remoteUpdated object:repositoryPath];
 	[self waitForExpectations:@[ pushExpectation ] timeout:20];
 	XCTAssertTrue([[NSFileManager defaultManager] removeItemAtPath:postCommitHookPath error:nil]);
-	XCTAssertEqualObjects(remotePopup.value, @"backup", @"Resetting the checkbox should preserve the remote selection");
+	XCTAssertEqualObjects(remotePopup.value, @"backup", @"Remembering the checkbox should preserve the remote selection");
 }
 
 - (void)testPushControlsRefreshForRemotesAndDisableForDetachedHead

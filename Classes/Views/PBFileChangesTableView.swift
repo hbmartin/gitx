@@ -13,7 +13,13 @@ final class PBFileChangesTableView: NSTableView {
         let eventLocation = convert(event.locationInWindow, from: nil)
         let rowIndex = row(at: eventLocation)
         if rowIndex >= 0 {
-            selectRowIndexes(IndexSet(integer: rowIndex), byExtendingSelection: true)
+            selectRowIndexes(
+                FileContextSelectionPolicy.selection(
+                    current: selectedRowIndexes,
+                    clickedRow: rowIndex
+                ),
+                byExtendingSelection: false
+            )
         }
         return super.menu(for: event)
     }
@@ -43,5 +49,11 @@ final class PBFileChangesTableView: NSTableView {
         }
 
         super.keyDown(with: event)
+    }
+}
+
+private enum FileContextSelectionPolicy {
+    static func selection(current: IndexSet, clickedRow: Int) -> IndexSet {
+        current.contains(clickedRow) ? current : IndexSet(integer: clickedRow)
     }
 }

@@ -214,6 +214,19 @@
 							 keyCode:49];
 }
 
+- (NSEvent *)rightMouseEventAtLocation:(NSPoint)location windowNumber:(NSInteger)windowNumber
+{
+	return [NSEvent mouseEventWithType:NSEventTypeRightMouseDown
+							  location:location
+						 modifierFlags:0
+							 timestamp:0
+						  windowNumber:windowNumber
+							   context:nil
+						   eventNumber:1
+							clickCount:1
+							  pressure:1];
+}
+
 - (void)setUp
 {
 	[super setUp];
@@ -356,6 +369,56 @@
 	table.delegate = nil;
 	[table keyDown:[self spaceKeyEventWithModifiers:0]];
 	XCTAssertEqual(target.stagingToggleCount, 2, @"Space without a staging delegate must not route through the responder chain");
+}
+
+- (void)testContextClickOnSelectedFilePreservesMultipleSelection
+{
+	PBFileChangesActionTarget *target = [[PBFileChangesActionTarget alloc] init];
+	PBFileChangesTableView *table = [[PBFileChangesTableView alloc] initWithFrame:NSMakeRect(0, 0, 300, 120)];
+	table.dataSource = target;
+	table.delegate = target;
+	table.allowsMultipleSelection = YES;
+	table.menu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Files", nil)];
+	[table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"Files"]];
+
+	NSWindow *window = [[NSWindow alloc] initWithContentRect:table.frame
+												   styleMask:NSWindowStyleMaskBorderless
+													 backing:NSBackingStoreBuffered
+													   defer:NO];
+	window.contentView = table;
+	[table reloadData];
+	[table selectRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)] byExtendingSelection:NO];
+
+	NSPoint tableLocation = NSMakePoint(10, NSMidY([table rectOfRow:1]));
+	NSPoint windowLocation = [table convertPoint:tableLocation toView:nil];
+	XCTAssertEqual([table rowAtPoint:tableLocation], (NSInteger)1);
+	XCTAssertNotNil([table menuForEvent:[self rightMouseEventAtLocation:windowLocation windowNumber:window.windowNumber]]);
+	XCTAssertEqualObjects(table.selectedRowIndexes, [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)]);
+}
+
+- (void)testContextClickOutsideSelectedFilesSelectsOnlyClickedRow
+{
+	PBFileChangesActionTarget *target = [[PBFileChangesActionTarget alloc] init];
+	PBFileChangesTableView *table = [[PBFileChangesTableView alloc] initWithFrame:NSMakeRect(0, 0, 300, 120)];
+	table.dataSource = target;
+	table.delegate = target;
+	table.allowsMultipleSelection = YES;
+	table.menu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Files", nil)];
+	[table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"Files"]];
+
+	NSWindow *window = [[NSWindow alloc] initWithContentRect:table.frame
+												   styleMask:NSWindowStyleMaskBorderless
+													 backing:NSBackingStoreBuffered
+													   defer:NO];
+	window.contentView = table;
+	[table reloadData];
+	[table selectRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)] byExtendingSelection:NO];
+
+	NSPoint tableLocation = NSMakePoint(10, NSMidY([table rectOfRow:2]));
+	NSPoint windowLocation = [table convertPoint:tableLocation toView:nil];
+	XCTAssertEqual([table rowAtPoint:tableLocation], (NSInteger)2);
+	XCTAssertNotNil([table menuForEvent:[self rightMouseEventAtLocation:windowLocation windowNumber:window.windowNumber]]);
+	XCTAssertEqualObjects(table.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
 }
 
 - (void)testRevisionCellObjectValueIsNullableBeforeTableConfiguration
@@ -527,6 +590,45 @@
 	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
 	[view showDiffSections:@[ @{PBNativeSectionTitleKey : @"Empty", PBNativeSectionTextKey : @""} ]];
 	[self waitForNativeView:view toContainString:@"There are no differences."];
+}
+
+- (void)testNativeDiffCacheRestoresRenderedContentAndScrollSynchronously
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 120)];
+	NSWindow *window = [[NSWindow alloc] initWithContentRect:view.frame
+												   styleMask:NSWindowStyleMaskBorderless
+													 backing:NSBackingStoreBuffered
+													   defer:NO];
+	window.contentView = view;
+	NSMutableString *diff = [NSMutableString stringWithString:
+												 @"diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1,200 +1,200 @@\n"];
+	for (NSUInteger index = 0; index < 200; index++) {
+		[diff appendFormat:@"-old-%lu\n+new-%lu\n", index, index];
+	}
+	NSArray<NSDictionary *> *sections = @[ @{
+		PBNativeSectionTextKey : diff,
+		PBNativeSectionContextKey : @"readOnly",
+	} ];
+	[view showDiffSections:sections cacheIdentifier:@"working-state-0" preserveScrollPosition:YES];
+	[self waitForNativeView:view toContainString:@"new-199"];
+	[window layoutIfNeeded];
+	NSScrollView *scrollView = view.textView.enclosingScrollView;
+	CGFloat maximumY = MAX(0, scrollView.documentView.frame.size.height - scrollView.contentView.bounds.size.height);
+	[scrollView.contentView scrollToPoint:NSMakePoint(0, maximumY * 0.75)];
+	[scrollView reflectScrolledClipView:scrollView.contentView];
+	CGFloat expectedY = scrollView.contentView.bounds.origin.y;
+	XCTAssertGreaterThan(expectedY, 0);
+
+	[view showDiffSections:sections cacheIdentifier:@"working-state-0" preserveScrollPosition:YES];
+	XCTAssertEqualWithAccuracy(scrollView.contentView.bounds.origin.y, expectedY, 1.0);
+	((void (*)(id, SEL))objc_msgSend)(view, NSSelectorFromString(@"rerenderCurrentDiffPreservingScrollPosition"));
+	[self waitForNativeView:view toContainString:@"new-199"];
+
+	[view showMessage:@"Loading…"];
+	[view showDiffSections:sections cacheIdentifier:@"working-state-0" preserveScrollPosition:YES];
+
+	XCTAssertTrue([view.textView.string containsString:@"new-199"]);
+	XCTAssertEqualWithAccuracy(scrollView.contentView.bounds.origin.y, expectedY, 1.0);
 }
 
 - (void)testAppearancePreferenceValidatesAndAppliesGlobally

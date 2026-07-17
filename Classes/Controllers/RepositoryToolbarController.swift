@@ -37,10 +37,17 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         static let actions = NSToolbarItem.Identifier("GitX.Toolbar.Actions")
     }
 
+    private struct StatusViews {
+        let label: NSTextField
+        let spinner: NSProgressIndicator
+    }
+
     private weak var windowController: PBGitWindowController?
     private var mode: Mode = .history
-    private weak var statusLabel: NSTextField?
-    private weak var statusSpinner: NSProgressIndicator?
+    private var toolbars: [Mode: NSToolbar] = [:]
+    private var statusViews: [Mode: StatusViews] = [:]
+    private var currentStatus = ""
+    private var currentBusy = false
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryToolbar")
 
     @objc(initWithWindowController:)
@@ -64,14 +71,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
     @objc(updateWithStatus:busy:baseWindowTitle:)
     // swiftlint:disable:next unused_declaration
     func update(status: String, busy: Bool, baseWindowTitle: String) {
-        statusLabel?.stringValue = status.isEmpty ? "Ready" : status
-        if busy {
-            statusSpinner?.startAnimation(nil)
-            statusSpinner?.isHidden = false
-        } else {
-            statusSpinner?.stopAnimation(nil)
-            statusSpinner?.isHidden = true
-        }
+        currentStatus = status
+        currentBusy = busy
+        applyCurrentStatus()
         if let window = windowController?.window {
             window.title = status.isEmpty ? baseWindowTitle : "\(baseWindowTitle) — \(status)"
         }
@@ -79,20 +81,48 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
 
     private func installToolbar(for mode: Mode) {
         guard let window = windowController?.window else { return }
+        let start = ProcessInfo.processInfo.systemUptime
         self.mode = mode
+        let reused = toolbars[mode] != nil
+        let toolbar = toolbars[mode] ?? makeToolbar(for: mode)
+        toolbars[mode] = toolbar
+        window.toolbar = toolbar
+        window.toolbarStyle = .expanded
+        applyCurrentStatus()
+        let elapsed = ProcessInfo.processInfo.systemUptime - start
+        logger.info(
+            "Installed repository toolbar mode, cached: \(reused, privacy: .public), elapsed: \(elapsed, format: .fixed(precision: 4))s"
+        )
+    }
+
+    private func makeToolbar(for mode: Mode) -> NSToolbar {
         let toolbar = NSToolbar(identifier: mode.toolbarIdentifier)
         toolbar.delegate = self
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
         toolbar.displayMode = .iconAndLabel
         toolbar.sizeMode = .regular
-        window.toolbar = toolbar
-        window.toolbarStyle = .expanded
-        logger.info("Installed repository toolbar for primary mode")
+        return toolbar
+    }
+
+    private func applyCurrentStatus() {
+        guard let views = statusViews[mode] else { return }
+        views.label.stringValue = currentStatus.isEmpty ? "Ready" : currentStatus
+        if currentBusy {
+            views.spinner.startAnimation(nil)
+            views.spinner.isHidden = false
+        } else {
+            views.spinner.stopAnimation(nil)
+            views.spinner.isHidden = true
+        }
+    }
+
+    private func mode(for toolbar: NSToolbar) -> Mode {
+        toolbar.identifier == Mode.commit.toolbarIdentifier ? .commit : .history
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        switch mode {
+        switch mode(for: toolbar) {
         case .history:
             [
                 Item.commit,
@@ -150,7 +180,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         if itemIdentifier == Item.refreshStatus {
-            return statusItem(identifier: itemIdentifier)
+            return statusItem(identifier: itemIdentifier, mode: mode(for: toolbar))
         }
         if itemIdentifier == Item.actions {
             return actionsItem(identifier: itemIdentifier)
@@ -187,7 +217,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         return item
     }
 
-    private func statusItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
+    private func statusItem(identifier: NSToolbarItem.Identifier, mode: Mode) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
         item.label = "Refresh"
         item.paletteLabel = "Refresh & Status"
@@ -227,8 +257,12 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         view.widthAnchor.constraint(greaterThanOrEqualToConstant: 118).isActive = true
         view.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         item.view = view
-        statusLabel = label
-        statusSpinner = spinner
+        statusViews[mode] = StatusViews(label: label, spinner: spinner)
+        label.stringValue = currentStatus.isEmpty ? "Ready" : currentStatus
+        if currentBusy {
+            spinner.startAnimation(nil)
+            spinner.isHidden = false
+        }
         return item
     }
 

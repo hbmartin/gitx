@@ -24,6 +24,7 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 @property (nonatomic) dispatch_queue_t renderQueue;
 @property (nonatomic) NSUInteger contentGeneration;
 @property (nonatomic) PBTask *activeTask;
+@property (nonatomic) PBWorkingStateDiffCache *workingStateCache;
 @end
 
 @implementation PBWebHistoryController
@@ -36,6 +37,7 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	[super awakeFromNib];
 	self.nativeView.delegate = self;
 	self.renderQueue = dispatch_queue_create("com.gitx.history-render", DISPATCH_QUEUE_SERIAL);
+	self.workingStateCache = [[PBWorkingStateDiffCache alloc] init];
 
 	self.presentationControl = [NSSegmentedControl segmentedControlWithLabels:@[ @"Sequential", @"Combined" ]
 																 trackingMode:NSSegmentSwitchTrackingSelectOne
@@ -269,10 +271,9 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 
 - (void)changeContentTo:(NSArray<PBGitCommit *> *)commits
 {
+	CFAbsoluteTime requestStarted = CFAbsoluteTimeGetCurrent();
 	NSArray<PBGitCommit *> *requestedCommits = [commits copy] ?: @[];
 	NSUInteger generation = [self beginContentGeneration];
-	BOOL refreshingDisplayedWorkingState = [requestedCommits.firstObject isKindOfClass:PBUncommittedChanges.class] &&
-		self.displayedCommits.firstObject == requestedCommits.firstObject && self->diff != nil;
 	self.displayedCommits = requestedCommits;
 	self.presentationControl.hidden = requestedCommits.count <= 1;
 	NSInteger selectedLayout = self.layoutControl.selectedSegment;
@@ -285,7 +286,20 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 		self.presentationControl.hidden = YES;
 		NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
 		NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:@[ @":" ] workingTree:YES];
-		if (!refreshingDisplayedWorkingState) [self.nativeView showMessage:@"Loading changes…"];
+		NSString *cacheIdentifier = [NSString stringWithFormat:@"working-state-%ld", (long)selectedLayout];
+		PBWorkingStateDiffSnapshot *cachedSnapshot = [self.workingStateCache snapshotForLayout:selectedLayout];
+		if (cachedSnapshot) {
+			self->diff = cachedSnapshot.renderedDiff;
+			[self.nativeView showDiffSections:cachedSnapshot.sections
+							  cacheIdentifier:cacheIdentifier
+					   preserveScrollPosition:YES];
+			CFTimeInterval cachedElapsed = CFAbsoluteTimeGetCurrent() - requestStarted;
+			NSLog(@"[GitX][Performance] Displayed cached Uncommitted Changes in %.3f ms (budget: %.0f ms)",
+				  cachedElapsed * 1000.0,
+				  [PBPerformanceBudgets cachedWorkingStateFeedbackSeconds] * 1000.0);
+		} else {
+			[self.nativeView showMessage:@"Loading changes…"];
+		}
 		dispatch_async(self.renderQueue, ^{
 			NSArray<NSDictionary *> *sections = [self workingStateSectionsForChanges:changes imageSource:imageSource generation:generation];
 			sections = [self sections:sections applyingDiffLayout:selectedLayout];
@@ -294,8 +308,19 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 				if (![self isGenerationCurrent:generation]) return;
 				NSString *renderedDiff = [[sections valueForKey:PBNativeSectionTextKey] componentsJoinedByString:@"\n"];
 				BOOL shouldReplace = [PBWorkingStateRefreshPolicy shouldReplaceDisplayedDiff:self->diff renderedDiff:renderedDiff];
+				[self.workingStateCache storeSections:sections renderedDiff:renderedDiff layout:selectedLayout];
 				self->diff = renderedDiff;
-				if (shouldReplace) [self.nativeView showDiffSections:sections];
+				if (shouldReplace) {
+					[self.nativeView showDiffSections:sections
+									  cacheIdentifier:cacheIdentifier
+							   preserveScrollPosition:YES];
+				}
+				CFTimeInterval freshElapsed = CFAbsoluteTimeGetCurrent() - requestStarted;
+				NSLog(@"[GitX][Performance] Refreshed Uncommitted Changes in %.3f ms (%lu files, %lu bytes, budget: %.0f ms)",
+					  freshElapsed * 1000.0,
+					  changes.count,
+					  [renderedDiff lengthOfBytesUsingEncoding:NSUTF8StringEncoding],
+					  [PBPerformanceBudgets freshWorkingStateP95Seconds] * 1000.0);
 			});
 		});
 		return;
@@ -325,6 +350,13 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 			[self.nativeView showDiffSections:sections];
 		});
 	});
+}
+
+- (void)closeView
+{
+	[self beginContentGeneration];
+	[self.workingStateCache removeAll];
+	[super closeView];
 }
 
 - (NSArray<NSDictionary *> *)sections:(NSArray<NSDictionary *> *)sections applyingDiffLayout:(NSInteger)layout

@@ -102,6 +102,24 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(PBWorkingStateRefreshPolicy.shouldReplaceDisplayedDiff("old", renderedDiff: "new"))
     }
 
+    func testWorkingStateDiffCacheIsMemoryAndLayoutScoped() {
+        let cache = PBWorkingStateDiffCache()
+        let sections = [["title": "Unstaged Changes", "text": "cached"]]
+
+        XCTAssertNil(cache.snapshot(forLayout: 0))
+        cache.store(sections: sections, renderedDiff: "cached", layout: 0)
+        XCTAssertEqual(cache.snapshot(forLayout: 0)?.renderedDiff, "cached")
+        XCTAssertEqual(cache.snapshot(forLayout: 0)?.sections.count, 1)
+        XCTAssertNil(cache.snapshot(forLayout: 1))
+        cache.removeAll()
+        XCTAssertNil(cache.snapshot(forLayout: 0))
+    }
+
+    func testRecentRepositoryActivationRoutesMissingEntriesToLocate() {
+        XCTAssertEqual(PBRecentRepositoryActivationPolicy.action(forReachable: true), .open)
+        XCTAssertEqual(PBRecentRepositoryActivationPolicy.action(forReachable: false), .locate)
+    }
+
     func testRewindOverlayUsesOneLayerBackedSurface() throws {
         let overlay = PBRewindOverlayView(frame: NSRect(x: 0, y: 0, width: 125, height: 125))
 
