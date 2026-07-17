@@ -131,6 +131,38 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertNotNil(layer.borderColor)
     }
 
+    func testRepositoryToolbarInsertedStatusItemReceivesLiveUpdates() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let windowController = PBGitWindowController(window: window)
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+        let item = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.RefreshStatus"),
+            willBeInsertedIntoToolbar: true
+        ))
+        let stack = try XCTUnwrap(item.view as? NSStackView)
+        let labels: [NSTextField] = stack.arrangedSubviews.compactMap { $0 as? NSTextField }
+        let spinners: [NSProgressIndicator] = stack.arrangedSubviews.compactMap { $0 as? NSProgressIndicator }
+        let label = try XCTUnwrap(labels.first)
+        let spinner = try XCTUnwrap(spinners.first)
+
+        toolbarController.update(
+            withStatus: "Fetching updates",
+            busy: true,
+            baseWindowTitle: "Repository"
+        )
+
+        XCTAssertEqual(label.stringValue, "Fetching updates")
+        XCTAssertFalse(spinner.isHidden)
+        XCTAssertEqual(window.title, "Repository — Fetching updates")
+    }
+
     private func largeDiff(
         lineCount: Int,
         path: String = "Large.swift",
