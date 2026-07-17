@@ -39,6 +39,21 @@ final class PBTaskLifecycleTests: XCTestCase {
         wait(for: [completion], timeout: 5)
     }
 
+    func testTerminationBeforeLaunchReturnsCancellationError() {
+        let task = PBTask(
+            launchPath: "/usr/bin/true",
+            arguments: [],
+            inDirectory: nil
+        )
+        task.terminate()
+
+        XCTAssertThrowsError(try task.launch()) { error in
+            let cancellationError = error as NSError
+            XCTAssertEqual(cancellationError.domain, NSCocoaErrorDomain)
+            XCTAssertEqual(cancellationError.code, NSUserCancelledError)
+        }
+    }
+
     func testParentFailureWinsWhenDescendantKeepsOutputPipeOpen() {
         let task = PBTask(
             launchPath: "/bin/sh",

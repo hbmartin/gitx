@@ -5,7 +5,7 @@ final class IndexMutationServiceTests: XCTestCase {
         struct Call {
             let arguments: [String]
             let input: String?
-            let environment: [String: String]?
+            let environment: [String: Any]?
         }
 
         var results: [Result<String, Error>] = []
@@ -14,10 +14,17 @@ final class IndexMutationServiceTests: XCTestCase {
         func output(
             withArguments arguments: [String],
             input: String?,
-            environment: [String: String]?
+            environment: [String: Any]?
         ) throws -> String {
             calls.append(Call(arguments: arguments, input: input, environment: environment))
             return try results.isEmpty ? "" : results.removeFirst().get()
+        }
+
+        func data(
+            withArguments _: [String],
+            completion: @escaping (Data?, Error?) -> Void
+        ) {
+            completion(nil, nil)
         }
     }
 

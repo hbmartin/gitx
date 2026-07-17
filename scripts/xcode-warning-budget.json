@@ -2,12 +2,6 @@
   "version": 2,
   "warnings": [
     {
-      "path": "Classes/Controllers/PBGitCommitController.m",
-      "category": "-Wdeprecated-declarations",
-      "message": "'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead",
-      "count": 2
-    },
-    {
       "path": "Classes/Controllers/PBRepositoryDocumentController.m",
       "category": "-Wdeprecated-declarations",
       "message": "'NSFileHandlingPanelOKButton' is deprecated: first deprecated in macOS 10.13",

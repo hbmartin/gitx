@@ -7,7 +7,6 @@
     "Classes/Controllers/ApplicationController.h",
     "Classes/Controllers/DBPrefsWindowController.h",
     "Classes/Controllers/OpenRecentController.h",
-    "Classes/Controllers/PBGitCommitController.h",
     "Classes/Controllers/PBGitRepositoryDocument.h",
     "Classes/Controllers/PBHistorySearchController.h",
     "Classes/Controllers/PBHistorySearchMode.h",

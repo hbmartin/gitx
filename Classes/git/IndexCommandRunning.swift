@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 
 @objc(PBIndexCommandRunning)
@@ -5,8 +6,13 @@ protocol IndexCommandRunning: AnyObject {
     nonisolated func output(
         arguments: [String],
         input: String?,
-        environment: [String: String]?
+        environment: [String: Any]?
     ) throws -> String
+
+    nonisolated func data(
+        arguments: [String],
+        completion: @escaping @Sendable (Data?, Error?) -> Void
+    )
 }
 
 final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexCommandRunning {
@@ -20,7 +26,7 @@ final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexCommandRunn
     func output(
         arguments: [String],
         input: String?,
-        environment: [String: String]?
+        environment: [String: Any]?
     ) throws -> String {
         let task = repository.task(withArguments: arguments)
         if let input {
@@ -31,5 +37,15 @@ final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexCommandRunn
         }
         try task.launch()
         return task.standardOutputString() ?? ""
+    }
+
+    func data(
+        arguments: [String],
+        completion: @escaping @Sendable (Data?, Error?) -> Void
+    ) {
+        let task = repository.task(withArguments: arguments)
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { data, error in
+            completion(data, error)
+        }
     }
 }

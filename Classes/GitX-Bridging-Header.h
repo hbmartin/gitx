@@ -40,6 +40,8 @@
 #import "PBHighlighting.h"
 #import "PBGitDefaults.h"
 #import "PBGitRepository.h"
+#import "PBGitIndex.h"
+#import "PBChangedFile.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitStash.h"
@@ -55,6 +57,7 @@
 #import "PBDiffWindowController.h"
 #import "PBRemoteProgressSheet.h"
 #import "PBTerminalUtil.h"
+#import "PBNativeContentView.h"
 
 // The bridging header declares no APIs of its own, but retain an explicit
 // nullability region so it follows the same interoperability contract as

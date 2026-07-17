@@ -10,6 +10,7 @@
 #import "PBChangedFile.h"
 #import "PBCommitHookFailedSheet.h"
 #import "PBCommitList.h"
+#import "PBCommitMessageView.h"
 #import "PBCreateBranchSheet.h"
 #import "PBCreateTagSheet.h"
 #import "PBDiffWindowController.h"
@@ -18,15 +19,18 @@
 #import "PBGitDefaults.h"
 #import "PBGitHistoryController.h"
 #import "PBGitHistoryList.h"
+#import "PBGitIndex.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
 #import "PBGitRepositoryDocument.h"
+#import "PBGitRepositoryWatcher.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitSidebarController.h"
 #import "PBGitStash.h"
 #import "PBGitWindowController.h"
 #import "PBGitXMessageSheet.h"
 #import "PBError.h"
+#import "PBFileChangesTableView.h"
 #import "PBRemoteProgressSheet.h"
 #import "PBSourceViewItem.h"
 #import "PBTask.h"
@@ -42,6 +46,48 @@
 - (nullable NSArray<NSURL *> *)selectedURLsFromSender:(id)sender;
 - (nullable id<PBGitRefish>)refishForSender:(id)sender refishTypes:(nullable NSArray<NSString *> *)types;
 - (nullable PBGitRef *)selectedRef;
+@end
+
+@interface PBGitCommitController (WindowControllerTests)
+- (void)applicationDidBecomeActive:(NSNotification *)notification;
+- (void)repositoryUpdatedNotification:(NSNotification *)notification;
+- (nullable NSString *)selectedPushRemoteName;
+- (void)reloadPushRemotes;
+- (void)commitWithVerification:(BOOL)doVerify;
+- (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)files force:(BOOL)force;
+- (NSArray<PBChangedFile *> *)selectedFilesForSender:(id)sender;
+- (void)refreshFinished:(NSNotification *)notification;
+- (void)commitStatusUpdated:(NSNotification *)notification;
+- (void)commitFinished:(NSNotification *)notification;
+- (void)commitFailed:(NSNotification *)notification;
+- (void)commitHookFailed:(NSNotification *)notification;
+- (void)amendCommit:(NSNotification *)notification;
+- (void)indexChanged:(NSNotification *)notification;
+- (void)indexOperationFailed:(NSNotification *)notification;
+- (void)focusTable:(NSTableView *)table;
+- (BOOL)textView:(NSTextView *)textView doCommandBySelector:(SEL)commandSelector;
+- (void)didDoubleClickOnTable:(NSTableView *)tableView;
+- (void)menuNeedsUpdate:(NSMenu *)menu;
+- (IBAction)toggleAmendCommit:(id)sender;
+- (IBAction)openFiles:(id)sender;
+- (IBAction)revealInFinder:(id)sender;
+- (IBAction)moveToTrash:(id)sender;
+- (IBAction)ignoreFiles:(id)sender;
+- (IBAction)stageFiles:(id)sender;
+- (IBAction)unstageFiles:(id)sender;
+- (IBAction)discardFiles:(id)sender;
+- (IBAction)discardFilesForcibly:(id)sender;
+- (void)fileChangesTableViewDidRequestStagingToggle:(PBFileChangesTableView *)tableView;
+- (void)tableView:(NSTableView *)tableView willDisplayCell:(id)cell forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex;
+- (BOOL)tableView:(NSTableView *)tableView writeRowsWithIndexes:(NSIndexSet *)rowIndexes toPasteboard:(NSPasteboard *)pasteboard;
+- (NSDragOperation)tableView:(NSTableView *)tableView
+				validateDrop:(id<NSDraggingInfo>)info
+				 proposedRow:(NSInteger)row
+	   proposedDropOperation:(NSTableViewDropOperation)operation;
+- (BOOL)tableView:(NSTableView *)tableView
+	   acceptDrop:(id<NSDraggingInfo>)info
+			  row:(NSInteger)row
+	dropOperation:(NSTableViewDropOperation)operation;
 @end
 
 static NSModalResponse PBWindowAlertResponse;
@@ -69,6 +115,9 @@ static NSURL *PBWindowLastTerminalDirectory;
 static BOOL PBWindowUseSnapshotTaskFake;
 static NSData *PBWindowSnapshotData;
 static NSError *PBWindowSnapshotError;
+static BOOL PBWindowTrashSucceeds;
+static NSUInteger PBWindowTrashCount;
+static BOOL PBWindowConfigurationMissingIdentity;
 
 static void PBSwapInstanceMethods(Class cls, SEL original, SEL replacement)
 {
@@ -117,6 +166,37 @@ static void PBWindowPerformPull(PBGitWindowController *controller, PBGitRef *bra
 		object_setClass(task, PBWindowSnapshotTask.class);
 	}
 	return task;
+}
+
+@end
+
+@interface GTConfiguration (WindowControllerTests)
+- (nullable NSString *)pb_window_stringForKey:(NSString *)key;
+@end
+
+@implementation GTConfiguration (WindowControllerTests)
+
+- (NSString *)pb_window_stringForKey:(NSString *)key
+{
+	if (PBWindowConfigurationMissingIdentity && [key isEqualToString:@"user.email"]) return nil;
+	return [self pb_window_stringForKey:key];
+}
+
+@end
+
+@interface NSFileManager (WindowControllerTests)
+- (BOOL)pb_window_trashItemAtURL:(NSURL *)url resultingItemURL:(NSURL *_Nullable *_Nullable)outResultingURL error:(NSError *_Nullable *_Nullable)error;
+@end
+
+@implementation NSFileManager (WindowControllerTests)
+
+- (BOOL)pb_window_trashItemAtURL:(NSURL *)url resultingItemURL:(NSURL *_Nullable *_Nullable)outResultingURL error:(NSError *_Nullable *_Nullable)error
+{
+	PBWindowTrashCount++;
+	if (PBWindowTrashSucceeds && outResultingURL) *outResultingURL = url;
+	if (!PBWindowTrashSucceeds && error)
+		*error = [NSError errorWithDomain:@"WindowControllerTests" code:99 userInfo:nil];
+	return PBWindowTrashSucceeds;
 }
 
 @end
@@ -388,6 +468,82 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @implementation PBWindowSubmodule
 @end
 
+@interface PBCommitIndexSpy : PBGitIndex
+@property (nonatomic, copy) NSArray<PBChangedFile *> *testChanges;
+@property (nonatomic, copy, nullable) NSString *prepareMessage;
+@property (nonatomic, copy, nullable) NSString *lastCommitMessage;
+@property (nonatomic) BOOL lastCommitVerification;
+@property (nonatomic) NSUInteger refreshCount;
+@property (nonatomic) NSUInteger refreshStatCacheCount;
+@property (nonatomic) NSUInteger prepareCount;
+@property (nonatomic) NSUInteger commitCount;
+@property (nonatomic) NSUInteger stageCount;
+@property (nonatomic) NSUInteger unstageCount;
+@property (nonatomic) NSUInteger discardCount;
+@property (nonatomic, copy) NSArray<PBChangedFile *> *lastFiles;
+@end
+
+@implementation PBCommitIndexSpy
+
+- (NSArray<PBChangedFile *> *)indexChanges
+{
+	return self.testChanges ?: @[];
+}
+- (void)refresh
+{
+	self.refreshCount++;
+}
+- (void)refreshStatCache
+{
+	self.refreshStatCacheCount++;
+}
+- (NSString *)createPrepareCommitMessage
+{
+	self.prepareCount++;
+	return self.prepareMessage;
+}
+- (void)commitWithMessage:(NSString *)commitMessage andVerify:(BOOL)doVerify
+{
+	self.commitCount++;
+	self.lastCommitMessage = commitMessage;
+	self.lastCommitVerification = doVerify;
+}
+- (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles
+{
+	self.stageCount++;
+	self.lastFiles = stageFiles;
+	return YES;
+}
+- (BOOL)unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles
+{
+	self.unstageCount++;
+	self.lastFiles = unstageFiles;
+	return YES;
+}
+- (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)discardFiles
+{
+	self.discardCount++;
+	self.lastFiles = discardFiles;
+}
+
+@end
+
+@interface PBCommitDraggingInfo : NSObject
+@property (nonatomic, strong) NSPasteboard *testPasteboard;
+@property (nonatomic, weak, nullable) id testSource;
+@end
+
+@implementation PBCommitDraggingInfo
+- (NSPasteboard *)draggingPasteboard
+{
+	return self.testPasteboard;
+}
+- (id)draggingSource
+{
+	return self.testSource;
+}
+@end
+
 @interface PBWindowRepositorySpy : PBGitRepository
 @property (nonatomic, strong) NSMutableArray<NSString *> *operations;
 @property (nonatomic, copy, nullable) NSString *failingOperation;
@@ -397,6 +553,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic, strong, nullable) PBWindowSubmodule *testSubmodule;
 @property (nonatomic, copy, nullable) NSURL *testWorkingDirectoryURL;
 @property (nonatomic) BOOL testBare;
+@property (nonatomic, strong, nullable) PBCommitIndexSpy *testIndex;
+@property (nonatomic) BOOL interceptIgnore;
+@property (nonatomic) BOOL ignoreSucceeds;
+@property (nonatomic) BOOL interceptHook;
+@property (nonatomic) BOOL testHookExists;
+@property (nonatomic) NSUInteger reloadRefsCount;
 @end
 
 @implementation PBWindowRepositorySpy
@@ -417,6 +579,15 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 {
 	return self.testBare;
 }
+- (PBGitIndex *)index
+{
+	return self.testIndex ?: super.index;
+}
+- (void)reloadRefs
+{
+	self.reloadRefsCount++;
+	[super reloadRefs];
+}
 - (NSArray<NSString *> *)remotes
 {
 	return self.testRemotes;
@@ -428,6 +599,17 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (GTSubmodule *)submoduleAtPath:(NSString *)path error:(NSError **)error
 {
 	return (GTSubmodule *)self.testSubmodule;
+}
+- (BOOL)ignoreFilePaths:(NSArray<NSString *> *)filePaths error:(NSError **)error
+{
+	if (!self.interceptIgnore) return [super ignoreFilePaths:filePaths error:error];
+	[self.operations addObject:[NSString stringWithFormat:@"ignore:%@", [filePaths componentsJoinedByString:@","]]];
+	if (!self.ignoreSucceeds && error) *error = self.testError;
+	return self.ignoreSucceeds;
+}
+- (BOOL)hookExists:(NSString *)name
+{
+	return self.interceptHook ? self.testHookExists : [super hookExists:name];
 }
 - (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError **)error
 {
@@ -620,6 +802,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic) NSUInteger pullRouteCount;
 @property (nonatomic) NSUInteger pushRouteCount;
 @property (nonatomic) BOOL lastPullRebase;
+@property (nonatomic) BOOL lastPushRequiresConfirmation;
 @property (nonatomic, strong, nullable) PBGitRef *lastBranch;
 @property (nonatomic, strong, nullable) PBGitRef *lastRemote;
 @property (nonatomic, copy, nullable) NSArray<NSURL *> *openedURLs;
@@ -681,6 +864,18 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	self.lastBranch = branchRef;
 	self.lastRemote = remoteRef;
 }
+- (void)performPushForBranch:(PBGitRef *)branchRef
+					toRemote:(PBGitRef *)remoteRef
+		requiresConfirmation:(BOOL)requiresConfirmation
+{
+	if (!self.interceptRemoteRouting) {
+		return [super performPushForBranch:branchRef toRemote:remoteRef requiresConfirmation:requiresConfirmation];
+	}
+	self.pushRouteCount++;
+	self.lastBranch = branchRef;
+	self.lastRemote = remoteRef;
+	self.lastPushRequiresConfirmation = requiresConfirmation;
+}
 - (void)openURLs:(NSArray<NSURL *> *)fileURLs
 {
 	self.openedURLs = fileURLs;
@@ -734,10 +929,14 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSwapClassMethods(PBTerminalUtil.class, @selector(runCommand:inDirectory:), @selector(pb_window_runCommand:inDirectory:));
 	PBSwapInstanceMethods(PBAutoFetchManager.class, @selector(recordManualFetchSucceededForRepositoryURL:), @selector(pb_window_recordManualFetchSucceededForRepositoryURL:));
 	PBSwapClassMethods(PBTask.class, @selector(taskWithLaunchPath:arguments:inDirectory:), @selector(pb_window_taskWithLaunchPath:arguments:inDirectory:));
+	PBSwapInstanceMethods(NSFileManager.class, @selector(trashItemAtURL:resultingItemURL:error:), @selector(pb_window_trashItemAtURL:resultingItemURL:error:));
+	PBSwapInstanceMethods(GTConfiguration.class, @selector(stringForKey:), @selector(pb_window_stringForKey:));
 }
 
 + (void)tearDown
 {
+	PBSwapInstanceMethods(GTConfiguration.class, @selector(stringForKey:), @selector(pb_window_stringForKey:));
+	PBSwapInstanceMethods(NSFileManager.class, @selector(trashItemAtURL:resultingItemURL:error:), @selector(pb_window_trashItemAtURL:resultingItemURL:error:));
 	PBSwapClassMethods(PBTask.class, @selector(taskWithLaunchPath:arguments:inDirectory:), @selector(pb_window_taskWithLaunchPath:arguments:inDirectory:));
 	PBSwapInstanceMethods(PBAutoFetchManager.class, @selector(recordManualFetchSucceededForRepositoryURL:), @selector(pb_window_recordManualFetchSucceededForRepositoryURL:));
 	PBSwapClassMethods(PBTerminalUtil.class, @selector(runCommand:inDirectory:), @selector(pb_window_runCommand:inDirectory:));
@@ -836,6 +1035,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowUseSnapshotTaskFake = NO;
 	PBWindowSnapshotData = nil;
 	PBWindowSnapshotError = nil;
+	PBWindowTrashSucceeds = YES;
+	PBWindowTrashCount = 0;
+	PBWindowConfigurationMissingIdentity = NO;
 	PBWindowRunProgressInBackground = NO;
 	PBWindowProgressExpectation = nil;
 
@@ -886,12 +1088,532 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	return item;
 }
 
+- (PBGitCommitController *)loadedCommitControllerWithIndex:(PBCommitIndexSpy *)index
+{
+	self.repository.testIndex = index;
+	PBGitCommitController *controller = [[PBGitCommitController alloc] initWithRepository:self.repository superController:self.controller];
+	NSView *view = controller.view;
+	view.frame = self.controller.window.contentView.bounds;
+	[self.controller.window.contentView addSubview:view];
+	return controller;
+}
+
+- (PBChangedFile *)changedFileWithPath:(NSString *)path
+								status:(PBChangedFileStatus)status
+					  hasStagedChanges:(BOOL)hasStagedChanges
+					hasUnstagedChanges:(BOOL)hasUnstagedChanges
+{
+	PBChangedFile *file = [[PBChangedFile alloc] initWithPath:path];
+	file.status = status;
+	file.hasStagedChanges = hasStagedChanges;
+	file.hasUnstagedChanges = hasUnstagedChanges;
+	return file;
+}
+
+- (void)setCommitFiles:(NSArray<PBChangedFile *> *)files controller:(PBGitCommitController *)controller
+{
+	self.repository.testIndex.testChanges = files;
+	for (NSString *key in @[ @"unstagedFilesController", @"stagedFilesController", @"trackedFilesController" ]) {
+		NSArrayController *arrayController = [controller valueForKey:key];
+		[arrayController setContent:files];
+		[arrayController rearrangeObjects];
+	}
+}
+
+- (NSMenuItem *)commitMenuItemWithAction:(SEL)action table:(NSTableView *)table
+{
+	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Test", nil) action:action keyEquivalent:@""];
+	[table.menu addItem:item];
+	return item;
+}
+
 - (void)pumpRunLoopFor:(NSTimeInterval)duration
 {
 	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:duration];
 	while ([deadline timeIntervalSinceNow] > 0) {
 		[NSRunLoop.currentRunLoop runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
 	}
+}
+
+- (void)testCommitControllerNibLifecycleRefreshAndRemoteSelection
+{
+	PBCommitIndexSpy *index = [[PBCommitIndexSpy alloc] initWithRepository:self.repository];
+	PBGitCommitController *controller = [self loadedCommitControllerWithIndex:index];
+	PBCommitMessageView *messageView = [controller valueForKey:@"commitMessageView"];
+	NSTableView *unstagedTable = [controller valueForKey:@"unstagedTable"];
+	NSTableView *stagedTable = [controller valueForKey:@"stagedTable"];
+	NSButton *pushAfterCommitButton = [controller valueForKey:@"pushAfterCommitButton"];
+	NSPopUpButton *pushRemotePopUpButton = [controller valueForKey:@"pushRemotePopUpButton"];
+
+	XCTAssertEqual(messageView.repository, self.repository);
+	XCTAssertEqual((id)messageView.delegate, controller);
+	XCTAssertEqualObjects(messageView.accessibilityIdentifier, @"CommitMessage");
+	XCTAssertEqualObjects(unstagedTable.accessibilityIdentifier, @"UnstagedFiles");
+	XCTAssertEqualObjects(stagedTable.accessibilityIdentifier, @"StagedFiles");
+	XCTAssertEqualObjects(pushAfterCommitButton.accessibilityIdentifier, @"PushAfterCommit");
+	XCTAssertEqualObjects(pushRemotePopUpButton.accessibilityIdentifier, @"PushRemote");
+	XCTAssertEqual(unstagedTable.target, controller);
+	XCTAssertEqual(stagedTable.target, controller);
+	XCTAssertEqual(unstagedTable.doubleAction, @selector(didDoubleClickOnTable:));
+	XCTAssertEqual(stagedTable.doubleAction, @selector(didDoubleClickOnTable:));
+	XCTAssertNotEqual(unstagedTable.menu, stagedTable.menu);
+	XCTAssertEqualObjects([controller firstResponder], messageView);
+	XCTAssertEqualObjects([controller index], index);
+	XCTAssertEqualObjects(pushRemotePopUpButton.itemTitles, (@[ @"backup", @"origin" ]));
+	XCTAssertEqualObjects([controller selectedPushRemoteName], @"origin");
+
+	[pushRemotePopUpButton selectItemWithTitle:NSLocalizedString(@"backup", nil)];
+	[controller reloadPushRemotes];
+	XCTAssertEqualObjects([controller selectedPushRemoteName], @"backup");
+
+	self.repository.testRemotes = @[];
+	[controller reloadPushRemotes];
+	XCTAssertEqualObjects(pushRemotePopUpButton.itemTitles, (@[ @"No Remotes" ]));
+	XCTAssertFalse(pushRemotePopUpButton.lastItem.enabled);
+	XCTAssertFalse(pushAfterCommitButton.enabled);
+	XCTAssertNil([controller selectedPushRemoteName]);
+
+	self.repository.testRemotes = @[ @"zebra" ];
+	self.repository.trackingRef = nil;
+	[controller reloadPushRemotes];
+	XCTAssertEqualObjects([controller selectedPushRemoteName], @"zebra");
+	XCTAssertTrue(pushAfterCommitButton.enabled);
+
+	index.refreshStatCacheCount = 0;
+	[controller applicationDidBecomeActive:[NSNotification notificationWithName:NSApplicationDidBecomeActiveNotification object:nil]];
+	XCTAssertEqual(index.refreshStatCacheCount, (NSUInteger)1);
+	[NSUserDefaults.standardUserDefaults setObject:@YES forKey:@"PBRefreshOnApplicationFocus"];
+	[controller applicationDidBecomeActive:[NSNotification notificationWithName:NSApplicationDidBecomeActiveNotification object:nil]];
+	XCTAssertEqual(index.refreshStatCacheCount, (NSUInteger)1);
+
+	NSUInteger reloadCount = self.repository.reloadRefsCount;
+	NSDictionary *workingDirectoryEvent = @{kPBGitRepositoryEventTypeUserInfoKey : @(PBGitRepositoryWatcherEventTypeWorkingDirectory)};
+	[controller repositoryUpdatedNotification:[NSNotification notificationWithName:PBGitRepositoryEventNotification
+																			object:self.repository
+																		  userInfo:workingDirectoryEvent]];
+	XCTAssertEqual(index.refreshCount, (NSUInteger)1);
+	XCTAssertEqual(self.repository.reloadRefsCount, reloadCount + 1);
+
+	NSDictionary *gitDirectoryEvent = @{kPBGitRepositoryEventTypeUserInfoKey : @(PBGitRepositoryWatcherEventTypeGitDirectory)};
+	[controller repositoryUpdatedNotification:[NSNotification notificationWithName:PBGitRepositoryEventNotification
+																			object:self.repository
+																		  userInfo:gitDirectoryEvent]];
+	XCTAssertEqual(self.repository.reloadRefsCount, reloadCount + 2);
+
+	[controller updateView];
+	XCTAssertEqual(index.refreshCount, (NSUInteger)2);
+	XCTAssertEqual(self.repository.reloadRefsCount, reloadCount + 3);
+	[controller closeView];
+}
+
+- (void)testCommitControllerSubmissionValidationAndNotificationTransitions
+{
+	PBCommitIndexSpy *index = [[PBCommitIndexSpy alloc] initWithRepository:self.repository];
+	PBGitCommitController *controller = [self loadedCommitControllerWithIndex:index];
+	PBCommitMessageView *messageView = [controller valueForKey:@"commitMessageView"];
+	NSButton *pushAfterCommitButton = [controller valueForKey:@"pushAfterCommitButton"];
+	NSPopUpButton *pushRemotePopUpButton = [controller valueForKey:@"pushRemotePopUpButton"];
+	NSButton *commitButton = [controller valueForKey:@"commitButton"];
+	PBChangedFile *staged = [self changedFileWithPath:@"tracked.txt" status:MODIFIED hasStagedChanges:YES hasUnstagedChanges:NO];
+
+	[self setCommitFiles:@[ staged ] controller:controller];
+	messageView.string = NSLocalizedString(@"characterized commit", nil);
+	NSURL *mergeHeadURL = [self.repository.gitURL URLByAppendingPathComponent:@"MERGE_HEAD"];
+	[@"merge\n" writeToURL:mergeHeadURL atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+	[controller commit:self];
+	XCTAssertEqual(index.commitCount, (NSUInteger)0);
+	XCTAssertEqualObjects(PBWindowLastMessage, @"Cannot commit merges");
+	[NSFileManager.defaultManager removeItemAtURL:mergeHeadURL error:NULL];
+
+	[self setCommitFiles:@[] controller:controller];
+	[controller commit:self];
+	XCTAssertEqualObjects(PBWindowLastMessage, @"No changes to commit");
+
+	[self setCommitFiles:@[ staged ] controller:controller];
+	messageView.string = NSLocalizedString(@"no", nil);
+	[controller commit:self];
+	XCTAssertEqualObjects(PBWindowLastMessage, @"Missing commit message");
+
+	messageView.string = NSLocalizedString(@"verified commit", nil);
+	[controller commit:self];
+	XCTAssertEqual(index.commitCount, (NSUInteger)1);
+	XCTAssertEqualObjects(index.lastCommitMessage, @"verified commit");
+	XCTAssertTrue(index.lastCommitVerification);
+	XCTAssertTrue(controller.isBusy);
+	XCTAssertFalse(messageView.editable);
+
+	messageView.editable = YES;
+	messageView.string = NSLocalizedString(@"force commit", nil);
+	pushAfterCommitButton.state = NSControlStateValueOn;
+	[pushRemotePopUpButton selectItemWithTitle:NSLocalizedString(@"origin", nil)];
+	[controller forceCommit:self];
+	XCTAssertEqual(index.commitCount, (NSUInteger)2);
+	XCTAssertFalse(index.lastCommitVerification);
+
+	self.controller.interceptRemoteRouting = YES;
+	[controller commitFinished:[NSNotification notificationWithName:PBGitIndexFinishedCommit
+															 object:index
+														   userInfo:@{@"description" : @"Committed"}]];
+	XCTAssertEqualObjects(messageView.string, @"");
+	XCTAssertTrue(messageView.editable);
+	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOff);
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
+	XCTAssertEqualObjects(self.controller.lastRemote.remoteName, @"origin");
+	XCTAssertFalse(self.controller.lastPushRequiresConfirmation);
+
+	messageView.string = NSLocalizedString(@"failed push commit", nil);
+	pushAfterCommitButton.state = NSControlStateValueOn;
+	[controller forceCommit:self];
+	controller.isBusy = YES;
+	messageView.editable = NO;
+	[controller commitFailed:[NSNotification notificationWithName:PBGitIndexCommitFailed
+														   object:index
+														 userInfo:@{@"description" : @"rejected"}]];
+	XCTAssertFalse(controller.isBusy);
+	XCTAssertTrue(messageView.editable);
+	XCTAssertEqualObjects(controller.status, @"Commit failed: rejected");
+	XCTAssertEqualObjects(PBWindowLastMessage, @"Commit failed");
+	[controller commitFinished:[NSNotification notificationWithName:PBGitIndexFinishedCommit object:index]];
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
+
+	messageView.string = NSLocalizedString(@"hook failure commit", nil);
+	pushAfterCommitButton.state = NSControlStateValueOn;
+	[controller forceCommit:self];
+	controller.isBusy = YES;
+	messageView.editable = NO;
+	[controller commitHookFailed:[NSNotification notificationWithName:PBGitIndexCommitHookFailed
+															   object:index
+															 userInfo:@{@"description" : @"hook rejected"}]];
+	XCTAssertFalse(controller.isBusy);
+	XCTAssertTrue(messageView.editable);
+	XCTAssertEqualObjects(controller.status, @"Commit hook failed: hook rejected");
+	XCTAssertEqual(PBWindowHookCount, (NSUInteger)1);
+	[controller commitFinished:[NSNotification notificationWithName:PBGitIndexFinishedCommit object:index]];
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
+
+	controller.isBusy = YES;
+	[controller refreshFinished:[NSNotification notificationWithName:PBGitIndexFinishedIndexRefresh object:index]];
+	XCTAssertFalse(controller.isBusy);
+	XCTAssertEqualObjects(controller.status, @"Index refresh finished");
+	[controller commitStatusUpdated:[NSNotification notificationWithName:PBGitIndexCommitStatus
+																  object:index
+																userInfo:@{@"description" : @"Writing commit"}]];
+	XCTAssertEqualObjects(controller.status, @"Writing commit");
+
+	messageView.string = NSLocalizedString(@"keep this message", nil);
+	[controller amendCommit:[NSNotification notificationWithName:PBGitIndexAmendMessageAvailable
+														  object:index
+														userInfo:@{@"message" : @"old message"}]];
+	XCTAssertEqualObjects(messageView.string, @"keep this message");
+	messageView.string = NSLocalizedString(@"old", nil);
+	[controller amendCommit:[NSNotification notificationWithName:PBGitIndexAmendMessageAvailable
+														  object:index
+														userInfo:@{@"message" : @"restored message"}]];
+	XCTAssertEqualObjects(messageView.string, @"restored message");
+
+	[self setCommitFiles:@[] controller:controller];
+	[controller indexChanged:[NSNotification notificationWithName:PBGitIndexIndexUpdated object:index]];
+	XCTAssertFalse(commitButton.enabled);
+	[self setCommitFiles:@[ staged ] controller:controller];
+	[controller indexChanged:[NSNotification notificationWithName:PBGitIndexIndexUpdated object:index]];
+	XCTAssertTrue(commitButton.enabled);
+	[controller indexOperationFailed:[NSNotification notificationWithName:PBGitIndexOperationFailed
+																   object:index
+																 userInfo:@{@"description" : @"stage failed"}]];
+	XCTAssertEqualObjects(PBWindowLastMessage, @"Index operation failed");
+	XCTAssertEqualObjects(PBWindowLastInfo, @"stage failed");
+	[controller closeView];
+}
+
+- (void)testCommitControllerMessageFileAndMutationActions
+{
+	PBCommitIndexSpy *index = [[PBCommitIndexSpy alloc] initWithRepository:self.repository];
+	PBGitCommitController *controller = [self loadedCommitControllerWithIndex:index];
+	PBCommitMessageView *messageView = [controller valueForKey:@"commitMessageView"];
+	NSArrayController *unstagedController = [controller valueForKey:@"unstagedFilesController"];
+	NSArrayController *stagedController = [controller valueForKey:@"stagedFilesController"];
+	NSTableView *unstagedTable = [controller valueForKey:@"unstagedTable"];
+	NSTableView *stagedTable = [controller valueForKey:@"stagedTable"];
+	PBChangedFile *unstaged = [self changedFileWithPath:@"tracked.txt" status:MODIFIED hasStagedChanges:NO hasUnstagedChanges:YES];
+	PBChangedFile *staged = [self changedFileWithPath:@"staged.txt" status:MODIFIED hasStagedChanges:YES hasUnstagedChanges:NO];
+
+	messageView.string = NSLocalizedString(@"Subject", nil);
+	[controller signOff:self];
+	XCTAssertTrue([messageView.string containsString:@"Signed-off-by: GitX Tests <gitx-tests@example.invalid>"]);
+	NSString *signedMessage = messageView.string;
+	[controller signOff:self];
+	XCTAssertEqualObjects(messageView.string, signedMessage);
+	PBWindowConfigurationMissingIdentity = YES;
+	[controller signOff:self];
+	XCTAssertEqualObjects(PBWindowLastMessage, @"User‘s name not set");
+	PBWindowConfigurationMissingIdentity = NO;
+
+	messageView.string = NSLocalizedString(@"original", nil);
+	index.prepareMessage = nil;
+	[controller prepareCommitMessage:self];
+	XCTAssertEqualObjects(messageView.string, @"original");
+	index.prepareMessage = @"prepared message";
+	[controller prepareCommitMessage:self];
+	XCTAssertEqualObjects(messageView.string, @"prepared message");
+	XCTAssertEqual(index.prepareCount, (NSUInteger)2);
+	XCTAssertFalse(controller.isBusy);
+
+	NSUInteger reloadCount = self.repository.reloadRefsCount;
+	[controller refresh:nil];
+	XCTAssertTrue(controller.isBusy);
+	XCTAssertEqualObjects(controller.status, @"Refreshing index…");
+	XCTAssertEqual(index.refreshCount, (NSUInteger)1);
+	XCTAssertEqual(self.repository.reloadRefsCount, reloadCount + 1);
+	XCTAssertFalse(index.isAmend);
+	[controller toggleAmendCommit:self];
+	XCTAssertTrue(index.isAmend);
+
+	[self setCommitFiles:@[ unstaged, staged ] controller:controller];
+	unstagedController.selectionIndexes = [NSIndexSet indexSetWithIndex:0];
+	stagedController.selectionIndexes = [NSIndexSet indexSetWithIndex:0];
+	[controller stageFiles:self];
+	[controller unstageFiles:self];
+	XCTAssertEqual(index.stageCount, (NSUInteger)1);
+	XCTAssertEqual(index.unstageCount, (NSUInteger)1);
+	XCTAssertEqualObjects(index.lastFiles, (@[ staged ]));
+	[controller fileChangesTableViewDidRequestStagingToggle:(PBFileChangesTableView *)unstagedTable];
+	[controller fileChangesTableViewDidRequestStagingToggle:(PBFileChangesTableView *)stagedTable];
+	XCTAssertEqual(index.stageCount, (NSUInteger)2);
+	XCTAssertEqual(index.unstageCount, (NSUInteger)2);
+	XCTestExpectation *reselectionFinished = [self expectationWithDescription:@"commit table reselection finished"];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[reselectionFinished fulfill];
+	});
+	[self waitForExpectations:@[ reselectionFinished ] timeout:1.0];
+	XCTAssertEqual(unstagedController.selectionIndex, (NSUInteger)0);
+	XCTAssertEqual(stagedController.selectionIndex, (NSUInteger)0);
+
+	self.controller.shouldConfirm = NO;
+	[controller discardFiles:self];
+	XCTAssertEqual(index.discardCount, (NSUInteger)0);
+	self.controller.shouldConfirm = YES;
+	[controller discardFiles:self];
+	[controller discardFilesForcibly:self];
+	XCTAssertEqual(index.discardCount, (NSUInteger)2);
+	[self setCommitFiles:@[] controller:controller];
+	[controller discardFiles:self];
+	[controller discardFilesForcibly:self];
+	XCTAssertEqual(index.discardCount, (NSUInteger)2);
+
+	[self setCommitFiles:@[ unstaged ] controller:controller];
+	unstagedController.selectionIndexes = [NSIndexSet indexSetWithIndex:0];
+	NSMenuItem *sender = [self commitMenuItemWithAction:@selector(openFiles:) table:unstagedTable];
+	XCTAssertEqualObjects([controller selectedFilesForSender:sender], (@[ unstaged ]));
+	XCTAssertNil([controller selectedFilesForSender:self]);
+	[controller openFiles:sender];
+	[controller revealInFinder:sender];
+	XCTAssertEqualObjects(self.controller.openedURLs.firstObject.lastPathComponent, @"tracked.txt");
+	XCTAssertEqualObjects(self.controller.revealedURLs.firstObject.lastPathComponent, @"tracked.txt");
+
+	self.repository.interceptIgnore = YES;
+	self.repository.ignoreSucceeds = YES;
+	NSUInteger ignoreRefreshCount = index.refreshCount;
+	[controller ignoreFiles:sender];
+	XCTAssertTrue([self.repository.operations containsObject:@"ignore:tracked.txt"]);
+	XCTAssertEqual(index.refreshCount, ignoreRefreshCount + 1);
+	self.repository.ignoreSucceeds = NO;
+	[controller ignoreFiles:sender];
+	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)1);
+	XCTAssertEqual(index.refreshCount, ignoreRefreshCount + 2);
+	unstagedController.selectionIndexes = [NSIndexSet indexSet];
+	[controller ignoreFiles:sender];
+	XCTAssertEqual(index.refreshCount, ignoreRefreshCount + 2);
+
+	unstagedController.selectionIndexes = [NSIndexSet indexSetWithIndex:0];
+	NSUInteger trashRefreshCount = index.refreshCount;
+	PBWindowTrashSucceeds = NO;
+	[controller moveToTrash:sender];
+	XCTAssertEqual(PBWindowTrashCount, (NSUInteger)1);
+	XCTAssertEqual(index.refreshCount, trashRefreshCount);
+	PBWindowTrashSucceeds = YES;
+	[controller moveToTrash:sender];
+	XCTAssertEqual(PBWindowTrashCount, (NSUInteger)2);
+	XCTAssertEqual(index.refreshCount, trashRefreshCount + 1);
+	[controller closeView];
+}
+
+- (void)testCommitControllerContextMenuPresentationAndEligibility
+{
+	PBCommitIndexSpy *index = [[PBCommitIndexSpy alloc] initWithRepository:self.repository];
+	PBGitCommitController *controller = [self loadedCommitControllerWithIndex:index];
+	NSArrayController *unstagedController = [controller valueForKey:@"unstagedFilesController"];
+	NSArrayController *stagedController = [controller valueForKey:@"stagedFilesController"];
+	NSTableView *unstagedTable = [controller valueForKey:@"unstagedTable"];
+	NSTableView *stagedTable = [controller valueForKey:@"stagedTable"];
+	PBChangedFile *newFile = [self changedFileWithPath:@"new.txt" status:NEW hasStagedChanges:NO hasUnstagedChanges:YES];
+	PBChangedFile *modified = [self changedFileWithPath:@"folder/modified.txt" status:MODIFIED hasStagedChanges:NO hasUnstagedChanges:YES];
+	PBChangedFile *staged = [self changedFileWithPath:@"staged.txt" status:MODIFIED hasStagedChanges:YES hasUnstagedChanges:NO];
+	[self setCommitFiles:@[ newFile, modified, staged ] controller:controller];
+	unstagedController.selectionIndexes = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)];
+	stagedController.selectionIndexes = [NSIndexSet indexSetWithIndex:0];
+
+	NSMenuItem *stageItem = [self commitMenuItemWithAction:@selector(stageFiles:) table:unstagedTable];
+	XCTAssertTrue([controller validateMenuItem:stageItem]);
+	XCTAssertEqualObjects(stageItem.title, @"Stage 2 Files");
+	XCTAssertFalse(stageItem.hidden);
+	NSMenuItem *unstageItem = [self commitMenuItemWithAction:@selector(unstageFiles:) table:stagedTable];
+	XCTAssertTrue([controller validateMenuItem:unstageItem]);
+	XCTAssertEqualObjects(unstageItem.title, @"Unstage “staged.txt”");
+
+	NSMenuItem *discardItem = [self commitMenuItemWithAction:@selector(discardFiles:) table:unstagedTable];
+	XCTAssertTrue([controller validateMenuItem:discardItem]);
+	XCTAssertEqualObjects(discardItem.title, @"Discard changes to 2 Files…");
+	XCTAssertFalse(discardItem.hidden);
+	NSMenuItem *forceDiscardItem = [self commitMenuItemWithAction:@selector(discardFilesForcibly:) table:unstagedTable];
+	XCTAssertTrue([controller validateMenuItem:forceDiscardItem]);
+	XCTAssertTrue(forceDiscardItem.alternate);
+	NSMenuItem *trashItem = [self commitMenuItemWithAction:@selector(moveToTrash:) table:unstagedTable];
+	XCTAssertTrue([controller validateMenuItem:trashItem]);
+	XCTAssertTrue(trashItem.hidden);
+
+	NSUInteger newFileIndex = [unstagedController.arrangedObjects indexOfObject:newFile];
+	XCTAssertNotEqual(newFileIndex, NSNotFound);
+	unstagedController.selectionIndexes = [NSIndexSet indexSetWithIndex:newFileIndex];
+	XCTAssertTrue([controller validateMenuItem:discardItem]);
+	XCTAssertTrue(discardItem.hidden);
+	XCTAssertTrue([controller validateMenuItem:trashItem]);
+	XCTAssertFalse(trashItem.hidden);
+	XCTAssertEqualObjects(trashItem.title, @"Move “new.txt” to Trash");
+
+	NSMenuItem *openItem = [self commitMenuItemWithAction:@selector(openFiles:) table:unstagedTable];
+	self.repository.testSubmodule = [PBWindowSubmodule new];
+	XCTAssertTrue([controller validateMenuItem:openItem]);
+	XCTAssertEqualObjects(openItem.title, @"Open Submodule “new.txt” in GitX");
+	self.repository.testSubmodule = nil;
+	XCTAssertTrue([controller validateMenuItem:openItem]);
+	XCTAssertEqualObjects(openItem.title, @"Open “new.txt”");
+
+	NSMenuItem *ignoreItem = [self commitMenuItemWithAction:@selector(ignoreFiles:) table:unstagedTable];
+	XCTAssertTrue([controller validateMenuItem:ignoreItem]);
+	XCTAssertFalse(ignoreItem.hidden);
+	NSMenuItem *stagedIgnoreItem = [self commitMenuItemWithAction:@selector(ignoreFiles:) table:stagedTable];
+	XCTAssertFalse([controller validateMenuItem:stagedIgnoreItem]);
+	XCTAssertTrue(stagedIgnoreItem.hidden);
+	NSMenuItem *revealItem = [self commitMenuItemWithAction:@selector(revealInFinder:) table:unstagedTable];
+	XCTAssertTrue([controller validateMenuItem:revealItem]);
+	XCTAssertEqualObjects(revealItem.title, @"Reveal “new.txt” in Finder");
+	unstagedController.selectionIndexes = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)];
+	XCTAssertFalse([controller validateMenuItem:revealItem]);
+	XCTAssertTrue(revealItem.hidden);
+
+	NSMenuItem *amendItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Amend", nil) action:@selector(toggleAmendCommit:) keyEquivalent:@""];
+	XCTAssertTrue([controller validateMenuItem:amendItem]);
+	XCTAssertEqual(amendItem.state, NSControlStateValueOff);
+	index.amend = YES;
+	XCTAssertTrue([controller validateMenuItem:amendItem]);
+	XCTAssertEqual(amendItem.state, NSControlStateValueOn);
+	NSMenuItem *prepareItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Prepare", nil) action:@selector(prepareCommitMessage:) keyEquivalent:@""];
+	self.repository.interceptHook = YES;
+	self.repository.testHookExists = NO;
+	XCTAssertFalse([controller validateMenuItem:prepareItem]);
+	self.repository.testHookExists = YES;
+	XCTAssertTrue([controller validateMenuItem:prepareItem]);
+
+	unstagedController.selectionIndexes = [NSIndexSet indexSet];
+	XCTAssertFalse([controller validateMenuItem:stageItem]);
+	XCTAssertTrue(stageItem.hidden);
+	XCTAssertEqualObjects(stageItem.title, @"Stage");
+	XCTAssertFalse([controller validateMenuItem:openItem]);
+	NSMenuItem *otherItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Other", nil) action:@selector(copy:) keyEquivalent:@""];
+	otherItem.enabled = YES;
+	XCTAssertTrue([controller validateMenuItem:otherItem]);
+	[controller menuNeedsUpdate:unstagedTable.menu];
+	[controller closeView];
+}
+
+- (void)testCommitControllerResponderTableAndDragInteractions
+{
+	PBCommitIndexSpy *index = [[PBCommitIndexSpy alloc] initWithRepository:self.repository];
+	PBGitCommitController *controller = [self loadedCommitControllerWithIndex:index];
+	PBCommitMessageView *messageView = [controller valueForKey:@"commitMessageView"];
+	NSArrayController *unstagedController = [controller valueForKey:@"unstagedFilesController"];
+	NSArrayController *stagedController = [controller valueForKey:@"stagedFilesController"];
+	NSTableView *unstagedTable = [controller valueForKey:@"unstagedTable"];
+	NSTableView *stagedTable = [controller valueForKey:@"stagedTable"];
+	PBChangedFile *unstaged = [self changedFileWithPath:@"tracked.txt" status:MODIFIED hasStagedChanges:NO hasUnstagedChanges:YES];
+	PBChangedFile *staged = [self changedFileWithPath:@"staged.txt" status:MODIFIED hasStagedChanges:YES hasUnstagedChanges:NO];
+	[self setCommitFiles:@[ unstaged, staged ] controller:controller];
+	[unstagedTable reloadData];
+	[stagedTable reloadData];
+
+	XCTAssertTrue([controller textView:messageView doCommandBySelector:@selector(insertTab:)]);
+	XCTAssertEqual(self.controller.window.firstResponder, stagedTable);
+	XCTAssertEqual(stagedTable.selectedRow, (NSInteger)0);
+	XCTAssertTrue([controller textView:messageView doCommandBySelector:@selector(insertBacktab:)]);
+	XCTAssertEqual(self.controller.window.firstResponder, unstagedTable);
+	XCTAssertFalse([controller textView:messageView doCommandBySelector:@selector(insertNewline:)]);
+
+	unstagedController.selectionIndexes = [NSIndexSet indexSetWithIndex:0];
+	stagedController.selectionIndexes = [NSIndexSet indexSetWithIndex:0];
+	[controller didDoubleClickOnTable:unstagedTable];
+	[controller didDoubleClickOnTable:stagedTable];
+	XCTAssertEqual(index.stageCount, (NSUInteger)1);
+	XCTAssertEqual(index.unstageCount, (NSUInteger)1);
+	NSTableColumn *column = unstagedTable.tableColumns.firstObject;
+	[controller tableView:unstagedTable willDisplayCell:column.dataCell forTableColumn:column row:0];
+
+	NSPasteboard *unstagedPasteboard = [NSPasteboard pasteboardWithUniqueName];
+	XCTAssertTrue([controller tableView:unstagedTable
+				   writeRowsWithIndexes:[NSIndexSet indexSetWithIndex:0]
+						   toPasteboard:unstagedPasteboard]);
+	XCTAssertEqualObjects([unstagedPasteboard propertyListForType:@"NSFilenamesPboardType"],
+						  (@[ [self.repository.workingDirectoryURL URLByAppendingPathComponent:@"tracked.txt"].path ]));
+	PBCommitDraggingInfo *dragInfo = [PBCommitDraggingInfo new];
+	dragInfo.testPasteboard = unstagedPasteboard;
+	dragInfo.testSource = unstagedTable;
+	XCTAssertEqual([controller tableView:unstagedTable
+								validateDrop:(id<NSDraggingInfo>)dragInfo
+								 proposedRow:0
+					   proposedDropOperation:NSTableViewDropAbove],
+				   NSDragOperationNone);
+	dragInfo.testSource = stagedTable;
+	XCTAssertEqual([controller tableView:unstagedTable
+								validateDrop:(id<NSDraggingInfo>)dragInfo
+								 proposedRow:0
+					   proposedDropOperation:NSTableViewDropAbove],
+				   NSDragOperationCopy);
+	XCTAssertTrue([controller tableView:stagedTable
+							 acceptDrop:(id<NSDraggingInfo>)dragInfo
+									row:0
+						  dropOperation:NSTableViewDropOn]);
+	XCTAssertEqual(index.stageCount, (NSUInteger)2);
+
+	NSPasteboard *stagedPasteboard = [NSPasteboard pasteboardWithUniqueName];
+	XCTAssertTrue([controller tableView:stagedTable
+				   writeRowsWithIndexes:[NSIndexSet indexSetWithIndex:0]
+						   toPasteboard:stagedPasteboard]);
+	dragInfo.testPasteboard = stagedPasteboard;
+	XCTAssertTrue([controller tableView:unstagedTable
+							 acceptDrop:(id<NSDraggingInfo>)dragInfo
+									row:0
+						  dropOperation:NSTableViewDropOn]);
+	XCTAssertEqual(index.unstageCount, (NSUInteger)2);
+
+	NSPasteboard *invalidPasteboard = [NSPasteboard pasteboardWithUniqueName];
+	[invalidPasteboard declareTypes:@[ @"GitFileChangedType" ] owner:nil];
+	[invalidPasteboard setData:[@"invalid" dataUsingEncoding:NSUTF8StringEncoding] forType:@"GitFileChangedType"];
+	dragInfo.testPasteboard = invalidPasteboard;
+	XCTAssertFalse([controller tableView:stagedTable
+							  acceptDrop:(id<NSDraggingInfo>)dragInfo
+									 row:0
+						   dropOperation:NSTableViewDropOn]);
+	NSPasteboard *missingRowsPasteboard = [NSPasteboard pasteboardWithUniqueName];
+	dragInfo.testPasteboard = missingRowsPasteboard;
+	XCTAssertFalse([controller tableView:stagedTable
+							  acceptDrop:(id<NSDraggingInfo>)dragInfo
+									 row:0
+						   dropOperation:NSTableViewDropOn]);
+
+	[self setCommitFiles:@[] controller:controller];
+	[unstagedTable reloadData];
+	[controller focusTable:unstagedTable];
+	XCTAssertEqual(unstagedTable.numberOfRows, (NSInteger)0);
+	[controller closeView];
 }
 
 - (void)testRealNibLifecycleContentSwitchingStatusAndValidation

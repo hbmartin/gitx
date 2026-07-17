@@ -46,10 +46,33 @@
 @property (nonatomic) NSData *imageData;
 @property (atomic) BOOL callbackWasOnMainThread;
 @property (atomic) NSDictionary<NSString *, id> *capturedImageSource;
+@property (nonatomic) NSMutableArray<NSString *> *diffActions;
+@property (nonatomic) NSMutableArray<NSString *> *diffPatches;
+@property (nullable, nonatomic) NSString *selectedCommitSHA;
 
 @end
 
 @implementation PBNativeImageDataDelegate
+
+- (instancetype)init
+{
+	self = [super init];
+	if (!self) return nil;
+	_diffActions = [NSMutableArray array];
+	_diffPatches = [NSMutableArray array];
+	return self;
+}
+
+- (void)nativeContentView:(PBNativeContentView *)view performDiffAction:(NSString *)action patch:(NSString *)patch
+{
+	[self.diffActions addObject:action];
+	[self.diffPatches addObject:patch];
+}
+
+- (void)nativeContentView:(PBNativeContentView *)view selectCommit:(NSString *)sha
+{
+	self.selectedCommitSHA = sha;
+}
 
 - (NSData *)nativeContentView:(PBNativeContentView *)view
 			 imageDataForPath:(NSString *)path
@@ -218,6 +241,14 @@
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
 }
 
+- (nullable id)linkInNativeView:(PBNativeContentView *)view titled:(NSString *)title index:(NSUInteger *)index
+{
+	NSRange range = [view.textView.string rangeOfString:title];
+	if (range.location == NSNotFound) return nil;
+	if (index) *index = range.location;
+	return [view.textView.textStorage attribute:NSLinkAttributeName atIndex:range.location effectiveRange:nil];
+}
+
 - (void)testAutoFetchDefaultsClampInterval
 {
 	[PBGitDefaults setAutoFetchIntervalMinutes:0];
@@ -352,7 +383,6 @@
 	delegate.imageData = imageData;
 	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
 	view.delegate = delegate;
-	[view setValue:[NSMutableSet setWithObject:@"0:image.png"] forKey:@"expandedImages"];
 	NSDictionary<NSString *, id> *imageSource = @{
 		PBNativeImageSourceRevisionsKey : @[ @"abc123" ],
 		PBNativeImageSourceGitLaunchPathKey : @"/usr/bin/git",
@@ -366,6 +396,11 @@
 			  PBNativeSectionContextKey : @"readOnly",
 			  PBNativeSectionImageSourceKey : imageSource,
 		  } ]];
+	[self waitForNativeView:view toContainString:@"Show image"];
+	NSUInteger linkIndex = NSNotFound;
+	id link = [self linkInNativeView:view titled:@"Show image" index:&linkIndex];
+	XCTAssertNotNil(link);
+	XCTAssertTrue([view textView:view.textView clickedOnLink:link atIndex:linkIndex]);
 
 	NSPredicate *hasAttachment = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 		NSAttributedString *storage = view.textView.textStorage;
@@ -386,6 +421,103 @@
 
 	XCTAssertFalse(delegate.callbackWasOnMainThread);
 	XCTAssertEqualObjects(delegate.capturedImageSource, imageSource);
+}
+
+- (void)testNativeBlameRendersMetadataReuseAndFallbacks
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	NSString *sha = @"0123456789abcdef0123456789abcdef01234567";
+	NSString *otherSHA = @"fedcba9876543210fedcba9876543210fedcba98";
+	NSString *porcelain = [NSString stringWithFormat:@"%@ 1 1 1\nauthor An Extremely Long Author Name\nsummary First line\n\tlet first = 1\n%@ 2 2\n\tlet second = 2\n%@ 3 3 1\nauthor Bob\nsummary Third line\n\tlet third = 3\n", sha, sha, otherSHA];
+
+	[view showBlameSections:@[ @{
+								  PBNativeSectionPathKey : @"Example.swift",
+								  PBNativeSectionTextKey : porcelain,
+							  },
+							   @{} ]];
+	[self waitForNativeView:view toContainString:@"let third = 3"];
+
+	XCTAssertTrue([view.textView.string containsString:@"Example.swift"]);
+	XCTAssertTrue([view.textView.string containsString:@"01234567"]);
+	XCTAssertTrue([view.textView.string containsString:@"An Extremely Long…"]);
+	XCTAssertTrue([view.textView.string containsString:@"let first = 1"]);
+	XCTAssertTrue([view.textView.string containsString:@"let second = 2"]);
+}
+
+- (void)testNativeHistoryRendersEntriesAndRoutesCommitLinks
+{
+	PBNativeImageDataDelegate *delegate = [[PBNativeImageDataDelegate alloc] init];
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	view.delegate = delegate;
+	NSString *sha = @"0123456789abcdef0123456789abcdef01234567";
+	[view showHistorySections:@[ @{
+			  PBNativeSectionPathKey : @"History fallback title",
+			  PBNativeSectionEntriesKey : @[
+				  @{@"subject" : @"Initial subject", @"author" : @"Ada", @"date" : @"Today", @"sha" : sha},
+				  @{},
+			  ],
+		  } ]];
+	[self waitForNativeView:view toContainString:@"Initial subject"];
+
+	XCTAssertTrue([view.textView.string containsString:@"History fallback title"]);
+	XCTAssertTrue([view.textView.string containsString:@"Ada  •  Today  •  0123456789ab"]);
+	NSUInteger linkIndex = NSNotFound;
+	id link = [self linkInNativeView:view titled:@"0123456789ab" index:&linkIndex];
+	XCTAssertNotNil(link);
+	XCTAssertTrue([view textView:view.textView clickedOnLink:link atIndex:linkIndex]);
+	XCTAssertEqualObjects(delegate.selectedCommitSHA, sha);
+}
+
+- (void)testNativeDiffRoutesHunkLineBlockCollapseAndScrollInteractions
+{
+	PBNativeImageDataDelegate *delegate = [[PBNativeImageDataDelegate alloc] init];
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 120)];
+	view.delegate = delegate;
+	NSString *diff = @"diff --git a/file.txt b/file.txt\n"
+					 @"index 1111111..2222222 100644\n"
+					 @"--- a/file.txt\n"
+					 @"+++ b/file.txt\n"
+					 @"@@ -1,2 +1,2 @@\n"
+					 @"-old\n"
+					 @"+new\n"
+					 @" tail\n";
+	NSDictionary *unstaged = @{PBNativeSectionTextKey : diff, PBNativeSectionContextKey : @"unstaged"};
+	[view showDiffSections:@[ unstaged ]];
+	[self waitForNativeView:view toContainString:@"Discard line"];
+
+	NSUInteger linkIndex = NSNotFound;
+	id hunkLink = [self linkInNativeView:view titled:@"Stage hunk" index:&linkIndex];
+	XCTAssertTrue([view textView:view.textView clickedOnLink:hunkLink atIndex:linkIndex]);
+	id lineLink = [self linkInNativeView:view titled:@"Stage line" index:&linkIndex];
+	XCTAssertTrue([view textView:view.textView clickedOnLink:lineLink atIndex:linkIndex]);
+	XCTAssertEqualObjects(delegate.diffActions, (@[ @"stage", @"stage" ]));
+	XCTAssertTrue([delegate.diffPatches.firstObject containsString:@"@@ -1,2 +1,2 @@"]);
+	XCTAssertTrue([delegate.diffPatches.lastObject containsString:@"old"]);
+
+	id collapseLink = [self linkInNativeView:view titled:@"▾ " index:&linkIndex];
+	XCTAssertTrue([view textView:view.textView clickedOnLink:collapseLink atIndex:linkIndex]);
+	[self waitForNativeView:view toContainString:@"▸ "];
+	id expandLink = [self linkInNativeView:view titled:@"▸ " index:&linkIndex];
+	XCTAssertTrue([view textView:view.textView clickedOnLink:expandLink atIndex:linkIndex]);
+	[self waitForNativeView:view toContainString:@"Stage block"];
+
+	[view showDiffSections:@[ @{PBNativeSectionTextKey : diff, PBNativeSectionContextKey : @"staged"} ]];
+	[self waitForNativeView:view toContainString:@"Unstage block"];
+	id unstageLink = [self linkInNativeView:view titled:@"Unstage line" index:&linkIndex];
+	XCTAssertTrue([view textView:view.textView clickedOnLink:unstageLink atIndex:linkIndex]);
+	XCTAssertEqualObjects(delegate.diffActions.lastObject, @"unstage");
+	XCTAssertTrue([delegate.diffPatches.lastObject containsString:@"old"]);
+
+	XCTAssertFalse([view textView:view.textView clickedOnLink:[NSURL URLWithString:@"gitx-action://missing"] atIndex:0]);
+	[view scrollPageDown];
+	[view scrollPageUp];
+}
+
+- (void)testNativeDiffRendersEmptySections
+{
+	PBNativeContentView *view = [[PBNativeContentView alloc] initWithFrame:NSMakeRect(0, 0, 500, 300)];
+	[view showDiffSections:@[ @{PBNativeSectionTitleKey : @"Empty", PBNativeSectionTextKey : @""} ]];
+	[self waitForNativeView:view toContainString:@"There are no differences."];
 }
 
 - (void)testAppearancePreferenceValidatesAndAppliesGlobally
@@ -700,6 +832,10 @@
 	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:renamed], @"new name.txt");
 	NSArray *sameInitial = @[ @"diff --git a/app/assets/variables.json b/assets/variables.json", @"similarity index 100%", @"rename from app/assets/variables.json", @"rename to assets/variables.json" ];
 	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:sameInitial], @"assets/variables.json");
+	NSArray *quoted = @[ @"diff --git a/old.txt b/new.txt", @"+++ \"b/quoted\\\"name.txt\"" ];
+	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:quoted], @"quoted\"name.txt");
+	NSArray *malformed = @[ @"not a diff header" ];
+	XCTAssertEqualObjects([view pathForDiffHeaderAtIndex:0 lines:malformed], @"not a diff header");
 }
 
 - (void)testTaskSupportsShortConfigurableTimeouts

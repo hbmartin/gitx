@@ -406,6 +406,21 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let singlePaths = historyController.menuItems(forPaths: [" nested/tracked.txt "])
         XCTAssertEqual(singlePaths.count, 5)
         XCTAssertTrue(singlePaths.allSatisfy { ($0 as! NSMenuItem).representedObject != nil })
+        let featurePathItems = try XCTUnwrap(singlePaths as? [NSMenuItem])
+        let featureDiff = try XCTUnwrap(featurePathItems.first { $0.action == NSSelectorFromString("diffFilesAction:") })
+        let featureCheckout = try XCTUnwrap(featurePathItems.first { $0.action == NSSelectorFromString("checkoutFiles:") })
+        XCTAssertTrue(featureDiff.isEnabled)
+        XCTAssertTrue(featureCheckout.isEnabled)
+        XCTAssertEqual(featureDiff.representedObject as? [String], ["nested/tracked.txt"])
+
+        historyController.selectedCommits = [headCommit]
+        let headPathItems = try XCTUnwrap(historyController.menuItems(forPaths: ["nested/tracked.txt"]) as? [NSMenuItem])
+        let headDiff = try XCTUnwrap(headPathItems.first { $0.title.hasPrefix("Diff file") })
+        let headCheckout = try XCTUnwrap(headPathItems.first { $0.action == NSSelectorFromString("checkoutFiles:") })
+        XCTAssertFalse(headDiff.isEnabled)
+        XCTAssertNil(headDiff.action)
+        XCTAssertTrue(headCheckout.isEnabled)
+
         let multiplePaths = historyController.menuItems(forPaths: ["one", "two"])
         XCTAssertTrue(try XCTUnwrap((multiplePaths[0] as? NSMenuItem)?.title.contains("files")))
         let sender = NSMenuItem()
@@ -481,13 +496,33 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             Notification(
                 name: .PBGitRepositoryEvent,
                 object: repository,
-                userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: 0)]
+                userInfo: [kPBGitRepositoryEventTypeUserInfoKey: NSNumber(value: 1 << 1)]
             )
         )
+        waitForHistory()
         historyController.commitController.setSelectedObjects([])
         historyController.updateKeys()
         XCTAssertNil(historyController.gitTree)
         XCTAssertTrue(historyController.webCommits.isEmpty)
+    }
+
+    func testPathMenuDisablesCommitActionsWithoutSelection() throws {
+        historyController.selectedCommits = []
+
+        let items = try XCTUnwrap(historyController.menuItems(forPaths: ["nested/tracked.txt"]) as? [NSMenuItem])
+        let diff = try XCTUnwrap(items.first { $0.title.hasPrefix("Diff file") })
+        let checkout = try XCTUnwrap(items.first { $0.title == "Checkout file" })
+        let history = try XCTUnwrap(items.first { $0.title == "Show history of file" })
+        let finder = try XCTUnwrap(items.first { $0.title == "Reveal in Finder" })
+        let open = try XCTUnwrap(items.first { $0.title == "Open File" })
+
+        XCTAssertFalse(diff.isEnabled)
+        XCTAssertNil(diff.action)
+        XCTAssertFalse(checkout.isEnabled)
+        XCTAssertNil(checkout.action)
+        XCTAssertTrue(history.isEnabled)
+        XCTAssertTrue(finder.isEnabled)
+        XCTAssertTrue(open.isEnabled)
     }
 
     func testTablePasteboardDropCheckoutAndResponderInteractions() throws {
