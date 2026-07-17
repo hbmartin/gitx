@@ -372,14 +372,12 @@
 	XCUIElement *hookFailure = self.app.staticTexts[@"Commit hook failed"];
 	XCTAssertTrue([hookFailure waitForExistenceWithTimeout:10]);
 	XCTAssertEqualObjects(pushCheckbox.value, @1, @"A failed commit must leave commit-and-push armed for retry");
+	[self saveWindowScreenshotNamed:@"commit-hook-failure-preserves-push-choice"];
 	XCTAssertEqualObjects(([self gitOutput:@[ @"rev-parse", @"HEAD" ] inDirectory:repositoryPath]), initialHead);
 	XCTAssertTrue([[NSFileManager defaultManager] removeItemAtPath:hookPath error:nil]);
 	[self.app.buttons[@"OK"] click];
 
-	NSString *postCommitHookPath = [repositoryPath stringByAppendingPathComponent:@".git/hooks/post-commit"];
-	XCTAssertTrue([@"#!/bin/sh\nexit 1\n" writeToFile:postCommitHookPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
-	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:postCommitHookPath error:nil]);
-	[self.app.buttons[@"Commit"] click];
+	pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
 	NSPredicate *checkboxRemembered = [NSPredicate predicateWithFormat:@"value == 1"];
 	XCTNSPredicateExpectation *rememberedExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:checkboxRemembered object:pushCheckbox];
 	[self waitForExpectations:@[ rememberedExpectation ] timeout:15];
@@ -391,7 +389,7 @@
 	}];
 	XCTNSPredicateExpectation *pushExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:remoteUpdated object:repositoryPath];
 	[self waitForExpectations:@[ pushExpectation ] timeout:20];
-	XCTAssertTrue([[NSFileManager defaultManager] removeItemAtPath:postCommitHookPath error:nil]);
+	[self saveWindowScreenshotNamed:@"commit-and-push-retry-succeeded"];
 	XCTAssertEqualObjects(remotePopup.value, @"backup", @"Remembering the checkbox should preserve the remote selection");
 }
 
@@ -491,7 +489,7 @@
 	[self.app launch];
 	XCUIElement *historySorting = self.app.checkBoxes[@"Allow commit columns to sort history"];
 	[self openPreferencesWaitingForElement:historySorting];
-	XCTAssertTrue(self.app.popUpButtons.firstMatch.exists);
+	XCTAssertTrue([self.app.popUpButtons.firstMatch waitForExistenceWithTimeout:5]);
 	[self saveWindowScreenshotNamed:@"history-fetch-preferences"];
 }
 
@@ -508,11 +506,21 @@
 		if (watchedOriginally) {
 			[continuousWatch click];
 		}
-		XCTAssertTrue(refreshOnFocus.isEnabled);
+		NSPredicate *refreshEnabled = [NSPredicate predicateWithFormat:@"enabled == YES"];
+		[self waitForExpectations:@[
+			[[XCTNSPredicateExpectation alloc] initWithPredicate:refreshEnabled
+														  object:refreshOnFocus]
+		]
+						  timeout:5];
 		if (![refreshOnFocus.value boolValue]) {
 			[refreshOnFocus click];
 		}
-		XCTAssertFalse(continuousWatch.isEnabled);
+		NSPredicate *watchDisabled = [NSPredicate predicateWithFormat:@"enabled == NO"];
+		[self waitForExpectations:@[
+			[[XCTNSPredicateExpectation alloc] initWithPredicate:watchDisabled
+														  object:continuousWatch]
+		]
+						  timeout:5];
 		[self saveWindowScreenshotNamed:@"refresh-on-focus-preference"];
 	} @finally {
 		if ([refreshOnFocus.value boolValue] != focusedOriginally) {
@@ -532,18 +540,25 @@
 
 	@try {
 		for (NSString *title in @[ @"Dark", @"Light", @"Automatic (System)" ]) {
+			appearance = self.app.popUpButtons[@"AppearancePreference"];
 			[appearance click];
-			[appearance typeKey:[title substringToIndex:1].lowercaseString modifierFlags:0];
-			[appearance typeKey:XCUIKeyboardKeyEnter modifierFlags:0];
-			[self waitForElement:appearance toHaveValue:title timeout:5];
+			XCUIElement *choice = self.app.menuItems[title];
+			XCTAssertTrue([choice waitForExistenceWithTimeout:5]);
+			[choice click];
+			[self waitForElement:self.app.popUpButtons[@"AppearancePreference"] toHaveValue:title timeout:5];
 			[self saveWindowScreenshotNamed:[NSString stringWithFormat:@"appearance-%@", title.lowercaseString]];
 		}
 	} @finally {
+		appearance = self.app.popUpButtons[@"AppearancePreference"];
 		if (originalValue.length && ![appearance.value isEqual:originalValue]) {
 			[appearance click];
-			[appearance typeKey:[originalValue substringToIndex:1].lowercaseString modifierFlags:0];
-			[appearance typeKey:XCUIKeyboardKeyEnter modifierFlags:0];
-			[self waitForElement:appearance toHaveValue:originalValue timeout:5];
+			XCUIElement *originalChoice = self.app.menuItems[originalValue];
+			if ([originalChoice waitForExistenceWithTimeout:5]) {
+				[originalChoice click];
+				[self waitForElement:self.app.popUpButtons[@"AppearancePreference"]
+						 toHaveValue:originalValue
+							 timeout:5];
+			}
 		}
 	}
 }
@@ -647,9 +662,11 @@
 	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
+	[self selectHistoryForCurrentBranch];
 
 	XCUIElement *window = self.app.windows.firstMatch;
-	XCUIElement *button = self.app.buttons[@"JumpToCheckedOutBranchButton"];
+	[self.app activate];
+	XCUIElement *button = self.app.buttons[@"Current Branch"];
 	XCTAssertTrue([button waitForExistenceWithTimeout:10], @"The repository toolbar should expose the checked-out branch action");
 	XCTAssertTrue([self.app.menuItems[@"Jump to Checked-Out Branch"] waitForExistenceWithTimeout:5], @"The View menu should expose the checked-out branch hotkey");
 

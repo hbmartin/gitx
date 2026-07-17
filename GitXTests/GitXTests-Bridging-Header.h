@@ -633,6 +633,8 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 - (void)armWithBranchRef:(PBGitRef *)branchRef remoteName:(NSString *)remoteName
 	NS_SWIFT_NAME(arm(branchRef:remoteName:));
 - (void)clear;
+- (nullable NSNumber *)cancelSubmission;
+- (nullable NSNumber *)consumeRememberedPushChoice;
 - (nullable PBCommitPushPlan *)consumePendingPush;
 @end
 

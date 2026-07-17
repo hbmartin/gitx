@@ -209,6 +209,7 @@
 {
 	BOOL wasAvailable = self.pushCapabilityAvailable;
 	BOOL livePushChoice = pushAfterCommitButton.state == NSControlStateValueOn;
+	NSNumber *failedSubmissionPushChoice = self.commitWorkflowState.pendingRememberedPushChoice;
 	NSString *previousSelection = [self selectedPushRemoteName];
 	NSArray<NSString *> *remotes = [PBCommitRemotePresentationPolicy sortedRemoteNames:self.repository.remotes];
 	PBGitRef *headRef = self.repository.headRef.ref;
@@ -239,6 +240,10 @@
 	pushRemotePopUpButton.enabled = presentation.canPush;
 	if (presentation.canPush) {
 		BOOL restoredChoice = wasAvailable ? livePushChoice : self.repositoryUISettings.pushAfterCommit;
+		if (failedSubmissionPushChoice) {
+			restoredChoice = failedSubmissionPushChoice.boolValue;
+			[self.commitWorkflowState consumeRememberedPushChoice];
+		}
 		pushAfterCommitButton.state = restoredChoice ? NSControlStateValueOn : NSControlStateValueOff;
 	} else {
 		pushAfterCommitButton.state = NSControlStateValueOff;
@@ -585,7 +590,10 @@
 	[self finishCommitProgressSheet];
 	self.isBusy = NO;
 	commitMessageView.editable = YES;
-	[self.commitWorkflowState clear];
+	NSNumber *rememberedPushChoice = [self.commitWorkflowState cancelSubmission];
+	if (rememberedPushChoice) {
+		pushAfterCommitButton.state = rememberedPushChoice.boolValue ? NSControlStateValueOn : NSControlStateValueOff;
+	}
 
 	NSString *reason = notification.userInfo[kNotificationDictionaryDescriptionKey];
 	self.status = [NSString stringWithFormat:
@@ -601,7 +609,10 @@
 	[self finishCommitProgressSheet];
 	self.isBusy = NO;
 	commitMessageView.editable = YES;
-	[self.commitWorkflowState clear];
+	NSNumber *rememberedPushChoice = [self.commitWorkflowState cancelSubmission];
+	if (rememberedPushChoice) {
+		pushAfterCommitButton.state = rememberedPushChoice.boolValue ? NSControlStateValueOn : NSControlStateValueOff;
+	}
 
 	NSString *reason = notification.userInfo[kNotificationDictionaryDescriptionKey];
 	self.status = [NSString stringWithFormat:

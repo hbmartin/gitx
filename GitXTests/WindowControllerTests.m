@@ -1574,6 +1574,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue(messageView.editable);
 	XCTAssertEqualObjects(controller.status, @"Commit failed: rejected");
 	XCTAssertEqualObjects(PBWindowLastMessage, @"Commit failed");
+	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOn);
+	[controller reloadPushRemotes];
+	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOn);
 	[controller commitFinished:[NSNotification notificationWithName:PBGitIndexFinishedCommit object:index]];
 	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
 
@@ -1589,6 +1592,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue(messageView.editable);
 	XCTAssertEqualObjects(controller.status, @"Commit hook failed: hook rejected");
 	XCTAssertEqual(PBWindowHookCount, (NSUInteger)1);
+	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOn);
+	[controller reloadPushRemotes];
+	XCTAssertEqual(pushAfterCommitButton.state, NSControlStateValueOn);
 	[controller commitFinished:[NSNotification notificationWithName:PBGitIndexFinishedCommit object:index]];
 	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
 
