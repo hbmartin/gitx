@@ -50,7 +50,7 @@
     "Classes/Controllers/RepositorySettingsController.swift": 0.7887,
     "Classes/Controllers/RepositorySettingsStore.swift": 0.8106,
     "Classes/Controllers/RepositoryStashActionCoordinator.swift": 1.0,
-    "Classes/Controllers/RepositoryToolbarController.swift": 0.9131,
+    "Classes/Controllers/RepositoryToolbarController.swift": 0.9832,
     "Classes/Controllers/TerminalIntegration.swift": 0.6245,
     "Classes/Controllers/WorkspaceActionCoordinator.swift": 0.95,
     "Classes/GitXRelativeDateFormatter.m": 0.6666,
