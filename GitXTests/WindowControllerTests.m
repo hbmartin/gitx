@@ -48,6 +48,15 @@
 - (void)setHistoryMode:(BOOL)historyMode;
 - (void)updateWithStatus:(NSString *)status busy:(BOOL)busy baseWindowTitle:(NSString *)baseWindowTitle;
 - (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar;
+- (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar;
+@end
+
+@interface PBRepositorySettingsStore : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (NSString *)stringForKey:(NSString *)key;
+- (BOOL)boolForKey:(NSString *)key defaultValue:(BOOL)defaultValue;
+- (BOOL)setString:(NSString *)value forKey:(NSString *)key error:(NSError **)error;
+- (BOOL)setBool:(BOOL)value forKey:(NSString *)key error:(NSError **)error;
 @end
 
 @interface PBCommitLayoutCoordinator : NSObject
@@ -1963,6 +1972,28 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual(sidebar.branchSelectionCount, (NSUInteger)2);
 }
 
+- (void)testContentObservationDoesNotRetainWindowController
+{
+	NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 400, 300)
+												   styleMask:NSWindowStyleMaskTitled
+													 backing:NSBackingStoreBuffered
+													   defer:NO];
+	PBWindowContentSpy *content = [PBWindowContentSpy new];
+	__weak PBGitWindowController *weakController = nil;
+	@autoreleasepool {
+		PBGitWindowController *controller = [[PBGitWindowController alloc] initWithWindow:window];
+		NSView *container = [[NSView alloc] initWithFrame:window.contentView.bounds];
+		[controller setValue:container forKey:@"contentSplitView"];
+		[controller changeContentController:content];
+		weakController = controller;
+		controller = nil;
+	}
+
+	XCTAssertNil(weakController);
+	[window orderOut:nil];
+	[window close];
+}
+
 - (void)testActionContextResolutionFromMenusSidebarAndHistory
 {
 	XCTAssertEqual([self.controller refishForSender:[self menuItemWithObject:self.branchRef] refishTypes:@[ kGitXBranchType ]], self.branchRef);
@@ -2303,6 +2334,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.Actions"]);
 	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.Reveal"]);
 	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.Terminal"]);
+	NSArray<NSToolbarItemIdentifier> *historyAllowed = [toolbarController toolbarAllowedItemIdentifiers:historyToolbar];
+	XCTAssertTrue([historyAllowed containsObject:@"GitX.Toolbar.Pull"]);
+	XCTAssertTrue([historyAllowed containsObject:@"GitX.Toolbar.Fetch"]);
+	XCTAssertTrue([historyAllowed containsObject:@"GitX.Toolbar.CreateBranch"]);
 
 	[toolbarController updateWithStatus:@"Loading commits" busy:YES baseWindowTitle:@"Repository"];
 	XCTAssertEqualObjects(self.controller.window.title, @"Repository — Loading commits");
@@ -2314,6 +2349,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([commitDefaults containsObject:@"GitX.Toolbar.History"]);
 	XCTAssertTrue([commitDefaults containsObject:@"GitX.Toolbar.Terminal"]);
 	XCTAssertFalse([commitDefaults containsObject:@"GitX.Toolbar.Push"]);
+	NSArray<NSToolbarItemIdentifier> *commitAllowed = [toolbarController toolbarAllowedItemIdentifiers:commitToolbar];
+	XCTAssertTrue([commitAllowed containsObject:@"GitX.Toolbar.Commit"]);
+	XCTAssertTrue([commitAllowed containsObject:@"GitX.Toolbar.Push"]);
 
 	[toolbarController setHistoryMode:YES];
 	XCTAssertEqual(self.controller.window.toolbar, historyToolbar);
@@ -2408,6 +2446,22 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 	XCTAssertNotNil(settings);
 	XCTAssertFalse(settings.pushAfterCommit);
+}
+
+- (void)testRepositorySettingsStoreReadsAndWritesLocalValues
+{
+	PBRepositorySettingsStore *store = [[PBRepositorySettingsStore alloc] initWithRepository:self.repository];
+	NSError *error = nil;
+
+	XCTAssertTrue([store setString:@"toolbar-value" forKey:@"gitx.test.toolbarValue" error:&error]);
+	XCTAssertNil(error);
+	XCTAssertEqualObjects([store stringForKey:@"gitx.test.toolbarValue"], @"toolbar-value");
+	XCTAssertTrue([store setBool:YES forKey:@"gitx.test.toolbarEnabled" error:&error]);
+	XCTAssertNil(error);
+	XCTAssertTrue([store boolForKey:@"gitx.test.toolbarEnabled" defaultValue:NO]);
+	XCTAssertTrue([store setBool:NO forKey:@"gitx.test.toolbarEnabled" error:&error]);
+	XCTAssertNil(error);
+	XCTAssertFalse([store boolForKey:@"gitx.test.toolbarEnabled" defaultValue:YES]);
 }
 
 - (void)testChangedFileTreeUsesFlatFullPathsAndStatusTitles

@@ -553,6 +553,10 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 - (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
 - (void)install;
 - (void)setHistoryMode:(BOOL)historyMode;
+- (void)updateWithStatus:(NSString *)status busy:(BOOL)busy baseWindowTitle:(NSString *)baseWindowTitle;
+- (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar
+			  itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier
+		  willBeInsertedIntoToolbar:(BOOL)flag;
 @end
 
 @interface PBCommitMessageResult : NSObject
