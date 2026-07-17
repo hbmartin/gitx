@@ -242,7 +242,7 @@
 		BOOL restoredChoice = wasAvailable ? livePushChoice : self.repositoryUISettings.pushAfterCommit;
 		if (failedSubmissionPushChoice) {
 			restoredChoice = failedSubmissionPushChoice.boolValue;
-			[self.commitWorkflowState consumeRememberedPushChoice];
+			(void)[self.commitWorkflowState consumeRememberedPushChoice];
 		}
 		pushAfterCommitButton.state = restoredChoice ? NSControlStateValueOn : NSControlStateValueOff;
 	} else {
