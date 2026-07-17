@@ -157,6 +157,23 @@ final nonisolated class CommitWorkflowState: NSObject {
         pendingRememberedPushChoice = nil
     }
 
+    @objc(cancelSubmission)
+    func cancelSubmission() -> NSNumber? {
+        let rememberedPushChoice = pendingRememberedPushChoice
+        pendingBranchRef = nil
+        pendingRemoteName = nil
+        if rememberedPushChoice != nil {
+            NSLog("[GitX] Restoring commit-and-push choice after failed submission")
+        }
+        return rememberedPushChoice
+    }
+
+    @objc(consumeRememberedPushChoice)
+    func consumeRememberedPushChoice() -> NSNumber? {
+        defer { pendingRememberedPushChoice = nil }
+        return pendingRememberedPushChoice
+    }
+
     @objc(consumePendingPush)
     func consumePendingPush() -> CommitPushPlan? {
         defer { clear() }
