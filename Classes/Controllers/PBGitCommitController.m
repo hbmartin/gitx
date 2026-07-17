@@ -236,7 +236,15 @@
 {
 	BOOL mergeInProgress = [[NSFileManager defaultManager] fileExistsAtPath:[self.repository.gitURL.path stringByAppendingPathComponent:@"MERGE_HEAD"]];
 	NSInteger stagedCount = [[stagedFilesController arrangedObjects] count];
-	NSString *commitMessage = [commitMessageView string];
+	NSError *transformationError = nil;
+	NSString *commitMessage = [PBCommitMessageEditCoordinator transformMessage:commitMessageView.string
+																	inTextView:commitMessageView
+																	repository:self.repository
+																		 error:&transformationError];
+	if (!commitMessage) {
+		[self.windowController showErrorSheet:transformationError];
+		return;
+	}
 	PBCommitSubmissionPlan *validationPlan = [PBCommitSubmissionPolicy planForMergeInProgress:mergeInProgress
 																				  stagedCount:stagedCount
 																				messageLength:commitMessage.length

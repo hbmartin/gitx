@@ -6,6 +6,7 @@
 #import "PBGitDefaults.h"
 #import "PBGitRepository.h"
 #import "PBGitXMessageSheet.h"
+#import "GitX-Swift.h"
 
 #pragma clang diagnostic push
 // These methods remain declared on the stable primary interface.
@@ -14,21 +15,7 @@
 
 - (IBAction)showRepositorySettings:(id)sender
 {
-	NSAlert *alert = [[NSAlert alloc] init];
-	alert.messageText = [NSString stringWithFormat:NSLocalizedString(@"Settings for %@", @"Repository settings title"), self.repository.projectName];
-	alert.informativeText = NSLocalizedString(@"These settings apply only to this repository.", @"Repository settings detail");
-	[alert addButtonWithTitle:NSLocalizedString(@"Done", @"Done button")];
-	[alert addButtonWithTitle:NSLocalizedString(@"Cancel", @"Cancel button")];
-	NSButton *notifications = [NSButton checkboxWithTitle:NSLocalizedString(@"Notify me when scheduled fetch finds new commits", @"Repository fetch notification checkbox") target:nil action:nil];
-	notifications.state = [PBGitDefaults notifyAboutFetchedCommitsForRepositoryURL:self.repository.workingDirectoryURL] ? NSControlStateValueOn : NSControlStateValueOff;
-	notifications.frame = NSMakeRect(0, 0, 390, 24);
-	alert.accessoryView = notifications;
-	[alert beginSheetModalForWindow:self.window
-				  completionHandler:^(__unused NSModalResponse response) {
-					  if (response == NSAlertFirstButtonReturn) {
-						  [PBGitDefaults setNotifyAboutFetchedCommits:notifications.state == NSControlStateValueOn forRepositoryURL:self.repository.workingDirectoryURL];
-					  }
-				  }];
+	[PBRepositorySettingsController beginSheetForRepository:self.repository windowController:self];
 }
 
 - (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText commitController:(PBGitCommitController *)controller

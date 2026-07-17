@@ -7,6 +7,7 @@
 //
 
 #import "PBPrefsWindowController.h"
+#import "GitX-Swift.h"
 #import "PBGitRepository.h"
 #import "PBGitDefaults.h"
 
@@ -29,17 +30,29 @@
 {
 	[self createAppearancePreferenceIfNeeded];
 	[self syncAppearancePreference];
-	// GENERAL
-	[self addView:generalPrefsView label:NSLocalizedString(@"General", @"General preferences toolbar item") image:[NSImage imageNamed:NSImageNameApplicationIcon]];
-	// INTERGRATION
-	[self addView:integrationPrefsView label:NSLocalizedString(@"Integration", @"Integration preferences toolbar item") image:[NSImage imageNamed:NSImageNameNetwork]];
-	// UPDATES
-	[self addView:updatesPrefsView label:NSLocalizedString(@"Updates", @"Updates preferences toolbar item")];
+	[self addView:[PBSettingsViewFactory generalViewWithLegacyView:generalPrefsView]
+			label:NSLocalizedString(@"General", @"General preferences toolbar item")
+			image:[NSImage imageNamed:NSImageNameApplicationIcon]];
+	[self addView:[PBSettingsViewFactory windowsView]
+			label:NSLocalizedString(@"Windows", @"Window preferences toolbar item")
+			image:[NSImage imageWithSystemSymbolName:@"macwindow.on.rectangle" accessibilityDescription:nil]];
+	[self addView:[PBSettingsViewFactory diffAndTextView]
+			label:NSLocalizedString(@"Diff & Text", @"Diff preferences toolbar item")
+			image:[NSImage imageWithSystemSymbolName:@"doc.text.magnifyingglass" accessibilityDescription:nil]];
+	[self addView:[PBSettingsViewFactory terminalView]
+			label:NSLocalizedString(@"Terminal", @"Terminal preferences toolbar item")
+			image:[NSImage imageWithSystemSymbolName:@"terminal" accessibilityDescription:nil]];
+	[self addView:[PBSettingsViewFactory integrationView]
+			label:NSLocalizedString(@"Integration", @"Integration preferences toolbar item")
+			image:[NSImage imageNamed:NSImageNameNetwork]];
 	[self createHistoryAndFetchPreferencesIfNeeded];
 	[self syncHistoryAndFetchPreferences];
 	[self addView:self.historyAndFetchPrefsView
 			label:NSLocalizedString(@"History & Fetch", @"History and fetch preferences toolbar item")
 			image:[NSImage imageWithSystemSymbolName:@"arrow.triangle.2.circlepath" accessibilityDescription:nil]];
+	[self addView:updatesPrefsView
+			label:NSLocalizedString(@"Updates", @"Updates preferences toolbar item")
+			image:[NSImage imageWithSystemSymbolName:@"sparkles" accessibilityDescription:nil]];
 }
 
 - (void)createAppearancePreferenceIfNeeded

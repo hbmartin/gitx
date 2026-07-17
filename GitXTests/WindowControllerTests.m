@@ -22,20 +22,134 @@
 #import "PBGitIndex.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
+#import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitRepositoryDocument.h"
 #import "PBGitRepositoryWatcher.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitSidebarController.h"
 #import "PBGitStash.h"
+#import "PBGitTree.h"
 #import "PBGitWindowController.h"
 #import "PBGitXMessageSheet.h"
 #import "PBError.h"
 #import "PBFileChangesTableView.h"
+#import "GLFileView.h"
+#import "PBNativeContentView.h"
 #import "PBRemoteProgressSheet.h"
 #import "PBSourceViewItem.h"
 #import "PBTask.h"
 #import "PBTerminalUtil.h"
+#import "PBPrefsWindowController.h"
 #import "PBViewController.h"
+
+@interface PBRepositoryToolbarController : NSObject
+- (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
+- (void)install;
+- (void)setHistoryMode:(BOOL)historyMode;
+- (void)updateWithStatus:(NSString *)status busy:(BOOL)busy baseWindowTitle:(NSString *)baseWindowTitle;
+- (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar;
+@end
+
+@interface PBCommitMessageTransformer : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (nullable NSString *)transformMessage:(NSString *)message error:(NSError **)error;
+@end
+
+@interface PBCommitMessageEditCoordinator : NSObject
++ (nullable NSString *)transformMessage:(NSString *)message
+							 inTextView:(NSTextView *)textView
+							 repository:(PBGitRepository *)repository
+								  error:(NSError **)error;
+@end
+
+@interface PBRepositoryRemoteURLCoordinator : NSObject
++ (instancetype)shared;
+- (nullable NSURL *)firstHTTPURLInOutput:(NSString *)output;
+- (nullable NSURL *)webURLForRemoteURL:(NSString *)remoteURL branch:(NSString *)branch sha:(NSString *)sha;
+@end
+
+@interface PBHistoryTreePresentation : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (PBGitTree *)treeForCommit:(PBGitCommit *)commit;
+- (NSString *)displayTitleForTree:(PBGitTree *)tree;
+- (NSString *)toolTipForTree:(PBGitTree *)tree;
+@end
+
+@interface PBHistoryStateCoordinator : NSObject
+- (void)saveFileBrowserSelectionFromSelectedObjects:(NSArray<NSObject *> *)selectedObjects hasContent:(BOOL)hasContent;
+- (nullable NSIndexPath *)treeSelectionIndexPathForChildren:(NSArray<NSObject *> *)children treeMode:(BOOL)treeMode;
+@end
+
+@interface GLFileView (WindowControllerTests)
+- (NSArray<NSDictionary *> *)historyEntriesForTree:(PBGitTree *)file;
+@end
+
+@interface PBApplicationSettings : NSObject
++ (BOOL)changedFilesOnly;
++ (void)setChangedFilesOnly:(BOOL)value;
++ (NSInteger)changedFilesSort;
++ (void)setChangedFilesSort:(NSInteger)value;
++ (NSInteger)diffLayout;
+@end
+
+@interface PBNativeDiffSectionSettings : NSObject
++ (NSArray<NSDictionary *> *)applyToSections:(NSArray<NSDictionary *> *)sections repository:(PBGitRepository *)repository;
+@end
+
+@interface PBWindowHistoryTreeLogStub : PBGitTree
+@end
+
+@interface PBWindowRepositoryWithoutGitURLs : PBGitRepository
+@end
+
+@interface PBWelcomeWindowController : NSWindowController
++ (instancetype)shared;
+- (void)searchChanged:(nullable id)sender;
+- (void)closeWelcome;
+@end
+
+@interface PBRepositoryUISettings : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+@end
+
+@implementation PBWindowHistoryTreeLogStub
+
+- (NSString *)log:(NSString *)format
+{
+	NSDictionary<NSString *, NSString *> *replacements = @{
+		@"%h" : @"abc1234",
+		@"%s" : @"Toolbar history",
+		@"%aN" : @"Ada",
+		@"%ar" : @"now",
+		@"%H" : @"abc123456789",
+	};
+	NSString *output = format;
+	for (NSString *placeholder in replacements) {
+		output = [output stringByReplacingOccurrencesOfString:placeholder withString:replacements[placeholder]];
+	}
+	return [output stringByAppendingString:@"malformed trailing record"];
+}
+
+@end
+
+@implementation PBWindowRepositoryWithoutGitURLs
+
+- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray *)arguments error:(NSError **)error
+{
+	return @"";
+}
+
+- (nullable NSURL *)gitURL
+{
+	return nil;
+}
+
+- (nullable NSURL *)workingDirectoryURL
+{
+	return nil;
+}
+
+@end
 
 @interface PBGitWindowController (WindowControllerTests)
 - (void)applicationDidBecomeActive:(NSNotification *)notification;
@@ -46,6 +160,11 @@
 - (nullable NSArray<NSURL *> *)selectedURLsFromSender:(id)sender;
 - (nullable id<PBGitRefish>)refishForSender:(id)sender refishTypes:(nullable NSArray<NSString *> *)types;
 - (nullable PBGitRef *)selectedRef;
+- (BOOL)isShowingCommitView;
+- (IBAction)toolbarFetch:(id)sender;
+- (IBAction)toolbarPull:(id)sender;
+- (IBAction)toolbarPush:(id)sender;
+- (IBAction)viewRemote:(id)sender;
 @end
 
 @interface PBGitCommitController (WindowControllerTests)
@@ -1234,13 +1353,23 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[controller commit:self];
 	XCTAssertEqualObjects(PBWindowLastMessage, @"Missing commit message");
 
+	[self git:@[ @"config", @"--local", @"gitx.commitMessageReplacementRules", @"([ => invalid" ] directory:self.repositoryURL];
+	NSUInteger shownErrorCount = self.controller.shownErrors.count;
+	messageView.string = NSLocalizedString(@"invalid replacement", nil);
+	[controller commit:self];
+	XCTAssertEqual(index.commitCount, (NSUInteger)0);
+	XCTAssertEqual(self.controller.shownErrors.count, shownErrorCount + 1);
+
+	[self git:@[ @"config", @"--local", @"gitx.commitMessageReplacementRules", @"^verified => transformed" ] directory:self.repositoryURL];
 	messageView.string = NSLocalizedString(@"verified commit", nil);
 	[controller commit:self];
 	XCTAssertEqual(index.commitCount, (NSUInteger)1);
-	XCTAssertEqualObjects(index.lastCommitMessage, @"verified commit");
+	XCTAssertEqualObjects(index.lastCommitMessage, @"transformed commit");
+	XCTAssertEqualObjects(messageView.string, @"transformed commit");
 	XCTAssertTrue(index.lastCommitVerification);
 	XCTAssertTrue(controller.isBusy);
 	XCTAssertFalse(messageView.editable);
+	[self git:@[ @"config", @"--local", @"--unset-all", @"gitx.commitMessageReplacementRules" ] directory:self.repositoryURL];
 
 	messageView.editable = YES;
 	messageView.string = NSLocalizedString(@"force commit", nil);
@@ -1646,6 +1775,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[controller updateStatus];
 	XCTAssertEqualObjects([[controller valueForKey:@"statusField"] stringValue], @"History ready");
 	XCTAssertFalse([[controller valueForKey:@"progressIndicator"] isHidden]);
+	[controller showCommitView:self];
+	XCTAssertTrue(controller.isShowingCommitView);
+	[controller showHistoryView:self];
+	XCTAssertFalse(controller.isShowingCommitView);
 	[controller changeContentController:commit];
 	[controller changeContentController:commit];
 	PBWindowSendObject(controller, @selector(changeContentController:), nil);
@@ -1678,6 +1811,18 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual(content.updateCount, (NSUInteger)1);
 	XCTAssertEqualObjects(status.stringValue, @"Busy");
 	XCTAssertFalse(progress.hidden);
+	XCTAssertFalse(self.controller.isShowingCommitView);
+	[self.controller setValue:content forKey:@"_commitViewController"];
+	XCTAssertTrue(self.controller.isShowingCommitView);
+
+	self.controller.interceptRemoteRouting = YES;
+	[self.controller toolbarFetch:self];
+	[self.controller toolbarPull:self];
+	[self.controller toolbarPush:self];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.pullRouteCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
+	[self.controller viewRemote:self];
 
 	content.status = nil;
 	content.isBusy = YES;
@@ -1969,6 +2114,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testWorkspacePathNormalizationOpenRevealAndTerminalRouting
 {
+	id previousTerminal = [NSUserDefaults.standardUserDefaults objectForKey:@"PBTerminalBundleIdentifier"];
+	[NSUserDefaults.standardUserDefaults setObject:@"com.apple.Terminal" forKey:@"PBTerminalBundleIdentifier"];
 	PBChangedFile *changed = [[PBChangedFile alloc] initWithPath:@"tracked.txt"];
 	NSMenuItem *item = [self menuItemWithObject:@[ @" stash.txt ", changed, @42 ]];
 	NSArray<NSURL *> *urls = [self.controller selectedURLsFromSender:item];
@@ -2001,6 +2148,157 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	self.repository.testSubmodule = submodule;
 	[directController openURLs:@[ [self.repository.workingDirectoryURL URLByAppendingPathComponent:@"Submodule"] ]];
 	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)1);
+	if (previousTerminal)
+		[NSUserDefaults.standardUserDefaults setObject:previousTerminal forKey:@"PBTerminalBundleIdentifier"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBTerminalBundleIdentifier"];
+}
+
+- (void)testPreferencesWindowCharacterizesExistingToolbarAndSizing
+{
+	PBPrefsWindowController *preferences = [[PBPrefsWindowController alloc] initWithWindowNibName:@"Preferences"];
+	[preferences showWindow:nil];
+	NSArray<NSToolbarItemIdentifier> *identifiers = [preferences toolbarAllowedItemIdentifiers:preferences.window.toolbar];
+
+	XCTAssertEqual(identifiers.count, (NSUInteger)7);
+	XCTAssertEqualObjects(identifiers, (@[ @"General", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
+	XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
+	XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
+	XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
+	XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 756.0);
+
+	[preferences close];
+}
+
+- (void)testRepositoryToolbarHasIndependentHistoryAndCommitConfigurations
+{
+	PBRepositoryToolbarController *toolbarController = [[PBRepositoryToolbarController alloc] initWithWindowController:self.controller];
+	[toolbarController install];
+	NSToolbar *historyToolbar = self.controller.window.toolbar;
+
+	XCTAssertEqualObjects(historyToolbar.identifier, @"GitX.Repository.HistoryToolbar");
+	XCTAssertTrue(historyToolbar.allowsUserCustomization);
+	XCTAssertTrue(historyToolbar.autosavesConfiguration);
+	XCTAssertEqual(historyToolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
+	NSArray<NSToolbarItemIdentifier> *historyDefaults = [toolbarController toolbarDefaultItemIdentifiers:historyToolbar];
+	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.Commit"]);
+	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.ViewRemote"]);
+	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.RefreshStatus"]);
+	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.Actions"]);
+	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.Reveal"]);
+	XCTAssertTrue([historyDefaults containsObject:@"GitX.Toolbar.Terminal"]);
+
+	[toolbarController updateWithStatus:@"Loading commits" busy:YES baseWindowTitle:@"Repository"];
+	XCTAssertEqualObjects(self.controller.window.title, @"Repository — Loading commits");
+
+	[toolbarController setHistoryMode:NO];
+	NSToolbar *commitToolbar = self.controller.window.toolbar;
+	XCTAssertEqualObjects(commitToolbar.identifier, @"GitX.Repository.CommitToolbar");
+	NSArray<NSToolbarItemIdentifier> *commitDefaults = [toolbarController toolbarDefaultItemIdentifiers:commitToolbar];
+	XCTAssertTrue([commitDefaults containsObject:@"GitX.Toolbar.History"]);
+	XCTAssertTrue([commitDefaults containsObject:@"GitX.Toolbar.Terminal"]);
+	XCTAssertFalse([commitDefaults containsObject:@"GitX.Toolbar.Push"]);
+}
+
+- (void)testRepositoryCommitMessageReplacementRulesAreOrderedAndMultiline
+{
+	NSString *rules = @"(?m)^WIP:[ \\t]* => \n(?m)^Ticket: ([0-9]+)$ => Refs #$1";
+	[self git:@[ @"config", @"--local", @"gitx.commitMessageReplacementRules", rules ] directory:self.repositoryURL];
+	PBCommitMessageTransformer *transformer = [[PBCommitMessageTransformer alloc] initWithRepository:self.repository];
+	NSError *error = nil;
+	NSString *result = [transformer transformMessage:@"WIP: Add toolbar\n\nTicket: 42" error:&error];
+
+	XCTAssertNil(error);
+	XCTAssertEqualObjects(result, @"Add toolbar\n\nRefs #42");
+
+	NSTextView *textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 400, 120)];
+	textView.string = @"WIP: Add toolbar\n\nTicket: 42";
+	NSString *edited = [PBCommitMessageEditCoordinator transformMessage:textView.string
+															 inTextView:textView
+															 repository:self.repository
+																  error:&error];
+	XCTAssertEqualObjects(edited, result);
+	XCTAssertEqualObjects(textView.string, result);
+}
+
+- (void)testRemoteWebURLsSupportCommonGitHostsAndServerOutput
+{
+	PBRepositoryRemoteURLCoordinator *coordinator = PBRepositoryRemoteURLCoordinator.shared;
+	XCTAssertEqualObjects([coordinator firstHTTPURLInOutput:@"remote: Open https://github.com/acme/repo/pull/7 to review."].absoluteString,
+						  @"https://github.com/acme/repo/pull/7");
+	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"git@github.com:acme/repo.git" branch:@"feature/settings" sha:@"abc"].absoluteString,
+						  @"https://github.com/acme/repo/tree/feature/settings");
+	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"ssh://git@gitlab.example/acme/repo.git" branch:@"main" sha:@"abc"].absoluteString,
+						  @"https://gitlab.example/acme/repo/-/tree/main");
+	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"https://bitbucket.org/acme/repo.git" branch:@"" sha:@"abc123"].absoluteString,
+						  @"https://bitbucket.org/acme/repo/src/abc123");
+}
+
+- (void)testFileHistoryEntriesParseStructuredGitLogOutput
+{
+	GLFileView *fileView = [GLFileView new];
+	NSArray<NSDictionary *> *entries = [fileView historyEntriesForTree:[PBWindowHistoryTreeLogStub new]];
+
+	XCTAssertEqual(entries.count, (NSUInteger)1);
+	XCTAssertEqualObjects(entries.firstObject[@"subject"], @"Toolbar history");
+	XCTAssertEqualObjects(entries.firstObject[@"author"], @"Ada");
+	XCTAssertEqualObjects(entries.firstObject[@"date"], @"now");
+	XCTAssertEqualObjects(entries.firstObject[@"sha"], @"abc123456789");
+}
+
+- (void)testWelcomeWindowSearchAndCloseActions
+{
+	PBWelcomeWindowController *welcome = PBWelcomeWindowController.shared;
+	[welcome searchChanged:nil];
+	[welcome closeWelcome];
+
+	XCTAssertFalse(welcome.window.isVisible);
+}
+
+- (void)testRepositoryUISettingsAcceptRepositoryWithoutGitURLs
+{
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:[PBWindowRepositoryWithoutGitURLs new]];
+
+	XCTAssertNotNil(settings);
+}
+
+- (void)testChangedFileTreeUsesFlatFullPathsAndStatusTitles
+{
+	BOOL previous = PBApplicationSettings.changedFilesOnly;
+	NSInteger previousSort = PBApplicationSettings.changedFilesSort;
+	PBApplicationSettings.changedFilesOnly = YES;
+	PBHistoryTreePresentation *presentation = [[PBHistoryTreePresentation alloc] initWithRepository:self.repository];
+	PBGitTree *tree = [presentation treeForCommit:self.headCommit];
+	NSArray<PBGitTree *> *children = tree.children;
+
+	XCTAssertEqual(children.count, (NSUInteger)1);
+	PBGitTree *file = children.firstObject;
+	XCTAssertEqualObjects(file.fullPath, @"tracked.txt");
+	XCTAssertEqualObjects([presentation toolTipForTree:file], @"tracked.txt");
+	XCTAssertTrue([[presentation displayTitleForTree:file] hasPrefix:@"A  tracked.txt"]);
+	PBHistoryStateCoordinator *state = [PBHistoryStateCoordinator new];
+	[state saveFileBrowserSelectionFromSelectedObjects:@[ file ] hasContent:YES];
+	XCTAssertEqualObjects([state treeSelectionIndexPathForChildren:(NSArray<NSObject *> *)children treeMode:YES], [NSIndexPath indexPathWithIndex:0]);
+	PBApplicationSettings.changedFilesSort = 1;
+	XCTAssertEqual([presentation treeForCommit:self.headCommit].children.count, (NSUInteger)1);
+	PBApplicationSettings.changedFilesSort = 2;
+	XCTAssertEqual([presentation treeForCommit:self.headCommit].children.count, (NSUInteger)1);
+	PBApplicationSettings.changedFilesOnly = NO;
+	XCTAssertFalse(PBApplicationSettings.changedFilesOnly);
+	XCTAssertEqualObjects([presentation treeForCommit:self.headCommit].fullPath, self.headCommit.tree.fullPath);
+
+	NSString *rules = @"^generated/\n# ignored\n\n.*\\.lock$";
+	[self git:@[ @"config", @"--local", @"gitx.diffSuppressionPatterns", rules ] directory:self.repositoryURL];
+	NSArray<NSDictionary *> *configured = [PBNativeDiffSectionSettings applyToSections:@[ @{PBNativeSectionTextKey : @"diff"} ]
+																			repository:self.repository];
+	XCTAssertEqualObjects(configured.firstObject[PBNativeSectionSuppressionPatternsKey], (@[ @"^generated/", @".*\\.lock$" ]));
+	XCTAssertEqualObjects(configured.firstObject[PBNativeSectionDiffLayoutKey], @(PBApplicationSettings.diffLayout));
+
+	NSError *launchError = nil;
+	BOOL launched = [self.repository launchTaskWithArguments:@[ @"status", @"--porcelain" ] error:&launchError];
+	XCTAssertTrue(launched, @"%@", launchError);
+	PBApplicationSettings.changedFilesOnly = previous;
+	PBApplicationSettings.changedFilesSort = previousSort;
 }
 
 - (void)testDialogsErrorsSettingsHookAndSuppressionBehavior

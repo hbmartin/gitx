@@ -32,7 +32,7 @@
                 <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                 <subviews>
                     <splitView autosaveName="sourceSplitView" dividerStyle="thin" vertical="YES" translatesAutoresizingMaskIntoConstraints="NO" id="351">
-                        <rect key="frame" x="0.0" y="31" width="890" height="483"/>
+                        <rect key="frame" x="0.0" y="0.0" width="890" height="514"/>
                         <subviews>
                             <customView id="353" userLabel="Source SplitView">
                                 <rect key="frame" x="0.0" y="0.0" width="184" height="483"/>
@@ -52,14 +52,14 @@
                             <real value="250"/>
                         </holdingPriorities>
                     </splitView>
-                    <customView wantsLayer="YES" translatesAutoresizingMaskIntoConstraints="NO" id="393" userLabel="Source List Controls View">
+                    <customView hidden="YES" wantsLayer="YES" translatesAutoresizingMaskIntoConstraints="NO" id="393" userLabel="Source List Controls View">
                         <rect key="frame" x="0.0" y="1" width="270" height="31"/>
                         <constraints>
                             <constraint firstAttribute="width" constant="270" id="R1X-0L-Y63"/>
-                            <constraint firstAttribute="height" constant="31" id="TO5-KE-aRg"/>
+                            <constraint firstAttribute="height" id="TO5-KE-aRg"/>
                         </constraints>
                     </customView>
-                    <customView wantsLayer="YES" translatesAutoresizingMaskIntoConstraints="NO" id="396" userLabel="Status View">
+                    <customView hidden="YES" wantsLayer="YES" translatesAutoresizingMaskIntoConstraints="NO" id="396" userLabel="Status View">
                         <rect key="frame" x="322" y="0.0" width="246" height="31"/>
                         <subviews>
                             <textField verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="397">
@@ -77,11 +77,11 @@
                             </progressIndicator>
                         </subviews>
                         <constraints>
-                            <constraint firstAttribute="height" constant="31" id="Bx6-Va-UgP"/>
+                            <constraint firstAttribute="height" id="Bx6-Va-UgP"/>
                             <constraint firstAttribute="width" constant="246" id="RzT-KH-8gx"/>
                         </constraints>
                     </customView>
-                    <customView wantsLayer="YES" translatesAutoresizingMaskIntoConstraints="NO" id="443" userLabel="RefreshTermFind View">
+                    <customView hidden="YES" wantsLayer="YES" translatesAutoresizingMaskIntoConstraints="NO" id="443" userLabel="RefreshTermFind View">
                         <rect key="frame" x="624" y="0.0" width="246" height="31"/>
                         <subviews>
                             <button toolTip="Jump to Checked-Out Branch (⌥⌘J)" verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="jump-to-checked-out-branch">
@@ -131,7 +131,7 @@
                         </subviews>
                         <constraints>
                             <constraint firstAttribute="width" constant="246" id="FFQ-Te-DMv"/>
-                            <constraint firstAttribute="height" constant="31" id="kbj-zH-ihc"/>
+                            <constraint firstAttribute="height" id="kbj-zH-ihc"/>
                         </constraints>
                     </customView>
                 </subviews>
@@ -141,7 +141,7 @@
                     <constraint firstAttribute="bottom" secondItem="393" secondAttribute="bottom" constant="1" id="D3w-hW-Lns"/>
                     <constraint firstItem="351" firstAttribute="leading" secondItem="5" secondAttribute="leading" id="DVR-Db-T5J"/>
                     <constraint firstAttribute="bottom" secondItem="443" secondAttribute="bottom" id="QTm-LQ-USz"/>
-                    <constraint firstItem="393" firstAttribute="top" secondItem="351" secondAttribute="bottom" constant="-1" id="TBA-8y-G81"/>
+                    <constraint firstAttribute="bottom" secondItem="351" secondAttribute="bottom" id="TBA-8y-G81"/>
                     <constraint firstAttribute="trailing" secondItem="351" secondAttribute="trailing" id="VJA-d6-nLw"/>
                     <constraint firstAttribute="trailing" secondItem="443" secondAttribute="trailing" constant="20" id="atn-Rd-9Ge"/>
                     <constraint firstItem="393" firstAttribute="leading" secondItem="5" secondAttribute="leading" id="j4W-RV-3aQ"/>

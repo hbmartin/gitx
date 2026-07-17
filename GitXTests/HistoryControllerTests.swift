@@ -273,6 +273,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.validateMenuItem(detailItem))
         XCTAssertEqual(detailItem.state, .on)
 
+        let patchItem = NSMenuItem(title: "Create Patch…", action: #selector(PBGitHistoryController.createPatch(_:)), keyEquivalent: "")
+        XCTAssertTrue(historyController.validateMenuItem(patchItem))
+        let selectedForPatch = historyController.commitController.selectedObjects ?? []
+        historyController.commitController.setSelectedObjects([])
+        historyController.createPatch(self)
+        historyController.commitController.setSelectedObjects(selectedForPatch)
+
         let localButton = try XCTUnwrap(historyController.value(forKey: "localRemoteBranchesFilterItem") as? NSButton)
         localButton.tag = 1
         historyController.setBranchFilter(localButton)
@@ -303,6 +310,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testSelectionReconciliationWorkingStateStatusAndTreeRestoration() throws {
+        let previousChangedFilesOnly = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = false
+        defer { PBApplicationSettings.changedFilesOnly = previousChangedFilesOnly }
+
         let commits = loadedCommits()
         XCTAssertGreaterThanOrEqual(commits.count, 3)
         let tree = commits[0].tree
@@ -336,21 +347,49 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         historyController.commitController.content = commits
         historyController.commitController.rearrangeObjects()
-        historyController.gitTree = commits[0].tree
+        historyController.commitController.setSelectedObjects([commits[0]])
         historyController.selectedCommitDetailsIndex = 1
-        pumpRunLoop()
-        if let leafNode = firstLeafNode(in: historyController.treeController.arrangedObjects) {
-            historyController.treeController.setSelectionIndexPath(leafNode.indexPath)
-            (historyController.value(forKey: "fileView") as? NSObject)?
-                .perform(NSSelectorFromString("showFile"))
-            (historyController.value(forKey: "fileView") as? NSObject)?
-                .perform(NSSelectorFromString("modeChanged:"), with: NSSegmentedControl())
+        historyController.updateKeys()
+        XCTAssertNotNil(historyController.gitTree)
+        XCTAssertFalse(historyController.gitTree?.children.isEmpty ?? true)
+        XCTAssertFalse((historyController.treeController.content as? [Any])?.isEmpty ?? true)
+        let leafNode = try XCTUnwrap(waitForTreeLeaf())
+        let fileBrowser = try XCTUnwrap(historyController.value(forKey: "fileBrowser") as? NSOutlineView)
+        let cell = NSTextFieldCell()
+        historyController.outlineView(
+            fileBrowser,
+            willDisplay: cell,
+            for: fileBrowser.tableColumns.first,
+            item: leafNode
+        )
+        XCTAssertEqual(cell.lineBreakMode, .byTruncatingHead)
+        XCTAssertNotNil(historyController.outlineView(
+            fileBrowser,
+            toolTipFor: cell,
+            rect: nil,
+            tableColumn: fileBrowser.tableColumns.first,
+            item: leafNode,
+            mouseLocation: .zero
+        ))
+        historyController.treeController.setSelectionIndexPath(leafNode.indexPath)
+        let fileView = try XCTUnwrap(historyController.value(forKey: "fileView") as? NSObject)
+        let modeControl = try XCTUnwrap(fileView.value(forKey: "modeControl") as? NSSegmentedControl)
+        let nativeView = try XCTUnwrap(fileView.value(forKey: "nativeView") as? PBNativeContentView)
+        for mode in 0 ... 3 {
+            modeControl.selectedSegment = mode
+            fileView.perform(NSSelectorFromString("modeChanged:"), with: modeControl)
             pumpRunLoop(for: 0.5)
-            historyController.saveFileBrowserSelection()
-            historyController.treeController.setSelectionIndexPaths([])
-            historyController.restoreFileBrowserSelection()
-            XCTAssertFalse(historyController.treeController.selectionIndexPaths.isEmpty)
+            XCTAssertFalse(nativeView.textView.string.isEmpty)
         }
+        try fixture.git(["config", "--local", "gitx.diffSuppressionPatterns", "# ignored\n^generated/"])
+        historyController.saveFileBrowserSelection()
+        historyController.treeController.setSelectionIndexPaths([])
+        historyController.restoreFileBrowserSelection()
+        pumpRunLoop()
+        XCTAssertFalse(historyController.treeController.selectionIndexPaths.isEmpty)
+        historyController.historyTreeSettingsDidChange(
+            Notification(name: Notification.Name("PBHistoryTreeSettingsDidChangeNotification"))
+        )
 
         try fixture.write("working state\n", to: "uncommitted.txt")
         refreshIndex()
@@ -358,6 +397,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let workingState = historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
         XCTAssertNotNil(workingState)
         XCTAssertTrue(workingState?.isWorkingState == true)
+        PBApplicationSettings.changedFilesOnly = true
+        let workingPresentation = PBHistoryTreePresentation(repository: repository)
+        let flatWorkingTree = try workingPresentation.tree(for: XCTUnwrap(workingState))
+        let flatWorkingPaths = flatWorkingTree.children.map(\.fullPath)
+        XCTAssertEqual(flatWorkingPaths, ["uncommitted.txt"])
+        try historyController.commitController.setSelectedObjects([XCTUnwrap(workingState)])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        let workingLeaf = try XCTUnwrap(waitForTreeNode(fullPath: "uncommitted.txt"))
+        historyController.treeController.setSelectionIndexPath(workingLeaf.indexPath)
+        modeControl.selectedSegment = 3
+        fileView.perform(NSSelectorFromString("showFile"))
+        pumpRunLoop(for: 1.0)
+        XCTAssertTrue(nativeView.textView.string.contains("new file mode"))
         try historyController.commitController.setSelectedObjects([XCTUnwrap(workingState)])
         historyController.updateKeys()
         let proposed = IndexSet(integersIn: 0 ... 1)
@@ -396,10 +449,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let commits = loadedCommits()
         let headCommit = try XCTUnwrap(commits.first { $0.oid == repository.headOID() })
         let featureCommit = try XCTUnwrap(commits.first { !$0.isOnHeadBranch() })
-        assertMenu(menuItems(selector: "menuItemsForCommits:", argument: [headCommit]), contains: ["Checkout Commit", "Copy SHA", "Reset"])
+        assertMenu(menuItems(selector: "menuItemsForCommits:", argument: [headCommit]), contains: ["Checkout Commit", "Copy SHA-1", "Create Patch…", "Reset"])
         assertMenu(menuItems(selector: "menuItemsForCommits:", argument: [featureCommit]), contains: ["Merge Commit", "Cherry Pick", "Rebase"])
         let multiple = try XCTUnwrap(menuItems(selector: "menuItemsForCommits:", argument: [headCommit, featureCommit]))
-        XCTAssertEqual(multiple.filter { $0.title == "Copy SHA" }.count, 1)
+        XCTAssertEqual(multiple.filter { $0.title == "Copy SHA-1" }.count, 1)
         XCTAssertFalse(multiple.contains { $0.title.contains("Checkout Commit") })
 
         historyController.selectedCommits = [featureCommit]
@@ -720,6 +773,35 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             return node
         }
         return node.children?.lazy.compactMap(firstLeafNode).first
+    }
+
+    private func waitForTreeLeaf(timeout: TimeInterval = 3.0) -> NSTreeNode? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let leaf = firstLeafNode(in: historyController.treeController.arrangedObjects) {
+                return leaf
+            }
+            pumpRunLoop()
+        }
+        return nil
+    }
+
+    private func waitForTreeNode(fullPath: String, timeout: TimeInterval = 3.0) -> NSTreeNode? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let node = treeNode(fullPath: fullPath, in: historyController.treeController.arrangedObjects) {
+                return node
+            }
+            pumpRunLoop()
+        }
+        return nil
+    }
+
+    private func treeNode(fullPath: String, in node: NSTreeNode) -> NSTreeNode? {
+        if (node.representedObject as? PBGitTree)?.fullPath == fullPath {
+            return node
+        }
+        return node.children?.lazy.compactMap { self.treeNode(fullPath: fullPath, in: $0) }.first
     }
 
     private var tableCoordinator: PBHistoryTableInteractionCoordinator {

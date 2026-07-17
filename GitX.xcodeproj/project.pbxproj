@@ -237,6 +237,15 @@
 		C0DED0000000000000000005 /* RepositoryStashActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */; };
 		C0DED0000000000000000006 /* WorkspaceActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */; };
 		C0DED0000000000000000007 /* PBGitWindowController+Dialogs.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */; };
+		C0DEC1000000000000000001 /* ApplicationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC1000000000000000011 /* ApplicationSettings.swift */; };
+		C0DEC2000000000000000001 /* RepositoryToolbarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC2000000000000000011 /* RepositoryToolbarController.swift */; };
+		C0DEC3000000000000000001 /* RepositorySettingsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC3000000000000000011 /* RepositorySettingsController.swift */; };
+		C0DEC4000000000000000001 /* RepositoryOpeningCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */; };
+		C0DEC5000000000000000001 /* CommitPatchExportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */; };
+		C0DEC6000000000000000001 /* HistoryTreePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC6000000000000000011 /* HistoryTreePresentation.swift */; };
+		C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.m */; };
+		C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */; };
+		C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
@@ -525,6 +534,11 @@
 		C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryMenuBuilder.swift; sourceTree = "<group>"; };
 		C0DEB0000000000000000013 /* HistoryTableInteractionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryTableInteractionCoordinator.swift; sourceTree = "<group>"; };
 		C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitHistoryController+UI.m"; sourceTree = "<group>"; };
+		C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitPatchExportCoordinator.swift; sourceTree = "<group>"; };
+		C0DEC6000000000000000011 /* HistoryTreePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryTreePresentation.swift; sourceTree = "<group>"; };
+		C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitWindowController+ToolbarActions.m"; sourceTree = "<group>"; };
+		C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMessageEditCoordinator.swift; sourceTree = "<group>"; };
+		C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiffSectionSettings.swift; sourceTree = "<group>"; };
 		4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarController.h; sourceTree = "<group>"; };
 		4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitSidebarController.m; sourceTree = "<group>"; };
 		4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitWindowController.h; sourceTree = "<group>"; };
@@ -810,6 +824,10 @@
 		C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryStashActionCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceActionCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitWindowController+Dialogs.m"; sourceTree = "<group>"; };
+		C0DEC1000000000000000011 /* ApplicationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationSettings.swift; sourceTree = "<group>"; };
+		C0DEC2000000000000000011 /* RepositoryToolbarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryToolbarController.swift; sourceTree = "<group>"; };
+		C0DEC3000000000000000011 /* RepositorySettingsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsController.swift; sourceTree = "<group>"; };
+		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
 		CC0000020000002 /* GitXScreenshotTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXScreenshotTests.m; sourceTree = "<group>"; };
@@ -1101,6 +1119,10 @@
 				C0DE1000000000000000000C /* PBAutoFetchManager.m */,
 				4A5D762614A9A9CC00DF6C68 /* ApplicationController.h */,
 				4A5D762714A9A9CC00DF6C68 /* ApplicationController.m */,
+				C0DEC1000000000000000011 /* ApplicationSettings.swift */,
+				C0DEC2000000000000000011 /* RepositoryToolbarController.swift */,
+				C0DEC3000000000000000011 /* RepositorySettingsController.swift */,
+				C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */,
 				4A5D762814A9A9CC00DF6C68 /* DBPrefsWindowController.h */,
 				4A5D762914A9A9CC00DF6C68 /* DBPrefsWindowController.m */,
 				4A5D762A14A9A9CC00DF6C68 /* OpenRecentController.h */,
@@ -1116,12 +1138,16 @@
 				4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */,
 				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
 				C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */,
+				C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */,
+				C0DEC6000000000000000011 /* HistoryTreePresentation.swift */,
+				C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */,
 				C0DEB0000000000000000013 /* HistoryTableInteractionCoordinator.swift */,
 				C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */,
 				4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */,
 				4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */,
 				4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */,
 				4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.m */,
+				C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.m */,
 				C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */,
 				C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */,
 				C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */,
@@ -1280,6 +1306,7 @@
 				C0DE10000000000000000004 /* PBNativeContentView.m */,
 				C0DEAF000000000000000011 /* NativeContentModels.swift */,
 				C0DEAE000000000000000011 /* NativeContentRenderer.swift */,
+				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
 				BF42F1431E025411004769FF /* GitXTextView.h */,
 				BF42F1321E025403004769FF /* GitXTextView.m */,
 				4A5D76B614A9A9CC00DF6C68 /* GLFileView.h */,
@@ -1849,6 +1876,15 @@
 				C0DED0000000000000000005 /* RepositoryStashActionCoordinator.swift in Sources */,
 				C0DED0000000000000000006 /* WorkspaceActionCoordinator.swift in Sources */,
 				C0DED0000000000000000007 /* PBGitWindowController+Dialogs.m in Sources */,
+				C0DEC1000000000000000001 /* ApplicationSettings.swift in Sources */,
+				C0DEC2000000000000000001 /* RepositoryToolbarController.swift in Sources */,
+				C0DEC3000000000000000001 /* RepositorySettingsController.swift in Sources */,
+				C0DEC4000000000000000001 /* RepositoryOpeningCoordinator.swift in Sources */,
+				C0DEC5000000000000000001 /* CommitPatchExportCoordinator.swift in Sources */,
+				C0DEC6000000000000000001 /* HistoryTreePresentation.swift in Sources */,
+				C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.m in Sources */,
+				C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */,
+				C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
 				C0DE10000000000000000014 /* PBWorkingTree.m in Sources */,

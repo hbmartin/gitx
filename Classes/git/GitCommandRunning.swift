@@ -2,12 +2,14 @@ import Foundation
 
 @objc(PBGitCommandRunning)
 protocol GitCommandRunning: AnyObject {
-    func output(arguments: [String]) throws -> String
-    func launch(arguments: [String]) throws
+    nonisolated func output(arguments: [String]) throws -> String
+    nonisolated func launch(arguments: [String]) throws
+    nonisolated var lastOutput: String? { get }
 }
 
-final class RepositoryGitCommandRunner: GitCommandRunning {
+final nonisolated class RepositoryGitCommandRunner: GitCommandRunning {
     private unowned let repository: PBGitRepository
+    private(set) var lastOutput: String?
 
     init(repository: PBGitRepository) {
         self.repository = repository
@@ -18,11 +20,13 @@ final class RepositoryGitCommandRunner: GitCommandRunning {
     }
 
     func launch(arguments: [String]) throws {
-        _ = try repository.launchTask(withArguments: arguments)
+        let task = repository.task(withArguments: arguments)
+        _ = try task.launch()
+        lastOutput = task.standardOutputString()
     }
 }
 
-enum RepositoryServiceError {
+nonisolated enum RepositoryServiceError {
     static func make(
         description: String,
         failureReason: String,

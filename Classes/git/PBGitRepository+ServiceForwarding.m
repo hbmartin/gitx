@@ -120,6 +120,11 @@
 	return success;
 }
 
+- (NSString *)lastPushOutput
+{
+	return self.pb_remoteService.lastPushOutput;
+}
+
 #pragma mark Mutations
 
 - (BOOL)finishHistoryMutation:(BOOL)success

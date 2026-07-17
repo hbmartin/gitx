@@ -20,6 +20,157 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+typedef NS_ENUM(NSInteger, PBOpenDisposition) {
+	PBOpenDispositionAlwaysNewWindow,
+	PBOpenDispositionFollowSystem,
+	PBOpenDispositionPreferTab,
+};
+
+typedef NS_ENUM(NSInteger, PBWindowRestorePolicy) {
+	PBWindowRestorePolicyAlways,
+	PBWindowRestorePolicyFollowSystem,
+	PBWindowRestorePolicyNever,
+};
+
+typedef NS_ENUM(NSInteger, PBDiffLayout) {
+	PBDiffLayoutUnified,
+	PBDiffLayoutSideBySide,
+};
+
+typedef NS_ENUM(NSInteger, PBDiffAlgorithm) {
+	PBDiffAlgorithmMyers,
+	PBDiffAlgorithmMinimal,
+	PBDiffAlgorithmPatience,
+	PBDiffAlgorithmHistogram,
+};
+
+typedef NS_ENUM(NSInteger, PBSyntaxTheme) {
+	PBSyntaxThemeXcode,
+	PBSyntaxThemeGithub,
+	PBSyntaxThemePlain,
+};
+
+typedef NS_ENUM(NSInteger, PBBranchSortMode) {
+	PBBranchSortModeAlphabetical,
+	PBBranchSortModeRecentCommit,
+};
+
+typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
+	PBChangedFilesSortModeAlphabetical,
+	PBChangedFilesSortModeGitOrder,
+	PBChangedFilesSortModeStatus,
+};
+
+@interface PBApplicationSettings : NSObject
+@property (class) PBOpenDisposition openDisposition;
+@property (class) PBWindowRestorePolicy restorePolicy;
+@property (class) BOOL changedFilesOnly;
+@property (class) PBChangedFilesSortMode changedFilesSort;
+@property (class) PBBranchSortMode branchSort;
+@property (class) PBDiffLayout diffLayout;
+@property (class) PBDiffAlgorithm diffAlgorithm;
+@property (class) NSInteger diffContextLines;
+@property (class) PBSyntaxTheme syntaxTheme;
+@property (class, copy) NSString *diffFontName;
+@property (class) double diffFontSize;
+@property (class, strong) NSColor *addedTextColor;
+@property (class, strong) NSColor *removedTextColor;
+@property (class, strong) NSColor *addedBackgroundColor;
+@property (class, strong) NSColor *removedBackgroundColor;
+@property (class, copy, nullable) NSString *terminalBundleIdentifier;
+@property (class, copy) NSString *terminalInitialCommand;
+@property (class, copy) NSString *customTerminalExecutable;
+@property (class, copy) NSString *customTerminalArguments;
+@property (class, copy) NSString *raycastScriptsDirectory;
+@property (class) NSInteger patchExportMode;
+@end
+
+@interface PBHistoryTreePresentation : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (PBGitTree *)treeForCommit:(PBGitCommit *)commit;
+- (NSString *)displayTitleForTree:(PBGitTree *)tree;
+- (NSString *)toolTipForTree:(PBGitTree *)tree;
+@end
+
+@interface PBDiffCommandOptions : NSObject
+@property (class, copy, readonly) NSArray<NSString *> *arguments;
+@end
+
+@interface PBSettingsViewFactory : NSObject
++ (NSView *)generalViewWithLegacyView:(NSView *)legacyView NS_SWIFT_NAME(generalView(legacyView:));
++ (NSView *)windowsView;
++ (NSView *)diffAndTextView;
++ (NSView *)terminalView;
+@end
+
+@interface PBTerminalLauncher : NSObject
+@property (class, readonly, strong) PBTerminalLauncher *shared;
+- (void)openDirectory:(NSURL *)directory presentingWindow:(nullable NSWindow *)window
+	NS_SWIFT_NAME(open(directory:presenting:));
+- (NSArray<NSString *> *)launchArgumentsForIdentifier:(NSString *)identifier
+										  directory:(NSString *)directory
+											command:(NSString *)command
+	NS_SWIFT_NAME(launchArguments(identifier:directory:command:));
+- (NSArray<NSString *> *)commandArguments:(NSString *)command;
+- (NSArray<NSString *> *)argumentTokens:(NSString *)string;
+@end
+
+@interface PBIntegrationManager : NSObject
+@property (class, readonly, strong) PBIntegrationManager *shared;
+- (void)installRaycastScriptsWithPresenting:(nullable NSWindow *)window
+	NS_SWIFT_NAME(installRaycastScripts(presenting:));
+- (void)removeRaycastScriptsWithPresenting:(nullable NSWindow *)window
+	NS_SWIFT_NAME(removeRaycastScripts(presenting:));
+@end
+
+@interface PBRecentRepositoryStore : NSObject
+@property (class, readonly, strong) PBRecentRepositoryStore *shared;
+- (void)record:(NSURL *)url;
+- (void)remove:(NSURL *)url;
+- (void)replace:(NSURL *)oldURL with:(NSURL *)newURL;
+@end
+
+@interface PBCommitPatchExportPolicy : NSObject
++ (NSArray<NSString *> *)filenamesForSubjects:(NSArray<NSString *> *)subjects;
++ (NSString *)safeFilenameForSubject:(NSString *)subject;
++ (NSString *)revisionForOldestSHA:(NSString *)oldestSHA
+						 newestSHA:(NSString *)newestSHA
+					oldestIsRoot:(BOOL)oldestIsRoot;
++ (BOOL)seriesOutput:(NSString *)output
+         matchesSHAs:(NSArray<NSString *> *)shas
+    NS_SWIFT_NAME(series(output:matchesSHAs:));
+@end
+
+@interface PBHistoryBranchFilterPresentation : NSObject
+@property (nonatomic, readonly) BOOL allEnabled;
+@property (nonatomic, readonly) BOOL localEnabled;
+@property (nonatomic, readonly) NSControlStateValue allState;
+@property (nonatomic, readonly) NSControlStateValue localState;
+@property (nonatomic, readonly) NSControlStateValue selectedState;
+@property (nonatomic, copy, readonly) NSString *selectedTitle;
+@property (nonatomic, copy, readonly) NSString *localTitle;
+@end
+
+@interface PBHistoryStateCoordinator : NSObject
+- (NSArray<PBGitCommit *> *)normalizedSelection:(NSArray<PBGitCommit *> *)selection;
+- (PBHistoryBranchFilterPresentation *)branchFilterPresentationForSimpleBranch:(BOOL)simpleBranch
+																			 filter:(NSInteger)filter
+															 selectedTitle:(NSString *)selectedTitle
+																			 remote:(BOOL)remote
+	NS_SWIFT_NAME(branchFilterPresentation(simpleBranch:filter:selectedTitle:remote:));
+- (void)saveFileBrowserSelectionFromSelectedObjects:(NSArray<NSObject *> *)selectedObjects
+																	 hasContent:(BOOL)hasContent
+	NS_SWIFT_NAME(saveFileBrowserSelection(selectedObjects:hasContent:));
+- (nullable NSIndexPath *)treeSelectionIndexPathForChildren:(NSArray<NSObject *> *)children
+																			 treeMode:(BOOL)treeMode
+	NS_SWIFT_NAME(treeSelectionIndexPath(children:treeMode:));
+- (NSInteger)adjustedScrollRowForSelectionRow:(NSInteger)selectionRow
+													 oldRow:(NSInteger)oldRow
+											 visibleRows:(NSInteger)visibleRows
+											contentCount:(NSInteger)contentCount
+	NS_SWIFT_NAME(adjustedScrollRow(selectionRow:oldRow:visibleRows:contentCount:));
+@end
+
 @interface PBImageRevisionPolicy : NSObject
 + (NSArray<NSString *> *)revisionsForCommitSHA:(NSString *)commitSHA
                                      parentSHA:(nullable NSString *)parentSHA
@@ -78,6 +229,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @protocol PBGitCommandRunning <NSObject>
+@property (nonatomic, copy, readonly, nullable) NSString *lastOutput;
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)launchWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
 @end
@@ -88,6 +240,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface PBRepositoryRemoteService : NSObject
+@property (nonatomic, copy, readonly, nullable) NSString *lastPushOutput;
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
 - (nullable NSArray<NSString *> *)remotes;
 - (BOOL)addRemote:(NSString *)remoteName withURL:(NSString *)URLString error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
@@ -476,6 +629,17 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (void)restoreFileBrowserSelection;
 - (void)saveFileBrowserSelection;
 - (void)historySortingPreferenceChanged:(NSNotification *)notification;
+- (void)historyTreeSettingsDidChange:(NSNotification *)notification;
+- (void)outlineView:(NSOutlineView *)outlineView
+    willDisplayCell:(NSTextFieldCell *)cell
+     forTableColumn:(nullable NSTableColumn *)tableColumn
+               item:(id)item;
+- (nullable NSString *)outlineView:(NSOutlineView *)outlineView
+                    toolTipForCell:(NSCell *)cell
+                               rect:(nullable NSRectPointer)rect
+                        tableColumn:(nullable NSTableColumn *)tableColumn
+                               item:(id)item
+                      mouseLocation:(NSPoint)mouseLocation;
 - (void)_repositoryUpdatedNotification:(NSNotification *)notification;
 - (void)performFindPanelAction:(id)sender;
 - (BOOL)isCommitSelected;

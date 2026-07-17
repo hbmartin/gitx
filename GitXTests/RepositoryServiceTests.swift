@@ -5,6 +5,7 @@ final class RepositoryServiceTests: XCTestCase {
     private final class CommandRunnerFake: NSObject, PBGitCommandRunning {
         var outputResults: [Result<String, Error>] = []
         var launchResults: [Result<Void, Error>] = []
+        var lastOutput: String?
         private(set) var outputArguments: [[String]] = []
         private(set) var launchArguments: [[String]] = []
 
@@ -76,12 +77,19 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertTrue(service.pullBranch(nil, fromRemote: remote, rebase: true, error: &error))
         XCTAssertFalse(service.pushBranch(nil, toRemote: remote, error: &error))
         XCTAssertEqual(error?.localizedDescription, "Push failed")
+        XCTAssertNil(service.lastPushOutput)
         XCTAssertEqual(runner.launchArguments, [
             ["remote", "add", "-f", "origin", "/tmp/remote"],
             ["fetch", "--all"],
             ["pull", "--rebase", "origin"],
             ["push", "origin"],
         ])
+
+        runner.launchResults = [.success(())]
+        runner.lastOutput = "remote: Open https://example.test/pull/42"
+        error = nil
+        XCTAssertTrue(service.pushBranch(nil, toRemote: remote, error: &error))
+        XCTAssertEqual(service.lastPushOutput, "remote: Open https://example.test/pull/42")
     }
 
     func testRemoteServiceReportsDiscoveryPullAndDeleteFailures() {

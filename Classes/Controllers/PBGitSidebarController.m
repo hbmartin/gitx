@@ -21,6 +21,7 @@
 #import "GitX-Swift.h"
 
 #define PBSidebarCellIdentifier @"PBSidebarCellIdentifier"
+#define PBBranchesHeaderCellIdentifier @"PBBranchesHeaderCellIdentifier"
 
 @interface PBGitSidebarController () <NSOutlineViewDelegate> {
 	__weak IBOutlet NSWindow *window;
@@ -35,6 +36,7 @@
 	PBSourceViewItem *stage;
 
 	PBSourceViewItem *branches, *remotes, *tags, *others, *submodules, *stashes;
+	PBBranchSidebarPresentation *branchPresentation;
 }
 
 - (void)populateList;
@@ -44,7 +46,9 @@
 - (void)updateActionMenu;
 - (void)updateRemoteControls;
 - (void)reloadSidebarAfterReferencesChange;
+- (void)reloadSidebarPresentation;
 - (void)synchronizeConfiguredRemotes;
+- (NSArray<PBSourceViewItem *> *)visibleChildrenForItem:(PBSourceViewItem *)item;
 
 @property (nonatomic) PBGitRevSpecifier *lastKnownHeadRef;
 @end
@@ -62,6 +66,7 @@
 
 	[sourceView setDelegate:self];
 	items = [NSMutableArray array];
+	branchPresentation = [[PBBranchSidebarPresentation alloc] initWithRepository:theRepository];
 
 	return self;
 }
@@ -92,17 +97,7 @@
 					options:(NSKeyValueObservingOptionOld | NSKeyValueObservingOptionNew)
 					  block:^(MAKVONotification *notification) {
 						  PBGitSidebarController *observer = notification.observer;
-						  if (notification.kind == NSKeyValueChangeInsertion) {
-							  NSArray *newRevSpecs = notification.newValue;
-							  for (PBGitRevSpecifier *rev in newRevSpecs) {
-								  PBSourceViewItem *item = [observer addRevSpec:rev];
-								  [observer.sourceView PBExpandItem:item expandParents:YES];
-							  }
-						  } else if (notification.kind == NSKeyValueChangeRemoval) {
-							  NSArray *removedRevSpecs = notification.oldValue;
-							  for (PBGitRevSpecifier *rev in removedRevSpecs)
-								  [observer removeRevSpec:rev];
-						  }
+						  [observer reloadSidebarPresentation];
 					  }];
 
 	[repository addObserver:self
@@ -140,12 +135,40 @@
 
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(expandCollapseItem:) name:NSOutlineViewItemWillExpandNotification object:sourceView];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(expandCollapseItem:) name:NSOutlineViewItemWillCollapseNotification object:sourceView];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(repositorySettingsDidChange:) name:@"PBRepositorySettingsDidChangeNotification" object:repository];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(repositorySettingsDidChange:) name:@"PBBranchSidebarSettingsDidChangeNotification" object:nil];
 }
 
 - (void)dealloc
 {
 	[[NSNotificationCenter defaultCenter] removeObserver:self name:NSOutlineViewItemWillExpandNotification object:sourceView];
 	[[NSNotificationCenter defaultCenter] removeObserver:self name:NSOutlineViewItemWillCollapseNotification object:sourceView];
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:@"PBRepositorySettingsDidChangeNotification" object:self.repository];
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:@"PBBranchSidebarSettingsDidChangeNotification" object:nil];
+}
+
+- (void)repositorySettingsDidChange:(NSNotification *)notification
+{
+	[self reloadSidebarPresentation];
+}
+
+- (void)reloadSidebarPresentation
+{
+	BOOL stageSelected = [PBGitDefaults showStageView];
+	PBGitRevSpecifier *viewedRev = self.repository.currentBranch;
+	[self populateList];
+	if (stageSelected) {
+		[self selectStage];
+	} else {
+		PBSourceViewItem *item = [self itemForRev:viewedRev];
+		if (item) {
+			[sourceView PBExpandItem:item expandParents:YES];
+			NSInteger row = [sourceView rowForItem:item];
+			if (row >= 0) [sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+		} else {
+			[self selectCurrentBranch];
+		}
+	}
 }
 
 - (PBSourceViewItem *)selectedItem
@@ -158,7 +181,12 @@
 
 - (void)selectStage
 {
-	NSIndexSet *index = [NSIndexSet indexSetWithIndex:[sourceView rowForItem:stage]];
+	NSInteger row = [sourceView rowForItem:stage];
+	if (row < 0) {
+		[self selectCurrentBranch];
+		return;
+	}
+	NSIndexSet *index = [NSIndexSet indexSetWithIndex:row];
 	[sourceView selectRowIndexes:index byExtendingSelection:NO];
 }
 
@@ -211,9 +239,16 @@
 	if ([pathComponents count] < 2) {
 		item = [PBSourceViewItem itemWithRevSpec:rev];
 		[branches addChild:item];
-	} else if ([[pathComponents objectAtIndex:1] isEqualToString:@"heads"])
-		[branches addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
-	else if ([[rev simpleRef] hasPrefix:@"refs/tags/"])
+	} else if ([[pathComponents objectAtIndex:1] isEqualToString:@"heads"]) {
+		if (![branchPresentation shouldShowRevision:rev]) return nil;
+		if (branchPresentation.usesRecentSorting) {
+			item = [PBSourceViewItem itemWithRevSpec:rev];
+			item.title = item.ref.shortName;
+			[branches addChild:item];
+		} else {
+			[branches addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
+		}
+	} else if ([[rev simpleRef] hasPrefix:@"refs/tags/"])
 		[tags addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
 	else if ([[rev simpleRef] hasPrefix:@"refs/remotes/"])
 		[remotes addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
@@ -222,7 +257,6 @@
 
 - (void)reloadSidebarAfterReferencesChange
 {
-	[self synchronizeConfiguredRemotes];
 	BOOL stageSelected = [PBGitDefaults showStageView];
 	PBGitRevSpecifier *viewedRev = self.repository.currentBranch;
 	PBGitRevSpecifier *newHead = self.repository.headRef;
@@ -234,10 +268,7 @@
 		viewedRev = newHead;
 	}
 
-	[sourceView reloadData];
-	[sourceView expandItem:items.firstObject];
-	[sourceView expandItem:branches expandChildren:YES];
-	[sourceView expandItem:remotes];
+	[self populateList];
 	if (stageSelected) {
 		[self selectStage];
 	} else {
@@ -301,29 +332,11 @@
 
 - (void)openSubmoduleAtURL:(NSURL *)submoduleURL
 {
-  NSWindow *currentWindow = [[NSApplication sharedApplication] keyWindow];
-  NSEvent *theEvent = [[NSApplication sharedApplication] currentEvent];
-  BOOL openInTab = (theEvent && [theEvent modifierFlags] & NSEventModifierFlagOption)!=0;
-  [[NSDocumentController sharedDocumentController] openDocumentWithContentsOfURL:submoduleURL
-                                                   display:YES
-                                                   completionHandler:^(NSDocument *document, BOOL documentWasAlreadyOpen, NSError *error) {
-
-    if (error) {
-      [self.windowController showErrorSheet:error];
-    }
-    else if (!documentWasAlreadyOpen) {
-      if (openInTab) {
-        // move into a tab of the original window
-        if (currentWindow) {
-          NSWindow *myWindow = [[document.windowControllers firstObject] window];
-          if (myWindow) {
-            NSWindowTabGroup *tabGroup = currentWindow.tabGroup;
-            [tabGroup addWindow:myWindow];
-          }
-        }
-      }
-    }
-  }];
+	[[PBRepositoryOpenCoordinator shared] openURLs:@[ submoduleURL ]
+									  sourceWindow:self.windowController.window
+										completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+											for (NSError *error in errors) [self.windowController showErrorSheet:error];
+										}];
 }
 
 #pragma mark NSOutlineView delegate methods
@@ -387,6 +400,40 @@
 
 - (NSView *)outlineView:(NSOutlineView *)outlineView viewForTableColumn:(NSTableColumn *)tableColumn item:(PBSourceViewItem *)item
 {
+	if (item == branches) {
+		NSTableCellView *header = [outlineView makeViewWithIdentifier:PBBranchesHeaderCellIdentifier owner:self];
+		if (!header) {
+			header = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, outlineView.bounds.size.width, 22)];
+			header.identifier = PBBranchesHeaderCellIdentifier;
+			NSTextField *label = [NSTextField labelWithString:NSLocalizedString(@"BRANCHES", nil)];
+			label.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
+			label.translatesAutoresizingMaskIntoConstraints = NO;
+			header.textField = label;
+			[header addSubview:label];
+			NSButton *button = [NSButton buttonWithImage:[NSImage imageWithSystemSymbolName:@"textformat" accessibilityDescription:NSLocalizedString(@"Change branch sorting", nil)]
+												  target:self
+												  action:@selector(toggleBranchSort:)];
+			button.identifier = @"BranchSortToggle";
+			button.bordered = NO;
+			button.translatesAutoresizingMaskIntoConstraints = NO;
+			[header addSubview:button];
+			[NSLayoutConstraint activateConstraints:@[
+				[label.leadingAnchor constraintEqualToAnchor:header.leadingAnchor
+													constant:4],
+				[label.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+				[button.trailingAnchor constraintEqualToAnchor:header.trailingAnchor
+													  constant:-4],
+				[button.centerYAnchor constraintEqualToAnchor:header.centerYAnchor],
+			]];
+		}
+		NSButton *sortButton = nil;
+		for (NSView *subview in header.subviews) {
+			if ([subview.identifier isEqualToString:@"BranchSortToggle"]) sortButton = (NSButton *)subview;
+		}
+		sortButton.image = [NSImage imageWithSystemSymbolName:(branchPresentation.usesRecentSorting ? @"clock" : @"textformat") accessibilityDescription:NSLocalizedString(@"Change branch sorting", nil)];
+		sortButton.toolTip = branchPresentation.usesRecentSorting ? NSLocalizedString(@"Branches sorted by most recent commit. Click for alphabetical.", nil) : NSLocalizedString(@"Branches sorted alphabetically. Click for most recent commit.", nil);
+		return header;
+	}
 	PBSidebarTableViewCell *cell = [outlineView makeViewWithIdentifier:PBSidebarCellIdentifier owner:outlineView];
 
 	cell.textField.stringValue = [[item title] copy];
@@ -394,6 +441,13 @@
 	cell.isCheckedOut = [item.revSpecifier isEqual:[self.repository headRef]];
 
 	return cell;
+}
+
+- (void)toggleBranchSort:(id)sender
+{
+	[branchPresentation toggleSorting];
+	NSLog(@"[GitX] Toggled branch sidebar sort mode");
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBBranchSidebarSettingsDidChangeNotification" object:nil];
 }
 
 - (NSTableRowView *)outlineView:(NSOutlineView *)outlineView rowViewForItem:(id)item
@@ -424,11 +478,14 @@
 - (void)populateList
 {
 	PBGitRepository *repository = self.repository;
+	[branchPresentation reload];
+	[items removeAllObjects];
 	PBSourceViewItem *project = [PBSourceViewItem groupItemWithTitle:[repository projectName]];
 	project.uncollapsible = YES;
 
 	stage = [PBSourceViewStageItem stageItem];
-	[project addChild:stage];
+	PBRepositoryUISettings *uiSettings = [[PBRepositoryUISettings alloc] initWithRepository:repository];
+	if ([uiSettings isSidebarGroupVisible:@"Stage"]) [project addChild:stage];
 
 	branches = [PBSourceViewItem groupItemWithTitle:@"Branches"];
 	remotes = [PBSourceViewItem groupItemWithTitle:@"Remotes"];
@@ -451,11 +508,11 @@
 
 	[items addObject:project];
 	[items addObject:branches];
-	[items addObject:remotes];
-	[items addObject:tags];
-	[items addObject:stashes];
-	[items addObject:submodules];
-	[items addObject:others];
+	if ([uiSettings isSidebarGroupVisible:@"Remotes"]) [items addObject:remotes];
+	if ([uiSettings isSidebarGroupVisible:@"Tags"]) [items addObject:tags];
+	if ([uiSettings isSidebarGroupVisible:@"Stashes"]) [items addObject:stashes];
+	if ([uiSettings isSidebarGroupVisible:@"Submodules"]) [items addObject:submodules];
+	if ([uiSettings isSidebarGroupVisible:@"Other"]) [items addObject:others];
 
 	[sourceView reloadData];
 	[sourceView expandItem:project];
@@ -482,12 +539,12 @@
 	if (!item)
 		return [items objectAtIndex:index];
 
-	return [[(PBSourceViewItem *)item sortedChildren] objectAtIndex:index];
+	return [[self visibleChildrenForItem:(PBSourceViewItem *)item] objectAtIndex:index];
 }
 
 - (BOOL)outlineView:(NSOutlineView *)outlineView isItemExpandable:(id)item
 {
-	return [[(PBSourceViewItem *)item sortedChildren] count] > 0;
+	return [[self visibleChildrenForItem:(PBSourceViewItem *)item] count] > 0;
 }
 
 - (NSInteger)outlineView:(NSOutlineView *)outlineView numberOfChildrenOfItem:(id)item
@@ -495,7 +552,13 @@
 	if (!item)
 		return [items count];
 
-	return [[(PBSourceViewItem *)item sortedChildren] count];
+	return [[self visibleChildrenForItem:(PBSourceViewItem *)item] count];
+}
+
+- (NSArray<PBSourceViewItem *> *)visibleChildrenForItem:(PBSourceViewItem *)item
+{
+	NSArray<PBSourceViewItem *> *children = item.sortedChildren;
+	return item == branches ? [branchPresentation sortedBranchItems:children] : children;
 }
 
 - (id)outlineView:(NSOutlineView *)outlineView objectValueForTableColumn:(NSTableColumn *)tableColumn byItem:(id)item
@@ -563,8 +626,8 @@
 // delegate of the action menu
 - (void)menuNeedsUpdate:(NSMenu *)menu
 {
-	[actionButton removeAllItems];
-	[menu addItem:[self actionIconItem]];
+	[menu removeAllItems];
+	if (menu == actionButton.menu) [menu addItem:[self actionIconItem]];
 
 	PBGitRef *ref = [[self selectedItem] ref];
 	[self addMenuItemsForRef:ref toMenu:menu];

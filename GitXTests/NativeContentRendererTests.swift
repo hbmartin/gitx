@@ -77,6 +77,7 @@ final class NativeContentRendererTests: XCTestCase {
             PBNativeSectionTitleKey: "Changes",
             PBNativeSectionTextKey: diff,
             PBNativeSectionContextKey: "unstaged",
+            PBNativeSectionDiffLayoutKey: 0,
         ])
 
         let result = renderer.renderSections(
@@ -88,6 +89,7 @@ final class NativeContentRendererTests: XCTestCase {
 
         XCTAssertTrue(result.attributedString.string.contains("Stage hunk"))
         XCTAssertTrue(result.attributedString.string.contains("Discard line"))
+        XCTAssertFalse(result.attributedString.string.contains("index 1111111..2222222 100644"))
         XCTAssertTrue(result.linkPayloads.values.contains { $0["action"] as? String == "stage" })
         XCTAssertTrue(result.linkPayloads.values.contains { $0["selectedIndexes"] is IndexSet })
 
@@ -122,5 +124,112 @@ final class NativeContentRendererTests: XCTestCase {
         XCTAssertTrue(result.attributedString.string.contains("There are no differences."))
         XCTAssertTrue(result.attributedString.string.contains("+new"))
         XCTAssertFalse(result.attributedString.string.contains("Stage line"))
+    }
+
+    func testDiffRendererSupportsSideBySideAndSuppressedFiles() {
+        let renderer = PBNativeDiffRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes,
+            parser: PBDiffDocumentParser()
+        )
+        let diff = """
+        diff --git a/generated/output.swift b/generated/output.swift
+        index 1111111..2222222 100644
+        --- a/generated/output.swift
+        +++ b/generated/output.swift
+        @@ -1,2 +1,2 @@
+        -let old = 1
+        +let new = 2
+         tail
+
+        """
+        let sideBySide = PBNativeContentSection(dictionary: [
+            PBNativeSectionTextKey: diff,
+            PBNativeSectionContextKey: "unstaged",
+            PBNativeSectionDiffLayoutKey: 1,
+        ])
+        let sideBySideResult = renderer.renderSections(
+            [sideBySide],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        )
+        XCTAssertTrue(sideBySideResult.attributedString.string.contains("Before"))
+        XCTAssertTrue(sideBySideResult.attributedString.string.contains("After"))
+        XCTAssertTrue(sideBySideResult.attributedString.string.contains("Stage hunk"))
+        XCTAssertFalse(sideBySideResult.attributedString.string.contains("index 1111111..2222222 100644"))
+
+        let suppressed = PBNativeContentSection(dictionary: [
+            PBNativeSectionTextKey: diff,
+            PBNativeSectionContextKey: "unstaged",
+            PBNativeSectionSuppressionPatternsKey: [#"^generated/"#],
+        ])
+        let suppressedResult = renderer.renderSections(
+            [suppressed],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        )
+        XCTAssertTrue(suppressedResult.attributedString.string.contains("Diff hidden by repository setting"))
+        XCTAssertFalse(suppressedResult.attributedString.string.contains("let new = 2"))
+
+        let revealedResult = renderer.renderSections(
+            [suppressed],
+            collapsedFiles: [],
+            expandedImages: ["suppression:0:generated/output.swift"],
+            imageDataProvider: nil
+        )
+        XCTAssertTrue(revealedResult.attributedString.string.contains("let new = 2"))
+    }
+
+    @MainActor
+    func testSideBySideTruncatesLongSyntaxLinesAndRendersImagesOnMainThread() throws {
+        let renderer = PBNativeDiffRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes,
+            parser: PBDiffDocumentParser()
+        )
+        let longValue = String(repeating: "value", count: 20)
+        let textDiff = """
+        diff --git a/Long.swift b/Long.swift
+        --- a/Long.swift
+        +++ b/Long.swift
+        @@ -1 +1 @@
+        -let old = \(longValue)
+        +let new = \(longValue)
+        \\ No newline at end of file
+
+        """
+        let sideBySide = PBNativeContentSection(dictionary: [
+            PBNativeSectionTextKey: textDiff,
+            PBNativeSectionContextKey: "readOnly",
+            PBNativeSectionDiffLayoutKey: 1,
+        ])
+        let textResult = renderer.renderSections(
+            [sideBySide],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        )
+        XCTAssertTrue(textResult.attributedString.string.contains("…"))
+        XCTAssertFalse(textResult.attributedString.string.contains(longValue))
+
+        let image = NSImage(size: NSSize(width: 2, height: 2))
+        image.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSRect(x: 0, y: 0, width: 2, height: 2).fill()
+        image.unlockFocus()
+        let imageData = try XCTUnwrap(image.tiffRepresentation)
+        let imageDiff = "diff --git a/image.png b/image.png\nBinary files a/image.png and b/image.png differ\n"
+        let imageSection = PBNativeContentSection(dictionary: [PBNativeSectionTextKey: imageDiff])
+        let imageResult = renderer.renderSections(
+            [imageSection],
+            collapsedFiles: [],
+            expandedImages: ["0:image.png"],
+            imageDataProvider: { _, _, _ in imageData }
+        )
+        XCTAssertTrue((0 ..< imageResult.attributedString.length).contains {
+            imageResult.attributedString.attribute(.attachment, at: $0, effectiveRange: nil) != nil
+        })
     }
 }

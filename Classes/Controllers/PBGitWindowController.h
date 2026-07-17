@@ -33,6 +33,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)init;
 
 - (void)changeContentController:(PBViewController *)controller;
+- (BOOL)isShowingCommitView;
 
 - (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText commitController:(PBGitCommitController *)controller;
 
@@ -51,6 +52,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)refresh:(id)sender;
 - (IBAction)jumpToCheckedOutBranch:(id)sender;
 - (IBAction)showRepositorySettings:(id)sender;
+- (IBAction)viewRemote:(id)sender;
+- (IBAction)toolbarFetch:(id)sender;
+- (IBAction)toolbarPull:(id)sender;
+- (IBAction)toolbarPush:(id)sender;
 
 - (IBAction)checkout:(id)sender;
 - (IBAction)createBranch:(id)sender;

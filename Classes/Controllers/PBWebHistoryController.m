@@ -19,6 +19,7 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 
 @interface PBWebHistoryController () <PBNativeContentViewDelegate>
 @property (nonatomic) NSSegmentedControl *presentationControl;
+@property (nonatomic) NSSegmentedControl *layoutControl;
 @property (nonatomic) NSArray<PBGitCommit *> *displayedCommits;
 @property (nonatomic) dispatch_queue_t renderQueue;
 @property (nonatomic) NSUInteger contentGeneration;
@@ -43,21 +44,37 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	self.presentationControl.controlSize = NSControlSizeSmall;
 	self.presentationControl.accessibilityIdentifier = @"MultiCommitDiffPresentation";
 	self.presentationControl.selectedSegment = [[NSUserDefaults standardUserDefaults] integerForKey:PBMultiCommitDiffPresentationKey];
+	self.layoutControl = [NSSegmentedControl segmentedControlWithLabels:@[ @"Unified", @"Side by Side" ]
+														   trackingMode:NSSegmentSwitchTrackingSelectOne
+																 target:self
+																 action:@selector(layoutChanged:)];
+	self.layoutControl.controlSize = NSControlSizeSmall;
+	self.layoutControl.accessibilityIdentifier = @"DiffLayout";
+	self.layoutControl.selectedSegment = PBApplicationSettings.diffLayout;
 	NSView *accessory = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 32)];
 	accessory.translatesAutoresizingMaskIntoConstraints = NO;
 	self.presentationControl.translatesAutoresizingMaskIntoConstraints = NO;
-	[accessory addSubview:self.presentationControl];
+	self.layoutControl.translatesAutoresizingMaskIntoConstraints = NO;
+	NSStackView *controls = [NSStackView stackViewWithViews:@[ self.layoutControl, self.presentationControl ]];
+	controls.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+	controls.spacing = 18;
+	controls.alignment = NSLayoutAttributeCenterY;
+	controls.translatesAutoresizingMaskIntoConstraints = NO;
+	[accessory addSubview:controls];
 	[NSLayoutConstraint activateConstraints:@[
 		[accessory.heightAnchor constraintEqualToConstant:32],
-		[self.presentationControl.centerXAnchor constraintEqualToAnchor:accessory.centerXAnchor],
-		[self.presentationControl.centerYAnchor constraintEqualToAnchor:accessory.centerYAnchor],
+		[controls.centerXAnchor constraintEqualToAnchor:accessory.centerXAnchor],
+		[controls.centerYAnchor constraintEqualToAnchor:accessory.centerYAnchor],
 	]];
 	[self.nativeView setAccessoryView:accessory];
-	accessory.hidden = YES;
+	self.presentationControl.hidden = YES;
 
-	[historyController addObserver:self keyPath:@"webCommits" options:0 block:^(MAKVONotification *notification) {
-		[notification.observer changeContentTo:((PBGitHistoryController *)notification.target).webCommits];
-	}];
+	[historyController addObserver:self
+						   keyPath:@"webCommits"
+						   options:0
+							 block:^(MAKVONotification *notification) {
+								 [notification.observer changeContentTo:((PBGitHistoryController *)notification.target).webCommits];
+							 }];
 }
 
 - (void)didLoad
@@ -146,7 +163,15 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 - (NSString *)diffForInput:(PBCommitRenderInput *)input generation:(NSUInteger)generation
 {
 	NSString *base = input.parentSHA ?: PBEmptyTreeSHA;
-	return [self runGitArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, input.sha ] generation:generation error:nil] ?: @"";
+	return [self runGitArguments:[self diffArgumentsWithTail:@[ @"--find-renames", @"--no-ext-diff", base, input.sha ]] generation:generation error:nil] ?: @"";
+}
+
+- (NSArray<NSString *> *)diffArgumentsWithTail:(NSArray<NSString *> *)tail
+{
+	NSMutableArray<NSString *> *arguments = [@[ @"diff" ] mutableCopy];
+	[arguments addObjectsFromArray:PBDiffCommandOptions.arguments];
+	[arguments addObjectsFromArray:tail];
+	return arguments;
 }
 
 - (BOOL)inputsShareAncestryPath:(NSArray<PBCommitRenderInput *> *)inputs generation:(NSUInteger)generation
@@ -199,7 +224,7 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	PBCommitRenderInput *oldest = inputs.firstObject;
 	PBCommitRenderInput *newest = inputs.lastObject;
 	NSString *base = oldest.parentSHA ?: PBEmptyTreeSHA;
-	NSString *combined = [self runGitArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff", base, newest.sha ] generation:generation error:nil];
+	NSString *combined = [self runGitArguments:[self diffArgumentsWithTail:@[ @"--find-renames", @"--no-ext-diff", base, newest.sha ]] generation:generation error:nil];
 	if (!combined || ![self isGenerationCurrent:generation]) return nil;
 	return @[ @{
 		PBNativeSectionTitleKey : [NSString stringWithFormat:@"Combined Diff — %@ through %@", oldest.shortName, newest.shortName],
@@ -211,7 +236,7 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 
 - (NSString *)syntheticUntrackedDiffForFile:(PBChangedFile *)file
 {
-	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:3] ?: @"";
+	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:PBApplicationSettings.diffContextLines] ?: @"";
 	NSMutableArray<NSString *> *lines = [[contents componentsSeparatedByString:@"\n"] mutableCopy];
 	BOOL endsWithNewline = [contents hasSuffix:@"\n"];
 	if (endsWithNewline && [lines.lastObject length] == 0) [lines removeLastObject];
@@ -226,9 +251,9 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 														 imageSource:(NSDictionary<NSString *, id> *)imageSource
 														  generation:(NSUInteger)generation
 {
-	NSString *staged = [self runGitArguments:@[ @"diff", @"--cached", @"--find-renames", @"--no-ext-diff" ] generation:generation error:nil];
+	NSString *staged = [self runGitArguments:[self diffArgumentsWithTail:@[ @"--cached", @"--find-renames", @"--no-ext-diff" ]] generation:generation error:nil];
 	if (!staged || ![self isGenerationCurrent:generation]) return nil;
-	NSString *unstagedOutput = [self runGitArguments:@[ @"diff", @"--find-renames", @"--no-ext-diff" ] generation:generation error:nil];
+	NSString *unstagedOutput = [self runGitArguments:[self diffArgumentsWithTail:@[ @"--find-renames", @"--no-ext-diff" ]] generation:generation error:nil];
 	if (!unstagedOutput || ![self isGenerationCurrent:generation]) return nil;
 	NSMutableString *unstaged = [unstagedOutput mutableCopy];
 	for (PBChangedFile *file in changes) {
@@ -249,19 +274,21 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	BOOL refreshingDisplayedWorkingState = [requestedCommits.firstObject isKindOfClass:PBUncommittedChanges.class] &&
 		self.displayedCommits.firstObject == requestedCommits.firstObject && self->diff != nil;
 	self.displayedCommits = requestedCommits;
-	self.presentationControl.superview.hidden = requestedCommits.count <= 1;
+	self.presentationControl.hidden = requestedCommits.count <= 1;
+	NSInteger selectedLayout = self.layoutControl.selectedSegment;
 	if (requestedCommits.count == 0) {
 		self->diff = @"";
 		[self.nativeView showMessage:@"No commit selected"];
 		return;
 	}
 	if ([requestedCommits.firstObject isKindOfClass:PBUncommittedChanges.class]) {
-		self.presentationControl.superview.hidden = YES;
+		self.presentationControl.hidden = YES;
 		NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
 		NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:@[ @":" ] workingTree:YES];
 		if (!refreshingDisplayedWorkingState) [self.nativeView showMessage:@"Loading changes…"];
 		dispatch_async(self.renderQueue, ^{
 			NSArray<NSDictionary *> *sections = [self workingStateSectionsForChanges:changes imageSource:imageSource generation:generation];
+			sections = [self sections:sections applyingDiffLayout:selectedLayout];
 			if (!sections) return;
 			dispatch_async(dispatch_get_main_queue(), ^{
 				if (![self isGenerationCurrent:generation]) return;
@@ -287,6 +314,7 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 		PBMultiCommitDiffPresentation mode = requestedMode;
 		if (mode == PBMultiCommitDiffPresentationCombined && !combinedEnabled) mode = PBMultiCommitDiffPresentationSequential;
 		NSArray<NSDictionary *> *sections = mode == PBMultiCommitDiffPresentationCombined ? [self combinedSectionsForInputs:inputs imageSource:imageSources.lastObject generation:generation] : [self sequentialSectionsForInputs:inputs imageSources:imageSources generation:generation];
+		sections = [self sections:sections applyingDiffLayout:selectedLayout];
 		if (!sections || ![self isGenerationCurrent:generation]) return;
 		dispatch_async(dispatch_get_main_queue(), ^{
 			if (![self isGenerationCurrent:generation]) return;
@@ -297,6 +325,25 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 			[self.nativeView showDiffSections:sections];
 		});
 	});
+}
+
+- (NSArray<NSDictionary *> *)sections:(NSArray<NSDictionary *> *)sections applyingDiffLayout:(NSInteger)layout
+{
+	PBRepositorySettingsStore *settings = [[PBRepositorySettingsStore alloc] initWithRepository:historyController.repository];
+	NSString *configuredPatterns = [settings stringForKey:@"gitx.diffSuppressionPatterns"];
+	NSMutableArray<NSString *> *patterns = [NSMutableArray array];
+	for (NSString *line in [configuredPatterns componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+		NSString *pattern = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+		if (pattern.length && ![pattern hasPrefix:@"#"]) [patterns addObject:pattern];
+	}
+	NSMutableArray<NSDictionary *> *result = [NSMutableArray arrayWithCapacity:sections.count];
+	for (NSDictionary *section in sections) {
+		NSMutableDictionary *copy = [section mutableCopy];
+		copy[PBNativeSectionDiffLayoutKey] = @(layout);
+		copy[PBNativeSectionSuppressionPatternsKey] = patterns;
+		[result addObject:copy];
+	}
+	return result;
 }
 
 - (nullable NSData *)dataForGitObject:(NSString *)object imageSource:(NSDictionary<NSString *, id> *)imageSource
@@ -334,6 +381,12 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	[self changeContentTo:self.displayedCommits];
 }
 
+- (void)layoutChanged:(NSSegmentedControl *)sender
+{
+	NSLog(@"[GitX] Changed per-window diff layout to %@", sender.selectedSegment == PBDiffLayoutSideBySide ? @"side-by-side" : @"unified");
+	[self changeContentTo:self.displayedCommits];
+}
+
 - (void)refreshDisplayedContent
 {
 	[self changeContentTo:self.displayedCommits];
@@ -346,12 +399,23 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 
 - (void)sendKey:(NSString *)key
 {
-	if ([key isEqualToString:@"j"]) [self.nativeView.textView scrollLineDown:self];
-	else if ([key isEqualToString:@"k"]) [self.nativeView.textView scrollLineUp:self];
+	if ([key isEqualToString:@"j"])
+		[self.nativeView.textView scrollLineDown:self];
+	else if ([key isEqualToString:@"k"])
+		[self.nativeView.textView scrollLineUp:self];
 }
 
-- (void)scrollPageUp { [self.nativeView scrollPageUp]; }
-- (void)scrollPageDown { [self.nativeView scrollPageDown]; }
-- (void)preferencesChanged { [self changeContentTo:self.displayedCommits]; }
+- (void)scrollPageUp
+{
+	[self.nativeView scrollPageUp];
+}
+- (void)scrollPageDown
+{
+	[self.nativeView scrollPageDown];
+}
+- (void)preferencesChanged
+{
+	[self changeContentTo:self.displayedCommits];
+}
 
 @end

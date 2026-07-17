@@ -134,7 +134,12 @@ final class HistoryMenuBuilder: NSObject {
         if single {
             items += [item("Checkout Commit", action: #selector(PBGitWindowController.checkout(_:))), .separator(), item("Create Branch…", action: #selector(PBGitWindowController.createBranch(_:))), item("Create Tag…", action: #selector(PBGitWindowController.createTag(_:))), .separator()]
         }
-        items += [item("Copy SHA", action: #selector(PBGitHistoryController.copySHA(_:))), item("Copy short SHA", action: #selector(PBGitHistoryController.copyShortName(_:))), item("Copy Patch", action: #selector(PBGitHistoryController.copyPatch(_:)))]
+        items += [
+            item("Copy SHA-1", action: #selector(PBGitHistoryController.copySHA(_:))),
+            item("Copy Short SHA-1", action: #selector(PBGitHistoryController.copyShortName(_:))),
+            item("Copy Patch", action: #selector(PBGitHistoryController.copyPatch(_:))),
+            item("Create Patch…", action: #selector(PBGitHistoryController.createPatch(_:))),
+        ]
         if single {
             items += [item("Diff with “\(headName)”", action: #selector(PBGitWindowController.diffWithHEAD(_:)), enabled: !isHead), .separator()]
             items.append(item(onHead ? "Merge Commit" : "Merge Commit into “\(headName)”", action: #selector(PBGitWindowController.merge(_:)), enabled: !onHead))
