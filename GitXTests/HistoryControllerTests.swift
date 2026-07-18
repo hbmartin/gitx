@@ -444,6 +444,19 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.status.contains("commits loaded"))
     }
 
+    func testHistoryTraversalRefreshPreservesExplicitColumnSortOverride() {
+        let descriptor = NSSortDescriptor(key: "subject", ascending: true)
+        historyController.commitController.sortDescriptors = [descriptor]
+
+        historyController.historyTraversalSettingsDidChange(
+            Notification(name: Notification.Name("PBHistoryTraversalSettingsDidChangeNotification"))
+        )
+
+        XCTAssertEqual(historyController.commitController.sortDescriptors, [descriptor])
+        XCTAssertTrue(historyController.hasNonlinearPath())
+        waitForHistory()
+    }
+
     func testGitTreeFileSizeSupportsConcurrentPreviewLoads() throws {
         let commits = loadedCommits()
         let file = try XCTUnwrap(
@@ -510,6 +523,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(historyController.value(forKey: "firstCommit"))
 
         historyController.commitController.content = [workingState] + Array(commits.prefix(3))
+        historyController.commitController.sortDescriptors = []
         historyController.commitController.rearrangeObjects()
         XCTAssertTrue(historyController.value(forKey: "firstCommit") as AnyObject === commits[0])
         historyController.commitController.setSelectedObjects([commits[2]])

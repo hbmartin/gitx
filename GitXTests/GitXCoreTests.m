@@ -9,6 +9,7 @@
 #import "PBGraphCellInfo.h"
 #import "PBGitBinary.h"
 #import "PBGitCommit.h"
+#import "PBGitDefaults.h"
 #import "PBGitGrapher.h"
 #import "PBGitHistoryList.h"
 #import "PBGitIndex.h"
@@ -44,6 +45,7 @@
 
 @interface PBGitSidebarController (GitXCoreTests)
 - (PBSourceViewItem *)addRevSpec:(PBGitRevSpecifier *)rev;
+- (void)repositorySettingsDidChange:(NSNotification *)notification;
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldEditTableColumn:(nullable NSTableColumn *)tableColumn item:(id)item;
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldSelectItem:(id)item;
 @end
@@ -125,7 +127,9 @@
 		@"GIT_COMMITTER_DATE" : date,
 	};
 	return [self git:@[ @"add", @"--all" ] error:error] != nil &&
-		[self git:@[ @"commit", @"--quiet", @"-m", message ] environment:environment error:error] != nil;
+		[self git:@[ @"commit", @"--quiet", @"-m", message ]
+			environment:environment
+				  error:error] != nil;
 }
 
 @end
@@ -532,6 +536,30 @@
 	}
 }
 
+- (void)testSidebarSettingsReloadPreservesAUsableSelection
+{
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
+	(void)sidebar.view;
+	BOOL previousShowStageView = PBGitDefaults.showStageView;
+	@try {
+		[PBGitDefaults setShowStageView:NO];
+		[sidebar selectCurrentBranch];
+		[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
+																		   object:self.repository]];
+
+		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
+
+		[PBGitDefaults setShowStageView:YES];
+		[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
+																		   object:self.repository]];
+
+		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
+	} @finally {
+		[PBGitDefaults setShowStageView:previousShowStageView];
+		[sidebar closeView];
+	}
+}
+
 - (void)testDeletingRemoteBranchRemovesOnlyLocalTrackingReference
 {
 	NSError *error = nil;
@@ -714,16 +742,25 @@
 	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
 }
 
-- (void)testRevisionListUsesDateOrderAndPreservesTopology
+- (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured
 {
 	NSError *error = nil;
+	NSString *groupingKey = @"PBHistoryGroupIncomingBranchCommits";
+	id previousGrouping = [[NSUserDefaults standardUserDefaults] objectForKey:groupingKey];
+	[self addTeardownBlock:^{
+		if (previousGrouping)
+			[[NSUserDefaults standardUserDefaults] setObject:previousGrouping forKey:groupingKey];
+		else
+			[[NSUserDefaults standardUserDefaults] removeObjectForKey:groupingKey];
+	}];
 	NSDictionary<NSString *, NSString *> *baseDate = @{
 		@"GIT_AUTHOR_DATE" : @"2030-01-01T12:00:00Z",
 		@"GIT_COMMITTER_DATE" : @"2030-01-01T12:00:00Z",
 	};
 	XCTAssertNotNil(([self.fixture git:@[ @"commit", @"--quiet", @"--amend", @"--no-edit" ]
-							 environment:baseDate
-								   error:&error]), @"%@", error);
+						   environment:baseDate
+								 error:&error]),
+					@"%@", error);
 	XCTAssertNotNil(([self.fixture git:@[ @"branch", @"topic" ] error:&error]), @"%@", error);
 
 	XCTAssertTrue([self.fixture writeText:@"main one\n" toPath:@"main.txt" error:&error], @"%@", error);
@@ -743,15 +780,24 @@
 		@"GIT_COMMITTER_DATE" : @"2030-01-06T12:00:00Z",
 	};
 	XCTAssertNotNil(([self.fixture git:@[ @"merge", @"--quiet", @"--no-ff", @"topic", @"-m", @"merge topic" ]
-							 environment:mergeDate
-								   error:&error]), @"%@", error);
+						   environment:mergeDate
+								 error:&error]),
+					@"%@", error);
 
 	[self.repository reloadRefs];
-	NSArray<PBGitCommit *> *commits =
+	[[NSUserDefaults standardUserDefaults] setBool:YES forKey:groupingKey];
+	NSArray<PBGitCommit *> *grouped =
 		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]];
-	XCTAssertEqualObjects([commits valueForKey:@"subject"],
+	XCTAssertEqualObjects([grouped valueForKey:@"subject"],
+						  (@[ @"merge topic", @"topic-2", @"topic-1", @"main-2", @"main-1", @"initial commit" ]));
+	[self assertCommitsAreUniqueAndChildrenPrecedeParents:grouped];
+
+	[[NSUserDefaults standardUserDefaults] setBool:NO forKey:groupingKey];
+	NSArray<PBGitCommit *> *dateOrdered =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]];
+	XCTAssertEqualObjects([dateOrdered valueForKey:@"subject"],
 						  (@[ @"merge topic", @"main-2", @"main-1", @"topic-2", @"topic-1", @"initial commit" ]));
-	[self assertCommitsAreUniqueAndChildrenPrecedeParents:commits];
+	[self assertCommitsAreUniqueAndChildrenPrecedeParents:dateOrdered];
 }
 
 - (void)testRevisionListHandlesSimpleAllRangeMissingAndInvalidSpecifications

@@ -217,6 +217,10 @@
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(_repositoryUpdatedNotification:) name:PBGitRepositoryEventNotification object:repository];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(indexUpdated:) name:PBGitIndexIndexUpdated object:repository.index];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(historySortingPreferenceChanged:) name:PBGitHistorySortingPreferenceDidChangeNotification object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self
+											 selector:@selector(historyTraversalSettingsDidChange:)
+												 name:@"PBHistoryTraversalSettingsDidChangeNotification"
+											   object:nil];
 	[self updateUncommittedChanges];
 
 	[super awakeFromNib];
@@ -232,6 +236,12 @@
 	if (![PBGitDefaults historyColumnSortingEnabled]) commitController.sortDescriptors = @[];
 	[commitController rearrangeObjects];
 	[commitList reloadData];
+}
+
+- (void)historyTraversalSettingsDidChange:(NSNotification *)notification
+{
+	NSLog(@"[GitX] History traversal setting changed; reloading revisions");
+	[self.repository forceUpdateRevisions];
 }
 
 - (void)updateUncommittedChanges

@@ -13,6 +13,7 @@
 #import "PBGitRevSpecifier.h"
 #import "PBGitBinary.h"
 #import "PBError.h"
+#import "GitX-Swift.h"
 
 #import <ObjectiveGit/ObjectiveGit.h>
 #import "ObjectiveGit+PBCategories.h"
@@ -110,7 +111,11 @@
 
 - (BOOL)isParsing
 {
-	return self.operationQueue.operationCount > 0;
+	for (NSOperation *operation in self.operationQueue.operations) {
+		if (!operation.finished)
+			return YES;
+	}
+	return NO;
 }
 
 
@@ -186,7 +191,10 @@ static BOOL hasParameter(NSMutableArray *parameters, NSString *paramName)
 	NSError *error = nil;
 	BOOL success = NO;
 	GTRepository *repo = enumerator.repository;
-	[enumerator resetWithOptions:GTEnumeratorOptionsTopologicalSort | GTEnumeratorOptionsTimeSort];
+	GTEnumeratorOptions options = GTEnumeratorOptionsTopologicalSort;
+	if (!PBApplicationSettings.groupIncomingBranchCommits)
+		options |= GTEnumeratorOptionsTimeSort;
+	[enumerator resetWithOptions:options];
 
 	if (rev.isSimpleRef) {
 		GTObject *object = [repo lookUpObjectByRevParse:rev.simpleRef error:&error];

@@ -68,6 +68,7 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 @property (class) PBWindowRestorePolicy restorePolicy;
 @property (class) BOOL changedFilesOnly;
 @property (class) PBChangedFilesSortMode changedFilesSort;
+@property (class) BOOL groupIncomingBranchCommits;
 @property (class) PBBranchSortMode branchSort;
 @property (class) PBDiffLayout diffLayout;
 @property (class) PBDiffAlgorithm diffAlgorithm;
@@ -676,6 +677,7 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (void)restoreFileBrowserSelection;
 - (void)saveFileBrowserSelection;
 - (void)historySortingPreferenceChanged:(NSNotification *)notification;
+- (void)historyTraversalSettingsDidChange:(NSNotification *)notification;
 - (void)historyTreeSettingsDidChange:(NSNotification *)notification;
 - (void)outlineView:(NSOutlineView *)outlineView
     willDisplayCell:(NSTextFieldCell *)cell

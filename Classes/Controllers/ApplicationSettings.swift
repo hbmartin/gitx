@@ -60,6 +60,7 @@ final nonisolated class ApplicationSettings: NSObject {
         static let restorePolicy = "PBWindowRestorePolicy"
         static let changedFilesOnly = "PBHistoryChangedFilesOnly"
         static let changedFilesSort = "PBHistoryChangedFilesSort"
+        static let groupIncomingBranchCommits = "PBHistoryGroupIncomingBranchCommits"
         static let branchSort = "PBBranchSortMode"
         static let diffLayout = "PBDiffLayout"
         static let diffAlgorithm = "PBDiffAlgorithm"
@@ -103,6 +104,14 @@ final nonisolated class ApplicationSettings: NSObject {
     @objc static var changedFilesSort: ChangedFilesSortMode {
         get { enumValue(Key.changedFilesSort, fallback: .alphabetical) }
         set { defaults.set(newValue.rawValue, forKey: Key.changedFilesSort) }
+    }
+
+    @objc static var groupIncomingBranchCommits: Bool {
+        get {
+            guard defaults.object(forKey: Key.groupIncomingBranchCommits) != nil else { return true }
+            return defaults.bool(forKey: Key.groupIncomingBranchCommits)
+        }
+        set { defaults.set(newValue, forKey: Key.groupIncomingBranchCommits) }
     }
 
     @objc static var branchSort: BranchSortMode {
@@ -363,6 +372,12 @@ private final class SettingsPaneView: NSView {
         NotificationCenter.default.post(name: .historyTreeSettingsDidChange, object: nil)
     }
 
+    @objc func groupIncomingBranchCommitsChanged(_ sender: NSButton) {
+        ApplicationSettings.groupIncomingBranchCommits = sender.state == .on
+        NotificationCenter.default.post(name: .historyTraversalSettingsDidChange, object: nil)
+        logger.info("History traversal setting changed")
+    }
+
     @objc func branchSortChanged(_ sender: NSPopUpButton) {
         ApplicationSettings.branchSort = BranchSortMode(rawValue: sender.selectedTag()) ?? .alphabetical
         NotificationCenter.default.post(name: .branchSidebarSettingsDidChange, object: nil)
@@ -466,6 +481,11 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         changedSort.target = view
         changedSort.action = #selector(SettingsPaneView.changedFilesSortChanged(_:))
         view.addRow("Changed-file order:", control: changedSort)
+        _ = view.addCheckbox(
+            "Group commits by branch",
+            state: ApplicationSettings.groupIncomingBranchCommits,
+            action: #selector(SettingsPaneView.groupIncomingBranchCommitsChanged(_:))
+        )
         let branchSort = popup(items: [
             ("Alphabetical", BranchSortMode.alphabetical.rawValue),
             ("Most Recent Commit", BranchSortMode.recentCommit.rawValue),
@@ -666,6 +686,7 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
 
 extension Notification.Name {
     static let branchSidebarSettingsDidChange = Notification.Name("PBBranchSidebarSettingsDidChangeNotification")
+    static let historyTraversalSettingsDidChange = Notification.Name("PBHistoryTraversalSettingsDidChangeNotification")
     static let historyTreeSettingsDidChange = Notification.Name("PBHistoryTreeSettingsDidChangeNotification")
 }
 
