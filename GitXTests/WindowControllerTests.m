@@ -2664,6 +2664,22 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[NSFileManager.defaultManager removeItemAtURL:plainURL error:NULL];
 }
 
+- (void)testFolderDocumentTypeRegistersPublicFolderAsAlternateViewer
+{
+	NSArray<NSDictionary *> *documentTypes = NSBundle.mainBundle.infoDictionary[@"CFBundleDocumentTypes"];
+	NSDictionary *folderType = nil;
+	for (NSDictionary *documentType in documentTypes) {
+		if ([documentType[@"LSItemContentTypes"] containsObject:@"public.folder"]) {
+			folderType = documentType;
+			break;
+		}
+	}
+
+	XCTAssertNotNil(folderType);
+	XCTAssertEqualObjects(folderType[@"CFBundleTypeRole"], @"Viewer");
+	XCTAssertEqualObjects(folderType[@"LSHandlerRank"], @"Alternate");
+}
+
 - (void)testPreferencesWindowCharacterizesExistingToolbarAndSizing
 {
 	PBPrefsWindowController *preferences = [[PBPrefsWindowController alloc] initWithWindowNibName:@"Preferences"];
