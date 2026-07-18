@@ -47,6 +47,20 @@ final nonisolated class RepositoryHookRunner: NSObject {
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         guard hookExists(name) else { return true }
+        do {
+            outputPointer?.pointee = try executeHook(name, arguments: arguments) { _ in } as NSString
+            return true
+        } catch {
+            return RepositoryServiceError.assign(error as NSError, to: outputError)
+        }
+    }
+
+    func executeHook(
+        _ name: String,
+        arguments: [String],
+        outputHandler: @escaping @Sendable (Data) -> Void
+    ) throws -> String {
+        guard hookExists(name) else { return "" }
         logger.debug("Executing repository hook")
         let task = PBTask(
             launchPath: path(forHook: name),
@@ -59,10 +73,9 @@ final nonisolated class RepositoryHookRunner: NSObject {
             "GIT_INDEX_FILE": (gitDirectory as NSString).appendingPathComponent("index"),
         ]
         do {
-            try task.launch()
-            outputPointer?.pointee = task.standardOutputString() as NSString?
+            try task.launch(outputChunkHandler: outputHandler)
             logger.debug("Repository hook completed")
-            return true
+            return task.standardOutputString() ?? ""
         } catch {
             let taskError = error as NSError
             let hookOutput = taskError.userInfo[PBTaskTerminationOutputKey] as? String ?? ""
@@ -79,7 +92,7 @@ final nonisolated class RepositoryHookRunner: NSObject {
                 userInfo: [PBHookNameErrorKey: name]
             )
             logger.error("Repository hook failed")
-            return RepositoryServiceError.assign(wrapped, to: outputError)
+            throw wrapped
         }
     }
 }

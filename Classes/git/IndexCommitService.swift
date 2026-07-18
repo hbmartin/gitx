@@ -6,24 +6,34 @@ import OSLog // swiftlint:disable:this unused_import
 
 @objc(PBIndexHookRunning)
 protocol IndexHookRunning: AnyObject {
-    func executeHook(_ name: String, arguments: [String]) throws
+    nonisolated func executeHook(
+        _ name: String,
+        arguments: [String],
+        outputHandler: @escaping @Sendable (Data) -> Void
+    ) throws
 }
 
-final class IndexRepositoryHookRunner: NSObject, IndexHookRunning {
-    private unowned let repository: PBGitRepository
+// swift6-safety-justification: The immutable hook service is called synchronously on the commit coordinator's serial work queue.
+final nonisolated class IndexRepositoryHookRunner: NSObject, IndexHookRunning, @unchecked Sendable {
+    private let hookRunner: RepositoryHookRunner
 
     init(repository: PBGitRepository) {
-        self.repository = repository
+        hookRunner = RepositoryHookRunner(repository: repository)
         super.init()
     }
 
-    func executeHook(_ name: String, arguments: [String]) throws {
-        try repository.executeHook(name, arguments: arguments)
+    func executeHook(
+        _ name: String,
+        arguments: [String],
+        outputHandler: @escaping @Sendable (Data) -> Void
+    ) throws {
+        _ = try hookRunner.executeHook(name, arguments: arguments, outputHandler: outputHandler)
     }
 }
 
+// swift6-safety-justification: This immutable request snapshot is created before dispatch and consumed on one serial commit queue.
 @objc(PBIndexCommitRequest)
-final nonisolated class IndexCommitRequest: NSObject {
+final nonisolated class IndexCommitRequest: NSObject, @unchecked Sendable {
     @objc let message: String
     @objc let verify: Bool
     @objc let gpgSign: Bool
@@ -54,14 +64,15 @@ final nonisolated class IndexCommitRequest: NSObject {
 }
 
 @objc(PBIndexCommitResultKind)
-enum IndexCommitResultKind: Int {
+enum IndexCommitResultKind: Int, Sendable {
     case success
     case failure
     case hookFailure
 }
 
+// swift6-safety-justification: Commit result properties are immutable value snapshots.
 @objc(PBIndexCommitResult)
-final nonisolated class IndexCommitResult: NSObject {
+final nonisolated class IndexCommitResult: NSObject, @unchecked Sendable {
     @objc let kind: IndexCommitResultKind
     @objc let message: String
     @objc let sha: String?
@@ -81,8 +92,88 @@ final nonisolated class IndexCommitResult: NSObject {
     }
 }
 
+@objc(PBIndexCommitPhase)
+enum IndexCommitPhase: Int, Sendable {
+    case creatingTree
+    case creatingCommit
+    case runningPreCommitHook
+    case runningCommitMessageHook
+    case updatingHead
+    case runningPostCommitHook
+
+    nonisolated var displayName: String {
+        switch self {
+        case .creatingTree:
+            NSLocalizedString("Creating tree", comment: "Interactive commit progress phase")
+        case .creatingCommit:
+            NSLocalizedString("Creating commit", comment: "Interactive commit progress phase")
+        case .runningPreCommitHook:
+            NSLocalizedString("Running pre-commit hook", comment: "Interactive commit progress phase")
+        case .runningCommitMessageHook:
+            NSLocalizedString("Running commit-msg hook", comment: "Interactive commit progress phase")
+        case .updatingHead:
+            NSLocalizedString("Updating HEAD", comment: "Interactive commit progress phase")
+        case .runningPostCommitHook:
+            NSLocalizedString("Running post-commit hook", comment: "Interactive commit progress phase")
+        }
+    }
+}
+
+// swift6-safety-justification: Commit events are immutable after initialization.
+@objc(PBIndexCommitEvent)
+nonisolated class IndexCommitEvent: NSObject, @unchecked Sendable {}
+
+// swift6-safety-justification: The phase and display name are immutable value snapshots.
+@objc(PBIndexCommitPhaseEvent)
+final nonisolated class IndexCommitPhaseEvent: IndexCommitEvent, @unchecked Sendable {
+    @objc let phase: IndexCommitPhase
+    @objc let displayName: String
+
+    init(phase: IndexCommitPhase) {
+        self.phase = phase
+        displayName = phase.displayName
+        super.init()
+    }
+}
+
+// swift6-safety-justification: The output string is immutable after initialization.
+@objc(PBIndexCommitOutputEvent)
+final nonisolated class IndexCommitOutputEvent: IndexCommitEvent, @unchecked Sendable {
+    @objc let output: String
+
+    init(output: String) {
+        self.output = output
+        super.init()
+    }
+}
+
+// swift6-safety-justification: The completion event retains an immutable commit result.
+@objc(PBIndexCommitCompletionEvent)
+final nonisolated class IndexCommitCompletionEvent: IndexCommitEvent, @unchecked Sendable {
+    @objc let result: IndexCommitResult
+
+    init(result: IndexCommitResult) {
+        self.result = result
+        super.init()
+    }
+}
+
+// swift6-safety-justification: PBTask invokes output synchronously before unblocking the serial coordinator, so sink calls cannot overlap.
+private final nonisolated class IndexCommitEventSink: @unchecked Sendable {
+    private let handler: (IndexCommitEvent) -> Void
+
+    init(handler: @escaping (IndexCommitEvent) -> Void) {
+        self.handler = handler
+    }
+
+    func send(_ event: IndexCommitEvent) {
+        handler(event)
+    }
+}
+
+// swift6-safety-justification: Service dependencies are immutable and each service instance is consumed synchronously on one commit queue.
 @objc(PBIndexCommitService)
-final class IndexCommitService: NSObject {
+final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
     private let runner: IndexCommandRunning
     private let hookRunner: IndexHookRunning
     private let gitDirectory: URL
@@ -133,7 +224,7 @@ final class IndexCommitService: NSObject {
         }
 
         do {
-            try hookRunner.executeHook("prepare-commit-msg", arguments: arguments)
+            try hookRunner.executeHook("prepare-commit-msg", arguments: arguments) { _ in }
         } catch {
             outputError?.pointee = hookFailureError(prefix: "prepare-commit-msg hook failed", error: error as NSError)
             logger.error("Prepare commit message hook failed")
@@ -154,7 +245,42 @@ final class IndexCommitService: NSObject {
     @objc(commitWithRequest:progress:)
     func commit(
         with request: IndexCommitRequest,
-        progress: (String) -> Void
+        progress: @escaping (String) -> Void
+    ) -> IndexCommitResult {
+        let sink = IndexCommitEventSink { event in
+            guard let phaseEvent = event as? IndexCommitPhaseEvent else { return }
+            switch phaseEvent.phase {
+            case .creatingTree:
+                progress("Creating tree")
+            case .creatingCommit:
+                progress("Creating commit")
+            case .runningPreCommitHook:
+                progress("Running hooks")
+            case .runningCommitMessageHook:
+                break
+            case .updatingHead:
+                progress("Updating HEAD")
+            case .runningPostCommitHook:
+                progress("Running post-commit hook")
+            }
+        }
+        return performCommit(with: request, sink: sink)
+    }
+
+    @objc(commitWithRequest:eventHandler:)
+    func commit(
+        with request: IndexCommitRequest,
+        eventHandler: @escaping @Sendable (IndexCommitEvent) -> Void
+    ) -> IndexCommitResult {
+        let sink = IndexCommitEventSink(handler: eventHandler)
+        let result = performCommit(with: request, sink: sink)
+        sink.send(IndexCommitCompletionEvent(result: result))
+        return result
+    }
+
+    private func performCommit(
+        with request: IndexCommitRequest,
+        sink: IndexCommitEventSink
     ) -> IndexCommitResult {
         let editMessageURL = gitDirectory.appendingPathComponent("COMMIT_EDITMSG")
         do {
@@ -163,7 +289,7 @@ final class IndexCommitService: NSObject {
             logger.error("Writing commit message failed")
         }
 
-        progress("Creating tree")
+        sink.send(IndexCommitPhaseEvent(phase: .creatingTree))
         let tree: String
         do {
             tree = try runner.output(arguments: ["write-tree"], input: nil, environment: nil)
@@ -187,16 +313,23 @@ final class IndexCommitService: NSObject {
             arguments.append("--gpg-sign")
         }
 
-        progress("Creating commit")
+        sink.send(IndexCommitPhaseEvent(phase: .creatingCommit))
         if request.verify {
-            progress("Running hooks")
-            if let hookFailure = runVerificationHook("pre-commit", arguments: [], prefix: "Pre-commit hook failed") {
+            sink.send(IndexCommitPhaseEvent(phase: .runningPreCommitHook))
+            if let hookFailure = runVerificationHook(
+                "pre-commit",
+                arguments: [],
+                prefix: "Pre-commit hook failed",
+                sink: sink
+            ) {
                 return hookFailure
             }
+            sink.send(IndexCommitPhaseEvent(phase: .runningCommitMessageHook))
             if let hookFailure = runVerificationHook(
                 "commit-msg",
                 arguments: [editMessageURL.path],
-                prefix: "Commit-msg hook failed"
+                prefix: "Commit-msg hook failed",
+                sink: sink
             ) {
                 return hookFailure
             }
@@ -224,8 +357,12 @@ final class IndexCommitService: NSObject {
             return failure("Could not create a commit object")
         }
 
-        progress("Updating HEAD")
-        let subject = request.message.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+        sink.send(IndexCommitPhaseEvent(phase: .updatingHead))
+        let subject = request.message.split(
+            separator: "\n",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        ).first.map(String.init) ?? ""
         do {
             _ = try runner.output(
                 arguments: ["update-ref", "-m", "commit: \(subject)", "HEAD", commit],
@@ -236,10 +373,10 @@ final class IndexCommitService: NSObject {
             return failure("Could not update HEAD")
         }
 
-        progress("Running post-commit hook")
+        sink.send(IndexCommitPhaseEvent(phase: .runningPostCommitHook))
         let postCommitSucceeded: Bool
         do {
-            try hookRunner.executeHook("post-commit", arguments: [])
+            try streamHook("post-commit", arguments: [], sink: sink)
             postCommitSucceeded = true
         } catch {
             postCommitSucceeded = false
@@ -259,16 +396,39 @@ final class IndexCommitService: NSObject {
     private func runVerificationHook(
         _ name: String,
         arguments: [String],
-        prefix: String
+        prefix: String,
+        sink: IndexCommitEventSink
     ) -> IndexCommitResult? {
         do {
-            try hookRunner.executeHook(name, arguments: arguments)
+            try streamHook(name, arguments: arguments, sink: sink)
             return nil
         } catch {
             return IndexCommitResult(
                 kind: .hookFailure,
                 message: hookFailureError(prefix: prefix, error: error as NSError).localizedDescription
             )
+        }
+    }
+
+    private func streamHook(
+        _ name: String,
+        arguments: [String],
+        sink: IndexCommitEventSink
+    ) throws {
+        let decoder = IncrementalUTF8Decoder()
+        let emit: @Sendable (String) -> Void = { output in
+            guard !output.isEmpty else { return }
+            sink.send(IndexCommitOutputEvent(output: output))
+        }
+
+        do {
+            try hookRunner.executeHook(name, arguments: arguments) { data in
+                emit(decoder.append(data))
+            }
+            emit(decoder.finish())
+        } catch {
+            emit(decoder.finish())
+            throw error
         }
     }
 

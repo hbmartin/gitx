@@ -201,9 +201,11 @@
 - (NSArray<PBChangedFile *> *)selectedFilesForSender:(id)sender;
 - (void)refreshFinished:(NSNotification *)notification;
 - (void)commitStatusUpdated:(NSNotification *)notification;
+- (void)commitOutputReceived:(NSNotification *)notification;
 - (void)commitFinished:(NSNotification *)notification;
 - (void)commitFailed:(NSNotification *)notification;
 - (void)commitHookFailed:(NSNotification *)notification;
+- (void)finishCommitProgressSheet;
 - (void)amendCommit:(NSNotification *)notification;
 - (void)indexChanged:(NSNotification *)notification;
 - (void)indexOperationFailed:(NSNotification *)notification;
@@ -1517,6 +1519,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue(index.lastCommitVerification);
 	XCTAssertTrue(controller.isBusy);
 	XCTAssertFalse(messageView.editable);
+	XCTAssertNotNil([controller valueForKey:@"commitProgressSheet"]);
+	[controller finishCommitProgressSheet];
+	XCTAssertNil([controller valueForKey:@"commitProgressSheet"]);
 	[self git:@[ @"config", @"--local", @"--unset-all", @"gitx.commitMessageReplacementRules" ] directory:self.repositoryURL];
 
 	messageView.editable = YES;

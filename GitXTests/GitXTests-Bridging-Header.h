@@ -438,7 +438,8 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @protocol PBIndexHookRunning <NSObject>
 - (BOOL)executeHook:(NSString *)name
           arguments:(NSArray<NSString *> *)arguments
-              error:(NSError * _Nullable * _Nullable)error;
+              error:(NSError * _Nullable * _Nullable)error
+       outputHandler:(void (^)(NSData *data))outputHandler;
 @end
 
 typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
@@ -464,6 +465,31 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 @property (nonatomic, readonly) BOOL postCommitHookSucceeded;
 @end
 
+typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
+    PBIndexCommitPhaseCreatingTree,
+    PBIndexCommitPhaseCreatingCommit,
+    PBIndexCommitPhaseRunningPreCommitHook,
+    PBIndexCommitPhaseRunningCommitMessageHook,
+    PBIndexCommitPhaseUpdatingHead,
+    PBIndexCommitPhaseRunningPostCommitHook,
+};
+
+@interface PBIndexCommitEvent : NSObject
+@end
+
+@interface PBIndexCommitPhaseEvent : PBIndexCommitEvent
+@property (nonatomic, readonly) PBIndexCommitPhase phase;
+@property (nonatomic, copy, readonly) NSString *displayName;
+@end
+
+@interface PBIndexCommitOutputEvent : PBIndexCommitEvent
+@property (nonatomic, copy, readonly) NSString *output;
+@end
+
+@interface PBIndexCommitCompletionEvent : PBIndexCommitEvent
+@property (nonatomic, strong, readonly) PBIndexCommitResult *result;
+@end
+
 @interface PBIndexCommitService : NSObject
 - (instancetype)initWithRunner:(id<PBIndexCommandRunning>)runner
                      hookRunner:(id<PBIndexHookRunning>)hookRunner
@@ -475,6 +501,27 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
                                               error:(NSError * _Nullable * _Nullable)error;
 - (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request
                                   progress:(void (^)(NSString *message))progress;
+- (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request
+                              eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
+@end
+
+@interface PBIndexCommitCoordinator : NSObject
+- (instancetype)initWithService:(PBIndexCommitService *)service;
+- (void)commitWithRequest:(PBIndexCommitRequest *)request
+             eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
+@end
+
+@interface PBIncrementalUTF8Decoder : NSObject
+- (NSString *)appendData:(NSData *)data NS_SWIFT_NAME(append(_:));
+- (NSString *)finish;
+@end
+
+@interface PBCommitProgressSheetController : NSWindowController
+- (instancetype)initWithParentWindow:(nullable NSWindow *)parentWindow;
+- (void)beginWithPhase:(NSString *)phase;
+- (void)updatePhase:(NSString *)phase;
+- (void)appendOutput:(NSString *)output;
+- (void)finish;
 @end
 
 @interface PBIndexMutationService : NSObject

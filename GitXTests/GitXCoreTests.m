@@ -1359,30 +1359,51 @@
 	[self stageTrackedText:@"verified contents\n" error:&error];
 	NSString *markerPath = [self.fixture.path stringByAppendingPathComponent:@"hook-order.txt"];
 	[self installHookNamed:@"pre-commit"
-				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'pre\\n' >> '%@'\n", markerPath]
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'pre output\\n'\nprintf 'pre\\n' >> '%@'\n", markerPath]
 					 error:&error];
 	[self installHookNamed:@"commit-msg"
-				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'message:%%s\\n' \"$(head -n 1 \"$1\")\" >> '%@'\n", markerPath]
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'message output\\n'\nprintf 'message:%%s\\n' \"$(head -n 1 \"$1\")\" >> '%@'\n", markerPath]
 					 error:&error];
 	[self installHookNamed:@"post-commit"
-				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'post\\n' >> '%@'\n", markerPath]
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'post output\\n'\nprintf 'post\\n' >> '%@'\n", markerPath]
 					 error:&error];
 	__block NSNotification *finished = nil;
-	id token = [[NSNotificationCenter defaultCenter]
+	__block NSMutableString *streamedOutput = [NSMutableString string];
+	__block NSUInteger eventSequence = 0;
+	__block NSUInteger lastOutputSequence = 0;
+	__block NSUInteger completionSequence = 0;
+	XCTestExpectation *finishedExpectation = [self expectationWithDescription:@"verified commit finished"];
+	id finishedToken = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexFinishedCommit
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
+					completionSequence = ++eventSequence;
 					finished = notification;
+					[finishedExpectation fulfill];
+				}];
+	id outputToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitOutput
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
+					lastOutputSequence = ++eventSequence;
+					[streamedOutput appendString:notification.userInfo[@"output"]];
 				}];
 
 	[self.repository.index commitWithMessage:@"verified subject\nbody" andVerify:YES];
+	[self waitForExpectations:@[ finishedExpectation ] timeout:10];
 
-	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	[[NSNotificationCenter defaultCenter] removeObserver:finishedToken];
+	[[NSNotificationCenter defaultCenter] removeObserver:outputToken];
 	NSString *message = [self.fixture git:@[ @"show", @"-s", @"--format=%B", @"HEAD" ] error:&error];
 	NSString *hookOrder = [NSString stringWithContentsOfFile:markerPath encoding:NSUTF8StringEncoding error:&error];
 	XCTAssertEqualObjects(message, @"verified subject\nbody\n");
 	XCTAssertEqualObjects(hookOrder, @"pre\nmessage:verified subject\npost\n");
+	XCTAssertEqualObjects(streamedOutput, @"pre output\nmessage output\npost output\n");
+	XCTAssertLessThan(lastOutputSequence, completionSequence);
 	XCTAssertEqualObjects(finished.userInfo[@"success"], @YES);
 	XCTAssertEqual([finished.userInfo[@"sha"] length], 40);
 }
@@ -1397,15 +1418,19 @@
 	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	__block NSNotification *failure = nil;
+	XCTestExpectation *failureExpectation = [self expectationWithDescription:@"pre-commit failure"];
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitHookFailed
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
 					failure = notification;
+					[failureExpectation fulfill];
 				}];
 
 	[self.repository.index commitWithMessage:@"blocked commit" andVerify:YES];
+	[self waitForExpectations:@[ failureExpectation ] timeout:10];
 
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
 	NSString *currentHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
@@ -1424,15 +1449,19 @@
 	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	__block NSNotification *failure = nil;
+	XCTestExpectation *failureExpectation = [self expectationWithDescription:@"commit-msg failure"];
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitHookFailed
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
 					failure = notification;
+					[failureExpectation fulfill];
 				}];
 
 	[self.repository.index commitWithMessage:@"blocked message" andVerify:YES];
+	[self waitForExpectations:@[ failureExpectation ] timeout:10];
 
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
 	NSString *currentHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
@@ -1448,15 +1477,19 @@
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"commit.gpgSign", @"true" ] error:&error]), @"%@", error);
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"gpg.program", @"gitx-missing-gpg" ] error:&error]), @"%@", error);
 	__block NSNotification *failure = nil;
+	XCTestExpectation *failureExpectation = [self expectationWithDescription:@"signing failure"];
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitFailed
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
 					failure = notification;
+					[failureExpectation fulfill];
 				}];
 
 	[self.repository.index commitWithMessage:@"signed commit" andVerify:NO];
+	[self waitForExpectations:@[ failureExpectation ] timeout:10];
 
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
 	XCTAssertEqualObjects(failure.userInfo[@"description"], @"Could not create a commit object");
@@ -1471,15 +1504,19 @@
 	NSString *lockPath = [self.fixture.path stringByAppendingPathComponent:@".git/refs/heads/main.lock"];
 	XCTAssertTrue([NSData.data writeToFile:lockPath options:NSDataWritingAtomic error:&error], @"%@", error);
 	__block NSNotification *failure = nil;
+	XCTestExpectation *failureExpectation = [self expectationWithDescription:@"ref update failure"];
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitFailed
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
 					failure = notification;
+					[failureExpectation fulfill];
 				}];
 
 	[self.repository.index commitWithMessage:@"locked ref commit" andVerify:NO];
+	[self waitForExpectations:@[ failureExpectation ] timeout:10];
 
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
 	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
@@ -1703,7 +1740,11 @@
 	[self refreshIndexAfterPerforming:^{
 		self.repository.index.amend = YES;
 	}];
+	XCTestExpectation *finishedExpectation = [self expectationForNotification:PBGitIndexFinishedCommit
+																	   object:self.repository.index
+																	  handler:nil];
 	[self.repository.index commitWithMessage:@"amended ordinary commit" andVerify:NO];
+	[self waitForExpectations:@[ finishedExpectation ] timeout:10];
 
 	NSString *amendedHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -1738,7 +1779,11 @@
 	[self refreshIndexAfterPerforming:^{
 		self.repository.index.amend = YES;
 	}];
+	XCTestExpectation *finishedExpectation = [self expectationForNotification:PBGitIndexFinishedCommit
+																	   object:self.repository.index
+																	  handler:nil];
 	[self.repository.index commitWithMessage:@"amended merge commit" andVerify:NO];
+	[self waitForExpectations:@[ finishedExpectation ] timeout:10];
 
 	NSString *amendedHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];

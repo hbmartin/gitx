@@ -2,6 +2,38 @@ import Darwin
 import XCTest
 
 final class PBTaskLifecycleTests: XCTestCase {
+    // swift6-safety-justification: `lock` protects every access to recorded events and output data.
+    private final class EventRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storedEvents: [String] = []
+        private var storedData = Data()
+
+        var events: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedEvents
+        }
+
+        var data: Data {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedData
+        }
+
+        func recordChunk(_ data: Data) {
+            lock.lock()
+            storedEvents.append("chunk")
+            storedData.append(data)
+            lock.unlock()
+        }
+
+        func recordCompletion() {
+            lock.lock()
+            storedEvents.append("completion")
+            lock.unlock()
+        }
+    }
+
     private func temporaryFileURL(named name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("gitx-pbtask-\(UUID().uuidString)-\(name)")
@@ -102,6 +134,50 @@ final class PBTaskLifecycleTests: XCTestCase {
         }
 
         wait(for: [completion], timeout: 5)
+    }
+
+    func testRawOutputChunksAreOrderedBeforeCompletion() {
+        let completion = expectation(description: "streaming completion")
+        let queue = DispatchQueue(label: "org.gitx.tests.pbtask-streaming")
+        let recorder = EventRecorder()
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf 'stdout-one'; printf 'stderr-two' >&2; printf 'terminal-byte'",
+            ],
+            inDirectory: nil
+        )
+
+        task.perform(
+            on: queue,
+            outputChunkHandler: { recorder.recordChunk($0) },
+            completionHandler: { data, error in
+                XCTAssertNil(error)
+                XCTAssertEqual(data, recorder.data)
+                recorder.recordCompletion()
+                completion.fulfill()
+            }
+        )
+
+        wait(for: [completion], timeout: 5)
+        XCTAssertEqual(recorder.data, Data("stdout-onestderr-twoterminal-byte".utf8))
+        XCTAssertEqual(recorder.events.last, "completion")
+        XCTAssertTrue(recorder.events.dropLast().allSatisfy { $0 == "chunk" })
+    }
+
+    func testIncrementalUTF8DecoderBuffersSplitScalarsAndFlushesFinalBytes() {
+        let decoder = PBIncrementalUTF8Decoder()
+
+        XCTAssertEqual(decoder.append(Data([0x41, 0xE2])), "A")
+        XCTAssertEqual(decoder.append(Data([0x82])), "")
+        XCTAssertEqual(decoder.append(Data([0xAC, 0x20, 0xF0, 0x9F])), "€ ")
+        XCTAssertEqual(decoder.append(Data([0x98, 0x80])), "😀")
+        XCTAssertEqual(decoder.finish(), "")
+
+        XCTAssertEqual(decoder.append(Data([0xE2, 0x82])), "")
+        XCTAssertEqual(decoder.finish(), "�")
+        XCTAssertEqual(decoder.finish(), "")
     }
 
     func testTerminationBeforeLaunchReturnsCancellationError() {
