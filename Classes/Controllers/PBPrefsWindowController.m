@@ -33,6 +33,9 @@
 	[self addView:[PBSettingsViewFactory generalViewWithLegacyView:generalPrefsView]
 			label:NSLocalizedString(@"General", @"General preferences toolbar item")
 			image:[NSImage imageNamed:NSImageNameApplicationIcon]];
+	[self addView:[PBSettingsViewFactory dockIconView]
+			label:NSLocalizedString(@"Dock Icon", @"Dock icon preferences toolbar item")
+			image:NSApp.applicationIconImage];
 	[self addView:[PBSettingsViewFactory windowsView]
 			label:NSLocalizedString(@"Windows", @"Window preferences toolbar item")
 			image:[NSImage imageWithSystemSymbolName:@"macwindow.on.rectangle" accessibilityDescription:nil]];

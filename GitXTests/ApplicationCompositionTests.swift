@@ -35,4 +35,15 @@ final class ApplicationCompositionTests: XCTestCase {
         defaults.set(2, forKey: "PBHistorySearchMode")
         XCTAssertEqual(PBGitDefaults.historySearchMode(), 2)
     }
+
+    func testApplicationIconSettingPersistsAndRejectsUnknownValues() {
+        XCTAssertEqual(PBApplicationSettings.applicationIconStyle, .plusEyes)
+
+        PBApplicationSettings.applicationIconStyle = .mixedDiff
+        XCTAssertEqual(defaults.integer(forKey: "PBApplicationIconStyle"), PBApplicationIconStyle.mixedDiff.rawValue)
+        XCTAssertEqual(PBApplicationSettings.applicationIconStyle, .mixedDiff)
+
+        defaults.set(99, forKey: "PBApplicationIconStyle")
+        XCTAssertEqual(PBApplicationSettings.applicationIconStyle, .plusEyes)
+    }
 }

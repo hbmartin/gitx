@@ -779,6 +779,48 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(PBApplicationSettings.diffFontSize, 15)
     }
 
+    func testDockIconChoicesRenderAndApplyImmediately() throws {
+        let restoreIconStyle = preservePersistentDefault(forKey: "PBApplicationIconStyle")
+        let originalApplicationIcon = NSApplication.shared.applicationIconImage
+        defer {
+            restoreIconStyle()
+            NSApplication.shared.applicationIconImage = originalApplicationIcon
+        }
+
+        PBApplicationSettings.applicationIconStyle = .plusEyes
+        PBApplicationIconController.applySelectedIcon()
+        let plusEyesDockImage = NSApplication.shared.applicationIconImage?.tiffRepresentation
+        let pane = PBSettingsViewFactory.dockIconView()
+        let buttons = controls(in: pane).compactMap { $0 as? NSButton }
+            .filter { $0.action == NSSelectorFromString("applicationIconChanged:") }
+        XCTAssertEqual(buttons.count, 4)
+        XCTAssertEqual(
+            Set(buttons.map(\.tag)),
+            Set(PBApplicationIconStyle.plusEyes.rawValue ... PBApplicationIconStyle.mixedDiff.rawValue)
+        )
+
+        let styles: [PBApplicationIconStyle] = [.plusEyes, .bracketed, .cursor, .mixedDiff]
+        let renderedIcons = try styles.map { style -> Data in
+            let image = PBApplicationIconController.image(for: style)
+            XCTAssertEqual(image.size, NSSize(width: 512, height: 512))
+            return try XCTUnwrap(image.tiffRepresentation)
+        }
+        XCTAssertEqual(Set(renderedIcons).count, styles.count, "Each choice should render a distinct robot face")
+
+        let mixedDiffButton = try XCTUnwrap(
+            buttons.first { $0.tag == PBApplicationIconStyle.mixedDiff.rawValue }
+        )
+        mixedDiffButton.performClick(nil)
+
+        XCTAssertEqual(PBApplicationSettings.applicationIconStyle, .mixedDiff)
+        XCTAssertEqual(buttons.filter { $0.state == .on }, [mixedDiffButton])
+        XCTAssertNotEqual(
+            NSApplication.shared.applicationIconImage?.tiffRepresentation,
+            plusEyesDockImage,
+            "Selecting another robot face should replace the current Dock image"
+        )
+    }
+
     func testTerminalLaunchArgumentsTokenizationAndCustomExecution() throws {
         let keys = [
             "PBTerminalBundleIdentifier", "PBTerminalInitialCommand",

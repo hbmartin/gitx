@@ -2810,12 +2810,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[preferences showWindow:nil];
 	NSArray<NSToolbarItemIdentifier> *identifiers = [preferences toolbarAllowedItemIdentifiers:preferences.window.toolbar];
 
-	XCTAssertEqual(identifiers.count, (NSUInteger)7);
-	XCTAssertEqualObjects(identifiers, (@[ @"General", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
+	XCTAssertEqual(identifiers.count, (NSUInteger)8);
+	XCTAssertEqualObjects(identifiers, (@[ @"General", @"Dock Icon", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
 	XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
 	XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
 	XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
-	XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 756.0);
+	XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 860.0);
 
 	[preferences close];
 }

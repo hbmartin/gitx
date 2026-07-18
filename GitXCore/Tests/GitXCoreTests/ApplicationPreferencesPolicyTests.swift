@@ -17,6 +17,7 @@ final class ApplicationPreferencesPolicyTests: XCTestCase {
     func testApplicationPreferenceKeysAndRepositoryIdentityRemainStable() {
         XCTAssertEqual(ApplicationPreferenceKey.historySearchMode.rawValue, "PBHistorySearchMode")
         XCTAssertEqual(ApplicationPreferenceKey.diffLayout.rawValue, "PBDiffLayout")
+        XCTAssertEqual(ApplicationPreferenceKey.applicationIconStyle.rawValue, "PBApplicationIconStyle")
         let url = URL(fileURLWithPath: "/tmp/example/../repository/.git", isDirectory: true)
         XCTAssertTrue(
             ApplicationPreferencePolicy.repositoryViewStateIdentifier(for: url)

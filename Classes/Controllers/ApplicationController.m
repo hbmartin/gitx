@@ -170,6 +170,7 @@
 	setenv("DISPLAY", "localhost:0", 1);
 
 	[NSApp registerObserverForAppearanceChanges:self];
+	[PBApplicationIconController applySelectedIcon];
 	[self registerServices];
 	[[PBAutoFetchManager sharedManager] start];
 	started = YES;

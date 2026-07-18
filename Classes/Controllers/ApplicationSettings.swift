@@ -77,6 +77,7 @@ final nonisolated class ApplicationSettings: NSObject {
         static let customTerminalArguments = "PBCustomTerminalArguments"
         static let raycastScriptsDirectory = "PBRaycastScriptsDirectory"
         static let patchExportMode = "PBPatchExportMode"
+        static let applicationIconStyle = ApplicationPreferenceKey.applicationIconStyle.rawValue
     }
 
     private static var defaults: UserDefaults {
@@ -221,6 +222,11 @@ final nonisolated class ApplicationSettings: NSObject {
     @objc static var patchExportMode: Int {
         get { defaults.integer(forKey: Key.patchExportMode) }
         set { defaults.set(newValue, forKey: Key.patchExportMode) }
+    }
+
+    @objc static var applicationIconStyle: ApplicationIconStyle {
+        get { enumValue(Key.applicationIconStyle, fallback: .plusEyes) }
+        set { defaults.set(newValue.rawValue, forKey: Key.applicationIconStyle) }
     }
 
     private static func enumValue<Value: RawRepresentable>(
