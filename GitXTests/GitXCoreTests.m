@@ -15,6 +15,7 @@
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
+#import "PBGitRevList.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitSidebarController.h"
 #import "PBGitStash.h"
@@ -53,8 +54,12 @@
 
 - (nullable instancetype)initWithError:(NSError **)error;
 - (nullable NSString *)git:(NSArray<NSString *> *)arguments error:(NSError **)error;
+- (nullable NSString *)git:(NSArray<NSString *> *)arguments
+			   environment:(NSDictionary<NSString *, NSString *> *)environment
+					 error:(NSError **)error;
 - (BOOL)writeText:(NSString *)text toPath:(NSString *)relativePath error:(NSError **)error;
 - (BOOL)commitAllWithMessage:(NSString *)message error:(NSError **)error;
+- (BOOL)commitAllWithMessage:(NSString *)message date:(NSString *)date error:(NSError **)error;
 
 @end
 
@@ -87,6 +92,16 @@
 	return [PBTask outputForCommand:PBGitBinary.path arguments:arguments inDirectory:self.path error:error];
 }
 
+- (nullable NSString *)git:(NSArray<NSString *> *)arguments
+			   environment:(NSDictionary<NSString *, NSString *> *)environment
+					 error:(NSError **)error
+{
+	PBTask *task = [PBTask taskWithLaunchPath:PBGitBinary.path arguments:arguments inDirectory:self.path];
+	task.additionalEnvironment = environment;
+	if (![task launchTask:error]) return nil;
+	return task.standardOutputString;
+}
+
 - (BOOL)writeText:(NSString *)text toPath:(NSString *)relativePath error:(NSError **)error
 {
 	NSString *absolutePath = [self.path stringByAppendingPathComponent:relativePath];
@@ -101,6 +116,16 @@
 	return [self git:@[ @"add", @"--all" ] error:error] != nil &&
 		[self git:@[ @"commit", @"--quiet", @"-m", message ]
 			error:error] != nil;
+}
+
+- (BOOL)commitAllWithMessage:(NSString *)message date:(NSString *)date error:(NSError **)error
+{
+	NSDictionary<NSString *, NSString *> *environment = @{
+		@"GIT_AUTHOR_DATE" : date,
+		@"GIT_COMMITTER_DATE" : date,
+	};
+	return [self git:@[ @"add", @"--all" ] error:error] != nil &&
+		[self git:@[ @"commit", @"--quiet", @"-m", message ] environment:environment error:error] != nil;
 }
 
 @end
@@ -342,6 +367,40 @@
 
 
 @implementation GitXRepositoryIntegrationTests
+
+- (NSArray<PBGitCommit *> *)loadCommitsForRevision:(PBGitRevSpecifier *)revision
+{
+	PBGitRevList *revisionList = [[PBGitRevList alloc] initWithRepository:self.repository rev:revision shouldGraph:NO];
+	XCTestExpectation *completion = [self expectationWithDescription:[NSString stringWithFormat:@"loaded %@", revision.description]];
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[completion fulfill];
+	}];
+	[self waitForExpectations:@[ completion ] timeout:10.0];
+	XCTAssertFalse(revisionList.isParsing);
+	NSArray<PBGitCommit *> *commits = [revisionList.commits copy] ?: @[];
+	[revisionList cancel];
+	return commits;
+}
+
+- (void)assertCommitsAreUniqueAndChildrenPrecedeParents:(NSArray<PBGitCommit *> *)commits
+{
+	NSMutableDictionary<NSString *, NSNumber *> *indexesBySHA = [NSMutableDictionary dictionaryWithCapacity:commits.count];
+	[commits enumerateObjectsUsingBlock:^(PBGitCommit *commit, NSUInteger index, __unused BOOL *stop) {
+		XCTAssertNil(indexesBySHA[commit.SHA], @"Revision list published %@ more than once", commit.SHA);
+		indexesBySHA[commit.SHA] = @(index);
+	}];
+	XCTAssertEqual(indexesBySHA.count, commits.count);
+
+	[commits enumerateObjectsUsingBlock:^(PBGitCommit *commit, NSUInteger childIndex, __unused BOOL *stop) {
+		for (GTOID *parent in commit.parents) {
+			NSNumber *parentIndex = indexesBySHA[parent.SHA];
+			XCTAssertNotNil(parentIndex, @"The full history should contain parent %@ of %@", parent.SHA, commit.SHA);
+			if (parentIndex)
+				XCTAssertLessThan(childIndex, parentIndex.unsignedIntegerValue,
+								  @"Child %@ must precede parent %@", commit.subject, parent.SHA);
+		}
+	}];
+}
 
 - (void)testRepositoryDiscoversHeadAndReferences
 {
@@ -653,6 +712,83 @@
 		maximumColumns = MAX(maximumColumns, commit.lineInfo.numColumns);
 	}
 	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
+}
+
+- (void)testRevisionListUsesDateOrderAndPreservesTopology
+{
+	NSError *error = nil;
+	NSDictionary<NSString *, NSString *> *baseDate = @{
+		@"GIT_AUTHOR_DATE" : @"2030-01-01T12:00:00Z",
+		@"GIT_COMMITTER_DATE" : @"2030-01-01T12:00:00Z",
+	};
+	XCTAssertNotNil(([self.fixture git:@[ @"commit", @"--quiet", @"--amend", @"--no-edit" ]
+							 environment:baseDate
+								   error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"branch", @"topic" ] error:&error]), @"%@", error);
+
+	XCTAssertTrue([self.fixture writeText:@"main one\n" toPath:@"main.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"main-1" date:@"2030-01-05T12:00:00Z" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"main two\n" toPath:@"main.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"main-2" date:@"2030-01-04T12:00:00Z" error:&error], @"%@", error);
+
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"topic" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"topic one\n" toPath:@"topic.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"topic-1" date:@"2030-01-03T12:00:00Z" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"topic two\n" toPath:@"topic.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"topic-2" date:@"2030-01-02T12:00:00Z" error:&error], @"%@", error);
+
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"main" ] error:&error]), @"%@", error);
+	NSDictionary<NSString *, NSString *> *mergeDate = @{
+		@"GIT_AUTHOR_DATE" : @"2030-01-06T12:00:00Z",
+		@"GIT_COMMITTER_DATE" : @"2030-01-06T12:00:00Z",
+	};
+	XCTAssertNotNil(([self.fixture git:@[ @"merge", @"--quiet", @"--no-ff", @"topic", @"-m", @"merge topic" ]
+							 environment:mergeDate
+								   error:&error]), @"%@", error);
+
+	[self.repository reloadRefs];
+	NSArray<PBGitCommit *> *commits =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]];
+	XCTAssertEqualObjects([commits valueForKey:@"subject"],
+						  (@[ @"merge topic", @"main-2", @"main-1", @"topic-2", @"topic-1", @"initial commit" ]));
+	[self assertCommitsAreUniqueAndChildrenPrecedeParents:commits];
+}
+
+- (void)testRevisionListHandlesSimpleAllRangeMissingAndInvalidSpecifications
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"second\n" toPath:@"second.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"second commit" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"third\n" toPath:@"third.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"third commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"tag", @"revision-list-tag", @"HEAD^" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/origin/main", @"HEAD" ] error:&error]), @"%@", error);
+	[self.repository reloadRefs];
+
+	NSArray<PBGitCommit *> *simple =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]];
+	XCTAssertEqualObjects([simple valueForKey:@"subject"],
+						  (@[ @"third commit", @"second commit", @"initial commit" ]));
+
+	NSArray<PBGitCommit *> *all = [self loadCommitsForRevision:PBGitRevSpecifier.allBranchesRevSpec];
+	XCTAssertEqual(all.count, (NSUInteger)3);
+	[self assertCommitsAreUniqueAndChildrenPrecedeParents:all];
+
+	NSArray<PBGitCommit *> *range =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~2..HEAD" ]]];
+	XCTAssertEqualObjects([range valueForKey:@"subject"], (@[ @"third commit", @"second commit" ]));
+
+	NSArray<PBGitCommit *> *complexObject =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~1" ]]];
+	XCTAssertEqualObjects([complexObject valueForKey:@"subject"], (@[ @"second commit", @"initial commit" ]));
+
+	NSArray<PBGitCommit *> *missing =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"refs/heads/missing" ]]];
+	XCTAssertEqual(missing.count, (NSUInteger)0);
+
+	NSArray<PBGitCommit *> *invalid =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"missing..also-missing" ]]];
+	XCTAssertEqual(invalid.count, (NSUInteger)0);
 }
 
 - (void)testNormalHistoryLoadPublishesEveryCommitOnce
