@@ -117,6 +117,55 @@ class CoveragePolicyTests(unittest.TestCase):
     def test_coverage_floor_does_not_underflow_four_decimal_value(self) -> None:
         self.assertEqual(self.module.coverage_floor(0.0003), 0.0003)
 
+    def test_weighted_group_preserves_a_split_file_floor(self) -> None:
+        policy = self.module.CoveragePolicy(
+            target="GitX.app",
+            minimum_line_coverage=0.5,
+            files={},
+            groups={
+                "Split surface": self.module.CoverageGroup(
+                    minimum_line_coverage=0.75,
+                    files=("Classes/A.swift", "Classes/B.swift"),
+                )
+            },
+        )
+
+        failures = self.module.evaluate_coverage(
+            policy,
+            target_coverage=0.5,
+            file_coverage={
+                "Classes/A.swift": 1.0,
+                "Classes/B.swift": 0.5,
+            },
+            file_line_counts={
+                "Classes/A.swift": (3, 3),
+                "Classes/B.swift": (1, 2),
+            },
+        )
+
+        self.assertEqual(failures, [])
+
+    def test_weighted_group_regression_fails(self) -> None:
+        group = self.module.CoverageGroup(
+            minimum_line_coverage=0.8,
+            files=("Classes/A.swift", "Classes/B.swift"),
+        )
+
+        self.assertEqual(
+            self.module.group_coverage(
+                group,
+                {
+                    "Classes/A.swift": (3, 3),
+                    "Classes/B.swift": (1, 2),
+                },
+            ),
+            0.8,
+        )
+        self.assertEqual(
+            self.module.group_coverage(group, {"Classes/A.swift": (3, 3)}),
+            None,
+        )
+
     def test_relative_source_path_uses_source_directory_nearest_the_file(self) -> None:
         relative = self.module.relative_source_path(
             "/Users/Classes/workspace/gitx/Classes/A.m",

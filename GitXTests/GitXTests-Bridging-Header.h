@@ -65,6 +65,17 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 	PBChangedFilesSortModeStatus,
 };
 
+@interface PBApplicationPreferences : NSObject
+@property (nonatomic, readonly, strong) NSUserDefaults *userDefaults;
+@end
+
+@interface PBApplicationComposition : NSObject
+@property (nonatomic, readonly, strong) PBApplicationPreferences *applicationPreferences;
+- (instancetype)initWithUserDefaults:(NSUserDefaults *)userDefaults;
++ (PBApplicationComposition *)sharedComposition;
++ (void)setSharedComposition:(PBApplicationComposition *)composition;
+@end
+
 @interface PBApplicationSettings : NSObject
 @property (class) PBOpenDisposition openDisposition;
 @property (class) PBWindowRestorePolicy restorePolicy;

@@ -47,7 +47,7 @@ class PinnedToolsTests(unittest.TestCase):
 
         self.assertNotIn("26.3", build_workflow + verify_workflow)
         self.assertEqual(build_workflow.count("xcode: 26.2"), 2)
-        self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 5)
+        self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 6)
 
 
 if __name__ == "__main__":

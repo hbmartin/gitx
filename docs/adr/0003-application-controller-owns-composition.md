@@ -1,0 +1,3 @@
+# Let ApplicationController own application composition
+
+`ApplicationController` will construct the application composition root and inject the shared Application Preferences adapter. Legacy `PBGitDefaults` and modern `ApplicationSettings` remain compatibility facades over that adapter, while repository configuration and repository view-state stores are created by the same composition object. This preserves Objective-C and Cocoa wiring while making persistence replaceable in tests. Controller-local globals were rejected because they would keep tests coupled to process state; application-wide dependency-injection machinery was rejected because the current graph needs one explicit root, not a framework.

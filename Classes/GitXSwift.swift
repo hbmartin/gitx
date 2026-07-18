@@ -1,3 +1,5 @@
+import GitXCore
+
 // GitXSwift.swift
 //
 // Placeholder that activates the Swift compiler for the GitX target.
@@ -280,17 +282,15 @@ final nonisolated class RemoteSidebarSyncPlan: NSObject, Sendable { // swiftlint
         existingRemoteNames: [String],
         nonEmptyRemoteNames: [String]
     ) -> RemoteSidebarSyncPlan {
-        let configured = Set(configuredRemoteNames)
-        let existing = Set(existingRemoteNames)
-        let nonEmpty = Set(nonEmptyRemoteNames)
-        return RemoteSidebarSyncPlan(
-            namesToAdd: sorted(configured.subtracting(existing)),
-            namesToRemove: sorted(existing.subtracting(configured).subtracting(nonEmpty))
+        let plan = SidebarRemotePolicy.syncPlan(
+            configuredRemoteNames: configuredRemoteNames,
+            existingRemoteNames: existingRemoteNames,
+            nonEmptyRemoteNames: nonEmptyRemoteNames
         )
-    }
-
-    private static func sorted(_ names: Set<String>) -> [String] {
-        names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        return RemoteSidebarSyncPlan(
+            namesToAdd: plan.namesToAdd,
+            namesToRemove: plan.namesToRemove
+        )
     }
 }
 
@@ -302,8 +302,11 @@ final nonisolated class GitDefaultsPolicy: NSObject { // swiftlint:disable:this 
     static func validatedAutoFetchScope(
         rawValue: Int
     ) -> Int {
-        let validRange = PBAutoFetchScope.none.rawValue ... PBAutoFetchScope.openAndRecentRepositories.rawValue
-        return validRange.contains(rawValue) ? rawValue : PBAutoFetchScope.none.rawValue
+        ApplicationPreferencePolicy.validatedRawValue(
+            rawValue,
+            validRange: PBAutoFetchScope.none.rawValue ... PBAutoFetchScope.openAndRecentRepositories.rawValue,
+            fallback: PBAutoFetchScope.none.rawValue
+        )
     }
 
     @objc(repositoryDefaultsKeyForURL:)
@@ -311,6 +314,6 @@ final nonisolated class GitDefaultsPolicy: NSObject { // swiftlint:disable:this 
     static func repositoryDefaultsKey(
         for repositoryURL: URL
     ) -> String {
-        repositoryURL.standardizedFileURL.resolvingSymlinksInPath().path
+        ApplicationPreferencePolicy.repositoryViewStateIdentifier(for: repositoryURL)
     }
 }

@@ -253,6 +253,14 @@
 		C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.m */; };
 		C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */; };
 		C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */; };
+		C0D0C0A00000000000000001 /* GitXCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0D0C0A00000000000000018 /* GitXCore */; };
+		C0D0C0A00000000000000002 /* ApplicationComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000011 /* ApplicationComposition.swift */; };
+		C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */; };
+		C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */; };
+		C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000014 /* TerminalIntegration.swift */; };
+		C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */; };
+		C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */; };
+		C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
@@ -842,6 +850,13 @@
 		C0DEC1000000000000000011 /* ApplicationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationSettings.swift; sourceTree = "<group>"; };
 		C0DEC2000000000000000011 /* RepositoryToolbarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryToolbarController.swift; sourceTree = "<group>"; };
 		C0DEC3000000000000000011 /* RepositorySettingsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsController.swift; sourceTree = "<group>"; };
+		C0D0C0A00000000000000011 /* ApplicationComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationComposition.swift; sourceTree = "<group>"; };
+		C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXCoreAdapters.swift; sourceTree = "<group>"; };
+		C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationPreferencesUI.swift; sourceTree = "<group>"; };
+		C0D0C0A00000000000000014 /* TerminalIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegration.swift; sourceTree = "<group>"; };
+		C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsStore.swift; sourceTree = "<group>"; };
+		C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPresentationPolicies.swift; sourceTree = "<group>"; };
+		C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationCompositionTests.swift; sourceTree = "<group>"; };
 		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
@@ -867,6 +882,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0D0C0A00000000000000001 /* GitXCore in Frameworks */,
 				C0DE1000000000000000001A /* UserNotifications.framework in Frameworks */,
 				C0DE10000000000000000016 /* HighlightKit in Frameworks */,
 				4A68AD7414A00541006DE321 /* Sparkle.framework in Frameworks */,
@@ -1134,9 +1150,15 @@
 				C0DE1000000000000000000C /* PBAutoFetchManager.m */,
 				4A5D762614A9A9CC00DF6C68 /* ApplicationController.h */,
 				4A5D762714A9A9CC00DF6C68 /* ApplicationController.m */,
+				C0D0C0A00000000000000011 /* ApplicationComposition.swift */,
+				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
 				C0DEC1000000000000000011 /* ApplicationSettings.swift */,
+				C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */,
+				C0D0C0A00000000000000014 /* TerminalIntegration.swift */,
 				C0DEC2000000000000000011 /* RepositoryToolbarController.swift */,
+				C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */,
 				C0DEC3000000000000000011 /* RepositorySettingsController.swift */,
+				C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */,
 				C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */,
 				4A5D762814A9A9CC00DF6C68 /* DBPrefsWindowController.h */,
 				4A5D762914A9A9CC00DF6C68 /* DBPrefsWindowController.m */,
@@ -1444,6 +1466,7 @@
 				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
 				C01400000000000000000014 /* CommitProgressSheetControllerTests.swift */,
 				C0DE50000000000000000002 /* GitXPerformanceTests.swift */,
+				C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */,
 			);
 			path = GitXTests;
 			sourceTree = "<group>";
@@ -1496,6 +1519,7 @@
 			);
 			name = GitX;
 			packageProductDependencies = (
+				C0D0C0A00000000000000018 /* GitXCore */,
 				C0DE10000000000000000018 /* HighlightKit */,
 			);
 			productInstallPath = "$(HOME)/Applications";
@@ -1576,6 +1600,7 @@
 			);
 			mainGroup = 29B97314FDCFA39411CA2CEA /* GitTest */;
 			packageReferences = (
+				C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */,
 				C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */,
 			);
 			projectDirPath = "";
@@ -1913,6 +1938,12 @@
 				C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.m in Sources */,
 				C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */,
 				C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */,
+				C0D0C0A00000000000000002 /* ApplicationComposition.swift in Sources */,
+				C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */,
+				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
+				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
+				C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */,
+				C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
 				C0DE10000000000000000014 /* PBWorkingTree.m in Sources */,
@@ -2048,6 +2079,7 @@
 				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
 				C01400000000000000000004 /* CommitProgressSheetControllerTests.swift in Sources */,
 				C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */,
+				C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2289,7 +2321,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 0.12;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				EXCLUDED_ARCHS = x86_64;
@@ -2586,6 +2618,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = GitXCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -2598,6 +2637,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		C0D0C0A00000000000000018 /* GitXCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */;
+			productName = GitXCore;
+		};
 		C0DE10000000000000000018 /* HighlightKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */;

@@ -42,6 +42,11 @@ NSString *const PBGitHistorySortingPreferenceDidChangeNotification = @"PBGitHist
 NSString *const PBAutoFetchPreferencesDidChangeNotification = @"PBAutoFetchPreferencesDidChangeNotification";
 NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePreferenceDidChangeNotification";
 
+static PBApplicationPreferences *PBPreferences(void)
+{
+	return [PBApplicationComposition sharedComposition].applicationPreferences;
+}
+
 @implementation PBGitDefaults
 
 + (void)initialize
@@ -82,126 +87,126 @@ NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePref
 	[defaultValues setObject:@(PBAutoFetchScopeNone) forKey:kAutoFetchScope];
 	[defaultValues setObject:@15 forKey:kAutoFetchIntervalMinutes];
 	[defaultValues setObject:@{} forKey:kAutoFetchRepositoryNotifications];
-	[[NSUserDefaults standardUserDefaults] registerDefaults:defaultValues];
+	[PBPreferences() registerDefaults:defaultValues];
 }
 
 + (NSInteger)commitMessageViewVerticalLineLength
 {
-	return [[NSUserDefaults standardUserDefaults] integerForKey:kCommitMessageViewVerticalLineLength];
+	return [PBPreferences() integerForKey:kCommitMessageViewVerticalLineLength];
 }
 
 + (BOOL)commitMessageViewHasVerticalLine
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kCommitMessageViewHasVerticalLine];
+	return [PBPreferences() boolForKey:kCommitMessageViewHasVerticalLine];
 }
 
 + (NSInteger)commitMessageViewVerticalBodyLineLength
 {
-	return [[NSUserDefaults standardUserDefaults] integerForKey:kCommitMessageViewVerticalBodyLineLength];
+	return [PBPreferences() integerForKey:kCommitMessageViewVerticalBodyLineLength];
 }
 
 + (BOOL)isGistEnabled
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kEnableGist];
+	return [PBPreferences() boolForKey:kEnableGist];
 }
 
 + (BOOL)isGravatarEnabled
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kEnableGravatar];
+	return [PBPreferences() boolForKey:kEnableGravatar];
 }
 
 + (BOOL)confirmPublicGists
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kConfirmPublicGists];
+	return [PBPreferences() boolForKey:kConfirmPublicGists];
 }
 
 + (BOOL)isGistPublic
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kPublicGist];
+	return [PBPreferences() boolForKey:kPublicGist];
 }
 
 + (BOOL)showWhitespaceDifferences
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kShowWhitespaceDifferences];
+	return [PBPreferences() boolForKey:kShowWhitespaceDifferences];
 }
 
 + (BOOL)openCurDirOnLaunch
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kOpenCurDirOnLaunch];
+	return [PBPreferences() boolForKey:kOpenCurDirOnLaunch];
 }
 
 + (BOOL)showOpenPanelOnLaunch
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kShowOpenPanelOnLaunch];
+	return [PBPreferences() boolForKey:kShowOpenPanelOnLaunch];
 }
 
 + (BOOL)shouldCheckoutBranch
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kShouldCheckoutBranch];
+	return [PBPreferences() boolForKey:kShouldCheckoutBranch];
 }
 
 + (void)setShouldCheckoutBranch:(BOOL)shouldCheckout
 {
-	[[NSUserDefaults standardUserDefaults] setBool:shouldCheckout forKey:kShouldCheckoutBranch];
+	[PBPreferences() setBool:shouldCheckout forKey:kShouldCheckoutBranch];
 }
 
 + (NSString *)recentCloneDestination
 {
-	return [[NSUserDefaults standardUserDefaults] stringForKey:kRecentCloneDestination];
+	return [PBPreferences() stringForKey:kRecentCloneDestination];
 }
 
 + (void)setRecentCloneDestination:(NSString *)path
 {
-	[[NSUserDefaults standardUserDefaults] setObject:path forKey:kRecentCloneDestination];
+	[PBPreferences() setObject:path forKey:kRecentCloneDestination];
 }
 
 + (BOOL)showStageView
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kShowStageView];
+	return [PBPreferences() boolForKey:kShowStageView];
 }
 
 + (void)setShowStageView:(BOOL)suppress
 {
-	return [[NSUserDefaults standardUserDefaults] setBool:suppress forKey:kShowStageView];
+	[PBPreferences() setBool:suppress forKey:kShowStageView];
 }
 
 + (BOOL)openPreviousDocumentsOnLaunch
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kOpenPreviousDocumentsOnLaunch];
+	return [PBPreferences() boolForKey:kOpenPreviousDocumentsOnLaunch];
 }
 
 + (void)setPreviousDocumentPaths:(NSArray *)documentPaths
 {
-	[[NSUserDefaults standardUserDefaults] setObject:documentPaths forKey:kPreviousDocumentPaths];
+	[PBPreferences() setObject:documentPaths forKey:kPreviousDocumentPaths];
 }
 
 + (NSArray *)previousDocumentPaths
 {
-	return [[NSUserDefaults standardUserDefaults] arrayForKey:kPreviousDocumentPaths];
+	return [PBPreferences() arrayForKey:kPreviousDocumentPaths];
 }
 
 + (void)removePreviousDocumentPaths
 {
-	[[NSUserDefaults standardUserDefaults] removeObjectForKey:kPreviousDocumentPaths];
+	[PBPreferences() removeObjectForKey:kPreviousDocumentPaths];
 }
 + (NSInteger)branchFilter
 {
-	return [[NSUserDefaults standardUserDefaults] integerForKey:kBranchFilterState];
+	return [PBPreferences() integerForKey:kBranchFilterState];
 }
 
 + (void)setBranchFilter:(NSInteger)state
 {
-	[[NSUserDefaults standardUserDefaults] setInteger:state forKey:kBranchFilterState];
+	[PBPreferences() setInteger:state forKey:kBranchFilterState];
 }
 
 + (NSInteger)historySearchMode
 {
-	return [[NSUserDefaults standardUserDefaults] integerForKey:kHistorySearchMode];
+	return [PBPreferences() integerForKey:kHistorySearchMode];
 }
 
 + (void)setHistorySearchMode:(NSInteger)mode
 {
-	[[NSUserDefaults standardUserDefaults] setInteger:mode forKey:kHistorySearchMode];
+	[PBPreferences() setInteger:mode forKey:kHistorySearchMode];
 }
 
 
@@ -212,7 +217,7 @@ NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePref
 
 + (NSSet *)suppressedDialogWarnings
 {
-	NSSet *suppressedDialogWarnings = [NSSet setWithArray:[[NSUserDefaults standardUserDefaults] arrayForKey:kSuppressedDialogWarnings]];
+	NSSet *suppressedDialogWarnings = [NSSet setWithArray:[PBPreferences() arrayForKey:kSuppressedDialogWarnings]];
 	if (suppressedDialogWarnings == nil)
 		suppressedDialogWarnings = [NSSet set];
 
@@ -223,7 +228,7 @@ NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePref
 {
 	NSSet *suppressedDialogWarnings = [[self suppressedDialogWarnings] setByAddingObject:dialog];
 
-	[[NSUserDefaults standardUserDefaults] setObject:[suppressedDialogWarnings allObjects] forKey:kSuppressedDialogWarnings];
+	[PBPreferences() setObject:[suppressedDialogWarnings allObjects] forKey:kSuppressedDialogWarnings];
 }
 
 + (BOOL)isDialogWarningSuppressedForDialog:(NSString *)dialog
@@ -233,24 +238,24 @@ NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePref
 
 + (void)resetAllDialogWarnings
 {
-	[[NSUserDefaults standardUserDefaults] setObject:nil forKey:kSuppressedDialogWarnings];
-	[[NSUserDefaults standardUserDefaults] synchronize];
+	[PBPreferences() setObject:nil forKey:kSuppressedDialogWarnings];
+	[PBPreferences() synchronize];
 }
 
 
 + (BOOL)useRepositoryWatcher
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kUseRepositoryWatcher];
+	return [PBPreferences() boolForKey:kUseRepositoryWatcher];
 }
 
 + (NSString *)terminalHandler
 {
-	return [[NSUserDefaults standardUserDefaults] stringForKey:kTerminalHandler];
+	return [PBPreferences() stringForKey:kTerminalHandler];
 }
 
 + (PBAppearancePreference)appearancePreference
 {
-	NSInteger preference = [[NSUserDefaults standardUserDefaults] integerForKey:kAppearancePreference];
+	NSInteger preference = [PBPreferences() integerForKey:kAppearancePreference];
 	return (preference >= PBAppearancePreferenceAutomatic && preference <= PBAppearancePreferenceDark) ? preference : PBAppearancePreferenceAutomatic;
 }
 
@@ -258,43 +263,43 @@ NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePref
 {
 	PBAppearancePreference validatedPreference =
 		(preference >= PBAppearancePreferenceAutomatic && preference <= PBAppearancePreferenceDark) ? preference : PBAppearancePreferenceAutomatic;
-	[[NSUserDefaults standardUserDefaults] setInteger:validatedPreference forKey:kAppearancePreference];
+	[PBPreferences() setInteger:validatedPreference forKey:kAppearancePreference];
 	[[NSNotificationCenter defaultCenter] postNotificationName:PBAppearancePreferenceDidChangeNotification object:nil];
 }
 
 + (BOOL)historyColumnSortingEnabled
 {
-	return [[NSUserDefaults standardUserDefaults] boolForKey:kHistoryColumnSortingEnabled];
+	return [PBPreferences() boolForKey:kHistoryColumnSortingEnabled];
 }
 
 + (void)setHistoryColumnSortingEnabled:(BOOL)enabled
 {
-	[[NSUserDefaults standardUserDefaults] setBool:enabled forKey:kHistoryColumnSortingEnabled];
+	[PBPreferences() setBool:enabled forKey:kHistoryColumnSortingEnabled];
 	[[NSNotificationCenter defaultCenter] postNotificationName:PBGitHistorySortingPreferenceDidChangeNotification object:nil];
 }
 
 + (PBAutoFetchScope)autoFetchScope
 {
-	NSInteger scope = [[NSUserDefaults standardUserDefaults] integerForKey:kAutoFetchScope];
+	NSInteger scope = [PBPreferences() integerForKey:kAutoFetchScope];
 	return (scope >= PBAutoFetchScopeNone && scope <= PBAutoFetchScopeOpenAndRecentRepositories) ? scope : PBAutoFetchScopeNone;
 }
 
 + (void)setAutoFetchScope:(PBAutoFetchScope)scope
 {
 	PBAutoFetchScope validatedScope = (PBAutoFetchScope)[PBGitDefaultsPolicy validatedAutoFetchScopeRawValue:scope];
-	[[NSUserDefaults standardUserDefaults] setInteger:validatedScope forKey:kAutoFetchScope];
+	[PBPreferences() setInteger:validatedScope forKey:kAutoFetchScope];
 	[[NSNotificationCenter defaultCenter] postNotificationName:PBAutoFetchPreferencesDidChangeNotification object:nil];
 }
 
 + (NSInteger)autoFetchIntervalMinutes
 {
-	NSInteger interval = [[NSUserDefaults standardUserDefaults] integerForKey:kAutoFetchIntervalMinutes];
+	NSInteger interval = [PBPreferences() integerForKey:kAutoFetchIntervalMinutes];
 	return MAX(1, MIN(1440, interval));
 }
 
 + (void)setAutoFetchIntervalMinutes:(NSInteger)minutes
 {
-	[[NSUserDefaults standardUserDefaults] setInteger:MAX(1, MIN(1440, minutes)) forKey:kAutoFetchIntervalMinutes];
+	[PBPreferences() setInteger:MAX(1, MIN(1440, minutes)) forKey:kAutoFetchIntervalMinutes];
 	[[NSNotificationCenter defaultCenter] postNotificationName:PBAutoFetchPreferencesDidChangeNotification object:nil];
 }
 
@@ -305,16 +310,16 @@ NSString *const PBAppearancePreferenceDidChangeNotification = @"PBAppearancePref
 
 + (BOOL)notifyAboutFetchedCommitsForRepositoryURL:(NSURL *)repositoryURL
 {
-	NSDictionary *settings = [[NSUserDefaults standardUserDefaults] dictionaryForKey:kAutoFetchRepositoryNotifications];
+	NSDictionary *settings = [PBPreferences() dictionaryForKey:kAutoFetchRepositoryNotifications];
 	return [settings[[self repositoryDefaultsKeyForURL:repositoryURL]] boolValue];
 }
 
 + (void)setNotifyAboutFetchedCommits:(BOOL)enabled forRepositoryURL:(NSURL *)repositoryURL
 {
-	NSMutableDictionary *settings = [[[NSUserDefaults standardUserDefaults] dictionaryForKey:kAutoFetchRepositoryNotifications] mutableCopy] ?: [NSMutableDictionary dictionary];
+	NSMutableDictionary *settings = [[PBPreferences() dictionaryForKey:kAutoFetchRepositoryNotifications] mutableCopy] ?: [NSMutableDictionary dictionary];
 	NSString *key = [self repositoryDefaultsKeyForURL:repositoryURL];
 	if (key.length) settings[key] = @(enabled);
-	[[NSUserDefaults standardUserDefaults] setObject:settings forKey:kAutoFetchRepositoryNotifications];
+	[PBPreferences() setObject:settings forKey:kAutoFetchRepositoryNotifications];
 }
 
 @end

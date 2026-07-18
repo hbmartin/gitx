@@ -27,6 +27,7 @@
 
 @interface ApplicationController () <SPUUpdaterDelegate>
 @property (nonatomic, strong) SPUStandardUpdaterController *updaterController;
+@property (nonatomic, strong) PBApplicationComposition *composition;
 - (void)applyAppearancePreference;
 @end
 
@@ -40,6 +41,9 @@
 
 	if (!(self = [super init]))
 		return nil;
+
+	self.composition = [[PBApplicationComposition alloc] initWithUserDefaults:NSUserDefaults.standardUserDefaults];
+	[PBApplicationComposition setSharedComposition:self.composition];
 
 	if (![[NSBundle bundleWithPath:@"/System/Library/Frameworks/Quartz.framework/Frameworks/QuickLookUI.framework"] load])
 		if (![[NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/QuickLookUI.framework"] load])

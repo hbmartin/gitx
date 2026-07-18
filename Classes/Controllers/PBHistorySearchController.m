@@ -13,9 +13,9 @@
 #import "PBGitRepository.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitDefaults.h"
-#import "PBCommitList.h"
 #import "PBGitCommit.h"
 #import "PBError.h"
+#import "GitX-Swift.h"
 
 @interface PBHistorySearchController ()
 
@@ -395,31 +395,17 @@
 		[backgroundSearchTask terminate];
 	}
 
-	NSString *searchString = [[searchField stringValue] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-	if ([searchString isEqualToString:@""]) {
+	PBHistorySearchPlan *plan = [PBHistorySearchPolicy planForQuery:[searchField stringValue] mode:self.searchMode];
+	if (plan.kind == PBHistorySearchExecutionKindClear) {
 		[self clearSearch];
 		return;
 	}
+	if (plan.kind != PBHistorySearchExecutionKindBackground)
+		return;
 
 	results = nil;
-
-	NSMutableArray *searchArguments = [NSMutableArray arrayWithObjects:@"log", @"--pretty=format:%H", @"--no-textconv", nil];
-	switch (self.searchMode) {
-		case PBHistorySearchModeRegex:
-			[searchArguments addObject:@"--pickaxe-regex"];
-		case PBHistorySearchModePickaxe:
-			[searchArguments addObject:[NSString stringWithFormat:@"-S%@", searchString]];
-			break;
-		case PBHistorySearchModePath:
-			[searchArguments addObject:@"--"];
-			[searchArguments addObjectsFromArray:[searchString componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
-			break;
-		case PBHistorySearchModeRaw:
-			[searchArguments addObjectsFromArray:[searchString componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
-			break;
-		default:
-			return;
-	}
+	NSString *searchString = plan.query;
+	NSArray<NSString *> *searchArguments = plan.arguments;
 
 	backgroundSearchTask = [historyController.repository taskWithArguments:searchArguments];
 	[backgroundSearchTask performTaskWithCompletionHandler:^(NSData *readData, NSError *taskError) {
