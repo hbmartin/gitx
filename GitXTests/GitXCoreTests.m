@@ -540,6 +540,8 @@
 {
 	NSError *error = nil;
 	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-sidebar-remote.git"];
+	BOOL previousShowStageView = PBGitDefaults.showStageView;
+	[PBGitDefaults setShowStageView:NO];
 	@try {
 		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
 		PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
@@ -560,6 +562,7 @@
 		XCTAssertTrue([remoteNames containsObject:@"cli-added"], @"The sidebar should not require fetched tracking refs to show a configured remote");
 		[sidebar closeView];
 	} @finally {
+		[PBGitDefaults setShowStageView:previousShowStageView];
 		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
 	}
 }
@@ -2373,6 +2376,17 @@
 		[expectation fulfill];
 	}];
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
+- (void)testTerminationBeforeLaunchReportsCancellation
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+	[task terminate];
+
+	NSError *error = nil;
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, NSCocoaErrorDomain);
+	XCTAssertEqual(error.code, NSUserCancelledError);
 }
 
 - (void)testAsyncTimeoutCompletesExactlyOnce

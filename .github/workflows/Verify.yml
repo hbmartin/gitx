@@ -195,7 +195,7 @@ jobs:
 
   performance:
     name: performance suite
-    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v7

@@ -607,6 +607,8 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 - (void)armWithBranchRef:(PBGitRef *)branchRef remoteName:(NSString *)remoteName
 	NS_SWIFT_NAME(arm(branchRef:remoteName:));
 - (void)clear;
+- (nullable NSNumber *)cancelSubmission;
+- (nullable NSNumber *)consumeRememberedPushChoice;
 - (nullable PBCommitPushPlan *)consumePendingPush;
 @end
 
@@ -614,6 +616,10 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 - (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
 - (void)install;
 - (void)setHistoryMode:(BOOL)historyMode;
+- (void)updateWithStatus:(NSString *)status busy:(BOOL)busy baseWindowTitle:(NSString *)baseWindowTitle;
+- (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar
+			  itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier
+		  willBeInsertedIntoToolbar:(BOOL)flag;
 @end
 
 @interface PBCommitMessageResult : NSObject

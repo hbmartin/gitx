@@ -209,11 +209,12 @@
 	NSResponder *firstResponder = [_contentFirstResponders objectForKey:controller] ?: controller.firstResponder;
 	if (firstResponder) [self.window makeFirstResponder:firstResponder];
 	[_repositoryToolbarController setHistoryMode:controller == _historyViewController];
+	__weak typeof(self) weakSelf = self;
 	[controller addObserver:self
 					keyPath:@"status"
 					options:NSKeyValueObservingOptionInitial
 					  block:^(__unused MAKVONotification *note) {
-						  [self updateStatus];
+						  [weakSelf updateStatus];
 					  }];
 	CFTimeInterval elapsed = CFAbsoluteTimeGetCurrent() - start;
 	NSLog(@"[GitX][Performance] %@ repository view in %.3f ms (first mount: %@, budget: %.0f ms)",
