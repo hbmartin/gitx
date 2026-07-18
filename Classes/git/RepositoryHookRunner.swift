@@ -35,8 +35,13 @@ final nonisolated class RepositoryHookRunner: NSObject {
 
     @objc(hookExists:)
     func hookExists(_ name: String) -> Bool {
-        let hookURL = URL(fileURLWithPath: path(forHook: name))
-        return (try? hookURL.resourceValues(forKeys: [.isExecutableKey]).isExecutable) == true
+        let hookPath = path(forHook: name)
+        let hookURL = URL(fileURLWithPath: hookPath)
+        let isExecutable = (try? hookURL.resourceValues(forKeys: [.isExecutableKey]).isExecutable) == true
+        logger.debug(
+            "Resolved hook \(name, privacy: .public) at \(hookPath, privacy: .private(mask: .hash)); executable=\(isExecutable)"
+        )
+        return isExecutable
     }
 
     @objc(executeHook:arguments:output:error:)
@@ -48,7 +53,8 @@ final nonisolated class RepositoryHookRunner: NSObject {
     ) -> Bool {
         guard hookExists(name) else { return true }
         do {
-            outputPointer?.pointee = try executeHook(name, arguments: arguments) { _ in } as NSString
+            let output = try executeHook(name, arguments: arguments) { _ in }
+            outputPointer?.pointee = output as NSString
             return true
         } catch {
             return RepositoryServiceError.assign(error as NSError, to: outputError)

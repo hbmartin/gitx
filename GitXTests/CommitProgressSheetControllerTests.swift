@@ -48,6 +48,21 @@ final class CommitProgressSheetControllerTests: XCTestCase {
         XCTAssertNil(parentWindow.attachedSheet)
     }
 
+    func testSheetWithoutParentHandlesEmptyOutputAndFinishesDetached() throws {
+        let controller = PBCommitProgressSheetController(parentWindow: nil)
+        let sheet = try XCTUnwrap(controller.window)
+        let outputTextView = try XCTUnwrap(
+            descendant(identifier: "CommitProgressOutput", in: sheet.contentView) as? NSTextView
+        )
+
+        controller.begin(withPhase: "Preparing commit")
+        controller.appendOutput("")
+        XCTAssertEqual(outputTextView.string, "")
+
+        controller.finish()
+        XCTAssertFalse(sheet.isVisible)
+    }
+
     private func descendant(identifier: String, in root: NSView?) -> NSView? {
         guard let root else { return nil }
         if root.accessibilityIdentifier() == identifier {

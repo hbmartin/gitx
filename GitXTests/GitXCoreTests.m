@@ -38,6 +38,34 @@
 - (NSSet<GTOID *> *)baseCommits;
 @end
 
+@interface PBGitIndex (GitXCoreTests)
+- (void)postCommitUpdate:(NSString *)update;
+- (void)postCommitOutput:(NSString *)output;
+@end
+
+@interface PBGitRepository (GitXCoreHookTests)
+- (NSString *)pathForHook:(NSString *)name;
+@end
+
+@interface GitXRepositoryWithoutConfiguration : PBGitRepository
+@property (nonatomic) BOOL hidesGitRepository;
+@property (nullable, nonatomic, copy) NSURL *retainedGitURL;
+@end
+
+@implementation GitXRepositoryWithoutConfiguration
+
+- (GTRepository *)gtRepo
+{
+	return self.hidesGitRepository ? nil : super.gtRepo;
+}
+
+- (NSURL *)gitURL
+{
+	return self.hidesGitRepository ? self.retainedGitURL : super.gitURL;
+}
+
+@end
+
 @interface PBGitTree (GitXCoreTests)
 - (BOOL)hasBinaryHeader:(nullable NSString *)contents;
 - (BOOL)hasBinaryAttributes;
@@ -940,11 +968,32 @@
 	XCTAssertTrue([taskError.userInfo[PBTaskTerminationOutputKey] containsString:marker]);
 	XCTAssertTrue([hookError.localizedFailureReason containsString:marker]);
 
+	NSString *silentHook = @"#!/bin/sh\nexit 24\n";
+	XCTAssertTrue([self.fixture writeText:silentHook toPath:@".githooks/gitx-silent" error:&error], @"%@", error);
+	NSString *silentHookPath = [self.fixture.path stringByAppendingPathComponent:@".githooks/gitx-silent"];
+	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:attributes ofItemAtPath:silentHookPath error:&error], @"%@", error);
+	NSError *silentHookError = nil;
+	XCTAssertFalse([self.repository executeHook:@"gitx-silent" error:&silentHookError]);
+	XCTAssertEqualObjects(silentHookError.localizedFailureReason, @"The gitx-silent hook reported an error.");
+	NSError *silentTaskError = silentHookError.userInfo[NSUnderlyingErrorKey];
+	XCTAssertEqualObjects(silentTaskError.userInfo[PBTaskTerminationStatusKey], @24);
+	XCTAssertEqualObjects(silentTaskError.userInfo[PBTaskTerminationOutputKey], @"");
+
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
 	XCTAssertFalse([self.repository hookExists:@"pre-commit"]);
 	NSError *disabledHookError = nil;
 	XCTAssertTrue([self.repository executeHook:@"pre-commit" error:&disabledHookError]);
 	XCTAssertNil(disabledHookError);
+
+	GitXRepositoryWithoutConfiguration *repositoryWithoutConfiguration =
+		[[GitXRepositoryWithoutConfiguration alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path]
+														  error:&error];
+	XCTAssertNotNil(repositoryWithoutConfiguration, @"%@", error);
+	repositoryWithoutConfiguration.retainedGitURL = repositoryWithoutConfiguration.gitURL;
+	repositoryWithoutConfiguration.hidesGitRepository = YES;
+	XCTAssertEqualObjects(
+		[repositoryWithoutConfiguration pathForHook:@"pre-commit"],
+		[repositoryWithoutConfiguration.gitURL.path stringByAppendingPathComponent:@"hooks/pre-commit"]);
 }
 
 - (void)testHeadCommitAncestryAndBranchFilterBoundaries
@@ -1313,6 +1362,35 @@
 	XCTAssertEqualObjects(message, @"prepared message");
 }
 
+- (void)testLegacyCommitPhaseAndEmptyOutputNotifications
+{
+	__block NSNotification *statusNotification = nil;
+	__block NSUInteger outputNotificationCount = 0;
+	id statusToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitStatus
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					statusNotification = notification;
+				}];
+	id outputToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitOutput
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(__unused NSNotification *notification) {
+					outputNotificationCount += 1;
+				}];
+
+	[self.repository.index postCommitUpdate:@"Creating tree"];
+	[self.repository.index postCommitOutput:@""];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:statusToken];
+	[[NSNotificationCenter defaultCenter] removeObserver:outputToken];
+	XCTAssertEqualObjects(statusNotification.userInfo[@"description"], @"Creating tree");
+	XCTAssertEqualObjects(statusNotification.userInfo[@"phase"], @0);
+	XCTAssertEqual(outputNotificationCount, (NSUInteger)0);
+}
+
 - (void)testPrepareCommitMessageFailurePublishesHookOutput
 {
 	NSError *error = nil;
@@ -1405,6 +1483,35 @@
 	XCTAssertEqualObjects(streamedOutput, @"pre output\nmessage output\npost output\n");
 	XCTAssertLessThan(lastOutputSequence, completionSequence);
 	XCTAssertEqualObjects(finished.userInfo[@"success"], @YES);
+	XCTAssertEqual([finished.userInfo[@"sha"] length], 40);
+}
+
+- (void)testPostCommitHookFailurePublishesCompletedCommitWithoutRefreshing
+{
+	NSError *error = nil;
+	[self stageTrackedText:@"post hook failure contents\n" error:&error];
+	[self installHookNamed:@"post-commit"
+				  contents:@"#!/bin/sh\nprintf 'post-commit denied\\n' >&2\nexit 25\n"
+					 error:&error];
+	__block NSNotification *finished = nil;
+	XCTestExpectation *finishedExpectation = [self expectationWithDescription:@"commit completion after post hook failure"];
+	id finishedToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexFinishedCommit
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					finished = notification;
+					[finishedExpectation fulfill];
+				}];
+
+	[self.repository.index commitWithMessage:@"post hook failure" andVerify:NO];
+	[self waitForExpectations:@[ finishedExpectation ] timeout:10];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:finishedToken];
+	NSString *message = [self.fixture git:@[ @"show", @"-s", @"--format=%s", @"HEAD" ] error:&error];
+	XCTAssertEqualObjects(message, @"post hook failure\n");
+	XCTAssertEqualObjects(finished.userInfo[@"success"], @NO);
+	XCTAssertTrue([finished.userInfo[@"description"] containsString:@"Post-commit hook failed"]);
 	XCTAssertEqual([finished.userInfo[@"sha"] length], 40);
 }
 

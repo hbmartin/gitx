@@ -1582,6 +1582,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 																  object:index
 																userInfo:@{@"description" : @"Writing commit"}]];
 	XCTAssertEqualObjects(controller.status, @"Writing commit");
+	[controller commitOutputReceived:[NSNotification notificationWithName:PBGitIndexCommitOutput
+																   object:index
+																 userInfo:@{@"output" : @"hook output\n"}]];
+	[controller commitOutputReceived:[NSNotification notificationWithName:PBGitIndexCommitOutput
+																   object:index
+																 userInfo:@{@"output" : @""}]];
 
 	messageView.string = NSLocalizedString(@"keep this message", nil);
 	[controller amendCommit:[NSNotification notificationWithName:PBGitIndexAmendMessageAvailable

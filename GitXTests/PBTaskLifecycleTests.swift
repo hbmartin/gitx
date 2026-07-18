@@ -166,6 +166,61 @@ final class PBTaskLifecycleTests: XCTestCase {
         XCTAssertTrue(recorder.events.dropLast().allSatisfy { $0 == "chunk" })
     }
 
+    func testSynchronousStreamingPreservesNonZeroExitErrorAndOutput() {
+        let recorder = EventRecorder()
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "printf 'streamed failure'; exit 23"],
+            inDirectory: nil
+        )
+
+        XCTAssertThrowsError(
+            try task.launch(outputChunkHandler: recorder.recordChunk)
+        ) { error in
+            let taskError = error as NSError
+            XCTAssertEqual(taskError.domain, PBTaskErrorDomain)
+            XCTAssertEqual(taskError.code, Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue))
+            XCTAssertEqual(taskError.userInfo[PBTaskTerminationStatusKey] as? NSNumber, 23)
+            XCTAssertEqual(
+                taskError.userInfo[PBTaskTerminationOutputKey] as? String,
+                "streamed failure"
+            )
+        }
+        XCTAssertEqual(recorder.data, Data("streamed failure".utf8))
+    }
+
+    func testSynchronousStreamingExecutableScriptPreservesFailure() throws {
+        let scriptURL = temporaryFileURL(named: "streaming-failure-hook")
+        defer { try? FileManager.default.removeItem(at: scriptURL) }
+        try "#!/bin/sh\nprintf 'script failure'\nexit 23\n".write(
+            to: scriptURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: scriptURL.path
+        )
+        let recorder = EventRecorder()
+        let task = PBTask(
+            launchPath: scriptURL.path,
+            arguments: [],
+            inDirectory: nil
+        )
+
+        XCTAssertThrowsError(
+            try task.launch(outputChunkHandler: recorder.recordChunk)
+        ) { error in
+            let taskError = error as NSError
+            XCTAssertEqual(taskError.userInfo[PBTaskTerminationStatusKey] as? NSNumber, 23)
+            XCTAssertEqual(
+                taskError.userInfo[PBTaskTerminationOutputKey] as? String,
+                "script failure"
+            )
+        }
+        XCTAssertEqual(recorder.data, Data("script failure".utf8))
+    }
+
     func testIncrementalUTF8DecoderBuffersSplitScalarsAndFlushesFinalBytes() {
         let decoder = PBIncrementalUTF8Decoder()
 
@@ -178,6 +233,10 @@ final class PBTaskLifecycleTests: XCTestCase {
         XCTAssertEqual(decoder.append(Data([0xE2, 0x82])), "")
         XCTAssertEqual(decoder.finish(), "�")
         XCTAssertEqual(decoder.finish(), "")
+
+        XCTAssertEqual(decoder.append(Data([0xC2, 0xA2])), "¢")
+        XCTAssertEqual(decoder.append(Data([0xE2, 0x41])), "�A")
+        XCTAssertEqual(decoder.append(Data([0xFF])), "�")
     }
 
     func testTerminationBeforeLaunchReturnsCancellationError() {
