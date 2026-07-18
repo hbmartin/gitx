@@ -22,7 +22,7 @@
     "Classes/Controllers/OpenRecentController.m": 0.0,
     "Classes/Controllers/PBAutoFetchManager.m": 0.1875,
     "Classes/Controllers/PBDiffWindowController.m": 0.0,
-    "Classes/Controllers/PBGitCommitController.m": 0.9942,
+    "Classes/Controllers/PBGitCommitController.m": 0.9943,
     "Classes/Controllers/PBGitHistoryController+UI.m": 0.8304,
     "Classes/Controllers/PBGitHistoryController.m": 0.9693,
     "Classes/Controllers/PBGitRepositoryDocument.m": 0.1464,
@@ -48,7 +48,7 @@
     "Classes/Controllers/RepositoryReferenceActionCoordinator.swift": 0.947,
     "Classes/Controllers/RepositoryRemoteActionCoordinator.swift": 0.9663,
     "Classes/Controllers/RepositorySettingsController.swift": 0.7887,
-    "Classes/Controllers/RepositorySettingsStore.swift": 0.8106,
+    "Classes/Controllers/RepositorySettingsStore.swift": 0.8712,
     "Classes/Controllers/RepositoryStashActionCoordinator.swift": 1.0,
     "Classes/Controllers/RepositoryToolbarController.swift": 0.9832,
     "Classes/Controllers/TerminalIntegration.swift": 0.6245,
@@ -163,7 +163,7 @@
       ]
     },
     "Repository Configuration surfaces": {
-      "minimumLineCoverage": 0.7368,
+      "minimumLineCoverage": 0.7479,
       "files": [
         "Classes/Controllers/RepositorySettingsStore.swift",
         "Classes/Controllers/RepositorySettingsController.swift",
