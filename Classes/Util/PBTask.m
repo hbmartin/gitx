@@ -35,6 +35,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 @property (strong) dispatch_queue_t stateQueue;
 @property (strong) dispatch_queue_t callbackQueue;
 @property (copy) void (^resultHandler)(NSData *_Nullable data, NSError *_Nullable error);
+@property (nullable, copy) PBTaskOutputChunkHandler outputChunkHandler;
 @property (strong) PBTask *operationRetainer;
 @property BOOL cancellationRequested;
 @property BOOL operationStarted;
@@ -187,6 +188,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		self.task.terminationHandler = nil;
 	}
 	self.resultHandler = nil;
+	self.outputChunkHandler = nil;
 	self.callbackQueue = nil;
 	self.operationRetainer = nil;
 
@@ -271,6 +273,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 			}
 			if (data.length) {
 				[strongSelf.standardOutputBuffer appendData:data];
+				PBTaskOutputChunkHandler outputChunkHandler = strongSelf.outputChunkHandler;
+				if (outputChunkHandler) outputChunkHandler(data);
 			} else if (!data.length) {
 				PBTaskLog(@"task %p: EOF, closing %d", strongSelf, handle.fileDescriptor);
 				strongSelf.outputFinished = YES;
@@ -285,7 +289,9 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	};
 }
 
-- (void)performTaskOnQueue:(dispatch_queue_t)queue resultHandler:(void (^)(NSData *_Nullable, NSError *_Nullable))resultHandler
+- (void)performTaskOnQueue:(dispatch_queue_t)queue
+		outputChunkHandler:(PBTaskOutputChunkHandler)outputChunkHandler
+			 resultHandler:(void (^)(NSData *_Nullable, NSError *_Nullable))resultHandler
 {
 	NSParameterAssert(queue != nil);
 	NSParameterAssert(resultHandler != nil);
@@ -295,6 +301,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		self.operationStarted = YES;
 		self.callbackQueue = queue;
 		self.resultHandler = resultHandler;
+		self.outputChunkHandler = outputChunkHandler;
 		self.operationRetainer = self;
 	});
 	[self configureOutputReader];
@@ -411,6 +418,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 {
 	NSParameterAssert(terminationHandler != nil);
 	[self performTaskOnQueue:queue
+		  outputChunkHandler:nil
 			   resultHandler:^(NSData *data, NSError *error) {
 				   terminationHandler(error);
 			   }];
@@ -419,16 +427,30 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 - (void)performTaskOnQueue:(dispatch_queue_t)queue completionHandler:(void (^)(NSData *readData, NSError *error))completionHandler
 {
 	NSParameterAssert(completionHandler != nil);
-	[self performTaskOnQueue:queue resultHandler:completionHandler];
+	[self performTaskOnQueue:queue outputChunkHandler:nil resultHandler:completionHandler];
+}
+
+- (void)performTaskOnQueue:(dispatch_queue_t)queue
+		outputChunkHandler:(PBTaskOutputChunkHandler)outputChunkHandler
+		 completionHandler:(void (^)(NSData *, NSError *))completionHandler
+{
+	NSParameterAssert(completionHandler != nil);
+	[self performTaskOnQueue:queue outputChunkHandler:outputChunkHandler resultHandler:completionHandler];
 }
 
 - (BOOL)launchTask:(NSError **)error
+{
+	return [self launchTaskWithOutputChunkHandler:nil error:error];
+}
+
+- (BOOL)launchTaskWithOutputChunkHandler:(PBTaskOutputChunkHandler)outputChunkHandler error:(NSError **)error
 {
 	dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
 	__block NSError *taskError = nil;
 
 	[self performTaskOnQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)
+		  outputChunkHandler:outputChunkHandler
 		   completionHandler:^(NSData *readData, NSError *error) {
 			   taskError = error;
 
@@ -462,12 +484,12 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 @implementation PBTask (PBBellsAndWhistles)
 
-+ (NSString *)outputForCommand:(NSString *)launchPath arguments:(NSArray *)arguments error:(NSError **)error
++ (NSString *)outputForCommand:(NSString *)launchPath arguments:(NSArray<NSString *> *)arguments error:(NSError **)error
 {
 	return [self outputForCommand:launchPath arguments:arguments inDirectory:nil error:error];
 }
 
-+ (NSString *)outputForCommand:(NSString *)launchPath arguments:(NSArray *)arguments inDirectory:(NSString *)directory error:(NSError **)error
++ (NSString *)outputForCommand:(NSString *)launchPath arguments:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory error:(NSError **)error
 {
 	PBTask *task = [self taskWithLaunchPath:launchPath arguments:arguments inDirectory:directory];
 	BOOL success = [task launchTask:error];
@@ -476,7 +498,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	return task.standardOutputString;
 }
 
-+ (void)launchTask:(NSString *)launchPath arguments:(NSArray *)arguments inDirectory:(NSString *)directory completionHandler:(void (^)(NSData *readData, NSError *error))completionHandler
++ (void)launchTask:(NSString *)launchPath arguments:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory completionHandler:(void (^)(NSData *readData, NSError *error))completionHandler
 {
 	PBTask *task = [self taskWithLaunchPath:launchPath arguments:arguments inDirectory:directory];
 	[task performTaskWithCompletionHandler:completionHandler];

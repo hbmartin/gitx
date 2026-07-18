@@ -1,0 +1,3 @@
+# Use a local Swift package for the Foundation core
+
+GitX will keep one local package named `GitXCore` for deterministic Foundation-only domain and presentation decisions. The app target owns AppKit, ObjectiveGit, persistence, process execution, and Objective-C adapters. This makes core tests hostless and gives Xcode a separately buildable dependency without creating several premature modules. An Xcode framework target was rejected because it would couple the boundary and its tests to the workspace; multiple feature packages were rejected because the ownership boundaries are not yet stable enough to justify them.

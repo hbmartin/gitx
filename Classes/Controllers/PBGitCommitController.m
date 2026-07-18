@@ -47,10 +47,12 @@
 @property (nonatomic, strong) PBCommitWorkflowState *commitWorkflowState;
 @property (nonatomic, strong) PBCommitTableInteractionCoordinator *tableInteractionCoordinator;
 @property (nonatomic, strong) PBRepositoryUISettings *repositoryUISettings;
+@property (nonatomic, strong, nullable) PBCommitProgressSheetController *commitProgressSheet;
 @property (nonatomic) BOOL pushCapabilityAvailable;
 
 - (nullable NSString *)selectedPushRemoteName;
 - (void)reloadPushRemotes;
+- (void)finishCommitProgressSheet;
 
 @end
 
@@ -70,6 +72,7 @@
 
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshFinished:) name:PBGitIndexFinishedIndexRefresh object:index];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(commitStatusUpdated:) name:PBGitIndexCommitStatus object:index];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(commitOutputReceived:) name:PBGitIndexCommitOutput object:index];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(commitFinished:) name:PBGitIndexFinishedCommit object:index];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(commitFailed:) name:PBGitIndexCommitFailed object:index];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(commitHookFailed:) name:PBGitIndexCommitHookFailed object:index];
@@ -105,7 +108,7 @@
 	if (!attrs) {
 		attrs = [NSMutableDictionary dictionary];
 	}
-	attrs[NSFontAttributeName] = [NSFont fontWithName:@"Menlo" size:12.0];
+	attrs[NSFontAttributeName] = [NSFont preferredFontForTextStyle:NSFontTextStyleBody options:@{}];
 	commitMessageView.typingAttributes = attrs;
 
 	[unstagedFilesController setFilterPredicate:[NSPredicate predicateWithFormat:@"hasUnstagedChanges == 1"]];
@@ -325,6 +328,8 @@
 	self.isBusy = YES;
 	commitMessageView.editable = NO;
 
+	self.commitProgressSheet = [[PBCommitProgressSheetController alloc] initWithRepositoryWindowController:self.windowController];
+	[self.commitProgressSheet beginWithPhase:NSLocalizedString(@"Preparing commit…", @"Initial interactive commit progress phase")];
 	[self.repository.index commitWithMessage:commitMessage andVerify:doVerify];
 }
 
@@ -548,10 +553,19 @@
 - (void)commitStatusUpdated:(NSNotification *)notification
 {
 	self.status = notification.userInfo[kNotificationDictionaryDescriptionKey];
+	[self.commitProgressSheet updatePhase:self.status];
+}
+
+- (void)commitOutputReceived:(NSNotification *)notification
+{
+	NSString *output = notification.userInfo[@"output"];
+	if (output.length > 0)
+		[self.commitProgressSheet appendOutput:output];
 }
 
 - (void)commitFinished:(NSNotification *)notification
 {
+	[self finishCommitProgressSheet];
 	commitMessageView.editable = YES;
 	commitMessageView.string = @"";
 	[webController setStateMessage:notification.userInfo[kNotificationDictionaryDescriptionKey]];
@@ -573,6 +587,7 @@
 
 - (void)commitFailed:(NSNotification *)notification
 {
+	[self finishCommitProgressSheet];
 	self.isBusy = NO;
 	commitMessageView.editable = YES;
 	NSNumber *rememberedPushChoice = [self.commitWorkflowState cancelSubmission];
@@ -591,6 +606,7 @@
 
 - (void)commitHookFailed:(NSNotification *)notification
 {
+	[self finishCommitProgressSheet];
 	self.isBusy = NO;
 	commitMessageView.editable = YES;
 	NSNumber *rememberedPushChoice = [self.commitWorkflowState cancelSubmission];
@@ -606,6 +622,12 @@
 	[self.windowController showCommitHookFailedSheet:NSLocalizedString(@"Commit hook failed", @"Title for sheet that running a commit hook has failed")
 											infoText:reason
 									commitController:self];
+}
+
+- (void)finishCommitProgressSheet
+{
+	[self.commitProgressSheet finish];
+	self.commitProgressSheet = nil;
 }
 
 - (void)amendCommit:(NSNotification *)notification

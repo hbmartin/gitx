@@ -39,7 +39,7 @@ while IFS= read -r file; do
 		Classes/*.m|Classes/*.mm|GitXTests/*.m|GitXUITests/*.m)
             objc_files+=("$file")
             ;;
-		Classes/*.swift|GitXTests/*.swift)
+		Classes/*.swift|GitXTests/*.swift|GitXCore/*.swift)
             swift_files+=("$file")
             ;;
     esac
@@ -53,6 +53,7 @@ if (( ${#swift_files[@]} )); then
 fi
 scripts/run_pinned_tool.sh swiftlint lint --strict --config .swiftlint.yml --baseline .swiftlint-baseline.json
 
+python3 scripts/check_gitxcore_boundary.py
 python3 scripts/check_header_interop.py "$merge_base"
 python3 scripts/check_swift_concurrency_escapes.py
 

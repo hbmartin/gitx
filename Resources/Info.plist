@@ -19,8 +19,12 @@
 			</array>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.folder</string>
+			</array>
 			<key>LSHandlerRank</key>
-			<string>Default</string>
+			<string>Alternate</string>
 		</dict>
 		<dict>
 			<key>CFBundleTypeExtensions</key>

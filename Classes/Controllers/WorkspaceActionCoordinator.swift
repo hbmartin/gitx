@@ -48,7 +48,7 @@ final class WorkspaceActionCoordinator: NSObject {
                 continue
             }
             let submoduleURL = parentURL.appendingPathComponent(submodule.path, isDirectory: true)
-            RepositoryOpenCoordinator.shared.open(
+            RepositoryOpenCoordinator.shared.openKnownRepositories(
                 urls: [submoduleURL],
                 sourceWindow: NSApp.keyWindow
             ) { _, _ in }

@@ -35,8 +35,13 @@ final nonisolated class RepositoryHookRunner: NSObject {
 
     @objc(hookExists:)
     func hookExists(_ name: String) -> Bool {
-        let hookURL = URL(fileURLWithPath: path(forHook: name))
-        return (try? hookURL.resourceValues(forKeys: [.isExecutableKey]).isExecutable) == true
+        let hookPath = path(forHook: name)
+        let hookURL = URL(fileURLWithPath: hookPath)
+        let isExecutable = (try? hookURL.resourceValues(forKeys: [.isExecutableKey]).isExecutable) == true
+        logger.debug(
+            "Resolved hook \(name, privacy: .public) at \(hookPath, privacy: .private(mask: .hash)); executable=\(isExecutable)"
+        )
+        return isExecutable
     }
 
     @objc(executeHook:arguments:output:error:)
@@ -47,6 +52,21 @@ final nonisolated class RepositoryHookRunner: NSObject {
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         guard hookExists(name) else { return true }
+        do {
+            let output = try executeHook(name, arguments: arguments) { _ in }
+            outputPointer?.pointee = output as NSString
+            return true
+        } catch {
+            return RepositoryServiceError.assign(error as NSError, to: outputError)
+        }
+    }
+
+    func executeHook(
+        _ name: String,
+        arguments: [String],
+        outputHandler: @escaping @Sendable (Data) -> Void
+    ) throws -> String {
+        guard hookExists(name) else { return "" }
         logger.debug("Executing repository hook")
         let task = PBTask(
             launchPath: path(forHook: name),
@@ -59,10 +79,9 @@ final nonisolated class RepositoryHookRunner: NSObject {
             "GIT_INDEX_FILE": (gitDirectory as NSString).appendingPathComponent("index"),
         ]
         do {
-            try task.launch()
-            outputPointer?.pointee = task.standardOutputString() as NSString?
+            try task.launch(outputChunkHandler: outputHandler)
             logger.debug("Repository hook completed")
-            return true
+            return task.standardOutputString() ?? ""
         } catch {
             let taskError = error as NSError
             let hookOutput = taskError.userInfo[PBTaskTerminationOutputKey] as? String ?? ""
@@ -79,7 +98,7 @@ final nonisolated class RepositoryHookRunner: NSObject {
                 userInfo: [PBHookNameErrorKey: name]
             )
             logger.error("Repository hook failed")
-            return RepositoryServiceError.assign(wrapped, to: outputError)
+            throw wrapped
         }
     }
 }

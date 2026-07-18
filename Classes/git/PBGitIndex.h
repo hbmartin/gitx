@@ -27,6 +27,7 @@ extern NSString *PBGitIndexIndexUpdated;
 
 // Committing files
 extern NSString *PBGitIndexCommitStatus;
+extern NSString *PBGitIndexCommitOutput;
 extern NSString *PBGitIndexCommitFailed;
 extern NSString *PBGitIndexCommitHookFailed;
 extern NSString *PBGitIndexFinishedCommit;

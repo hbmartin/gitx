@@ -14,11 +14,13 @@
 #import "PBGitStash.h"
 #import "PBUncommittedChanges.h"
 #import "PBHighlighting.h"
+#import "PBChangedFile.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
 #import "PBGitRevisionCell.h"
 #import "PBHistorySearchController.h"
+#import "RepositoryIgnoreTestSupport.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -63,11 +65,23 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 	PBChangedFilesSortModeStatus,
 };
 
+@interface PBApplicationPreferences : NSObject
+@property (nonatomic, readonly, strong) NSUserDefaults *userDefaults;
+@end
+
+@interface PBApplicationComposition : NSObject
+@property (nonatomic, readonly, strong) PBApplicationPreferences *applicationPreferences;
+- (instancetype)initWithUserDefaults:(NSUserDefaults *)userDefaults;
++ (PBApplicationComposition *)sharedComposition;
++ (void)setSharedComposition:(PBApplicationComposition *)composition;
+@end
+
 @interface PBApplicationSettings : NSObject
 @property (class) PBOpenDisposition openDisposition;
 @property (class) PBWindowRestorePolicy restorePolicy;
 @property (class) BOOL changedFilesOnly;
 @property (class) PBChangedFilesSortMode changedFilesSort;
+@property (class) BOOL groupIncomingBranchCommits;
 @property (class) PBBranchSortMode branchSort;
 @property (class) PBDiffLayout diffLayout;
 @property (class) PBDiffAlgorithm diffAlgorithm;
@@ -435,7 +449,8 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @protocol PBIndexHookRunning <NSObject>
 - (BOOL)executeHook:(NSString *)name
           arguments:(NSArray<NSString *> *)arguments
-              error:(NSError * _Nullable * _Nullable)error;
+              error:(NSError * _Nullable * _Nullable)error
+       outputHandler:(void (^)(NSData *data))outputHandler;
 @end
 
 typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
@@ -461,6 +476,31 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 @property (nonatomic, readonly) BOOL postCommitHookSucceeded;
 @end
 
+typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
+    PBIndexCommitPhaseCreatingTree,
+    PBIndexCommitPhaseCreatingCommit,
+    PBIndexCommitPhaseRunningPreCommitHook,
+    PBIndexCommitPhaseRunningCommitMessageHook,
+    PBIndexCommitPhaseUpdatingHead,
+    PBIndexCommitPhaseRunningPostCommitHook,
+};
+
+@interface PBIndexCommitEvent : NSObject
+@end
+
+@interface PBIndexCommitPhaseEvent : PBIndexCommitEvent
+@property (nonatomic, readonly) PBIndexCommitPhase phase;
+@property (nonatomic, copy, readonly) NSString *displayName;
+@end
+
+@interface PBIndexCommitOutputEvent : PBIndexCommitEvent
+@property (nonatomic, copy, readonly) NSString *output;
+@end
+
+@interface PBIndexCommitCompletionEvent : PBIndexCommitEvent
+@property (nonatomic, strong, readonly) PBIndexCommitResult *result;
+@end
+
 @interface PBIndexCommitService : NSObject
 - (instancetype)initWithRunner:(id<PBIndexCommandRunning>)runner
                      hookRunner:(id<PBIndexHookRunning>)hookRunner
@@ -472,6 +512,27 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
                                               error:(NSError * _Nullable * _Nullable)error;
 - (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request
                                   progress:(void (^)(NSString *message))progress;
+- (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request
+                              eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
+@end
+
+@interface PBIndexCommitCoordinator : NSObject
+- (instancetype)initWithService:(PBIndexCommitService *)service;
+- (void)commitWithRequest:(PBIndexCommitRequest *)request
+             eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
+@end
+
+@interface PBIncrementalUTF8Decoder : NSObject
+- (NSString *)appendData:(NSData *)data NS_SWIFT_NAME(append(_:));
+- (NSString *)finish;
+@end
+
+@interface PBCommitProgressSheetController : NSWindowController
+- (instancetype)initWithParentWindow:(nullable NSWindow *)parentWindow;
+- (void)beginWithPhase:(NSString *)phase;
+- (void)updatePhase:(NSString *)phase;
+- (void)appendOutput:(NSString *)output;
+- (void)finish;
 @end
 
 @interface PBIndexMutationService : NSObject
@@ -682,6 +743,7 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (void)restoreFileBrowserSelection;
 - (void)saveFileBrowserSelection;
 - (void)historySortingPreferenceChanged:(NSNotification *)notification;
+- (void)historyTraversalSettingsDidChange:(NSNotification *)notification;
 - (void)historyTreeSettingsDidChange:(NSNotification *)notification;
 - (void)outlineView:(NSOutlineView *)outlineView
     willDisplayCell:(NSTextFieldCell *)cell

@@ -2,7 +2,7 @@
 
 ## Principle
 
-Prefer explicit `.xctestplan` files and explicit CI commands over one implicit “run everything” configuration. Each plan should answer four questions in version control: which tests run, what environment they receive, which diagnostics are enabled, and when the plan is required.
+Prefer explicit execution policy over one implicit “run everything” configuration. App-hosted and UI suites use `.xctestplan` files; the local `GitXCore` package uses its canonical SwiftPM command so it remains independent of the application workspace.
 
 Plans are execution policy, not merely Xcode UI state. Changes to a plan should receive the same review as changes to workflow YAML.
 
@@ -11,7 +11,7 @@ Plans are execution policy, not merely Xcode UI state. Changes to a plan should 
 | Plan | Contents | Coverage | Frequency | Failure policy |
 | --- | --- | --- | --- | --- |
 | `GitX` | Fast app-hosted unit and integration XCTest; excludes performance classes | On | Every push and pull request | Required |
-| `GitXCore` | Future hostless Foundation-only XCTest | On, reported separately | Every push and pull request | Required |
+| `GitXCore` SwiftPM job | Hostless Foundation-only XCTest | On, reported separately | Every push and pull request | Required |
 | `GitXUI` | Accessibility-driven XCUITest workflows | Off | Dedicated UI-capable runner or explicit invocation | Required where runner support exists |
 | `GitXPerformance` | Stable XCTest performance benchmarks only | Off | Scheduled and manual | Detect/report regressions; do not mix with correctness timing |
 | `GitXAddressUndefined` | Unit/integration tests with Address and Undefined Behavior Sanitizers | Off | Scheduled and manual | Required on scheduled hardening run |
@@ -59,6 +59,8 @@ Address Sanitizer and Thread Sanitizer remain separate because their instrumenta
 The canonical forms are:
 
 ```sh
+swift test --package-path GitXCore --enable-code-coverage
+python3 scripts/check_core_coverage.py "$(swift test --package-path GitXCore --show-codecov-path)"
 xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitX -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
 xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXUI -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
 xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXPerformance -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
@@ -70,13 +72,13 @@ Use a unique `-resultBundlePath` in CI. Do not rely on whichever plan is current
 
 ## Change Policy
 
-- Adding a test class requires assigning it to the appropriate explicit plan.
+- Adding an app test class requires assigning it to the appropriate explicit plan. Package tests belong to the `GitXCoreTests` SwiftPM target.
 - Moving a test between plans requires a short rationale in the change description.
 - Lowering coverage or weakening a diagnostic requires explicit user approval and a documented time-bounded exception.
 - Removing a warning, header-debt entry, or coverage gap must ratchet its checked-in baseline in the same change.
-- New plans must be shared in `GitX.xcscheme`, validated as JSON, invoked explicitly in CI or documented as local-only, and added to this matrix.
+- New Xcode plans must be shared in `GitX.xcscheme`, validated as JSON, invoked explicitly in CI or documented as local-only, and added to this matrix.
 - CI must pin Xcode and all externally installed analysis/format tools.
 
-## Future Split
+## Build Reuse
 
-When `GitXCoreTests` exists, split CI into a fast hostless job and an app-hosted integration job. Build-for-testing/test-without-building may then be introduced if measurements show a real improvement. The first priority is clear ownership and reproducibility, not maximizing the number of jobs.
+The hostless core job and app-hosted integration job are intentionally separate. Build-for-testing/test-without-building may be introduced later only if repeated measurements show a real improvement. Clear ownership and reproducibility remain more important than maximizing job count.

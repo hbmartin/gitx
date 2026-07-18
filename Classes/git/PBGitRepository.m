@@ -353,29 +353,18 @@ NSString *const PBHookNameErrorKey = @"PBHookNameErrorKey";
 
 - (BOOL)ignoreFilePaths:(NSArray *)filePaths error:(NSError **)error
 {
-	NSString *filesAsString = [filePaths componentsJoinedByString:@"\n"];
-
-	// Write to the file
 	NSString *gitIgnoreName = [self gitIgnoreFilename];
-
-	NSStringEncoding enc = NSUTF8StringEncoding;
-	NSString *ignoreFile;
-
-	if (![[NSFileManager defaultManager] fileExistsAtPath:gitIgnoreName]) {
-		ignoreFile = filesAsString;
-	} else {
-		NSMutableString *currentFile = [NSMutableString stringWithContentsOfFile:gitIgnoreName usedEncoding:&enc error:error];
-		if (!currentFile) return NO;
-
-		// Add a newline if not yet present
-		if ([currentFile characterAtIndex:([ignoreFile length] - 1)] != '\n')
-			[currentFile appendString:@"\n"];
-		[currentFile appendString:filesAsString];
-
-		ignoreFile = currentFile;
+	if (!gitIgnoreName) {
+		if (error) {
+			*error = [NSError pb_errorWithDescription:NSLocalizedString(@"Ignore file update failed", @"")
+										failureReason:NSLocalizedString(@"This repository does not have a working directory.", @"")];
+		}
+		return NO;
 	}
 
-	return [ignoreFile writeToFile:gitIgnoreName atomically:YES encoding:enc error:error];
+	PBRepositoryIgnoreFileService *service =
+		[[PBRepositoryIgnoreFileService alloc] initWithFileURL:[NSURL fileURLWithPath:gitIgnoreName]];
+	return [service appendPaths:filePaths error:error];
 }
 
 - (PBGitIndex *)index

@@ -16,6 +16,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         private var fixedRepository: PBGitRepository!
         private(set) var shownErrors: [NSError] = []
         private(set) var confirmationCount = 0
+        var automaticallyConfirms = true
 
         init(repository: PBGitRepository) {
             fixedRepository = repository
@@ -51,7 +52,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             forAction actionBlock: @escaping () -> Void
         ) -> Bool {
             confirmationCount += 1
-            actionBlock()
+            if automaticallyConfirms {
+                actionBlock()
+            }
             return true
         }
     }
@@ -441,6 +444,19 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.status.contains("commits loaded"))
     }
 
+    func testHistoryTraversalRefreshPreservesExplicitColumnSortOverride() {
+        let descriptor = NSSortDescriptor(key: "subject", ascending: true)
+        historyController.commitController.sortDescriptors = [descriptor]
+
+        historyController.historyTraversalSettingsDidChange(
+            Notification(name: Notification.Name("PBHistoryTraversalSettingsDidChangeNotification"))
+        )
+
+        XCTAssertEqual(historyController.commitController.sortDescriptors, [descriptor])
+        XCTAssertTrue(historyController.hasNonlinearPath())
+        waitForHistory()
+    }
+
     func testGitTreeFileSizeSupportsConcurrentPreviewLoads() throws {
         let commits = loadedCommits()
         let file = try XCTUnwrap(
@@ -507,6 +523,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(historyController.value(forKey: "firstCommit"))
 
         historyController.commitController.content = [workingState] + Array(commits.prefix(3))
+        historyController.commitController.sortDescriptors = []
         historyController.commitController.rearrangeObjects()
         XCTAssertTrue(historyController.value(forKey: "firstCommit") as AnyObject === commits[0])
         historyController.commitController.setSelectedObjects([commits[2]])
@@ -598,11 +615,30 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(menuItems(selector: "menuItemsForRef:", argument: nil))
         XCTAssertEqual(menuItems(selector: "menuItemsForRef:", argument: PBGitRef(string: "refs/stash"))?.count, 0)
         assertMenu(menuItems(selector: "menuItemsForRef:", argument: stash), contains: ["Pop", "Apply", "View Diff", "Drop"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: head), contains: ["Checkout", "Create Branch", "Fetch", "Push"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: feature), contains: ["Checkout", "Merge", "Rebase", "Reset"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: tag), contains: ["View Tag Info", "Push"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: remoteBranch), contains: ["Push Updates", "Fetch", "Pull"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: remote), contains: ["Push Updates", "Fetch", "Pull"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: head), contains: ["Checkout", "Copy Branch Name", "Create Branch", "Fetch", "Push"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: feature), contains: ["Checkout", "Copy Branch Name", "Merge", "Rebase", "Reset"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: tag), contains: ["View Tag Info", "Push"], excludes: ["Copy Branch Name"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: remoteBranch), contains: ["Copy Branch Name", "Push Updates", "Fetch", "Pull"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: remote), contains: ["Push Updates", "Fetch", "Pull"], excludes: ["Copy Branch Name"])
+
+        let featureItems = try XCTUnwrap(menuItems(selector: "menuItemsForRef:", argument: feature))
+        let copyFeatureName = try XCTUnwrap(featureItems.first { $0.title == "Copy Branch Name" })
+        let copyFeatureAction = try XCTUnwrap(copyFeatureName.action)
+        XCTAssertTrue(NSApp.sendAction(copyFeatureAction, to: copyFeatureName.target, from: copyFeatureName))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "feature")
+
+        let remoteBranchItems = try XCTUnwrap(menuItems(selector: "menuItemsForRef:", argument: remoteBranch))
+        let copyRemoteBranchName = try XCTUnwrap(remoteBranchItems.first { $0.title == "Copy Branch Name" })
+        let copyRemoteBranchAction = try XCTUnwrap(copyRemoteBranchName.action)
+        XCTAssertTrue(NSApp.sendAction(copyRemoteBranchAction, to: copyRemoteBranchName.target, from: copyRemoteBranchName))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "origin/main")
+
+        let invalidCopyItem = NSMenuItem(title: "Copy Branch Name", action: copyFeatureAction, keyEquivalent: "")
+        invalidCopyItem.target = copyFeatureName.target
+        invalidCopyItem.representedObject = tag
+        NSPasteboard.general.clearContents()
+        XCTAssertTrue(NSApp.sendAction(copyFeatureAction, to: invalidCopyItem.target, from: invalidCopyItem))
+        XCTAssertNil(NSPasteboard.general.string(forType: .string))
 
         let commits = loadedCommits()
         let headCommit = try XCTUnwrap(commits.first { $0.oid == repository.headOID() })
@@ -715,6 +751,205 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.updateKeys()
         XCTAssertNil(historyController.gitTree)
         XCTAssertTrue(historyController.webCommits.isEmpty)
+    }
+
+    func testHistorySearchModesCharacterizeCurrentWhitespaceAndUnicodeBehavior() throws {
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let arrangedCount = try XCTUnwrap(
+            historyController.commitController.arrangedObjects as? [PBGitCommit]
+        ).count
+        XCTAssertGreaterThanOrEqual(arrangedCount, 3)
+
+        XCTAssertEqual(try searchResultRows(for: "initial", mode: .basic).count, 1)
+        XCTAssertTrue(searchController.hasSearchResults())
+        XCTAssertEqual(searchField.stringValue, "initial")
+        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "1 match")
+
+        let basicWithOuterWhitespace = " \tinitial\n"
+        XCTAssertTrue(try searchResultRows(for: basicWithOuterWhitespace, mode: .basic).isEmpty)
+        XCTAssertFalse(searchController.hasSearchResults())
+        XCTAssertEqual(searchField.stringValue, basicWithOuterWhitespace)
+        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "Not found")
+
+        XCTAssertEqual(
+            try searchResultRows(for: "GitX Tests", mode: .basic).count,
+            arrangedCount
+        )
+        XCTAssertEqual(searchField.stringValue, "GitX Tests")
+        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "\(arrangedCount) matches")
+        historyController.commitList.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        searchController.stepper.selectedSegment = 0
+        searchController.stepperPressed(searchController.stepper)
+        searchController.stepper.selectedSegment = 1
+        searchController.stepperPressed(searchController.stepper)
+
+        let unicodeQuery = "東京 crème"
+        XCTAssertTrue(try searchResultRows(for: unicodeQuery, mode: .basic).isEmpty)
+        XCTAssertEqual(searchField.stringValue, unicodeQuery)
+
+        let pickaxeQuery = " \tsecond\n"
+        XCTAssertEqual(try searchResultRows(for: pickaxeQuery, mode: .pickaxe).count, 1)
+        XCTAssertEqual(searchField.stringValue, pickaxeQuery)
+
+        let regexQuery = "\nseco.*\t"
+        XCTAssertEqual(try searchResultRows(for: regexQuery, mode: .regex).count, 1)
+        XCTAssertEqual(searchField.stringValue, regexQuery)
+
+        let pathQuery = " \nnested/tracked.txt\t"
+        XCTAssertEqual(try searchResultRows(for: pathQuery, mode: .path).count, 2)
+        XCTAssertEqual(searchField.stringValue, pathQuery)
+
+        let rawQuery = "\t--author=GitX\n"
+        XCTAssertEqual(try searchResultRows(for: rawQuery, mode: .raw).count, 2)
+        XCTAssertEqual(searchField.stringValue, rawQuery)
+    }
+
+    func testWhitespaceOnlySearchClearingDiffersBetweenBasicAndGitModes() throws {
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let whitespace = " \t\n"
+
+        XCTAssertTrue(try searchResultRows(for: whitespace, mode: .basic).isEmpty)
+        XCTAssertEqual(searchField.stringValue, whitespace)
+        XCTAssertFalse(searchController.numberOfMatchesField.isHidden)
+        XCTAssertFalse(searchController.stepper.isHidden)
+
+        for mode in [
+            PBHistorySearchMode.pickaxe,
+            .regex,
+            .path,
+            .raw,
+        ] {
+            XCTAssertTrue(try searchResultRows(for: whitespace, mode: mode).isEmpty)
+            XCTAssertEqual(searchField.stringValue, "")
+            XCTAssertTrue(searchController.numberOfMatchesField.isHidden)
+            XCTAssertTrue(searchController.stepper.isHidden)
+        }
+    }
+
+    func testSearchModeMenuSelectionPlaceholderAndPersistence() throws {
+        let defaults = UserDefaults.standard
+        let oldStoredMode = defaults.object(forKey: "PBHistorySearchMode")
+        defer {
+            if let oldStoredMode {
+                defaults.set(oldStoredMode, forKey: "PBHistorySearchMode")
+            } else {
+                defaults.removeObject(forKey: "PBHistorySearchMode")
+            }
+        }
+
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let searchFieldCell = try XCTUnwrap(searchField.cell as? NSSearchFieldCell)
+        let menu = try XCTUnwrap(searchFieldCell.searchMenuTemplate)
+        let expectations: [(PBHistorySearchMode, String)] = [
+            (.basic, "Subject, Author, SHA"),
+            (.pickaxe, "Commit (pickaxe)"),
+            (.regex, "Commit (pickaxe regex)"),
+            (.path, "File path"),
+            (.raw, "Raw"),
+        ]
+
+        for (mode, placeholder) in expectations {
+            let sender = NSButton()
+            sender.tag = mode.rawValue
+            searchController.selectSearchMode(sender)
+
+            XCTAssertEqual(searchController.searchMode, mode)
+            XCTAssertEqual(searchField.placeholderString, placeholder)
+            XCTAssertEqual(defaults.integer(forKey: "PBHistorySearchMode"), mode.rawValue)
+            for (candidate, _) in expectations {
+                XCTAssertEqual(
+                    menu.item(withTag: candidate.rawValue)?.state,
+                    candidate == mode ? .on : .off
+                )
+            }
+        }
+    }
+
+    func testHistorySearchRecentsCharacterizeSubmissionNavigationDedupAndClearing() throws {
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let originalAutosaveName = searchField.recentsAutosaveName
+        let originalRecents = searchField.recentSearches
+        let autosaveName = "GitX History Search Tests \(UUID().uuidString)"
+        defer {
+            searchField.recentSearches = []
+            searchField.recentsAutosaveName = originalAutosaveName
+            searchField.recentSearches = originalRecents
+            UserDefaults.standard.removeObject(forKey: autosaveName)
+        }
+
+        searchField.recentsAutosaveName = autosaveName
+        searchField.recentSearches = []
+
+        searchField.stringValue = "unchanged"
+        searchController.setHistorySearch("", mode: .raw)
+        XCTAssertEqual(searchField.stringValue, "unchanged")
+        XCTAssertTrue(searchField.recentSearches.isEmpty)
+
+        searchController.setHistorySearch("  alpha  ", mode: .basic)
+        searchController.setHistorySearch("beta", mode: .basic)
+        searchController.setHistorySearch("  alpha  ", mode: .basic)
+        XCTAssertEqual(searchField.recentSearches, ["  alpha  ", "beta"])
+
+        searchController.setHistorySearch("   ", mode: .basic)
+        let submittedRecents = ["   ", "  alpha  ", "beta"]
+        XCTAssertEqual(searchField.recentSearches, submittedRecents)
+
+        searchController.clearSearch()
+        XCTAssertEqual(searchField.stringValue, "")
+        XCTAssertEqual(searchField.recentSearches, submittedRecents)
+
+        let restoredField = NSSearchField()
+        restoredField.recentsAutosaveName = autosaveName
+        XCTAssertEqual(restoredField.recentSearches, submittedRecents)
+
+        searchField.recentSearches = []
+        let clearedField = NSSearchField()
+        clearedField.recentsAutosaveName = autosaveName
+        XCTAssertTrue(clearedField.recentSearches.isEmpty)
+
+        searchField.stringValue = "init"
+        searchController.updateSearch(self)
+        searchField.stringValue = "initial"
+        searchController.updateSearch(self)
+        searchController.selectNextResult()
+        XCTAssertTrue(searchField.recentSearches.isEmpty)
+
+        searchField.performClick(self)
+        XCTAssertEqual(searchField.recentSearches, ["initial"])
+    }
+
+    func testHistorySearchPastePreservesFullWhitespaceAndUnicode() throws {
+        let searchField = try XCTUnwrap(historyController.searchController.searchField)
+        let window = try XCTUnwrap(windowController.window)
+        let pasteboard = NSPasteboard.general
+        let originalItems: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        } ?? []
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(originalItems.map { $0 as NSPasteboardWriting })
+        }
+
+        searchField.stringValue = "prefix"
+        XCTAssertTrue(window.makeFirstResponder(searchField))
+        let editor = try XCTUnwrap(searchField.currentEditor() as? NSTextView)
+        editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
+        pasteboard.clearContents()
+        pasteboard.setString("  東京 crème  ", forType: .string)
+        editor.paste(self)
+
+        XCTAssertEqual(editor.string, "prefix  東京 crème  ")
+        XCTAssertEqual(searchField.stringValue, "prefix  東京 crème  ")
     }
 
     func testPathMenuDisablesCommitActionsWithoutSelection() throws {
@@ -917,9 +1152,405 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.previewPanel(nil, handle: previewKeyEvent))
     }
 
+    func testBranchDragSourceMaskNegotiatesMoveOnlyInsideApplication() throws {
+        let commitListClass = try XCTUnwrap(NSClassFromString("GitX.PBCommitList") as? NSTableView.Type)
+        let commitList = commitListClass.init(frame: .zero)
+        let selector = NSSelectorFromString("branchDragSourceOperationMaskForContext:")
+        let implementation = try XCTUnwrap(commitList.method(for: selector))
+        typealias SourceMaskImplementation = @convention(c) (
+            AnyObject,
+            Selector,
+            NSDraggingContext
+        ) -> NSDragOperation
+        // swift6-safety-justification: The Objective-C entry point accepts exactly one NSDraggingContext enum argument.
+        let sourceMask = unsafeBitCast(implementation, to: SourceMaskImplementation.self)
+
+        XCTAssertEqual(
+            sourceMask(commitList, selector, .withinApplication),
+            .move
+        )
+        XCTAssertEqual(
+            sourceMask(commitList, selector, .outsideApplication),
+            []
+        )
+    }
+
+    func testBranchLabelDragPayloadAndEligibility() throws {
+        repository.reloadRefs()
+        let commits = loadedCommits()
+        historyController.commitController.content = commits
+        historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+
+        let table = CommitListFake()
+        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SubjectColumn")))
+        table.testColumn = 0
+        let tableCoordinator = self.tableCoordinator
+        let originalCommitList = historyController.commitList
+        historyController.setValue(table, forKey: "commitList")
+        defer { historyController.setValue(originalCommitList, forKey: "commitList") }
+
+        func writeDrag(for ref: PBGitRef) throws -> (Bool, NSPasteboard, Int, Int) {
+            let row = try XCTUnwrap(arranged.firstIndex { commit in
+                commit.refs.compactMap { $0 as? PBGitRef }.contains { $0.isEqual(to: ref) }
+            })
+            let referenceIndex = try XCTUnwrap(
+                arranged[row].refs.compactMap { $0 as? PBGitRef }.firstIndex { $0.isEqual(to: ref) }
+            )
+            table.testRow = row
+            table.revisionCell.referenceIndex = Int32(referenceIndex)
+            let pasteboard = freshPasteboard()
+            let didWrite = tableCoordinator.tableView(
+                table,
+                writeRowsWith: IndexSet(integer: row),
+                to: pasteboard
+            )
+            return (didWrite, pasteboard, row, referenceIndex)
+        }
+
+        let feature = try XCTUnwrap(repository.ref(forName: "feature"))
+        let (didWriteFeature, featurePasteboard, featureRow, _) = try writeDrag(for: feature)
+        XCTAssertTrue(didWriteFeature)
+        let featureData = try XCTUnwrap(
+            featurePasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef"))
+        )
+        let payload = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: featureData, format: nil) as? [String: Any]
+        )
+        XCTAssertEqual(payload["version"] as? Int, 1)
+        XCTAssertEqual(payload["referenceName"] as? String, "refs/heads/feature")
+        XCTAssertEqual(payload["sourceSHA"] as? String, arranged[featureRow].sha)
+
+        let ineligibleReferences = try [
+            XCTUnwrap(repository.headRef()?.ref()),
+            XCTUnwrap(repository.ref(forName: "v1")),
+            XCTUnwrap(repository.ref(forName: "origin/main")),
+        ]
+        for ref in ineligibleReferences {
+            let (didWrite, pasteboard, _, _) = try writeDrag(for: ref)
+            XCTAssertFalse(didWrite)
+            XCTAssertNil(pasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef")))
+        }
+
+        table.testRow = arranged.count
+        table.revisionCell.referenceIndex = 0
+        let outOfRangePasteboard = freshPasteboard()
+        XCTAssertFalse(tableCoordinator.tableView(
+            table,
+            writeRowsWith: IndexSet(integer: arranged.count),
+            to: outOfRangePasteboard
+        ))
+        XCTAssertNil(outOfRangePasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef")))
+    }
+
+    func testBranchMoveSurvivesCommitAndReferenceReordering() throws {
+        let drag = try branchDragFixture()
+        drag.sourceCommit.refs.insert(PBGitRef(string: "refs/tags/reordered-label"), at: 0)
+        historyController.commitController.sortDescriptors = [
+            NSSortDescriptor(key: "SHA", ascending: false),
+        ]
+        historyController.commitController.rearrangeObjects()
+        let reordered = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let destinationRow = try XCTUnwrap(reordered.firstIndex { $0.sha == drag.destinationCommit.sha })
+        let info = DraggingInfoFake(pasteboard: drag.pasteboard)
+
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: info,
+                proposedRow: destinationRow,
+                proposedDropOperation: .on
+            ),
+            .move
+        )
+        XCTAssertTrue(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: info,
+            row: destinationRow,
+            dropOperation: .on
+        ))
+        XCTAssertTrue(
+            drag.destinationCommit.refs.compactMap { $0 as? PBGitRef }
+                .contains { $0.ref == "refs/heads/feature" }
+        )
+    }
+
+    func testBranchMoveRejectsStaleReference() throws {
+        let drag = try branchDragFixture()
+        try fixture.git(["update-ref", "refs/heads/feature", drag.destinationCommit.sha])
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+                proposedRow: drag.destinationRow,
+                proposedDropOperation: .on
+            ),
+            []
+        )
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+    }
+
+    func testBranchMoveRejectsSourceThatBecameCheckedOutAfterDragStarted() throws {
+        let checkedOutDrag = try branchDragFixture()
+        try fixture.git(["checkout", "--quiet", "feature"])
+        XCTAssertFalse(tableCoordinator.tableView(
+            checkedOutDrag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: checkedOutDrag.pasteboard),
+            row: checkedOutDrag.destinationRow,
+            dropOperation: .on
+        ))
+        XCTAssertEqual(
+            try XCTUnwrap(windowController as? HistoryWindowController).confirmationCount,
+            0
+        )
+    }
+
+    func testBranchMoveRejectsCopyOnlyMalformedLegacyAndWorkingStateDrops() throws {
+        let drag = try branchDragFixture()
+        let copyOnlyInfo = DraggingInfoFake(pasteboard: drag.pasteboard)
+        copyOnlyInfo.draggingSourceOperationMask = .copy
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: copyOnlyInfo,
+                proposedRow: drag.destinationRow,
+                proposedDropOperation: .on
+            ),
+            []
+        )
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: copyOnlyInfo,
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+
+        for malformedData in try [
+            PropertyListSerialization.data(
+                fromPropertyList: [-1, -1],
+                format: .binary,
+                options: 0
+            ),
+            Data("not a property list".utf8),
+            branchPayloadData(
+                referenceName: "refs/remotes/origin/main",
+                sourceSHA: drag.sourceCommit.sha
+            ),
+            branchPayloadData(
+                referenceName: "refs/heads/feature",
+                sourceSHA: "-1"
+            ),
+        ] {
+            let malformedPasteboard = freshPasteboard()
+            malformedPasteboard.setData(
+                malformedData,
+                forType: NSPasteboard.PasteboardType("PBGitRef")
+            )
+            let malformedInfo = DraggingInfoFake(pasteboard: malformedPasteboard)
+            XCTAssertEqual(
+                tableCoordinator.tableView(
+                    drag.table,
+                    validateDrop: malformedInfo,
+                    proposedRow: drag.destinationRow,
+                    proposedDropOperation: .on
+                ),
+                []
+            )
+            XCTAssertFalse(tableCoordinator.tableView(
+                drag.table,
+                acceptDrop: malformedInfo,
+                row: drag.destinationRow,
+                dropOperation: .on
+            ))
+        }
+
+        let workingState = PBUncommittedChanges(repository: repository)
+        historyController.commitController.content = [drag.sourceCommit, workingState]
+        historyController.commitController.sortDescriptors = []
+        historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let workingStateRow = try XCTUnwrap(arranged.firstIndex { $0 is PBUncommittedChanges })
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+                proposedRow: workingStateRow,
+                proposedDropOperation: .on
+            ),
+            []
+        )
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: workingStateRow,
+            dropOperation: .on
+        ))
+    }
+
+    func testBranchMoveRejectsSameCommitAtDifferentRow() throws {
+        let drag = try branchDragFixture()
+        let duplicate = PBGitCommit(repository: repository, andCommit: drag.sourceCommit.gtCommit)
+        historyController.commitController.content = [drag.sourceCommit, duplicate]
+        historyController.commitController.sortDescriptors = []
+        historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let duplicateRow = try XCTUnwrap(arranged.firstIndex { $0 === duplicate })
+        XCTAssertNotEqual(duplicateRow, drag.sourceRow)
+        XCTAssertEqual(duplicate.sha, drag.sourceCommit.sha)
+
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+                proposedRow: duplicateRow,
+                proposedDropOperation: .on
+            ),
+            []
+        )
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: duplicateRow,
+            dropOperation: .on
+        ))
+    }
+
+    func testBranchMoveCancellationLeavesReferenceUnchanged() throws {
+        let drag = try branchDragFixture()
+        let historyWindowController = try XCTUnwrap(windowController as? HistoryWindowController)
+        historyWindowController.automaticallyConfirms = false
+
+        XCTAssertTrue(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+        XCTAssertEqual(historyWindowController.confirmationCount, 1)
+        XCTAssertTrue(
+            drag.sourceCommit.refs.compactMap { $0 as? PBGitRef }
+                .contains { $0.ref == "refs/heads/feature" }
+        )
+        XCTAssertFalse(
+            drag.destinationCommit.refs.compactMap { $0 as? PBGitRef }
+                .contains { $0.ref == "refs/heads/feature" }
+        )
+        XCTAssertEqual(repository.ref(forName: "feature")?.ref, "refs/heads/feature")
+    }
+
     private func loadedCommits() -> [PBGitCommit] {
         waitForHistory()
         return repository.revisionList?.commits.compactMap { $0 as? PBGitCommit } ?? []
+    }
+
+    private func searchResultRows(
+        for query: String,
+        mode: PBHistorySearchMode,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> IndexSet {
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField, file: file, line: line)
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.repository.revisionList?.isUpdating != true
+            },
+            "Revision loading did not settle before history search",
+            file: file,
+            line: line
+        )
+        searchController.searchMode = mode
+        searchField.stringValue = query
+        searchController.updateSearch(self)
+
+        if mode != .basic {
+            XCTAssertTrue(
+                waitForCondition {
+                    searchController.value(forKey: "backgroundSearchTask") == nil
+                },
+                "Background history search did not finish",
+                file: file,
+                line: line
+            )
+        }
+
+        let count = try XCTUnwrap(
+            historyController.commitController.arrangedObjects as? [PBGitCommit],
+            file: file,
+            line: line
+        ).count
+        return IndexSet((0 ..< count).filter {
+            searchController.isRow(inSearchResults: $0)
+        })
+    }
+
+    private struct BranchDragFixture {
+        let table: CommitListFake
+        let sourceCommit: PBGitCommit
+        let destinationCommit: PBGitCommit
+        let sourceRow: Int
+        let destinationRow: Int
+        let pasteboard: NSPasteboard
+    }
+
+    private func branchDragFixture() throws -> BranchDragFixture {
+        repository.reloadRefs()
+        let commits = loadedCommits()
+        let feature = try XCTUnwrap(repository.ref(forName: "feature"))
+        let sourceCommit = try XCTUnwrap(commits.first { commit in
+            commit.refs.compactMap { $0 as? PBGitRef }.contains { $0.ref == feature.ref }
+        })
+        let destinationCommit = try XCTUnwrap(commits.first { $0.sha != sourceCommit.sha })
+        historyController.commitController.content = [sourceCommit, destinationCommit]
+        historyController.commitController.sortDescriptors = []
+        historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let sourceRow = try XCTUnwrap(arranged.firstIndex { $0 === sourceCommit })
+        let destinationRow = try XCTUnwrap(arranged.firstIndex { $0 === destinationCommit })
+        let referenceIndex = try XCTUnwrap(
+            sourceCommit.refs.compactMap { $0 as? PBGitRef }.firstIndex { $0.ref == feature.ref }
+        )
+
+        let table = CommitListFake()
+        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SubjectColumn")))
+        table.testColumn = 0
+        table.testRow = sourceRow
+        table.revisionCell.referenceIndex = Int32(referenceIndex)
+        let pasteboard = freshPasteboard()
+        XCTAssertTrue(tableCoordinator.tableView(
+            table,
+            writeRowsWith: IndexSet(integer: sourceRow),
+            to: pasteboard
+        ))
+        return BranchDragFixture(
+            table: table,
+            sourceCommit: sourceCommit,
+            destinationCommit: destinationCommit,
+            sourceRow: sourceRow,
+            destinationRow: destinationRow,
+            pasteboard: pasteboard
+        )
+    }
+
+    private func branchPayloadData(
+        referenceName: String,
+        sourceSHA: String,
+        version: Int = 1
+    ) throws -> Data {
+        try PropertyListSerialization.data(
+            fromPropertyList: [
+                "version": version,
+                "referenceName": referenceName,
+                "sourceSHA": sourceSHA,
+            ],
+            format: .binary,
+            options: 0
+        )
     }
 
     private func flattenedTree(_ root: PBGitTree) -> [PBGitTree] {
@@ -1026,12 +1657,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     private func assertMenu(
         _ items: [NSMenuItem]?,
         contains fragments: [String],
+        excludes excludedFragments: [String] = [],
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let titles = items?.map(\.title) ?? []
         for fragment in fragments {
             XCTAssertTrue(titles.contains { $0.contains(fragment) }, "Missing \(fragment) in \(titles)", file: file, line: line)
+        }
+        for fragment in excludedFragments {
+            XCTAssertFalse(titles.contains { $0.contains(fragment) }, "Unexpected \(fragment) in \(titles)", file: file, line: line)
         }
         XCTAssertTrue(items?.allSatisfy { $0.isSeparatorItem || $0.representedObject != nil } == true, file: file, line: line)
     }

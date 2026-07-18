@@ -19,6 +19,7 @@ NSString *PBGitIndexFinishedIndexRefresh = @"PBGitIndexFinishedIndexRefresh";
 NSString *PBGitIndexIndexUpdated = @"PBGitIndexIndexUpdated";
 
 NSString *PBGitIndexCommitStatus = @"PBGitIndexCommitStatus";
+NSString *PBGitIndexCommitOutput = @"PBGitIndexCommitOutput";
 NSString *PBGitIndexCommitFailed = @"PBGitIndexCommitFailed";
 NSString *PBGitIndexCommitHookFailed = @"PBGitIndexCommitHookFailed";
 NSString *PBGitIndexFinishedCommit = @"PBGitIndexFinishedCommit";
@@ -41,6 +42,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (retain) PBIndexSnapshotReducer *snapshotReducer;
 @property (retain) PBIndexMutationService *mutationService;
 @property (retain) PBIndexCommitService *commitService;
+@property (retain) PBIndexCommitCoordinator *commitCoordinator;
 @property (retain) PBIndexRefreshCoordinator *refreshCoordinator;
 @end
 
@@ -60,6 +62,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	_snapshotReducer = [[PBIndexSnapshotReducer alloc] init];
 	_mutationService = [[PBIndexMutationService alloc] initWithRepository:theRepository];
 	_commitService = [[PBIndexCommitService alloc] initWithRepository:theRepository];
+	_commitCoordinator = [[PBIndexCommitCoordinator alloc] initWithService:_commitService];
 	__weak PBGitIndex *weakSelf = self;
 	_refreshCoordinator = [[PBIndexRefreshCoordinator alloc] initWithRepository:theRepository
 		parser:_statusParser
@@ -259,7 +262,6 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	return message;
 }
 
-// TODO: make Asynchronous
 - (void)commitWithMessage:(NSString *)commitMessage andVerify:(BOOL)doVerify
 {
 	NSError *error = nil;
@@ -287,10 +289,29 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 																	  environment:self.amendEnvironment
 																	   parentSHAs:parentSHAs
 																		  hasHead:[self.repository revisionExists:@"HEAD"]];
-	PBIndexCommitResult *result = [self.commitService commitWithRequest:request
-															   progress:^(NSString *progress) {
-																   [self postCommitUpdate:progress];
-															   }];
+	NSLog(@"[GitX] Scheduling interactive commit orchestration");
+	__weak PBGitIndex *weakSelf = self;
+	[self.commitCoordinator commitWithRequest:request
+								 eventHandler:^(PBIndexCommitEvent *event) {
+									 PBGitIndex *strongSelf = weakSelf;
+									 if (!strongSelf)
+										 return;
+									 NSAssert(NSThread.isMainThread, @"Commit events must be delivered on the main thread");
+									 if ([event isKindOfClass:PBIndexCommitPhaseEvent.class]) {
+										 PBIndexCommitPhaseEvent *phaseEvent = (PBIndexCommitPhaseEvent *)event;
+										 [strongSelf postCommitUpdate:phaseEvent.displayName phase:phaseEvent.phase];
+									 } else if ([event isKindOfClass:PBIndexCommitOutputEvent.class]) {
+										 [strongSelf postCommitOutput:((PBIndexCommitOutputEvent *)event).output];
+									 } else if ([event isKindOfClass:PBIndexCommitCompletionEvent.class]) {
+										 [strongSelf handleCommitResult:((PBIndexCommitCompletionEvent *)event).result];
+									 }
+								 }];
+}
+
+- (void)handleCommitResult:(PBIndexCommitResult *)result
+{
+	NSAssert(NSThread.isMainThread, @"Commit completion must be handled on the main thread");
+	NSLog(@"[GitX] Handling interactive commit completion (kind: %ld)", (long)result.kind);
 	if (result.kind == PBIndexCommitResultKindFailure) {
 		[self postCommitFailure:result.message];
 		return;
@@ -323,9 +344,30 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)postCommitUpdate:(NSString *)update
 {
+	[self postCommitUpdate:update phase:PBIndexCommitPhaseCreatingTree];
+}
+
+- (void)postCommitUpdate:(NSString *)update phase:(PBIndexCommitPhase)phase
+{
 	[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexCommitStatus
 														object:self
-													  userInfo:[NSDictionary dictionaryWithObject:update forKey:@"description"]];
+													  userInfo:@{
+														  @"description" : update,
+														  @"phase" : @(phase),
+													  }];
+}
+
+- (void)postCommitOutput:(NSString *)output
+{
+	if (output.length == 0)
+		return;
+	NSLog(@"[GitX] Posting %lu characters of interactive commit output", (unsigned long)output.length);
+	[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexCommitOutput
+														object:self
+													  userInfo:@{
+														  @"description" : output,
+														  @"output" : output,
+													  }];
 }
 
 - (void)postCommitFailure:(NSString *)reason

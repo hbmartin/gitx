@@ -22,6 +22,8 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 	PBTaskNonZeroExitCodeError = 4,
 };
 
+typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
+
 /// PBTask is a wrapper around NSTask that uses blocks to report when the
 /// executable exits, and should be used whenever we need to shell out to git.
 @interface PBTask : NSObject
@@ -33,7 +35,7 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 /// @param arguments  The arguments to pass to the executable. Can be nil.
 /// @param directory  The directory to use as the executable working directory. Can be nil.
 ///
-+ (instancetype)taskWithLaunchPath:(NSString *)launchPath arguments:(nullable NSArray *)arguments inDirectory:(nullable NSString *)directory;
++ (instancetype)taskWithLaunchPath:(NSString *)launchPath arguments:(nullable NSArray<NSString *> *)arguments inDirectory:(nullable NSString *)directory;
 
 ///
 /// Execute a task.
@@ -52,6 +54,12 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 ///
 - (void)performTaskOnQueue:(dispatch_queue_t)queue completionHandler:(void (^)(NSData *__nullable readData, NSError *__nullable error))completionHandler;
 
+/// Execute a task, reporting each raw output chunk before completion.
+- (void)performTaskOnQueue:(dispatch_queue_t)queue
+		outputChunkHandler:(nullable PBTaskOutputChunkHandler)outputChunkHandler
+		 completionHandler:(void (^)(NSData *_Nullable readData, NSError *_Nullable error))completionHandler
+	NS_SWIFT_NAME(perform(on:outputChunkHandler:completionHandler:));
+
 /// Execute a task synchronously
 ///
 /// This method will block until the task exits, or a timeout occurs (30s by default).
@@ -60,15 +68,20 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 ///
 /// @return YES if the command execution was successful, no otherwise
 ///
-- (BOOL)launchTask:(NSError **)error;
+- (BOOL)launchTask:(NSError *_Nullable *_Nullable)error;
+
+/// Execute a task synchronously, reporting each raw output chunk before completion.
+- (BOOL)launchTaskWithOutputChunkHandler:(nullable PBTaskOutputChunkHandler)outputChunkHandler
+								   error:(NSError *_Nullable *_Nullable)error
+	NS_SWIFT_NAME(launch(outputChunkHandler:));
 
 /// The standard output of the command
 @property (readonly, retain) NSData *standardOutputData;
 /// Maximum synchronous execution time in seconds. Defaults to 30; values at or below zero disable the timeout.
 @property NSTimeInterval timeout;
 /// Set this if you want to pass data to the command on its standard input
-@property (retain) NSData *standardInputData;
-@property (retain) NSDictionary *additionalEnvironment;
+@property (nullable, retain) NSData *standardInputData;
+@property (nullable, retain) NSDictionary<NSString *, id> *additionalEnvironment;
 
 - (void)terminate;
 
@@ -98,7 +111,7 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 ///
 /// @see -[PBTask outputForCommand:arguments:inDirectory:error]
 ///
-+ (nullable NSString *)outputForCommand:(NSString *)launchPath arguments:(nullable NSArray *)arguments error:(NSError **)error;
++ (nullable NSString *)outputForCommand:(NSString *)launchPath arguments:(nullable NSArray<NSString *> *)arguments error:(NSError *_Nullable *_Nullable)error;
 
 
 /// Execute a command, only caring for its output
@@ -110,7 +123,7 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 /// @return The data outputted by the command as a string, nil in case of failure.
 /// Hint: We only try to convert from UTF-8 data, so that might fail.
 ///
-+ (nullable NSString *)outputForCommand:(NSString *)launchPath arguments:(nullable NSArray *)arguments inDirectory:(nullable NSString *)directory error:(NSError **)error;
++ (nullable NSString *)outputForCommand:(NSString *)launchPath arguments:(nullable NSArray<NSString *> *)arguments inDirectory:(nullable NSString *)directory error:(NSError *_Nullable *_Nullable)error;
 
 /// Directly launch a task with a completion handler
 ///
@@ -120,7 +133,7 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 /// @param completionHandler A block that will be called when the executable exits.
 ///							 If readData is nil, it means an error occurred.
 ///
-+ (void)launchTask:(NSString *)launchPath arguments:(nullable NSArray *)arguments inDirectory:(nullable NSString *)directory completionHandler:(void (^)(NSData *__nullable readData, NSError *__nullable error))completionHandler;
++ (void)launchTask:(NSString *)launchPath arguments:(nullable NSArray<NSString *> *)arguments inDirectory:(nullable NSString *)directory completionHandler:(void (^)(NSData *__nullable readData, NSError *__nullable error))completionHandler;
 
 /// Return the standard output data as a string
 ///

@@ -62,7 +62,13 @@ final class HistoryMenuBuilder: NSObject {
         var items: [NSMenuItem] = []
 
         if !remoteOnly {
-            items += [item("Checkout “\(refName)”", action: #selector(PBGitWindowController.checkout(_:)), enabled: !isHead), .separator()]
+            items.append(item("Checkout “\(refName)”", action: #selector(PBGitWindowController.checkout(_:)), enabled: !isHead))
+            if ref.isBranch || ref.isRemoteBranch {
+                let copyBranchName = item("Copy Branch Name", action: #selector(copyBranchName(_:)))
+                copyBranchName.target = self
+                items.append(copyBranchName)
+            }
+            items.append(.separator())
             let branchTitle = ref.isRemoteBranch ? "Create Branch tracking “\(refName)”…" : "Create Branch…"
             items += [item(branchTitle, action: #selector(PBGitWindowController.createBranch(_:))), item("Create Tag…", action: #selector(PBGitWindowController.createTag(_:)))]
             if ref.isTag {
@@ -108,6 +114,22 @@ final class HistoryMenuBuilder: NSObject {
         }
         items.filter { $0.representedObject == nil }.forEach { $0.representedObject = ref }
         return items
+    }
+
+    @objc(copyBranchName:)
+    private func copyBranchName(_ sender: NSMenuItem) {
+        guard let ref = sender.representedObject as? PBGitRef,
+              ref.isBranch || ref.isRemoteBranch
+        else {
+            logger.error("Ignoring Copy Branch Name without an eligible branch reference")
+            return
+        }
+
+        let branchName = ref.shortName()
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(branchName, forType: .string)
+        logger.debug("Copied branch name to the pasteboard")
     }
 
     private func stashItems(_ ref: PBGitRef) -> [NSMenuItem] {

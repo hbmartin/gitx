@@ -20,7 +20,15 @@
     override func draggingSession(_ session: NSDraggingSession,
                                   sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation
     {
+        if session.draggingPasteboard.data(forType: .gitXBranchReference) != nil {
+            return branchDragSourceOperationMask(for: context)
+        }
         return .copy
+    }
+
+    @objc(branchDragSourceOperationMaskForContext:)
+    func branchDragSourceOperationMask(for context: NSDraggingContext) -> NSDragOperation {
+        context == .withinApplication ? .move : []
     }
 
     // TODO: dragImageForRowsWithIndexes is deprecated in modern macOS

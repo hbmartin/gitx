@@ -16,6 +16,7 @@
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
+#import "PBGitRevList.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitSidebarController.h"
 #import "PBGitStash.h"
@@ -37,6 +38,34 @@
 - (NSSet<GTOID *> *)baseCommits;
 @end
 
+@interface PBGitIndex (GitXCoreTests)
+- (void)postCommitUpdate:(NSString *)update;
+- (void)postCommitOutput:(NSString *)output;
+@end
+
+@interface PBGitRepository (GitXCoreHookTests)
+- (NSString *)pathForHook:(NSString *)name;
+@end
+
+@interface GitXRepositoryWithoutConfiguration : PBGitRepository
+@property (nonatomic) BOOL hidesGitRepository;
+@property (nullable, nonatomic, copy) NSURL *retainedGitURL;
+@end
+
+@implementation GitXRepositoryWithoutConfiguration
+
+- (GTRepository *)gtRepo
+{
+	return self.hidesGitRepository ? nil : super.gtRepo;
+}
+
+- (NSURL *)gitURL
+{
+	return self.hidesGitRepository ? self.retainedGitURL : super.gitURL;
+}
+
+@end
+
 @interface PBGitTree (GitXCoreTests)
 - (BOOL)hasBinaryHeader:(nullable NSString *)contents;
 - (BOOL)hasBinaryAttributes;
@@ -44,6 +73,7 @@
 
 @interface PBGitSidebarController (GitXCoreTests)
 - (PBSourceViewItem *)addRevSpec:(PBGitRevSpecifier *)rev;
+- (void)repositorySettingsDidChange:(NSNotification *)notification;
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldEditTableColumn:(nullable NSTableColumn *)tableColumn item:(id)item;
 - (BOOL)outlineView:(NSOutlineView *)outlineView shouldSelectItem:(id)item;
 @end
@@ -54,8 +84,12 @@
 
 - (nullable instancetype)initWithError:(NSError **)error;
 - (nullable NSString *)git:(NSArray<NSString *> *)arguments error:(NSError **)error;
+- (nullable NSString *)git:(NSArray<NSString *> *)arguments
+			   environment:(NSDictionary<NSString *, NSString *> *)environment
+					 error:(NSError **)error;
 - (BOOL)writeText:(NSString *)text toPath:(NSString *)relativePath error:(NSError **)error;
 - (BOOL)commitAllWithMessage:(NSString *)message error:(NSError **)error;
+- (BOOL)commitAllWithMessage:(NSString *)message date:(NSString *)date error:(NSError **)error;
 
 @end
 
@@ -88,6 +122,16 @@
 	return [PBTask outputForCommand:PBGitBinary.path arguments:arguments inDirectory:self.path error:error];
 }
 
+- (nullable NSString *)git:(NSArray<NSString *> *)arguments
+			   environment:(NSDictionary<NSString *, NSString *> *)environment
+					 error:(NSError **)error
+{
+	PBTask *task = [PBTask taskWithLaunchPath:PBGitBinary.path arguments:arguments inDirectory:self.path];
+	task.additionalEnvironment = environment;
+	if (![task launchTask:error]) return nil;
+	return task.standardOutputString;
+}
+
 - (BOOL)writeText:(NSString *)text toPath:(NSString *)relativePath error:(NSError **)error
 {
 	NSString *absolutePath = [self.path stringByAppendingPathComponent:relativePath];
@@ -102,6 +146,18 @@
 	return [self git:@[ @"add", @"--all" ] error:error] != nil &&
 		[self git:@[ @"commit", @"--quiet", @"-m", message ]
 			error:error] != nil;
+}
+
+- (BOOL)commitAllWithMessage:(NSString *)message date:(NSString *)date error:(NSError **)error
+{
+	NSDictionary<NSString *, NSString *> *environment = @{
+		@"GIT_AUTHOR_DATE" : date,
+		@"GIT_COMMITTER_DATE" : date,
+	};
+	return [self git:@[ @"add", @"--all" ] error:error] != nil &&
+		[self git:@[ @"commit", @"--quiet", @"-m", message ]
+			environment:environment
+				  error:error] != nil;
 }
 
 @end
@@ -344,6 +400,40 @@
 
 @implementation GitXRepositoryIntegrationTests
 
+- (NSArray<PBGitCommit *> *)loadCommitsForRevision:(PBGitRevSpecifier *)revision
+{
+	PBGitRevList *revisionList = [[PBGitRevList alloc] initWithRepository:self.repository rev:revision shouldGraph:NO];
+	XCTestExpectation *completion = [self expectationWithDescription:[NSString stringWithFormat:@"loaded %@", revision.description]];
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[completion fulfill];
+	}];
+	[self waitForExpectations:@[ completion ] timeout:10.0];
+	XCTAssertFalse(revisionList.isParsing);
+	NSArray<PBGitCommit *> *commits = [revisionList.commits copy] ?: @[];
+	[revisionList cancel];
+	return commits;
+}
+
+- (void)assertCommitsAreUniqueAndChildrenPrecedeParents:(NSArray<PBGitCommit *> *)commits
+{
+	NSMutableDictionary<NSString *, NSNumber *> *indexesBySHA = [NSMutableDictionary dictionaryWithCapacity:commits.count];
+	[commits enumerateObjectsUsingBlock:^(PBGitCommit *commit, NSUInteger index, __unused BOOL *stop) {
+		XCTAssertNil(indexesBySHA[commit.SHA], @"Revision list published %@ more than once", commit.SHA);
+		indexesBySHA[commit.SHA] = @(index);
+	}];
+	XCTAssertEqual(indexesBySHA.count, commits.count);
+
+	[commits enumerateObjectsUsingBlock:^(PBGitCommit *commit, NSUInteger childIndex, __unused BOOL *stop) {
+		for (GTOID *parent in commit.parents) {
+			NSNumber *parentIndex = indexesBySHA[parent.SHA];
+			XCTAssertNotNil(parentIndex, @"The full history should contain parent %@ of %@", parent.SHA, commit.SHA);
+			if (parentIndex)
+				XCTAssertLessThan(childIndex, parentIndex.unsignedIntegerValue,
+								  @"Child %@ must precede parent %@", commit.subject, parent.SHA);
+		}
+	}];
+}
+
 - (void)testRepositoryDiscoversHeadAndReferences
 {
 	XCTAssertFalse(self.repository.isBareRepository);
@@ -474,6 +564,30 @@
 	} @finally {
 		[PBGitDefaults setShowStageView:previousShowStageView];
 		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
+	}
+}
+
+- (void)testSidebarSettingsReloadPreservesAUsableSelection
+{
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
+	(void)sidebar.view;
+	BOOL previousShowStageView = PBGitDefaults.showStageView;
+	@try {
+		[PBGitDefaults setShowStageView:NO];
+		[sidebar selectCurrentBranch];
+		[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
+																		   object:self.repository]];
+
+		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
+
+		[PBGitDefaults setShowStageView:YES];
+		[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
+																		   object:self.repository]];
+
+		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
+	} @finally {
+		[PBGitDefaults setShowStageView:previousShowStageView];
+		[sidebar closeView];
 	}
 }
 
@@ -659,6 +773,101 @@
 	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
 }
 
+- (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured
+{
+	NSError *error = nil;
+	NSString *groupingKey = @"PBHistoryGroupIncomingBranchCommits";
+	id previousGrouping = [[NSUserDefaults standardUserDefaults] objectForKey:groupingKey];
+	[self addTeardownBlock:^{
+		if (previousGrouping)
+			[[NSUserDefaults standardUserDefaults] setObject:previousGrouping forKey:groupingKey];
+		else
+			[[NSUserDefaults standardUserDefaults] removeObjectForKey:groupingKey];
+	}];
+	NSDictionary<NSString *, NSString *> *baseDate = @{
+		@"GIT_AUTHOR_DATE" : @"2030-01-01T12:00:00Z",
+		@"GIT_COMMITTER_DATE" : @"2030-01-01T12:00:00Z",
+	};
+	XCTAssertNotNil(([self.fixture git:@[ @"commit", @"--quiet", @"--amend", @"--no-edit" ]
+						   environment:baseDate
+								 error:&error]),
+					@"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"branch", @"topic" ] error:&error]), @"%@", error);
+
+	XCTAssertTrue([self.fixture writeText:@"main one\n" toPath:@"main.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"main-1" date:@"2030-01-05T12:00:00Z" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"main two\n" toPath:@"main.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"main-2" date:@"2030-01-04T12:00:00Z" error:&error], @"%@", error);
+
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"topic" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"topic one\n" toPath:@"topic.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"topic-1" date:@"2030-01-03T12:00:00Z" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"topic two\n" toPath:@"topic.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"topic-2" date:@"2030-01-02T12:00:00Z" error:&error], @"%@", error);
+
+	XCTAssertNotNil(([self.fixture git:@[ @"checkout", @"--quiet", @"main" ] error:&error]), @"%@", error);
+	NSDictionary<NSString *, NSString *> *mergeDate = @{
+		@"GIT_AUTHOR_DATE" : @"2030-01-06T12:00:00Z",
+		@"GIT_COMMITTER_DATE" : @"2030-01-06T12:00:00Z",
+	};
+	XCTAssertNotNil(([self.fixture git:@[ @"merge", @"--quiet", @"--no-ff", @"topic", @"-m", @"merge topic" ]
+						   environment:mergeDate
+								 error:&error]),
+					@"%@", error);
+
+	[self.repository reloadRefs];
+	[[NSUserDefaults standardUserDefaults] setBool:YES forKey:groupingKey];
+	NSArray<PBGitCommit *> *grouped =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]];
+	XCTAssertEqualObjects([grouped valueForKey:@"subject"],
+						  (@[ @"merge topic", @"topic-2", @"topic-1", @"main-2", @"main-1", @"initial commit" ]));
+	[self assertCommitsAreUniqueAndChildrenPrecedeParents:grouped];
+
+	[[NSUserDefaults standardUserDefaults] setBool:NO forKey:groupingKey];
+	NSArray<PBGitCommit *> *dateOrdered =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]];
+	XCTAssertEqualObjects([dateOrdered valueForKey:@"subject"],
+						  (@[ @"merge topic", @"main-2", @"main-1", @"topic-2", @"topic-1", @"initial commit" ]));
+	[self assertCommitsAreUniqueAndChildrenPrecedeParents:dateOrdered];
+}
+
+- (void)testRevisionListHandlesSimpleAllRangeMissingAndInvalidSpecifications
+{
+	NSError *error = nil;
+	XCTAssertTrue([self.fixture writeText:@"second\n" toPath:@"second.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"second commit" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"third\n" toPath:@"third.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"third commit" error:&error], @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"tag", @"revision-list-tag", @"HEAD^" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/origin/main", @"HEAD" ] error:&error]), @"%@", error);
+	[self.repository reloadRefs];
+
+	NSArray<PBGitCommit *> *simple =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]];
+	XCTAssertEqualObjects([simple valueForKey:@"subject"],
+						  (@[ @"third commit", @"second commit", @"initial commit" ]));
+
+	NSArray<PBGitCommit *> *all = [self loadCommitsForRevision:PBGitRevSpecifier.allBranchesRevSpec];
+	XCTAssertEqual(all.count, (NSUInteger)3);
+	[self assertCommitsAreUniqueAndChildrenPrecedeParents:all];
+
+	NSArray<PBGitCommit *> *range =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~2..HEAD" ]]];
+	XCTAssertEqualObjects([range valueForKey:@"subject"], (@[ @"third commit", @"second commit" ]));
+
+	NSArray<PBGitCommit *> *complexObject =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~1" ]]];
+	XCTAssertEqualObjects([complexObject valueForKey:@"subject"], (@[ @"second commit", @"initial commit" ]));
+
+	NSArray<PBGitCommit *> *missing =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"refs/heads/missing" ]]];
+	XCTAssertEqual(missing.count, (NSUInteger)0);
+
+	NSArray<PBGitCommit *> *invalid =
+		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"missing..also-missing" ]]];
+	XCTAssertEqual(invalid.count, (NSUInteger)0);
+}
+
 - (void)testNormalHistoryLoadPublishesEveryCommitOnce
 {
 	NSError *error = nil;
@@ -762,11 +971,32 @@
 	XCTAssertTrue([taskError.userInfo[PBTaskTerminationOutputKey] containsString:marker]);
 	XCTAssertTrue([hookError.localizedFailureReason containsString:marker]);
 
+	NSString *silentHook = @"#!/bin/sh\nexit 24\n";
+	XCTAssertTrue([self.fixture writeText:silentHook toPath:@".githooks/gitx-silent" error:&error], @"%@", error);
+	NSString *silentHookPath = [self.fixture.path stringByAppendingPathComponent:@".githooks/gitx-silent"];
+	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:attributes ofItemAtPath:silentHookPath error:&error], @"%@", error);
+	NSError *silentHookError = nil;
+	XCTAssertFalse([self.repository executeHook:@"gitx-silent" error:&silentHookError]);
+	XCTAssertEqualObjects(silentHookError.localizedFailureReason, @"The gitx-silent hook reported an error.");
+	NSError *silentTaskError = silentHookError.userInfo[NSUnderlyingErrorKey];
+	XCTAssertEqualObjects(silentTaskError.userInfo[PBTaskTerminationStatusKey], @24);
+	XCTAssertEqualObjects(silentTaskError.userInfo[PBTaskTerminationOutputKey], @"");
+
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"core.hooksPath", @"/dev/null" ] error:&error]), @"%@", error);
 	XCTAssertFalse([self.repository hookExists:@"pre-commit"]);
 	NSError *disabledHookError = nil;
 	XCTAssertTrue([self.repository executeHook:@"pre-commit" error:&disabledHookError]);
 	XCTAssertNil(disabledHookError);
+
+	GitXRepositoryWithoutConfiguration *repositoryWithoutConfiguration =
+		[[GitXRepositoryWithoutConfiguration alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path]
+														  error:&error];
+	XCTAssertNotNil(repositoryWithoutConfiguration, @"%@", error);
+	repositoryWithoutConfiguration.retainedGitURL = repositoryWithoutConfiguration.gitURL;
+	repositoryWithoutConfiguration.hidesGitRepository = YES;
+	XCTAssertEqualObjects(
+		[repositoryWithoutConfiguration pathForHook:@"pre-commit"],
+		[repositoryWithoutConfiguration.gitURL.path stringByAppendingPathComponent:@"hooks/pre-commit"]);
 }
 
 - (void)testHeadCommitAncestryAndBranchFilterBoundaries
@@ -1135,6 +1365,35 @@
 	XCTAssertEqualObjects(message, @"prepared message");
 }
 
+- (void)testLegacyCommitPhaseAndEmptyOutputNotifications
+{
+	__block NSNotification *statusNotification = nil;
+	__block NSUInteger outputNotificationCount = 0;
+	id statusToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitStatus
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					statusNotification = notification;
+				}];
+	id outputToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitOutput
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(__unused NSNotification *notification) {
+					outputNotificationCount += 1;
+				}];
+
+	[self.repository.index postCommitUpdate:@"Creating tree"];
+	[self.repository.index postCommitOutput:@""];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:statusToken];
+	[[NSNotificationCenter defaultCenter] removeObserver:outputToken];
+	XCTAssertEqualObjects(statusNotification.userInfo[@"description"], @"Creating tree");
+	XCTAssertEqualObjects(statusNotification.userInfo[@"phase"], @0);
+	XCTAssertEqual(outputNotificationCount, (NSUInteger)0);
+}
+
 - (void)testPrepareCommitMessageFailurePublishesHookOutput
 {
 	NSError *error = nil;
@@ -1181,31 +1440,81 @@
 	[self stageTrackedText:@"verified contents\n" error:&error];
 	NSString *markerPath = [self.fixture.path stringByAppendingPathComponent:@"hook-order.txt"];
 	[self installHookNamed:@"pre-commit"
-				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'pre\\n' >> '%@'\n", markerPath]
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'pre output\\n'\nprintf 'pre\\n' >> '%@'\n", markerPath]
 					 error:&error];
 	[self installHookNamed:@"commit-msg"
-				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'message:%%s\\n' \"$(head -n 1 \"$1\")\" >> '%@'\n", markerPath]
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'message output\\n'\nprintf 'message:%%s\\n' \"$(head -n 1 \"$1\")\" >> '%@'\n", markerPath]
 					 error:&error];
 	[self installHookNamed:@"post-commit"
-				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'post\\n' >> '%@'\n", markerPath]
+				  contents:[NSString stringWithFormat:@"#!/bin/sh\nprintf 'post output\\n'\nprintf 'post\\n' >> '%@'\n", markerPath]
 					 error:&error];
 	__block NSNotification *finished = nil;
-	id token = [[NSNotificationCenter defaultCenter]
+	__block NSMutableString *streamedOutput = [NSMutableString string];
+	__block NSUInteger eventSequence = 0;
+	__block NSUInteger lastOutputSequence = 0;
+	__block NSUInteger completionSequence = 0;
+	XCTestExpectation *finishedExpectation = [self expectationWithDescription:@"verified commit finished"];
+	id finishedToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexFinishedCommit
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
+					completionSequence = ++eventSequence;
+					finished = notification;
+					[finishedExpectation fulfill];
+				}];
+	id outputToken = [[NSNotificationCenter defaultCenter]
+		addObserverForName:PBGitIndexCommitOutput
+					object:self.repository.index
+					 queue:nil
+				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
+					lastOutputSequence = ++eventSequence;
+					[streamedOutput appendString:notification.userInfo[@"output"]];
+				}];
+
+	[self.repository.index commitWithMessage:@"verified subject\nbody" andVerify:YES];
+	[self waitForExpectations:@[ finishedExpectation ] timeout:10];
+
+	[[NSNotificationCenter defaultCenter] removeObserver:finishedToken];
+	[[NSNotificationCenter defaultCenter] removeObserver:outputToken];
+	NSString *message = [self.fixture git:@[ @"show", @"-s", @"--format=%B", @"HEAD" ] error:&error];
+	NSString *hookOrder = [NSString stringWithContentsOfFile:markerPath encoding:NSUTF8StringEncoding error:&error];
+	XCTAssertEqualObjects(message, @"verified subject\nbody\n");
+	XCTAssertEqualObjects(hookOrder, @"pre\nmessage:verified subject\npost\n");
+	XCTAssertEqualObjects(streamedOutput, @"pre output\nmessage output\npost output\n");
+	XCTAssertLessThan(lastOutputSequence, completionSequence);
+	XCTAssertEqualObjects(finished.userInfo[@"success"], @YES);
+	XCTAssertEqual([finished.userInfo[@"sha"] length], 40);
+}
+
+- (void)testPostCommitHookFailurePublishesCompletedCommitWithoutRefreshing
+{
+	NSError *error = nil;
+	[self stageTrackedText:@"post hook failure contents\n" error:&error];
+	[self installHookNamed:@"post-commit"
+				  contents:@"#!/bin/sh\nprintf 'post-commit denied\\n' >&2\nexit 25\n"
+					 error:&error];
+	__block NSNotification *finished = nil;
+	XCTestExpectation *finishedExpectation = [self expectationWithDescription:@"commit completion after post hook failure"];
+	id finishedToken = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexFinishedCommit
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
 					finished = notification;
+					[finishedExpectation fulfill];
 				}];
 
-	[self.repository.index commitWithMessage:@"verified subject\nbody" andVerify:YES];
+	[self.repository.index commitWithMessage:@"post hook failure" andVerify:NO];
+	[self waitForExpectations:@[ finishedExpectation ] timeout:10];
 
-	[[NSNotificationCenter defaultCenter] removeObserver:token];
-	NSString *message = [self.fixture git:@[ @"show", @"-s", @"--format=%B", @"HEAD" ] error:&error];
-	NSString *hookOrder = [NSString stringWithContentsOfFile:markerPath encoding:NSUTF8StringEncoding error:&error];
-	XCTAssertEqualObjects(message, @"verified subject\nbody\n");
-	XCTAssertEqualObjects(hookOrder, @"pre\nmessage:verified subject\npost\n");
-	XCTAssertEqualObjects(finished.userInfo[@"success"], @YES);
+	[[NSNotificationCenter defaultCenter] removeObserver:finishedToken];
+	NSString *message = [self.fixture git:@[ @"show", @"-s", @"--format=%s", @"HEAD" ] error:&error];
+	XCTAssertEqualObjects(message, @"post hook failure\n");
+	XCTAssertEqualObjects(finished.userInfo[@"success"], @NO);
+	XCTAssertTrue([finished.userInfo[@"description"] containsString:@"Post-commit hook failed"]);
 	XCTAssertEqual([finished.userInfo[@"sha"] length], 40);
 }
 
@@ -1219,15 +1528,19 @@
 	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	__block NSNotification *failure = nil;
+	XCTestExpectation *failureExpectation = [self expectationWithDescription:@"pre-commit failure"];
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitHookFailed
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
 					failure = notification;
+					[failureExpectation fulfill];
 				}];
 
 	[self.repository.index commitWithMessage:@"blocked commit" andVerify:YES];
+	[self waitForExpectations:@[ failureExpectation ] timeout:10];
 
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
 	NSString *currentHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
@@ -1246,15 +1559,19 @@
 	NSString *originalHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	__block NSNotification *failure = nil;
+	XCTestExpectation *failureExpectation = [self expectationWithDescription:@"commit-msg failure"];
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitHookFailed
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
 					failure = notification;
+					[failureExpectation fulfill];
 				}];
 
 	[self.repository.index commitWithMessage:@"blocked message" andVerify:YES];
+	[self waitForExpectations:@[ failureExpectation ] timeout:10];
 
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
 	NSString *currentHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
@@ -1270,15 +1587,19 @@
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"commit.gpgSign", @"true" ] error:&error]), @"%@", error);
 	XCTAssertNotNil(([self.fixture git:@[ @"config", @"gpg.program", @"gitx-missing-gpg" ] error:&error]), @"%@", error);
 	__block NSNotification *failure = nil;
+	XCTestExpectation *failureExpectation = [self expectationWithDescription:@"signing failure"];
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitFailed
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
 					failure = notification;
+					[failureExpectation fulfill];
 				}];
 
 	[self.repository.index commitWithMessage:@"signed commit" andVerify:NO];
+	[self waitForExpectations:@[ failureExpectation ] timeout:10];
 
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
 	XCTAssertEqualObjects(failure.userInfo[@"description"], @"Could not create a commit object");
@@ -1293,15 +1614,19 @@
 	NSString *lockPath = [self.fixture.path stringByAppendingPathComponent:@".git/refs/heads/main.lock"];
 	XCTAssertTrue([NSData.data writeToFile:lockPath options:NSDataWritingAtomic error:&error], @"%@", error);
 	__block NSNotification *failure = nil;
+	XCTestExpectation *failureExpectation = [self expectationWithDescription:@"ref update failure"];
 	id token = [[NSNotificationCenter defaultCenter]
 		addObserverForName:PBGitIndexCommitFailed
 					object:self.repository.index
 					 queue:nil
 				usingBlock:^(NSNotification *notification) {
+					XCTAssertTrue(NSThread.isMainThread);
 					failure = notification;
+					[failureExpectation fulfill];
 				}];
 
 	[self.repository.index commitWithMessage:@"locked ref commit" andVerify:NO];
+	[self waitForExpectations:@[ failureExpectation ] timeout:10];
 
 	[[NSNotificationCenter defaultCenter] removeObserver:token];
 	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
@@ -1525,7 +1850,11 @@
 	[self refreshIndexAfterPerforming:^{
 		self.repository.index.amend = YES;
 	}];
+	XCTestExpectation *finishedExpectation = [self expectationForNotification:PBGitIndexFinishedCommit
+																	   object:self.repository.index
+																	  handler:nil];
 	[self.repository.index commitWithMessage:@"amended ordinary commit" andVerify:NO];
+	[self waitForExpectations:@[ finishedExpectation ] timeout:10];
 
 	NSString *amendedHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
@@ -1560,7 +1889,11 @@
 	[self refreshIndexAfterPerforming:^{
 		self.repository.index.amend = YES;
 	}];
+	XCTestExpectation *finishedExpectation = [self expectationForNotification:PBGitIndexFinishedCommit
+																	   object:self.repository.index
+																	  handler:nil];
 	[self.repository.index commitWithMessage:@"amended merge commit" andVerify:NO];
+	[self waitForExpectations:@[ finishedExpectation ] timeout:10];
 
 	NSString *amendedHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];

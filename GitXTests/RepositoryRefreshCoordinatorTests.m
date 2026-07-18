@@ -219,6 +219,37 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 	[self waitForExpectations:@[ notification ] timeout:0.2];
 }
 
+- (void)testWatcherCallbackReportsGitDirectoryRootEventsDeterministically
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	PBGitRepositoryWatcherCallbackContext *context =
+		[[PBGitRepositoryWatcherCallbackContext alloc] initWithWatcher:watcher];
+	NSString *gitDirectoryPath = [watcher valueForKey:@"gitDir"];
+	NSArray<NSString *> *eventPaths = @[ gitDirectoryPath ];
+	FSEventStreamEventFlags eventFlags[] = {kFSEventStreamEventFlagRootChanged};
+	FSEventStreamEventId eventIds[] = {2};
+	XCTestExpectation *notification =
+		[self expectationForNotification:PBGitRepositoryEventNotification
+								  object:self.repository
+								 handler:^BOOL(NSNotification *note) {
+									 NSUInteger eventType =
+										 [note.userInfo[kPBGitRepositoryEventTypeUserInfoKey] unsignedIntegerValue];
+									 NSArray<NSString *> *paths = note.userInfo[kPBGitRepositoryEventPathsUserInfoKey];
+									 XCTAssertNotEqual(eventType & PBGitRepositoryWatcherEventTypeGitDirectory, (NSUInteger)0);
+									 XCTAssertTrue([paths containsObject:gitDirectoryPath]);
+									 return YES;
+								 }];
+
+	PBGitRepositoryWatcherCallback(NULL,
+								   (__bridge void *)context,
+								   eventPaths.count,
+								   (__bridge void *)eventPaths,
+								   eventFlags,
+								   eventIds);
+
+	[self waitForExpectations:@[ notification ] timeout:2.0];
+}
+
 - (void)testLinkedWorktreeWatcherOpensStatusRepositoryFromWorktree
 {
 	NSURL *worktreeURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()

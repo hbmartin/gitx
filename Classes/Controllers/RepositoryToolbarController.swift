@@ -252,7 +252,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         spinner.widthAnchor.constraint(equalToConstant: 14).isActive = true
 
         let label = NSTextField(labelWithString: "Ready")
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.font = .preferredFont(forTextStyle: .caption1, options: [:])
         label.lineBreakMode = .byTruncatingTail
         label.widthAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
         label.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true

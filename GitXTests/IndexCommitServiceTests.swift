@@ -34,12 +34,36 @@ final class IndexCommitServiceTests: XCTestCase {
             let arguments: [String]
         }
 
-        var handlers: [String: ([String]) throws -> Void] = [:]
+        typealias Handler = ([String], (Data) -> Void) throws -> Void
+
+        var handlers: [String: Handler] = [:]
         private(set) var calls: [Call] = []
 
-        func executeHook(_ name: String, arguments: [String]) throws {
+        func executeHook(
+            _ name: String,
+            arguments: [String],
+            outputHandler: @escaping (Data) -> Void
+        ) throws {
             calls.append(Call(name: name, arguments: arguments))
-            try handlers[name]?(arguments)
+            try handlers[name]?(arguments, outputHandler)
+        }
+    }
+
+    // swift6-safety-justification: `lock` protects every access to the recorded cross-queue event array.
+    private final class EventRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storedEvents: [PBIndexCommitEvent] = []
+
+        var events: [PBIndexCommitEvent] {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedEvents
+        }
+
+        func append(_ event: PBIndexCommitEvent) {
+            lock.lock()
+            storedEvents.append(event)
+            lock.unlock()
         }
     }
 
@@ -67,7 +91,7 @@ final class IndexCommitServiceTests: XCTestCase {
     func testPrepareCommitMessageRunsHookTrimsOneNewlineAndCleansTemporaryFile() throws {
         let runner = CommandRunnerFake()
         let hooks = HookRunnerFake()
-        hooks.handlers["prepare-commit-msg"] = { arguments in
+        hooks.handlers["prepare-commit-msg"] = { arguments, _ in
             try "prepared\n\n".write(toFile: arguments[0], atomically: true, encoding: .utf8)
         }
         let service = makeService(runner: runner, hooks: hooks)
@@ -88,7 +112,7 @@ final class IndexCommitServiceTests: XCTestCase {
     func testPrepareAmendSeedsMessageAndPassesCommitSourceAndSHA() throws {
         let runner = CommandRunnerFake()
         let hooks = HookRunnerFake()
-        hooks.handlers["prepare-commit-msg"] = { arguments in
+        hooks.handlers["prepare-commit-msg"] = { arguments, _ in
             XCTAssertEqual(try String(contentsOfFile: arguments[0], encoding: .utf8), "old message")
             try "amended".write(toFile: arguments[0], atomically: true, encoding: .utf8)
         }
@@ -110,7 +134,7 @@ final class IndexCommitServiceTests: XCTestCase {
     func testPrepareHookFailureIncludesTaskOutputAndCleansTemporaryFile() throws {
         let runner = CommandRunnerFake()
         let hooks = HookRunnerFake()
-        hooks.handlers["prepare-commit-msg"] = { _ in throw self.hookError(output: "prepare denied") }
+        hooks.handlers["prepare-commit-msg"] = { _, _ in throw self.hookError(output: "prepare denied") }
         let service = makeService(runner: runner, hooks: hooks)
         XCTAssertThrowsError(
             try service.prepareCommitMessage(
@@ -130,7 +154,7 @@ final class IndexCommitServiceTests: XCTestCase {
         let runner = CommandRunnerFake()
         runner.results = [.success("\(tree)\n"), .success("\(commit)\n"), .success("")]
         let hooks = HookRunnerFake()
-        hooks.handlers["commit-msg"] = { arguments in
+        hooks.handlers["commit-msg"] = { arguments, _ in
             try "edited by hook".write(toFile: arguments[0], atomically: true, encoding: .utf8)
         }
         let service = makeService(runner: runner, hooks: hooks)
@@ -163,7 +187,7 @@ final class IndexCommitServiceTests: XCTestCase {
         let runner = CommandRunnerFake()
         runner.results = [.success(tree), .success(commit), .success("")]
         let hooks = HookRunnerFake()
-        hooks.handlers["post-commit"] = { _ in throw self.hookError() }
+        hooks.handlers["post-commit"] = { _, _ in throw self.hookError() }
         let service = makeService(runner: runner, hooks: hooks)
 
         let result = service.commit(
@@ -216,7 +240,7 @@ final class IndexCommitServiceTests: XCTestCase {
         let preRunner = CommandRunnerFake()
         preRunner.results = [.success(tree)]
         let preHooks = HookRunnerFake()
-        preHooks.handlers["pre-commit"] = { _ in throw self.hookError(output: "pre denied") }
+        preHooks.handlers["pre-commit"] = { _, _ in throw self.hookError(output: "pre denied") }
         let preResult = makeService(runner: preRunner, hooks: preHooks).commit(
             with: request(verify: true),
             progress: { _ in }
@@ -225,7 +249,7 @@ final class IndexCommitServiceTests: XCTestCase {
         let messageRunner = CommandRunnerFake()
         messageRunner.results = [.success(tree)]
         let messageHooks = HookRunnerFake()
-        messageHooks.handlers["commit-msg"] = { _ in throw self.hookError() }
+        messageHooks.handlers["commit-msg"] = { _, _ in throw self.hookError() }
         let messageResult = makeService(runner: messageRunner, hooks: messageHooks).commit(
             with: request(verify: true),
             progress: { _ in }
@@ -293,6 +317,118 @@ final class IndexCommitServiceTests: XCTestCase {
         XCTAssertTrue(hooks.calls.isEmpty)
     }
 
+    func testTypedEventsStreamSplitUTF8HookOutputInOrder() {
+        let tree = String(repeating: "b", count: 40)
+        let commit = String(repeating: "c", count: 40)
+        let runner = CommandRunnerFake()
+        runner.results = [.success(tree), .success(commit), .success("")]
+        let hooks = HookRunnerFake()
+        hooks.handlers["pre-commit"] = { _, output in
+            output(Data("pre ".utf8))
+            output(Data([0xE2]))
+            output(Data([0x82, 0xAC, 0x0A]))
+        }
+        hooks.handlers["commit-msg"] = { _, output in
+            output(Data("message\n".utf8))
+        }
+        hooks.handlers["post-commit"] = { _, output in
+            output(Data("post\n".utf8))
+        }
+        let recorder = EventRecorder()
+
+        let result = makeService(runner: runner, hooks: hooks).commit(
+            with: request(verify: true, hasHead: true),
+            eventHandler: recorder.append
+        )
+
+        XCTAssertEqual(result.kind, .success)
+        XCTAssertEqual(
+            eventDescriptions(recorder.events),
+            [
+                "phase:\(PBIndexCommitPhase.creatingTree.rawValue)",
+                "phase:\(PBIndexCommitPhase.creatingCommit.rawValue)",
+                "phase:\(PBIndexCommitPhase.runningPreCommitHook.rawValue)",
+                "output:pre ",
+                "output:€\n",
+                "phase:\(PBIndexCommitPhase.runningCommitMessageHook.rawValue)",
+                "output:message\n",
+                "phase:\(PBIndexCommitPhase.updatingHead.rawValue)",
+                "phase:\(PBIndexCommitPhase.runningPostCommitHook.rawValue)",
+                "output:post\n",
+                "completion:\(PBIndexCommitResultKind.success.rawValue)",
+            ]
+        )
+    }
+
+    func testHookFailureStreamsOutputBeforeDetailedCompletion() {
+        let tree = String(repeating: "d", count: 40)
+        let runner = CommandRunnerFake()
+        runner.results = [.success(tree)]
+        let hooks = HookRunnerFake()
+        hooks.handlers["pre-commit"] = { _, output in
+            output(Data("pre denied\n".utf8))
+            throw self.hookError(output: "pre denied\n")
+        }
+        let recorder = EventRecorder()
+
+        let result = makeService(runner: runner, hooks: hooks).commit(
+            with: request(verify: true),
+            eventHandler: recorder.append
+        )
+
+        XCTAssertEqual(result.kind, .hookFailure)
+        XCTAssertEqual(result.message, "Pre-commit hook failed:\npre denied\n")
+        XCTAssertEqual(
+            eventDescriptions(recorder.events).suffix(2),
+            [
+                "output:pre denied\n",
+                "completion:\(PBIndexCommitResultKind.hookFailure.rawValue)",
+            ]
+        )
+    }
+
+    func testCoordinatorReturnsImmediatelyAndDeliversFIFOEventsOnMainThread() {
+        let tree = String(repeating: "e", count: 40)
+        let commit = String(repeating: "f", count: 40)
+        let runner = CommandRunnerFake()
+        runner.results = [.success(tree), .success(commit), .success("")]
+        let hookStarted = DispatchSemaphore(value: 0)
+        let releaseHook = DispatchSemaphore(value: 0)
+        let hooks = HookRunnerFake()
+        hooks.handlers["pre-commit"] = { _, output in
+            hookStarted.signal()
+            XCTAssertEqual(releaseHook.wait(timeout: .now() + 5), .success)
+            output(Data("released\n".utf8))
+        }
+        let service = makeService(runner: runner, hooks: hooks)
+        let coordinator = PBIndexCommitCoordinator(service: service)
+        let completion = expectation(description: "coordinator completion")
+        let mainQueueHeartbeat = expectation(description: "main queue remains responsive")
+        let recorder = EventRecorder()
+
+        coordinator.commit(with: request(verify: true), eventHandler: { event in
+            XCTAssertTrue(Thread.isMainThread)
+            recorder.append(event)
+            if event is PBIndexCommitCompletionEvent {
+                completion.fulfill()
+            }
+        })
+
+        XCTAssertEqual(hookStarted.wait(timeout: .now() + 5), .success)
+        DispatchQueue.main.async {
+            mainQueueHeartbeat.fulfill()
+        }
+        wait(for: [mainQueueHeartbeat], timeout: 2)
+        releaseHook.signal()
+        wait(for: [completion], timeout: 5)
+        let descriptions = eventDescriptions(recorder.events)
+        XCTAssertEqual(descriptions.last, "completion:\(PBIndexCommitResultKind.success.rawValue)")
+        XCTAssertLessThan(
+            try XCTUnwrap(descriptions.firstIndex(of: "output:released\n")),
+            try XCTUnwrap(descriptions.firstIndex(of: "completion:\(PBIndexCommitResultKind.success.rawValue)"))
+        )
+    }
+
     private func makeService(
         runner: CommandRunnerFake,
         hooks: HookRunnerFake
@@ -336,5 +472,20 @@ final class IndexCommitServiceTests: XCTestCase {
             code: 1,
             userInfo: [NSUnderlyingErrorKey: taskError]
         )
+    }
+
+    private func eventDescriptions(_ events: [PBIndexCommitEvent]) -> [String] {
+        events.map { event in
+            if let phase = event as? PBIndexCommitPhaseEvent {
+                return "phase:\(phase.phase.rawValue)"
+            }
+            if let output = event as? PBIndexCommitOutputEvent {
+                return "output:\(output.output)"
+            }
+            if let completion = event as? PBIndexCommitCompletionEvent {
+                return "completion:\(completion.result.kind.rawValue)"
+            }
+            return "unknown"
+        }
     }
 }

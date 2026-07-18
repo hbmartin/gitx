@@ -721,7 +721,8 @@ final class GitXSwiftFeatureTests: XCTestCase {
     func testApplicationSettingsRoundTripAndPaneActions() throws {
         let keys = [
             "PBOpenDisposition", "PBWindowRestorePolicy", "PBHistoryChangedFilesOnly",
-            "PBHistoryChangedFilesSort", "PBBranchSortMode", "PBDiffLayout",
+            "PBHistoryChangedFilesSort", "PBHistoryGroupIncomingBranchCommits",
+            "PBBranchSortMode", "PBDiffLayout",
             "PBDiffAlgorithm", "PBDiffContextLines", "PBSyntaxTheme", "PBDiffFontName",
             "PBDiffFontSize", "PBDiffAddedTextColor", "PBDiffRemovedTextColor",
             "PBDiffAddedBackgroundColor", "PBDiffRemovedBackgroundColor",
@@ -732,10 +733,13 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let restorers = keys.map { preservePersistentDefault(forKey: $0) }
         defer { restorers.reversed().forEach { $0() } }
 
+        UserDefaults.standard.removeObject(forKey: "PBHistoryGroupIncomingBranchCommits")
+        XCTAssertTrue(PBApplicationSettings.groupIncomingBranchCommits)
         PBApplicationSettings.openDisposition = .preferTab
         PBApplicationSettings.restorePolicy = .never
         PBApplicationSettings.changedFilesOnly = false
         PBApplicationSettings.changedFilesSort = .status
+        PBApplicationSettings.groupIncomingBranchCommits = false
         PBApplicationSettings.branchSort = .recentCommit
         PBApplicationSettings.diffLayout = .unified
         PBApplicationSettings.diffAlgorithm = .histogram
@@ -758,6 +762,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(PBApplicationSettings.restorePolicy, .never)
         XCTAssertFalse(PBApplicationSettings.changedFilesOnly)
         XCTAssertEqual(PBApplicationSettings.changedFilesSort, .status)
+        XCTAssertFalse(PBApplicationSettings.groupIncomingBranchCommits)
         XCTAssertEqual(PBApplicationSettings.branchSort, .recentCommit)
         XCTAssertEqual(PBApplicationSettings.diffLayout, .unified)
         XCTAssertEqual(PBApplicationSettings.diffAlgorithm, .histogram)
@@ -785,11 +790,24 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let windows = PBSettingsViewFactory.windowsView()
         let diff = PBSettingsViewFactory.diffAndTextView()
         let terminal = PBSettingsViewFactory.terminalView()
+        let traversalNotification = expectation(description: "history traversal setting changed")
+        traversalNotification.assertForOverFulfill = true
+        let traversalToken = NotificationCenter.default.addObserver(
+            forName: Notification.Name("PBHistoryTraversalSettingsDidChangeNotification"),
+            object: nil,
+            queue: nil
+        ) { _ in
+            traversalNotification.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(traversalToken) }
         try triggerSettingsAction("changedOnlyChanged:", in: general) {
             ($0 as? NSButton)?.state = .on
         }
         try triggerSettingsAction("changedFilesSortChanged:", in: general) {
             ($0 as? NSPopUpButton)?.selectItem(withTag: PBChangedFilesSortMode.gitOrder.rawValue)
+        }
+        try triggerSettingsAction("groupIncomingBranchCommitsChanged:", in: general) {
+            ($0 as? NSButton)?.state = .on
         }
         try triggerSettingsAction("branchSortChanged:", in: general) {
             ($0 as? NSPopUpButton)?.selectItem(withTag: PBBranchSortMode.alphabetical.rawValue)
@@ -833,6 +851,8 @@ final class GitXSwiftFeatureTests: XCTestCase {
 
         XCTAssertTrue(PBApplicationSettings.changedFilesOnly)
         XCTAssertEqual(PBApplicationSettings.changedFilesSort, .gitOrder)
+        XCTAssertTrue(PBApplicationSettings.groupIncomingBranchCommits)
+        wait(for: [traversalNotification], timeout: 0.1)
         XCTAssertEqual(PBApplicationSettings.branchSort, .alphabetical)
         XCTAssertEqual(PBApplicationSettings.openDisposition, .alwaysNewWindow)
         XCTAssertEqual(PBApplicationSettings.restorePolicy, .always)

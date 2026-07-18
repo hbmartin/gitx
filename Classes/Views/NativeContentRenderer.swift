@@ -56,13 +56,45 @@ private nonisolated enum NativeLinkAction {
 }
 
 private nonisolated struct NativeRenderingSupport {
+    let typography: NativeContentTypography
     let baseAttributes: [NSAttributedString.Key: Any]
     let titleAttributes: [NSAttributedString.Key: Any]
+
+    init(
+        baseAttributes: [NSAttributedString.Key: Any],
+        titleAttributes: [NSAttributedString.Key: Any]
+    ) {
+        let suppliedFont = baseAttributes[.font] as? NSFont ??
+            NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        typography = NativeContentTypography(
+            fontName: suppliedFont.fontName,
+            baseSize: suppliedFont.pointSize
+        )
+        self.baseAttributes = typography.attributes(
+            for: .body,
+            merging: baseAttributes
+        )
+        self.titleAttributes = typography.attributes(
+            for: .title,
+            merging: titleAttributes
+        )
+    }
+
+    func attributes(
+        for role: NativeContentTypographyRole,
+        merging attributes: [NSAttributedString.Key: Any] = [:]
+    ) -> [NSAttributedString.Key: Any] {
+        typography.attributes(for: role, merging: attributes)
+    }
+
+    func styledBody(_ attributedString: NSAttributedString) -> NSAttributedString {
+        typography.styledString(attributedString, role: .body)
+    }
 
     func appendSectionTitle(_ title: String, to result: NSMutableAttributedString) {
         guard !title.isEmpty else { return }
         if result.length > 0 {
-            result.append(NSAttributedString(string: "\n\n"))
+            result.append(NSAttributedString(string: "\n\n", attributes: baseAttributes))
         }
         result.append(NSAttributedString(string: title + "\n", attributes: titleAttributes))
     }
@@ -78,12 +110,11 @@ private nonisolated struct NativeRenderingSupport {
         linkPayloads[url.absoluteString] = action.payload
         result.append(NSAttributedString(
             string: title,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+            attributes: attributes(for: .link, merging: [
                 .link: url,
                 .foregroundColor: NSColor.linkColor,
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
-            ]
+            ])
         ))
         return url
     }
@@ -117,10 +148,10 @@ final nonisolated class NativeTextRenderer: NSObject {
         let rendered = NSMutableAttributedString(string: "")
         for section in sections {
             support.appendSectionTitle(section.displayTitle, to: rendered)
-            rendered.append(PBHighlighting.highlightedString(
+            rendered.append(support.styledBody(PBHighlighting.highlightedString(
                 forText: section.text,
                 path: section.highlightingPath
-            ))
+            )))
         }
         return NativeRenderResult(attributedString: rendered)
     }
@@ -158,14 +189,15 @@ final nonisolated class NativeTextRenderer: NSObject {
                 let gutter = "\(shortSHA)  \(author) │ "
                 rendered.append(NSAttributedString(
                     string: gutter,
-                    attributes: [
-                        .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
+                    attributes: support.attributes(for: .blameGutter, merging: [
                         .foregroundColor: NSColor.secondaryLabelColor,
                         .backgroundColor: NSColor.controlBackgroundColor,
-                    ]
+                    ])
                 ))
                 let range = NSRange(location: codeLocation, length: (line as NSString).length)
-                rendered.append(highlighted.attributedSubstring(from: range))
+                rendered.append(support.styledBody(
+                    highlighted.attributedSubstring(from: range)
+                ))
                 codeLocation += range.length
             }
         }
@@ -188,10 +220,9 @@ final nonisolated class NativeTextRenderer: NSObject {
                 let date = entry["date"] as? String ?? ""
                 rendered.append(NSAttributedString(
                     string: "\(author)  •  \(date)  •  ",
-                    attributes: [
-                        .font: NSFont.systemFont(ofSize: 11),
+                    attributes: support.attributes(for: .metadata, merging: [
                         .foregroundColor: NSColor.secondaryLabelColor,
-                    ]
+                    ])
                 ))
                 let sha = entry["sha"] as? String ?? ""
                 let shortSHA = (sha as NSString).length > 12
@@ -203,7 +234,10 @@ final nonisolated class NativeTextRenderer: NSObject {
                     linkPayloads: &linkPayloads,
                     to: rendered
                 )
-                rendered.append(NSAttributedString(string: "\n\n"))
+                rendered.append(NSAttributedString(
+                    string: "\n\n",
+                    attributes: support.baseAttributes
+                ))
             }
         }
         return NativeRenderResult(attributedString: rendered, linkPayloads: linkPayloads)
@@ -298,7 +332,10 @@ final nonisolated class NativeDiffRenderer: NSObject {
             if section.text.isEmpty {
                 rendered.append(NSAttributedString(
                     string: "There are no differences.\n",
-                    attributes: [.foregroundColor: NSColor.secondaryLabelColor]
+                    attributes: support.attributes(
+                        for: .metadata,
+                        merging: [.foregroundColor: NSColor.secondaryLabelColor]
+                    )
                 ))
             } else {
                 renderDiffText(
@@ -566,11 +603,10 @@ final nonisolated class NativeDiffRenderer: NSObject {
     ) {
         rendered.append(NSAttributedString(
             string: "──────────────────────── Before ────────────────────────┬──────────────────────── After ─────────────────────────\n",
-            attributes: [
-                .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold),
+            attributes: support.attributes(for: .sideHeader, merging: [
                 .foregroundColor: NSColor.secondaryLabelColor,
                 .backgroundColor: NSColor.controlBackgroundColor,
-            ]
+            ])
         ))
         let rows = pairedRowIndexes(hunk.lines)
         for (leftIndex, rightIndex) in rows {
@@ -591,10 +627,9 @@ final nonisolated class NativeDiffRenderer: NSObject {
             rendered.append(leftRendered)
             rendered.append(NSAttributedString(
                 string: " │ ",
-                attributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                attributes: support.attributes(for: .sideSeparator, merging: [
                     .foregroundColor: NSColor.separatorColor,
-                ]
+                ])
             ))
             rendered.append(rightRendered)
             rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
@@ -708,13 +743,17 @@ final nonisolated class NativeDiffRenderer: NSObject {
 
         var highlights: [Int: NSAttributedString] = [:]
         if !oldRanges.isEmpty {
-            let highlighted = PBHighlighting.highlightedString(forText: oldText as String, path: path)
+            let highlighted = support.styledBody(
+                PBHighlighting.highlightedString(forText: oldText as String, path: path)
+            )
             for (index, range) in oldRanges where NSMaxRange(range) <= highlighted.length {
                 highlights[index] = highlighted.attributedSubstring(from: range)
             }
         }
         if !newRanges.isEmpty {
-            let highlighted = PBHighlighting.highlightedString(forText: newText as String, path: path)
+            let highlighted = support.styledBody(
+                PBHighlighting.highlightedString(forText: newText as String, path: path)
+            )
             for (index, range) in newRanges where NSMaxRange(range) <= highlighted.length {
                 highlights[index] = highlighted.attributedSubstring(from: range)
             }

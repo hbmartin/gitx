@@ -1,4 +1,5 @@
 import AppKit
+import GitXCore
 
 // Objective-C controller wiring calls these policies through GitX-Swift.h.
 // swiftlint:disable unused_declaration
@@ -20,9 +21,7 @@ final nonisolated class CommitRemotePresentation: NSObject {
 final nonisolated class CommitRemotePresentationPolicy: NSObject {
     @objc(sortedRemoteNames:)
     static func sortedRemoteNames(_ remoteNames: [String]) -> [String] {
-        remoteNames.sorted { left, right in
-            left.localizedCaseInsensitiveCompare(right) == .orderedAscending
-        }
+        GitXCore.CommitRemotePresentationPolicy.sortedRemoteNames(remoteNames)
     }
 
     @objc(shouldResolveTrackingRemoteForRemoteNames:previousSelection:isBranch:)
@@ -31,7 +30,11 @@ final nonisolated class CommitRemotePresentationPolicy: NSObject {
         previousSelection: String?,
         isBranch: Bool
     ) -> Bool {
-        isBranch && !remoteNames.isEmpty && !remoteNames.contains(previousSelection ?? "")
+        GitXCore.CommitRemotePresentationPolicy.shouldResolveTrackingRemote(
+            remoteNames: remoteNames,
+            previousSelection: previousSelection,
+            isBranch: isBranch
+        )
     }
 
     @objc(presentationForRemoteNames:previousSelection:trackingRemoteName:isBranch:)
@@ -41,25 +44,16 @@ final nonisolated class CommitRemotePresentationPolicy: NSObject {
         trackingRemoteName: String?,
         isBranch: Bool
     ) -> CommitRemotePresentation {
-        guard !remoteNames.isEmpty else {
-            return CommitRemotePresentation(remoteNames: [], selectedRemoteName: nil, canPush: false)
-        }
-
-        let selectedRemoteName: String
-        if let previousSelection, remoteNames.contains(previousSelection) {
-            selectedRemoteName = previousSelection
-        } else if isBranch, let trackingRemoteName, remoteNames.contains(trackingRemoteName) {
-            selectedRemoteName = trackingRemoteName
-        } else if remoteNames.contains("origin") {
-            selectedRemoteName = "origin"
-        } else {
-            selectedRemoteName = remoteNames[0]
-        }
-
-        return CommitRemotePresentation(
+        let presentation = GitXCore.CommitRemotePresentationPolicy.presentation(
             remoteNames: remoteNames,
-            selectedRemoteName: selectedRemoteName,
-            canPush: isBranch
+            previousSelection: previousSelection,
+            trackingRemoteName: trackingRemoteName,
+            isBranch: isBranch
+        )
+        return CommitRemotePresentation(
+            remoteNames: presentation.remoteNames,
+            selectedRemoteName: presentation.selectedRemoteName,
+            canPush: presentation.canPush
         )
     }
 }
@@ -95,25 +89,24 @@ final nonisolated class CommitSubmissionPolicy: NSObject {
         isBranch: Bool,
         remoteName: String?
     ) -> CommitSubmissionPlan {
-        let disposition: CommitSubmissionDisposition
-        if mergeInProgress {
-            disposition = .mergeInProgress
-        } else if stagedCount == 0 {
-            disposition = .noStagedChanges
-        } else if messageLength < 3 {
-            disposition = .messageTooShort
-        } else {
-            disposition = .accepted
+        let plan = GitXCore.CommitSubmissionPolicy.plan(
+            mergeInProgress: mergeInProgress,
+            stagedCount: stagedCount,
+            messageLength: messageLength,
+            pushEnabled: pushEnabled,
+            pushRequested: pushRequested,
+            isBranch: isBranch,
+            remoteName: remoteName
+        )
+        let disposition: CommitSubmissionDisposition = switch plan.disposition {
+        case .accepted: CommitSubmissionDisposition.accepted
+        case .mergeInProgress: .mergeInProgress
+        case .noStagedChanges: .noStagedChanges
+        case .messageTooShort: .messageTooShort
         }
-
-        let shouldArmPendingPush = disposition == .accepted
-            && pushEnabled
-            && pushRequested
-            && isBranch
-            && !(remoteName?.isEmpty ?? true)
         return CommitSubmissionPlan(
             disposition: disposition,
-            shouldArmPendingPush: shouldArmPendingPush
+            shouldArmPendingPush: plan.shouldArmPendingPush
         )
     }
 }

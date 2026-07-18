@@ -17,6 +17,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  core:
+    name: GitXCore hostless tests
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "26.2"
+      - name: Enforce the core dependency boundary
+        run: python3 scripts/check_gitxcore_boundary.py
+      - name: Run hostless core tests
+        run: |
+          swift test \
+            --package-path GitXCore \
+            --scratch-path "$RUNNER_TEMP/GitXCoreBuild" \
+            --enable-code-coverage
+      - name: Enforce core coverage floors
+        run: |
+          CODECOV_PATH=$(swift test \
+            --package-path GitXCore \
+            --scratch-path "$RUNNER_TEMP/GitXCoreBuild" \
+            --show-codecov-path)
+          python3 scripts/check_core_coverage.py "$CODECOV_PATH"
+      - name: Upload core coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: GitXCore-coverage
+          path: ${{ runner.temp }}/GitXCoreBuild/**/codecov/GitXCore.json
+
   static:
     name: static verification
     runs-on: [self-hosted, macOS, ARM64]

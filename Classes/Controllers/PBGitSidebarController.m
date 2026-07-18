@@ -229,29 +229,35 @@
 		if ((item = [it findRev:rev]) != nil)
 			return item;
 
-	if (![rev isSimpleRef]) {
-		item = [PBSourceViewItem itemWithRevSpec:rev];
-		[others addChild:item];
-		return item;
-	}
-
-	NSArray *pathComponents = [[rev simpleRef] componentsSeparatedByString:@"/"];
-	if ([pathComponents count] < 2) {
-		item = [PBSourceViewItem itemWithRevSpec:rev];
-		[branches addChild:item];
-	} else if ([[pathComponents objectAtIndex:1] isEqualToString:@"heads"]) {
-		if (![branchPresentation shouldShowRevision:rev]) return nil;
-		if (branchPresentation.usesRecentSorting) {
+	NSString *simpleReference = [rev isSimpleRef] ? [rev simpleRef] : nil;
+	PBSidebarRevisionPlan *plan = [PBSidebarRevisionPolicy planForSimpleReference:simpleReference
+																 shouldShowBranch:[branchPresentation shouldShowRevision:rev]
+														  usesRecentBranchSorting:branchPresentation.usesRecentSorting];
+	switch (plan.placement) {
+		case PBSidebarRevisionPlacementOther:
 			item = [PBSourceViewItem itemWithRevSpec:rev];
-			item.title = item.ref.shortName;
+			[others addChild:item];
+			return item;
+		case PBSidebarRevisionPlacementBranchRoot:
+			item = [PBSourceViewItem itemWithRevSpec:rev];
+			if ([simpleReference hasPrefix:@"refs/heads/"] && branchPresentation.usesRecentSorting)
+				item.title = item.ref.shortName;
 			[branches addChild:item];
-		} else {
-			[branches addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
-		}
-	} else if ([[rev simpleRef] hasPrefix:@"refs/tags/"])
-		[tags addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
-	else if ([[rev simpleRef] hasPrefix:@"refs/remotes/"])
-		[remotes addRev:rev toPath:[pathComponents subarrayWithRange:NSMakeRange(2, [pathComponents count] - 2)]];
+			break;
+		case PBSidebarRevisionPlacementBranchPath:
+			[branches addRev:rev toPath:plan.path];
+			break;
+		case PBSidebarRevisionPlacementTagPath:
+			[tags addRev:rev toPath:plan.path];
+			break;
+		case PBSidebarRevisionPlacementRemotePath:
+			[remotes addRev:rev toPath:plan.path];
+			break;
+		case PBSidebarRevisionPlacementHidden:
+			return nil;
+		case PBSidebarRevisionPlacementUnsupported:
+			break;
+	}
 	return item ?: [self itemForRev:rev];
 }
 
@@ -406,7 +412,7 @@
 			header = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, outlineView.bounds.size.width, 22)];
 			header.identifier = PBBranchesHeaderCellIdentifier;
 			NSTextField *label = [NSTextField labelWithString:NSLocalizedString(@"BRANCHES", nil)];
-			label.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
+			label.font = [NSFont preferredFontForTextStyle:NSFontTextStyleSubheadline options:@{}];
 			label.translatesAutoresizingMaskIntoConstraints = NO;
 			header.textField = label;
 			[header addSubview:label];
