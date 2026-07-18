@@ -16,6 +16,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         private var fixedRepository: PBGitRepository!
         private(set) var shownErrors: [NSError] = []
         private(set) var confirmationCount = 0
+        var automaticallyConfirms = true
 
         init(repository: PBGitRepository) {
             fixedRepository = repository
@@ -51,7 +52,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             forAction actionBlock: @escaping () -> Void
         ) -> Bool {
             confirmationCount += 1
-            actionBlock()
+            if automaticallyConfirms {
+                actionBlock()
+            }
             return true
         }
     }
@@ -936,28 +939,30 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.previewPanel(nil, handle: previewKeyEvent))
     }
 
-    func testBranchDragSourceMaskCharacterization() throws {
+    func testBranchDragSourceMaskNegotiatesMoveOnlyInsideApplication() throws {
         let commitListClass = try XCTUnwrap(NSClassFromString("GitX.PBCommitList") as? NSTableView.Type)
         let commitList = commitListClass.init(frame: .zero)
-        let sessionObject = NSObject()
-        let selector = NSSelectorFromString("draggingSession:sourceOperationMaskForDraggingContext:")
+        let selector = NSSelectorFromString("branchDragSourceOperationMaskForContext:")
         let implementation = try XCTUnwrap(commitList.method(for: selector))
-        typealias SourceMaskImplementation =
-            @convention(c) (AnyObject, Selector, AnyObject, NSDraggingContext) -> NSDragOperation
-        // swift6-safety-justification: Objective-C object arguments share an ABI, and the override does not inspect the session.
+        typealias SourceMaskImplementation = @convention(c) (
+            AnyObject,
+            Selector,
+            NSDraggingContext
+        ) -> NSDragOperation
+        // swift6-safety-justification: The Objective-C entry point accepts exactly one NSDraggingContext enum argument.
         let sourceMask = unsafeBitCast(implementation, to: SourceMaskImplementation.self)
 
         XCTAssertEqual(
-            sourceMask(commitList, selector, sessionObject, .withinApplication),
-            .copy
+            sourceMask(commitList, selector, .withinApplication),
+            .move
         )
         XCTAssertEqual(
-            sourceMask(commitList, selector, sessionObject, .outsideApplication),
-            .copy
+            sourceMask(commitList, selector, .outsideApplication),
+            []
         )
     }
 
-    func testBranchLabelDragEligibilityCharacterization() throws {
+    func testBranchLabelDragPayloadAndEligibility() throws {
         repository.reloadRefs()
         let commits = loadedCommits()
         historyController.commitController.content = commits
@@ -991,15 +996,17 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
 
         let feature = try XCTUnwrap(repository.ref(forName: "feature"))
-        let (didWriteFeature, featurePasteboard, featureRow, featureIndex) = try writeDrag(for: feature)
+        let (didWriteFeature, featurePasteboard, featureRow, _) = try writeDrag(for: feature)
         XCTAssertTrue(didWriteFeature)
         let featureData = try XCTUnwrap(
             featurePasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef"))
         )
-        let legacyPayload = try XCTUnwrap(
-            PropertyListSerialization.propertyList(from: featureData, format: nil) as? [Int]
+        let payload = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: featureData, format: nil) as? [String: Any]
         )
-        XCTAssertEqual(legacyPayload, [featureRow, featureIndex])
+        XCTAssertEqual(payload["version"] as? Int, 1)
+        XCTAssertEqual(payload["referenceName"] as? String, "refs/heads/feature")
+        XCTAssertEqual(payload["sourceSHA"] as? String, arranged[featureRow].sha)
 
         let ineligibleReferences = try [
             XCTUnwrap(repository.headRef()?.ref()),
@@ -1023,9 +1030,273 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(outOfRangePasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef")))
     }
 
+    func testBranchMoveSurvivesCommitAndReferenceReordering() throws {
+        let drag = try branchDragFixture()
+        drag.sourceCommit.refs.insert(PBGitRef(string: "refs/tags/reordered-label"), at: 0)
+        historyController.commitController.sortDescriptors = [
+            NSSortDescriptor(key: "SHA", ascending: false),
+        ]
+        historyController.commitController.rearrangeObjects()
+        let reordered = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let destinationRow = try XCTUnwrap(reordered.firstIndex { $0.sha == drag.destinationCommit.sha })
+        let info = DraggingInfoFake(pasteboard: drag.pasteboard)
+
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: info,
+                proposedRow: destinationRow,
+                proposedDropOperation: .on
+            ),
+            .move
+        )
+        XCTAssertTrue(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: info,
+            row: destinationRow,
+            dropOperation: .on
+        ))
+        XCTAssertTrue(
+            drag.destinationCommit.refs.compactMap { $0 as? PBGitRef }
+                .contains { $0.ref == "refs/heads/feature" }
+        )
+    }
+
+    func testBranchMoveRejectsStaleReference() throws {
+        let drag = try branchDragFixture()
+        try fixture.git(["update-ref", "refs/heads/feature", drag.destinationCommit.sha])
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+                proposedRow: drag.destinationRow,
+                proposedDropOperation: .on
+            ),
+            []
+        )
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+    }
+
+    func testBranchMoveRejectsSourceThatBecameCheckedOutAfterDragStarted() throws {
+        let checkedOutDrag = try branchDragFixture()
+        try fixture.git(["checkout", "--quiet", "feature"])
+        XCTAssertFalse(tableCoordinator.tableView(
+            checkedOutDrag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: checkedOutDrag.pasteboard),
+            row: checkedOutDrag.destinationRow,
+            dropOperation: .on
+        ))
+        XCTAssertEqual(
+            try XCTUnwrap(windowController as? HistoryWindowController).confirmationCount,
+            0
+        )
+    }
+
+    func testBranchMoveRejectsCopyOnlyMalformedLegacyAndWorkingStateDrops() throws {
+        let drag = try branchDragFixture()
+        let copyOnlyInfo = DraggingInfoFake(pasteboard: drag.pasteboard)
+        copyOnlyInfo.draggingSourceOperationMask = .copy
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: copyOnlyInfo,
+                proposedRow: drag.destinationRow,
+                proposedDropOperation: .on
+            ),
+            []
+        )
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: copyOnlyInfo,
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+
+        for malformedData in try [
+            PropertyListSerialization.data(
+                fromPropertyList: [-1, -1],
+                format: .binary,
+                options: 0
+            ),
+            Data("not a property list".utf8),
+            branchPayloadData(
+                referenceName: "refs/remotes/origin/main",
+                sourceSHA: drag.sourceCommit.sha
+            ),
+            branchPayloadData(
+                referenceName: "refs/heads/feature",
+                sourceSHA: "-1"
+            ),
+        ] {
+            let malformedPasteboard = freshPasteboard()
+            malformedPasteboard.setData(
+                malformedData,
+                forType: NSPasteboard.PasteboardType("PBGitRef")
+            )
+            let malformedInfo = DraggingInfoFake(pasteboard: malformedPasteboard)
+            XCTAssertEqual(
+                tableCoordinator.tableView(
+                    drag.table,
+                    validateDrop: malformedInfo,
+                    proposedRow: drag.destinationRow,
+                    proposedDropOperation: .on
+                ),
+                []
+            )
+            XCTAssertFalse(tableCoordinator.tableView(
+                drag.table,
+                acceptDrop: malformedInfo,
+                row: drag.destinationRow,
+                dropOperation: .on
+            ))
+        }
+
+        let workingState = PBUncommittedChanges(repository: repository)
+        historyController.commitController.content = [drag.sourceCommit, workingState]
+        historyController.commitController.sortDescriptors = []
+        historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let workingStateRow = try XCTUnwrap(arranged.firstIndex { $0 is PBUncommittedChanges })
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+                proposedRow: workingStateRow,
+                proposedDropOperation: .on
+            ),
+            []
+        )
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: workingStateRow,
+            dropOperation: .on
+        ))
+    }
+
+    func testBranchMoveRejectsSameCommitAtDifferentRow() throws {
+        let drag = try branchDragFixture()
+        let duplicate = PBGitCommit(repository: repository, andCommit: drag.sourceCommit.gtCommit)
+        historyController.commitController.content = [drag.sourceCommit, duplicate]
+        historyController.commitController.sortDescriptors = []
+        historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let duplicateRow = try XCTUnwrap(arranged.firstIndex { $0 === duplicate })
+        XCTAssertNotEqual(duplicateRow, drag.sourceRow)
+        XCTAssertEqual(duplicate.sha, drag.sourceCommit.sha)
+
+        XCTAssertEqual(
+            tableCoordinator.tableView(
+                drag.table,
+                validateDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+                proposedRow: duplicateRow,
+                proposedDropOperation: .on
+            ),
+            []
+        )
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: duplicateRow,
+            dropOperation: .on
+        ))
+    }
+
+    func testBranchMoveCancellationLeavesReferenceUnchanged() throws {
+        let drag = try branchDragFixture()
+        let historyWindowController = try XCTUnwrap(windowController as? HistoryWindowController)
+        historyWindowController.automaticallyConfirms = false
+
+        XCTAssertTrue(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+        XCTAssertEqual(historyWindowController.confirmationCount, 1)
+        XCTAssertTrue(
+            drag.sourceCommit.refs.compactMap { $0 as? PBGitRef }
+                .contains { $0.ref == "refs/heads/feature" }
+        )
+        XCTAssertFalse(
+            drag.destinationCommit.refs.compactMap { $0 as? PBGitRef }
+                .contains { $0.ref == "refs/heads/feature" }
+        )
+        XCTAssertEqual(repository.ref(forName: "feature")?.ref, "refs/heads/feature")
+    }
+
     private func loadedCommits() -> [PBGitCommit] {
         waitForHistory()
         return repository.revisionList?.commits.compactMap { $0 as? PBGitCommit } ?? []
+    }
+
+    private struct BranchDragFixture {
+        let table: CommitListFake
+        let sourceCommit: PBGitCommit
+        let destinationCommit: PBGitCommit
+        let sourceRow: Int
+        let destinationRow: Int
+        let pasteboard: NSPasteboard
+    }
+
+    private func branchDragFixture() throws -> BranchDragFixture {
+        repository.reloadRefs()
+        let commits = loadedCommits()
+        let feature = try XCTUnwrap(repository.ref(forName: "feature"))
+        let sourceCommit = try XCTUnwrap(commits.first { commit in
+            commit.refs.compactMap { $0 as? PBGitRef }.contains { $0.ref == feature.ref }
+        })
+        let destinationCommit = try XCTUnwrap(commits.first { $0.sha != sourceCommit.sha })
+        historyController.commitController.content = [sourceCommit, destinationCommit]
+        historyController.commitController.sortDescriptors = []
+        historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let sourceRow = try XCTUnwrap(arranged.firstIndex { $0 === sourceCommit })
+        let destinationRow = try XCTUnwrap(arranged.firstIndex { $0 === destinationCommit })
+        let referenceIndex = try XCTUnwrap(
+            sourceCommit.refs.compactMap { $0 as? PBGitRef }.firstIndex { $0.ref == feature.ref }
+        )
+
+        let table = CommitListFake()
+        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SubjectColumn")))
+        table.testColumn = 0
+        table.testRow = sourceRow
+        table.revisionCell.referenceIndex = Int32(referenceIndex)
+        let pasteboard = freshPasteboard()
+        XCTAssertTrue(tableCoordinator.tableView(
+            table,
+            writeRowsWith: IndexSet(integer: sourceRow),
+            to: pasteboard
+        ))
+        return BranchDragFixture(
+            table: table,
+            sourceCommit: sourceCommit,
+            destinationCommit: destinationCommit,
+            sourceRow: sourceRow,
+            destinationRow: destinationRow,
+            pasteboard: pasteboard
+        )
+    }
+
+    private func branchPayloadData(
+        referenceName: String,
+        sourceSHA: String,
+        version: Int = 1
+    ) throws -> Data {
+        try PropertyListSerialization.data(
+            fromPropertyList: [
+                "version": version,
+                "referenceName": referenceName,
+                "sourceSHA": sourceSHA,
+            ],
+            format: .binary,
+            options: 0
+        )
     }
 
     private func flattenedTree(_ root: PBGitTree) -> [PBGitTree] {

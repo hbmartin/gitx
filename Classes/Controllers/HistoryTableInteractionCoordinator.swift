@@ -1,4 +1,23 @@
 import AppKit
+import OSLog
+
+extension NSPasteboard.PasteboardType {
+    static let gitXBranchReference = NSPasteboard.PasteboardType("PBGitRef")
+}
+
+private struct HistoryBranchDragPayload: Codable {
+    static let currentVersion = 1
+
+    let version: Int
+    let referenceName: String
+    let sourceSHA: String
+
+    init(referenceName: String, sourceSHA: String) {
+        version = Self.currentVersion
+        self.referenceName = referenceName
+        self.sourceSHA = sourceSHA
+    }
+}
 
 // SwiftLint's analyzer cannot see these entry points through GitX-Swift.h.
 // swiftlint:disable unused_declaration
@@ -7,6 +26,7 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
     private weak var owner: PBGitHistoryController?
     private weak var commitList: PBCommitList?
     private let stateCoordinator: HistoryStateCoordinator
+    private let logger = Logger(subsystem: "com.gitx.gitx", category: "HistoryBranchDrag")
 
     @objc var hasWorkingState = false
 
@@ -56,13 +76,23 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         if referenceIndex >= 0 {
             guard commit.refs.count > Int(referenceIndex),
                   let ref = commit.refs.object(at: Int(referenceIndex)) as? PBGitRef,
-                  !ref.isTag, !ref.isRemoteBranch,
-                  owner.repository.headRef()?.ref()?.isEqual(to: ref) != true
-            else { return false }
-            let payload = [row, Int(referenceIndex)]
-            guard let data = try? PropertyListSerialization.data(fromPropertyList: payload, format: .binary, options: 0) else { return false }
-            pasteboard.declareTypes([NSPasteboard.PasteboardType("PBGitRef")], owner: self)
-            pasteboard.setData(data, forType: NSPasteboard.PasteboardType("PBGitRef"))
+                  ref.isBranch,
+                  commit.sha.isEmpty == false,
+                  liveCheckedOutReferenceName(in: owner.repository) != ref.ref
+            else {
+                logger.debug("Rejected branch drag source")
+                return false
+            }
+            let payload = HistoryBranchDragPayload(referenceName: ref.ref, sourceSHA: commit.sha)
+            let encoder = PropertyListEncoder()
+            encoder.outputFormat = .binary
+            guard let data = try? encoder.encode(payload) else {
+                logger.error("Could not encode branch drag payload")
+                return false
+            }
+            pasteboard.declareTypes([.gitXBranchReference], owner: self)
+            pasteboard.setData(data, forType: .gitXBranchReference)
+            logger.debug("Started local branch drag")
         } else {
             pasteboard.declareTypes([.string], owner: self)
             let shortColumn = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier("ShortSHAColumn"))
@@ -78,9 +108,12 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         proposedRow row: Int,
         proposedDropOperation dropOperation: NSTableView.DropOperation
     ) -> NSDragOperation {
-        guard dropOperation != .above,
-              info.draggingPasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef")) != nil
-        else { return [] }
+        guard dropOperation == .on,
+              info.draggingSourceOperationMask.contains(.move),
+              validatedBranchMove(info: info, destinationRow: row) != nil
+        else {
+            return []
+        }
         return .move
     }
 
@@ -92,18 +125,16 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
     ) -> Bool {
         guard dropOperation == .on,
               let owner,
-              let data = info.draggingPasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef")),
-              let payload = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [Int],
-              payload.count == 2,
-              payload[0] != row,
-              let commits = owner.commitController.arrangedObjects as? [PBGitCommit],
-              commits.indices.contains(payload[0]), commits.indices.contains(row),
-              commits[payload[0]].refs.count > payload[1],
-              let ref = commits[payload[0]].refs.object(at: payload[1]) as? PBGitRef
-        else { return false }
+              info.draggingSourceOperationMask.contains(.move),
+              let move = validatedBranchMove(info: info, destinationRow: row)
+        else {
+            logger.debug("Rejected branch move drop")
+            return false
+        }
 
-        let oldCommit = commits[payload[0]]
-        let dropCommit = commits[row]
+        let ref = move.reference
+        let oldCommit = move.sourceCommit
+        let dropCommit = move.destinationCommit
         let subject = dropCommit.subject.count > 99 ? String(dropCommit.subject.prefix(99)) + "…" : dropCommit.subject
         let alert = NSAlert()
         alert.messageText = "Move \(ref.refishType() ?? "reference"): \(ref.shortName())"
@@ -119,8 +150,9 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
                 try windowController.repository.updateReference(ref, toPointAt: dropCommit)
                 dropCommit.addRef(ref)
                 oldCommit.removeRef(ref)
-                NSLog("[GitX] History reference move completed")
+                self.logger.debug("History branch move completed")
             } catch {
+                self.logger.error("History branch move failed")
                 windowController.showErrorSheet(error)
             }
         }
@@ -164,6 +196,72 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         typealias Function = @convention(c) (AnyObject, Selector, CGFloat) -> Int32
         // swift6-safety-justification: PBGraphCellInfo's Objective-C -indexAtX: selector has this exact CGFloat-to-int signature.
         return unsafeBitCast(implementation, to: Function.self)(object, selector, x)
+    }
+
+    private struct ValidatedBranchMove {
+        let reference: PBGitRef
+        let sourceCommit: PBGitCommit
+        let destinationCommit: PBGitCommit
+    }
+
+    private func validatedBranchMove(
+        info: NSDraggingInfo,
+        destinationRow: Int
+    ) -> ValidatedBranchMove? {
+        guard let owner,
+              let data = info.draggingPasteboard.data(forType: .gitXBranchReference),
+              let payload = try? PropertyListDecoder().decode(HistoryBranchDragPayload.self, from: data),
+              payload.version == HistoryBranchDragPayload.currentVersion,
+              isFullSHA(payload.sourceSHA),
+              let commits = owner.commitController.arrangedObjects as? [PBGitCommit],
+              commits.indices.contains(destinationRow),
+              let sourceCommit = commits.first(where: { $0.sha == payload.sourceSHA }),
+              let reference = sourceCommit.refs.compactMap({ $0 as? PBGitRef }).first(where: {
+                  $0.ref == payload.referenceName
+              }),
+              reference.isBranch,
+              liveCheckedOutReferenceName(in: owner.repository) != payload.referenceName,
+              liveReferenceSHA(payload.referenceName, in: owner.repository) == payload.sourceSHA
+        else {
+            return nil
+        }
+
+        let destinationCommit = commits[destinationRow]
+        guard !(destinationCommit is PBUncommittedChanges),
+              destinationCommit.sha.isEmpty == false,
+              destinationCommit.sha != payload.sourceSHA
+        else {
+            return nil
+        }
+        return ValidatedBranchMove(
+            reference: reference,
+            sourceCommit: sourceCommit,
+            destinationCommit: destinationCommit
+        )
+    }
+
+    private func liveCheckedOutReferenceName(in repository: PBGitRepository) -> String? {
+        guard let gitRepository = repository.gtRepo,
+              let head = try? gitRepository.lookUpReference(withName: "HEAD"),
+              gitRepository.isHEADDetached == false
+        else {
+            return nil
+        }
+        return gitRepository.isHEADUnborn ? head.name : head.resolved.name
+    }
+
+    private func liveReferenceSHA(_ referenceName: String, in repository: PBGitRepository) -> String? {
+        guard let gitRepository = repository.gtRepo,
+              let reference = try? gitRepository.lookUpReference(withName: referenceName),
+              let oid = reference.oid
+        else {
+            return nil
+        }
+        return oid.sha
+    }
+
+    private func isFullSHA(_ value: String) -> Bool {
+        value.count == 40 && value.allSatisfy(\.isHexDigit)
     }
 }
 
