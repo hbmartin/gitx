@@ -2,6 +2,65 @@ import AppKit
 import XCTest
 
 final class NativeContentRendererTests: XCTestCase {
+    private func preserveDefault(_ key: String) -> () -> Void {
+        let original = UserDefaults.standard.object(forKey: key)
+        return {
+            if let original {
+                UserDefaults.standard.set(original, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+    }
+
+    private func font(
+        in attributedString: NSAttributedString,
+        matching text: String,
+        offset: Int = 0,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> NSFont {
+        let range = (attributedString.string as NSString).range(of: text)
+        XCTAssertNotEqual(range.location, NSNotFound, file: file, line: line)
+        XCTAssertGreaterThan(range.length, offset, file: file, line: line)
+        return try XCTUnwrap(
+            attributedString.attribute(
+                .font,
+                at: range.location + offset,
+                effectiveRange: nil
+            ) as? NSFont,
+            file: file,
+            line: line
+        )
+    }
+
+    private func firstFont(
+        in attributedString: NSAttributedString,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> NSFont {
+        var result: NSFont?
+        attributedString.enumerateAttribute(
+            .font,
+            in: NSRange(location: 0, length: attributedString.length)
+        ) { value, _, stop in
+            if let font = value as? NSFont {
+                result = font
+                stop.pointee = true
+            }
+        }
+        return try XCTUnwrap(result, file: file, line: line)
+    }
+
+    @MainActor
+    private func waitForText(_ text: String, in view: PBNativeContentView) {
+        let rendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in view.textView.string.contains(text) },
+            object: view.textView
+        )
+        wait(for: [rendered], timeout: 10)
+    }
+
     private var baseAttributes: [NSAttributedString.Key: Any] {
         [
             .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
@@ -53,6 +112,260 @@ final class NativeContentRendererTests: XCTestCase {
         XCTAssertTrue(historyResult.attributedString.string.contains("Ada  •  Today  •  0123456789ab"))
         XCTAssertEqual(historyResult.linkPayloads.values.first?["type"] as? String, "commit")
         XCTAssertEqual(historyResult.linkPayloads.values.first?["sha"] as? String, sha)
+    }
+
+    func testDiffFontSettingsPersistClampAndProvidePlainThemeFallback() throws {
+        let restoreName = preserveDefault("PBDiffFontName")
+        let restoreSize = preserveDefault("PBDiffFontSize")
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer {
+            restoreTheme()
+            restoreSize()
+            restoreName()
+        }
+
+        UserDefaults.standard.removeObject(forKey: "PBDiffFontName")
+        UserDefaults.standard.removeObject(forKey: "PBDiffFontSize")
+        XCTAssertEqual(
+            PBApplicationSettings.diffFontName,
+            NSFont.monospacedSystemFont(ofSize: 12, weight: .regular).fontName
+        )
+        XCTAssertEqual(PBApplicationSettings.diffFontSize, 12)
+
+        PBApplicationSettings.diffFontName = "Configured Font"
+        PBApplicationSettings.diffFontSize = 8
+        XCTAssertEqual(PBApplicationSettings.diffFontName, "Configured Font")
+        XCTAssertEqual(PBApplicationSettings.diffFontSize, 9)
+        PBApplicationSettings.diffFontSize = 72
+        XCTAssertEqual(PBApplicationSettings.diffFontSize, 36)
+
+        UserDefaults.standard.set(-100, forKey: "PBDiffFontSize")
+        XCTAssertEqual(PBApplicationSettings.diffFontSize, 9)
+        UserDefaults.standard.set(100, forKey: "PBDiffFontSize")
+        XCTAssertEqual(PBApplicationSettings.diffFontSize, 36)
+
+        PBApplicationSettings.syntaxTheme = .plain
+        PBApplicationSettings.diffFontName = "Definitely Not An Installed Font"
+        PBApplicationSettings.diffFontSize = 17
+        let fallback = try firstFont(
+            in: PBHighlighting.highlightedString(forText: "plain text", path: "Example.swift")
+        )
+        XCTAssertEqual(fallback.pointSize, 17)
+        XCTAssertTrue(fallback.fontDescriptor.symbolicTraits.contains(.monoSpace))
+    }
+
+    func testSyntaxThemesCharacterizeCurrentConfiguredFontParticipation() throws {
+        let restoreName = preserveDefault("PBDiffFontName")
+        let restoreSize = preserveDefault("PBDiffFontSize")
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer {
+            restoreTheme()
+            restoreSize()
+            restoreName()
+        }
+        PBApplicationSettings.diffFontName = NSFont.monospacedSystemFont(
+            ofSize: 12,
+            weight: .regular
+        ).fontName
+
+        PBApplicationSettings.syntaxTheme = .plain
+        PBApplicationSettings.diffFontSize = 9
+        let smallPlain = try firstFont(
+            in: PBHighlighting.highlightedString(forText: "let value = 1", path: "Example.swift")
+        )
+        PBApplicationSettings.diffFontSize = 36
+        let largePlain = try firstFont(
+            in: PBHighlighting.highlightedString(forText: "let value = 1", path: "Example.swift")
+        )
+        XCTAssertEqual(smallPlain.pointSize, 9)
+        XCTAssertEqual(largePlain.pointSize, 36)
+
+        for theme in [PBSyntaxTheme.xcode, .github] {
+            PBApplicationSettings.syntaxTheme = theme
+            PBApplicationSettings.diffFontSize = 9
+            let smallHighlighted = try firstFont(
+                in: PBHighlighting.highlightedString(forText: "let value = 1", path: "Example.swift")
+            )
+            PBApplicationSettings.diffFontSize = 36
+            let largeHighlighted = try firstFont(
+                in: PBHighlighting.highlightedString(forText: "let value = 1", path: "Example.swift")
+            )
+
+            XCTAssertEqual(smallHighlighted.fontName, largeHighlighted.fontName)
+            XCTAssertEqual(smallHighlighted.pointSize, largeHighlighted.pointSize)
+        }
+    }
+
+    func testRenderersUseCurrentThirteenTwelveElevenTenPointHierarchy() throws {
+        let restoreName = preserveDefault("PBDiffFontName")
+        let restoreSize = preserveDefault("PBDiffFontSize")
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer {
+            restoreTheme()
+            restoreSize()
+            restoreName()
+        }
+        PBApplicationSettings.syntaxTheme = .plain
+        PBApplicationSettings.diffFontName = NSFont.monospacedSystemFont(
+            ofSize: 12,
+            weight: .regular
+        ).fontName
+        PBApplicationSettings.diffFontSize = 12
+
+        let textRenderer = PBNativeTextRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes
+        )
+        let source = textRenderer.renderSourceSections([
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionPathKey: "Example.swift",
+                PBNativeSectionTextKey: "let value = 42\n",
+            ]),
+        ]).attributedString
+        XCTAssertEqual(try font(in: source, matching: "Example.swift").pointSize, 13)
+        XCTAssertEqual(try font(in: source, matching: "let value").pointSize, 12)
+
+        let sha = "0123456789abcdef0123456789abcdef01234567"
+        let blame = textRenderer.renderBlameSections([
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionPathKey: "Blame.swift",
+                PBNativeSectionTextKey: "\(sha) 1 1 1\nauthor Ada\nsummary First\n\tlet blamed = true\n",
+            ]),
+        ]).attributedString
+        XCTAssertEqual(try font(in: blame, matching: "Blame.swift").pointSize, 13)
+        XCTAssertEqual(try font(in: blame, matching: "01234567").pointSize, 11)
+        XCTAssertEqual(try font(in: blame, matching: "let blamed").pointSize, 12)
+
+        let historyResult = textRenderer.renderHistorySections([
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionTitleKey: "History",
+                PBNativeSectionEntriesKey: [[
+                    "subject": "Subject",
+                    "author": "Ada",
+                    "date": "Today",
+                    "sha": sha,
+                ]],
+            ]),
+        ])
+        XCTAssertEqual(try font(in: historyResult.attributedString, matching: "History").pointSize, 13)
+        XCTAssertEqual(try font(in: historyResult.attributedString, matching: "Subject").pointSize, 13)
+        XCTAssertEqual(try font(in: historyResult.attributedString, matching: "Ada").pointSize, 11)
+        XCTAssertEqual(
+            try font(in: historyResult.attributedString, matching: "0123456789ab").pointSize,
+            11
+        )
+        let historyLinkRange = (historyResult.attributedString.string as NSString)
+            .range(of: "0123456789ab")
+        let historyLink = historyResult.attributedString.attribute(
+            .link,
+            at: historyLinkRange.location,
+            effectiveRange: nil
+        )
+        XCTAssertNotNil(historyLink)
+        XCTAssertEqual(historyResult.linkPayloads.values.first?["sha"] as? String, sha)
+
+        let diff = """
+        diff --git a/Example.swift b/Example.swift
+        --- a/Example.swift
+        +++ b/Example.swift
+        @@ -1 +1 @@
+        -let old = 1
+        +let new = 2
+
+        """
+        let diffRenderer = PBNativeDiffRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes,
+            parser: PBDiffDocumentParser()
+        )
+        let unified = diffRenderer.renderSections(
+            [PBNativeContentSection(dictionary: [
+                PBNativeSectionTextKey: diff,
+                PBNativeSectionContextKey: "unstaged",
+                PBNativeSectionDiffLayoutKey: 0,
+            ])],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        ).attributedString
+        XCTAssertEqual(try font(in: unified, matching: "Example.swift").pointSize, 13)
+        XCTAssertEqual(try font(in: unified, matching: "@@ -1 +1 @@").pointSize, 12)
+        XCTAssertEqual(try font(in: unified, matching: "Stage hunk").pointSize, 11)
+
+        let sideBySide = diffRenderer.renderSections(
+            [PBNativeContentSection(dictionary: [
+                PBNativeSectionTextKey: diff,
+                PBNativeSectionContextKey: "readOnly",
+                PBNativeSectionDiffLayoutKey: 1,
+            ])],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        ).attributedString
+        XCTAssertEqual(try font(in: sideBySide, matching: "Before").pointSize, 10)
+        XCTAssertEqual(try font(in: sideBySide, matching: " │ ").pointSize, 12)
+    }
+
+    @MainActor
+    func testCachedDiffRestoresScrollButReplacementMovesSelectionToEnd() throws {
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 120))
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        var diff = """
+        diff --git a/file.txt b/file.txt
+        --- a/file.txt
+        +++ b/file.txt
+        @@ -1,200 +1,200 @@
+
+        """
+        for index in 0 ..< 200 {
+            diff += "-old-\(index)\n+new-\(index)\n"
+        }
+        let sections: [[String: Any]] = [[
+            PBNativeSectionTextKey: diff,
+            PBNativeSectionContextKey: "readOnly",
+        ]]
+
+        view.showDiffSections(
+            sections,
+            cacheIdentifier: "font-characterization",
+            preserveScrollPosition: true
+        )
+        waitForText("new-199", in: view)
+        window.layoutIfNeeded()
+
+        let scrollView = try XCTUnwrap(view.textView.enclosingScrollView)
+        let documentView = try XCTUnwrap(scrollView.documentView)
+        let maximumY = max(
+            0,
+            documentView.frame.height - scrollView.contentView.bounds.height
+        )
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: maximumY * 0.65))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        let expectedY = scrollView.contentView.bounds.origin.y
+        XCTAssertGreaterThan(expectedY, 0)
+
+        let selection = (view.textView.string as NSString).range(of: "new-150")
+        XCTAssertNotEqual(selection.location, NSNotFound)
+        view.textView.setSelectedRange(selection)
+
+        view.showDiffSections(
+            sections,
+            cacheIdentifier: "font-characterization",
+            preserveScrollPosition: true
+        )
+
+        XCTAssertEqual(scrollView.contentView.bounds.origin.y, expectedY, accuracy: 1)
+        XCTAssertNotEqual(view.textView.selectedRange(), selection)
+        XCTAssertEqual(
+            view.textView.selectedRange(),
+            NSRange(location: view.textView.textStorage?.length ?? 0, length: 0)
+        )
     }
 
     func testDiffRendererBuildsTypedActionsAndCollapsedResults() {
