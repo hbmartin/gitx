@@ -753,6 +753,205 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.webCommits.isEmpty)
     }
 
+    func testHistorySearchModesCharacterizeCurrentWhitespaceAndUnicodeBehavior() throws {
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let arrangedCount = try XCTUnwrap(
+            historyController.commitController.arrangedObjects as? [PBGitCommit]
+        ).count
+        XCTAssertGreaterThanOrEqual(arrangedCount, 3)
+
+        XCTAssertEqual(try searchResultRows(for: "initial", mode: .basic).count, 1)
+        XCTAssertTrue(searchController.hasSearchResults())
+        XCTAssertEqual(searchField.stringValue, "initial")
+        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "1 match")
+
+        let basicWithOuterWhitespace = " \tinitial\n"
+        XCTAssertTrue(try searchResultRows(for: basicWithOuterWhitespace, mode: .basic).isEmpty)
+        XCTAssertFalse(searchController.hasSearchResults())
+        XCTAssertEqual(searchField.stringValue, basicWithOuterWhitespace)
+        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "Not found")
+
+        XCTAssertEqual(
+            try searchResultRows(for: "GitX Tests", mode: .basic).count,
+            arrangedCount
+        )
+        XCTAssertEqual(searchField.stringValue, "GitX Tests")
+        XCTAssertEqual(searchController.numberOfMatchesField.stringValue, "\(arrangedCount) matches")
+        historyController.commitList.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        searchController.stepper.selectedSegment = 0
+        searchController.stepperPressed(searchController.stepper)
+        searchController.stepper.selectedSegment = 1
+        searchController.stepperPressed(searchController.stepper)
+
+        let unicodeQuery = "東京 crème"
+        XCTAssertTrue(try searchResultRows(for: unicodeQuery, mode: .basic).isEmpty)
+        XCTAssertEqual(searchField.stringValue, unicodeQuery)
+
+        let pickaxeQuery = " \tsecond\n"
+        XCTAssertEqual(try searchResultRows(for: pickaxeQuery, mode: .pickaxe).count, 1)
+        XCTAssertEqual(searchField.stringValue, pickaxeQuery)
+
+        let regexQuery = "\nseco.*\t"
+        XCTAssertEqual(try searchResultRows(for: regexQuery, mode: .regex).count, 1)
+        XCTAssertEqual(searchField.stringValue, regexQuery)
+
+        let pathQuery = " \nnested/tracked.txt\t"
+        XCTAssertEqual(try searchResultRows(for: pathQuery, mode: .path).count, 2)
+        XCTAssertEqual(searchField.stringValue, pathQuery)
+
+        let rawQuery = "\t--author=GitX\n"
+        XCTAssertEqual(try searchResultRows(for: rawQuery, mode: .raw).count, 2)
+        XCTAssertEqual(searchField.stringValue, rawQuery)
+    }
+
+    func testWhitespaceOnlySearchClearingDiffersBetweenBasicAndGitModes() throws {
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let whitespace = " \t\n"
+
+        XCTAssertTrue(try searchResultRows(for: whitespace, mode: .basic).isEmpty)
+        XCTAssertEqual(searchField.stringValue, whitespace)
+        XCTAssertFalse(searchController.numberOfMatchesField.isHidden)
+        XCTAssertFalse(searchController.stepper.isHidden)
+
+        for mode in [
+            PBHistorySearchMode.pickaxe,
+            .regex,
+            .path,
+            .raw,
+        ] {
+            XCTAssertTrue(try searchResultRows(for: whitespace, mode: mode).isEmpty)
+            XCTAssertEqual(searchField.stringValue, "")
+            XCTAssertTrue(searchController.numberOfMatchesField.isHidden)
+            XCTAssertTrue(searchController.stepper.isHidden)
+        }
+    }
+
+    func testSearchModeMenuSelectionPlaceholderAndPersistence() throws {
+        let defaults = UserDefaults.standard
+        let oldStoredMode = defaults.object(forKey: "PBHistorySearchMode")
+        defer {
+            if let oldStoredMode {
+                defaults.set(oldStoredMode, forKey: "PBHistorySearchMode")
+            } else {
+                defaults.removeObject(forKey: "PBHistorySearchMode")
+            }
+        }
+
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let searchFieldCell = try XCTUnwrap(searchField.cell as? NSSearchFieldCell)
+        let menu = try XCTUnwrap(searchFieldCell.searchMenuTemplate)
+        let expectations: [(PBHistorySearchMode, String)] = [
+            (.basic, "Subject, Author, SHA"),
+            (.pickaxe, "Commit (pickaxe)"),
+            (.regex, "Commit (pickaxe regex)"),
+            (.path, "File path"),
+            (.raw, "Raw"),
+        ]
+
+        for (mode, placeholder) in expectations {
+            let sender = NSButton()
+            sender.tag = mode.rawValue
+            searchController.selectSearchMode(sender)
+
+            XCTAssertEqual(searchController.searchMode, mode)
+            XCTAssertEqual(searchField.placeholderString, placeholder)
+            XCTAssertEqual(defaults.integer(forKey: "PBHistorySearchMode"), mode.rawValue)
+            for (candidate, _) in expectations {
+                XCTAssertEqual(
+                    menu.item(withTag: candidate.rawValue)?.state,
+                    candidate == mode ? .on : .off
+                )
+            }
+        }
+    }
+
+    func testHistorySearchRecentsCharacterizeSubmissionNavigationDedupAndClearing() throws {
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField)
+        let originalAutosaveName = searchField.recentsAutosaveName
+        let originalRecents = searchField.recentSearches
+        let autosaveName = "GitX History Search Tests \(UUID().uuidString)"
+        defer {
+            searchField.recentSearches = []
+            searchField.recentsAutosaveName = originalAutosaveName
+            searchField.recentSearches = originalRecents
+            UserDefaults.standard.removeObject(forKey: autosaveName)
+        }
+
+        searchField.recentsAutosaveName = autosaveName
+        searchField.recentSearches = []
+
+        searchField.stringValue = "unchanged"
+        searchController.setHistorySearch("", mode: .raw)
+        XCTAssertEqual(searchField.stringValue, "unchanged")
+        XCTAssertTrue(searchField.recentSearches.isEmpty)
+
+        searchController.setHistorySearch("  alpha  ", mode: .basic)
+        searchController.setHistorySearch("beta", mode: .basic)
+        searchController.setHistorySearch("  alpha  ", mode: .basic)
+        XCTAssertEqual(searchField.recentSearches, ["  alpha  ", "beta"])
+
+        searchController.setHistorySearch("   ", mode: .basic)
+        let submittedRecents = ["   ", "  alpha  ", "beta"]
+        XCTAssertEqual(searchField.recentSearches, submittedRecents)
+
+        searchController.clearSearch()
+        XCTAssertEqual(searchField.stringValue, "")
+        XCTAssertEqual(searchField.recentSearches, submittedRecents)
+
+        let restoredField = NSSearchField()
+        restoredField.recentsAutosaveName = autosaveName
+        XCTAssertEqual(restoredField.recentSearches, submittedRecents)
+
+        searchField.recentSearches = []
+        let clearedField = NSSearchField()
+        clearedField.recentsAutosaveName = autosaveName
+        XCTAssertTrue(clearedField.recentSearches.isEmpty)
+
+        searchField.stringValue = "init"
+        searchController.updateSearch(self)
+        searchField.stringValue = "initial"
+        searchController.updateSearch(self)
+        searchController.selectNextResult()
+        XCTAssertTrue(searchField.recentSearches.isEmpty)
+
+        searchField.performClick(self)
+        XCTAssertEqual(searchField.recentSearches, ["initial"])
+    }
+
+    func testHistorySearchPastePreservesFullWhitespaceAndUnicode() throws {
+        let searchField = try XCTUnwrap(historyController.searchController.searchField)
+        let window = try XCTUnwrap(windowController.window)
+        let pasteboard = NSPasteboard.general
+        let originalItems: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        } ?? []
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(originalItems.map { $0 as NSPasteboardWriting })
+        }
+
+        searchField.stringValue = "prefix"
+        XCTAssertTrue(window.makeFirstResponder(searchField))
+        let editor = try XCTUnwrap(searchField.currentEditor() as? NSTextView)
+        editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
+        pasteboard.clearContents()
+        pasteboard.setString("  東京 crème  ", forType: .string)
+        editor.paste(self)
+
+        XCTAssertEqual(editor.string, "prefix  東京 crème  ")
+        XCTAssertEqual(searchField.stringValue, "prefix  東京 crème  ")
+    }
+
     func testPathMenuDisablesCommitActionsWithoutSelection() throws {
         historyController.selectedCommits = []
 
@@ -1247,6 +1446,47 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     private func loadedCommits() -> [PBGitCommit] {
         waitForHistory()
         return repository.revisionList?.commits.compactMap { $0 as? PBGitCommit } ?? []
+    }
+
+    private func searchResultRows(
+        for query: String,
+        mode: PBHistorySearchMode,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> IndexSet {
+        let searchController = historyController.searchController
+        let searchField = try XCTUnwrap(searchController.searchField, file: file, line: line)
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.repository.revisionList?.isUpdating != true
+            },
+            "Revision loading did not settle before history search",
+            file: file,
+            line: line
+        )
+        searchController.searchMode = mode
+        searchField.stringValue = query
+        searchController.updateSearch(self)
+
+        if mode != .basic {
+            XCTAssertTrue(
+                waitForCondition {
+                    searchController.value(forKey: "backgroundSearchTask") == nil
+                },
+                "Background history search did not finish",
+                file: file,
+                line: line
+            )
+        }
+
+        let count = try XCTUnwrap(
+            historyController.commitController.arrangedObjects as? [PBGitCommit],
+            file: file,
+            line: line
+        ).count
+        return IndexSet((0 ..< count).filter {
+            searchController.isRow(inSearchResults: $0)
+        })
     }
 
     private struct BranchDragFixture {
