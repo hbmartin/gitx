@@ -598,11 +598,30 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(menuItems(selector: "menuItemsForRef:", argument: nil))
         XCTAssertEqual(menuItems(selector: "menuItemsForRef:", argument: PBGitRef(string: "refs/stash"))?.count, 0)
         assertMenu(menuItems(selector: "menuItemsForRef:", argument: stash), contains: ["Pop", "Apply", "View Diff", "Drop"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: head), contains: ["Checkout", "Create Branch", "Fetch", "Push"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: feature), contains: ["Checkout", "Merge", "Rebase", "Reset"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: tag), contains: ["View Tag Info", "Push"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: remoteBranch), contains: ["Push Updates", "Fetch", "Pull"])
-        assertMenu(menuItems(selector: "menuItemsForRef:", argument: remote), contains: ["Push Updates", "Fetch", "Pull"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: head), contains: ["Checkout", "Copy Branch Name", "Create Branch", "Fetch", "Push"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: feature), contains: ["Checkout", "Copy Branch Name", "Merge", "Rebase", "Reset"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: tag), contains: ["View Tag Info", "Push"], excludes: ["Copy Branch Name"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: remoteBranch), contains: ["Copy Branch Name", "Push Updates", "Fetch", "Pull"])
+        assertMenu(menuItems(selector: "menuItemsForRef:", argument: remote), contains: ["Push Updates", "Fetch", "Pull"], excludes: ["Copy Branch Name"])
+
+        let featureItems = try XCTUnwrap(menuItems(selector: "menuItemsForRef:", argument: feature))
+        let copyFeatureName = try XCTUnwrap(featureItems.first { $0.title == "Copy Branch Name" })
+        let copyFeatureAction = try XCTUnwrap(copyFeatureName.action)
+        XCTAssertTrue(NSApp.sendAction(copyFeatureAction, to: copyFeatureName.target, from: copyFeatureName))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "feature")
+
+        let remoteBranchItems = try XCTUnwrap(menuItems(selector: "menuItemsForRef:", argument: remoteBranch))
+        let copyRemoteBranchName = try XCTUnwrap(remoteBranchItems.first { $0.title == "Copy Branch Name" })
+        let copyRemoteBranchAction = try XCTUnwrap(copyRemoteBranchName.action)
+        XCTAssertTrue(NSApp.sendAction(copyRemoteBranchAction, to: copyRemoteBranchName.target, from: copyRemoteBranchName))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "origin/main")
+
+        let invalidCopyItem = NSMenuItem(title: "Copy Branch Name", action: copyFeatureAction, keyEquivalent: "")
+        invalidCopyItem.target = copyFeatureName.target
+        invalidCopyItem.representedObject = tag
+        NSPasteboard.general.clearContents()
+        XCTAssertTrue(NSApp.sendAction(copyFeatureAction, to: invalidCopyItem.target, from: invalidCopyItem))
+        XCTAssertNil(NSPasteboard.general.string(forType: .string))
 
         let commits = loadedCommits()
         let headCommit = try XCTUnwrap(commits.first { $0.oid == repository.headOID() })
@@ -1026,12 +1045,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     private func assertMenu(
         _ items: [NSMenuItem]?,
         contains fragments: [String],
+        excludes excludedFragments: [String] = [],
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let titles = items?.map(\.title) ?? []
         for fragment in fragments {
             XCTAssertTrue(titles.contains { $0.contains(fragment) }, "Missing \(fragment) in \(titles)", file: file, line: line)
+        }
+        for fragment in excludedFragments {
+            XCTAssertFalse(titles.contains { $0.contains(fragment) }, "Unexpected \(fragment) in \(titles)", file: file, line: line)
         }
         XCTAssertTrue(items?.allSatisfy { $0.isSeparatorItem || $0.representedObject != nil } == true, file: file, line: line)
     }
