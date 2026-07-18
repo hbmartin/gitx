@@ -217,6 +217,101 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
         XCTAssertTrue(isDirectory.boolValue)
     }
 
+    func testAppendingUsesExactlyOneSeparatorAndPreservesExistingNewlines() throws {
+        let cases = [
+            ("existing", "existing\nnew"),
+            ("existing\n", "existing\nnew"),
+            ("existing\n\n", "existing\n\nnew"),
+            ("", "new"),
+        ]
+
+        for (existing, expected) in cases {
+            try existing.write(to: ignoreURL, atomically: true, encoding: .utf8)
+
+            assertSuccessfulIgnore(["new"])
+
+            XCTAssertEqual(try String(contentsOf: ignoreURL, encoding: .utf8), expected)
+        }
+    }
+
+    func testAppendingUsesExistingCRLFConventionForSeparatorsAndNewPaths() throws {
+        try Data("existing\r\nline".utf8).write(to: ignoreURL, options: .atomic)
+
+        assertSuccessfulIgnore(["résumé/雪.tmp", "*.temporary"])
+
+        XCTAssertEqual(
+            try Data(contentsOf: ignoreURL),
+            Data("existing\r\nline\r\nrésumé/雪.tmp\r\n*.temporary".utf8)
+        )
+    }
+
+    func testAppendingPreservesClassicMacNewlinesAndEmptyRequests() throws {
+        try Data("existing\rline".utf8).write(to: ignoreURL, options: .atomic)
+
+        assertSuccessfulIgnore(["new"])
+        XCTAssertEqual(try Data(contentsOf: ignoreURL), Data("existing\rline\rnew".utf8))
+
+        let existingData = try Data(contentsOf: ignoreURL)
+        assertSuccessfulIgnore([])
+        XCTAssertEqual(try Data(contentsOf: ignoreURL), existingData)
+
+        try FileManager.default.removeItem(at: ignoreURL)
+        assertSuccessfulIgnore([])
+        XCTAssertEqual(try Data(contentsOf: ignoreURL), Data())
+    }
+
+    func testAppendingPreservesDetectedEncodingAndUnicode() throws {
+        try "existing ü".write(to: ignoreURL, atomically: true, encoding: .utf16)
+        var originalEncoding = String.Encoding.utf8
+        _ = try String(contentsOf: ignoreURL, usedEncoding: &originalEncoding)
+
+        assertSuccessfulIgnore(["résumé/雪.tmp"])
+
+        var updatedEncoding = String.Encoding.utf8
+        let updated = try String(contentsOf: ignoreURL, usedEncoding: &updatedEncoding)
+        XCTAssertEqual(updatedEncoding, originalEncoding)
+        XCTAssertEqual(updated, "existing ü\nrésumé/雪.tmp")
+    }
+
+    func testAppendingRereadsExternallyReplacedIgnoreFile() throws {
+        try "initial".write(to: ignoreURL, atomically: true, encoding: .utf8)
+        assertSuccessfulIgnore(["first"])
+        XCTAssertEqual(try String(contentsOf: ignoreURL, encoding: .utf8), "initial\nfirst")
+
+        try Data("external\r\nreplacement".utf8).write(to: ignoreURL, options: .atomic)
+        assertSuccessfulIgnore(["second"])
+
+        XCTAssertEqual(
+            try Data(contentsOf: ignoreURL),
+            Data("external\r\nreplacement\r\nsecond".utf8)
+        )
+    }
+
+    func testAtomicWriteFailurePreservesExistingIgnoreContents() throws {
+        let original = Data("existing\n".utf8)
+        try original.write(to: ignoreURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500],
+            ofItemAtPath: repositoryURL.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: repositoryURL.path
+            )
+        }
+
+        let invocation = PBRepositoryIgnoreInvocation.invokeRepository(
+            repository,
+            paths: ["new"]
+        )
+
+        XCTAssertNil(invocation.exception)
+        XCTAssertFalse(invocation.success)
+        XCTAssertNotNil(invocation.error)
+        XCTAssertEqual(try Data(contentsOf: ignoreURL), original)
+    }
+
     func testExternalIgnoreEditRemovesUntrackedRowButRetainsTrackedChange() throws {
         let ignoredPath = "ignored ü.txt"
         try "ignored\n".write(
@@ -246,6 +341,21 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
         XCTAssertEqual(Set(refreshedChanges.keys), [".gitignore", "tracked.txt"])
         XCTAssertNil(refreshedChanges[ignoredPath])
         XCTAssertTrue(refreshedChanges["tracked.txt"]?.hasUnstagedChanges == true)
+    }
+
+    private var ignoreURL: URL {
+        repositoryURL.appendingPathComponent(".gitignore")
+    }
+
+    private func assertSuccessfulIgnore(
+        _ paths: [String],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let invocation = PBRepositoryIgnoreInvocation.invokeRepository(repository, paths: paths)
+        XCTAssertNil(invocation.exception, file: file, line: line)
+        XCTAssertNil(invocation.error, file: file, line: line)
+        XCTAssertTrue(invocation.success, file: file, line: line)
     }
 
     private func refreshIndex() {

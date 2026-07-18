@@ -20,6 +20,7 @@
 #import "PBProcessEnvironment.h"
 #import "PBGitRevisionCell.h"
 #import "PBHistorySearchController.h"
+#import "RepositoryIgnoreTestSupport.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
