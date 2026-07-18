@@ -1,5 +1,5 @@
 import AppKit
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 extension NSPasteboard.PasteboardType {
     static let gitXBranchReference = NSPasteboard.PasteboardType("PBGitRef")
