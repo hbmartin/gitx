@@ -19,9 +19,6 @@ jobs:
       matrix:
         include:
           - xcode: 26.2
-            runner_arch: x64
-            abi: x86_64
-          - xcode: 26.2
             runner_arch: ARM64
             abi: arm64
     steps:
@@ -233,13 +230,7 @@ jobs:
           commit-ish: HEAD
       - uses: actions/download-artifact@v8
         with:
-          name: GitX-x86_64.dmg
-      - uses: actions/download-artifact@v8
-        with:
           name: GitX-arm64.dmg
-      - uses: actions/download-artifact@v8
-        with:
-          name: GitX-x86_64.zip
       - uses: actions/download-artifact@v8
         with:
           name: GitX-arm64.zip
@@ -264,8 +255,6 @@ jobs:
           prerelease: ${{ env.PRE_RELEASE }}
           name: ${{steps.tagger.outputs.tag}}
           files: |
-            GitX-x86_64.dmg
-            GitX-x86_64.zip
             GitX-arm64.dmg
             GitX-arm64.zip
         env:
@@ -287,16 +276,13 @@ jobs:
       - name: Show shasum
         run: |
           find . -name "gitx.rb"
-          shax86=$(shasum -a 256 GitX-x86_64.dmg | cut -d " " -f1)
-          echo "x86 sha256=$shax86"
           shaarm64=$(shasum -a 256 GitX-arm64.dmg | cut -d " " -f1)
           echo "arm64 sha256=$shaarm64"
           cd brew/Casks/g
           {
             sed -n 1,3p gitx.rb
             echo "  version \"${{ steps.tagger.outputs.tag }}\""
-            echo "  sha256 arm:   \"$shaarm64\","
-            echo "         intel: \"$shax86\""
+            echo "  sha256 \"$shaarm64\""
             sed -n 7,33p gitx.rb
           } > gitx.rb.new
           cat gitx.rb.new
