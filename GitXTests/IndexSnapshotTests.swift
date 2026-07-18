@@ -70,6 +70,41 @@ final class IndexSnapshotTests: XCTestCase {
         XCTAssertTrue(removed.isEmpty)
     }
 
+    func testSuccessfulRefreshRemovesIgnoredUntrackedPathAndRetainsTrackedChange() {
+        let ignored = PBIndexFileSnapshot(
+            path: "ignored ü.txt",
+            status: 0,
+            commitBlobMode: nil,
+            commitBlobSHA: nil,
+            hasStagedChanges: false,
+            hasUnstagedChanges: true
+        )
+        let tracked = PBIndexFileSnapshot(
+            path: "tracked.txt",
+            status: 1,
+            commitBlobMode: "100644",
+            commitBlobSHA: "old",
+            hasStagedChanges: false,
+            hasUnstagedChanges: true
+        )
+        let refreshedTracked = parser.parseTrackedData(
+            ":100644 100644 old new M\0tracked.txt\0".data(using: .utf8),
+            error: nil
+        )
+
+        let result = reducer.reducePrevious(
+            [ignored, tracked],
+            staged: [:],
+            unstaged: refreshedTracked,
+            untracked: [:]
+        )
+
+        XCTAssertEqual(result.map(\.path), ["tracked.txt"])
+        XCTAssertFalse(result[0].hasStagedChanges)
+        XCTAssertTrue(result[0].hasUnstagedChanges)
+        XCTAssertEqual(result[0].commitBlobSHA, "old")
+    }
+
     func testReducerCombinesStagedUnstagedAndUntrackedEntries() {
         let staged = parser.parseTrackedData(
             ":100644 100644 old staged M\0partial.txt\0".data(using: .utf8),

@@ -14,6 +14,7 @@
 #import "PBGitStash.h"
 #import "PBUncommittedChanges.h"
 #import "PBHighlighting.h"
+#import "PBChangedFile.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
