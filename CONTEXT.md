@@ -43,3 +43,7 @@ _Avoid_: Pull, background sync
 **Recent Repository**:
 A previously opened repository offered for reopening from GitX's welcome experience.
 _Avoid_: Recent, repo
+
+**Initializable Folder**:
+An existing folder that is not inside a Git repository and has no `.git` metadata, which GitX may offer to initialize as a repository.
+_Avoid_: Invalid repository, empty repository

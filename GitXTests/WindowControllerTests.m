@@ -235,6 +235,10 @@
 
 static NSModalResponse PBWindowAlertResponse;
 static NSControlStateValue PBWindowAlertSuppressionState;
+static NSUInteger PBWindowAlertSheetCount;
+static NSUInteger PBWindowAlertAppModalCount;
+static NSMutableArray<NSAlert *> *PBWindowPresentedAlerts;
+static void (^PBWindowAlertPresentationHook)(NSAlert *);
 static NSModalResponse PBWindowAddRemoteResponse;
 static NSModalResponse PBWindowCreateBranchResponse;
 static NSModalResponse PBWindowCreateTagResponse;
@@ -483,14 +487,26 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 @interface NSAlert (WindowControllerTests)
 - (void)pb_window_beginSheetModalForWindow:(NSWindow *)sheetWindow completionHandler:(void (^)(NSModalResponse returnCode))handler;
+- (NSModalResponse)pb_window_runModal;
 @end
 
 @implementation NSAlert (WindowControllerTests)
 
 - (void)pb_window_beginSheetModalForWindow:(NSWindow *)sheetWindow completionHandler:(void (^)(NSModalResponse returnCode))handler
 {
+	PBWindowAlertSheetCount++;
+	[PBWindowPresentedAlerts addObject:self];
+	if (PBWindowAlertPresentationHook) PBWindowAlertPresentationHook(self);
 	self.suppressionButton.state = PBWindowAlertSuppressionState;
 	handler(PBWindowAlertResponse);
+}
+
+- (NSModalResponse)pb_window_runModal
+{
+	PBWindowAlertAppModalCount++;
+	[PBWindowPresentedAlerts addObject:self];
+	if (PBWindowAlertPresentationHook) PBWindowAlertPresentationHook(self);
+	return PBWindowAlertResponse;
 }
 
 @end
@@ -1069,6 +1085,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSwapClassMethods(PBCreateBranchSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
 	PBSwapClassMethods(PBCreateTagSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
 	PBSwapInstanceMethods(NSAlert.class, @selector(beginSheetModalForWindow:completionHandler:), @selector(pb_window_beginSheetModalForWindow:completionHandler:));
+	PBSwapInstanceMethods(NSAlert.class, @selector(runModal), @selector(pb_window_runModal));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:configuration:completionHandler:), @selector(pb_window_openURL:configuration:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(activateFileViewerSelectingURLs:), @selector(pb_window_activateFileViewerSelectingURLs:));
 	PBSwapInstanceMethods(NSDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
@@ -1099,6 +1116,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSwapInstanceMethods(NSDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(activateFileViewerSelectingURLs:), @selector(pb_window_activateFileViewerSelectingURLs:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:configuration:completionHandler:), @selector(pb_window_openURL:configuration:completionHandler:));
+	PBSwapInstanceMethods(NSAlert.class, @selector(runModal), @selector(pb_window_runModal));
 	PBSwapInstanceMethods(NSAlert.class, @selector(beginSheetModalForWindow:completionHandler:), @selector(pb_window_beginSheetModalForWindow:completionHandler:));
 	PBSwapClassMethods(PBCreateTagSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
 	PBSwapClassMethods(PBCreateBranchSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
@@ -1163,6 +1181,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 	PBWindowAlertResponse = NSAlertFirstButtonReturn;
 	PBWindowAlertSuppressionState = NSControlStateValueOff;
+	PBWindowAlertSheetCount = 0;
+	PBWindowAlertAppModalCount = 0;
+	PBWindowPresentedAlerts = [NSMutableArray array];
+	PBWindowAlertPresentationHook = nil;
 	PBWindowAddRemoteResponse = NSModalResponseCancel;
 	PBWindowCreateBranchResponse = NSModalResponseCancel;
 	PBWindowCreateTagResponse = NSModalResponseCancel;
@@ -1222,6 +1244,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowSnapshotError = nil;
 	PBWindowDocumentOpenedURLs = nil;
 	PBWindowDocumentOpenErrorsByPath = nil;
+	PBWindowPresentedAlerts = nil;
+	PBWindowAlertPresentationHook = nil;
 	[NSFileManager.defaultManager removeItemAtURL:self.repositoryURL error:NULL];
 	[NSFileManager.defaultManager removeItemAtURL:self.remoteURL error:NULL];
 	[PBGitDefaults resetAllDialogWarnings];
@@ -2448,6 +2472,196 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	} @finally {
 		[NSFileManager.defaultManager removeItemAtURL:rootURL error:NULL];
 	}
+}
+
+- (void)testRepositoryOpeningOffersAndCreatesEmptyAndNonemptyFoldersInOrder
+{
+	NSString *name = [NSString stringWithFormat:@"GitXInitializableOpening-%@", NSUUID.UUID.UUIDString];
+	NSURL *rootURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name] isDirectory:YES];
+	NSURL *emptyURL = [rootURL URLByAppendingPathComponent:@"Empty Folder" isDirectory:YES];
+	NSURL *nonemptyURL = [rootURL URLByAppendingPathComponent:@"Nonempty Ünicode" isDirectory:YES];
+	NSURL *existingFileURL = [nonemptyURL URLByAppendingPathComponent:@"keep.txt"];
+	NSData *existingContents = [@"keep existing contents\n" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:emptyURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:nonemptyURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	XCTAssertTrue([existingContents writeToURL:existingFileURL options:NSDataWritingAtomic error:NULL]);
+
+	@try {
+		PBWindowAlertResponse = NSAlertFirstButtonReturn;
+		XCTestExpectation *completion = [self expectationWithDescription:@"initializable folders opened"];
+		__block NSArray<NSError *> *openingErrors = nil;
+		[[PBRepositoryOpenCoordinator shared] openURLs:@[ emptyURL, nonemptyURL ]
+										  sourceWindow:self.controller.window
+											completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+												openingErrors = errors;
+												[completion fulfill];
+											}];
+		[self waitForExpectations:@[ completion ] timeout:2.0];
+
+		XCTAssertEqual(openingErrors.count, (NSUInteger)0);
+		XCTAssertEqual(PBWindowAlertSheetCount, (NSUInteger)2);
+		XCTAssertEqual(PBWindowAlertAppModalCount, (NSUInteger)0);
+		XCTAssertEqual(PBWindowPresentedAlerts.count, (NSUInteger)2);
+		for (NSAlert *alert in PBWindowPresentedAlerts) {
+			XCTAssertEqualObjects(alert.buttons.firstObject.title, @"Create Repository");
+			XCTAssertEqualObjects(alert.buttons.lastObject.title, @"Cancel");
+		}
+		XCTAssertEqual(PBWindowDocumentOpenedURLs.count, (NSUInteger)2);
+		XCTAssertEqualObjects(PBWindowResolvedPath(PBWindowDocumentOpenedURLs[0]), PBWindowResolvedPath(emptyURL));
+		XCTAssertEqualObjects(PBWindowResolvedPath(PBWindowDocumentOpenedURLs[1]), PBWindowResolvedPath(nonemptyURL));
+		XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:[emptyURL URLByAppendingPathComponent:@".git"].path]);
+		XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:[nonemptyURL URLByAppendingPathComponent:@".git"].path]);
+		XCTAssertEqualObjects([NSData dataWithContentsOfURL:existingFileURL], existingContents);
+
+		NSError *emptyError = nil;
+		GTRepository *emptyRepository = [GTRepository repositoryWithURL:emptyURL error:&emptyError];
+		XCTAssertNotNil(emptyRepository, @"%@", emptyError);
+		XCTAssertTrue(emptyRepository.isHEADUnborn);
+		NSError *nonemptyError = nil;
+		GTRepository *nonemptyRepository = [GTRepository repositoryWithURL:nonemptyURL error:&nonemptyError];
+		XCTAssertNotNil(nonemptyRepository, @"%@", nonemptyError);
+		XCTAssertTrue(nonemptyRepository.isHEADUnborn);
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:rootURL error:NULL];
+	}
+}
+
+- (void)testRepositoryOpeningCancelIsAppModalLeavesFolderUntouchedAndContinues
+{
+	NSString *name = [NSString stringWithFormat:@"GitXCancelledOpening-%@", NSUUID.UUID.UUIDString];
+	NSURL *plainURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name] isDirectory:YES];
+	NSURL *existingFileURL = [plainURL URLByAppendingPathComponent:@"keep.txt"];
+	NSData *existingContents = [@"do not change\n" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:plainURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	XCTAssertTrue([existingContents writeToURL:existingFileURL options:NSDataWritingAtomic error:NULL]);
+
+	@try {
+		PBWindowAlertResponse = NSAlertSecondButtonReturn;
+		XCTestExpectation *completion = [self expectationWithDescription:@"cancelled folder skipped"];
+		__block NSArray<NSError *> *openingErrors = nil;
+		[[PBRepositoryOpenCoordinator shared] openURLs:@[ plainURL, self.repositoryURL ]
+										  sourceWindow:nil
+											completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+												openingErrors = errors;
+												[completion fulfill];
+											}];
+		[self waitForExpectations:@[ completion ] timeout:2.0];
+
+		XCTAssertEqual(openingErrors.count, (NSUInteger)0);
+		XCTAssertEqual(PBWindowAlertSheetCount, (NSUInteger)0);
+		XCTAssertEqual(PBWindowAlertAppModalCount, (NSUInteger)1);
+		XCTAssertEqual(PBWindowPresentedAlerts.count, (NSUInteger)1);
+		XCTAssertEqualObjects(PBWindowPresentedAlerts.firstObject.buttons.firstObject.title, @"Create Repository");
+		XCTAssertEqualObjects(PBWindowPresentedAlerts.firstObject.buttons.lastObject.title, @"Cancel");
+		XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[plainURL URLByAppendingPathComponent:@".git"].path]);
+		XCTAssertEqualObjects([NSData dataWithContentsOfURL:existingFileURL], existingContents);
+		XCTAssertEqual(PBWindowDocumentOpenedURLs.count, (NSUInteger)1);
+		XCTAssertEqualObjects(PBWindowResolvedPath(PBWindowDocumentOpenedURLs.firstObject),
+							  PBWindowResolvedPath(self.repositoryURL));
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:plainURL error:NULL];
+	}
+}
+
+- (void)testRepositoryOpeningRejectsMalformedMetadataAndInvalidInputsWithoutOfferingCreation
+{
+	NSString *name = [NSString stringWithFormat:@"GitXRejectedOpening-%@", NSUUID.UUID.UUIDString];
+	NSURL *rootURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name] isDirectory:YES];
+	NSURL *malformedDirectoryURL = [rootURL URLByAppendingPathComponent:@"Malformed Directory" isDirectory:YES];
+	NSURL *malformedFileURL = [rootURL URLByAppendingPathComponent:@"Malformed File" isDirectory:YES];
+	NSURL *regularFileURL = [rootURL URLByAppendingPathComponent:@"regular.txt"];
+	NSURL *missingURL = [rootURL URLByAppendingPathComponent:@"Missing Folder" isDirectory:YES];
+	NSURL *nonfileURL = [NSURL URLWithString:@"https://example.invalid/repository"];
+	XCTAssertNotNil(nonfileURL);
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:[malformedDirectoryURL URLByAppendingPathComponent:@".git"]
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:malformedFileURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	XCTAssertTrue([@"invalid git metadata\n" writeToURL:[malformedFileURL URLByAppendingPathComponent:@".git"]
+											 atomically:YES
+											   encoding:NSUTF8StringEncoding
+												  error:NULL]);
+	XCTAssertTrue([@"not a folder\n" writeToURL:regularFileURL
+									 atomically:YES
+									   encoding:NSUTF8StringEncoding
+										  error:NULL]);
+
+	@try {
+		XCTestExpectation *completion = [self expectationWithDescription:@"invalid inputs rejected"];
+		__block NSArray<NSError *> *openingErrors = nil;
+		[[PBRepositoryOpenCoordinator shared] openURLs:@[
+			malformedDirectoryURL,
+			malformedFileURL,
+			regularFileURL,
+			missingURL,
+			nonfileURL,
+			self.repositoryURL,
+		]
+										  sourceWindow:self.controller.window
+											completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+												openingErrors = errors;
+												[completion fulfill];
+											}];
+		[self waitForExpectations:@[ completion ] timeout:2.0];
+
+		XCTAssertEqual(openingErrors.count, (NSUInteger)5);
+		XCTAssertEqual(PBWindowPresentedAlerts.count, (NSUInteger)0);
+		XCTAssertEqual(PBWindowDocumentOpenedURLs.count, (NSUInteger)1);
+		XCTAssertEqualObjects(PBWindowResolvedPath(PBWindowDocumentOpenedURLs.firstObject),
+							  PBWindowResolvedPath(self.repositoryURL));
+		XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:[malformedDirectoryURL URLByAppendingPathComponent:@".git"].path]);
+		XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:[malformedFileURL URLByAppendingPathComponent:@".git"].path]);
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:rootURL error:NULL];
+	}
+}
+
+- (void)testRepositoryOpeningReportsInitializationFailureAndContinues
+{
+	NSString *name = [NSString stringWithFormat:@"GitXFailedInitialization-%@", NSUUID.UUID.UUIDString];
+	NSURL *plainURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name] isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:plainURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(__unused NSAlert *alert) {
+		[NSFileManager.defaultManager removeItemAtURL:plainURL error:NULL];
+		[@"block repository initialization\n" writeToURL:plainURL
+											  atomically:YES
+												encoding:NSUTF8StringEncoding
+												   error:NULL];
+	};
+
+	XCTestExpectation *completion = [self expectationWithDescription:@"initialization failure reported"];
+	__block NSArray<NSError *> *openingErrors = nil;
+	[[PBRepositoryOpenCoordinator shared] openURLs:@[ plainURL, self.repositoryURL ]
+									  sourceWindow:self.controller.window
+										completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+											openingErrors = errors;
+											[completion fulfill];
+										}];
+	[self waitForExpectations:@[ completion ] timeout:2.0];
+
+	XCTAssertEqual(PBWindowAlertSheetCount, (NSUInteger)1);
+	XCTAssertEqual(openingErrors.count, (NSUInteger)1);
+	XCTAssertEqual(PBWindowDocumentOpenedURLs.count, (NSUInteger)1);
+	XCTAssertEqualObjects(PBWindowResolvedPath(PBWindowDocumentOpenedURLs.firstObject),
+						  PBWindowResolvedPath(self.repositoryURL));
+	[NSFileManager.defaultManager removeItemAtURL:plainURL error:NULL];
 }
 
 - (void)testPreferencesWindowCharacterizesExistingToolbarAndSizing

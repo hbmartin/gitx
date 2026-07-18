@@ -76,10 +76,190 @@ final class RecentRepositoryStore: NSObject {
     }
 }
 
+enum RepositoryOpenClassification {
+    case existingRepository(URL)
+    case initializableFolder(URL)
+    case malformedMetadata(URL, NSError)
+    case invalidInput(URL, NSError)
+}
+
+struct RepositoryOpeningClassifier {
+    typealias RepositoryResolver = (URL) -> URL?
+
+    private let fileManager: FileManager
+    private let repositoryResolver: RepositoryResolver
+
+    init(
+        fileManager: FileManager = .default,
+        repositoryResolver: @escaping RepositoryResolver = {
+            PBRepositoryFinder.fileURL(for: $0)
+        }
+    ) {
+        self.fileManager = fileManager
+        self.repositoryResolver = repositoryResolver
+    }
+
+    func classify(_ inputURL: URL) -> RepositoryOpenClassification {
+        guard inputURL.isFileURL else {
+            return .invalidInput(
+                inputURL,
+                error(
+                    for: inputURL,
+                    code: 1,
+                    description: NSLocalizedString("Unable to Open Repository", comment: ""),
+                    reason: NSLocalizedString("GitX can only open folders on this Mac.", comment: "")
+                )
+            )
+        }
+
+        let folderURL = inputURL.standardizedFileURL.resolvingSymlinksInPath()
+        if let repositoryURL = repositoryResolver(folderURL) {
+            return .existingRepository(
+                repositoryURL.standardizedFileURL.resolvingSymlinksInPath()
+            )
+        }
+
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: folderURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            return .invalidInput(
+                folderURL,
+                error(
+                    for: folderURL,
+                    code: 2,
+                    description: NSLocalizedString("Unable to Open Folder", comment: ""),
+                    reason: NSLocalizedString(
+                        "The selected item does not exist or is not a folder.",
+                        comment: ""
+                    )
+                )
+            )
+        }
+
+        do {
+            if try fileManager.contentsOfDirectory(atPath: folderURL.path).contains(".git") {
+                return .malformedMetadata(
+                    folderURL,
+                    error(
+                        for: folderURL,
+                        code: 3,
+                        description: NSLocalizedString("Unable to Open Repository", comment: ""),
+                        reason: NSLocalizedString(
+                            "The folder contains malformed .git metadata.",
+                            comment: ""
+                        )
+                    )
+                )
+            }
+        } catch {
+            return .invalidInput(
+                folderURL,
+                self.error(
+                    for: folderURL,
+                    code: 4,
+                    description: NSLocalizedString("Unable to Read Folder", comment: ""),
+                    reason: error.localizedDescription,
+                    underlyingError: error
+                )
+            )
+        }
+
+        return .initializableFolder(folderURL)
+    }
+
+    private func error(
+        for url: URL,
+        code: Int,
+        description: String,
+        reason: String,
+        underlyingError: Error? = nil
+    ) -> NSError {
+        var userInfo: [String: Any] = [
+            NSLocalizedDescriptionKey: description,
+            NSLocalizedFailureReasonErrorKey: reason,
+            NSURLErrorKey: url,
+        ]
+        if let underlyingError {
+            userInfo[NSUnderlyingErrorKey] = underlyingError
+        }
+        return NSError(
+            domain: "PBRepositoryOpeningErrorDomain",
+            code: code,
+            userInfo: userInfo
+        )
+    }
+}
+
+enum RepositoryCreationDecision: Equatable {
+    case create
+    case cancel
+}
+
+protocol RepositoryCreationPrompting {
+    func prompt(
+        toCreateRepositoryAt url: URL,
+        sourceWindow: NSWindow?,
+        completion: @escaping (RepositoryCreationDecision) -> Void
+    )
+}
+
+struct AppKitRepositoryCreationPrompter: RepositoryCreationPrompting {
+    func prompt(
+        toCreateRepositoryAt url: URL,
+        sourceWindow: NSWindow?,
+        completion: @escaping (RepositoryCreationDecision) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = NSLocalizedString("Create a Repository?", comment: "")
+        alert.informativeText = String(
+            format: NSLocalizedString(
+                "“%@” is not inside a Git repository. Would you like GitX to create one in this folder?",
+                comment: ""
+            ),
+            url.lastPathComponent
+        )
+        alert.addButton(withTitle: NSLocalizedString("Create Repository", comment: ""))
+        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))
+
+        let handleResponse: (NSApplication.ModalResponse) -> Void = { response in
+            completion(response == .alertFirstButtonReturn ? .create : .cancel)
+        }
+        if let sourceWindow {
+            alert.beginSheetModal(for: sourceWindow, completionHandler: handleResponse)
+        } else {
+            handleResponse(alert.runModal())
+        }
+    }
+}
+
 @objc(PBRepositoryOpenCoordinator)
 final class RepositoryOpenCoordinator: NSObject {
     @objc static let shared = RepositoryOpenCoordinator()
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryOpening")
+    private let classifier: RepositoryOpeningClassifier
+    private let creationPrompter: RepositoryCreationPrompting
+    private let repositoryInitializer: (URL) -> Result<Void, NSError>
+
+    override convenience init() {
+        self.init(
+            classifier: RepositoryOpeningClassifier(),
+            creationPrompter: AppKitRepositoryCreationPrompter(),
+            repositoryInitializer: Self.initializeRepository
+        )
+    }
+
+    init(
+        classifier: RepositoryOpeningClassifier,
+        creationPrompter: RepositoryCreationPrompting,
+        repositoryInitializer: @escaping (URL) -> Result<Void, NSError>
+    ) {
+        self.classifier = classifier
+        self.creationPrompter = creationPrompter
+        self.repositoryInitializer = repositoryInitializer
+        super.init()
+    }
 
     @objc(openURLs:sourceWindow:completion:)
     func open(
@@ -97,24 +277,18 @@ final class RepositoryOpenCoordinator: NSObject {
         disposition: OpenDisposition,
         completion: @escaping ([NSDocument], [NSError]) -> Void
     ) {
-        let canonical = urls.compactMap { PBRepositoryFinder.fileURL(for: $0) ?? $0.standardizedFileURL }
         var documents: [NSDocument] = []
         var errors: [NSError] = []
         var tabTarget = eligibleRepositoryWindow(preferred: sourceWindow)
 
-        func openNext(_ index: Int) {
-            guard canonical.indices.contains(index) else {
-                completion(documents, errors)
-                return
-            }
-            let url = canonical[index]
+        func openRepository(at url: URL, then continueOpening: @escaping () -> Void) {
             if let existing = existingDocument(for: url) {
                 existing.showWindows()
                 existing.windowControllers.first?.window?.makeKeyAndOrderFront(self)
                 documents.append(existing)
                 RecentRepositoryStore.shared.record(url)
                 logger.info("Focused an already-open repository")
-                openNext(index + 1)
+                continueOpening()
                 return
             }
 
@@ -142,11 +316,69 @@ final class RepositoryOpenCoordinator: NSObject {
                     WelcomeWindowController.shared.closeWelcome()
                 } else if let error {
                     errors.append(error as NSError)
+                    self.logger.error("Failed to open repository: \(error.localizedDescription, privacy: .public)")
                 }
+                continueOpening()
+            }
+        }
+
+        func openNext(_ index: Int) {
+            guard urls.indices.contains(index) else {
+                completion(documents, errors)
+                return
+            }
+            let inputURL = urls[index]
+            let continueOpening = {
                 openNext(index + 1)
+            }
+
+            switch classifier.classify(inputURL) {
+            case let .existingRepository(repositoryURL):
+                logger.info("Classified repository input as an existing repository")
+                openRepository(at: repositoryURL, then: continueOpening)
+            case let .initializableFolder(folderURL):
+                logger.info("Classified repository input as an initializable folder")
+                creationPrompter.prompt(
+                    toCreateRepositoryAt: folderURL,
+                    sourceWindow: sourceWindow
+                ) { decision in
+                    guard decision == .create else {
+                        self.logger.info("Repository creation was cancelled")
+                        continueOpening()
+                        return
+                    }
+                    switch self.repositoryInitializer(folderURL) {
+                    case .success:
+                        self.logger.info("Initialized a repository with ObjectiveGit defaults")
+                        openRepository(at: folderURL, then: continueOpening)
+                    case let .failure(error):
+                        errors.append(error)
+                        self.logger.error(
+                            "Failed to initialize repository: \(error.localizedDescription, privacy: .public)"
+                        )
+                        continueOpening()
+                    }
+                }
+            case let .malformedMetadata(_, error):
+                errors.append(error)
+                logger.error("Rejected malformed repository metadata")
+                continueOpening()
+            case let .invalidInput(_, error):
+                errors.append(error)
+                logger.error("Rejected invalid repository input")
+                continueOpening()
             }
         }
         openNext(0)
+    }
+
+    private static func initializeRepository(at url: URL) -> Result<Void, NSError> {
+        do {
+            _ = try GTRepository.initializeEmpty(atFileURL: url, options: nil)
+            return .success(())
+        } catch {
+            return .failure(error as NSError)
+        }
     }
 
     private func resolvedDisposition(for modifiers: NSEvent.ModifierFlags) -> OpenDisposition {

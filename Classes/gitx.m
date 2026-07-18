@@ -305,10 +305,11 @@ NSURL *workingDirectoryURL(NSMutableArray *arguments)
 		// The user might be trying todo a `gitx log -- path` or something.
 		if ([path isEqualToString:@"--"]) break;
 
-		// Let's check that path and find the closest repository
-		NSURL *url = checkWorkingDirectoryPath(path);
-		url = [PBRepositoryFinder fileURLForURL:url];
-		if (!url) continue; // Invalid path, let's ignore it
+		// Prefer the closest repository, but preserve an existing plain folder
+		// so the app can offer to initialize it.
+		NSURL *folderURL = checkWorkingDirectoryPath(path);
+		if (!folderURL) continue; // Invalid path, let's ignore it
+		NSURL *url = [PBRepositoryFinder fileURLForURL:folderURL] ?: folderURL;
 
 		// Valid repository found, lets' drop parsed argument
 		[arguments removeObjectAtIndex:i];
@@ -316,8 +317,11 @@ NSURL *workingDirectoryURL(NSMutableArray *arguments)
 		return url;
 	}
 
-	// Still no path found, let's default to our current working directory
-	return [PBRepositoryFinder fileURLForURL:[NSURL fileURLWithPath:workingDirectory]];
+	// Still no path found, default to the current working directory. Keep a
+	// plain folder intact so repository creation is coordinated by the app.
+	NSURL *folderURL = checkWorkingDirectoryPath(workingDirectory);
+	if (!folderURL) return nil;
+	return [PBRepositoryFinder fileURLForURL:folderURL] ?: folderURL;
 }
 
 int main(int argc, const char **argv)
