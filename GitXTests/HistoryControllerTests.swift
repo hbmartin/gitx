@@ -936,6 +936,93 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.previewPanel(nil, handle: previewKeyEvent))
     }
 
+    func testBranchDragSourceMaskCharacterization() throws {
+        let commitListClass = try XCTUnwrap(NSClassFromString("GitX.PBCommitList") as? NSTableView.Type)
+        let commitList = commitListClass.init(frame: .zero)
+        let sessionObject = NSObject()
+        let selector = NSSelectorFromString("draggingSession:sourceOperationMaskForDraggingContext:")
+        let implementation = try XCTUnwrap(commitList.method(for: selector))
+        typealias SourceMaskImplementation =
+            @convention(c) (AnyObject, Selector, AnyObject, NSDraggingContext) -> NSDragOperation
+        // swift6-safety-justification: Objective-C object arguments share an ABI, and the override does not inspect the session.
+        let sourceMask = unsafeBitCast(implementation, to: SourceMaskImplementation.self)
+
+        XCTAssertEqual(
+            sourceMask(commitList, selector, sessionObject, .withinApplication),
+            .copy
+        )
+        XCTAssertEqual(
+            sourceMask(commitList, selector, sessionObject, .outsideApplication),
+            .copy
+        )
+    }
+
+    func testBranchLabelDragEligibilityCharacterization() throws {
+        repository.reloadRefs()
+        let commits = loadedCommits()
+        historyController.commitController.content = commits
+        historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+
+        let table = CommitListFake()
+        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SubjectColumn")))
+        table.testColumn = 0
+        let tableCoordinator = self.tableCoordinator
+        let originalCommitList = historyController.commitList
+        historyController.setValue(table, forKey: "commitList")
+        defer { historyController.setValue(originalCommitList, forKey: "commitList") }
+
+        func writeDrag(for ref: PBGitRef) throws -> (Bool, NSPasteboard, Int, Int) {
+            let row = try XCTUnwrap(arranged.firstIndex { commit in
+                commit.refs.compactMap { $0 as? PBGitRef }.contains { $0.isEqual(to: ref) }
+            })
+            let referenceIndex = try XCTUnwrap(
+                arranged[row].refs.compactMap { $0 as? PBGitRef }.firstIndex { $0.isEqual(to: ref) }
+            )
+            table.testRow = row
+            table.revisionCell.referenceIndex = Int32(referenceIndex)
+            let pasteboard = freshPasteboard()
+            let didWrite = tableCoordinator.tableView(
+                table,
+                writeRowsWith: IndexSet(integer: row),
+                to: pasteboard
+            )
+            return (didWrite, pasteboard, row, referenceIndex)
+        }
+
+        let feature = try XCTUnwrap(repository.ref(forName: "feature"))
+        let (didWriteFeature, featurePasteboard, featureRow, featureIndex) = try writeDrag(for: feature)
+        XCTAssertTrue(didWriteFeature)
+        let featureData = try XCTUnwrap(
+            featurePasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef"))
+        )
+        let legacyPayload = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: featureData, format: nil) as? [Int]
+        )
+        XCTAssertEqual(legacyPayload, [featureRow, featureIndex])
+
+        let ineligibleReferences = try [
+            XCTUnwrap(repository.headRef()?.ref()),
+            XCTUnwrap(repository.ref(forName: "v1")),
+            XCTUnwrap(repository.ref(forName: "origin/main")),
+        ]
+        for ref in ineligibleReferences {
+            let (didWrite, pasteboard, _, _) = try writeDrag(for: ref)
+            XCTAssertFalse(didWrite)
+            XCTAssertNil(pasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef")))
+        }
+
+        table.testRow = arranged.count
+        table.revisionCell.referenceIndex = 0
+        let outOfRangePasteboard = freshPasteboard()
+        XCTAssertFalse(tableCoordinator.tableView(
+            table,
+            writeRowsWith: IndexSet(integer: arranged.count),
+            to: outOfRangePasteboard
+        ))
+        XCTAssertNil(outOfRangePasteboard.data(forType: NSPasteboard.PasteboardType("PBGitRef")))
+    }
+
     private func loadedCommits() -> [PBGitCommit] {
         waitForHistory()
         return repository.revisionList?.commits.compactMap { $0 as? PBGitCommit } ?? []
