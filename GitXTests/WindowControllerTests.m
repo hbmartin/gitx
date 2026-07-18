@@ -506,19 +506,19 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @end
 
 @interface NSAlert (WindowControllerTests)
-- (void)pb_window_beginSheetModalForWindow:(NSWindow *)sheetWindow completionHandler:(void (^)(NSModalResponse returnCode))handler;
+- (void)pb_window_beginSheetModalForWindow:(NSWindow *)sheetWindow completionHandler:(void (^_Nullable)(NSModalResponse returnCode))handler;
 - (NSModalResponse)pb_window_runModal;
 @end
 
 @implementation NSAlert (WindowControllerTests)
 
-- (void)pb_window_beginSheetModalForWindow:(NSWindow *)sheetWindow completionHandler:(void (^)(NSModalResponse returnCode))handler
+- (void)pb_window_beginSheetModalForWindow:(NSWindow *)sheetWindow completionHandler:(void (^_Nullable)(NSModalResponse returnCode))handler
 {
 	PBWindowAlertSheetCount++;
 	[PBWindowPresentedAlerts addObject:self];
 	if (PBWindowAlertPresentationHook) PBWindowAlertPresentationHook(self);
 	self.suppressionButton.state = PBWindowAlertSuppressionState;
-	handler(PBWindowAlertResponse);
+	if (handler) handler(PBWindowAlertResponse);
 }
 
 - (NSModalResponse)pb_window_runModal
