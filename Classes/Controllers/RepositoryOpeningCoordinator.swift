@@ -277,6 +277,42 @@ final class RepositoryOpenCoordinator: NSObject {
         disposition: OpenDisposition,
         completion: @escaping ([NSDocument], [NSError]) -> Void
     ) {
+        open(
+            urls: urls,
+            sourceWindow: sourceWindow,
+            disposition: disposition,
+            classify: classifier.classify,
+            completion: completion
+        )
+    }
+
+    /// Opens repository URLs supplied by a source that has already identified
+    /// them as repositories, such as the repository's submodule list. This
+    /// preserves the document-opening attempt for uninitialized submodules
+    /// whose work-tree folder does not exist yet.
+    @objc(openKnownRepositoryURLs:sourceWindow:completion:)
+    func openKnownRepositories(
+        urls: [URL],
+        sourceWindow: NSWindow?,
+        completion: @escaping ([NSDocument], [NSError]) -> Void
+    ) {
+        let disposition = resolvedDisposition(for: NSApp.currentEvent?.modifierFlags ?? [])
+        open(
+            urls: urls,
+            sourceWindow: sourceWindow,
+            disposition: disposition,
+            classify: { .existingRepository($0) },
+            completion: completion
+        )
+    }
+
+    private func open(
+        urls: [URL],
+        sourceWindow: NSWindow?,
+        disposition: OpenDisposition,
+        classify: @escaping (URL) -> RepositoryOpenClassification,
+        completion: @escaping ([NSDocument], [NSError]) -> Void
+    ) {
         var documents: [NSDocument] = []
         var errors: [NSError] = []
         var tabTarget = eligibleRepositoryWindow(preferred: sourceWindow)
@@ -332,7 +368,7 @@ final class RepositoryOpenCoordinator: NSObject {
                 openNext(index + 1)
             }
 
-            switch classifier.classify(inputURL) {
+            switch classify(inputURL) {
             case let .existingRepository(repositoryURL):
                 logger.info("Classified repository input as an existing repository")
                 openRepository(at: repositoryURL, then: continueOpening)
