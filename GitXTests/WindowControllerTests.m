@@ -87,7 +87,7 @@
 - (void)toggleBranchSort:(id)sender;
 - (BOOL)outlineView:(NSOutlineView *)outlineView
 	shouldEditTableColumn:(nullable NSTableColumn *)tableColumn
-				 item:(id)item;
+					 item:(id)item;
 @end
 
 @interface PBCommitMessageTransformer : NSObject
@@ -2116,7 +2116,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (void)testSidebarMenusSortingAndReferenceRemoval
 {
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
-																	   superController:self.controller];
+																		 superController:self.controller];
 	(void)sidebar.view;
 	PBGitRevSpecifier *branchRevision = [[PBGitRevSpecifier alloc] initWithRef:self.branchRef];
 	PBSourceViewItem *branchItem = [sidebar itemForRev:branchRevision];
@@ -2135,7 +2135,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowOutlineView *outline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200)];
 	outline.testItem = submoduleItem;
 	PBGitSidebarController *isolatedSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
-																		  superController:self.controller];
+																				 superController:self.controller];
 	[isolatedSidebar setValue:outline forKey:@"sourceView"];
 	[isolatedSidebar setValue:sidebar.remotes forKey:@"remotes"];
 	NSMenu *submoduleMenu = [isolatedSidebar menuForRow:0];
@@ -2162,7 +2162,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 {
 	PBWindowOutlineView *outline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200)];
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
-																	   superController:self.controller];
+																		 superController:self.controller];
 	PBSourceViewItem *remotes = [PBSourceViewItem groupItemWithTitle:@"Remotes"];
 	[sidebar setValue:outline forKey:@"sourceView"];
 	[sidebar setValue:remotes forKey:@"remotes"];
