@@ -120,8 +120,10 @@ final class CommitProgressSheetController: NSWindowController {
             .font: NSFont.userFixedPitchFont(ofSize: NSFont.smallSystemFontSize) as Any,
             .foregroundColor: NSColor.textColor,
         ]
-        outputTextView.textStorage?.append(NSAttributedString(string: output, attributes: attributes))
-        outputTextView.scrollRangeToVisible(NSRange(location: outputTextView.string.utf16.count, length: 0))
+        if let textStorage = outputTextView.textStorage {
+            textStorage.append(NSAttributedString(string: output, attributes: attributes))
+            outputTextView.scrollRangeToVisible(NSRange(location: textStorage.length, length: 0))
+        }
         logger.debug("Appended \(output.utf8.count) bytes of interactive commit output")
     }
 

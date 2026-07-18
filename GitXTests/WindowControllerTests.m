@@ -56,8 +56,9 @@
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 - (NSString *)stringForKey:(NSString *)key;
 - (BOOL)boolForKey:(NSString *)key defaultValue:(BOOL)defaultValue;
-- (BOOL)setString:(NSString *)value forKey:(NSString *)key error:(NSError **)error;
-- (BOOL)setBool:(BOOL)value forKey:(NSString *)key error:(NSError **)error;
+- (BOOL)setString:(NSString *)value forKey:(NSString *)key error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)setBool:(BOOL)value forKey:(NSString *)key error:(NSError *_Nullable *_Nullable)error;
+- (NSString *)detectedPrimaryBranch;
 @end
 
 @interface PBCommitLayoutCoordinator : NSObject
@@ -1334,6 +1335,21 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	}
 }
 
+- (void)attachScreenshotOfView:(NSView *)view name:(NSString *)name
+{
+	[view layoutSubtreeIfNeeded];
+	NSBitmapImageRep *representation = [view bitmapImageRepForCachingDisplayInRect:view.bounds];
+	XCTAssertNotNil(representation);
+	if (!representation) return;
+	[view cacheDisplayInRect:view.bounds toBitmapImageRep:representation];
+	NSImage *screenshot = [[NSImage alloc] initWithSize:view.bounds.size];
+	[screenshot addRepresentation:representation];
+	XCTAttachment *attachment = [XCTAttachment attachmentWithImage:screenshot];
+	attachment.name = name;
+	attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
+	[self addAttachment:attachment];
+}
+
 - (void)testCommitControllerNibLifecycleRefreshAndRemoteSelection
 {
 	PBCommitIndexSpy *index = [[PBCommitIndexSpy alloc] initWithRepository:self.repository];
@@ -1368,6 +1384,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSSplitView *composerSplitView = (NSSplitView *)messagePane.superview;
 	XCTAssertTrue([composerSplitView isKindOfClass:NSSplitView.class]);
 	XCTAssertFalse(composerSplitView.isVertical);
+	[self attachScreenshotOfView:messagePane name:@"Commit message typography"];
 	XCTAssertEqualObjects(composerSplitView.autosaveName, @"CommitComposer");
 	XCTAssertEqual(composerSplitView.subviews.count, (NSUInteger)2);
 	NSSplitView *fileSplitView = (NSSplitView *)composerSplitView.subviews.firstObject;
@@ -2713,6 +2730,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 			XCTAssertEqualObjects(alert.buttons.firstObject.title, @"Create Repository");
 			XCTAssertEqualObjects(alert.buttons.lastObject.title, @"Cancel");
 		}
+		[self attachScreenshotOfView:PBWindowPresentedAlerts.firstObject.window.contentView
+								name:@"Repository creation prompt"];
 		XCTAssertEqual(PBWindowDocumentOpenedURLs.count, (NSUInteger)2);
 		XCTAssertEqualObjects(PBWindowResolvedPath(PBWindowDocumentOpenedURLs[0]), PBWindowResolvedPath(emptyURL));
 		XCTAssertEqualObjects(PBWindowResolvedPath(PBWindowDocumentOpenedURLs[1]), PBWindowResolvedPath(nonemptyURL));
@@ -2965,6 +2984,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 						  @"https://github.com/acme/repo/pull/7");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"git@github.com:acme/repo.git" branch:@"feature/settings" sha:@"abc"].absoluteString,
 						  @"https://github.com/acme/repo/tree/feature/settings");
+	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"deploy@example.com:team/repo.git" branch:@"main" sha:@"abc"].absoluteString,
+						  @"https://example.com/team/repo/tree/main");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"ssh://git@gitlab.example/acme/repo.git" branch:@"main" sha:@"abc"].absoluteString,
 						  @"https://gitlab.example/acme/repo/-/tree/main");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"https://bitbucket.org/acme/repo.git" branch:@"" sha:@"abc123"].absoluteString,
@@ -3011,6 +3032,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSFont *preferredTitleFont = [NSFont preferredFontForTextStyle:NSFontTextStyleTitle1 options:@{}];
 	XCTAssertEqualObjects(welcomeTitle.font.fontName, preferredTitleFont.fontName);
 	XCTAssertEqualWithAccuracy(welcomeTitle.font.pointSize, preferredTitleFont.pointSize, 0.01);
+	[self attachScreenshotOfView:welcome.window.contentView name:@"Welcome window title typography"];
 	XCTAssertEqual(recentsTable.target, welcome);
 	XCTAssertEqual(recentsTable.doubleAction, NSSelectorFromString(@"openSelected:"));
 	XCTAssertGreaterThan(recentsTable.numberOfRows, (NSInteger)0);
@@ -3049,6 +3071,13 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([store setBool:NO forKey:@"gitx.test.toolbarEnabled" error:&error]);
 	XCTAssertNil(error);
 	XCTAssertFalse([store boolForKey:@"gitx.test.toolbarEnabled" defaultValue:YES]);
+
+	[self git:@[ @"branch", @"-m", @"topic" ] directory:self.repositoryURL];
+	[self git:@[ @"tag", @"main" ] directory:self.repositoryURL];
+	[self.repository reloadRefs];
+	[self.repository readCurrentBranch];
+	PBRepositorySettingsStore *tagOnlyStore = [[PBRepositorySettingsStore alloc] initWithRepository:self.repository];
+	XCTAssertEqualObjects(tagOnlyStore.detectedPrimaryBranch, @"topic");
 }
 
 - (void)testChangedFileTreeUsesFlatFullPathsAndStatusTitles

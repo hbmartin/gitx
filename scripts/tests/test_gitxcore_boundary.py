@@ -36,6 +36,21 @@ class GitXCoreBoundaryTests(unittest.TestCase):
         self.assertTrue(any("global notifications" in failure for failure in failures))
         self.assertTrue(any("process execution" in failure for failure in failures))
 
+    def test_attributed_and_access_modified_imports_cannot_bypass_the_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "Attributed.swift").write_text(
+                "@preconcurrency internal import AppKit\n"
+                "private import WebKit\n"
+                "@_exported public import GitX\n"
+            )
+
+            failures = self.module.boundary_failures(root)
+
+        self.assertTrue(any("disallowed module AppKit" in failure for failure in failures))
+        self.assertTrue(any("disallowed module WebKit" in failure for failure in failures))
+        self.assertTrue(any("disallowed module GitX" in failure for failure in failures))
+
 
 if __name__ == "__main__":
     unittest.main()

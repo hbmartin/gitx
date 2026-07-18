@@ -35,23 +35,19 @@ final class TerminalLauncher: NSObject {
         do {
             if identifier == "custom" {
                 try launchCustom(directory: directory)
+                logger.info("Opened terminal for repository")
             } else if identifier == "com.apple.Terminal" || identifier == "com.googlecode.iterm2" {
                 ApplicationComposition.shared.applicationPreferences.set(
                     identifier,
                     forKey: "PBTerminalHandler"
                 )
                 PBTerminalUtil.runCommand(ApplicationSettings.terminalInitialCommand, inDirectory: directory)
+                logger.info("Opened terminal for repository")
             } else {
-                try launchApplication(identifier: identifier, directory: directory)
+                try launchApplication(identifier: identifier, directory: directory, presenting: window)
             }
-            logger.info("Opened terminal for repository")
         } catch {
-            let alert = NSAlert(error: error)
-            if let window {
-                alert.beginSheetModal(for: window)
-            } else {
-                alert.runModal()
-            }
+            present(error: error, window: window)
         }
     }
 
@@ -79,7 +75,7 @@ final class TerminalLauncher: NSObject {
         return identifier
     }
 
-    private func launchApplication(identifier: String, directory: URL) throws {
+    private func launchApplication(identifier: String, directory: URL, presenting window: NSWindow?) throws {
         guard let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) else {
             throw TerminalLaunchError.applicationUnavailable(identifier)
         }
@@ -93,9 +89,19 @@ final class TerminalLauncher: NSObject {
             command: command
         )
         NSWorkspace.shared.openApplication(at: applicationURL, configuration: configuration) { _, error in
-            if let error {
-                self.logger.error("Terminal launch failed: \(error.localizedDescription, privacy: .public)")
+            DispatchQueue.main.async {
+                self.completeApplicationLaunch(error: error as NSError?, presenting: window)
             }
+        }
+    }
+
+    @objc(completeApplicationLaunchWithError:presentingWindow:)
+    func completeApplicationLaunch(error: NSError?, presenting window: NSWindow?) {
+        if let error {
+            logger.error("Terminal launch failed: \(error.localizedDescription, privacy: .public)")
+            present(error: error, window: window)
+        } else {
+            logger.info("Opened terminal for repository")
         }
     }
 
@@ -129,14 +135,23 @@ final class TerminalLauncher: NSObject {
             throw TerminalLaunchError.invalidCustomExecutable
         }
         let command = ApplicationSettings.terminalInitialCommand
-        let replaced = ApplicationSettings.customTerminalArguments
-            .replacingOccurrences(of: "{directory}", with: directory.path)
-            .replacingOccurrences(of: "{command}", with: command)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = argumentTokens(replaced)
+        process.arguments = customArguments(
+            template: ApplicationSettings.customTerminalArguments,
+            directory: directory.path,
+            command: command
+        )
         process.currentDirectoryURL = directory
         try process.run()
+    }
+
+    @objc(customArgumentsForTemplate:directory:command:)
+    func customArguments(template: String, directory: String, command: String) -> [String] {
+        argumentTokens(template).map {
+            $0.replacingOccurrences(of: "{directory}", with: directory)
+                .replacingOccurrences(of: "{command}", with: command)
+        }
     }
 
     @objc(argumentTokens:)
@@ -175,6 +190,15 @@ final class TerminalLauncher: NSObject {
             tokens.append(current)
         }
         return tokens
+    }
+
+    private func present(error: Error, window: NSWindow?) {
+        let alert = NSAlert(error: error)
+        if let window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 }
 
@@ -229,12 +253,29 @@ final class IntegrationManager: NSObject {
     @objc func removeRaycastScripts(presenting window: NSWindow?) {
         guard let directory = scriptsDirectory(presenting: window, promptIfMissing: false) else { return }
         do {
-            let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            for file in files where file.lastPathComponent.hasPrefix(managedPrefix) {
+            var removedCount = 0
+            var preservedCount = 0
+            for script in raycastScripts {
+                let file = directory.appendingPathComponent(managedPrefix + script.filename)
+                guard FileManager.default.fileExists(atPath: file.path) else { continue }
+                guard let contents = try? String(contentsOf: file, encoding: .utf8),
+                      hasValidManagedChecksum(contents)
+                else {
+                    preservedCount += 1
+                    logger.notice("Preserved a modified managed Raycast command")
+                    continue
+                }
                 try FileManager.default.removeItem(at: file)
+                removedCount += 1
             }
-            logger.info("Removed managed Raycast commands")
-            present(title: "Raycast Commands Removed", message: "GitX left other scripts unchanged.", window: window)
+            logger.info("Removed \(removedCount) managed Raycast command(s); preserved \(preservedCount)")
+            present(
+                title: "Raycast Commands Removed",
+                message: preservedCount == 0
+                    ? "GitX left other scripts unchanged."
+                    : "GitX preserved modified and user-authored scripts.",
+                window: window
+            )
         } catch {
             present(error: error, window: window)
         }

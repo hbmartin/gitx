@@ -346,12 +346,12 @@ final class IndexCommitServiceTests: XCTestCase {
             eventDescriptions(recorder.events),
             [
                 "phase:\(PBIndexCommitPhase.creatingTree.rawValue)",
-                "phase:\(PBIndexCommitPhase.creatingCommit.rawValue)",
                 "phase:\(PBIndexCommitPhase.runningPreCommitHook.rawValue)",
                 "output:pre ",
                 "output:€\n",
                 "phase:\(PBIndexCommitPhase.runningCommitMessageHook.rawValue)",
                 "output:message\n",
+                "phase:\(PBIndexCommitPhase.creatingCommit.rawValue)",
                 "phase:\(PBIndexCommitPhase.updatingHead.rawValue)",
                 "phase:\(PBIndexCommitPhase.runningPostCommitHook.rawValue)",
                 "output:post\n",

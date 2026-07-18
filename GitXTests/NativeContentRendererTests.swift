@@ -3,12 +3,14 @@ import XCTest
 
 final class NativeContentRendererTests: XCTestCase {
     private func preserveDefault(_ key: String) -> () -> Void {
-        let original = UserDefaults.standard.object(forKey: key)
+        let defaults = UserDefaults.standard
+        let original = Bundle.main.bundleIdentifier
+            .flatMap { defaults.persistentDomain(forName: $0)?[key] }
         return {
             if let original {
-                UserDefaults.standard.set(original, forKey: key)
+                defaults.set(original, forKey: key)
             } else {
-                UserDefaults.standard.removeObject(forKey: key)
+                defaults.removeObject(forKey: key)
             }
         }
     }
@@ -263,9 +265,7 @@ final class NativeContentRendererTests: XCTestCase {
         let emphasisFont = try font(in: highlighted, matching: "emphasis")
 
         XCTAssertEqual(emphasisFont.pointSize, 18)
-        XCTAssertTrue(
-            NSFontManager.shared.traits(of: emphasisFont).contains(.italicFontMask)
-        )
+        XCTAssertTrue(emphasisFont.fontDescriptor.symbolicTraits.contains(.italic))
     }
 
     func testTextRendererUsesTwelvePointFallbackWhenBaseFontIsAbsent() throws {
@@ -282,9 +282,7 @@ final class NativeContentRendererTests: XCTestCase {
 
         let bodyFont = try font(in: rendered, matching: "fallback body")
         XCTAssertEqual(bodyFont.pointSize, 12)
-        XCTAssertTrue(
-            NSFontManager.shared.traits(of: bodyFont).contains(.fixedPitchFontMask)
-        )
+        XCTAssertTrue(bodyFont.fontDescriptor.symbolicTraits.contains(.monoSpace))
         XCTAssertEqual(try font(in: rendered, matching: "Fallback.txt").pointSize, 13)
     }
 

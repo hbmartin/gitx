@@ -143,6 +143,19 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 	NS_SWIFT_NAME(launchArguments(identifier:directory:command:));
 - (NSArray<NSString *> *)commandArguments:(NSString *)command;
 - (NSArray<NSString *> *)argumentTokens:(NSString *)string;
+- (NSArray<NSString *> *)customArgumentsForTemplate:(NSString *)template
+                                           directory:(NSString *)directory
+                                             command:(NSString *)command
+	NS_SWIFT_NAME(customArguments(template:directory:command:));
+- (void)completeApplicationLaunchWithError:(nullable NSError *)error
+                          presentingWindow:(nullable NSWindow *)window
+	NS_SWIFT_NAME(completeApplicationLaunch(error:presenting:));
+@end
+
+@interface PBRepositoryIgnoreFileService : NSObject
+- (instancetype)initWithFileURL:(NSURL *)fileURL;
+- (BOOL)appendPaths:(NSArray<NSString *> *)paths
+              error:(NSError * _Nullable * _Nullable)error;
 @end
 
 @interface PBIntegrationManager : NSObject

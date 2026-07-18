@@ -85,6 +85,21 @@ public enum RepositoryConfigurationPolicy {
     }
 }
 
+public enum RepositoryConfigurationIssuePresenter {
+    public static func message(for issue: RepositoryConfigurationValidationIssue) -> String {
+        switch issue {
+        case .webURLTemplateMustUseHTTPS:
+            "The web URL template must use HTTPS."
+        case let .commitRuleMissingSeparator(line):
+            "Commit message replacement rule on line \(line) must contain =>."
+        case let .commitRuleInvalidRegularExpression(line):
+            "Commit message replacement rule \(line) is not a valid regular expression."
+        case let .diffSuppressionInvalidRegularExpression(line):
+            "Diff suppression pattern on line \(line) is not a valid regular expression."
+        }
+    }
+}
+
 public enum CommitMessageRuleError: Error, Equatable, Sendable {
     case missingSeparator(line: Int)
     case invalidRegularExpression(line: Int, description: String)

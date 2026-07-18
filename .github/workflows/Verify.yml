@@ -21,8 +21,10 @@ jobs:
     name: GitXCore hostless tests
     runs-on: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v7
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: "26.2"
       - name: Enforce the core dependency boundary
@@ -42,7 +44,7 @@ jobs:
           python3 scripts/check_core_coverage.py "$CODECOV_PATH"
       - name: Upload core coverage
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: GitXCore-coverage
           path: ${{ runner.temp }}/GitXCoreBuild/**/codecov/GitXCore.json
@@ -51,14 +53,15 @@ jobs:
     name: static verification
     runs-on: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
-      - uses: maxim-lobanov/setup-xcode@v1
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: "26.2"
       - name: Restore pinned Swift tool cache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.mint
           key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.2-mint-${{ hashFiles('Mintfile') }}
@@ -75,15 +78,16 @@ jobs:
     name: unit tests and analyzer
     runs-on: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
           submodules: recursive
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: "26.2"
       - name: Restore pinned Swift tool cache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.mint
           key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.2-mint-${{ hashFiles('Mintfile') }}
@@ -115,7 +119,7 @@ jobs:
         run: scripts/run_analyzer.sh
       - name: Upload test and analyzer results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: GitX-verification-results
           path: |
@@ -126,10 +130,11 @@ jobs:
     name: UI workflows
     runs-on: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: "26.2"
       - name: Prepare ObjectiveGit
@@ -148,7 +153,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/GitXUI.xcresult"
       - name: Upload UI result
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: GitXUI-results
           path: ${{ runner.temp }}/GitXUI.xcresult
@@ -166,10 +171,11 @@ jobs:
           - name: Thread sanitizer
             test_plan: GitXThreadSanitizer
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: "26.2"
       - name: Prepare ObjectiveGit
@@ -188,7 +194,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/${{ matrix.test_plan }}.xcresult"
       - name: Upload sanitizer result
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.test_plan }}-results
           path: ${{ runner.temp }}/${{ matrix.test_plan }}.xcresult
@@ -198,10 +204,11 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: "26.2"
       - name: Prepare ObjectiveGit
@@ -220,7 +227,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/GitXPerformance.xcresult"
       - name: Upload performance result
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: GitXPerformance-results
           path: ${{ runner.temp }}/GitXPerformance.xcresult
