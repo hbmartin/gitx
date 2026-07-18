@@ -206,7 +206,8 @@ const BOOL SHUFFLE_COLORS = NO;
 	[style setAlignment:NSTextAlignmentCenter];
 	[attributes setObject:style forKey:NSParagraphStyleAttributeName];
 
-	[attributes setObject:[NSFont systemFontOfSize:10] forKey:NSFontAttributeName];
+	[attributes setObject:[NSFont preferredFontForTextStyle:NSFontTextStyleCaption1 options:@{}]
+				   forKey:NSFontAttributeName];
 
 	return attributes;
 }

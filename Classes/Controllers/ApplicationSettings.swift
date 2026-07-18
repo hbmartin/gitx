@@ -55,6 +55,9 @@ enum ChangedFilesSortMode: Int {
 
 @objc(PBApplicationSettings)
 final nonisolated class ApplicationSettings: NSObject {
+    @objc static let diffTextTypographyDidChangeNotificationName =
+        "PBDiffTextTypographyDidChangeNotification"
+
     private enum Key {
         static let openDisposition = "PBOpenDisposition"
         static let restorePolicy = "PBWindowRestorePolicy"
@@ -144,7 +147,14 @@ final nonisolated class ApplicationSettings: NSObject {
 
     @objc static var diffFontName: String {
         get { defaults.string(forKey: Key.diffFontName) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular).fontName }
-        set { defaults.set(newValue, forKey: Key.diffFontName) }
+        set {
+            guard newValue != diffFontName else { return }
+            defaults.set(newValue, forKey: Key.diffFontName)
+            NotificationCenter.default.post(
+                name: .diffTextTypographyDidChange,
+                object: nil
+            )
+        }
     }
 
     @objc static var diffFontSize: Double {
@@ -152,7 +162,15 @@ final nonisolated class ApplicationSettings: NSObject {
             guard defaults.object(forKey: Key.diffFontSize) != nil else { return 12 }
             return min(36, max(9, defaults.double(forKey: Key.diffFontSize)))
         }
-        set { defaults.set(min(36, max(9, newValue)), forKey: Key.diffFontSize) }
+        set {
+            let clamped = min(36, max(9, newValue))
+            guard clamped != diffFontSize else { return }
+            defaults.set(clamped, forKey: Key.diffFontSize)
+            NotificationCenter.default.post(
+                name: .diffTextTypographyDidChange,
+                object: nil
+            )
+        }
     }
 
     @objc static var addedTextColor: NSColor {
@@ -277,7 +295,8 @@ private final class SettingsPaneView: NSView {
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 24),
         ])
         let heading = NSTextField(labelWithString: title)
-        heading.font = .systemFont(ofSize: 15, weight: .semibold)
+        heading.font = .preferredFont(forTextStyle: .headline, options: [:])
+        heading.setAccessibilityIdentifier("SettingsPaneHeading")
         stack.addArrangedSubview(heading)
         if let detail {
             let field = wrappingLabel(detail)
@@ -305,7 +324,7 @@ private final class SettingsPaneView: NSView {
         if let help {
             let field = wrappingLabel(help)
             field.textColor = .secondaryLabelColor
-            field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            field.font = .preferredFont(forTextStyle: .footnote, options: [:])
             let spacer = NSView()
             spacer.widthAnchor.constraint(equalToConstant: 192).isActive = true
             let helpRow = NSStackView(views: [spacer, field])
@@ -564,11 +583,14 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         view.addRow("Context:", control: NSStackView(views: [context, contextField]))
 
         let font = stepper(value: ApplicationSettings.diffFontSize, minimum: 9, maximum: 36)
+        font.setAccessibilityIdentifier("DiffFontSizeStepper")
         font.target = view
         font.action = #selector(SettingsPaneView.fontSizeChanged(_:))
         let fontField = NSTextField(labelWithString: "\(Int(ApplicationSettings.diffFontSize)) pt")
+        fontField.setAccessibilityIdentifier("DiffFontSizeValue")
         font.nextKeyView = fontField
         let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        fontPopup.setAccessibilityIdentifier("DiffFontFamily")
         let fixedPitchFonts = NSFontManager.shared.availableFontFamilies.filter { family in
             guard let font = NSFont(name: family, size: 12) else { return false }
             return NSFontManager.shared.traits(of: font).contains(.fixedPitchFontMask)
@@ -685,9 +707,12 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
 }
 
 extension Notification.Name {
-    static let branchSidebarSettingsDidChange = Notification.Name("PBBranchSidebarSettingsDidChangeNotification")
-    static let historyTraversalSettingsDidChange = Notification.Name("PBHistoryTraversalSettingsDidChangeNotification")
-    static let historyTreeSettingsDidChange = Notification.Name("PBHistoryTreeSettingsDidChangeNotification")
+    nonisolated static let branchSidebarSettingsDidChange = Notification.Name("PBBranchSidebarSettingsDidChangeNotification")
+    nonisolated static let diffTextTypographyDidChange = Notification.Name(
+        ApplicationSettings.diffTextTypographyDidChangeNotificationName
+    )
+    nonisolated static let historyTraversalSettingsDidChange = Notification.Name("PBHistoryTraversalSettingsDidChangeNotification")
+    nonisolated static let historyTreeSettingsDidChange = Notification.Name("PBHistoryTreeSettingsDidChangeNotification")
 }
 
 struct TerminalApplication {

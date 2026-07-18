@@ -246,7 +246,8 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
         icon.widthAnchor.constraint(equalToConstant: 64).isActive = true
         icon.heightAnchor.constraint(equalToConstant: 64).isActive = true
         let title = NSTextField(labelWithString: "Open a Recent Repository")
-        title.font = .systemFont(ofSize: 20, weight: .semibold)
+        title.font = .preferredFont(forTextStyle: .title1, options: [:])
+        title.setAccessibilityIdentifier("WelcomeTitle")
         let subtitle = NSTextField(labelWithString: "Search your 20 most recently opened repositories.")
         subtitle.textColor = .secondaryLabelColor
         let heading = NSStackView(views: [icon, NSStackView(views: [title, subtitle])])

@@ -1285,8 +1285,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual((id)messageView.delegate, controller);
 	XCTAssertEqualObjects(messageView.accessibilityIdentifier, @"CommitMessage");
 	NSFont *messageFont = messageView.typingAttributes[NSFontAttributeName];
-	XCTAssertEqualObjects(messageFont.fontName, @"Menlo-Regular");
-	XCTAssertEqualWithAccuracy(messageFont.pointSize, 12.0, 0.01);
+	NSFont *preferredBodyFont = [NSFont preferredFontForTextStyle:NSFontTextStyleBody options:@{}];
+	XCTAssertEqualObjects(messageFont.fontName, preferredBodyFont.fontName);
+	XCTAssertEqualWithAccuracy(messageFont.pointSize, preferredBodyFont.pointSize, 0.01);
 	XCTAssertEqualObjects(unstagedTable.accessibilityIdentifier, @"UnstagedFiles");
 	XCTAssertEqualObjects(stagedTable.accessibilityIdentifier, @"StagedFiles");
 	XCTAssertEqualObjects(pushAfterCommitButton.accessibilityIdentifier, @"PushAfterCommit");
@@ -2377,18 +2378,25 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[welcome searchChanged:nil];
 	NSArray<NSView *> *descendants = welcome.window.contentView.subviews;
 	NSTableView *recentsTable = nil;
-	while (descendants.count > 0 && !recentsTable) {
+	NSTextField *welcomeTitle = nil;
+	while (descendants.count > 0 && (!recentsTable || !welcomeTitle)) {
 		NSView *view = descendants.firstObject;
 		descendants = [descendants subarrayWithRange:NSMakeRange(1, descendants.count - 1)];
 		if ([view isKindOfClass:NSTableView.class] &&
 			[view.accessibilityIdentifier isEqualToString:@"WelcomeRecents"]) {
 			recentsTable = (NSTableView *)view;
-		} else {
-			descendants = [descendants arrayByAddingObjectsFromArray:view.subviews];
+		} else if ([view isKindOfClass:NSTextField.class] &&
+				   [view.accessibilityIdentifier isEqualToString:@"WelcomeTitle"]) {
+			welcomeTitle = (NSTextField *)view;
 		}
+		descendants = [descendants arrayByAddingObjectsFromArray:view.subviews];
 	}
 
 	XCTAssertNotNil(recentsTable);
+	XCTAssertNotNil(welcomeTitle);
+	NSFont *preferredTitleFont = [NSFont preferredFontForTextStyle:NSFontTextStyleTitle1 options:@{}];
+	XCTAssertEqualObjects(welcomeTitle.font.fontName, preferredTitleFont.fontName);
+	XCTAssertEqualWithAccuracy(welcomeTitle.font.pointSize, preferredTitleFont.pointSize, 0.01);
 	XCTAssertEqual(recentsTable.target, welcome);
 	XCTAssertEqual(recentsTable.doubleAction, NSSelectorFromString(@"openSelected:"));
 	XCTAssertGreaterThan(recentsTable.numberOfRows, (NSInteger)0);

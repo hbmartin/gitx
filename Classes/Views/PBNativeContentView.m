@@ -28,6 +28,7 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 @property (nonatomic) NSUInteger renderGeneration;
 @property (nonatomic) PBDiffDocumentParser *diffParser;
 @property (nonatomic) PBPartialPatchBuilder *partialPatchBuilder;
+@property (nonatomic) PBNativeContentTypography *typography;
 @property (nonatomic) PBNativeTextRenderer *textRenderer;
 @property (nonatomic) PBNativeDiffRenderer *diffRenderer;
 @property (nonatomic) NSMutableDictionary<NSString *, PBNativeRenderResult *> *cachedDiffResults;
@@ -52,19 +53,8 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	_cachedDiffScrollOrigins = [NSMutableDictionary dictionary];
 	_diffParser = [[PBDiffDocumentParser alloc] init];
 	_partialPatchBuilder = [[PBPartialPatchBuilder alloc] init];
-	NSFont *configuredFont = [NSFont fontWithName:PBApplicationSettings.diffFontName size:PBApplicationSettings.diffFontSize] ?:
-																																[NSFont monospacedSystemFontOfSize:PBApplicationSettings.diffFontSize
-									weight:NSFontWeightRegular];
-	NSDictionary<NSAttributedStringKey, id> *baseAttributes = @{
-		NSFontAttributeName : configuredFont,
-		NSForegroundColorAttributeName : NSColor.textColor,
-	};
-	NSDictionary<NSAttributedStringKey, id> *titleAttributes = @{
-		NSFontAttributeName : [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
-		NSForegroundColorAttributeName : NSColor.labelColor,
-	};
-	_textRenderer = [[PBNativeTextRenderer alloc] initWithBaseAttributes:baseAttributes titleAttributes:titleAttributes];
-	_diffRenderer = [[PBNativeDiffRenderer alloc] initWithBaseAttributes:baseAttributes titleAttributes:titleAttributes parser:_diffParser];
+	_typography = [PBNativeContentTypography currentTypography];
+	[self configureRenderers];
 
 	_rootStack = [[NSStackView alloc] initWithFrame:NSZeroRect];
 	_rootStack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -101,6 +91,7 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	_textView.richText = YES;
 	_textView.automaticLinkDetectionEnabled = NO;
 	_textView.delegate = self;
+	_textView.accessibilityIdentifier = @"NativeContentText";
 	_textView.backgroundColor = NSColor.textBackgroundColor;
 	_textView.textColor = NSColor.textColor;
 	_scrollView.documentView = _textView;
@@ -113,8 +104,26 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 		[_rootStack.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
 		[_scrollView.widthAnchor constraintEqualToAnchor:_rootStack.widthAnchor],
 	]];
+	[[NSNotificationCenter defaultCenter] addObserver:self
+										 selector:@selector(diffTextTypographyDidChange:)
+											 name:PBApplicationSettings.diffTextTypographyDidChangeNotificationName
+										   object:nil];
 
 	return self;
+}
+
+- (void)dealloc
+{
+	[[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)configureRenderers
+{
+	self.textRenderer = [[PBNativeTextRenderer alloc] initWithBaseAttributes:self.typography.bodyAttributes
+													 titleAttributes:self.typography.titleAttributes];
+	self.diffRenderer = [[PBNativeDiffRenderer alloc] initWithBaseAttributes:self.typography.bodyAttributes
+													 titleAttributes:self.typography.titleAttributes
+															 parser:self.diffParser];
 }
 
 - (void)setAccessoryView:(NSView *)accessoryView
@@ -135,8 +144,13 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 			 scrollOrigin:(nullable NSValue *)scrollOrigin
 {
 	if (generation != self.renderGeneration) return;
+	NSArray<NSValue *> *selectedRanges = scrollOrigin ? self.textView.selectedRanges : nil;
 	self.linkPayloads = linkPayloads ? [linkPayloads mutableCopy] : [NSMutableDictionary dictionary];
-	[self.textView.textStorage setAttributedString:string];
+	NSAttributedString *restyledString = [self.typography restyledString:string];
+	[self.textView.textStorage setAttributedString:restyledString];
+	if (selectedRanges)
+		self.textView.selectedRanges = [self validSelectedRanges:selectedRanges
+													 textLength:restyledString.length];
 	if (scrollOrigin) {
 		[self.textView layoutSubtreeIfNeeded];
 		[self.scrollView.contentView scrollToPoint:scrollOrigin.pointValue];
@@ -144,6 +158,88 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	} else {
 		[self.textView scrollRangeToVisible:NSMakeRange(0, 0)];
 	}
+}
+
+- (NSArray<NSValue *> *)validSelectedRanges:(NSArray<NSValue *> *)ranges textLength:(NSUInteger)textLength
+{
+	NSMutableArray<NSValue *> *validRanges = [NSMutableArray arrayWithCapacity:ranges.count];
+	for (NSValue *value in ranges) {
+		NSRange range = value.rangeValue;
+		range.location = MIN(range.location, textLength);
+		range.length = MIN(range.length, textLength - range.location);
+		[validRanges addObject:[NSValue valueWithRange:range]];
+	}
+	return validRanges;
+}
+
+- (nullable NSDictionary<NSString *, NSNumber *> *)currentViewportAnchor
+{
+	if (self.textView.textStorage.length == 0) return nil;
+	NSLayoutManager *layoutManager = self.textView.layoutManager;
+	NSTextContainer *textContainer = self.textView.textContainer;
+	if (!layoutManager || !textContainer) return nil;
+	[layoutManager ensureLayoutForTextContainer:textContainer];
+	NSRect visibleRect = self.textView.visibleRect;
+	NSPoint containerPoint = NSMakePoint(NSMinX(visibleRect) - self.textView.textContainerOrigin.x,
+										NSMinY(visibleRect) - self.textView.textContainerOrigin.y);
+	CGFloat fraction = 0;
+	NSUInteger glyphIndex = [layoutManager glyphIndexForPoint:containerPoint
+											 inTextContainer:textContainer
+								  fractionOfDistanceThroughGlyph:&fraction];
+	if (glyphIndex >= layoutManager.numberOfGlyphs) return nil;
+	NSUInteger characterIndex = [layoutManager characterIndexForGlyphAtIndex:glyphIndex];
+	NSRect glyphRect = [layoutManager boundingRectForGlyphRange:NSMakeRange(glyphIndex, 1)
+												inTextContainer:textContainer];
+	CGFloat offset = NSMinY(visibleRect) - (NSMinY(glyphRect) + self.textView.textContainerOrigin.y);
+	return @{
+		@"characterIndex" : @(characterIndex),
+		@"offset" : @(offset),
+		@"x" : @(self.scrollView.contentView.bounds.origin.x),
+	};
+}
+
+- (void)restoreViewportAnchor:(NSDictionary<NSString *, NSNumber *> *)anchor
+{
+	if (!anchor || self.textView.textStorage.length == 0) return;
+	NSLayoutManager *layoutManager = self.textView.layoutManager;
+	NSTextContainer *textContainer = self.textView.textContainer;
+	if (!layoutManager || !textContainer) return;
+	[layoutManager ensureLayoutForTextContainer:textContainer];
+	NSUInteger characterIndex = MIN(anchor[@"characterIndex"].unsignedIntegerValue,
+									self.textView.textStorage.length - 1);
+	NSRange glyphRange = [layoutManager glyphRangeForCharacterRange:NSMakeRange(characterIndex, 1)
+											actualCharacterRange:NULL];
+	if (glyphRange.length == 0) return;
+	NSRect glyphRect = [layoutManager boundingRectForGlyphRange:glyphRange
+												inTextContainer:textContainer];
+	CGFloat targetY = NSMinY(glyphRect) + self.textView.textContainerOrigin.y + anchor[@"offset"].doubleValue;
+	NSView *documentView = self.scrollView.documentView;
+	CGFloat maximumY = MAX(0, NSHeight(documentView.frame) - NSHeight(self.scrollView.contentView.bounds));
+	NSPoint target = NSMakePoint(anchor[@"x"].doubleValue, MIN(MAX(0, targetY), maximumY));
+	[self.scrollView.contentView scrollToPoint:target];
+	[self.scrollView reflectScrolledClipView:self.scrollView.contentView];
+}
+
+- (void)diffTextTypographyDidChange:(NSNotification *)notification
+{
+	if (!NSThread.isMainThread) {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[self diffTextTypographyDidChange:notification];
+		});
+		return;
+	}
+	NSArray<NSValue *> *selectedRanges = self.textView.selectedRanges;
+	NSDictionary<NSString *, NSNumber *> *anchor = [self currentViewportAnchor];
+	self.typography = [PBNativeContentTypography currentTypography];
+	[self configureRenderers];
+	NSAttributedString *restyledString = [self.typography restyledString:self.textView.attributedString];
+	[self.textView.textStorage setAttributedString:restyledString];
+	self.textView.selectedRanges = [self validSelectedRanges:selectedRanges textLength:restyledString.length];
+	[self.textView layoutSubtreeIfNeeded];
+	[self restoreViewportAnchor:anchor];
+	NSLog(@"[GitX] Applied native content typography %@ at %.1f pt",
+		  PBApplicationSettings.diffFontName,
+		  PBApplicationSettings.diffFontSize);
 }
 
 - (void)saveCurrentDiffScrollPosition
@@ -158,11 +254,10 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	[self saveCurrentDiffScrollPosition];
 	self.currentDiffCacheIdentifier = nil;
 	self.renderGeneration++;
+	NSMutableDictionary<NSAttributedStringKey, id> *attributes = self.typography.statusAttributes.mutableCopy;
+	attributes[NSForegroundColorAttributeName] = NSColor.secondaryLabelColor;
 	NSAttributedString *string = [[NSAttributedString alloc] initWithString:message ?: @""
-																 attributes:@{
-																	 NSFontAttributeName : [NSFont systemFontOfSize:13],
-																	 NSForegroundColorAttributeName : NSColor.secondaryLabelColor,
-																 }];
+																 attributes:attributes];
 	[self setRenderedString:string generation:self.renderGeneration linkPayloads:nil scrollOrigin:nil];
 }
 

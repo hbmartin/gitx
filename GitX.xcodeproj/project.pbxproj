@@ -219,6 +219,7 @@
 		C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAF000000000000000012 /* NativeContentModelsTests.swift */; };
 		C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAE000000000000000011 /* NativeContentRenderer.swift */; };
 		C0DEAE000000000000000002 /* NativeContentRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAE000000000000000012 /* NativeContentRendererTests.swift */; };
+		C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE45200000000000000011 /* NativeContentTypography.swift */; };
 		C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000011 /* CommitControllerPolicies.swift */; };
 		C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */; };
 		C0DECE000000000000000001 /* CommitMenuPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECE000000000000000011 /* CommitMenuPresenter.swift */; };
@@ -810,6 +811,7 @@
 		C0DEAF000000000000000012 /* NativeContentModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentModelsTests.swift; sourceTree = "<group>"; };
 		C0DEAE000000000000000011 /* NativeContentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentRenderer.swift; sourceTree = "<group>"; };
 		C0DEAE000000000000000012 /* NativeContentRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentRendererTests.swift; sourceTree = "<group>"; };
+		C0DE45200000000000000011 /* NativeContentTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentTypography.swift; sourceTree = "<group>"; };
 		C0DECF000000000000000011 /* CommitControllerPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitControllerPolicies.swift; sourceTree = "<group>"; };
 		C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitControllerPoliciesTests.swift; sourceTree = "<group>"; };
 		C0DECE000000000000000011 /* CommitMenuPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMenuPresenter.swift; sourceTree = "<group>"; };
@@ -1306,6 +1308,7 @@
 				C0DE10000000000000000004 /* PBNativeContentView.m */,
 				C0DEAF000000000000000011 /* NativeContentModels.swift */,
 				C0DEAE000000000000000011 /* NativeContentRenderer.swift */,
+				C0DE45200000000000000011 /* NativeContentTypography.swift */,
 				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
 				BF42F1431E025411004769FF /* GitXTextView.h */,
 				BF42F1321E025403004769FF /* GitXTextView.m */,
@@ -1862,6 +1865,7 @@
 				C0DEE0000000000000000008 /* IndexRefreshCoordinator.swift in Sources */,
 				C0DEAF000000000000000001 /* NativeContentModels.swift in Sources */,
 				C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */,
+				C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */,
 				C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */,
 				C0DECE000000000000000001 /* CommitMenuPresenter.swift in Sources */,
 				C0DECD000000000000000001 /* CommitTableInteractionCoordinator.swift in Sources */,

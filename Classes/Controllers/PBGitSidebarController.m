@@ -406,7 +406,7 @@
 			header = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, outlineView.bounds.size.width, 22)];
 			header.identifier = PBBranchesHeaderCellIdentifier;
 			NSTextField *label = [NSTextField labelWithString:NSLocalizedString(@"BRANCHES", nil)];
-			label.font = [NSFont systemFontOfSize:11 weight:NSFontWeightSemibold];
+			label.font = [NSFont preferredFontForTextStyle:NSFontTextStyleSubheadline options:@{}];
 			label.translatesAutoresizingMaskIntoConstraints = NO;
 			header.textField = label;
 			[header addSubview:label];

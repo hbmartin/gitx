@@ -105,7 +105,7 @@
 	if (!attrs) {
 		attrs = [NSMutableDictionary dictionary];
 	}
-	attrs[NSFontAttributeName] = [NSFont fontWithName:@"Menlo" size:12.0];
+	attrs[NSFontAttributeName] = [NSFont preferredFontForTextStyle:NSFontTextStyleBody options:@{}];
 	commitMessageView.typingAttributes = attrs;
 
 	[unstagedFilesController setFilterPredicate:[NSPredicate predicateWithFormat:@"hasUnstagedChanges == 1"]];

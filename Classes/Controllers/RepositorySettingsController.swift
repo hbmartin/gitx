@@ -383,7 +383,8 @@ final class RepositorySettingsController: NSWindowController, NSToolbarDelegate,
 
     private func pane(title: String, rows: [NSView]) -> NSView {
         let heading = NSTextField(labelWithString: title)
-        heading.font = .systemFont(ofSize: 15, weight: .semibold)
+        heading.font = .preferredFont(forTextStyle: .headline, options: [:])
+        heading.setAccessibilityIdentifier("RepositorySettingsPaneHeading")
         let stack = NSStackView(views: [heading] + rows)
         stack.orientation = .vertical
         stack.alignment = .leading
