@@ -105,9 +105,9 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 		[_scrollView.widthAnchor constraintEqualToAnchor:_rootStack.widthAnchor],
 	]];
 	[[NSNotificationCenter defaultCenter] addObserver:self
-										 selector:@selector(diffTextTypographyDidChange:)
-											 name:PBApplicationSettings.diffTextTypographyDidChangeNotificationName
-										   object:nil];
+											 selector:@selector(diffTextTypographyDidChange:)
+												 name:PBApplicationSettings.diffTextTypographyDidChangeNotificationName
+											   object:nil];
 
 	return self;
 }
@@ -120,10 +120,10 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 - (void)configureRenderers
 {
 	self.textRenderer = [[PBNativeTextRenderer alloc] initWithBaseAttributes:self.typography.bodyAttributes
-													 titleAttributes:self.typography.titleAttributes];
+															 titleAttributes:self.typography.titleAttributes];
 	self.diffRenderer = [[PBNativeDiffRenderer alloc] initWithBaseAttributes:self.typography.bodyAttributes
-													 titleAttributes:self.typography.titleAttributes
-															 parser:self.diffParser];
+															 titleAttributes:self.typography.titleAttributes
+																	  parser:self.diffParser];
 }
 
 - (void)setAccessoryView:(NSView *)accessoryView
@@ -150,7 +150,7 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	[self.textView.textStorage setAttributedString:restyledString];
 	if (selectedRanges)
 		self.textView.selectedRanges = [self validSelectedRanges:selectedRanges
-													 textLength:restyledString.length];
+													  textLength:restyledString.length];
 	if (scrollOrigin) {
 		[self.textView layoutSubtreeIfNeeded];
 		[self.scrollView.contentView scrollToPoint:scrollOrigin.pointValue];
@@ -181,11 +181,11 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	[layoutManager ensureLayoutForTextContainer:textContainer];
 	NSRect visibleRect = self.textView.visibleRect;
 	NSPoint containerPoint = NSMakePoint(NSMinX(visibleRect) - self.textView.textContainerOrigin.x,
-										NSMinY(visibleRect) - self.textView.textContainerOrigin.y);
+										 NSMinY(visibleRect) - self.textView.textContainerOrigin.y);
 	CGFloat fraction = 0;
 	NSUInteger glyphIndex = [layoutManager glyphIndexForPoint:containerPoint
-											 inTextContainer:textContainer
-								  fractionOfDistanceThroughGlyph:&fraction];
+											  inTextContainer:textContainer
+							   fractionOfDistanceThroughGlyph:&fraction];
 	if (glyphIndex >= layoutManager.numberOfGlyphs) return nil;
 	NSUInteger characterIndex = [layoutManager characterIndexForGlyphAtIndex:glyphIndex];
 	NSRect glyphRect = [layoutManager boundingRectForGlyphRange:NSMakeRange(glyphIndex, 1)
@@ -208,7 +208,7 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	NSUInteger characterIndex = MIN(anchor[@"characterIndex"].unsignedIntegerValue,
 									self.textView.textStorage.length - 1);
 	NSRange glyphRange = [layoutManager glyphRangeForCharacterRange:NSMakeRange(characterIndex, 1)
-											actualCharacterRange:NULL];
+											   actualCharacterRange:NULL];
 	if (glyphRange.length == 0) return;
 	NSRect glyphRect = [layoutManager boundingRectForGlyphRange:glyphRange
 												inTextContainer:textContainer];
