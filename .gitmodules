@@ -7,9 +7,6 @@
 [submodule "SyntaxHighlighter"]
 	path = External/SyntaxHighlighter
 	url = git@github.com:syntaxhighlighter/syntaxhighlighter.git
-[submodule "MGScopeBar"]
-	path = External/MGScopeBar
-	url = git@github.com:gitx/MGScopeBar.git
 [submodule "External/MAKVONotificationCenter"]
 	path = External/MAKVONotificationCenter
 	url = git@github.com:mikeash/MAKVONotificationCenter
