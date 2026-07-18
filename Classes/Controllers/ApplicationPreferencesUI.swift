@@ -157,6 +157,16 @@ private final class SettingsPaneView: NSView {
         NotificationCenter.default.post(name: .branchSidebarSettingsDidChange, object: nil)
     }
 
+    @objc func applicationIconChanged(_ sender: NSButton) {
+        guard let style = ApplicationIconStyle(rawValue: sender.tag) else { return }
+        for case let button as NSButton in sender.superview?.subviews ?? [] {
+            button.state = button === sender ? .on : .off
+        }
+        ApplicationSettings.applicationIconStyle = style
+        ApplicationIconController.applySelectedIcon()
+        logger.info("Dock icon preference changed to \(style.displayName, privacy: .public)")
+    }
+
     @objc func diffLayoutChanged(_ sender: NSPopUpButton) {
         ApplicationSettings.diffLayout = DiffLayout(rawValue: sender.selectedTag()) ?? .sideBySide
     }
@@ -272,6 +282,40 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         view.addSeparator()
         legacyView.autoresizingMask = [.width]
         view.addCustom(legacyView)
+        return view
+    }
+
+    @objc static func dockIconView() -> NSView {
+        let view = SettingsPaneView(
+            title: "Dock Icon",
+            detail: "Choose the robot face GitX shows in the Dock. Changes apply immediately and persist across launches."
+        )
+        let iconChoices = NSStackView()
+        iconChoices.orientation = .horizontal
+        iconChoices.alignment = .centerY
+        iconChoices.spacing = 10
+        iconChoices.setAccessibilityIdentifier("DockIconPicker")
+        for style in ApplicationIconStyle.allCases {
+            let button = NSButton(
+                title: style.displayName,
+                image: ApplicationIconController.image(for: style),
+                target: view,
+                action: #selector(SettingsPaneView.applicationIconChanged(_:))
+            )
+            button.tag = style.rawValue
+            button.setButtonType(.pushOnPushOff)
+            button.bezelStyle = .regularSquare
+            button.imagePosition = .imageAbove
+            button.imageScaling = .scaleProportionallyDown
+            button.state = style == ApplicationSettings.applicationIconStyle ? .on : .off
+            button.toolTip = style.displayName
+            button.setAccessibilityIdentifier("DockIcon.\(style.rawValue)")
+            button.setAccessibilityLabel("\(style.displayName) Dock icon")
+            button.widthAnchor.constraint(equalToConstant: 108).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 104).isActive = true
+            iconChoices.addArrangedSubview(button)
+        }
+        view.addRow("Robot face:", control: iconChoices)
         return view
     }
 

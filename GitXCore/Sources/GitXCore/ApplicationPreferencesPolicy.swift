@@ -29,6 +29,7 @@ public enum ApplicationPreferenceKey: String, CaseIterable, Sendable {
     case appearance = "PBAppearancePreference"
     case autoFetchScope = "PBAutoFetchScope"
     case autoFetchIntervalMinutes = "PBAutoFetchIntervalMinutes"
+    case applicationIconStyle = "PBApplicationIconStyle"
 }
 
 public enum ApplicationPreferencePolicy {
