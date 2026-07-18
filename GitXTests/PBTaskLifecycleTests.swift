@@ -39,6 +39,71 @@ final class PBTaskLifecycleTests: XCTestCase {
         wait(for: [completion], timeout: 5)
     }
 
+    func testCompletionObservesMergedOutputInWriteOrderIncludingFinalByte() {
+        let completion = expectation(description: "output callback")
+        let queue = DispatchQueue(label: "org.gitx.tests.pbtask-output")
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf 'stdout-one'; printf 'stderr-two' >&2; printf 'terminal-byte'",
+            ],
+            inDirectory: nil
+        )
+
+        task.perform(on: queue) { data, error in
+            XCTAssertNil(error)
+            XCTAssertEqual(data, Data("stdout-onestderr-twoterminal-byte".utf8))
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 5)
+        XCTAssertEqual(task.standardOutputData, Data("stdout-onestderr-twoterminal-byte".utf8))
+    }
+
+    func testRawStandardOutputDataPreservesInvalidUTF8() {
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "printf '\\377'"],
+            inDirectory: nil
+        )
+
+        XCTAssertNoThrow(try task.launch())
+        XCTAssertEqual(task.standardOutputData, Data([0xFF]))
+        XCTAssertNil(task.standardOutputString())
+    }
+
+    func testFailureCompletionFollowsCompleteMergedOutput() {
+        let completion = expectation(description: "failure callback")
+        let queue = DispatchQueue(label: "org.gitx.tests.pbtask-failure-output")
+        let queueKey = DispatchSpecificKey<Bool>()
+        queue.setSpecific(key: queueKey, value: true)
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf 'stdout-one'; printf 'stderr-two' >&2; printf 'terminal-byte'; exit 17",
+            ],
+            inDirectory: nil
+        )
+
+        task.perform(on: queue) { data, error in
+            XCTAssertNil(data)
+            XCTAssertEqual(DispatchQueue.getSpecific(key: queueKey), true)
+            let taskError = error as NSError?
+            XCTAssertEqual(taskError?.domain, PBTaskErrorDomain)
+            XCTAssertEqual(taskError?.code, Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue))
+            XCTAssertEqual(taskError?.userInfo[PBTaskTerminationStatusKey] as? NSNumber, 17)
+            XCTAssertEqual(
+                taskError?.userInfo[PBTaskTerminationOutputKey] as? String,
+                "stdout-onestderr-twoterminal-byte"
+            )
+            completion.fulfill()
+        }
+
+        wait(for: [completion], timeout: 5)
+    }
+
     func testTerminationBeforeLaunchReturnsCancellationError() {
         let task = PBTask(
             launchPath: "/usr/bin/true",
