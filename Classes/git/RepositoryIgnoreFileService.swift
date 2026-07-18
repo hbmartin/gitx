@@ -8,6 +8,7 @@ final nonisolated class RepositoryIgnoreFileService: NSObject {
     private static let transactionLock = NSLock()
     private let fileURL: URL
     private let fileManager: FileManager
+    private let makeFileCoordinator: () -> NSFileCoordinator
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryIgnoreFileService")
 
     @objc(initWithFileURL:)
@@ -15,9 +16,25 @@ final nonisolated class RepositoryIgnoreFileService: NSObject {
         self.init(fileURL: fileURL, fileManager: .default)
     }
 
-    init(fileURL: URL, fileManager: FileManager) {
+    @objc(initWithFileURL:fileCoordinator:)
+    convenience init(fileURL: URL, fileCoordinator: NSFileCoordinator) {
+        self.init(
+            fileURL: fileURL,
+            fileManager: .default,
+            makeFileCoordinator: { fileCoordinator }
+        )
+    }
+
+    init(
+        fileURL: URL,
+        fileManager: FileManager,
+        makeFileCoordinator: @escaping () -> NSFileCoordinator = {
+            NSFileCoordinator(filePresenter: nil)
+        }
+    ) {
         self.fileURL = fileURL
         self.fileManager = fileManager
+        self.makeFileCoordinator = makeFileCoordinator
         super.init()
     }
 
@@ -40,7 +57,7 @@ final nonisolated class RepositoryIgnoreFileService: NSObject {
         Self.transactionLock.lock()
         defer { Self.transactionLock.unlock() }
 
-        let coordinator = NSFileCoordinator(filePresenter: nil)
+        let coordinator = makeFileCoordinator()
         var coordinationError: NSError?
         var accessorError: Error?
         coordinator.coordinate(
@@ -70,13 +87,10 @@ final nonisolated class RepositoryIgnoreFileService: NSObject {
             let data = try Data(contentsOf: coordinatedURL)
             if data.isEmpty {
                 existingContents = ""
+            } else if let utf8Contents = String(data: data, encoding: .utf8) {
+                existingContents = utf8Contents
             } else {
-                do {
-                    existingContents = try String(contentsOf: coordinatedURL, usedEncoding: &encoding)
-                } catch {
-                    encoding = .utf8
-                    existingContents = try String(contentsOf: coordinatedURL, encoding: .utf8)
-                }
+                existingContents = try String(contentsOf: coordinatedURL, usedEncoding: &encoding)
             }
         } else {
             existingContents = ""

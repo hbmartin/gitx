@@ -154,6 +154,8 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 
 @interface PBRepositoryIgnoreFileService : NSObject
 - (instancetype)initWithFileURL:(NSURL *)fileURL;
+- (instancetype)initWithFileURL:(NSURL *)fileURL
+				fileCoordinator:(NSFileCoordinator *)fileCoordinator;
 - (BOOL)appendPaths:(NSArray<NSString *> *)paths
               error:(NSError * _Nullable * _Nullable)error;
 @end

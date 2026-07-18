@@ -238,6 +238,21 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
         XCTAssertTrue(isDirectory.boolValue)
     }
 
+    func testIgnoreWriteReportsFileCoordinationCancellation() {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        coordinator.cancel()
+        let service = PBRepositoryIgnoreFileService(
+            fileURL: ignoreURL,
+            fileCoordinator: coordinator
+        )
+
+        XCTAssertThrowsError(try service.appendPaths(["ignored.txt"])) { error in
+            XCTAssertEqual((error as NSError).domain, NSCocoaErrorDomain)
+            XCTAssertEqual((error as NSError).code, CocoaError.Code.userCancelled.rawValue)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ignoreURL.path))
+    }
+
     func testAppendingUsesExactlyOneSeparatorAndPreservesExistingNewlines() throws {
         let cases = [
             ("existing", "existing\nnew"),

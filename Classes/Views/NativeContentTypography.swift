@@ -168,13 +168,7 @@ final nonisolated class NativeContentTypography: NSObject {
         preservingTraitsOf existingFont: NSFont? = nil
     ) -> NSFont {
         let pointSize = baseSize + role.sizeOffset
-        var font = NSFont(
-            name: baseFont.fontName,
-            size: pointSize
-        ) ?? NSFont.monospacedSystemFont(
-            ofSize: pointSize,
-            weight: .regular
-        )
+        var font = baseFont.withSize(pointSize)
         if let weight = role.weight {
             let descriptor = font.fontDescriptor.addingAttributes([
                 .traits: [NSFontDescriptor.TraitKey.weight: weight],
