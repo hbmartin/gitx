@@ -261,10 +261,21 @@ final class RepositoryRemoteURLCoordinator: NSObject {
     }
 
     private func webBaseURL(for remoteURL: String) -> URL? {
+        normalizedRemote(remoteURL)?.url
+    }
+
+    private func normalizedRemote(_ remoteURL: String) -> (url: URL, host: String)? {
         var candidate = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if candidate.hasPrefix("git@"), let colon = candidate.firstIndex(of: ":") {
-            let hostStart = candidate.index(candidate.startIndex, offsetBy: 4)
-            candidate = "https://" + candidate[hostStart ..< colon] + "/" + candidate[candidate.index(after: colon)...]
+        guard !candidate.isEmpty else { return nil }
+        if !candidate.contains("://"), let colon = candidate.firstIndex(of: ":") {
+            let authority = candidate[..<colon]
+            let path = candidate[candidate.index(after: colon)...]
+            guard !authority.contains("/"), !path.isEmpty else { return nil }
+            let host = authority.lastIndex(of: "@").map {
+                authority[authority.index(after: $0)...]
+            } ?? authority[authority.startIndex...]
+            guard !host.isEmpty else { return nil }
+            candidate = "https://\(host)/\(path)"
         } else if candidate.hasPrefix("ssh://") {
             guard var components = URLComponents(string: candidate) else { return nil }
             components.scheme = "https"
@@ -277,7 +288,8 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         if candidate.hasSuffix(".git") {
             candidate.removeLast(4)
         }
-        return URL(string: candidate)
+        guard let url = URL(string: candidate), let host = url.host else { return nil }
+        return (url, host)
     }
 
     private func providerURL(baseURL: URL, branch: String, sha: String) -> URL? {
@@ -297,10 +309,7 @@ final class RepositoryRemoteURLCoordinator: NSObject {
 
     private func gitHost(_ remoteURL: String?) -> String? {
         guard let remoteURL else { return nil }
-        if remoteURL.hasPrefix("git@"), let colon = remoteURL.firstIndex(of: ":") {
-            return String(remoteURL[remoteURL.index(remoteURL.startIndex, offsetBy: 4) ..< colon])
-        }
-        return webBaseURL(for: remoteURL)?.host
+        return normalizedRemote(remoteURL)?.host
     }
 
     private func urlComponent(_ string: String) -> String {

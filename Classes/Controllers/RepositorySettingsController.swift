@@ -317,21 +317,10 @@ final class RepositorySettingsController: NSWindowController, NSToolbarDelegate,
             commitRules: rulesTextView.string,
             diffSuppressionPatterns: suppressionTextView.string
         ) else { return }
-        let message: String
-        switch issue {
-        case .webURLTemplateMustUseHTTPS:
-            message = "The web URL template must use HTTPS."
-        case .commitRuleMissingSeparator:
-            message = "Each commit rule must contain =>."
-        case let .commitRuleInvalidRegularExpression(line):
-            message = "Commit message replacement rule \(line) is not a valid regular expression."
-        case let .diffSuppressionInvalidRegularExpression(line):
-            message = "Diff suppression pattern on line \(line) is not a valid regular expression."
-        }
         throw NSError(
             domain: PBGitXErrorDomain,
             code: 0,
-            userInfo: [NSLocalizedDescriptionKey: message]
+            userInfo: [NSLocalizedDescriptionKey: RepositoryConfigurationIssuePresenter.message(for: issue)]
         )
     }
 

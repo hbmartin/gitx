@@ -30,6 +30,25 @@ final class RepositoryConfigurationPolicyTests: XCTestCase {
         ))
     }
 
+    func testRepositoryConfigurationIssueMessagesPreserveLineNumbers() {
+        XCTAssertEqual(
+            RepositoryConfigurationIssuePresenter.message(for: .commitRuleMissingSeparator(line: 7)),
+            "Commit message replacement rule on line 7 must contain =>."
+        )
+        XCTAssertEqual(
+            RepositoryConfigurationIssuePresenter.message(for: .commitRuleInvalidRegularExpression(line: 3)),
+            "Commit message replacement rule 3 is not a valid regular expression."
+        )
+        XCTAssertEqual(
+            RepositoryConfigurationIssuePresenter.message(for: .diffSuppressionInvalidRegularExpression(line: 5)),
+            "Diff suppression pattern on line 5 is not a valid regular expression."
+        )
+        XCTAssertEqual(
+            RepositoryConfigurationIssuePresenter.message(for: .webURLTemplateMustUseHTTPS),
+            "The web URL template must use HTTPS."
+        )
+    }
+
     func testCommitMessageRulesTransformInOrderAndIgnoreComments() throws {
         let transformed = try RepositoryConfigurationPolicy.transformedCommitMessage(
             "bug 42 draft",

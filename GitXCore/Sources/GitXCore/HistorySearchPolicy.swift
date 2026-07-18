@@ -47,5 +47,6 @@ public enum HistorySearchPolicy {
 
     private static func components(in query: String) -> [String] {
         query.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
     }
 }

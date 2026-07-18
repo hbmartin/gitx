@@ -257,11 +257,28 @@ final nonisolated class RepositoryMutationService: NSObject {
     ) -> Bool {
         logger.debug("Updating repository reference")
         do {
-            try runner.launch(arguments: ["update-ref", "-mUpdate from GitX", ref.ref, newCommit.sha])
-            logger.debug("Repository reference updated")
+            try updateReference(ref, toPointAt: newCommit, expectedOldOID: nil)
             return true
         } catch {
-            let wrapped = RepositoryServiceError.make(
+            return RepositoryServiceError.assign(error as NSError, to: outputError)
+        }
+    }
+
+    func updateReference(
+        _ ref: PBGitRef,
+        toPointAt newCommit: PBGitCommit,
+        expectedOldOID: String?
+    ) throws {
+        var arguments = ["update-ref", "-mUpdate from GitX", ref.ref, newCommit.sha]
+        if let expectedOldOID {
+            arguments.append(expectedOldOID)
+        }
+        do {
+            try runner.launch(arguments: arguments)
+            logger.debug("Repository reference updated")
+        } catch {
+            logger.error("Repository reference update failed")
+            throw RepositoryServiceError.make(
                 description: NSLocalizedString("Reference update failed", comment: "Reference update failure - error title"),
                 failureReason: String(
                     format: NSLocalizedString("The reference %@ couldn't be update", comment: "Reference update failure - error message"),
@@ -269,8 +286,6 @@ final nonisolated class RepositoryMutationService: NSObject {
                 ),
                 underlyingError: error
             )
-            logger.error("Repository reference update failed")
-            return RepositoryServiceError.assign(wrapped, to: outputError)
         }
     }
 

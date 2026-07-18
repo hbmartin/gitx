@@ -58,7 +58,15 @@ final nonisolated class SidebarRevisionPlanAdapter: NSObject {
     @objc let path: [String]
 
     init(plan: GitXCore.SidebarRevisionPlan) {
-        placement = SidebarRevisionPlacementAdapter(rawValue: plan.placement.rawValue) ?? .unsupported
+        placement = switch plan.placement {
+        case .other: .other
+        case .branchRoot: .branchRoot
+        case .branchPath: .branchPath
+        case .tagPath: .tagPath
+        case .remotePath: .remotePath
+        case .hidden: .hidden
+        case .unsupported: .unsupported
+        }
         path = plan.path
         super.init()
     }
