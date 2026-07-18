@@ -37,6 +37,7 @@
 #import "PBNativeContentView.h"
 #import "PBRemoteProgressSheet.h"
 #import "PBSourceViewItem.h"
+#import "PBSourceViewItems.h"
 #import "PBTask.h"
 #import "PBTerminalUtil.h"
 #import "PBPrefsWindowController.h"
@@ -71,6 +72,13 @@
 
 @interface PBGitSidebarController (WindowControllerTests)
 - (void)reloadSidebarAfterReferencesChange;
+- (nullable PBSourceViewItem *)itemForRev:(PBGitRevSpecifier *)rev;
+- (void)removeRevSpec:(PBGitRevSpecifier *)rev;
+- (void)doubleClicked:(id)sender;
+- (void)toggleBranchSort:(id)sender;
+- (BOOL)outlineView:(NSOutlineView *)outlineView
+	shouldEditTableColumn:(nullable NSTableColumn *)tableColumn
+				 item:(id)item;
 @end
 
 @interface PBCommitMessageTransformer : NSObject
@@ -631,6 +639,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @end
 
 @interface PBWindowSubmodule : NSObject
+@property (nonatomic, copy) NSString *name;
 @property (nonatomic, copy) NSString *path;
 @property (nonatomic, strong) GTRepository *parentRepository;
 @end
@@ -2065,6 +2074,110 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertNil([self.controller selectedRef]);
 	((PBWindowTestWindow *)self.controller.window).testFirstResponder = self.controller.window.contentView;
 	XCTAssertNil([self.controller selectedRef]);
+}
+
+- (void)testSidebarMenusSortingAndReferenceRemoval
+{
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																	   superController:self.controller];
+	(void)sidebar.view;
+	PBGitRevSpecifier *branchRevision = [[PBGitRevSpecifier alloc] initWithRef:self.branchRef];
+	PBSourceViewItem *branchItem = [sidebar itemForRev:branchRevision];
+	XCTAssertNotNil(branchItem);
+
+	NSInteger branchRow = [sidebar.sourceView rowForItem:branchItem];
+	XCTAssertGreaterThanOrEqual(branchRow, (NSInteger)0);
+	NSMenu *branchMenu = [sidebar menuForRow:branchRow];
+	XCTAssertFalse(branchMenu.autoenablesItems);
+
+	PBWindowSubmodule *submodule = [PBWindowSubmodule new];
+	submodule.name = @"CharacterizedSubmodule";
+	submodule.path = @"CharacterizedSubmodule";
+	submodule.parentRepository = self.repository.gtRepo;
+	PBSourceViewGitSubmoduleItem *submoduleItem = [PBSourceViewGitSubmoduleItem itemWithSubmodule:(GTSubmodule *)submodule];
+	PBWindowOutlineView *outline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200)];
+	outline.testItem = submoduleItem;
+	PBGitSidebarController *isolatedSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		  superController:self.controller];
+	[isolatedSidebar setValue:outline forKey:@"sourceView"];
+	[isolatedSidebar setValue:sidebar.remotes forKey:@"remotes"];
+	NSMenu *submoduleMenu = [isolatedSidebar menuForRow:0];
+	XCTAssertEqual(submoduleMenu.numberOfItems, (NSInteger)1);
+	XCTAssertEqualObjects(submoduleMenu.itemArray.firstObject.title, @"Open Submodule");
+	XCTAssertEqual(submoduleMenu.itemArray.firstObject.target, isolatedSidebar);
+	XCTAssertEqualObjects(submoduleMenu.itemArray.firstObject.representedObject, submoduleItem.path);
+	XCTAssertFalse([isolatedSidebar outlineView:outline shouldEditTableColumn:nil item:submoduleItem]);
+
+	XCTestExpectation *sortNotification = [self expectationForNotification:@"PBBranchSidebarSettingsDidChangeNotification"
+																	object:nil
+																   handler:nil];
+	[sidebar toggleBranchSort:self];
+	[self waitForExpectations:@[ sortNotification ] timeout:1.0];
+	[sidebar toggleBranchSort:self];
+
+	[sidebar removeRevSpec:branchRevision];
+	XCTAssertNil([sidebar itemForRev:branchRevision]);
+	[sidebar removeRevSpec:branchRevision];
+	[sidebar closeView];
+}
+
+- (void)testSidebarRoutesRemoteActionsAndBranchDoubleClicks
+{
+	PBWindowOutlineView *outline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200)];
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																	   superController:self.controller];
+	PBSourceViewItem *remotes = [PBSourceViewItem groupItemWithTitle:@"Remotes"];
+	[sidebar setValue:outline forKey:@"sourceView"];
+	[sidebar setValue:remotes forKey:@"remotes"];
+	self.controller.interceptRemoteRouting = YES;
+
+	NSSegmentedControl *sender = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(0, 0, 160, 24)];
+	sender.segmentCount = 4;
+	PBSourceViewItem *branchItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.branchRef]];
+	outline.testItem = branchItem;
+
+	sender.selectedSegment = 1;
+	[sidebar fetchPullPushAction:sender];
+	sender.selectedSegment = 2;
+	[sidebar fetchPullPushAction:sender];
+	sender.selectedSegment = 3;
+	[sidebar fetchPullPushAction:sender];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.pullRouteCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
+	XCTAssertEqualObjects(self.controller.lastBranch.ref, self.branchRef.ref);
+	XCTAssertEqualObjects(self.controller.lastRemote.ref, self.remoteBranchRef.ref);
+
+	PBSourceViewItem *remoteBranchItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.remoteBranchRef]];
+	outline.testItem = remoteBranchItem;
+	[sidebar fetchPullPushAction:sender];
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)2);
+	XCTAssertNil(self.controller.lastBranch);
+
+	PBSourceViewItem *configuredRemoteItem = [PBSourceViewItem itemWithTitle:@"origin"];
+	configuredRemoteItem.parent = remotes;
+	outline.testItem = configuredRemoteItem;
+	sender.selectedSegment = 1;
+	[sidebar fetchPullPushAction:sender];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)2);
+
+	outline.testItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.tagRef]];
+	[sidebar fetchPullPushAction:sender];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)2);
+
+	self.repository.trackingRef = nil;
+	outline.testItem = branchItem;
+	[sidebar fetchPullPushAction:sender];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)2);
+	self.repository.trackingRef = self.remoteBranchRef;
+
+	[self.repository.operations removeAllObjects];
+	[sidebar doubleClicked:self];
+	XCTAssertEqualObjects(self.repository.operations, (@[ @"checkout" ]));
+	self.repository.failingOperation = @"checkout";
+	[sidebar doubleClicked:self];
+	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)1);
+	self.repository.failingOperation = nil;
 }
 
 - (void)testRemoteProgressWorkflowsSuccessFailureAndRouting
