@@ -54,7 +54,12 @@ final nonisolated class IndexStatusParser: NSObject {
                     throw IndexSnapshotError.malformed("Tracked index output contains an empty path")
                 }
                 let status: Int
-                if fields[4].hasPrefix("D") {
+                if fields[4].hasPrefix("U") {
+                    // Unmerged (conflicted) entries carry mode :000000 like additions, so they must be
+                    // classified before the ":000000" NEW check or they display as brand-new untracked files.
+                    // PBChangedFileStatus has no dedicated conflict case, so surface them as MODIFIED.
+                    status = 1
+                } else if fields[4].hasPrefix("D") {
                     status = 2
                 } else if fields[0] == ":000000" {
                     status = 0
@@ -100,14 +105,17 @@ final nonisolated class IndexStatusParser: NSObject {
 
     private func records(from data: Data?) throws -> [String] {
         guard let data, !data.isEmpty else { return [] }
-        guard var output = String(data: data, encoding: .utf8) else {
-            throw IndexSnapshotError.malformed("Index output is not valid UTF-8")
+        var payload = data
+        if payload.last == 0x00 {
+            payload.removeLast()
         }
-        if output.last == "\0" {
-            output.removeLast()
-        }
-        guard !output.isEmpty else { return [] }
-        return output.components(separatedBy: "\0")
+        guard !payload.isEmpty else { return [] }
+        // Split on NUL at the byte level and decode each field with a lossy UTF-8 fallback. A single
+        // non-UTF-8 path (e.g. latin-1 created on another OS) previously failed the whole-payload decode
+        // and silently froze the staged/unstaged/untracked list at its previous contents.
+        return payload
+            .split(separator: 0x00, omittingEmptySubsequences: false)
+            .map { String(decoding: $0, as: UTF8.self) }
     }
 }
 
@@ -197,8 +205,12 @@ final nonisolated class IndexSnapshotReducer: NSObject {
 
         if let untracked {
             merge(untracked, into: &snapshots, order: &order) { snapshot, _ in
-                snapshot.status = 0
-                snapshot.hasStagedChanges = false
+                // Don't let an untracked entry erase a staged change for the same path. `git rm --cached foo`
+                // (keeping foo on disk) reports foo as both a staged deletion and an untracked file; clobbering
+                // the staged state here hid the staged deletion so the user could neither see nor unstage it.
+                if !snapshot.hasStagedChanges {
+                    snapshot.status = 0
+                }
                 snapshot.hasUnstagedChanges = true
             }
         }
