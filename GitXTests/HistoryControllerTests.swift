@@ -433,6 +433,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(nativeView.textView.string.contains("new file mode"))
         try historyController.commitController.setSelectedObjects([XCTUnwrap(workingState)])
         historyController.updateKeys()
+        historyController.updateUncommittedChanges()
+        XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === workingState)
         let proposed = IndexSet(integersIn: 0 ... 1)
         XCTAssertEqual(
             tableCoordinator.tableView(historyController.commitList, selectionIndexesForProposedSelection: proposed),
