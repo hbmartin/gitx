@@ -281,7 +281,7 @@ final nonisolated class RepositoryMutationService: NSObject {
             throw RepositoryServiceError.make(
                 description: NSLocalizedString("Reference update failed", comment: "Reference update failure - error title"),
                 failureReason: String(
-                    format: NSLocalizedString("The reference %@ couldn't be update", comment: "Reference update failure - error message"),
+                    format: NSLocalizedString("The reference %@ couldn't be updated", comment: "Reference update failure - error message"),
                     ref.shortName()
                 ),
                 underlyingError: error

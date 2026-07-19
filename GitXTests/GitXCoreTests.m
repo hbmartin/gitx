@@ -1305,6 +1305,7 @@
 	PBGitRef *invalid = [PBGitRef refFromString:@"refs/heads/invalid branch name"];
 	XCTAssertFalse([self.repository updateReference:invalid toPointAtCommit:head error:&error]);
 	XCTAssertNotNil(error);
+	XCTAssertEqualObjects(error.localizedFailureReason, @"The reference invalid branch name couldn't be updated");
 	error = nil;
 	PBGitRef *empty = [PBGitRef refFromString:@""];
 	XCTAssertFalse([self.repository deleteRef:empty error:&error]);

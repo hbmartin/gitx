@@ -8,6 +8,7 @@ import OSLog
 @objc(PBRepositoryUISettings)
 final nonisolated class RepositoryUISettings: NSObject {
     private static let defaultsKey = "PBRepositoryUISettings"
+    private static let preferencesLock = NSLock()
     private let repositoryKey: String
 
     @objc(initWithRepository:)
@@ -57,15 +58,15 @@ final nonisolated class RepositoryUISettings: NSObject {
     }
 
     private func value(for key: String) -> Any? {
-        objc_sync_enter(preferences)
-        defer { objc_sync_exit(preferences) }
+        Self.preferencesLock.lock()
+        defer { Self.preferencesLock.unlock() }
         let all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         return (all[repositoryKey] as? [String: Any])?[key]
     }
 
     private func setValue(_ value: Any, for key: String) {
-        objc_sync_enter(preferences)
-        defer { objc_sync_exit(preferences) }
+        Self.preferencesLock.lock()
+        defer { Self.preferencesLock.unlock() }
         var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         var repository = all[repositoryKey] as? [String: Any] ?? [:]
         repository[key] = value
