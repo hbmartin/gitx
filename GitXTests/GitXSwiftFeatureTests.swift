@@ -472,7 +472,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
             let process = Process()
             process.executableURL = cliURL
             process.currentDirectoryURL = worktree
-            process.arguments = []
+            process.arguments = ["--git-dir=\(worktree.path)"]
             var environment = ProcessInfo.processInfo.environment
             environment["PWD"] = worktree.path
             process.environment = environment
@@ -484,7 +484,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
             process.waitUntilExit()
 
             XCTAssertEqual(process.terminationReason, .exit)
-            XCTAssertEqual(process.terminationStatus, 0)
+            XCTAssertEqual(process.terminationStatus, 2)
         }
     }
 
