@@ -139,6 +139,16 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: -1, rowCount: 5, movingDown: true), 1)
     }
 
+    func testTerminalShellQuoteNeutralizesCommandSubstitution() {
+        // A repository path containing $(...) or backticks must be fully literal inside single quotes so it
+        // cannot execute arbitrary shell when the repo is opened in Terminal/iTerm.
+        XCTAssertEqual(PBTerminalUtil.shellQuote("/repo/normal"), "'/repo/normal'")
+        XCTAssertEqual(PBTerminalUtil.shellQuote("/repo/$(whoami)"), "'/repo/$(whoami)'")
+        XCTAssertEqual(PBTerminalUtil.shellQuote("/repo/`id`"), "'/repo/`id`'")
+        // An embedded single quote is escaped so it cannot terminate the quoting and break out.
+        XCTAssertEqual(PBTerminalUtil.shellQuote("/repo/it's mine"), "'/repo/it'\\''s mine'")
+    }
+
     func testRecentRepositoryKeyNavigationReportsNoSelectableRowWhenEmpty() {
         XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 0, movingDown: true), -1)
         XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 0, movingDown: false), -1)

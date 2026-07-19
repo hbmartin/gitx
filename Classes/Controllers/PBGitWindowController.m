@@ -489,7 +489,15 @@
 }
 - (IBAction)revealInFinder:(id)sender
 {
-	[self revealURLsInFinder:@[ self.repository.workingDirectoryURL ]];
+	// Honor the file paths attached to a menu item (e.g. the history file tree's context menu) the same way
+	// openInTerminal: does; fall back to the repository root when the sender carries no selection (e.g. a
+	// toolbar/menu action with no represented files).
+	NSArray<NSURL *> *urls = nil;
+	if ([sender respondsToSelector:@selector(representedObject)])
+		urls = [self selectedURLsFromSender:sender];
+	if (urls.count == 0)
+		urls = @[ self.repository.workingDirectoryURL ];
+	[self revealURLsInFinder:urls];
 }
 - (IBAction)openInTerminal:(id)sender
 {
