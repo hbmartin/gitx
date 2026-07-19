@@ -468,6 +468,49 @@ final class GitXSwiftFeatureTests: XCTestCase {
         }
     }
 
+    func testCommandLineToolOpensCurrentRepositoryBeforeReturningFromTest() throws {
+        try withTemporaryDirectory { worktree in
+            try runGit(["init", "--quiet"], in: worktree)
+
+            let normalizedWorktree = worktree.standardizedFileURL
+            let documentController = NSDocumentController.shared
+            defer {
+                for document in documentController.documents
+                    where document.fileURL?.standardizedFileURL == normalizedWorktree
+                {
+                    document.windowControllers.forEach { $0.window?.orderOut(nil) }
+                    documentController.removeDocument(document)
+                }
+                PBRecentRepositoryStore.shared.remove(normalizedWorktree)
+            }
+
+            let cliURL = try XCTUnwrap(Bundle.main.url(forResource: "gitx", withExtension: nil))
+            let process = Process()
+            process.executableURL = cliURL
+            process.currentDirectoryURL = worktree
+            var environment = ProcessInfo.processInfo.environment
+            environment["PWD"] = worktree.path
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+
+            try process.run()
+            process.waitUntilExit()
+
+            XCTAssertEqual(process.terminationReason, .exit)
+            XCTAssertEqual(process.terminationStatus, 0)
+
+            let repositoryOpened = NSPredicate { _, _ in
+                documentController.documents.contains {
+                    $0.fileURL?.standardizedFileURL == normalizedWorktree
+                }
+            }
+            expectation(for: repositoryOpened, evaluatedWith: nil)
+            waitForExpectations(timeout: 5)
+        }
+    }
+
     func testTaskAppliesCallerEnvironmentOverridesAtLaunch() {
         let task = PBTask(launchPath: "/usr/bin/env", arguments: [], inDirectory: nil)
         task.additionalEnvironment = ["GITX_ENVIRONMENT_OVERRIDE": "configured-after-initialization"]

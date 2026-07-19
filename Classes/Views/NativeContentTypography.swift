@@ -131,36 +131,46 @@ final nonisolated class NativeContentTypography: NSObject {
     @objc(restyledString:)
     func restyledString(_ attributedString: NSAttributedString) -> NSAttributedString { // swiftlint:disable:this unused_declaration
         guard attributedString.length > 0 else { return attributedString }
-        let result = NSMutableAttributedString(attributedString: attributedString)
+        if usesCurrentTypography(attributedString) {
+            return attributedString
+        }
         let fullRange = NSRange(location: 0, length: attributedString.length)
-        result.addAttribute(
-            .nativeContentTypographyRole,
-            value: NativeContentTypographyRole.body.rawValue,
-            range: fullRange
-        )
-        result.addAttribute(
-            .font,
-            value: font(for: .body),
-            range: fullRange
-        )
+        var runs: [(role: NativeContentTypographyRole, font: NSFont?, range: NSRange)] = []
         attributedString.enumerateAttributes(in: fullRange) { attributes, range, _ in
             let role = (attributes[.nativeContentTypographyRole] as? String)
                 .flatMap(NativeContentTypographyRole.init(rawValue:)) ?? .body
+            runs.append((role, attributes[.font] as? NSFont, range))
+        }
+        let result = NSMutableAttributedString(attributedString: attributedString)
+        for run in runs {
             result.addAttribute(
                 .nativeContentTypographyRole,
-                value: role.rawValue,
-                range: range
+                value: run.role.rawValue,
+                range: run.range
             )
             result.addAttribute(
                 .font,
-                value: self.font(
-                    for: role,
-                    preservingTraitsOf: attributes[.font] as? NSFont
+                value: font(
+                    for: run.role,
+                    preservingTraitsOf: run.font
                 ),
-                range: range
+                range: run.range
             )
         }
         return result
+    }
+
+    private func usesCurrentTypography(_ attributedString: NSAttributedString) -> Bool {
+        let attributes = attributedString.attributes(at: 0, effectiveRange: nil)
+        guard let existingFont = attributes[.font] as? NSFont,
+              let roleName = attributes[.nativeContentTypographyRole] as? String,
+              let role = NativeContentTypographyRole(rawValue: roleName)
+        else {
+            return false
+        }
+        let expectedFont = font(for: role, preservingTraitsOf: existingFont)
+        return existingFont.fontName == expectedFont.fontName &&
+            existingFont.pointSize == expectedFont.pointSize
     }
 
     private func font(
@@ -173,7 +183,9 @@ final nonisolated class NativeContentTypography: NSObject {
             let descriptor = font.fontDescriptor.addingAttributes([
                 .traits: [NSFontDescriptor.TraitKey.weight: weight],
             ])
-            font = NSFont(descriptor: descriptor, size: pointSize) ?? font
+            if let weightedFont = NSFont(descriptor: descriptor, size: pointSize) {
+                font = weightedFont
+            }
         }
         guard let existingFont else { return font }
         let existingTraits = existingFont.fontDescriptor.symbolicTraits
@@ -185,7 +197,9 @@ final nonisolated class NativeContentTypography: NSObject {
             targetTraits.insert(.italic)
         }
         let descriptor = font.fontDescriptor.withSymbolicTraits(targetTraits)
-        font = NSFont(descriptor: descriptor, size: pointSize) ?? font
+        if let traitFont = NSFont(descriptor: descriptor, size: pointSize) {
+            font = traitFont
+        }
         return font
     }
 }

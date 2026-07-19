@@ -38,9 +38,26 @@
 - (NSSet<GTOID *> *)baseCommits;
 @end
 
+@interface PBGitBinary (GitXCoreTests)
++ (nullable NSString *)versionForPath:(nullable NSString *)path;
++ (nullable NSString *)extractGitVersion:(nullable NSString *)versionString;
++ (BOOL)acceptBinary:(nullable NSString *)path;
+@end
+
+@interface PBGitCommit (GitXCoreTests)
+@property (nonatomic, readonly) NSString *dateString;
+- (BOOL)isOnSameBranchAs:(nullable PBGitCommit *)otherCommit;
+@end
+
 @interface PBGitIndex (GitXCoreTests)
 - (void)postCommitUpdate:(NSString *)update;
 - (void)postCommitOutput:(NSString *)output;
+@end
+
+@interface PBGitRevList (GitXCoreTests)
+- (void)updateCommits:(NSArray<PBGitCommit *> *)revisions
+			operation:(NSOperation *)operation
+		   generation:(NSUInteger)generation;
 @end
 
 @interface PBGitRepository (GitXCoreHookTests)
@@ -265,6 +282,27 @@
 @end
 
 @implementation GitXRefAndRevisionTests
+
+- (void)testGitBinaryDiscoveryCompatibilitySurface
+{
+	XCTAssertNil([PBGitBinary versionForPath:nil]);
+	XCTAssertNil([PBGitBinary versionForPath:@"/path/that/does/not/exist"]);
+	XCTAssertNil([PBGitBinary extractGitVersion:nil]);
+	XCTAssertNil([PBGitBinary extractGitVersion:@"not a git version"]);
+	XCTAssertEqualObjects([PBGitBinary extractGitVersion:@"git version 2.51.0 (Apple Git-155)"], @"2.51.0");
+
+	XCTAssertFalse([PBGitBinary acceptBinary:nil]);
+	XCTAssertFalse([PBGitBinary acceptBinary:@" \n"]);
+	XCTAssertFalse([PBGitBinary acceptBinary:@"/path/that/does/not/exist"]);
+	NSString *configuredPath = PBGitBinary.path;
+	XCTAssertTrue([PBGitBinary acceptBinary:[configuredPath stringByAppendingString:@"\n"]]);
+	XCTAssertEqualObjects(PBGitBinary.path, configuredPath);
+	XCTAssertNotNil(PBGitBinary.version);
+
+	NSArray<NSString *> *locations = PBGitBinary.searchLocations;
+	XCTAssertTrue([locations containsObject:@"/usr/bin/git"]);
+	XCTAssertTrue([PBGitBinary.notFoundError containsString:@"/usr/bin/git"]);
+}
 
 - (void)testRefClassificationAndNames
 {
@@ -779,6 +817,71 @@
 		maximumColumns = MAX(maximumColumns, commit.lineInfo.numColumns);
 	}
 	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
+}
+
+- (void)testCommitMetadataCompatibilityAccessors
+{
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+	PBGitCommit *commit = self.repository.headCommit;
+
+	XCTAssertNotNil(commit);
+	XCTAssertGreaterThan(commit.dateString.length, (NSUInteger)0);
+	XCTAssertEqualObjects(commit.message, @"initial commit\n");
+	XCTAssertEqualObjects(commit.author, @"GitX Test");
+	XCTAssertEqualObjects(commit.authorEmail, @"gitx-tests@example.invalid");
+	XCTAssertEqualObjects(commit.committer, @"GitX Test");
+	XCTAssertEqualObjects(commit.committerEmail, @"gitx-tests@example.invalid");
+	XCTAssertGreaterThan(commit.committerDate.length, (NSUInteger)0);
+	XCTAssertEqual(commit.treeContents.count, commit.tree.children.count);
+	XCTAssertEqual(commit.hash, commit.OID.hash);
+	XCTAssertFalse([commit isOnSameBranchAs:nil]);
+}
+
+- (void)testRevisionListPublishesIncrementalBatches
+{
+	NSError *error = nil;
+	NSString *firstSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(firstSHA, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"second\n" toPath:@"second.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"second commit" error:&error], @"%@", error);
+	NSString *secondSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(secondSHA, @"%@", error);
+
+	GTCommit *firstGTCommit = [self.repository.gtRepo lookUpObjectBySHA:firstSHA objectType:GTObjectTypeCommit error:&error];
+	GTCommit *secondGTCommit = [self.repository.gtRepo lookUpObjectBySHA:secondSHA objectType:GTObjectTypeCommit error:&error];
+	XCTAssertNotNil(firstGTCommit, @"%@", error);
+	XCTAssertNotNil(secondGTCommit, @"%@", error);
+	PBGitCommit *firstCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:firstGTCommit];
+	PBGitCommit *secondCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:secondGTCommit];
+
+	PBGitRevList *revisionList = [[PBGitRevList alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]
+			   shouldGraph:NO];
+	[revisionList setValue:@1 forKey:@"loadGeneration"];
+	[revisionList setValue:@YES forKey:@"resetCommits"];
+	[revisionList setValue:[NSMutableSet set] forKey:@"publishedSHAs"];
+	NSOperation *operation = [NSBlockOperation blockOperationWithBlock:^{
+	}];
+
+	[revisionList updateCommits:@[ firstCommit ] operation:operation generation:1];
+	XCTAssertEqualObjects([revisionList.commits valueForKey:@"SHA"], (@[ firstSHA ]));
+	[revisionList updateCommits:@[ secondCommit ] operation:operation generation:1];
+	XCTAssertEqualObjects([revisionList.commits valueForKey:@"SHA"], (@[ firstSHA, secondSHA ]));
+
+	NSOperationQueue *operationQueue = [revisionList valueForKey:@"operationQueue"];
+	operationQueue.suspended = YES;
+	NSBlockOperation *pendingOperation = [NSBlockOperation blockOperationWithBlock:^{
+	}];
+	[operationQueue addOperation:pendingOperation];
+	XCTAssertTrue(revisionList.isParsing);
+	[pendingOperation cancel];
+	operationQueue.suspended = NO;
+	[operationQueue waitUntilAllOperationsAreFinished];
+	XCTAssertFalse(revisionList.isParsing);
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured

@@ -397,11 +397,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let nativeView = try XCTUnwrap(fileView.value(forKey: "nativeView") as? PBNativeContentView)
         for mode in 0 ... 3 {
             modeControl.selectedSegment = mode
+            nativeView.showMessage("")
             fileView.perform(NSSelectorFromString("modeChanged:"), with: modeControl)
-            pumpRunLoop(for: 0.5)
-            XCTAssertFalse(nativeView.textView.string.isEmpty)
+            XCTAssertTrue(waitForCondition {
+                !nativeView.textView.string.isEmpty
+            })
         }
         try fixture.git(["config", "--local", "gitx.diffSuppressionPatterns", "# ignored\n^generated/"])
+        let selectionLeaf = try XCTUnwrap(waitForTreeNode(fullPath: "nested/tracked.txt"))
+        historyController.treeController.setSelectionIndexPath(selectionLeaf.indexPath)
+        XCTAssertFalse(historyController.treeController.selectionIndexPaths.isEmpty)
         historyController.saveFileBrowserSelection()
         historyController.treeController.setSelectionIndexPaths([])
         historyController.restoreFileBrowserSelection()
@@ -431,8 +436,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         fileView.perform(NSSelectorFromString("showFile"))
         pumpRunLoop(for: 1.0)
         XCTAssertTrue(nativeView.textView.string.contains("new file mode"))
-        try historyController.commitController.setSelectedObjects([XCTUnwrap(workingState)])
+        let selectedWorkingState = try XCTUnwrap(workingState)
+        historyController.commitController.setSelectedObjects([selectedWorkingState])
         historyController.updateKeys()
+        historyController.selectedCommits = [selectedWorkingState]
+        historyController.reselectCommitAfterUpdate()
+        XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === workingState)
         historyController.updateUncommittedChanges()
         XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === workingState)
         let proposed = IndexSet(integersIn: 0 ... 1)

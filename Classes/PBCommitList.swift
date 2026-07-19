@@ -5,6 +5,9 @@
 //  Converted from PBCommitList.m
 //
 
+// Objective-C nib and controller references are not visible to SwiftLint's analyzer.
+// swiftlint:disable unused_declaration
+
 @objc class PBCommitList: NSTableView {
     // MARK: - Properties
 
@@ -211,3 +214,5 @@
         return menu
     }
 }
+
+// swiftlint:enable unused_declaration

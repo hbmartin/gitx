@@ -639,6 +639,40 @@ final class NativeContentRendererTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveFontChangeRestylesUnclassifiedNativeContentAsBody() throws {
+        let restoreName = preserveDefault("PBDiffFontName")
+        let restoreSize = preserveDefault("PBDiffFontSize")
+        defer {
+            restoreSize()
+            restoreName()
+        }
+        let initialFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        UserDefaults.standard.set(initialFont.fontName, forKey: "PBDiffFontName")
+        UserDefaults.standard.set(12, forKey: "PBDiffFontSize")
+
+        let view = PBNativeContentView(
+            frame: NSRect(x: 0, y: 0, width: 420, height: 120)
+        )
+        let textStorage = try XCTUnwrap(view.textView.textStorage)
+        textStorage.setAttributedString(NSAttributedString(
+            string: "Legacy content",
+            attributes: [.font: initialFont]
+        ))
+
+        PBApplicationSettings.diffFontSize = 18
+
+        XCTAssertEqual(
+            try font(in: view.textView.attributedString(), matching: "Legacy content")
+                .pointSize,
+            18
+        )
+        XCTAssertEqual(
+            try role(in: view.textView.attributedString(), matching: "Legacy content"),
+            "body"
+        )
+    }
+
+    @MainActor
     func testDiffSettingsControlsKeepSemanticSystemTypographyAtLargeDiffSize() throws {
         let restoreSize = preserveDefault("PBDiffFontSize")
         defer { restoreSize() }

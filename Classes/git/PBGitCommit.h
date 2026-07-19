@@ -54,7 +54,7 @@ extern NSString *const kGitXCommitType;
 - (BOOL)hasRef:(PBGitRef *)ref;
 
 - (NSString *)SHA;
-- (BOOL)isOnSameBranchAs:(PBGitCommit *)other;
+- (BOOL)isOnSameBranchAs:(nullable PBGitCommit *)other;
 - (BOOL)isOnHeadBranch;
 
 // <PBGitRefish>
