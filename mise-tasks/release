@@ -116,6 +116,7 @@ build_settings=$(
 		-workspace GitX.xcworkspace \
 		-scheme GitX \
 		-configuration Release \
+		-destination "generic/platform=macOS" \
 		-showBuildSettings
 )
 
@@ -145,6 +146,40 @@ bundle_identifier=$(build_setting PRODUCT_BUNDLE_IDENTIFIER)
 	fail "Unexpected root bundle identifier: $bundle_identifier"
 
 log "Preflight passed (team $team_id, bundle $bundle_identifier, architecture $artifact_arch)"
+
+temporary_dir=
+mounted_dmg=
+
+cleanup()
+{
+	if [[ -n "$mounted_dmg" ]]; then
+		hdiutil detach "$mounted_dmg" -quiet >/dev/null 2>&1 || true
+	fi
+	if [[ -n "$temporary_dir" ]]; then
+		rm -rf "$temporary_dir"
+	fi
+}
+trap cleanup EXIT
+
+temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/gitx-release.XXXXXX")
+export_options="$temporary_dir/ExportOptions.plist"
+plutil -create xml1 "$export_options"
+plutil -insert method -string developer-id "$export_options"
+plutil -insert destination -string upload "$export_options"
+plutil -insert signingStyle -string automatic "$export_options"
+plutil -insert teamID -string "$team_id" "$export_options"
+
+[[ $(plutil -extract method raw "$export_options") == developer-id ]] ||
+	fail "Export options plist has the wrong distribution method"
+[[ $(plutil -extract destination raw "$export_options") == upload ]] ||
+	fail "Export options plist has the wrong destination"
+[[ $(plutil -extract signingStyle raw "$export_options") == automatic ]] ||
+	fail "Export options plist has the wrong signing style"
+[[ $(plutil -extract teamID raw "$export_options") == "$team_id" ]] ||
+	fail "Export options plist has the wrong development team"
+plutil -lint "$export_options" >/dev/null
+log "Export options plist passed validation"
+
 if [[ "$mode" == check ]]; then
 	log "Xcode will validate account access and provision Developer ID signing during export"
 	exit 0
@@ -182,25 +217,6 @@ rm -rf \
 	"$dmg_path" \
 	"$checksum_path"
 mkdir -p "$logs_path" "$upload_export_path"
-
-temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/gitx-release.XXXXXX")
-mounted_dmg=
-
-cleanup()
-{
-	if [[ -n "$mounted_dmg" ]]; then
-		hdiutil detach "$mounted_dmg" -quiet >/dev/null 2>&1 || true
-	fi
-	rm -rf "$temporary_dir"
-}
-trap cleanup EXIT
-
-export_options="$temporary_dir/ExportOptions.plist"
-plutil -create xml "$export_options"
-plutil -insert method -string developer-id "$export_options"
-plutil -insert destination -string upload "$export_options"
-plutil -insert signingStyle -string automatic "$export_options"
-plutil -insert teamID -string "$team_id" "$export_options"
 
 log "Archiving GitX ($artifact_arch)"
 xcodebuild \
