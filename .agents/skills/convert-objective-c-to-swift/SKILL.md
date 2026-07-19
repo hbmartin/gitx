@@ -86,7 +86,7 @@ Fix compatibility gaps before moving the implementation. Preserve runtime names 
 
 Keep `Classes/GitX-Bridging-Header.h` narrow. Import a header only when Swift genuinely consumes it; do not bulk-import first-party or external headers.
 
-Compatibility shims are allowed. Full replacement does not require eliminating every Objective-C-facing declaration.
+Compatibility shims are allowed, but remove Objective-C facades and shims wherever migrating their callers would not cause significant churn. Retain an Objective-C-facing declaration only when it protects a required runtime or interoperability contract or avoids significant caller churn.
 
 ### 5. Choose the smallest coherent migration
 
@@ -94,9 +94,10 @@ Prefer incremental extraction while it is the lower-churn option:
 
 - Move parsing, filtering, state transformation, menu eligibility, push-control state, retry policy, formatting decisions, or other decision logic into a Swift value type, presenter, or use-case object.
 - Leave controllers and views responsible for wiring, responder-chain behavior, accessibility, bindings, outlets, actions, and rendering.
-- Keep an Objective-C facade or category when it avoids widespread caller churn.
+- Prefer migrating localized callers and deleting the Objective-C facade or category when doing so does not cause significant churn.
+- Keep an Objective-C facade or category when removing it would cause significant churn or break a required runtime or interoperability contract.
 
-Use full replacement when the compatibility audit has been completed and necessary fixes are in place. A compatibility shim may remain. Remove the `.m` implementation from the target only after confirming that Swift owns every replaced symbol and no duplicate implementation remains.
+Use full replacement when the compatibility audit has been completed and necessary fixes are in place. A compatibility shim may remain only for a documented compatibility need or to avoid significant churn. Remove the `.m` implementation from the target only after confirming that Swift owns every replaced symbol and no duplicate implementation remains.
 
 Do not make “no Objective-C callers” or “no shim” prerequisites. Migrate callers or provide compatibility as part of the conversion.
 
