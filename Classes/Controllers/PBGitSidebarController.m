@@ -88,7 +88,8 @@
 						  PBGitSidebarController *observer = notification.observer;
 						  NSInteger row = observer.sourceView.selectedRow;
 						  [observer.sourceView reloadData];
-						  [observer.sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+						  if (row >= 0)
+							  [observer.sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
 						  [observer selectCurrentBranch];
 					  }];
 
@@ -206,10 +207,11 @@
 	PBSourceViewItem *item = [self addRevSpec:rev];
 	if (item) {
 		[sourceView PBExpandItem:item expandParents:YES];
-		NSIndexSet *index = [NSIndexSet indexSetWithIndex:[sourceView rowForItem:item]];
-
-		[sourceView deselectAll:nil];
-		[sourceView selectRowIndexes:index byExtendingSelection:NO];
+		NSInteger row = [sourceView rowForItem:item];
+		if (row >= 0) {
+			[sourceView deselectAll:nil];
+			[sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+		}
 	}
 }
 
@@ -281,7 +283,9 @@
 		PBSourceViewItem *item = [self itemForRev:viewedRev];
 		if (item) {
 			[sourceView PBExpandItem:item expandParents:YES];
-			[sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:[sourceView rowForItem:item]] byExtendingSelection:NO];
+			NSInteger row = [sourceView rowForItem:item];
+			if (row >= 0)
+				[sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
 		}
 	}
 

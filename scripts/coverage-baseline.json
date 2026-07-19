@@ -5,6 +5,7 @@
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 0.7692,
     "Classes/Controllers/ApplicationController.m": 0.4047,
+    "Classes/Controllers/ApplicationIcon.swift": 1.0,
     "Classes/Controllers/CommitControllerPolicies.swift": 1.0,
     "Classes/Controllers/CommitMenuPresenter.swift": 1.0,
     "Classes/Controllers/CommitMessageEditCoordinator.swift": 1.0,

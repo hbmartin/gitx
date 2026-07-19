@@ -297,7 +297,8 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
         } catch {
             return failure("Failed to lookup tree")
         }
-        guard tree.count == 40 else {
+        // Accept SHA-1 (40) and SHA-256 (64) object IDs.
+        guard tree.count == 40 || tree.count == 64 else {
             return failure("Creating tree failed")
         }
 
@@ -353,7 +354,8 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
             }
             return failure("Could not create a commit object")
         }
-        guard commit.count == 40 else {
+        // Accept SHA-1 (40) and SHA-256 (64) object IDs.
+        guard commit.count == 40 || commit.count == 64 else {
             return failure("Could not create a commit object")
         }
 

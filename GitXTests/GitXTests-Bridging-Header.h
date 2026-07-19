@@ -65,6 +65,13 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 	PBChangedFilesSortModeStatus,
 };
 
+typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
+	PBApplicationIconStylePlusEyes,
+	PBApplicationIconStyleBracketed,
+	PBApplicationIconStyleCursor,
+	PBApplicationIconStyleMixedDiff,
+};
+
 @interface PBApplicationPreferences : NSObject
 @property (nonatomic, readonly, strong) NSUserDefaults *userDefaults;
 @end
@@ -99,6 +106,12 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 @property (class, copy) NSString *customTerminalArguments;
 @property (class, copy) NSString *raycastScriptsDirectory;
 @property (class) NSInteger patchExportMode;
+@property (class) PBApplicationIconStyle applicationIconStyle;
+@end
+
+@interface PBApplicationIconController : NSObject
++ (NSImage *)imageForStyle:(PBApplicationIconStyle)style NS_SWIFT_NAME(image(for:));
++ (void)applySelectedIcon;
 @end
 
 @interface PBHistoryTreePresentation : NSObject
@@ -114,6 +127,7 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 
 @interface PBSettingsViewFactory : NSObject
 + (NSView *)generalViewWithLegacyView:(NSView *)legacyView NS_SWIFT_NAME(generalView(legacyView:));
++ (NSView *)dockIconView;
 + (NSView *)windowsView;
 + (NSView *)diffAndTextView;
 + (NSView *)terminalView;
@@ -289,6 +303,17 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @interface PBRecentRepositoryActivationPolicy : NSObject
 + (PBRecentRepositoryActivationAction)actionForReachable:(BOOL)reachable
 	NS_SWIFT_NAME(action(forReachable:));
+@end
+
+@interface PBRecentRepositoryKeyNavigation : NSObject
++ (NSInteger)nextRowFromRow:(NSInteger)currentRow
+                   rowCount:(NSInteger)rowCount
+                 movingDown:(BOOL)movingDown
+	NS_SWIFT_NAME(nextRow(fromRow:rowCount:movingDown:));
+@end
+
+@interface PBTerminalUtil : NSObject
++ (NSString *)shellQuote:(NSString *)string;
 @end
 
 @interface PBRewindOverlayView : NSView
@@ -532,7 +557,8 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 @end
 
 @interface PBIndexCommitCoordinator : NSObject
-- (instancetype)initWithService:(PBIndexCommitService *)service;
+- (instancetype)initWithService:(PBIndexCommitService *)service
+                     repository:(nullable PBGitRepository *)repository;
 - (void)commitWithRequest:(PBIndexCommitRequest *)request
              eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
 @end

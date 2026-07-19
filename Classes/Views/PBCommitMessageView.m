@@ -19,13 +19,15 @@
 
 	NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
 
+	// Use notification.observer (weak) rather than capturing self: NSUserDefaults never deallocates, so a
+	// strong self-capture here would retain this view for the life of the process (a per-window leak).
 	[defaults addObserver:self
 				  keyPath:@[ @"PBCommitMessageViewHasVerticalLine",
 							 @"PBCommitMessageViewVerticalLineLength",
 							 @"PBCommitMessageViewVerticalBodyLineLength" ]
 				  options:NSKeyValueObservingOptionNew
 					block:^(MAKVONotification *notification) {
-						[self setNeedsDisplay:YES];
+						[(PBCommitMessageView *)notification.observer setNeedsDisplay:YES];
 					}];
 }
 

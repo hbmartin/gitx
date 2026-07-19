@@ -563,6 +563,24 @@
 	}
 }
 
+- (void)testDockIconPreferencesOfferFourRobotFaces
+{
+	[self.app terminate];
+	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
+	arguments[arguments.count - 1] = @"Dock Icon";
+	self.app.launchArguments = arguments;
+	[self.app launch];
+
+	XCUIElement *firstButton = self.app.checkBoxes[@"DockIcon.0"];
+	[self openPreferencesWaitingForElement:firstButton];
+	NSArray<NSString *> *iconTitles = @[ @"Plus Eyes", @"Bracketed", @"Cursor", @"Mixed Diff" ];
+	XCUIElementQuery *iconButtonQuery =
+		[self.app.checkBoxes matchingPredicate:[NSPredicate predicateWithFormat:@"title IN %@", iconTitles]];
+	NSArray<XCUIElement *> *buttons = iconButtonQuery.allElementsBoundByIndex;
+	XCTAssertEqual(buttons.count, (NSUInteger)4, @"Each robot face should be available");
+	[self saveWindowScreenshotNamed:@"dock-icon-robot-face-choices"];
+}
+
 - (void)testCommitContextMenuScreenshot
 {
 	[self.app terminate];

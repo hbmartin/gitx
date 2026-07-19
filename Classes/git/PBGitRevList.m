@@ -292,7 +292,10 @@ static BOOL hasParameter(NSMutableArray *parameters, NSString *paramName)
 			} else {
 				GTCommit *commit = (GTCommit *)[pbRepo.gtRepo lookUpObjectByOID:oid error:NULL];
 				if (!commit) {
-					[NSException raise:NSInternalInconsistencyException format:@"Missing commit with OID %@", oid];
+					// A concurrent `git gc`/prune/fetch can remove an object mid-walk. Log and skip rather than
+					// raising an uncaught NSException on this background queue, which would abort the process.
+					NSLog(@"[GitX] Skipping missing commit with OID %@ during history enumeration", oid);
+					return;
 				}
 
 				newCommit = [[PBGitCommit alloc] initWithRepository:pbRepo andCommit:commit];
@@ -322,7 +325,10 @@ static BOOL hasParameter(NSMutableArray *parameters, NSString *paramName)
 		});
 	}
 
-	NSAssert(!enumError, @"Error enumerating commits");
+	// Log rather than assert: enumeration can fail if the object database changes underneath the walk
+	// (e.g. a concurrent fetch or gc). Asserting crashes debug builds and silently truncates release builds.
+	if (enumError)
+		NSLog(@"[GitX] Error enumerating commits: %@", enumError);
 
 	dispatch_group_wait(loadGroup, DISPATCH_TIME_FOREVER);
 	dispatch_group_wait(decorateGroup, DISPATCH_TIME_FOREVER);

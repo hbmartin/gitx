@@ -401,7 +401,7 @@ final class IndexCommitServiceTests: XCTestCase {
             output(Data("released\n".utf8))
         }
         let service = makeService(runner: runner, hooks: hooks)
-        let coordinator = PBIndexCommitCoordinator(service: service)
+        let coordinator = PBIndexCommitCoordinator(service: service, repository: nil)
         let completion = expectation(description: "coordinator completion")
         let mainQueueHeartbeat = expectation(description: "main queue remains responsive")
         let recorder = EventRecorder()

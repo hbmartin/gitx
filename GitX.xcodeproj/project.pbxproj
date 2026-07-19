@@ -245,6 +245,7 @@
 		C0DED0000000000000000006 /* WorkspaceActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */; };
 		C0DED0000000000000000007 /* PBGitWindowController+Dialogs.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */; };
 		C0DEC1000000000000000001 /* ApplicationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC1000000000000000011 /* ApplicationSettings.swift */; };
+		C0D1C0A00000000000000001 /* ApplicationIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1C0A00000000000000011 /* ApplicationIcon.swift */; };
 		C0DEC2000000000000000001 /* RepositoryToolbarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC2000000000000000011 /* RepositoryToolbarController.swift */; };
 		C0DEC3000000000000000001 /* RepositorySettingsController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC3000000000000000011 /* RepositorySettingsController.swift */; };
 		C0DEC4000000000000000001 /* RepositoryOpeningCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */; };
@@ -848,6 +849,7 @@
 		C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceActionCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitWindowController+Dialogs.m"; sourceTree = "<group>"; };
 		C0DEC1000000000000000011 /* ApplicationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationSettings.swift; sourceTree = "<group>"; };
+		C0D1C0A00000000000000011 /* ApplicationIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationIcon.swift; sourceTree = "<group>"; };
 		C0DEC2000000000000000011 /* RepositoryToolbarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryToolbarController.swift; sourceTree = "<group>"; };
 		C0DEC3000000000000000011 /* RepositorySettingsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsController.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000011 /* ApplicationComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationComposition.swift; sourceTree = "<group>"; };
@@ -1153,6 +1155,7 @@
 				C0D0C0A00000000000000011 /* ApplicationComposition.swift */,
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
 				C0DEC1000000000000000011 /* ApplicationSettings.swift */,
+				C0D1C0A00000000000000011 /* ApplicationIcon.swift */,
 				C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */,
 				C0D0C0A00000000000000014 /* TerminalIntegration.swift */,
 				C0DEC2000000000000000011 /* RepositoryToolbarController.swift */,
@@ -1930,6 +1933,7 @@
 				C0DED0000000000000000006 /* WorkspaceActionCoordinator.swift in Sources */,
 				C0DED0000000000000000007 /* PBGitWindowController+Dialogs.m in Sources */,
 				C0DEC1000000000000000001 /* ApplicationSettings.swift in Sources */,
+				C0D1C0A00000000000000001 /* ApplicationIcon.swift in Sources */,
 				C0DEC2000000000000000001 /* RepositoryToolbarController.swift in Sources */,
 				C0DEC3000000000000000001 /* RepositorySettingsController.swift in Sources */,
 				C0DEC4000000000000000001 /* RepositoryOpeningCoordinator.swift in Sources */,

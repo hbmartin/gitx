@@ -120,6 +120,43 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(PBRecentRepositoryActivationPolicy.action(forReachable: false), .locate)
     }
 
+    func testRecentRepositoryKeyNavigationMovesOneRowAtATime() {
+        // Moving down advances exactly one row and stops at the last row.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 5, movingDown: true), 1)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 3, rowCount: 5, movingDown: true), 4)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 4, rowCount: 5, movingDown: true), 4)
+
+        // Moving up retreats exactly one row — regression guard against the double-decrement that skipped a row.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 3, rowCount: 5, movingDown: false), 2)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 1, rowCount: 5, movingDown: false), 0)
+    }
+
+    func testRecentRepositoryKeyNavigationClampsAtTopRowWithoutUnderflow() {
+        // Regression guard: pressing Up on the first row must clamp to 0, not underflow NSUInteger and crash.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 5, movingDown: false), 0)
+        // A not-found selection bridges from NSNotFound to -1; it must be treated as the nearest valid row.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: -1, rowCount: 5, movingDown: false), 0)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: -1, rowCount: 5, movingDown: true), 1)
+    }
+
+    func testTerminalShellQuoteNeutralizesCommandSubstitution() {
+        // A repository path containing $(...) or backticks must be fully literal inside single quotes so it
+        // cannot execute arbitrary shell when the repo is opened in Terminal/iTerm.
+        XCTAssertEqual(PBTerminalUtil.shellQuote("/repo/normal"), "'/repo/normal'")
+        XCTAssertEqual(PBTerminalUtil.shellQuote("/repo/$(whoami)"), "'/repo/$(whoami)'")
+        XCTAssertEqual(PBTerminalUtil.shellQuote("/repo/`id`"), "'/repo/`id`'")
+        // An embedded single quote is escaped so it cannot terminate the quoting and break out.
+        XCTAssertEqual(PBTerminalUtil.shellQuote("/repo/it's mine"), "'/repo/it'\\''s mine'")
+    }
+
+    func testRecentRepositoryKeyNavigationReportsNoSelectableRowWhenEmpty() {
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 0, movingDown: true), -1)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 0, movingDown: false), -1)
+        // Single-row list: both directions stay put.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 1, movingDown: true), 0)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 1, movingDown: false), 0)
+    }
+
     func testRewindOverlayUsesOneLayerBackedSurface() throws {
         let overlay = PBRewindOverlayView(frame: NSRect(x: 0, y: 0, width: 125, height: 125))
 
@@ -869,6 +906,48 @@ final class GitXSwiftFeatureTests: XCTestCase {
             controls(in: diff).compactMap { $0 as? NSTextField }
                 .first { $0.accessibilityIdentifier() == "DiffFontSizeValue" }?.stringValue,
             "15 pt"
+        )
+    }
+
+    func testDockIconChoicesRenderAndApplyImmediately() throws {
+        let restoreIconStyle = preservePersistentDefault(forKey: "PBApplicationIconStyle")
+        let originalApplicationIcon = NSApplication.shared.applicationIconImage
+        defer {
+            restoreIconStyle()
+            NSApplication.shared.applicationIconImage = originalApplicationIcon
+        }
+
+        PBApplicationSettings.applicationIconStyle = .plusEyes
+        PBApplicationIconController.applySelectedIcon()
+        let plusEyesDockImage = NSApplication.shared.applicationIconImage?.tiffRepresentation
+        let pane = PBSettingsViewFactory.dockIconView()
+        let buttons = controls(in: pane).compactMap { $0 as? NSButton }
+            .filter { $0.action == NSSelectorFromString("applicationIconChanged:") }
+        XCTAssertEqual(buttons.count, 4)
+        XCTAssertEqual(
+            Set(buttons.map(\.tag)),
+            Set(PBApplicationIconStyle.plusEyes.rawValue ... PBApplicationIconStyle.mixedDiff.rawValue)
+        )
+
+        let styles: [PBApplicationIconStyle] = [.plusEyes, .bracketed, .cursor, .mixedDiff]
+        let renderedIcons = try styles.map { style -> Data in
+            let image = PBApplicationIconController.image(for: style)
+            XCTAssertEqual(image.size, NSSize(width: 512, height: 512))
+            return try XCTUnwrap(image.tiffRepresentation)
+        }
+        XCTAssertEqual(Set(renderedIcons).count, styles.count, "Each choice should render a distinct robot face")
+
+        let mixedDiffButton = try XCTUnwrap(
+            buttons.first { $0.tag == PBApplicationIconStyle.mixedDiff.rawValue }
+        )
+        mixedDiffButton.performClick(nil)
+
+        XCTAssertEqual(PBApplicationSettings.applicationIconStyle, .mixedDiff)
+        XCTAssertEqual(buttons.filter { $0.state == .on }, [mixedDiffButton])
+        XCTAssertNotEqual(
+            NSApplication.shared.applicationIconImage?.tiffRepresentation,
+            plusEyesDockImage,
+            "Selecting another robot face should replace the current Dock image"
         )
     }
 

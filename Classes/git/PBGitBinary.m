@@ -28,6 +28,10 @@ static NSString *gitPath = nil;
 
 + (NSString *)extractGitVersion:(NSString *)versionString
 {
+	// outputForCommand: returns nil when the binary fails to launch; firstMatchInString: would raise on nil.
+	if (versionString == nil)
+		return nil;
+
 	NSError *error;
 	NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:@"git version ([0-9.]+)"
 																		   options:0
@@ -44,6 +48,12 @@ static NSString *gitPath = nil;
 + (BOOL)acceptBinary:(NSString *)path
 {
 	if (!path)
+		return NO;
+
+	// `which`/`xcrun -f git` output includes a trailing newline; without trimming, fileExistsAtPath: is
+	// handed ".../git\n" and every dynamic-discovery fallback silently fails.
+	path = [path stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	if (path.length == 0)
 		return NO;
 
 	NSString *version = [self versionForPath:path];
@@ -121,6 +131,7 @@ static NSMutableArray *locations = nil;
 {
 	if (!locations) {
 		locations = [[NSMutableArray alloc] initWithObjects:
+												@"/opt/homebrew/bin/git",
 												@"/opt/local/bin/git",
 												@"/sw/bin/git",
 												@"/opt/git/bin/git",
