@@ -317,3 +317,20 @@ final nonisolated class GitDefaultsPolicy: NSObject { // swiftlint:disable:this 
         ApplicationPreferencePolicy.repositoryViewStateIdentifier(for: repositoryURL)
     }
 }
+
+/// Chooses the next Recent Repository row when the user presses the arrow keys in the Open Recent popup.
+@objc(PBRecentRepositoryKeyNavigation)
+final nonisolated class RecentRepositoryKeyNavigation: NSObject { // swiftlint:disable:this unused_declaration
+    /// Returns the row to select when moving up or down from `currentRow` within a list of `rowCount` rows.
+    ///
+    /// Returns `-1` when there is no selectable row. `currentRow` is clamped into range before moving, so an
+    /// out-of-range or not-found index (Objective-C `NSNotFound` bridges to `-1`) is treated as the nearest
+    /// valid row instead of underflowing `NSUInteger` and crashing `objectAtIndex:`.
+    @objc(nextRowFromRow:rowCount:movingDown:)
+    // swiftlint:disable:next unused_declaration
+    static func nextRow(fromRow currentRow: Int, rowCount: Int, movingDown: Bool) -> Int {
+        guard rowCount > 0 else { return -1 }
+        let clamped = min(max(currentRow, 0), rowCount - 1)
+        return movingDown ? min(clamped + 1, rowCount - 1) : max(clamped - 1, 0)
+    }
+}
