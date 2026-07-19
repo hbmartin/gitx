@@ -120,6 +120,33 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(PBRecentRepositoryActivationPolicy.action(forReachable: false), .locate)
     }
 
+    func testRecentRepositoryKeyNavigationMovesOneRowAtATime() {
+        // Moving down advances exactly one row and stops at the last row.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 5, movingDown: true), 1)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 3, rowCount: 5, movingDown: true), 4)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 4, rowCount: 5, movingDown: true), 4)
+
+        // Moving up retreats exactly one row — regression guard against the double-decrement that skipped a row.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 3, rowCount: 5, movingDown: false), 2)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 1, rowCount: 5, movingDown: false), 0)
+    }
+
+    func testRecentRepositoryKeyNavigationClampsAtTopRowWithoutUnderflow() {
+        // Regression guard: pressing Up on the first row must clamp to 0, not underflow NSUInteger and crash.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 5, movingDown: false), 0)
+        // A not-found selection bridges from NSNotFound to -1; it must be treated as the nearest valid row.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: -1, rowCount: 5, movingDown: false), 0)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: -1, rowCount: 5, movingDown: true), 1)
+    }
+
+    func testRecentRepositoryKeyNavigationReportsNoSelectableRowWhenEmpty() {
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 0, movingDown: true), -1)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 0, movingDown: false), -1)
+        // Single-row list: both directions stay put.
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 1, movingDown: true), 0)
+        XCTAssertEqual(PBRecentRepositoryKeyNavigation.nextRow(fromRow: 0, rowCount: 1, movingDown: false), 0)
+    }
+
     func testRewindOverlayUsesOneLayerBackedSurface() throws {
         let overlay = PBRewindOverlayView(frame: NSRect(x: 0, y: 0, width: 125, height: 125))
 

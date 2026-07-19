@@ -6,7 +6,10 @@ import OSLog // swiftlint:disable:this unused_import
 
 @objc(PBIndexMutationService)
 final nonisolated class IndexMutationService: NSObject {
-    private let repository: PBGitRepository
+    // `unowned` matches every sibling repository service. A strong reference here formed the cycle
+    // PBGitRepository -> PBGitIndex -> mutationService -> repository, which leaked the whole repository
+    // graph (and its live FSEvents watcher) on every document close.
+    private unowned let repository: PBGitRepository
     private let runner: IndexCommandRunning
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "IndexMutationService")
 

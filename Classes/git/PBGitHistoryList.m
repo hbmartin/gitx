@@ -192,8 +192,12 @@
 			if ([ref isBranch] || [ref isTag])
 				[baseCommitOIDs addObject:OID];
 
-	if (![[PBGitRef refFromString:[[repository headRef] simpleRef]] type])
-		[baseCommitOIDs addObject:repository.headOID];
+	if (![[PBGitRef refFromString:[[repository headRef] simpleRef]] type]) {
+		// An unborn branch (fresh `git init`) has HEAD as a symbolic ref with no target, so headOID is nil.
+		GTOID *headOID = repository.headOID;
+		if (headOID)
+			[baseCommitOIDs addObject:headOID];
+	}
 
 	return baseCommitOIDs;
 }

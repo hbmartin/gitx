@@ -62,7 +62,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	_snapshotReducer = [[PBIndexSnapshotReducer alloc] init];
 	_mutationService = [[PBIndexMutationService alloc] initWithRepository:theRepository];
 	_commitService = [[PBIndexCommitService alloc] initWithRepository:theRepository];
-	_commitCoordinator = [[PBIndexCommitCoordinator alloc] initWithService:_commitService];
+	_commitCoordinator = [[PBIndexCommitCoordinator alloc] initWithService:_commitService repository:theRepository];
 	__weak PBGitIndex *weakSelf = self;
 	_refreshCoordinator = [[PBIndexRefreshCoordinator alloc] initWithRepository:theRepository
 		parser:_statusParser
@@ -102,12 +102,28 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	// in a dictionary. This dictionary will then later be read by [self commit:]
 	GTReference *headRef = [self.repository.gtRepo headReferenceWithError:NULL];
 	GTCommit *commit = [headRef resolvedTarget];
-	if (commit)
-		self.amendEnvironment = @{
-			@"GIT_AUTHOR_NAME" : commit.author.name,
-			@"GIT_AUTHOR_EMAIL" : commit.author.email,
-			@"GIT_AUTHOR_DATE" : commit.commitDate,
-		};
+	if (commit) {
+		GTSignature *author = commit.author;
+		NSMutableDictionary<NSString *, NSString *> *environment = [NSMutableDictionary dictionary];
+		if (author.name)
+			environment[@"GIT_AUTHOR_NAME"] = author.name;
+		if (author.email)
+			environment[@"GIT_AUTHOR_EMAIL"] = author.email;
+		// Preserve the original *author* date and its timezone, not the committer date. The value must be a
+		// git-parseable string ("@<unixtime> <±HHMM>"); the previous code stored the committer NSDate, which
+		// NSTask stringified to UTC and lost the author's timezone.
+		if (author.time) {
+			NSTimeZone *timeZone = author.timeZone ?: [NSTimeZone timeZoneForSecondsFromGMT:0];
+			NSInteger offset = [timeZone secondsFromGMTForDate:author.time];
+			NSInteger absOffset = labs(offset);
+			environment[@"GIT_AUTHOR_DATE"] = [NSString stringWithFormat:@"@%lld %c%02ld%02ld",
+														(long long)llround(author.time.timeIntervalSince1970),
+														offset < 0 ? '-' : '+',
+														(long)(absOffset / 3600),
+														(long)((absOffset % 3600) / 60)];
+		}
+		self.amendEnvironment = environment;
+	}
 
 	NSDictionary *notifDict = nil;
 	if (commit.message) {

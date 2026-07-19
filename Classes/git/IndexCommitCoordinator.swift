@@ -18,10 +18,23 @@ private final nonisolated class IndexCommitEventDelivery: @unchecked Sendable {
     }
 }
 
+// swift6-safety-justification: Only holds a strong reference to keep the repository alive for the duration of a
+// background commit. The repository is never accessed through this box off the main thread; the commit runners
+// reach it via their own `unowned` references, so this box exists solely for lifetime extension.
+private final nonisolated class RepositoryLifetimeToken: @unchecked Sendable {
+    let repository: PBGitRepository?
+
+    init(_ repository: PBGitRepository?) {
+        self.repository = repository
+    }
+}
+
 // swift6-safety-justification: Immutable service ownership and private serial work/event queues confine all coordination.
 @objc(PBIndexCommitCoordinator)
 final nonisolated class IndexCommitCoordinator: NSObject, @unchecked Sendable {
     private let service: IndexCommitService
+    // Held weakly so it never contributes to a retain cycle; strong-captured per operation (see `commit`).
+    private weak var repository: PBGitRepository?
     private let workQueue = DispatchQueue(
         label: "org.gitx.IndexCommitCoordinator.work",
         qos: .userInitiated
@@ -29,9 +42,10 @@ final nonisolated class IndexCommitCoordinator: NSObject, @unchecked Sendable {
     private let eventQueue = DispatchQueue(label: "org.gitx.IndexCommitCoordinator.events")
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "IndexCommitCoordinator")
 
-    @objc(initWithService:)
-    init(service: IndexCommitService) {
+    @objc(initWithService:repository:)
+    init(service: IndexCommitService, repository: PBGitRepository?) {
         self.service = service
+        self.repository = repository
         super.init()
     }
 
@@ -42,11 +56,16 @@ final nonisolated class IndexCommitCoordinator: NSObject, @unchecked Sendable {
     ) {
         let delivery = IndexCommitEventDelivery(handler: eventHandler)
         logger.debug("Scheduling commit orchestration off the main thread")
-        workQueue.async { [service, eventQueue, logger] in
-            _ = service.commit(with: request) { event in
-                eventQueue.async {
-                    DispatchQueue.main.async {
-                        delivery.deliver(event)
+        // The commit runners reference the repository `unowned`. Capture a strong reference for the whole
+        // background operation so a document closed mid-commit cannot deallocate the repository underneath them.
+        let lifetimeToken = RepositoryLifetimeToken(repository)
+        workQueue.async { [service, eventQueue, logger, lifetimeToken] in
+            withExtendedLifetime(lifetimeToken) {
+                _ = service.commit(with: request) { event in
+                    eventQueue.async {
+                        DispatchQueue.main.async {
+                            delivery.deliver(event)
+                        }
                     }
                 }
             }

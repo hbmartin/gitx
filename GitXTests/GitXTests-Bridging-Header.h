@@ -290,6 +290,13 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 	NS_SWIFT_NAME(action(forReachable:));
 @end
 
+@interface PBRecentRepositoryKeyNavigation : NSObject
++ (NSInteger)nextRowFromRow:(NSInteger)currentRow
+                   rowCount:(NSInteger)rowCount
+                 movingDown:(BOOL)movingDown
+	NS_SWIFT_NAME(nextRow(fromRow:rowCount:movingDown:));
+@end
+
 @interface PBRewindOverlayView : NSView
 - (instancetype)initWithFrame:(NSRect)frameRect;
 @end
@@ -531,7 +538,8 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 @end
 
 @interface PBIndexCommitCoordinator : NSObject
-- (instancetype)initWithService:(PBIndexCommitService *)service;
+- (instancetype)initWithService:(PBIndexCommitService *)service
+                     repository:(nullable PBGitRepository *)repository;
 - (void)commitWithRequest:(PBIndexCommitRequest *)request
              eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
 @end

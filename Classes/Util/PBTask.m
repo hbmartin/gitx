@@ -346,8 +346,18 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 			if (!strongSelf) return;
 			PBTaskLog(@"task %p: can write %d", strongSelf, handle.fileDescriptor);
 
-			[handle writeData:strongSelf.standardInputData];
-			[handle closeFile];
+			@try {
+				[handle writeData:strongSelf.standardInputData];
+			} @catch (NSException *exception) {
+				// A child that exits without draining stdin (e.g. a fast-failing `git update-index --stdin`
+				// on a locked index, or a hook that closes stdin) makes writeData: raise
+				// NSFileHandleOperationException on EPIPE. It fires on a GCD thread where nothing catches it,
+				// so swallow it here and still close the descriptor below to avoid leaking it.
+				PBTaskLog(@"task %p: stdin write failed: %@", strongSelf, exception);
+			} @finally {
+				[handle closeFile];
+				handle.writeabilityHandler = nil;
+			}
 		};
 	}
 

@@ -2553,6 +2553,46 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	}
 }
 
+- (void)testRepositoryDeallocatesAfterIndexServicesCreated
+{
+	// Regression: PBIndexMutationService retained its repository strongly, forming the cycle
+	// PBGitRepository -> PBGitIndex -> mutationService -> repository. That leaked the whole repository
+	// (including its live FSEvents watcher) every time a document closed. The mutation service now holds
+	// the repository `unowned`, matching every sibling repository service, so the graph must deallocate.
+	NSString *name = [NSString stringWithFormat:@"GitXRetainCycle-%@", NSUUID.UUID.UUIDString];
+	NSURL *repoURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name] isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:repoURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	__weak PBGitRepository *weakRepository = nil;
+	__weak PBGitIndex *weakIndex = nil;
+	@try {
+		[self git:@[ @"init", @"--quiet" ] directory:repoURL];
+		@autoreleasepool {
+			NSError *error = nil;
+			PBGitRepositoryDocument *document = [[PBGitRepositoryDocument alloc] initWithContentsOfURL:repoURL
+																								ofType:PBGitRepositoryDocumentType
+																								 error:&error];
+			XCTAssertNotNil(document, @"%@", error);
+			PBGitIndex *index = document.repository.index; // creates the mutation/commit services + coordinator
+			XCTAssertNotNil(index);
+			weakRepository = document.repository;
+			weakIndex = index;
+			[document close];
+			document = nil;
+			index = nil;
+		}
+		// Allow any deferred teardown (watcher invalidation, notification drain) to run.
+		for (int i = 0; i < 20 && (weakRepository != nil || weakIndex != nil); i++)
+			[[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
+		XCTAssertNil(weakRepository, @"PBGitRepository leaked after document close (retain cycle via index services)");
+		XCTAssertNil(weakIndex, @"PBGitIndex leaked after document close");
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:repoURL error:NULL];
+	}
+}
+
 - (void)testRepositoryDocumentRejectsPlainAndMalformedFoldersWithoutMutation
 {
 	NSString *name = [NSString stringWithFormat:@"GitXInvalidOpening-%@", NSUUID.UUID.UUIDString];

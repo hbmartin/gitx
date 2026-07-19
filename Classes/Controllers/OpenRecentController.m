@@ -8,6 +8,7 @@
 
 #import "OpenRecentController.h"
 #import "PBGitDefaults.h"
+#import "GitX-Swift.h"
 
 @implementation OpenRecentController
 
@@ -104,24 +105,18 @@
 	} else if (commandSelector == @selector(cancelOperation:)) {
 		[self hide];
 		result = YES;
-	} else if (commandSelector == @selector(moveUp:)) {
+	} else if (commandSelector == @selector(moveUp:) || commandSelector == @selector(moveDown:)) {
 		if (selectedResult != nil) {
-			NSUInteger index = [currentResults indexOfObject:selectedResult] - 1;
-			if (index > 0) {
-				index -= 1;
+			BOOL movingDown = (commandSelector == @selector(moveDown:));
+			NSInteger current = (NSInteger)[currentResults indexOfObject:selectedResult];
+			NSInteger next = [PBRecentRepositoryKeyNavigation nextRowFromRow:current
+																	rowCount:(NSInteger)[currentResults count]
+																  movingDown:movingDown];
+			if (next >= 0) {
+				selectedResult = [currentResults objectAtIndex:(NSUInteger)next];
+				[resultViewer selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)next] byExtendingSelection:FALSE];
+				[resultViewer scrollRowToVisible:next];
 			}
-			selectedResult = [currentResults objectAtIndex:index];
-			[resultViewer selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:FALSE];
-			[resultViewer scrollRowToVisible:index];
-		}
-		result = YES;
-	} else if (commandSelector == @selector(moveDown:)) {
-		if (selectedResult != nil) {
-			NSUInteger index = [currentResults indexOfObject:selectedResult] + 1;
-			if (index >= [currentResults count]) index = [currentResults count] - 1;
-			selectedResult = [currentResults objectAtIndex:index];
-			[resultViewer selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:FALSE];
-			[resultViewer scrollRowToVisible:index];
 		}
 		result = YES;
 	}
