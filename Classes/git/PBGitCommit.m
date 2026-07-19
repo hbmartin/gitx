@@ -195,14 +195,23 @@ NSString *const kGitXCommitType = @"commit";
 		return _patch;
 
 	NSError *error = nil;
-	NSString *p = [self.repository outputOfTaskWithArguments:@[ @"format-patch", @"-1", @"--stdout", self.SHA ] error:&error];
+	NSArray<NSString *> *arguments;
+	if (self.parents.count > 1) {
+		// `format-patch` skips merge commits and would emit an unrelated ancestor's patch. Show the merge's
+		// own net changes against its first parent instead, in the same email-style format.
+		arguments = @[ @"show", @"--first-parent", @"-m", @"--patch", @"--format=email", self.SHA ];
+	} else {
+		arguments = @[ @"format-patch", @"-1", @"--stdout", self.SHA ];
+	}
+	NSString *p = [self.repository outputOfTaskWithArguments:arguments error:&error];
 	if (!p) {
 		PBLogError(error);
 		return nil;
 	}
 
-	// Add a GitX identifier to the patch ;)
-	self.patch = [[p substringToIndex:[p length] - 1] stringByAppendingString:@"+GitX"];
+	// Add a GitX identifier to the patch ;) — guard against underflow when the command produced no output.
+	NSString *trimmed = p.length > 0 ? [p substringToIndex:p.length - 1] : p;
+	self.patch = [trimmed stringByAppendingString:@"+GitX"];
 	return self->_patch;
 }
 

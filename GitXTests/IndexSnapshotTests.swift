@@ -34,6 +34,42 @@ final class IndexSnapshotTests: XCTestCase {
         XCTAssertNotNil(error)
     }
 
+    func testParserClassifiesUnmergedEntriesAsModifiedNotNew() {
+        // Unmerged (conflicted) entries carry mode :000000 like additions; they must be MODIFIED, not NEW,
+        // so conflicted files don't display as brand-new untracked files.
+        let zero = String(repeating: "0", count: 40)
+        let output = ":000000 000000 \(zero) \(zero) U\0conflict.txt\0"
+        let entries = parser.parseTrackedData(output.data(using: .utf8), error: nil)
+        XCTAssertEqual(entries?["conflict.txt"]?.status, 1)
+    }
+
+    func testParserToleratesNonUTF8PathInsteadOfAbortingEntireParse() {
+        // A single non-UTF-8 path must not fail the whole-payload decode (which froze the entire file list);
+        // it survives with a lossy path and the record still parses.
+        var data = Data(":100644 100644 abc def M\0".utf8)
+        data.append(0xFF)
+        data.append(0x00)
+        let entries = parser.parseTrackedData(data, error: nil)
+        XCTAssertEqual(entries?.count, 1)
+        XCTAssertEqual(entries?.values.first?.status, 1)
+    }
+
+    func testReducerPreservesStagedDeletionWhenPathAlsoUntracked() {
+        // `git rm --cached foo` (kept on disk) reports foo as both staged-deleted and untracked; the
+        // untracked entry must not erase the staged deletion, or the user cannot see or unstage it.
+        let zero = String(repeating: "0", count: 40)
+        let stagedOutput = ":100644 000000 abc \(zero) D\0foo.txt\0"
+        let staged = parser.parseTrackedData(stagedOutput.data(using: .utf8), error: nil)
+        let untracked = parser.parseUntrackedData("foo.txt\0".data(using: .utf8), error: nil)
+
+        let result = reducer.reducePrevious([], staged: staged, unstaged: [:], untracked: untracked)
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].path, "foo.txt")
+        XCTAssertEqual(result[0].status, 2)
+        XCTAssertTrue(result[0].hasStagedChanges)
+    }
+
     func testReducerPreservesStagedMetadataForPartialAddition() {
         let stagedOutput = ":000000 100644 0000000000000000000000000000000000000000 stagedsha A\0new.txt\0"
         let unstagedOutput = ":100644 100644 stagedsha workingsha M\0new.txt\0"
