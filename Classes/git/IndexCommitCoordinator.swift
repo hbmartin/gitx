@@ -18,8 +18,10 @@ private final nonisolated class IndexCommitEventDelivery: @unchecked Sendable {
     }
 }
 
-// Only holds a strong reference for a background commit; the repository is never accessed through this box off-main.
-// swift6-safety-justification: The token is handed to the main queue before its final release.
+// The repository is never accessed through this box off the main thread; commit runners use their own
+// `unowned` references.
+// swift6-safety-justification: This token keeps the repository alive during a background commit and is handed
+// to the main queue before its final release.
 private final nonisolated class RepositoryLifetimeToken: @unchecked Sendable {
     let repository: PBGitRepository?
 

@@ -28,6 +28,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface PBGitRepositoryWatcher (GitXTests)
 - (nullable NSDate *)fileModificationDateAtPath:(NSString *)path;
+- (void)handleGitDirEventCallback:(NSArray *)eventPaths;
+@end
+
+@interface PBGitRepositoryWatcherEventPath : NSObject
+@property (nonatomic, copy) NSString *path;
+@property (nonatomic) FSEventStreamEventFlags flag;
 @end
 
 @interface PBGitRepositoryWatcherCallbackContext : NSObject
@@ -147,8 +153,10 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 	[super tearDown];
 }
 
-- (void)testWorkingTreeEditDeliversRepositoryNotificationOnMainThread
+- (void)testWorkingTreeEditCallbackDeliversRepositoryNotificationOnMainThread
 {
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	[watcher stop];
 	XCTestExpectation *delivered = [self expectationWithDescription:@"Watcher delivered working-tree edit"];
 	NSString *changedPath = [self.repositoryURL.path stringByAppendingPathComponent:@"changed.txt"];
 	id notificationToken = [[NSNotificationCenter defaultCenter]
@@ -170,7 +178,19 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 									inDirectory:self.repositoryURL.path
 										  error:&error];
 	XCTAssertNotNil(output, @"%@", error);
-	[self waitForExpectations:@[ delivered ] timeout:5.0];
+	PBGitRepositoryWatcherCallbackContext *context =
+		[[PBGitRepositoryWatcherCallbackContext alloc] initWithWatcher:watcher];
+	NSArray<NSString *> *eventPaths = @[ changedPath, self.repositoryURL.path ];
+	FSEventStreamEventFlags eventFlags[] = {kFSEventStreamEventFlagNone, kFSEventStreamEventFlagNone};
+	FSEventStreamEventId eventIds[] = {3, 4};
+	PBGitRepositoryWatcherCallback(NULL,
+								   (__bridge void *)context,
+								   eventPaths.count,
+								   (__bridge void *)eventPaths,
+								   eventFlags,
+								   eventIds);
+
+	[self waitForExpectations:@[ delivered ] timeout:2.0];
 	[[NSNotificationCenter defaultCenter] removeObserver:notificationToken];
 	XCTAssertEqual(self.repository.offMainGTRepositoryAccessCount, (NSUInteger)0);
 }
@@ -222,8 +242,20 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 - (void)testWatcherCallbackReportsGitDirectoryRootEventsDeterministically
 {
 	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	[watcher stop];
 	PBGitRepositoryWatcherCallbackContext *context =
 		[[PBGitRepositoryWatcherCallbackContext alloc] initWithWatcher:watcher];
+	NSError *error = nil;
+	XCTAssertTrue([@"indexed change\n" writeToFile:[self.repositoryURL.path stringByAppendingPathComponent:@"changed.txt"]
+										atomically:NO
+										  encoding:NSUTF8StringEncoding
+											 error:&error],
+				  @"%@", error);
+	NSString *output = [PBTask outputForCommand:@"/usr/bin/git"
+									  arguments:@[ @"add", @"changed.txt" ]
+									inDirectory:self.repositoryURL.path
+										  error:&error];
+	XCTAssertNotNil(output, @"%@", error);
 	NSString *gitDirectoryPath = [watcher valueForKey:@"gitDir"];
 	NSArray<NSString *> *eventPaths = @[ gitDirectoryPath ];
 	FSEventStreamEventFlags eventFlags[] = {kFSEventStreamEventFlagRootChanged};
@@ -235,6 +267,7 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 									 NSUInteger eventType =
 										 [note.userInfo[kPBGitRepositoryEventTypeUserInfoKey] unsignedIntegerValue];
 									 NSArray<NSString *> *paths = note.userInfo[kPBGitRepositoryEventPathsUserInfoKey];
+									 XCTAssertNotEqual(eventType & PBGitRepositoryWatcherEventTypeIndex, (NSUInteger)0);
 									 XCTAssertNotEqual(eventType & PBGitRepositoryWatcherEventTypeGitDirectory, (NSUInteger)0);
 									 XCTAssertTrue([paths containsObject:gitDirectoryPath]);
 									 return YES;
@@ -246,6 +279,20 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 								   (__bridge void *)eventPaths,
 								   eventFlags,
 								   eventIds);
+
+	NSMutableArray<PBGitRepositoryWatcherEventPath *> *branchEvents = [NSMutableArray array];
+	for (NSString *path in @[
+			 gitDirectoryPath,
+			 [gitDirectoryPath stringByAppendingPathComponent:@"objects/pack"],
+			 [gitDirectoryPath stringByAppendingPathComponent:@"index"],
+			 [gitDirectoryPath stringByAppendingPathComponent:@"refs/heads/main"],
+		 ]) {
+		PBGitRepositoryWatcherEventPath *eventPath = [PBGitRepositoryWatcherEventPath new];
+		eventPath.path = path;
+		eventPath.flag = kFSEventStreamEventFlagNone;
+		[branchEvents addObject:eventPath];
+	}
+	[watcher handleGitDirEventCallback:branchEvents];
 
 	[self waitForExpectations:@[ notification ] timeout:2.0];
 }
