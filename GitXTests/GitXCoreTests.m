@@ -47,12 +47,12 @@
 - (NSString *)pathForHook:(NSString *)name;
 @end
 
-@interface GitXRepositoryWithoutConfiguration : PBGitRepository
+@interface PBRepositoryWithoutConfiguration : PBGitRepository
 @property (nonatomic) BOOL hidesGitRepository;
 @property (nullable, nonatomic, copy) NSURL *retainedGitURL;
 @end
 
-@implementation GitXRepositoryWithoutConfiguration
+@implementation PBRepositoryWithoutConfiguration
 
 - (GTRepository *)gtRepo
 {
@@ -82,20 +82,24 @@
 
 @property (nonatomic, copy, readonly) NSString *path;
 
-- (nullable instancetype)initWithError:(NSError **)error;
-- (nullable NSString *)git:(NSArray<NSString *> *)arguments error:(NSError **)error;
+- (nullable instancetype)initWithError:(NSError *_Nullable *_Nullable)error;
+- (nullable NSString *)git:(NSArray<NSString *> *)arguments error:(NSError *_Nullable *_Nullable)error;
 - (nullable NSString *)git:(NSArray<NSString *> *)arguments
 			   environment:(NSDictionary<NSString *, NSString *> *)environment
-					 error:(NSError **)error;
-- (BOOL)writeText:(NSString *)text toPath:(NSString *)relativePath error:(NSError **)error;
-- (BOOL)commitAllWithMessage:(NSString *)message error:(NSError **)error;
-- (BOOL)commitAllWithMessage:(NSString *)message date:(NSString *)date error:(NSError **)error;
+					 error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)writeText:(NSString *)text
+		   toPath:(NSString *)relativePath
+			error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)commitAllWithMessage:(NSString *)message error:(NSError *_Nullable *_Nullable)error;
+- (BOOL)commitAllWithMessage:(NSString *)message
+						date:(NSString *)date
+					   error:(NSError *_Nullable *_Nullable)error;
 
 @end
 
 @implementation GitXTestRepository
 
-- (nullable instancetype)initWithError:(NSError **)error
+- (nullable instancetype)initWithError:(NSError *_Nullable *_Nullable)error
 {
 	self = [super init];
 	if (!self) return nil;
@@ -117,14 +121,14 @@
 	[[NSFileManager defaultManager] removeItemAtPath:self.path error:nil];
 }
 
-- (nullable NSString *)git:(NSArray<NSString *> *)arguments error:(NSError **)error
+- (nullable NSString *)git:(NSArray<NSString *> *)arguments error:(NSError *_Nullable *_Nullable)error
 {
 	return [PBTask outputForCommand:PBGitBinary.path arguments:arguments inDirectory:self.path error:error];
 }
 
 - (nullable NSString *)git:(NSArray<NSString *> *)arguments
 			   environment:(NSDictionary<NSString *, NSString *> *)environment
-					 error:(NSError **)error
+					 error:(NSError *_Nullable *_Nullable)error
 {
 	PBTask *task = [PBTask taskWithLaunchPath:PBGitBinary.path arguments:arguments inDirectory:self.path];
 	task.additionalEnvironment = environment;
@@ -132,7 +136,9 @@
 	return task.standardOutputString;
 }
 
-- (BOOL)writeText:(NSString *)text toPath:(NSString *)relativePath error:(NSError **)error
+- (BOOL)writeText:(NSString *)text
+		   toPath:(NSString *)relativePath
+			error:(NSError *_Nullable *_Nullable)error
 {
 	NSString *absolutePath = [self.path stringByAppendingPathComponent:relativePath];
 	NSString *parent = absolutePath.stringByDeletingLastPathComponent;
@@ -141,14 +147,16 @@
 	return [text writeToFile:absolutePath atomically:YES encoding:NSUTF8StringEncoding error:error];
 }
 
-- (BOOL)commitAllWithMessage:(NSString *)message error:(NSError **)error
+- (BOOL)commitAllWithMessage:(NSString *)message error:(NSError *_Nullable *_Nullable)error
 {
 	return [self git:@[ @"add", @"--all" ] error:error] != nil &&
 		[self git:@[ @"commit", @"--quiet", @"-m", message ]
 			error:error] != nil;
 }
 
-- (BOOL)commitAllWithMessage:(NSString *)message date:(NSString *)date error:(NSError **)error
+- (BOOL)commitAllWithMessage:(NSString *)message
+						date:(NSString *)date
+					   error:(NSError *_Nullable *_Nullable)error
 {
 	NSDictionary<NSString *, NSString *> *environment = @{
 		@"GIT_AUTHOR_DATE" : date,
@@ -988,9 +996,9 @@
 	XCTAssertTrue([self.repository executeHook:@"pre-commit" error:&disabledHookError]);
 	XCTAssertNil(disabledHookError);
 
-	GitXRepositoryWithoutConfiguration *repositoryWithoutConfiguration =
-		[[GitXRepositoryWithoutConfiguration alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path]
-														  error:&error];
+	PBRepositoryWithoutConfiguration *repositoryWithoutConfiguration =
+		[[PBRepositoryWithoutConfiguration alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path]
+														error:&error];
 	XCTAssertNotNil(repositoryWithoutConfiguration, @"%@", error);
 	repositoryWithoutConfiguration.retainedGitURL = repositoryWithoutConfiguration.gitURL;
 	repositoryWithoutConfiguration.hidesGitRepository = YES;
@@ -1321,29 +1329,38 @@
 
 @interface GitXIndexIntegrationTests : GitXRepositoryTestCase
 
-- (NSString *)installHookNamed:(NSString *)name contents:(NSString *)contents error:(NSError **)error;
-- (PBChangedFile *)stageTrackedText:(NSString *)text error:(NSError **)error;
+- (NSString *)installHookNamed:(NSString *)name
+					  contents:(NSString *)contents
+						 error:(NSError *_Nullable *_Nullable)error;
+- (PBChangedFile *)stageTrackedText:(NSString *)text error:(NSError *_Nullable *_Nullable)error;
 
 @end
 
 
 @implementation GitXIndexIntegrationTests
 
-- (NSString *)installHookNamed:(NSString *)name contents:(NSString *)contents error:(NSError **)error
+- (NSString *)installHookNamed:(NSString *)name
+					  contents:(NSString *)contents
+						 error:(NSError *_Nullable *_Nullable)error
 {
 	NSString *relativePath = [@".git/hooks" stringByAppendingPathComponent:name];
-	XCTAssertTrue([self.fixture writeText:contents toPath:relativePath error:error], @"%@", *error);
+	XCTAssertTrue([self.fixture writeText:contents toPath:relativePath error:error],
+				  @"%@",
+				  error ? *error : nil);
 	NSString *path = [self.fixture.path stringByAppendingPathComponent:relativePath];
 	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755}
 												   ofItemAtPath:path
 														  error:error],
-				  @"%@", *error);
+				  @"%@",
+				  error ? *error : nil);
 	return path;
 }
 
-- (PBChangedFile *)stageTrackedText:(NSString *)text error:(NSError **)error
+- (PBChangedFile *)stageTrackedText:(NSString *)text error:(NSError *_Nullable *_Nullable)error
 {
-	XCTAssertTrue([self.fixture writeText:text toPath:@"tracked.txt" error:error], @"%@", *error);
+	XCTAssertTrue([self.fixture writeText:text toPath:@"tracked.txt" error:error],
+				  @"%@",
+				  error ? *error : nil);
 	[self refreshIndexAfterPerforming:^{
 		[self.repository.index refresh];
 	}];

@@ -860,6 +860,16 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(PBApplicationSettings.diffAlgorithm, .patience)
         XCTAssertEqual(PBApplicationSettings.diffContextLines, 7)
         XCTAssertEqual(PBApplicationSettings.diffFontSize, 15)
+        XCTAssertEqual(
+            controls(in: diff).compactMap { $0 as? NSTextField }
+                .first { $0.accessibilityIdentifier() == "DiffContextValue" }?.stringValue,
+            "7 lines"
+        )
+        XCTAssertEqual(
+            controls(in: diff).compactMap { $0 as? NSTextField }
+                .first { $0.accessibilityIdentifier() == "DiffFontSizeValue" }?.stringValue,
+            "15 pt"
+        )
     }
 
     func testTerminalLaunchArgumentsTokenizationAndCustomExecution() throws {
@@ -896,6 +906,14 @@ final class GitXSwiftFeatureTests: XCTestCase {
             ["--working-directory", "/tmp/repo"]
         )
         XCTAssertTrue(launcher.launchArguments(identifier: "unknown", directory: "/tmp/repo", command: "").isEmpty)
+        XCTAssertEqual(
+            launcher.customArguments(
+                template: "--cwd '{directory}' --command \"{command}\"",
+                directory: "/tmp/repository with spaces",
+                command: "git status --short"
+            ),
+            ["--cwd", "/tmp/repository with spaces", "--command", "git status --short"]
+        )
 
         PBApplicationSettings.terminalBundleIdentifier = "custom"
         PBApplicationSettings.terminalInitialCommand = "git status"
@@ -906,6 +924,23 @@ final class GitXSwiftFeatureTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         launcher.open(directory: directory, presenting: nil)
+
+        let parentWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 240),
+            styleMask: .titled,
+            backing: .buffered,
+            defer: false
+        )
+        launcher.completeApplicationLaunch(
+            error: NSError(
+                domain: "TerminalLauncherTests",
+                code: 42,
+                userInfo: [NSLocalizedDescriptionKey: "launch failed"]
+            ),
+            presenting: parentWindow
+        )
+        XCTAssertNotNil(parentWindow.attachedSheet)
+        dismissAttachedSheet(from: parentWindow)
     }
 
     func testRaycastManagedScriptsInstallUpdateAndRemove() throws {
@@ -930,9 +965,17 @@ final class GitXSwiftFeatureTests: XCTestCase {
 
         PBIntegrationManager.shared.installRaycastScripts(presenting: window)
         dismissAttachedSheet(from: window)
+        let modifiedScript = directory.appendingPathComponent("gitx-raycast-open-repository.sh")
+        try (String(contentsOf: modifiedScript, encoding: .utf8) + "\n# user customization\n")
+            .write(to: modifiedScript, atomically: true, encoding: .utf8)
+        let userScript = directory.appendingPathComponent("gitx-raycast-personal-command.sh")
+        try "#!/bin/zsh\necho personal\n".write(to: userScript, atomically: true, encoding: .utf8)
         PBIntegrationManager.shared.removeRaycastScripts(presenting: window)
         dismissAttachedSheet(from: window)
-        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
+        XCTAssertEqual(
+            try Set(FileManager.default.contentsOfDirectory(atPath: directory.path)),
+            Set(["gitx-raycast-open-repository.sh", "gitx-raycast-personal-command.sh"])
+        )
 
         PBApplicationSettings.raycastScriptsDirectory = ""
         PBIntegrationManager.shared.removeRaycastScripts(presenting: window)

@@ -1,5 +1,26 @@
 import XCTest
 
+// swift6-safety-justification: all mutable state is guarded by the private lock.
+private final class RepositoryIgnoreErrorCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var errors: [Error] = []
+
+    func record(_ error: Error) {
+        lock.lock()
+        errors.append(error)
+        lock.unlock()
+    }
+}
+
+// swift6-safety-justification: this box intentionally stress-tests the production object's synchronized access.
+private final class RepositorySettingsConcurrencyBox: @unchecked Sendable {
+    let settings: PBRepositoryUISettings
+
+    init(_ settings: PBRepositoryUISettings) {
+        self.settings = settings
+    }
+}
+
 @MainActor
 final class RepositoryServiceTests: XCTestCase {
     private final class CommandRunnerFake: NSObject, PBGitCommandRunning {
@@ -217,6 +238,21 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
         XCTAssertTrue(isDirectory.boolValue)
     }
 
+    func testIgnoreWriteReportsFileCoordinationCancellation() {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        coordinator.cancel()
+        let service = PBRepositoryIgnoreFileService(
+            fileURL: ignoreURL,
+            fileCoordinator: coordinator
+        )
+
+        XCTAssertThrowsError(try service.appendPaths(["ignored.txt"])) { error in
+            XCTAssertEqual((error as NSError).domain, NSCocoaErrorDomain)
+            XCTAssertEqual((error as NSError).code, CocoaError.Code.userCancelled.rawValue)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ignoreURL.path))
+    }
+
     func testAppendingUsesExactlyOneSeparatorAndPreservesExistingNewlines() throws {
         let cases = [
             ("existing", "existing\nnew"),
@@ -285,6 +321,59 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
             try Data(contentsOf: ignoreURL),
             Data("external\r\nreplacement\r\nsecond".utf8)
         )
+    }
+
+    func testConcurrentAppendsPreserveEveryPath() throws {
+        let ignoreURL = repositoryURL.appendingPathComponent(".gitignore")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ignoreURL.path))
+        let collector = RepositoryIgnoreErrorCollector()
+        let expected = Set((0 ..< 64).map { "concurrent-\($0)" })
+
+        DispatchQueue.concurrentPerform(iterations: expected.count) { index in
+            let service = PBRepositoryIgnoreFileService(fileURL: ignoreURL)
+            do {
+                try service.appendPaths(["concurrent-\(index)"])
+            } catch {
+                collector.record(error)
+            }
+        }
+
+        XCTAssertTrue(collector.errors.isEmpty, "\(collector.errors)")
+        let lines = try String(contentsOf: ignoreURL, encoding: .utf8)
+            .components(separatedBy: .newlines)
+            .filter { !$0.isEmpty }
+        XCTAssertEqual(lines.count, expected.count)
+        XCTAssertEqual(Set(lines), expected)
+    }
+
+    func testConcurrentRepositorySettingsUpdatesPreserveIndependentFields() {
+        let defaultsKey = "PBRepositoryUISettings"
+        let defaults = UserDefaults.standard
+        let originalSettings = defaults.object(forKey: defaultsKey)
+        defer {
+            if let originalSettings {
+                defaults.set(originalSettings, forKey: defaultsKey)
+            } else {
+                defaults.removeObject(forKey: defaultsKey)
+            }
+        }
+
+        let settings = PBRepositoryUISettings(repository: repository)
+        settings.pushAfterCommit = false
+        settings.hideContainedBranches = false
+        let settingsBox = RepositorySettingsConcurrencyBox(settings)
+
+        DispatchQueue.concurrentPerform(iterations: 200) { iteration in
+            if iteration.isMultiple(of: 2) {
+                settingsBox.settings.pushAfterCommit = true
+            } else {
+                settingsBox.settings.hideContainedBranches = true
+            }
+        }
+
+        let reloaded = PBRepositoryUISettings(repository: repository)
+        XCTAssertTrue(reloaded.pushAfterCommit)
+        XCTAssertTrue(reloaded.hideContainedBranches)
     }
 
     func testAtomicWriteFailurePreservesExistingIgnoreContents() throws {

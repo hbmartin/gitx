@@ -57,11 +57,15 @@ final nonisolated class RepositoryUISettings: NSObject {
     }
 
     private func value(for key: String) -> Any? {
+        objc_sync_enter(preferences)
+        defer { objc_sync_exit(preferences) }
         let all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         return (all[repositoryKey] as? [String: Any])?[key]
     }
 
     private func setValue(_ value: Any, for key: String) {
+        objc_sync_enter(preferences)
+        defer { objc_sync_exit(preferences) }
         var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         var repository = all[repositoryKey] as? [String: Any] ?? [:]
         repository[key] = value
@@ -153,10 +157,10 @@ final nonisolated class RepositorySettingsStore: NSObject {
                 return String(short[short.index(after: slash)...])
             }
         }
-        if repository.ref(forName: "main") != nil {
+        if repository.ref(forName: "refs/heads/main") != nil {
             return "main"
         }
-        if repository.ref(forName: "master") != nil {
+        if repository.ref(forName: "refs/heads/master") != nil {
             return "master"
         }
         return repository.headRef()?.ref()?.shortName() ?? "main"

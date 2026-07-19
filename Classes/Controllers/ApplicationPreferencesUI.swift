@@ -171,12 +171,14 @@ private final class SettingsPaneView: NSView {
 
     @objc func contextChanged(_ sender: NSStepper) {
         ApplicationSettings.diffContextLines = sender.integerValue
-        (sender.nextKeyView as? NSTextField)?.integerValue = ApplicationSettings.diffContextLines
+        (sender.nextKeyView as? NSTextField)?.stringValue =
+            "\(ApplicationSettings.diffContextLines) lines"
     }
 
     @objc func fontSizeChanged(_ sender: NSStepper) {
         ApplicationSettings.diffFontSize = sender.doubleValue
-        (sender.nextKeyView as? NSTextField)?.doubleValue = ApplicationSettings.diffFontSize
+        (sender.nextKeyView as? NSTextField)?.stringValue =
+            "\(Int(ApplicationSettings.diffFontSize)) pt"
     }
 
     @objc func fontChanged(_ sender: NSPopUpButton) {
@@ -334,6 +336,7 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         context.target = view
         context.action = #selector(SettingsPaneView.contextChanged(_:))
         let contextField = NSTextField(labelWithString: "\(ApplicationSettings.diffContextLines) lines")
+        contextField.setAccessibilityIdentifier("DiffContextValue")
         context.nextKeyView = contextField
         view.addRow("Context:", control: NSStackView(views: [context, contextField]))
 

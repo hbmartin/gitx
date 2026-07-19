@@ -29,12 +29,12 @@ final class HistorySearchPolicyTests: XCTestCase {
         }
     }
 
-    func testHistorySearchPreservesWhitespaceComponentBehavior() {
+    func testHistorySearchNormalizesRepeatedWhitespaceComponents() {
         XCTAssertEqual(
             HistorySearchPolicy.execution(query: "one  two", mode: .path),
             .background(
                 query: "one  two",
-                arguments: ["log", "--pretty=format:%H", "--no-textconv", "--", "one", "", "two"]
+                arguments: ["log", "--pretty=format:%H", "--no-textconv", "--", "one", "two"]
             )
         )
     }

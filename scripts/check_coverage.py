@@ -139,12 +139,17 @@ def ratchet_policy(
     file_coverage: dict[str, float],
     file_line_counts: dict[str, tuple[int, int]] | None = None,
 ) -> CoveragePolicy:
+    grouped_files = {
+        path
+        for group in policy.groups.values()
+        for path in group.files
+    }
     files = {
         path: max(minimum, coverage_floor(file_coverage.get(path, minimum)))
         for path, minimum in policy.files.items()
     }
     for path, actual in file_coverage.items():
-        if path not in files and is_first_party_source(path):
+        if path not in files and path not in grouped_files and is_first_party_source(path):
             files[path] = coverage_floor(actual)
     counts = file_line_counts or {}
     groups = {

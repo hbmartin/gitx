@@ -313,7 +313,6 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
             arguments.append("--gpg-sign")
         }
 
-        sink.send(IndexCommitPhaseEvent(phase: .creatingCommit))
         if request.verify {
             sink.send(IndexCommitPhaseEvent(phase: .runningPreCommitHook))
             if let hookFailure = runVerificationHook(
@@ -335,6 +334,7 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
             }
         }
 
+        sink.send(IndexCommitPhaseEvent(phase: .creatingCommit))
         let editedMessage = (try? String(contentsOf: editMessageURL, encoding: .utf8)) ?? request.message
         let commit: String
         do {

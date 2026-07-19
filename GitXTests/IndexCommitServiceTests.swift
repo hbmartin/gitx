@@ -171,7 +171,7 @@ final class IndexCommitServiceTests: XCTestCase {
         XCTAssertEqual(result.message, "Successfully created commit \(commit)")
         XCTAssertEqual(
             progress,
-            ["Creating tree", "Creating commit", "Running hooks", "Updating HEAD", "Running post-commit hook"]
+            ["Creating tree", "Running hooks", "Creating commit", "Updating HEAD", "Running post-commit hook"]
         )
         XCTAssertEqual(runner.calls[1].arguments, ["commit-tree", tree, "-p", "HEAD"])
         XCTAssertEqual(runner.calls[1].input, "edited by hook")
@@ -346,12 +346,12 @@ final class IndexCommitServiceTests: XCTestCase {
             eventDescriptions(recorder.events),
             [
                 "phase:\(PBIndexCommitPhase.creatingTree.rawValue)",
-                "phase:\(PBIndexCommitPhase.creatingCommit.rawValue)",
                 "phase:\(PBIndexCommitPhase.runningPreCommitHook.rawValue)",
                 "output:pre ",
                 "output:€\n",
                 "phase:\(PBIndexCommitPhase.runningCommitMessageHook.rawValue)",
                 "output:message\n",
+                "phase:\(PBIndexCommitPhase.creatingCommit.rawValue)",
                 "phase:\(PBIndexCommitPhase.updatingHead.rawValue)",
                 "phase:\(PBIndexCommitPhase.runningPostCommitHook.rawValue)",
                 "output:post\n",

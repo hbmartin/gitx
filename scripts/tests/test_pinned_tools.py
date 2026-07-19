@@ -49,6 +49,26 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertEqual(build_workflow.count("xcode: 26.2"), 2)
         self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 6)
 
+    def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        pinned_actions = {
+            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 6,
+            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 6,
+            "actions/cache@caa296126883cff596d87d8935842f9db880ef25": 2,
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 5,
+        }
+
+        for action, expected_count in pinned_actions.items():
+            self.assertEqual(verify_workflow.count(action), expected_count)
+        self.assertEqual(verify_workflow.count("persist-credentials: false"), 6)
+        for mutable_tag in [
+            "actions/checkout@v7",
+            "maxim-lobanov/setup-xcode@v1",
+            "actions/cache@v5",
+            "actions/upload-artifact@v7",
+        ]:
+            self.assertNotIn(mutable_tag, verify_workflow)
+
     def test_performance_suite_keeps_trusted_scheduled_and_manual_execution(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         performance_job = verify_workflow.split("\n  performance:\n", maxsplit=1)[1]

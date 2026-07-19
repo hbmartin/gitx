@@ -17,6 +17,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         private(set) var shownErrors: [NSError] = []
         private(set) var confirmationCount = 0
         var automaticallyConfirms = true
+        private var pendingConfirmation: (() -> Void)?
 
         init(repository: PBGitRepository) {
             fixedRepository = repository
@@ -54,8 +55,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             confirmationCount += 1
             if automaticallyConfirms {
                 actionBlock()
+            } else {
+                pendingConfirmation = actionBlock
             }
             return true
+        }
+
+        func confirmPendingAction() {
+            let action = pendingConfirmation
+            pendingConfirmation = nil
+            action?()
         }
     }
 
@@ -604,6 +613,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testReferenceCommitStashAndPathMenuMatrices() throws {
+        let pasteboard = NSPasteboard.general
+        let originalItems: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        } ?? []
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(originalItems.map { $0 as NSPasteboardWriting })
+        }
         repository.reloadRefs()
         let head = try XCTUnwrap(repository.headRef()?.ref())
         let feature = try XCTUnwrap(repository.ref(forName: "feature"))
@@ -1441,6 +1464,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 .contains { $0.ref == "refs/heads/feature" }
         )
         XCTAssertEqual(repository.ref(forName: "feature")?.ref, "refs/heads/feature")
+    }
+
+    func testBranchMoveRejectsReferenceChangedWhileConfirmationIsOpen() throws {
+        let drag = try branchDragFixture()
+        let historyWindowController = try XCTUnwrap(windowController as? HistoryWindowController)
+        historyWindowController.automaticallyConfirms = false
+
+        XCTAssertTrue(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+        let interveningSHA = try fixture.git(["rev-parse", "main"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        try fixture.git(["update-ref", "refs/heads/feature", interveningSHA])
+
+        historyWindowController.confirmPendingAction()
+
+        XCTAssertEqual(
+            try fixture.git(["rev-parse", "refs/heads/feature"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            interveningSHA
+        )
+        XCTAssertEqual(historyWindowController.shownErrors.count, 1)
     }
 
     private func loadedCommits() -> [PBGitCommit] {

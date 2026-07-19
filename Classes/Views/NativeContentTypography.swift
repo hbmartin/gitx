@@ -168,13 +168,7 @@ final nonisolated class NativeContentTypography: NSObject {
         preservingTraitsOf existingFont: NSFont? = nil
     ) -> NSFont {
         let pointSize = baseSize + role.sizeOffset
-        var font = NSFont(
-            name: baseFont.fontName,
-            size: pointSize
-        ) ?? NSFont.monospacedSystemFont(
-            ofSize: pointSize,
-            weight: .regular
-        )
+        var font = baseFont.withSize(pointSize)
         if let weight = role.weight {
             let descriptor = font.fontDescriptor.addingAttributes([
                 .traits: [NSFontDescriptor.TraitKey.weight: weight],
@@ -182,13 +176,16 @@ final nonisolated class NativeContentTypography: NSObject {
             font = NSFont(descriptor: descriptor, size: pointSize) ?? font
         }
         guard let existingFont else { return font }
-        let traits = NSFontManager.shared.traits(of: existingFont)
-        if traits.contains(.boldFontMask) {
-            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        let existingTraits = existingFont.fontDescriptor.symbolicTraits
+        var targetTraits = font.fontDescriptor.symbolicTraits
+        if existingTraits.contains(.bold) {
+            targetTraits.insert(.bold)
         }
-        if traits.contains(.italicFontMask) {
-            font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+        if existingTraits.contains(.italic) {
+            targetTraits.insert(.italic)
         }
+        let descriptor = font.fontDescriptor.withSymbolicTraits(targetTraits)
+        font = NSFont(descriptor: descriptor, size: pointSize) ?? font
         return font
     }
 }

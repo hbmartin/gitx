@@ -10,6 +10,12 @@ import sys
 
 
 ALLOWED_IMPORTS = {"Foundation"}
+IMPORT_DECLARATION = re.compile(
+    r"^\s*(?:(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?|"
+    r"public|package|internal|fileprivate|private)\s+)*"
+    r"import\s+([A-Za-z_][A-Za-z0-9_]*)",
+    re.MULTILINE,
+)
 FORBIDDEN_PATTERNS = {
     "application framework": re.compile(r"^\s*import\s+(AppKit|Cocoa|WebKit)\b", re.MULTILINE),
     "application target": re.compile(r"^\s*import\s+GitX\b", re.MULTILINE),
@@ -21,7 +27,7 @@ FORBIDDEN_PATTERNS = {
 
 
 def imported_modules(source: str) -> set[str]:
-    return set(re.findall(r"^\s*import\s+([A-Za-z_][A-Za-z0-9_]*)", source, re.MULTILINE))
+    return set(IMPORT_DECLARATION.findall(source))
 
 
 def boundary_failures(source_root: pathlib.Path) -> list[str]:

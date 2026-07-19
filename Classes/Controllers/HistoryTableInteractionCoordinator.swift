@@ -147,7 +147,11 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         windowController.confirmDialog(alert, suppressionIdentifier: kDialogAcceptDroppedRef) { [weak windowController] in
             guard let windowController else { return }
             do {
-                try windowController.repository.updateReference(ref, toPointAt: dropCommit)
+                try RepositoryMutationService(repository: windowController.repository).updateReference(
+                    ref,
+                    toPointAt: dropCommit,
+                    expectedOldOID: oldCommit.sha
+                )
                 dropCommit.addRef(ref)
                 oldCommit.removeRef(ref)
                 self.logger.debug("History branch move completed")
