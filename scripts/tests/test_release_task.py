@@ -49,6 +49,16 @@ class ReleaseTaskTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(f"Unknown argument: {arch}", result.stderr)
 
+    def test_release_check_validates_export_options(self) -> None:
+        result = subprocess.run(
+            [self.task, "--check"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertIn("Export options plist passed validation", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
