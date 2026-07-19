@@ -32,6 +32,9 @@ final class ApplicationCompositionTests: XCTestCase {
         PBGitDefaults.setBranchFilter(3)
         XCTAssertEqual(defaults.integer(forKey: "PBBranchFilter"), 3)
 
+        PBGitDefaults.setRecentCloneDestination("/tmp/injected-clone")
+        XCTAssertEqual(PBGitDefaults.recentCloneDestination(), "/tmp/injected-clone")
+
         defaults.set(2, forKey: "PBHistorySearchMode")
         XCTAssertEqual(PBGitDefaults.historySearchMode(), 2)
     }
