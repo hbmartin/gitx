@@ -72,8 +72,8 @@
 
 	if (error.localizedRecoverySuggestion) {
 		NSString *message = NSLocalizedString(@"Maybe you could try the following:", @"PBGitXMessageSheet - localized recovery suggestion header");
-		[message stringByAppendingString:@"\n"];
-		[message stringByAppendingString:error.localizedRecoverySuggestion];
+		message = [message stringByAppendingString:@"\n"];
+		message = [message stringByAppendingString:error.localizedRecoverySuggestion];
 		[messageParts addObject:message];
 	}
 

@@ -57,9 +57,19 @@
 	return nil;
 }
 
+// Wraps a string in single quotes for safe shell interpolation. Single-quoting is fully literal, so it
+// neutralizes command substitution ($(...)/backticks), variable expansion, and every other metacharacter —
+// unlike double quotes, which still evaluate $(...) and backticks. A repository whose path contains e.g.
+// "$(...)" must not be able to execute arbitrary commands when opened in Terminal/iTerm.
++ (NSString *)shellQuote:(NSString *)string
+{
+	NSString *escaped = [string stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"];
+	return [NSString stringWithFormat:@"'%@'", escaped];
+}
+
 - (BOOL)runTerminalCommand:(NSString *)command inDirectory:(NSURL *)directory
 {
-	NSString *fullCommand = [NSString stringWithFormat:@"cd \"%@\"; clear; echo '# Opened by GitX'; %@", directory.path, command];
+	NSString *fullCommand = [NSString stringWithFormat:@"cd %@; clear; echo '# Opened by GitX'; %@", [PBTerminalUtil shellQuote:directory.path], command];
 
 	TerminalApplication *term = [SBApplication applicationWithBundleIdentifier:@"com.apple.Terminal"];
 	if (!term)
@@ -77,7 +87,7 @@
 
 - (BOOL)runiTerm2Command:(NSString *)command inDirectory:(NSURL *)directory
 {
-	NSString *fullCommand = [NSString stringWithFormat:@"cd \"%@\"; clear; echo '# Opened by GitX'; %@", directory.path, command];
+	NSString *fullCommand = [NSString stringWithFormat:@"cd %@; clear; echo '# Opened by GitX'; %@", [PBTerminalUtil shellQuote:directory.path], command];
 
 	iTerm2Application *term = [SBApplication applicationWithBundleIdentifier:@"com.googlecode.iterm2"];
 	if (!term)

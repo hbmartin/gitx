@@ -312,6 +312,10 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 	NS_SWIFT_NAME(nextRow(fromRow:rowCount:movingDown:));
 @end
 
+@interface PBTerminalUtil : NSObject
++ (NSString *)shellQuote:(NSString *)string;
+@end
+
 @interface PBRewindOverlayView : NSView
 - (instancetype)initWithFrame:(NSRect)frameRect;
 @end
