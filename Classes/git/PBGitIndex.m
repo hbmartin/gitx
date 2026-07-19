@@ -117,10 +117,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			NSInteger offset = [timeZone secondsFromGMTForDate:author.time];
 			NSInteger absOffset = labs(offset);
 			environment[@"GIT_AUTHOR_DATE"] = [NSString stringWithFormat:@"@%lld %c%02ld%02ld",
-														(long long)llround(author.time.timeIntervalSince1970),
-														offset < 0 ? '-' : '+',
-														(long)(absOffset / 3600),
-														(long)((absOffset % 3600) / 60)];
+																		 (long long)llround(author.time.timeIntervalSince1970),
+																		 offset < 0 ? '-' : '+',
+																		 (long)(absOffset / 3600),
+																		 (long)((absOffset % 3600) / 60)];
 		}
 		self.amendEnvironment = environment;
 	}

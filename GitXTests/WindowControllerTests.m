@@ -34,6 +34,7 @@
 #import "GLFileView.h"
 #import "PBNativeContentView.h"
 #import "PBRemoteProgressSheet.h"
+#import "PBSourceViewBadge.h"
 #import "PBSourceViewItem.h"
 #import "PBSourceViewItems.h"
 #import "PBTask.h"
@@ -156,6 +157,52 @@
 @property (nonatomic) BOOL pushAfterCommit;
 @end
 
+@interface PBSourceViewBadge (WindowControllerTests)
++ (NSColor *)badgeHighlightColor;
++ (NSColor *)badgeBackgroundColor;
++ (NSColor *)badgeColorForCell:(NSTableCellView *)cell;
++ (NSColor *)badgeTextColorForCell:(NSTableCellView *)cell;
++ (NSImage *)badge:(NSString *)badge forCell:(NSTableCellView *)cell;
+@end
+
+@interface PBSourceViewBadgeTestWindow : NSWindow
+@property (nonatomic) BOOL testMainWindow;
+@property (nonatomic) BOOL testKeyWindow;
+@end
+
+@interface PBSourceViewBadgeTestCell : NSTableCellView
+@property (nonatomic) NSBackgroundStyle testBackgroundStyle;
+@property (nonatomic) NSWindow *testWindow;
+@end
+
+@implementation PBSourceViewBadgeTestWindow
+
+- (BOOL)isMainWindow
+{
+	return self.testMainWindow;
+}
+
+- (BOOL)isKeyWindow
+{
+	return self.testKeyWindow;
+}
+
+@end
+
+@implementation PBSourceViewBadgeTestCell
+
+- (NSBackgroundStyle)backgroundStyle
+{
+	return self.testBackgroundStyle;
+}
+
+- (NSWindow *)window
+{
+	return self.testWindow;
+}
+
+@end
+
 @implementation PBWindowHistoryTreeLogStub
 
 - (NSString *)log:(NSString *)format
@@ -203,6 +250,9 @@
 - (nullable NSArray<NSURL *> *)selectedURLsFromSender:(id)sender;
 - (nullable id<PBGitRefish>)refishForSender:(id)sender refishTypes:(nullable NSArray<NSString *> *)types;
 - (nullable PBGitRef *)selectedRef;
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem
+			 remoteTitle:(NSString *)remoteTitle
+			  plainTitle:(NSString *)plainTitle;
 - (IBAction)toolbarFetch:(id)sender;
 - (IBAction)toolbarPull:(id)sender;
 - (IBAction)toolbarPush:(id)sender;
@@ -1425,6 +1475,13 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSMenuItem *fetch = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Fetch", nil) action:@selector(fetchRemote:) keyEquivalent:@""];
 	XCTAssertTrue([self.controller validateMenuItem:fetch]);
 	XCTAssertTrue([fetch.title containsString:@"origin"]);
+	PBGitRef *untrackedBranch = [PBGitRef refFromString:@"refs/heads/untracked"];
+	outline.testItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:untrackedBranch]];
+	NSMenuItem *plainFetch = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+	self.repository.trackingRef = nil;
+	XCTAssertFalse([self.controller validateMenuItem:plainFetch remoteTitle:@"Fetch “%@”" plainTitle:@"Fetch"]);
+	XCTAssertEqualObjects(plainFetch.title, @"Fetch");
+	self.repository.trackingRef = self.remoteBranchRef;
 
 	PBSourceViewItem *remoteItem = [PBSourceViewItem itemWithTitle:@"origin"];
 	remoteItem.revSpecifier = [[PBGitRevSpecifier alloc] initWithRef:self.remoteBranchRef];
@@ -2454,6 +2511,46 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 		else
 			[defaults removeObjectForKey:defaultsKey];
 	}
+}
+
+- (void)testSourceViewBadgeColorsAndRenderingAcrossWindowStates
+{
+	PBSourceViewBadgeTestWindow *window = [[PBSourceViewBadgeTestWindow alloc]
+		initWithContentRect:NSZeroRect
+				  styleMask:NSWindowStyleMaskBorderless
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	PBSourceViewBadgeTestCell *cell = [PBSourceViewBadgeTestCell new];
+	cell.testWindow = window;
+
+	cell.testBackgroundStyle = NSBackgroundStyleEmphasized;
+	window.testKeyWindow = YES;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], NSColor.whiteColor);
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell],
+						  [PBSourceViewBadge badgeBackgroundColor]);
+
+	window.testKeyWindow = NO;
+	window.testMainWindow = YES;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell],
+						  [PBSourceViewBadge badgeHighlightColor]);
+	window.testMainWindow = NO;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell],
+						  [PBSourceViewBadge badgeBackgroundColor]);
+
+	cell.testBackgroundStyle = NSBackgroundStyleNormal;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell],
+						  [PBSourceViewBadge badgeBackgroundColor]);
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], NSColor.whiteColor);
+	window.testMainWindow = YES;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell],
+						  [PBSourceViewBadge badgeHighlightColor]);
+
+	NSImage *checkedBadge = [PBSourceViewBadge checkedOutBadgeForCell:cell];
+	NSImage *numericBadge = [PBSourceViewBadge numericBadge:123456 forCell:cell];
+	NSImage *directBadge = [PBSourceViewBadge badge:@"7" forCell:cell];
+	XCTAssertGreaterThan(checkedBadge.size.width, (CGFloat)0);
+	XCTAssertGreaterThan(numericBadge.size.width, checkedBadge.size.width);
+	XCTAssertGreaterThan(directBadge.size.height, (CGFloat)0);
 }
 
 - (void)testRepositorySettingsStoreReadsAndWritesLocalValues

@@ -5,6 +5,9 @@
 //  Converted from PBFileChangesTableView.m.
 //
 
+// Objective-C nib, controller, and test references are not visible to SwiftLint's analyzer.
+// swiftlint:disable unused_declaration
+
 @objc(PBFileChangesTableView)
 final class PBFileChangesTableView: NSTableView {
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -57,3 +60,5 @@ private enum FileContextSelectionPolicy {
         current.contains(clickedRow) ? current : IndexSet(integer: clickedRow)
     }
 }
+
+// swiftlint:enable unused_declaration

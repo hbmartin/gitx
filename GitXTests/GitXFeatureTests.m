@@ -19,6 +19,7 @@
 #import "PBTask.h"
 #import "PBWebController.h"
 #import "NSAppearance+PBDarkMode.h"
+#import "ApplicationController.h"
 #import "PBSourceViewBadge.h"
 
 @interface PBSourceViewBadge (GitXFeatureTests)
@@ -64,6 +65,11 @@
 	return self.testWindow;
 }
 
+@end
+
+@interface ApplicationController (GitXFeatureTests)
+- (NSArray *)feedParametersForUpdater:(nullable id)updater sendingSystemProfile:(BOOL)sendingSystemProfile;
+- (void)applicationDidBecomeActive:(nullable NSNotification *)notification;
 @end
 
 @interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
@@ -308,6 +314,16 @@
 	if (range.location == NSNotFound) return nil;
 	if (index) *index = range.location;
 	return [view.textView.textStorage attribute:NSLinkAttributeName atIndex:range.location effectiveRange:nil];
+}
+
+- (void)testApplicationDelegateCompatibilitySurface
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	XCTAssertTrue([controller isKindOfClass:ApplicationController.class]);
+	XCTAssertEqual([controller feedParametersForUpdater:nil sendingSystemProfile:NO].count, (NSUInteger)0);
+	XCTAssertGreaterThan([controller feedParametersForUpdater:nil sendingSystemProfile:YES].count, (NSUInteger)0);
+	(void)[controller applicationShouldOpenUntitledFile:NSApp];
+	[controller applicationDidBecomeActive:nil];
 }
 
 - (void)testAutoFetchDefaultsClampInterval
