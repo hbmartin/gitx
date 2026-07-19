@@ -1,0 +1,3 @@
+# Authorize Milestone 3 GitHub writes from Milestone 1
+
+GitX's GitHub App and accepted Credentials will carry the complete permission envelope needed through Milestone 3 from the first authenticated release, including Contents and Pull Requests write access and reserved Issues write access even though Issue UI remains read-only. This rejects progressive permission elevation in favor of one predictable full-capability account contract and future Issue expansion; selected-repository installation access, one Credential per Forge Account, explicit mutation confirmation, and Keychain storage limit the broader authorization.
