@@ -59,3 +59,49 @@ _Avoid_: Repository preferences, repository settings
 **Repository View State**:
 Per-user presentation state remembered separately for each repository.
 _Avoid_: Repository configuration, repository preferences
+
+## Forge Integration
+
+**Forge**:
+A hosted collaboration service endpoint identified by its scheme and host, such as `https://github.com`.
+_Avoid_: Provider, vendor
+
+**Forge Kind**:
+The family of link and API semantics implemented by a Forge, such as GitHub, GitLab, or Bitbucket.
+_Avoid_: Forge, host
+
+**Forge Repository**:
+A repository hosted by a Forge and identified within that Forge by its owner and name.
+_Avoid_: Local repository, Git remote
+
+**Forge Account**:
+A user identity authenticated with one Forge. A Forge Account has one current Credential.
+_Avoid_: Git account, credential
+
+**Credential**:
+The single current authorization for a Forge Account, sourced from a GitHub App, GitHub CLI, or personal access token.
+_Avoid_: Account, identity
+
+**Forge Repository Binding**:
+The per-user association among a local repository's Git remote, its Forge Repository, and the preferred Forge Account.
+_Avoid_: Remote, account mapping
+
+**Primary Forge Repository**:
+The stable Forge Repository whose repository-level Pull Requests, Issues, checks, and reviews GitX presents for a local repository.
+_Avoid_: Current remote, tracking remote
+
+**Pull Request**:
+A proposed integration of changes from a head branch into a base branch on a Forge.
+_Avoid_: Change request, merge request
+
+**Forge Overlay**:
+Cached Forge state presented alongside local Git state without replacing or blocking it.
+_Avoid_: Git state, remote tracking data
+
+**Check Rollup**:
+The normalized Forge result for all known checks associated with one commit or Pull Request: Succeeded, Failed, Running, Attention Required, or Neutral.
+_Avoid_: Build status, CI status
+
+**Review Rollup**:
+The aggregate Forge review decision for a Pull Request: Approved, Changes Requested, Review Required, or No Decision. Personal review attention is a separate state.
+_Avoid_: Review status, my review
