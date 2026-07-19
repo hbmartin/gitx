@@ -376,6 +376,40 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
         XCTAssertTrue(reloaded.hideContainedBranches)
     }
 
+    func testConcurrentRepositorySettingsInstancesPreserveIndependentFields() {
+        let defaultsKey = "PBRepositoryUISettings"
+        let defaults = UserDefaults.standard
+        let originalSettings = defaults.object(forKey: defaultsKey)
+        defer {
+            if let originalSettings {
+                defaults.set(originalSettings, forKey: defaultsKey)
+            } else {
+                defaults.removeObject(forKey: defaultsKey)
+            }
+        }
+
+        let pushSettings = RepositorySettingsConcurrencyBox(
+            PBRepositoryUISettings(repository: repository)
+        )
+        let branchSettings = RepositorySettingsConcurrencyBox(
+            PBRepositoryUISettings(repository: repository)
+        )
+        pushSettings.settings.pushAfterCommit = false
+        branchSettings.settings.hideContainedBranches = false
+
+        DispatchQueue.concurrentPerform(iterations: 200) { iteration in
+            if iteration.isMultiple(of: 2) {
+                pushSettings.settings.pushAfterCommit = true
+            } else {
+                branchSettings.settings.hideContainedBranches = true
+            }
+        }
+
+        let reloaded = PBRepositoryUISettings(repository: repository)
+        XCTAssertTrue(reloaded.pushAfterCommit)
+        XCTAssertTrue(reloaded.hideContainedBranches)
+    }
+
     func testAtomicWriteFailurePreservesExistingIgnoreContents() throws {
         let original = Data("existing\n".utf8)
         try original.write(to: ignoreURL, options: .atomic)
