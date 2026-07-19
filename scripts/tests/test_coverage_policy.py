@@ -201,7 +201,11 @@ class CoveragePolicyTests(unittest.TestCase):
         policy = self.module.CoveragePolicy(
             target="GitX.app",
             minimum_line_coverage=0.5,
-            files={"Classes/Tracked.swift": 0.75},
+            files={
+                "Classes/Tracked.swift": 0.75,
+                "Classes/A.swift": 0.75,
+                "Classes/B.swift": 0.75,
+            },
             groups={
                 "Split surface": self.module.CoverageGroup(
                     minimum_line_coverage=0.75,
