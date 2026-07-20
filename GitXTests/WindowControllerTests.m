@@ -2707,6 +2707,39 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	}
 }
 
+- (void)testRepositoryDocumentNamesDetachedRepository
+{
+	NSString *name = [NSString stringWithFormat:@"GitXDetachedNaming-%@", NSUUID.UUID.UUIDString];
+	NSURL *detachedURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name] isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:detachedURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	@try {
+		[self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] directory:detachedURL];
+		[self git:@[ @"config", @"user.name", @"GitX Tests" ] directory:detachedURL];
+		[self git:@[ @"config", @"user.email", @"gitx-tests@example.invalid" ] directory:detachedURL];
+		[@"initial\n" writeToURL:[detachedURL URLByAppendingPathComponent:@"tracked.txt"]
+					  atomically:YES
+						encoding:NSUTF8StringEncoding
+						   error:NULL];
+		[self git:@[ @"add", @"--all" ] directory:detachedURL];
+		[self git:@[ @"commit", @"--quiet", @"-m", @"initial" ] directory:detachedURL];
+		[self git:@[ @"checkout", @"--detach", @"--quiet", @"HEAD" ] directory:detachedURL];
+
+		NSError *error = nil;
+		PBGitRepositoryDocument *document = [[PBGitRepositoryDocument alloc] initWithContentsOfURL:detachedURL
+																							ofType:PBGitRepositoryDocumentType
+																							 error:&error];
+		XCTAssertNotNil(document, @"%@", error);
+		XCTAssertTrue(document.repository.gtRepo.isHEADDetached);
+		XCTAssertTrue([document.displayName containsString:@"detached HEAD"]);
+		[document close];
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:detachedURL error:NULL];
+	}
+}
+
 - (void)testRepositoryDeallocatesAfterIndexServicesCreated
 {
 	// Regression: PBIndexMutationService retained its repository strongly, forming the cycle

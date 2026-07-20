@@ -140,11 +140,6 @@ final class TerminalLauncher: NSObject {
         launchArgumentPolicy.arguments(identifier: identifier, directory: directory, command: command)
     }
 
-    @objc(commandArguments:)
-    func commandArguments(_ command: String) -> [String] {
-        launchArgumentPolicy.executableArguments(command)
-    }
-
     private func launchCustom(directory: URL) throws {
         let executable = ApplicationSettings.customTerminalExecutable
         guard executable.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: executable) else {
