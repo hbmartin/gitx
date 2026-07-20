@@ -10,6 +10,16 @@ final class CommitPolicyTests: XCTestCase {
             previousSelection: "Origin",
             isBranch: true
         ))
+        XCTAssertTrue(CommitRemotePresentationPolicy.shouldResolveTrackingRemote(
+            remoteNames: names,
+            previousSelection: "missing",
+            isBranch: true
+        ))
+        XCTAssertTrue(CommitRemotePresentationPolicy.shouldResolveTrackingRemote(
+            remoteNames: names,
+            previousSelection: nil,
+            isBranch: true
+        ))
         XCTAssertEqual(
             CommitRemotePresentationPolicy.presentation(
                 remoteNames: names,
@@ -39,6 +49,35 @@ final class CommitPolicyTests: XCTestCase {
         )
     }
 
+    func testRemotePresentationPreservesSelectionAndFallsBackToFirstRemote() {
+        XCTAssertEqual(
+            CommitRemotePresentationPolicy.presentation(
+                remoteNames: ["backup", "upstream"],
+                previousSelection: "upstream",
+                trackingRemoteName: "backup",
+                isBranch: true
+            ),
+            CommitRemotePresentation(
+                remoteNames: ["backup", "upstream"],
+                selectedRemoteName: "upstream",
+                canPush: true
+            )
+        )
+        XCTAssertEqual(
+            CommitRemotePresentationPolicy.presentation(
+                remoteNames: ["backup", "upstream"],
+                previousSelection: nil,
+                trackingRemoteName: "missing",
+                isBranch: true
+            ),
+            CommitRemotePresentation(
+                remoteNames: ["backup", "upstream"],
+                selectedRemoteName: "backup",
+                canPush: true
+            )
+        )
+    }
+
     func testSubmissionPolicyPreservesValidationAndPushBoundaries() {
         XCTAssertEqual(plan(merge: true, staged: 0, messageLength: 0).disposition, .mergeInProgress)
         XCTAssertEqual(plan(staged: 0, messageLength: 0).disposition, .noStagedChanges)
@@ -61,6 +100,12 @@ final class CommitPolicyTests: XCTestCase {
             pushRequested: true,
             isBranch: true,
             remote: ""
+        ).shouldArmPendingPush)
+        XCTAssertFalse(plan(
+            pushEnabled: true,
+            pushRequested: true,
+            isBranch: true,
+            remote: nil
         ).shouldArmPendingPush)
     }
 

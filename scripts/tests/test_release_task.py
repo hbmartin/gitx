@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import pathlib
 import subprocess
+import tempfile
 import unittest
 
 from support import ROOT
@@ -58,6 +59,32 @@ class ReleaseTaskTests(unittest.TestCase):
         )
 
         self.assertIn("Export options plist passed validation", result.stdout)
+
+    def test_release_check_rejects_a_missing_development_team(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            mock_xcodebuild = pathlib.Path(directory) / "xcodebuild"
+            mock_xcodebuild.write_text(
+                "#!/bin/sh\n"
+                "cat <<'EOF'\n"
+                "    CODE_SIGN_STYLE = Automatic\n"
+                "    ENABLE_HARDENED_RUNTIME = YES\n"
+                "    PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitX\n"
+                "EOF\n"
+            )
+            mock_xcodebuild.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{directory}:{environment['PATH']}"
+
+            result = subprocess.run(
+                [self.task, "--check"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Release has no DEVELOPMENT_TEAM", result.stderr)
 
 
 if __name__ == "__main__":
