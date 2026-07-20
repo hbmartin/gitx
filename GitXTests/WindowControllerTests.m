@@ -145,6 +145,10 @@
 @property (nonatomic, strong, nullable) NSURL *testWorkingDirectoryURL;
 @end
 
+@interface PBWindowRepositoryWithGitURLOnly : PBGitRepository
+@property (nonatomic, strong) NSURL *testGitURL;
+@end
+
 @interface PBWelcomeWindowController : NSWindowController
 + (instancetype)shared;
 - (void)show;
@@ -238,6 +242,50 @@
 - (nullable NSURL *)workingDirectoryURL
 {
 	return self.testWorkingDirectoryURL;
+}
+
+@end
+
+@implementation PBWindowRepositoryWithGitURLOnly
+
+- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray *)arguments error:(NSError **)error
+{
+	return @".git/common\n";
+}
+
+- (nullable NSURL *)gitURL
+{
+	return self.testGitURL;
+}
+
+- (nullable NSURL *)workingDirectoryURL
+{
+	return nil;
+}
+
+@end
+
+@interface RepositoryUISettingsTests : XCTestCase
+@end
+
+@implementation RepositoryUISettingsTests
+
+- (void)testRepositoryUISettingsUsesGitURLForRelativeCommonDirectoryWithoutWorkingDirectory
+{
+	id originalSettings = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRepositoryUISettings"];
+	PBWindowRepositoryWithGitURLOnly *repository = [PBWindowRepositoryWithGitURLOnly new];
+	repository.testGitURL = [NSURL fileURLWithPath:@"/tmp/GitXGitURLOnly" isDirectory:YES];
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:repository];
+
+	settings.pushAfterCommit = YES;
+	NSURL *commonDirectory = [repository.testGitURL URLByAppendingPathComponent:@".git/common" isDirectory:YES];
+	NSString *repositoryKey = commonDirectory.standardizedURL.URLByResolvingSymlinksInPath.path;
+	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
+	XCTAssertEqualObjects(allSettings[repositoryKey][@"pushAfterCommit"], @YES);
+	if (originalSettings)
+		[NSUserDefaults.standardUserDefaults setObject:originalSettings forKey:@"PBRepositoryUISettings"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRepositoryUISettings"];
 }
 
 @end
