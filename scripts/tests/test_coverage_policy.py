@@ -25,12 +25,18 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertEqual(policy.target, "GitX.app")
         self.assertEqual(policy.minimum_line_coverage, 0.5)
         self.assertEqual(policy.files, {"Classes/A.m": 0.75})
+        self.assertEqual(policy.groups, {})
+
+    def test_policy_requires_explicit_groups(self) -> None:
+        with self.assertRaises(TypeError):
+            self.module.CoveragePolicy("GitX.app", 0.5, {})
 
     def test_coverage_regressions_fail_against_the_policy(self) -> None:
         policy = self.module.CoveragePolicy(
             target="GitX.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75},
+            groups={},
         )
 
         failures = self.module.evaluate_coverage(
@@ -46,6 +52,7 @@ class CoveragePolicyTests(unittest.TestCase):
             target="GitX.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75},
+            groups={},
         )
 
         failures = self.module.evaluate_coverage(
@@ -64,6 +71,7 @@ class CoveragePolicyTests(unittest.TestCase):
             target="GitX.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75},
+            groups={},
         )
 
         failures = self.module.evaluate_coverage(
@@ -82,6 +90,7 @@ class CoveragePolicyTests(unittest.TestCase):
             target="GitX.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75, "Classes/B.m": 0.8},
+            groups={},
         )
 
         ratcheted = self.module.ratchet_policy(
@@ -99,6 +108,7 @@ class CoveragePolicyTests(unittest.TestCase):
             target="GitX.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75},
+            groups={},
         )
 
         ratcheted = self.module.ratchet_policy(

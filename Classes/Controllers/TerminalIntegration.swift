@@ -24,10 +24,40 @@ struct TerminalApplication {
     ]
 }
 
+struct TerminalLaunchArgumentPolicy {
+    func arguments(identifier: String, directory: String, command: String) -> [String] {
+        switch identifier {
+        case "com.mitchellh.ghostty":
+            ["--working-directory=\(directory)"] + executableArguments(command)
+        case "dev.warp.Warp-Stable":
+            ["--new-window", "--cwd", directory] + executableArguments(command)
+        case "com.github.wez.wezterm":
+            ["start", "--cwd", directory, "--always-new-process"] + executableArguments(command)
+        case "net.kovidgoyal.kitty":
+            ["--directory", directory] + positionalArguments(command)
+        case "org.alacritty":
+            ["--working-directory", directory] + executableArguments(command)
+        default:
+            []
+        }
+    }
+
+    func executableArguments(_ command: String) -> [String] {
+        guard !command.isEmpty else { return [] }
+        return ["-e", "/bin/zsh", "-lc", command]
+    }
+
+    private func positionalArguments(_ command: String) -> [String] {
+        guard !command.isEmpty else { return [] }
+        return ["/bin/zsh", "-lc", command]
+    }
+}
+
 @objc(PBTerminalLauncher)
 final class TerminalLauncher: NSObject {
     @objc static let shared = TerminalLauncher()
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "TerminalLauncher")
+    private let launchArgumentPolicy = TerminalLaunchArgumentPolicy()
 
     @objc(openDirectory:presentingWindow:)
     func open(directory: URL, presenting window: NSWindow?) {
@@ -107,26 +137,12 @@ final class TerminalLauncher: NSObject {
 
     @objc(launchArgumentsForIdentifier:directory:command:)
     func launchArguments(identifier: String, directory: String, command: String) -> [String] {
-        switch identifier {
-        case "com.mitchellh.ghostty":
-            ["--working-directory=\(directory)"] + commandArguments(command)
-        case "dev.warp.Warp-Stable":
-            ["--new-window", "--cwd", directory] + commandArguments(command)
-        case "com.github.wez.wezterm":
-            ["start", "--cwd", directory, "--always-new-process"] + commandArguments(command)
-        case "net.kovidgoyal.kitty":
-            ["--directory", directory] + commandArguments(command)
-        case "org.alacritty":
-            ["--working-directory", directory] + commandArguments(command)
-        default:
-            []
-        }
+        launchArgumentPolicy.arguments(identifier: identifier, directory: directory, command: command)
     }
 
     @objc(commandArguments:)
     func commandArguments(_ command: String) -> [String] {
-        guard !command.isEmpty else { return [] }
-        return ["-e", "/bin/zsh", "-lc", command]
+        launchArgumentPolicy.executableArguments(command)
     }
 
     private func launchCustom(directory: URL) throws {

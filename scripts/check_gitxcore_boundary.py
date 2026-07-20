@@ -32,7 +32,10 @@ def imported_modules(source: str) -> set[str]:
 
 def boundary_failures(source_root: pathlib.Path) -> list[str]:
     failures: list[str] = []
-    for path in sorted(source_root.rglob("*.swift")):
+    swift_files = sorted(source_root.rglob("*.swift"))
+    if not swift_files:
+        return [f"No Swift sources were found under {source_root}"]
+    for path in swift_files:
         source = path.read_text()
         relative = path.relative_to(source_root)
         for module in sorted(imported_modules(source) - ALLOWED_IMPORTS):

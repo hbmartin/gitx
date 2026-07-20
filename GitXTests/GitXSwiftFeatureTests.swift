@@ -1087,14 +1087,14 @@ final class GitXSwiftFeatureTests: XCTestCase {
         dismissAttachedSheet(from: parentWindow)
     }
 
-    func testKittyNonEmptyCommandUsesExistingExecutableFlagConvention() {
+    func testKittyNonEmptyCommandUsesPositionalArguments() {
         XCTAssertEqual(
             PBTerminalLauncher.shared.launchArguments(
                 identifier: "net.kovidgoyal.kitty",
                 directory: "/tmp/repo",
                 command: "git status"
             ),
-            ["--directory", "/tmp/repo", "-e", "/bin/zsh", "-lc", "git status"]
+            ["--directory", "/tmp/repo", "/bin/zsh", "-lc", "git status"]
         )
     }
 

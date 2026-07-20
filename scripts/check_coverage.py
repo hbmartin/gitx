@@ -22,7 +22,7 @@ class CoveragePolicy(NamedTuple):
     target: str
     minimum_line_coverage: float
     files: dict[str, float]
-    groups: dict[str, CoverageGroup] = {}
+    groups: dict[str, CoverageGroup]
 
 
 def load_policy(path: pathlib.Path) -> CoveragePolicy:
