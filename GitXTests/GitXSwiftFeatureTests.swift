@@ -1087,6 +1087,17 @@ final class GitXSwiftFeatureTests: XCTestCase {
         dismissAttachedSheet(from: parentWindow)
     }
 
+    func testKittyNonEmptyCommandUsesExistingExecutableFlagConvention() {
+        XCTAssertEqual(
+            PBTerminalLauncher.shared.launchArguments(
+                identifier: "net.kovidgoyal.kitty",
+                directory: "/tmp/repo",
+                command: "git status"
+            ),
+            ["--directory", "/tmp/repo", "-e", "/bin/zsh", "-lc", "git status"]
+        )
+    }
+
     func testRaycastManagedScriptsInstallUpdateAndRemove() throws {
         let restoreDirectory = preservePersistentDefault(forKey: "PBRaycastScriptsDirectory")
         defer { restoreDirectory() }
