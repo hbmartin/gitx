@@ -312,7 +312,6 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 										  directory:(NSString *)directory
 											command:(NSString *)command
 	NS_SWIFT_NAME(launchArguments(identifier:directory:command:));
-- (NSArray<NSString *> *)commandArguments:(NSString *)command;
 - (NSArray<NSString *> *)argumentTokens:(NSString *)string;
 - (NSArray<NSString *> *)customArgumentsForTemplate:(NSString *)template
                                            directory:(NSString *)directory
