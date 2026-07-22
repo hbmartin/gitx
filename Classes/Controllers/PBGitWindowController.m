@@ -184,7 +184,11 @@
 
 - (void)removeAllContentSubViews
 {
-	while (contentSplitView.subviews.count > 0) [contentSplitView.subviews.lastObject removeFromSuperview];
+	while (contentSplitView.subviews.count > 0) {
+		NSView *view = contentSplitView.subviews.lastObject;
+		view.hidden = YES;
+		[view removeFromSuperview];
+	}
 	[contentSplitView setNeedsDisplay:YES];
 }
 
@@ -200,6 +204,7 @@
 			[_contentFirstResponders setObject:firstResponder forKey:previousController];
 		}
 		[previousController removeObserver:self keyPath:@"status"];
+		previousController.view.hidden = YES;
 		[previousController.view removeFromSuperview];
 	}
 
@@ -210,13 +215,17 @@
 	controller.view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 	controller.view.hidden = NO;
 	for (NSView *mountedView in contentSplitView.subviews.copy) {
-		if (mountedView != controller.view) [mountedView removeFromSuperview];
+		if (mountedView != controller.view) {
+			mountedView.hidden = YES;
+			[mountedView removeFromSuperview];
+		}
 	}
 	[contentSplitView addSubview:controller.view];
 	if (firstMount) {
 		[_initializedContentControllers addObject:controller];
 		[controller updateView];
 	}
+	[controller.view setNeedsDisplay:YES];
 	[contentSplitView setNeedsDisplay:YES];
 	NSResponder *firstResponder = [_contentFirstResponders objectForKey:controller] ?: controller.firstResponder;
 	if (firstResponder) [self.window makeFirstResponder:firstResponder];
