@@ -29,6 +29,8 @@ class ReleaseTaskTests(unittest.TestCase):
         )
 
         self.assertIn("mise run release", result.stdout)
+        self.assertIn("arm64|x86_64|universal", result.stdout)
+        self.assertIn("GITX_RELEASE_ARCH", result.stdout)
         self.assertIn("Developer ID", result.stdout)
         self.assertIn("GitX-<architecture>.zip", result.stdout)
         self.assertIn("GitX-<architecture>.dmg", result.stdout)
