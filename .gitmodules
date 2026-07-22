@@ -1,6 +1,6 @@
 [submodule "objective-git"]
 	path = External/objective-git
-	url = git@github.com:gitx/objective-git.git
+	url = https://github.com/hbmartin/objective-git.git
 [submodule "Sparkle"]
 	path = External/Sparkle
 	url = git@github.com:sparkle-project/Sparkle.git

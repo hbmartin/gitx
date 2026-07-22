@@ -25,7 +25,6 @@ Build a directly distributable GitX app using the Apple team configured in Xcode
 
 Usage:
   mise run release
-  mise run release -- [arm64|x86_64|universal]
   mise run release -- --check
 
 The release command:
@@ -33,20 +32,18 @@ The release command:
   2. Uploads the archive for Developer ID signing and notarization.
   3. Waits for Xcode to export the notarized, stapled app.
   4. Verifies signatures, bundle identifiers, architectures, and Gatekeeper acceptance.
-  5. Writes GitX-<architecture>.zip, GitX-<architecture>.dmg, the exported app,
+  5. Writes GitX-arm64.zip, GitX-arm64.dmg, the exported app,
      and SHA-256 checksums under release/.
 
 Xcode must have an Apple Developer account with access to the project's team.
 Xcode may create or download a managed Developer ID certificate during export.
 
 Environment overrides:
-  GITX_RELEASE_ARCH
-      arm64, x86_64, or universal. Defaults to the current Mac architecture.
   GITX_RELEASE_DIR
       Artifact directory. Defaults to <repository>/release.
   GITX_RELEASE_WORK_DIR
       Archive, Derived Data, and log directory. Defaults to
-      <repository>/build/release-<architecture>.
+      <repository>/build/release-arm64.
   GITX_NOTARIZATION_TIMEOUT_SECONDS
       Maximum wait for notarization. Defaults to 3600.
   GITX_NOTARIZATION_POLL_SECONDS
@@ -55,7 +52,8 @@ EOF
 }
 
 mode=release
-requested_arch=${GITX_RELEASE_ARCH:-$(uname -m)}
+xcode_archs=arm64
+artifact_arch=arm64
 
 while (( $# > 0 )); do
 	case "$1" in
@@ -66,9 +64,6 @@ while (( $# > 0 )); do
 			usage
 			exit 0
 			;;
-		arm64|x86_64|universal)
-			requested_arch=$1
-			;;
 		*)
 			usage >&2
 			fail "Unknown argument: $1"
@@ -77,23 +72,9 @@ while (( $# > 0 )); do
 	shift
 done
 
-case "$requested_arch" in
-	arm64)
-		xcode_archs=arm64
-		artifact_arch=arm64
-		;;
-	x86_64)
-		xcode_archs=x86_64
-		artifact_arch=x86_64
-		;;
-	universal)
-		xcode_archs="arm64 x86_64"
-		artifact_arch=universal
-		;;
-	*)
-		fail "Unsupported architecture '$requested_arch'; use arm64, x86_64, or universal"
-		;;
-esac
+host_arch=$(uname -m)
+[[ "$host_arch" == arm64 ]] ||
+	fail "GitX releases require an Apple Silicon host; found $host_arch"
 
 timeout_seconds=${GITX_NOTARIZATION_TIMEOUT_SECONDS:-3600}
 poll_seconds=${GITX_NOTARIZATION_POLL_SECONDS:-30}
@@ -262,7 +243,6 @@ verify_app()
 	local executable_path="$app_path/Contents/MacOS/GitX"
 	local signature_details
 	local actual_archs
-	local expected_arch
 
 	[[ -x "$executable_path" ]] || fail "GitX executable is missing from $app_path"
 	codesign --verify --deep --strict --verbose=2 "$app_path"
@@ -274,12 +254,8 @@ verify_app()
 	python3 scripts/check_bundle_identifiers.py "$app_path"
 
 	actual_archs=$(lipo -archs "$executable_path")
-	for expected_arch in $xcode_archs; do
-		case " $actual_archs " in
-			*" $expected_arch "*) ;;
-			*) fail "$app_path is missing the $expected_arch architecture" ;;
-		esac
-	done
+	[[ "$actual_archs" == arm64 ]] ||
+		fail "$app_path must contain only arm64; found $actual_archs"
 	log "Verified Developer ID signature, notarization, Gatekeeper, and architectures: $actual_archs"
 }
 

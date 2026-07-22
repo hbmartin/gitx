@@ -55,7 +55,7 @@ In the steps below, we assume the certificate name to be _"Apple Development"_ b
 
 You can also build and run on the command line. Once you've created the config file,
 you may use [the script shared here](https://github.com/gitx/gitx/discussions/366#discussion-4897466).
-For x86 builds, please replace `arm64` with `x86_64`.
+GitX builds for arm64 only and requires an Apple Silicon Mac.
 
 ### Apple Silicon
 
