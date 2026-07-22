@@ -8,31 +8,36 @@ on:
       - '*'
   pull_request:
 
+permissions: {}
+
 jobs:
   build-gitx:
     name: build
+    permissions:
+      contents: read
     env:
       variableSet: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-    runs-on: [self-hosted, macOS, "${{ matrix.runner_arch }}"]
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - xcode: 26.2
-            runner_arch: x64
+            runner: macos-26-intel
             abi: x86_64
           - xcode: 26.2
-            runner_arch: ARM64
+            runner: macos-26
             abi: arm64
     steps:
       - name: ls Xcode
         run: ls -la /Applications/Xcode*
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
           submodules: recursive
-      - uses: maxim-lobanov/setup-xcode@v1
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: ${{ matrix.xcode }}
       - name: Install the Apple certificate and provisioning profile
@@ -111,7 +116,7 @@ jobs:
             ./scripts/screenshots-${{ matrix.abi }}
       - name: Upload screenshots
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: Screenshots-${{ matrix.abi }}
           path: ./scripts/screenshots-${{ matrix.abi }}
@@ -127,7 +132,7 @@ jobs:
           ./screenShotScript/screenShotCompare.sh false
       - name: Archive screenshots diffs
         if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: gitx-Screenshots-diffs-${{ matrix.abi }}
           path: |
@@ -197,14 +202,14 @@ jobs:
         if: ${{ env.variableSet != '' }}
         run: spctl -a -vv GitX.app
       - name: Upload dmg
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ success() }}
         with:
           name: GitX-${{ matrix.abi }}.dmg
           path: GitX-${{ matrix.abi }}.dmg
           overwrite: true
       - name: Upload zip
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: GitX-${{ matrix.abi }}.zip
           path: GitX-${{ matrix.abi }}.zip
@@ -217,30 +222,33 @@ jobs:
   release:
     if: startsWith(github.event.ref, 'refs/tags/')
     needs: build-gitx
-    runs-on: [self-hosted, macOS, ARM64]
+    permissions:
+      contents: write
+    runs-on: macos-26
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
           submodules: recursive
       - name: Find Tag
         id: tagger
-        uses: jimschubert/query-tag-action@v2
+        uses: jimschubert/query-tag-action@ebe504c35d1ea44d7272c8eccc7a71e2e4f1b1cb # v2
         with:
           skip-unshallow: 'true'
           abbrev: false
           commit-ish: HEAD
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: GitX-x86_64.dmg
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: GitX-arm64.dmg
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: GitX-x86_64.zip
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: GitX-arm64.zip
       - name: Check pre-release
@@ -257,7 +265,7 @@ jobs:
           echo "PRE_RELEASE=$prerelease" >> "$GITHUB_ENV"
           echo "prerelease=$prerelease"
       - name: Create Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
         with:
           tag_name: ${{steps.tagger.outputs.tag}}
           generate_release_notes: true
@@ -278,11 +286,12 @@ jobs:
         run: curl -u "$GITHUB_ACTOR:$CLASSIC_TOKEN" -X POST "https://api.github.com/repos/$GITHUB_REPOSITORY/pages/builds"
 
       - name: Checkout brew repo
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           token: ${{ secrets.PERSONALACCESSTOKEN }}
           repository: Homebrew/homebrew-cask.git
           path: brew
+          persist-credentials: false
           ref: main
       - name: Show shasum
         run: |
@@ -303,7 +312,7 @@ jobs:
           cp gitx.rb.new gitx.rb
           rm gitx.rb.new
       - name: Create Pull Request in brew https://github.com/Homebrew/homebrew-cask
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         if: ${{ env.PRE_RELEASE == 'false' }}
         with:
           path: ${{ github.workspace }}/brew

@@ -19,7 +19,7 @@ concurrency:
 jobs:
   core:
     name: GitXCore hostless tests
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -51,7 +51,7 @@ jobs:
 
   static:
     name: static verification
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -76,7 +76,7 @@ jobs:
 
   unit-and-analyze:
     name: unit tests and analyzer
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -128,7 +128,7 @@ jobs:
 
   ui:
     name: UI workflows
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:

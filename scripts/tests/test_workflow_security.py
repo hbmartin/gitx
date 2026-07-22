@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from support import load_script
+from support import ROOT, load_script
 
 
 PIN = "0123456789abcdef0123456789abcdef01234567"
@@ -87,6 +87,11 @@ jobs:
         self.assertTrue(any("permissions" in failure for failure in failures))
         self.assertTrue(any("full commit SHA" in failure for failure in failures))
         self.assertTrue(any("persists Git credentials" in failure for failure in failures))
+
+    def test_repository_workflows_satisfy_security_policy(self) -> None:
+        workflow_paths = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+
+        self.assertEqual(self.module.check_paths(workflow_paths), [])
 
 
 if __name__ == "__main__":

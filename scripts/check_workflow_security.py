@@ -75,7 +75,8 @@ def _checkout_blocks(contents: str) -> list[list[str]]:
         block = [line]
         for following in lines[index + 1 :]:
             following_indent = len(following) - len(following.lstrip())
-            if following.strip() and following_indent <= indent:
+            starts_next_step = following.lstrip().startswith("- ") and following_indent <= indent
+            if following.strip() and (following_indent < indent or starts_next_step):
                 break
             block.append(following)
         blocks.append(block)

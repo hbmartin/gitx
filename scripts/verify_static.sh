@@ -63,6 +63,7 @@ find Resources -name '*.xib' -print0 | while IFS= read -r -d '' xib; do
 done
 find GitXTests -maxdepth 1 -name '*.xctestplan' -print0 | xargs -0 -n1 jq empty
 find .github -name '*.yml' -print0 | xargs -0 ruby -e 'require "yaml"; ARGV.each { |path| YAML.safe_load_file(path, aliases: true) }'
+python3 scripts/check_workflow_security.py .github/workflows/*.yml
 
 PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/gitx-pycache" python3 -m py_compile scripts/*.py scripts/tests/*.py
 PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/gitx-pycache" python3 -m unittest discover -s scripts/tests -v
