@@ -419,7 +419,8 @@ final class GitXPerformanceTests: XCTestCase {
             "Warm switching must fit in one 60 Hz frame at p95"
         )
         XCTAssertIdentical(history.view.superview, container)
-        XCTAssertIdentical(commit.view.superview, container)
+        XCTAssertNil(commit.view.superview)
+        XCTAssertEqual(container.subviews.count, 1)
     }
 
     func testCachedWorkingStateFeedbackMeetsBudget() {

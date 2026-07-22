@@ -233,6 +233,10 @@
 	XCUIElement *stageItem = sidebar.staticTexts[@"Stage"];
 	XCTAssertTrue([stageItem waitForExistenceWithTimeout:10], @"The Stage item should be visible in the sidebar");
 	[stageItem click];
+	XCTAssertTrue([self.app.tables[@"UnstagedFiles"] waitForExistenceWithTimeout:10],
+				  @"The Unstaged Changes table should be ready before using the Stage view");
+	XCTAssertTrue([self.app.tables[@"StagedFiles"] waitForExistenceWithTimeout:10],
+				  @"The Staged Changes table should be ready before using the Stage view");
 }
 
 // MARK: - Tests
@@ -253,9 +257,39 @@
 
 - (void)testStagingTabScreenshot
 {
+	[self selectHistoryForCurrentBranch];
 	[self openStagingView];
+	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
+	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
+	[self waitForElement:diff toHaveValue:@"No file selected" timeout:10];
 
 	[self saveWindowScreenshotNamed:@"staging-view"];
+}
+
+- (void)testStagingViewRemainsActiveAfterMovingWindow
+{
+	[self selectHistoryForCurrentBranch];
+	[self openStagingView];
+	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
+	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
+	[self waitForElement:diff toHaveValue:@"No file selected" timeout:10];
+
+	XCUIElement *window = self.app.windows.firstMatch;
+	CGRect originalFrame = window.frame;
+	XCUICoordinate *titleBar = [[window coordinateWithNormalizedOffset:CGVectorMake(0, 0)]
+		coordinateWithOffset:CGVectorMake(originalFrame.size.width * 0.5, 12)];
+	XCUICoordinate *destination = [titleBar coordinateWithOffset:CGVectorMake(80, 50)];
+	[titleBar pressForDuration:0.1 thenDragToCoordinate:destination];
+	NSPredicate *frameChanged = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return !CGPointEqualToPoint(window.frame.origin, originalFrame.origin);
+	}];
+	XCTNSPredicateExpectation *moveExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:frameChanged object:window];
+	[self waitForExpectations:@[ moveExpectation ] timeout:5];
+
+	XCTAssertEqualObjects(diff.value, @"No file selected");
+	XCTAssertTrue(self.app.tables[@"UnstagedFiles"].hittable);
+	XCTAssertTrue(self.app.tables[@"StagedFiles"].hittable);
+	[self saveWindowScreenshotNamed:@"staging-view-after-window-move"];
 }
 
 - (void)testPartiallyStagedAdditionShowsOnlyTheIndexedContent
