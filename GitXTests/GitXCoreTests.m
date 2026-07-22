@@ -38,6 +38,10 @@
 - (NSSet<GTOID *> *)baseCommits;
 @end
 
+@interface PBGitCommit (GitXCoreGraphTests)
+- (void)setParents:(NSArray<GTOID *> *)parents;
+@end
+
 @interface PBGitIndex (GitXCoreTests)
 - (void)postCommitUpdate:(NSString *)update;
 - (void)postCommitOutput:(NSString *)output;
@@ -818,6 +822,19 @@
 		[refreshedGrapher decorateCommit:commit];
 		XCTAssertNotEqual(commit.lineInfo, publishedLineInfo, @"A refresh must not mutate line info that AppKit may be drawing");
 	}
+
+	XCTAssertGreaterThanOrEqual(commits.count, 3);
+	PBGitCommit *laneSeed = commits[0];
+	PBGitCommit *mergeCommit = commits[1];
+	PBGitCommit *displayedParent = commits[2];
+	[laneSeed setParents:@[ displayedParent.OID ]];
+	PBGitGrapher *displayedParentGrapher = [[PBGitGrapher alloc] init];
+	[displayedParentGrapher decorateCommit:laneSeed];
+	[mergeCommit setParents:@[ laneSeed.OID, displayedParent.OID ]];
+	[displayedParentGrapher decorateCommit:mergeCommit];
+	XCTAssertGreaterThanOrEqual(mergeCommit.lineInfo.nLines, 3);
+	XCTAssertTrue([mergeCommit.lineInfo.description containsString:@"position:"]);
+	XCTAssertTrue([mergeCommit.lineInfo.debugDescription containsString:@"colorIndex:"]);
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured
