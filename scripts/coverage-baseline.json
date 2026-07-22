@@ -27,7 +27,7 @@
     "Classes/Controllers/PBGitSidebarController.m": 0.9116,
     "Classes/Controllers/PBGitWindowController+Dialogs.m": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.m": 1.0,
-    "Classes/Controllers/PBGitWindowController.m": 0.9972,
+    "Classes/Controllers/PBGitWindowController.m": 0.9973,
     "Classes/Controllers/PBHistorySearchController.m": 0.9285,
     "Classes/Controllers/PBHistorySearchMode.m": 0.8333,
     "Classes/Controllers/PBOpenShallowRepositoryErrorRecoveryAttempter.m": 0.0,
