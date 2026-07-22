@@ -2503,8 +2503,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[document setValue:bareRepository forKey:@"_repository"];
 	PBGitWindowController *controller = [[PBGitWindowController alloc] initWithWindow:self.controller.window];
 	controller.document = document;
-	NSMenuItem *reveal = [[NSMenuItem alloc] initWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
-	NSMenuItem *terminal = [[NSMenuItem alloc] initWithTitle:@"Open in Terminal" action:@selector(openInTerminal:) keyEquivalent:@""];
+	NSMenuItem *reveal = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Reveal in Finder", nil) action:@selector(revealInFinder:) keyEquivalent:@""];
+	NSMenuItem *terminal = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Open in Terminal", nil) action:@selector(openInTerminal:) keyEquivalent:@""];
 	NSUInteger previousRevealCount = PBWindowWorkspaceRevealCount;
 
 	XCTAssertFalse([controller validateMenuItem:reveal]);
