@@ -203,6 +203,8 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 
 @interface PBHistoryStateCoordinator : NSObject
 - (NSArray<PBGitCommit *> *)normalizedSelection:(NSArray<PBGitCommit *> *)selection;
+- (nullable NSArray<PBGitCommit *> *)preservedSelection:(NSArray<PBGitCommit *> *)selection
+                                              inContent:(NSArray<PBGitCommit *> *)content;
 - (PBHistoryBranchFilterPresentation *)branchFilterPresentationForSimpleBranch:(BOOL)simpleBranch
 																			 filter:(NSInteger)filter
 															 selectedTitle:(NSString *)selectedTitle
@@ -434,6 +436,10 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly) NSString *fallbackPath;
 @property (nonatomic, readonly) NSDictionary<NSNumber *, PBNativeDiffFile *> *filesByStartIndex;
 @property (nonatomic, readonly) NSDictionary<NSNumber *, PBNativeDiffHunk *> *hunksByStartIndex;
+@end
+
+@interface PBSyntheticUntrackedDiffFormatter : NSObject
++ (NSString *)diffForPath:(NSString *)path contents:(NSString *)contents;
 @end
 
 @interface PBPartialPatchBuilder : NSObject

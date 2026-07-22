@@ -327,7 +327,7 @@ final nonisolated class DiffDocumentParser: NSObject {
     }
 }
 
-private enum SyntheticUntrackedDiffFormatter {
+private nonisolated enum SyntheticUntrackedDiffFormatter {
     static func diff(path: String, contents: String) -> String {
         guard !contents.isEmpty else { return "" }
         let endsWithNewline = contents.hasSuffix("\n")

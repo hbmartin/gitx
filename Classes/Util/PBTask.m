@@ -9,6 +9,7 @@
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
 
+#import <fcntl.h>
 #import <signal.h>
 
 NSString *const PBTaskErrorDomain = @"PBTaskErrorDomain";
@@ -340,8 +341,11 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	if (self.standardInputData) {
 		self.inputPipe = [NSPipe pipe];
 		self.task.standardInput = self.inputPipe;
+		NSFileHandle *inputHandle = self.inputPipe.fileHandleForWriting;
+		if (fcntl(inputHandle.fileDescriptor, F_SETNOSIGPIPE, 1) == -1)
+			PBTaskLog(@"task %p: could not suppress SIGPIPE for stdin", self);
 
-		self.inputPipe.fileHandleForWriting.writeabilityHandler = ^(NSFileHandle *handle) {
+		inputHandle.writeabilityHandler = ^(NSFileHandle *handle) {
 			PBTask *strongSelf = weakSelf;
 			if (!strongSelf) return;
 			PBTaskLog(@"task %p: can write %d", strongSelf, handle.fileDescriptor);

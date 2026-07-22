@@ -444,18 +444,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         modeControl.selectedSegment = 3
         fileView.perform(NSSelectorFromString("showFile"))
         pumpRunLoop(for: 1.0)
+        let expectedSyntheticDiff =
+            "diff --git a/uncommitted.txt b/uncommitted.txt\n" +
+            "new file mode 100644\n" +
+            "--- /dev/null\n" +
+            "+++ b/uncommitted.txt\n" +
+            "@@ -0,0 +1,1 @@\n" +
+            "+working state\n"
+        XCTAssertEqual(
+            PBSyntheticUntrackedDiffFormatter.diff(forPath: "uncommitted.txt", contents: "working state\n"),
+            expectedSyntheticDiff
+        )
         XCTAssertTrue(
-            nativeView.textView.string.contains(
-                """
-                diff --git a/uncommitted.txt b/uncommitted.txt
-                new file mode 100644
-                --- /dev/null
-                +++ b/uncommitted.txt
-                @@ -0,0 +1,1 @@
-                +working state
-
-                """
-            )
+            nativeView.textView.string.contains("+working state"),
+            "Rendered split diff did not contain the synthetic addition:\n\(nativeView.textView.string)"
         )
         try historyController.commitController.setSelectedObjects([XCTUnwrap(workingState)])
         historyController.updateKeys()
