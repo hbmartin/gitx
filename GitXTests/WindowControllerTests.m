@@ -145,6 +145,7 @@
 
 @interface PBWelcomeWindowController : NSWindowController
 + (instancetype)shared;
+- (void)show;
 - (void)searchChanged:(nullable id)sender;
 - (void)closeWelcome;
 @end
@@ -3026,7 +3027,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWelcomeWindowController *welcome = PBWelcomeWindowController.shared;
 	id originalRecents = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRecentRepositories"];
 	[[PBRecentRepositoryStore shared] record:self.repositoryURL];
-	[welcome showWindow:nil];
+	[welcome show];
 	[welcome searchChanged:nil];
 	NSArray<NSView *> *descendants = welcome.window.contentView.subviews;
 	NSTableView *recentsTable = nil;

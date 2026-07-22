@@ -501,9 +501,9 @@
 	if ([sender respondsToSelector:@selector(representedObject)])
 		urls = [self selectedURLsFromSender:sender];
 	if (urls.count == 0) {
-		[self ensureActionCoordinators];
-		[_workspaceActionCoordinator revealRepositoryInFinder];
-		return;
+		NSURL *workingDirectoryURL = self.repository.workingDirectoryURL;
+		if (!workingDirectoryURL) return;
+		urls = @[ workingDirectoryURL ];
 	}
 	[self revealURLsInFinder:urls];
 }

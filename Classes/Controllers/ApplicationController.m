@@ -128,7 +128,13 @@
 									  sourceWindow:NSApp.keyWindow
 										completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
 											if (errors.count > 0) {
-												for (NSError *error in errors) [sender presentError:error];
+												BOOL isUnitTestHost = [NSProcessInfo.processInfo.environment objectForKey:@"XCTestConfigurationFilePath"] != nil;
+												for (NSError *error in errors) {
+													if (isUnitTestHost)
+														NSLog(@"[Testing] Suppressed modal repository-open error: %@", error.localizedDescription);
+													else
+														[sender presentError:error];
+												}
 												[sender replyToOpenOrPrint:NSApplicationDelegateReplyFailure];
 											} else {
 												[sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
