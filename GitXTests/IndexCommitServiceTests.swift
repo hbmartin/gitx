@@ -1,6 +1,20 @@
 import XCTest
 
 final class IndexCommitServiceTests: XCTestCase {
+    private final class DeinitThreadRepository: PBGitRepository {
+        private let onDeinit: () -> Void
+
+        init(onDeinit: @escaping () -> Void) {
+            self.onDeinit = onDeinit
+            super.init()
+        }
+
+        deinit {
+            XCTAssertTrue(Thread.isMainThread)
+            onDeinit()
+        }
+    }
+
     private final class CommandRunnerFake: NSObject, PBIndexCommandRunning {
         struct Call {
             let arguments: [String]
@@ -427,6 +441,33 @@ final class IndexCommitServiceTests: XCTestCase {
             try XCTUnwrap(descriptions.firstIndex(of: "output:released\n")),
             try XCTUnwrap(descriptions.firstIndex(of: "completion:\(PBIndexCommitResultKind.success.rawValue)"))
         )
+    }
+
+    func testCoordinatorReleasesFinalRepositoryOwnershipOnMainThread() {
+        let tree = String(repeating: "a", count: 40)
+        let commit = String(repeating: "b", count: 40)
+        let runner = CommandRunnerFake()
+        runner.results = [.success(tree), .success(commit), .success("")]
+        let hookStarted = DispatchSemaphore(value: 0)
+        let releaseHook = DispatchSemaphore(value: 0)
+        let hooks = HookRunnerFake()
+        hooks.handlers["pre-commit"] = { _, _ in
+            hookStarted.signal()
+            XCTAssertEqual(releaseHook.wait(timeout: .now() + 5), .success)
+        }
+        let service = makeService(runner: runner, hooks: hooks)
+        let deinitialized = expectation(description: "repository deinitialized on main")
+        var repository: DeinitThreadRepository? = DeinitThreadRepository {
+            deinitialized.fulfill()
+        }
+        let coordinator = PBIndexCommitCoordinator(service: service, repository: repository)
+
+        coordinator.commit(with: request(verify: true)) { _ in }
+        XCTAssertEqual(hookStarted.wait(timeout: .now() + 5), .success)
+        repository = nil
+        releaseHook.signal()
+
+        wait(for: [deinitialized], timeout: 5)
     }
 
     private func makeService(

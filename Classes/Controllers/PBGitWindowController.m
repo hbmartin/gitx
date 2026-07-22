@@ -103,6 +103,10 @@
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem
 {
+	if (menuItem.action == @selector(revealInFinder:) || menuItem.action == @selector(openInTerminal:)) {
+		[self ensureActionCoordinators];
+		return _workspaceActionCoordinator.hasWorkingDirectory;
+	}
 	if (menuItem.action == @selector(showCommitView:)) {
 		menuItem.state = contentController == _commitViewController;
 		return !self.repository.isBareRepository;
@@ -496,8 +500,11 @@
 	NSArray<NSURL *> *urls = nil;
 	if ([sender respondsToSelector:@selector(representedObject)])
 		urls = [self selectedURLsFromSender:sender];
-	if (urls.count == 0)
-		urls = @[ self.repository.workingDirectoryURL ];
+	if (urls.count == 0) {
+		[self ensureActionCoordinators];
+		[_workspaceActionCoordinator revealRepositoryInFinder];
+		return;
+	}
 	[self revealURLsInFinder:urls];
 }
 - (IBAction)openInTerminal:(id)sender

@@ -71,6 +71,19 @@ final class WorkspaceActionCoordinator: NSObject {
         NSWorkspace.shared.activateFileViewerSelecting(urls)
     }
 
+    @objc var hasWorkingDirectory: Bool {
+        repository.workingDirectoryURL() != nil
+    }
+
+    @objc(revealRepositoryInFinder)
+    func revealRepositoryInFinder() {
+        guard let workingDirectoryURL = repository.workingDirectoryURL() else {
+            logger.notice("Skipped Finder reveal because the repository has no working directory")
+            return
+        }
+        revealInFinder([workingDirectoryURL])
+    }
+
     @objc(openRepositoryInTerminal)
     func openRepositoryInTerminal() {
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }

@@ -2495,6 +2495,23 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBTerminalBundleIdentifier"];
 }
 
+- (void)testBareRepositoryDisablesAndSafelyIgnoresWorkingDirectoryActions
+{
+	PBWindowRepositoryWithoutGitURLs *bareRepository = [PBWindowRepositoryWithoutGitURLs new];
+	PBGitRepositoryDocument *document = [[PBGitRepositoryDocument alloc] init];
+	[document setValue:bareRepository forKey:@"_repository"];
+	PBGitWindowController *controller = [[PBGitWindowController alloc] initWithWindow:self.controller.window];
+	controller.document = document;
+	NSMenuItem *reveal = [[NSMenuItem alloc] initWithTitle:@"Reveal in Finder" action:@selector(revealInFinder:) keyEquivalent:@""];
+	NSMenuItem *terminal = [[NSMenuItem alloc] initWithTitle:@"Open in Terminal" action:@selector(openInTerminal:) keyEquivalent:@""];
+	NSUInteger previousRevealCount = PBWindowWorkspaceRevealCount;
+
+	XCTAssertFalse([controller validateMenuItem:reveal]);
+	XCTAssertFalse([controller validateMenuItem:terminal]);
+	XCTAssertNoThrow([controller revealInFinder:self]);
+	XCTAssertEqual(PBWindowWorkspaceRevealCount, previousRevealCount);
+}
+
 - (void)testRepositoryOpeningCanonicalizesNestedLinkedAndBareRepositoriesInInputOrder
 {
 	NSURL *nestedURL = [self.repositoryURL URLByAppendingPathComponent:@"Sources/Ünicode/Nested" isDirectory:YES];

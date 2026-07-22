@@ -18,9 +18,8 @@ private final nonisolated class IndexCommitEventDelivery: @unchecked Sendable {
     }
 }
 
-// swift6-safety-justification: Only holds a strong reference to keep the repository alive for the duration of a
-// background commit. The repository is never accessed through this box off the main thread; the commit runners
-// reach it via their own `unowned` references, so this box exists solely for lifetime extension.
+// Only holds a strong reference for a background commit; the repository is never accessed through this box off-main.
+// swift6-safety-justification: The token is handed to the main queue before its final release.
 private final nonisolated class RepositoryLifetimeToken: @unchecked Sendable {
     let repository: PBGitRepository?
 
@@ -69,7 +68,11 @@ final nonisolated class IndexCommitCoordinator: NSObject, @unchecked Sendable {
                     }
                 }
             }
-            logger.debug("Background commit orchestration completed")
+            DispatchQueue.main.async { [lifetimeToken, logger] in
+                withExtendedLifetime(lifetimeToken) {
+                    logger.debug("Background commit orchestration completed; releasing repository lifetime on main")
+                }
+            }
         }
     }
 }
