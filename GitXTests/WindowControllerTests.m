@@ -2037,6 +2037,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[container addSubview:staleLayer];
 	[self.controller changeContentController:secondContent];
 	XCTAssertNil(content.view.superview);
+	XCTAssertTrue(content.view.hidden);
 	XCTAssertNil(staleLayer.superview);
 	XCTAssertEqual(secondContent.view.superview, container);
 	XCTAssertTrue(NSEqualRects(secondContent.view.frame, container.bounds));
