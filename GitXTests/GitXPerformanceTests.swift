@@ -389,8 +389,8 @@ final class GitXPerformanceTests: XCTestCase {
             PBPerformanceBudgets.mainThreadBlockSeconds,
             "Warm switching must fit in one 60 Hz frame at p95"
         )
-        XCTAssertIdentical(history.view.superview, container)
-        XCTAssertNil(commit.view.superview)
+        XCTAssertNil(history.view.superview)
+        XCTAssertIdentical(commit.view.superview, container)
         XCTAssertEqual(container.subviews.count, 1)
     }
 
