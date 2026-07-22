@@ -94,6 +94,19 @@ final class IndexMutationServiceTests: XCTestCase {
         XCTAssertEqual(runner.calls[1].input, "reverse\n")
     }
 
+    func testEmptyPatchReturnsInvalidInputWithoutLaunchingGit() {
+        let runner = CommandRunnerFake()
+        let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
+        var error: NSError?
+
+        XCTAssertFalse(service.applyPatch("", stage: true, reverse: false, error: &error))
+
+        XCTAssertEqual(error?.domain, "PBGitIndexMutationError")
+        XCTAssertEqual(error?.code, 2)
+        XCTAssertEqual(error?.localizedDescription, "The patch is empty and cannot be applied.")
+        XCTAssertTrue(runner.calls.isEmpty)
+    }
+
     func testDiffSelectsStagedAndTrackedCommands() {
         let runner = CommandRunnerFake()
         runner.results = [.success("staged"), .success("unstaged")]

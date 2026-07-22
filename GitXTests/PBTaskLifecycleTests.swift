@@ -254,6 +254,19 @@ final class PBTaskLifecycleTests: XCTestCase {
         }
     }
 
+    func testChildClosingStandardInputDuringLargeWriteDoesNotRaise() {
+        // `head` exits after one byte, forcing the oversized write through PBTask's EPIPE cleanup path.
+        let task = PBTask(
+            launchPath: "/usr/bin/head",
+            arguments: ["-c", "1"],
+            inDirectory: nil
+        )
+        task.standardInputData = Data(repeating: 0x61, count: 1_000_000)
+
+        XCTAssertNoThrow(try task.launch())
+        XCTAssertEqual(task.standardOutputData, Data([0x61]))
+    }
+
     func testParentFailureWinsWhenDescendantKeepsOutputPipeOpen() {
         let task = PBTask(
             launchPath: "/bin/sh",

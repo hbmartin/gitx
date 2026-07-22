@@ -50,7 +50,9 @@
 }
 - (NSString *)subject
 {
-	return [NSString stringWithFormat:@"%lu staged, %lu unstaged, %lu untracked",
+	NSString *format = NSLocalizedString(@"%lu staged, %lu unstaged, %lu untracked",
+										 @"Working-state summary: staged, unstaged, and untracked file counts");
+	return [NSString stringWithFormat:format,
 									  (unsigned long)self.stagedCount, (unsigned long)self.unstagedCount, (unsigned long)self.untrackedCount];
 }
 - (NSString *)message

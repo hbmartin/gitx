@@ -62,7 +62,7 @@ final nonisolated class RepositoryIgnoreFileService: NSObject {
         var accessorError: Error?
         coordinator.coordinate(
             writingItemAt: fileURL,
-            options: [],
+            options: .forReplacing,
             error: &coordinationError
         ) { coordinatedURL in
             do {

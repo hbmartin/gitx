@@ -40,8 +40,15 @@ final class HistoryStateCoordinator: NSObject {
     @objc(preservedSelection:inContent:)
     func preservedSelection(_ selection: [PBGitCommit], in content: [PBGitCommit]) -> [PBGitCommit]? {
         guard !selection.isEmpty else { return nil }
+        var firstCommitByOID: [GTOID: PBGitCommit] = [:]
+        for commit in content {
+            let oid = commit.oid
+            if firstCommitByOID[oid] == nil {
+                firstCommitByOID[oid] = commit
+            }
+        }
         let preserved = selection.compactMap { selected in
-            content.first { $0.oid == selected.oid }
+            firstCommitByOID[selected.oid]
         }
         guard preserved.count == selection.count else { return nil }
         NSLog("[GitX] History selection preservation result: %lu commits", preserved.count)

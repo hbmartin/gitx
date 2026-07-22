@@ -438,12 +438,22 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertNil(PBRepositoryFinder.workDir(for: webURL))
         XCTAssertNil(PBRepositoryFinder.gitDir(for: webURL))
         XCTAssertNil(PBRepositoryFinder.fileURL(for: webURL))
+
+        for pathlessURLString in ["file:", "file://", "file:?query=repository", "file://?query=repository"] {
+            let pathlessURL = try XCTUnwrap(URL(string: pathlessURLString))
+            XCTAssertTrue(pathlessURL.isFileURL)
+            XCTAssertTrue(pathlessURL.path.isEmpty)
+            XCTAssertNil(PBRepositoryFinder.workDir(for: pathlessURL))
+            XCTAssertNil(PBRepositoryFinder.gitDir(for: pathlessURL))
+            XCTAssertNil(PBRepositoryFinder.fileURL(for: pathlessURL))
+        }
     }
 
     func testCommandLineToolDoesNotCrashWhenLibgitRejectsRepositoryFormat() throws {
         try withTemporaryDirectory { worktree in
             try runGit(["init", "--quiet"], in: worktree)
             try runGit(["config", "core.repositoryformatversion", "1"], in: worktree)
+            try runGit(["config", "extensions.gitxUnsupported", "true"], in: worktree)
 
             XCTAssertNil(PBRepositoryFinder.workDir(for: worktree))
             XCTAssertNil(PBRepositoryFinder.fileURL(for: worktree))
@@ -703,8 +713,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         clipView.scroll(to: NSPoint(x: 0, y: maximumY))
         scrollView.reflectScrolledClipView(clipView)
 
-        XCTAssertGreaterThan(clipView.bounds.origin.y, 0)
-        XCTAssertLessThanOrEqual(clipView.bounds.origin.y, maximumY)
+        XCTAssertEqual(clipView.bounds.origin.y, maximumY, accuracy: 0.5)
     }
 
     func testLargeNativeDiffUsesLightweightColoring() throws {
@@ -1047,17 +1056,115 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let modifiedScript = directory.appendingPathComponent("gitx-raycast-open-repository.sh")
         try (String(contentsOf: modifiedScript, encoding: .utf8) + "\n# user customization\n")
             .write(to: modifiedScript, atomically: true, encoding: .utf8)
+        let malformedScript = directory.appendingPathComponent("gitx-raycast-start-clone.sh")
+        try "#!/bin/zsh\n# GitX checksum: malformed\nopen -b net.phere.GitX\n"
+            .write(to: malformedScript, atomically: true, encoding: .utf8)
+        let alteredChecksumScript = directory.appendingPathComponent("gitx-raycast-show-recents.sh")
+        let alteredChecksum = try String(contentsOf: alteredChecksumScript, encoding: .utf8)
+            .replacingOccurrences(of: "# GitX checksum: ", with: "# GitX checksum: 0")
+        try alteredChecksum.write(to: alteredChecksumScript, atomically: true, encoding: .utf8)
         let userScript = directory.appendingPathComponent("gitx-raycast-personal-command.sh")
         try "#!/bin/zsh\necho personal\n".write(to: userScript, atomically: true, encoding: .utf8)
         PBIntegrationManager.shared.removeRaycastScripts(presenting: window)
         dismissAttachedSheet(from: window)
         XCTAssertEqual(
             try Set(FileManager.default.contentsOfDirectory(atPath: directory.path)),
-            Set(["gitx-raycast-open-repository.sh", "gitx-raycast-personal-command.sh"])
+            Set([
+                "gitx-raycast-open-repository.sh",
+                "gitx-raycast-personal-command.sh",
+                "gitx-raycast-show-recents.sh",
+                "gitx-raycast-start-clone.sh",
+            ])
         )
 
         PBApplicationSettings.raycastScriptsDirectory = ""
         PBIntegrationManager.shared.removeRaycastScripts(presenting: window)
+    }
+
+    func testManagedScriptChecksumPolicyGeneratesAndValidatesManagedScripts() {
+        let body = "#!/bin/zsh\n# @raycast.title Open GitX\necho ready\n"
+
+        let managed = PBManagedScriptChecksumPolicy.managedScript(for: body)
+
+        XCTAssertTrue(managed.hasPrefix("#!/bin/zsh\n# GitX checksum: "))
+        XCTAssertTrue(PBManagedScriptChecksumPolicy.hasValidChecksum(for: managed))
+    }
+
+    func testManagedScriptChecksumPolicyCanonicalizesSupportedLineEndings() {
+        let body = "#!/bin/zsh\n# @raycast.title Open GitX\necho ready\n"
+        let managed = PBManagedScriptChecksumPolicy.managedScript(for: body)
+        let lineEndingVariants = [
+            managed,
+            managed.replacingOccurrences(of: "\n", with: "\r\n"),
+            managed.replacingOccurrences(of: "\n", with: "\r"),
+        ]
+
+        for variant in lineEndingVariants {
+            XCTAssertTrue(PBManagedScriptChecksumPolicy.hasValidChecksum(for: variant))
+        }
+        XCTAssertEqual(
+            PBManagedScriptChecksumPolicy.managedScript(
+                for: body.replacingOccurrences(of: "\n", with: "\r\n")
+            ),
+            managed
+        )
+        XCTAssertEqual(
+            PBManagedScriptChecksumPolicy.managedScript(
+                for: body.replacingOccurrences(of: "\n", with: "\r")
+            ),
+            managed
+        )
+    }
+
+    func testManagedScriptChecksumPolicyRejectsTamperedAndMalformedScripts() {
+        let body = "#!/bin/zsh\n# @raycast.title Open GitX\necho ready\n"
+        let managed = PBManagedScriptChecksumPolicy.managedScript(for: body)
+        let tamperedBody = managed.replacingOccurrences(of: "echo ready", with: "echo changed")
+        let tamperedChecksum = managed.replacingOccurrences(
+            of: "# GitX checksum: ",
+            with: "# GitX checksum: 0"
+        )
+
+        XCTAssertFalse(PBManagedScriptChecksumPolicy.hasValidChecksum(for: tamperedBody))
+        XCTAssertFalse(PBManagedScriptChecksumPolicy.hasValidChecksum(for: tamperedChecksum))
+        XCTAssertFalse(PBManagedScriptChecksumPolicy.hasValidChecksum(for: ""))
+        XCTAssertFalse(PBManagedScriptChecksumPolicy.hasValidChecksum(for: "#!/bin/zsh\necho unmanaged\n"))
+        XCTAssertFalse(
+            PBManagedScriptChecksumPolicy.hasValidChecksum(
+                for: "#!/bin/zsh\n# GitX checksum: missing-body"
+            )
+        )
+    }
+
+    func testRaycastManagedScriptRemovalAcceptsLineEndingOnlyChanges() throws {
+        let restoreDirectory = preservePersistentDefault(forKey: "PBRaycastScriptsDirectory")
+        defer { restoreDirectory() }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitXRaycast-LineEndings-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        PBApplicationSettings.raycastScriptsDirectory = directory.path
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 240),
+            styleMask: .titled,
+            backing: .buffered,
+            defer: false
+        )
+
+        PBIntegrationManager.shared.installRaycastScripts(presenting: window)
+        dismissAttachedSheet(from: window)
+        let crlfScript = directory.appendingPathComponent("gitx-raycast-open-repository.sh")
+        let classicMacScript = directory.appendingPathComponent("gitx-raycast-open-finder.sh")
+        let crlfContents = try String(contentsOf: crlfScript, encoding: .utf8)
+            .replacingOccurrences(of: "\n", with: "\r\n")
+        let classicMacContents = try String(contentsOf: classicMacScript, encoding: .utf8)
+            .replacingOccurrences(of: "\n", with: "\r")
+        try crlfContents.write(to: crlfScript, atomically: true, encoding: .utf8)
+        try classicMacContents.write(to: classicMacScript, atomically: true, encoding: .utf8)
+
+        PBIntegrationManager.shared.removeRaycastScripts(presenting: window)
+        dismissAttachedSheet(from: window)
+
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path), [])
     }
 
     func testRecentRepositoryStorePersistsReplacesAndRemovesEntries() {

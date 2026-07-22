@@ -196,6 +196,16 @@ final nonisolated class DiffDocumentParser: NSObject {
         }
 
         let header = lines[headerIndex]
+        if let paths = paths(fromDiffHeader: header) {
+            let destination = normalizedPath(paths.destination)
+            if destination != "/dev/null", !destination.isEmpty {
+                return destination
+            }
+            let source = normalizedPath(paths.source)
+            if source != "/dev/null", !source.isEmpty {
+                return source
+            }
+        }
         if let destination = header.range(of: " b/", options: .backwards) {
             let pathStart = header.index(destination.upperBound, offsetBy: -2)
             return normalizedPath(String(header[pathStart...]))
@@ -204,16 +214,108 @@ final nonisolated class DiffDocumentParser: NSObject {
     }
 
     private func normalizedPath(_ input: String) -> String {
-        var path = input
-        if path.hasPrefix("\""), path.hasSuffix("\""), path.utf16.count >= 2 {
-            path = String(path.dropFirst().dropLast())
-        }
-        path = path.replacingOccurrences(of: "\\\"", with: "\"")
-        path = path.replacingOccurrences(of: "\\\\", with: "\\")
+        var path = decodedGitPath(input)
         if path.hasPrefix("a/") || path.hasPrefix("b/") {
             path = String(path.dropFirst(2))
         }
         return path
+    }
+
+    private func paths(fromDiffHeader header: String) -> (source: String, destination: String)? {
+        let prefix = "diff --git "
+        guard header.hasPrefix(prefix) else { return nil }
+        let payload = String(header.dropFirst(prefix.count))
+        var index = payload.startIndex
+        guard let source = nextHeaderToken(in: payload, index: &index) else { return nil }
+        guard let destination = nextHeaderToken(in: payload, index: &index) else { return nil }
+        while index < payload.endIndex, payload[index].isWhitespace {
+            index = payload.index(after: index)
+        }
+        guard index == payload.endIndex else {
+            // With core.quotePath disabled, older Git versions can leave spaces unquoted.
+            // The destination marker is unambiguous when read from the right.
+            guard let marker = payload.range(of: " b/", options: .backwards) else { return nil }
+            return (String(payload[..<marker.lowerBound]), String(payload[payload.index(after: marker.lowerBound)...]))
+        }
+        return (source, destination)
+    }
+
+    private func nextHeaderToken(in text: String, index: inout String.Index) -> String? {
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        guard index < text.endIndex else { return nil }
+        let start = index
+        if text[index] == "\"" {
+            index = text.index(after: index)
+            var escaped = false
+            while index < text.endIndex {
+                let character = text[index]
+                index = text.index(after: index)
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    return String(text[start ..< index])
+                }
+            }
+            return nil
+        }
+        while index < text.endIndex, !text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        return String(text[start ..< index])
+    }
+
+    private func decodedGitPath(_ input: String) -> String {
+        guard input.hasPrefix("\""), input.hasSuffix("\""), input.count >= 2 else { return input }
+        let scalars = Array(input.dropFirst().dropLast().unicodeScalars)
+        var bytes: [UInt8] = []
+        var index = 0
+        while index < scalars.count {
+            let scalar = scalars[index]
+            guard scalar == "\\" else {
+                bytes.append(contentsOf: String(scalar).utf8)
+                index += 1
+                continue
+            }
+            index += 1
+            guard index < scalars.count else {
+                bytes.append(UInt8(ascii: "\\"))
+                break
+            }
+            let escaped = scalars[index]
+            if (48 ... 55).contains(escaped.value) {
+                var value = 0
+                var digitCount = 0
+                while index < scalars.count,
+                      digitCount < 3,
+                      (48 ... 55).contains(scalars[index].value)
+                {
+                    let digit = Int(scalars[index].value - 48)
+                    value = value * 8 + digit
+                    index += 1
+                    digitCount += 1
+                }
+                bytes.append(UInt8(truncatingIfNeeded: value))
+                continue
+            }
+            let escapedBytes: [UInt8]
+            switch escaped {
+            case "a": escapedBytes = [7]
+            case "b": escapedBytes = [8]
+            case "t": escapedBytes = [9]
+            case "n": escapedBytes = [10]
+            case "v": escapedBytes = [11]
+            case "f": escapedBytes = [12]
+            case "r": escapedBytes = [13]
+            default: escapedBytes = Array(String(escaped).utf8)
+            }
+            bytes.append(contentsOf: escapedBytes)
+            index += 1
+        }
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     private func isFileHeaderDetail(_ line: String) -> Bool {
@@ -222,6 +324,58 @@ final nonisolated class DiffDocumentParser: NSObject {
             line.hasPrefix("deleted file ") ||
             line.hasPrefix("--- ") ||
             line.hasPrefix("+++ ")
+    }
+}
+
+private enum SyntheticUntrackedDiffFormatter {
+    static func diff(path: String, contents: String) -> String {
+        guard !contents.isEmpty else { return "" }
+        let endsWithNewline = contents.hasSuffix("\n")
+        var lines = contents.components(separatedBy: "\n")
+        if endsWithNewline {
+            lines.removeLast()
+        }
+        let sourcePath = quotedGitPath("a/\(path)")
+        let destinationPath = quotedGitPath("b/\(path)")
+        var added = lines.map { "+\($0)\n" }.joined()
+        if !endsWithNewline {
+            added += "\\ No newline at end of file\n"
+        }
+        let header = [
+            "diff --git \(sourcePath) \(destinationPath)",
+            "new file mode 100644",
+            "--- /dev/null",
+            "+++ \(destinationPath)",
+            "@@ -0,0 +1,\(lines.count) @@",
+        ].joined(separator: "\n") + "\n"
+        return header + added
+    }
+
+    private static func quotedGitPath(_ path: String) -> String {
+        let requiresQuotes = path.utf8.contains { byte in
+            byte < 0x21 || byte > 0x7E || byte == UInt8(ascii: "\"") || byte == UInt8(ascii: "\\")
+        }
+        guard requiresQuotes else { return path }
+        var result = "\""
+        for byte in path.utf8 {
+            if byte == UInt8(ascii: "\"") || byte == UInt8(ascii: "\\") {
+                result.append("\\")
+                result.append(Character(UnicodeScalar(byte)))
+            } else if byte >= 0x21, byte <= 0x7E {
+                result.append(Character(UnicodeScalar(byte)))
+            } else {
+                result += String(format: "\\%03o", byte)
+            }
+        }
+        return result + "\""
+    }
+}
+
+@objc(PBSyntheticUntrackedDiffFormatter)
+final nonisolated class SyntheticUntrackedDiffFormatterBridge: NSObject {
+    @objc(diffForPath:contents:)
+    static func diff(path: String, contents: String) -> String {
+        SyntheticUntrackedDiffFormatter.diff(path: path, contents: contents)
     }
 }
 

@@ -216,6 +216,41 @@ private enum TerminalLaunchError: LocalizedError {
     }
 }
 
+@objc(PBManagedScriptChecksumPolicy)
+final nonisolated class ManagedScriptChecksumPolicy: NSObject {
+    private static let checksumPrefix = "# GitX checksum: "
+
+    @objc(managedScriptForBody:)
+    static func managedScript(for body: String) -> String {
+        let canonicalBody = canonicalizingLineEndings(in: body)
+        let checksum = SHA256.hash(data: Data(canonicalBody.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let lines = canonicalBody.components(separatedBy: "\n")
+        guard !lines.isEmpty else { return canonicalBody }
+        return ([lines[0], checksumPrefix + checksum] + lines.dropFirst()).joined(separator: "\n")
+    }
+
+    @objc(hasValidChecksumForScript:)
+    static func hasValidChecksum(for script: String) -> Bool {
+        let canonicalScript = canonicalizingLineEndings(in: script)
+        let lines = canonicalScript.components(separatedBy: "\n")
+        guard lines.count > 2, lines[1].hasPrefix(checksumPrefix) else { return false }
+        let recorded = String(lines[1].dropFirst(checksumPrefix.count))
+        let body = ([lines[0]] + lines.dropFirst(2)).joined(separator: "\n")
+        let actual = SHA256.hash(data: Data(body.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return recorded == actual
+    }
+
+    private static func canonicalizingLineEndings(in string: String) -> String {
+        string
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+}
+
 @objc(PBIntegrationManager)
 final class IntegrationManager: NSObject {
     @objc static let shared = IntegrationManager()
@@ -231,7 +266,7 @@ final class IntegrationManager: NSObject {
                 if FileManager.default.fileExists(atPath: destination.path),
                    let existing = try? String(contentsOf: destination, encoding: .utf8),
                    existing != script.contents,
-                   !hasValidManagedChecksum(existing)
+                   !ManagedScriptChecksumPolicy.hasValidChecksum(for: existing)
                 {
                     let alert = NSAlert()
                     alert.messageText = "Replace Modified Raycast Script?"
@@ -259,7 +294,7 @@ final class IntegrationManager: NSObject {
                 let file = directory.appendingPathComponent(managedPrefix + script.filename)
                 guard FileManager.default.fileExists(atPath: file.path) else { continue }
                 guard let contents = try? String(contentsOf: file, encoding: .utf8),
-                      hasValidManagedChecksum(contents)
+                      ManagedScriptChecksumPolicy.hasValidChecksum(for: contents)
                 else {
                     preservedCount += 1
                     logger.notice("Preserved a modified managed Raycast command")
@@ -304,23 +339,7 @@ final class IntegrationManager: NSObject {
             ("open-finder.sh", header + "# @raycast.title Open Frontmost Finder Folder in GitX\n\(appLookup)\nDIR=$(osascript -e 'tell application \\\"Finder\\\" to POSIX path of (target of front window as alias)')\n\\\"$APP/Contents/Resources/gitx\\\" \\\"$DIR\\\"\n"),
             ("show-recents.sh", header + "# @raycast.title Show GitX Recents\nopen -b net.phere.GitX --args --welcome\n"),
             ("start-clone.sh", header + "# @raycast.title Start GitX Clone\nopen -b net.phere.GitX --args --clone\n"),
-        ].map { ($0.0, managedScript($0.1)) }
-    }
-
-    private func managedScript(_ body: String) -> String {
-        let checksum = SHA256.hash(data: Data(body.utf8)).map { String(format: "%02x", $0) }.joined()
-        let lines = body.components(separatedBy: "\n")
-        guard !lines.isEmpty else { return body }
-        return ([lines[0], "# GitX checksum: \(checksum)"] + lines.dropFirst()).joined(separator: "\n")
-    }
-
-    private func hasValidManagedChecksum(_ script: String) -> Bool {
-        let lines = script.components(separatedBy: "\n")
-        guard lines.count > 2, lines[1].hasPrefix("# GitX checksum: ") else { return false }
-        let recorded = String(lines[1].dropFirst("# GitX checksum: ".count))
-        let body = ([lines[0]] + lines.dropFirst(2)).joined(separator: "\n")
-        let actual = SHA256.hash(data: Data(body.utf8)).map { String(format: "%02x", $0) }.joined()
-        return recorded == actual
+        ].map { ($0.0, ManagedScriptChecksumPolicy.managedScript(for: $0.1)) }
     }
 
     private func present(title: String, message: String, window: NSWindow?) {

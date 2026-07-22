@@ -12,13 +12,14 @@
 
 + (NSURL *)workDirForURL:(NSURL *)fileURL;
 {
-	if (!fileURL.isFileURL) {
+	NSString *path = fileURL.path;
+	if (!fileURL.isFileURL || path.length == 0) {
 		return nil;
 	}
 
 	git_repository *repo = NULL;
 	int gitResult = git_repository_open_ext(&repo,
-											fileURL.path.UTF8String,
+											path.UTF8String,
 											GIT_REPOSITORY_OPEN_CROSS_FS,
 											NULL);
 	if (gitResult != GIT_OK || !repo) {
@@ -38,12 +39,13 @@
 
 + (NSURL *)gitDirForURL:(NSURL *)fileURL
 {
-	if (!fileURL.isFileURL) {
+	NSString *path = fileURL.path;
+	if (!fileURL.isFileURL || path.length == 0) {
 		return nil;
 	}
 	git_buf path_buffer = {NULL, 0, 0};
 	int gitResult = git_repository_discover(&path_buffer,
-											[fileURL.path UTF8String],
+											path.UTF8String,
 											GIT_REPOSITORY_OPEN_CROSS_FS,
 											nil);
 
@@ -69,13 +71,14 @@
 
 + (NSURL *)fileURLForURL:(NSURL *)inputURL
 {
-	if (!inputURL.isFileURL) {
+	NSString *path = inputURL.path;
+	if (!inputURL.isFileURL || path.length == 0) {
 		return nil;
 	}
 
 	git_repository *repo = NULL;
 	int gitResult = git_repository_open_ext(&repo,
-											inputURL.path.UTF8String,
+											path.UTF8String,
 											GIT_REPOSITORY_OPEN_CROSS_FS,
 											NULL);
 	if (gitResult != GIT_OK || !repo) {

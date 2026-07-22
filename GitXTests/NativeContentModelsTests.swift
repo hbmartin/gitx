@@ -79,6 +79,63 @@ final class NativeContentModelsTests: XCTestCase {
         XCTAssertEqual(parser.pathForDiffHeader(at: 2, lines: ["short"]), "")
     }
 
+    func testParserDecodesQuotedHeaderOnlyPathsAndGitEscapes() {
+        XCTAssertEqual(
+            parser.pathForDiffHeader(
+                at: 0,
+                lines: ["diff --git \"a/old name.bin\" \"b/new name.bin\"", "Binary files differ"]
+            ),
+            "new name.bin"
+        )
+        XCTAssertEqual(
+            parser.pathForDiffHeader(
+                at: 0,
+                lines: ["diff --git \"a/old.txt\" \"b/quoted\\\"slash\\\\name.txt\""]
+            ),
+            "quoted\"slash\\name.txt"
+        )
+        XCTAssertEqual(
+            parser.pathForDiffHeader(
+                at: 0,
+                lines: ["diff --git \"a/caf\\303\\251.txt\" \"b/caf\\303\\251.txt\""]
+            ),
+            "café.txt"
+        )
+        XCTAssertEqual(
+            parser.pathForDiffHeader(at: 0, lines: ["diff --git a/deleted.txt /dev/null"]),
+            "deleted.txt"
+        )
+    }
+
+    func testSyntheticUntrackedDiffFormattingCoversContentAndPathBoundaries() {
+        XCTAssertEqual(PBSyntheticUntrackedDiffFormatter.diff(forPath: "empty.txt", contents: ""), "")
+        XCTAssertEqual(
+            PBSyntheticUntrackedDiffFormatter.diff(forPath: "plain.txt", contents: "one\ntwo\n"),
+            "diff --git a/plain.txt b/plain.txt\n" +
+                "new file mode 100644\n--- /dev/null\n+++ b/plain.txt\n" +
+                "@@ -0,0 +1,2 @@\n+one\n+two\n"
+        )
+        XCTAssertEqual(
+            PBSyntheticUntrackedDiffFormatter.diff(forPath: "plain.txt", contents: "one"),
+            "diff --git a/plain.txt b/plain.txt\n" +
+                "new file mode 100644\n--- /dev/null\n+++ b/plain.txt\n" +
+                "@@ -0,0 +1,1 @@\n+one\n\\ No newline at end of file\n"
+        )
+
+        let quoted = PBSyntheticUntrackedDiffFormatter.diff(
+            forPath: "Folder/ünicode \"name\".txt",
+            contents: "line\n"
+        )
+        XCTAssertTrue(quoted.hasPrefix("diff --git \"a/Folder/\\303\\274nicode\\040\\\"name\\\".txt\" "))
+        XCTAssertTrue(quoted.contains("+++ \"b/Folder/\\303\\274nicode\\040\\\"name\\\".txt\"\n"))
+        XCTAssertTrue(quoted.hasSuffix("@@ -0,0 +1,1 @@\n+line\n"))
+
+        XCTAssertTrue(
+            PBSyntheticUntrackedDiffFormatter.diff(forPath: "newline.txt", contents: "\n")
+                .hasSuffix("@@ -0,0 +1,1 @@\n+\n")
+        )
+    }
+
     func testPatchBuilderSelectsForwardAndReverseChanges() {
         let fileHeader = ["diff --git a/file.txt b/file.txt", "--- a/file.txt", "+++ b/file.txt"]
         let hunk = ["@@ -1,3 +1,3 @@ label", " context", "-old", "+new", " tail"]

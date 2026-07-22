@@ -168,6 +168,11 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 	NS_SWIFT_NAME(removeRaycastScripts(presenting:));
 @end
 
+@interface PBManagedScriptChecksumPolicy : NSObject
++ (NSString *)managedScriptForBody:(NSString *)body NS_SWIFT_NAME(managedScript(for:));
++ (BOOL)hasValidChecksumForScript:(NSString *)script NS_SWIFT_NAME(hasValidChecksum(for:));
+@end
+
 @interface PBRecentRepositoryStore : NSObject
 @property (class, readonly, strong) PBRecentRepositoryStore *shared;
 - (void)record:(NSURL *)url;

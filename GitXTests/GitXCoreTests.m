@@ -422,6 +422,36 @@
 	return commits;
 }
 
+- (void)testRevisionLoadGenerationSuppressesSupersededAndCancelledCompletions
+{
+	PBGitRevList *revisionList = [[PBGitRevList alloc] initWithRepository:self.repository
+																	  rev:[PBGitRevSpecifier allBranchesRevSpec]
+															  shouldGraph:NO];
+	NSOperationQueue *operationQueue = [revisionList valueForKey:@"operationQueue"];
+	operationQueue.suspended = YES;
+	XCTestExpectation *superseded = [self expectationWithDescription:@"superseded generation ignored"];
+	superseded.inverted = YES;
+	XCTestExpectation *latest = [self expectationWithDescription:@"latest generation completed"];
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[superseded fulfill];
+	}];
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[latest fulfill];
+	}];
+	operationQueue.suspended = NO;
+	[self waitForExpectations:@[ latest, superseded ] timeout:2.0];
+
+	operationQueue.suspended = YES;
+	XCTestExpectation *cancelled = [self expectationWithDescription:@"cancelled generation ignored"];
+	cancelled.inverted = YES;
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[cancelled fulfill];
+	}];
+	[revisionList cancel];
+	operationQueue.suspended = NO;
+	[self waitForExpectations:@[ cancelled ] timeout:0.2];
+}
+
 - (void)assertCommitsAreUniqueAndChildrenPrecedeParents:(NSArray<PBGitCommit *> *)commits
 {
 	NSMutableDictionary<NSString *, NSNumber *> *indexesBySHA = [NSMutableDictionary dictionaryWithCapacity:commits.count];

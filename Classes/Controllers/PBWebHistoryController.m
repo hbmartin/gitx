@@ -239,14 +239,7 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 - (NSString *)syntheticUntrackedDiffForFile:(PBChangedFile *)file
 {
 	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:PBApplicationSettings.diffContextLines] ?: @"";
-	NSMutableArray<NSString *> *lines = [[contents componentsSeparatedByString:@"\n"] mutableCopy];
-	BOOL endsWithNewline = [contents hasSuffix:@"\n"];
-	if (endsWithNewline && [lines.lastObject length] == 0) [lines removeLastObject];
-	if (lines.count == 0 || (lines.count == 1 && [lines.firstObject length] == 0)) return @"";
-	NSMutableString *added = [NSMutableString string];
-	for (NSString *line in lines) [added appendFormat:@"+%@\n", line];
-	if (!endsWithNewline) [added appendString:@"\\ No newline at end of file\n"];
-	return [NSString stringWithFormat:@"diff --git a/%@ b/%@\nnew file mode 100644\n--- /dev/null\n+++ b/%@\n@@ -0,0 +1,%lu @@\n%@", file.path, file.path, file.path, (unsigned long)lines.count, added];
+	return [PBSyntheticUntrackedDiffFormatter diffForPath:file.path contents:contents];
 }
 
 - (nullable NSArray<NSDictionary *> *)workingStateSectionsForChanges:(NSArray<PBChangedFile *> *)changes

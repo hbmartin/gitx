@@ -36,6 +36,7 @@
 @property (nonatomic, strong) NSMutableSet<NSString *> *publishedSHAs;
 
 - (BOOL)isLoadGenerationCurrent:(NSUInteger)generation;
+- (void)performLoadStateOnMainThread:(dispatch_block_t)block;
 - (void)updateCommits:(NSArray<PBGitCommit *> *)revisions operation:(NSOperation *)operation generation:(NSUInteger)generation;
 - (void)addCommitsFromEnumerator:(GTEnumerator *)enumerator operation:(NSOperation *)operation generation:(NSUInteger)generation;
 - (void)finishLoadGeneration:(NSUInteger)generation completionBlock:(void (^)(void))completionBlock;
@@ -67,13 +68,13 @@
 
 - (void)loadRevisionsWithCompletionBlock:(void (^)(void))completionBlock
 {
-	[self.operationQueue cancelAllOperations];
-	NSUInteger generation;
-	@synchronized(self) {
+	__block NSUInteger generation;
+	[self performLoadStateOnMainThread:^{
 		generation = ++self.loadGeneration;
 		self.resetCommits = YES;
 		self.publishedSHAs = [NSMutableSet set];
-	}
+	}];
+	[self.operationQueue cancelAllOperations];
 	NSLog(@"[GitX] Starting revision load generation %lu", (unsigned long)generation);
 
 	NSBlockOperation *parseOperation = [[NSBlockOperation alloc] init];
@@ -103,9 +104,9 @@
 
 - (void)cancel
 {
-	@synchronized(self) {
+	[self performLoadStateOnMainThread:^{
 		self.loadGeneration++;
-	}
+	}];
 	[self.operationQueue cancelAllOperations];
 }
 
@@ -121,57 +122,70 @@
 
 - (BOOL)isLoadGenerationCurrent:(NSUInteger)generation
 {
-	@synchronized(self) {
-		return generation == self.loadGeneration;
+	__block BOOL current;
+	[self performLoadStateOnMainThread:^{
+		current = generation == self.loadGeneration;
+	}];
+	return current;
+}
+
+- (void)performLoadStateOnMainThread:(dispatch_block_t)block
+{
+	if (NSThread.isMainThread) {
+		block();
+		return;
 	}
+	dispatch_sync(dispatch_get_main_queue(), block);
 }
 
 - (void)updateCommits:(NSArray<PBGitCommit *> *)revisions operation:(NSOperation *)operation generation:(NSUInteger)generation
 {
-	if (!revisions || [revisions count] == 0 || operation.cancelled || ![self isLoadGenerationCurrent:generation]) {
-		if (revisions.count && !operation.cancelled)
-			NSLog(@"[GitX] Dropped %lu stale commits from revision load generation %lu", (unsigned long)revisions.count, (unsigned long)generation);
-		return;
-	}
+	if (!revisions || revisions.count == 0) return;
+	[self performLoadStateOnMainThread:^{
+		if (operation.cancelled || generation != self.loadGeneration) {
+			if (!operation.cancelled)
+				NSLog(@"[GitX] Dropped %lu stale commits from revision load generation %lu", (unsigned long)revisions.count, (unsigned long)generation);
+			return;
+		}
 
-	NSMutableArray<PBGitCommit *> *uniqueRevisions = [NSMutableArray arrayWithCapacity:revisions.count];
-	@synchronized(self) {
-		if (generation != self.loadGeneration) return;
+		NSMutableArray<PBGitCommit *> *uniqueRevisions = [NSMutableArray arrayWithCapacity:revisions.count];
 		for (PBGitCommit *commit in revisions) {
 			if ([self.publishedSHAs containsObject:commit.SHA]) continue;
 			[self.publishedSHAs addObject:commit.SHA];
 			[uniqueRevisions addObject:commit];
 		}
-	}
-	if (uniqueRevisions.count == 0) return;
+		if (uniqueRevisions.count == 0) return;
 
-	if (self.resetCommits) {
-		self.commits = [uniqueRevisions mutableCopy];
-		self.resetCommits = NO;
-		NSLog(@"[GitX] Published %lu initial commits for revision load generation %lu", (unsigned long)uniqueRevisions.count, (unsigned long)generation);
-		return;
-	}
+		if (self.resetCommits) {
+			self.commits = [uniqueRevisions mutableCopy];
+			self.resetCommits = NO;
+			NSLog(@"[GitX] Published %lu initial commits for revision load generation %lu", (unsigned long)uniqueRevisions.count, (unsigned long)generation);
+			return;
+		}
 
-	NSRange range = NSMakeRange([self.commits count], [uniqueRevisions count]);
-	NSIndexSet *indexes = [NSIndexSet indexSetWithIndexesInRange:range];
+		NSRange range = NSMakeRange([self.commits count], [uniqueRevisions count]);
+		NSIndexSet *indexes = [NSIndexSet indexSetWithIndexesInRange:range];
 
-	[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indexes forKey:@"commits"];
-	[self.commits addObjectsFromArray:uniqueRevisions];
-	[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indexes forKey:@"commits"];
+		[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indexes forKey:@"commits"];
+		[self.commits addObjectsFromArray:uniqueRevisions];
+		[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indexes forKey:@"commits"];
+	}];
 }
 
 - (void)finishLoadGeneration:(NSUInteger)generation completionBlock:(void (^)(void))completionBlock
 {
-	if (![self isLoadGenerationCurrent:generation]) {
-		NSLog(@"[GitX] Ignored completion for stale revision load generation %lu", (unsigned long)generation);
-		return;
-	}
-	if (self.resetCommits) {
-		self.commits = [NSMutableArray array];
-		self.resetCommits = NO;
-		NSLog(@"[GitX] Revision load generation %lu completed empty", (unsigned long)generation);
-	}
-	if (completionBlock) completionBlock();
+	[self performLoadStateOnMainThread:^{
+		if (generation != self.loadGeneration) {
+			NSLog(@"[GitX] Ignored completion for stale revision load generation %lu", (unsigned long)generation);
+			return;
+		}
+		if (self.resetCommits) {
+			self.commits = [NSMutableArray array];
+			self.resetCommits = NO;
+			NSLog(@"[GitX] Revision load generation %lu completed empty", (unsigned long)generation);
+		}
+		if (completionBlock) completionBlock();
+	}];
 }
 
 static BOOL hasParameter(NSMutableArray *parameters, NSString *paramName)

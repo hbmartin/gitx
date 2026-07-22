@@ -84,6 +84,15 @@ final nonisolated class IndexMutationService: NSObject {
         reverse: Bool,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
+        guard !patch.isEmpty else {
+            outputError?.pointee = NSError(
+                domain: "PBGitIndexMutationError",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "The patch is empty and cannot be applied."]
+            )
+            logger.error("Rejected an empty index patch")
+            return false
+        }
         let normalizedPatch = patch.hasSuffix("\n") ? patch : patch + "\n"
         var arguments = ["apply", "--unidiff-zero"]
         if stage {

@@ -365,6 +365,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.reselectCommitAfterUpdate()
         XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === replacement)
 
+        let stateCoordinator = PBHistoryStateCoordinator()
+        let secondReplacement = PBGitCommit(repository: repository, andCommit: commits[1].gtCommit)
+        let duplicateSecondReplacement = PBGitCommit(repository: repository, andCommit: commits[1].gtCommit)
+        let preserved = try XCTUnwrap(
+            stateCoordinator.preservedSelection(
+                [commits[1], commits[0], commits[1]],
+                inContent: [secondReplacement, duplicateSecondReplacement, replacement]
+            )
+        )
+        XCTAssertTrue(preserved[0] === secondReplacement)
+        XCTAssertTrue(preserved[1] === replacement)
+        XCTAssertTrue(preserved[2] === secondReplacement)
+        XCTAssertNil(stateCoordinator.preservedSelection([commits[2]], inContent: [replacement]))
+
         historyController.commitController.content = commits
         historyController.commitController.rearrangeObjects()
         historyController.commitController.setSelectedObjects([commits[0]])
@@ -430,7 +444,19 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         modeControl.selectedSegment = 3
         fileView.perform(NSSelectorFromString("showFile"))
         pumpRunLoop(for: 1.0)
-        XCTAssertTrue(nativeView.textView.string.contains("new file mode"))
+        XCTAssertTrue(
+            nativeView.textView.string.contains(
+                """
+                diff --git a/uncommitted.txt b/uncommitted.txt
+                new file mode 100644
+                --- /dev/null
+                +++ b/uncommitted.txt
+                @@ -0,0 +1,1 @@
+                +working state
+
+                """
+            )
+        )
         try historyController.commitController.setSelectedObjects([XCTUnwrap(workingState)])
         historyController.updateKeys()
         historyController.updateUncommittedChanges()
@@ -516,6 +542,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             historyList.value(forKey: "currentRevList") as? NSObject
         )
         let currentCommits = currentRevList.value(forKey: "commits")
+        let publishedCount = historyList.commits.count
+        currentRevList.setValue(nil, forKey: "commits")
+        XCTAssertEqual(historyList.commits.count, publishedCount)
+        currentRevList.setValue(NSNull(), forKey: "commits")
+        XCTAssertEqual(historyList.commits.count, publishedCount)
+        currentRevList.setValue("invalid payload", forKey: "commits")
+        XCTAssertEqual(historyList.commits.count, publishedCount)
+        currentRevList.setValue(currentCommits, forKey: "commits")
         currentRevList.setValue(NSMutableArray(), forKey: "commits")
         historyList.commits = [commits[0]]
         historyList.setValue(true, forKey: "resetCommits")

@@ -12,6 +12,20 @@ private final class RepositoryIgnoreErrorCollector: @unchecked Sendable {
     }
 }
 
+private final class RepositoryIgnoreFileCoordinatorSpy: NSFileCoordinator {
+    private(set) var writingOptions: [NSFileCoordinator.WritingOptions] = []
+
+    override func coordinate(
+        writingItemAt url: URL,
+        options: NSFileCoordinator.WritingOptions = [],
+        error outError: AutoreleasingUnsafeMutablePointer<NSError?>?,
+        byAccessor writer: (URL) -> Void
+    ) {
+        writingOptions.append(options)
+        writer(url)
+    }
+}
+
 // swift6-safety-justification: this box intentionally stress-tests the production object's synchronized access.
 private final class RepositorySettingsConcurrencyBox: @unchecked Sendable {
     let settings: PBRepositoryUISettings
@@ -251,6 +265,20 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
             XCTAssertEqual((error as NSError).code, CocoaError.Code.userCancelled.rawValue)
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: ignoreURL.path))
+    }
+
+    func testAtomicIgnoreWritesDeclareReplacementCoordination() throws {
+        let coordinator = RepositoryIgnoreFileCoordinatorSpy(filePresenter: nil)
+        let service = PBRepositoryIgnoreFileService(
+            fileURL: ignoreURL,
+            fileCoordinator: coordinator
+        )
+
+        try service.appendPaths(["ignored.txt"])
+        try FileManager.default.removeItem(at: ignoreURL)
+        try service.appendPaths([])
+
+        XCTAssertEqual(coordinator.writingOptions, [.forReplacing, .forReplacing])
     }
 
     func testAppendingUsesExactlyOneSeparatorAndPreservesExistingNewlines() throws {

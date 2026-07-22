@@ -355,8 +355,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 				// so swallow it here and still close the descriptor below to avoid leaking it.
 				PBTaskLog(@"task %p: stdin write failed: %@", strongSelf, exception);
 			} @finally {
-				[handle closeFile];
 				handle.writeabilityHandler = nil;
+				[handle closeFile];
 			}
 		};
 	}

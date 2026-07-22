@@ -265,7 +265,12 @@
 						  block:^(MAKVONotification *notification) {
 							  PBGitHistoryList *observer = notification.observer;
 							  if (notification.kind == NSKeyValueChangeInsertion || notification.kind == NSKeyValueChangeSetting) {
-								  NSArray *newCommits = notification.newValue;
+								  id payload = notification.newValue;
+								  if (![payload isKindOfClass:NSArray.class]) {
+									  NSLog(@"[GitX] Ignored invalid history KVO payload of type %@", [payload class]);
+									  return;
+								  }
+								  NSArray *newCommits = payload;
 								  if (newCommits.count == 0) return;
 								  if ([observer->repository.currentBranch isSimpleRef])
 									  [observer->graphQueue addOperation:[observer operationForCommits:newCommits]];

@@ -171,14 +171,14 @@ final nonisolated class RepositoryRefreshCoordinator: NSObject, Sendable { // sw
     }
 
     private func deliver(generation scheduledGeneration: UInt64) {
-        let delivery: (eventType: UInt, paths: [String], cancellationGeneration: UInt64)? = state.withLock { state in
+        let delivery: (eventType: UInt, paths: Set<String>, cancellationGeneration: UInt64)? = state.withLock { state in
             guard scheduledGeneration == state.generation else {
                 return nil
             }
 
             let delivery = (
                 eventType: state.accumulatedEventType,
-                paths: state.accumulatedPaths.sorted(),
+                paths: state.accumulatedPaths,
                 cancellationGeneration: state.cancellationGeneration
             )
             state.scheduledAction = nil
@@ -188,11 +188,12 @@ final nonisolated class RepositoryRefreshCoordinator: NSObject, Sendable { // sw
         }
 
         guard let delivery else { return }
+        let sortedPaths = delivery.paths.sorted()
 
         callbackExecutor { [weak self] in
             self?.deliverIfNotCancelled(
                 eventType: delivery.eventType,
-                paths: delivery.paths,
+                paths: sortedPaths,
                 cancellationGeneration: delivery.cancellationGeneration
             )
         }
