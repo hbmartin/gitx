@@ -29,11 +29,23 @@ class ReleaseTaskTests(unittest.TestCase):
         )
 
         self.assertIn("mise run release", result.stdout)
-        self.assertIn("arm64|x86_64|universal", result.stdout)
-        self.assertIn("GITX_RELEASE_ARCH", result.stdout)
+        self.assertNotIn("x86_64", result.stdout)
+        self.assertNotIn("universal", result.stdout)
+        self.assertNotIn("GITX_RELEASE_ARCH", result.stdout)
         self.assertIn("Developer ID", result.stdout)
-        self.assertIn("GitX-<architecture>.zip", result.stdout)
-        self.assertIn("GitX-<architecture>.dmg", result.stdout)
+        self.assertIn("GitX-arm64.zip", result.stdout)
+        self.assertIn("GitX-arm64.dmg", result.stdout)
+
+    def test_release_task_rejects_architecture_arguments(self) -> None:
+        result = subprocess.run(
+            [self.task, "x86_64"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unknown argument: x86_64", result.stderr)
 
 
 if __name__ == "__main__":
