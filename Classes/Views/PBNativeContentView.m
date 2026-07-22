@@ -146,11 +146,10 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	if (generation != self.renderGeneration) return;
 	NSArray<NSValue *> *selectedRanges = scrollOrigin ? self.textView.selectedRanges : nil;
 	self.linkPayloads = linkPayloads ? [linkPayloads mutableCopy] : [NSMutableDictionary dictionary];
-	NSAttributedString *restyledString = [self.typography restyledString:string];
-	[self.textView.textStorage setAttributedString:restyledString];
+	[self.textView.textStorage setAttributedString:string];
 	if (selectedRanges)
 		self.textView.selectedRanges = [self validSelectedRanges:selectedRanges
-													  textLength:restyledString.length];
+												  textLength:string.length];
 	if (scrollOrigin) {
 		[self.textView layoutSubtreeIfNeeded];
 		[self.scrollView.contentView scrollToPoint:scrollOrigin.pointValue];
@@ -232,6 +231,8 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	NSDictionary<NSString *, NSNumber *> *anchor = [self currentViewportAnchor];
 	self.typography = [PBNativeContentTypography currentTypography];
 	[self configureRenderers];
+	[self.cachedDiffResults removeAllObjects];
+	[self.cachedDiffSections removeAllObjects];
 	NSAttributedString *restyledString = [self.typography restyledString:self.textView.attributedString];
 	[self.textView.textStorage setAttributedString:restyledString];
 	self.textView.selectedRanges = [self validSelectedRanges:selectedRanges textLength:restyledString.length];
