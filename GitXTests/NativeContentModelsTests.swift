@@ -107,6 +107,27 @@ final class NativeContentModelsTests: XCTestCase {
         )
     }
 
+    func testParserFallsBackForLegacyAndMalformedDiffHeaders() {
+        XCTAssertEqual(
+            parser.pathForDiffHeader(at: 0, lines: ["diff --git a/old name.txt b/new name.txt"]),
+            "new name.txt"
+        )
+        XCTAssertEqual(
+            parser.pathForDiffHeader(at: 0, lines: ["diff --git a/old.txt b/new.txt   "]),
+            "new.txt"
+        )
+        XCTAssertEqual(
+            parser.pathForDiffHeader(at: 0, lines: ["diff --git \"a/unterminated b/fallback.txt"]),
+            "fallback.txt"
+        )
+
+        let trailingBackslash = "+++ " + "\"" + "b/trailing" + "\\" + "\""
+        XCTAssertEqual(
+            parser.pathForDiffHeader(at: 0, lines: ["diff --git a/old.txt b/new.txt", trailingBackslash]),
+            "trailing\\"
+        )
+    }
+
     func testSyntheticUntrackedDiffFormattingCoversContentAndPathBoundaries() {
         XCTAssertEqual(PBSyntheticUntrackedDiffFormatter.diff(forPath: "empty.txt", contents: ""), "")
         XCTAssertEqual(
