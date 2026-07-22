@@ -149,7 +149,7 @@ NSString *const PBNativeImageSourceTaskDirectoryKey = @"taskDirectory";
 	[self.textView.textStorage setAttributedString:string];
 	if (selectedRanges)
 		self.textView.selectedRanges = [self validSelectedRanges:selectedRanges
-												  textLength:string.length];
+													  textLength:string.length];
 	if (scrollOrigin) {
 		[self.textView layoutSubtreeIfNeeded];
 		[self.scrollView.contentView scrollToPoint:scrollOrigin.pointValue];
