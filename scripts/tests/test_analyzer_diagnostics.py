@@ -70,6 +70,30 @@ class AnalyzerDiagnosticsTests(unittest.TestCase):
 
         self.assertEqual(diagnostic.path, "Classes/Legacy.m")
 
+    def test_parser_uses_nearest_source_directory_across_prefix_families(self) -> None:
+        cases = (
+            (
+                "/Users/Classes/workspace/gitx/GitXTests/AnalyzerTests.swift",
+                "GitXTests/AnalyzerTests.swift",
+            ),
+            (
+                "/Users/GitXTests/workspace/gitx/Classes/Legacy.m",
+                "Classes/Legacy.m",
+            ),
+            (
+                "/Users/GitXTests/workspace/gitx/GitXUITests/LaunchTests.swift",
+                "GitXUITests/LaunchTests.swift",
+            ),
+        )
+
+        for path, expected in cases:
+            with self.subTest(path=path):
+                diagnostic = self.module.parse_diagnostics(
+                    f"{path}:10:2: warning: test warning [-Wunused-variable]"
+                )[0]
+
+                self.assertEqual(diagnostic.path, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

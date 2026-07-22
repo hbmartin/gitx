@@ -17,6 +17,7 @@ DIAGNOSTIC = re.compile(
     r"(?P<severity>warning|error): (?P<message>.+)$"
 )
 COMPILER_WARNING = re.compile(r"\s*\[(?P<category>-W[^]]+)\]$")
+FIRST_PARTY_SOURCE_ROOTS = frozenset(("Classes", "GitXTests", "GitXUITests"))
 
 
 class WarningFingerprint(NamedTuple):
@@ -42,12 +43,10 @@ class Diagnostic(NamedTuple):
 
 def normalize_first_party_path(path: str) -> str | None:
     normalized = path.replace("\\", "/")
-    for prefix in ("Classes", "GitXTests", "GitXUITests"):
-        if normalized.startswith(f"{prefix}/"):
-            return normalized
-        marker = f"/{prefix}/"
-        if marker in normalized:
-            return f"{prefix}/{normalized.rsplit(marker, 1)[1]}"
+    components = normalized.split("/")
+    for index in range(len(components) - 2, -1, -1):
+        if components[index] in FIRST_PARTY_SOURCE_ROOTS:
+            return "/".join(components[index:])
     return None
 
 
