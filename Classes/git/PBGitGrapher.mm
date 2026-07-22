@@ -162,13 +162,9 @@ void add_line(struct PBGitGraphLine *lines, int *nLines, int upper, long from, l
 		add_line(lines, &currentLine, 0, currentLanes->size(), newPos, newLane->index());
 	}
 
-	if (commit.lineInfo) {
-		self.previous = commit.lineInfo;
-		self.previous.position = newPos;
-		self.previous.lines = lines;
-	}
-	else
-		self.previous = [[PBGraphCellInfo alloc] initWithPosition:newPos andLines:lines];
+	// A commit may still be visible while a refreshed graph is calculated. Publish a fresh immutable-by-convention
+	// cell-info object instead of mutating the one AppKit may currently be drawing on the main thread.
+	self.previous = [[PBGraphCellInfo alloc] initWithPosition:newPos andLines:lines];
 
 	if (currentLine > maxLines)
 		NSLog(@"Number of lines: %i vs allocated: %lu", currentLine, maxLines);

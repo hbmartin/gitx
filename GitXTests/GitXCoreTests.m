@@ -798,6 +798,7 @@
 	NSString *revisionOutput = [self.fixture git:@[ @"rev-list", @"--topo-order", @"--all" ] error:&error];
 	NSArray<NSString *> *revisions = [revisionOutput componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
 	PBGitGrapher *grapher = [[PBGitGrapher alloc] init];
+	NSMutableArray<PBGitCommit *> *commits = [NSMutableArray array];
 	__block long maximumColumns = 0;
 	for (NSString *SHA in revisions) {
 		if (!SHA.length) continue;
@@ -807,8 +808,16 @@
 		[grapher decorateCommit:commit];
 		XCTAssertNotNil(commit.lineInfo);
 		maximumColumns = MAX(maximumColumns, commit.lineInfo.numColumns);
+		[commits addObject:commit];
 	}
 	XCTAssertGreaterThanOrEqual(maximumColumns, 2, @"A merge should use at least two graph lanes");
+
+	PBGitGrapher *refreshedGrapher = [[PBGitGrapher alloc] init];
+	for (PBGitCommit *commit in commits) {
+		PBGraphCellInfo *publishedLineInfo = commit.lineInfo;
+		[refreshedGrapher decorateCommit:commit];
+		XCTAssertNotEqual(commit.lineInfo, publishedLineInfo, @"A refresh must not mutate line info that AppKit may be drawing");
+	}
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured
