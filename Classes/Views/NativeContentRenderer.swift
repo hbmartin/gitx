@@ -87,10 +87,6 @@ private nonisolated struct NativeRenderingSupport {
         typography.attributes(for: role, merging: attributes)
     }
 
-    func styledBody(_ attributedString: NSAttributedString) -> NSAttributedString {
-        typography.styledString(attributedString, role: .body)
-    }
-
     func appendSectionTitle(_ title: String, to result: NSMutableAttributedString) {
         guard !title.isEmpty else { return }
         if result.length > 0 {
@@ -120,6 +116,14 @@ private nonisolated struct NativeRenderingSupport {
     }
 }
 
+private nonisolated func nativeContentByteCount(
+    of sections: [NativeContentSection]
+) -> Int {
+    sections.reduce(0) { byteCount, section in
+        byteCount + section.text.lengthOfBytes(using: .utf8)
+    }
+}
+
 private struct NativeBlameRecord {
     let sha: String
     let author: String
@@ -127,44 +131,94 @@ private struct NativeBlameRecord {
     let code: String
 }
 
+typealias NativeRenderCancellation = @convention(block) () -> Bool
+
 @objc(PBNativeTextRenderer)
 final nonisolated class NativeTextRenderer: NSObject {
     private let support: NativeRenderingSupport
+    private let syntaxStyler: NativeSyntaxStyler
+    private let logger = Logger(subsystem: "com.gitx.gitx", category: "NativeTextRenderer")
 
     @objc(initWithBaseAttributes:titleAttributes:)
     init(
         baseAttributes: [NSAttributedString.Key: Any],
         titleAttributes: [NSAttributedString.Key: Any]
     ) {
-        support = NativeRenderingSupport(
+        let renderingSupport = NativeRenderingSupport(
             baseAttributes: baseAttributes,
             titleAttributes: titleAttributes
         )
+        support = renderingSupport
+        syntaxStyler = NativeSyntaxStyler(baseAttributes: renderingSupport.baseAttributes)
         super.init()
     }
 
     @objc(renderSourceSections:)
     func renderSource(sections: [NativeContentSection]) -> NativeRenderResult {
+        renderSource(sections: sections, shouldCancel: { false })
+    }
+
+    @objc(renderSourceSections:shouldCancel:)
+    func renderSource(
+        sections: [NativeContentSection],
+        shouldCancel: NativeRenderCancellation
+    ) -> NativeRenderResult {
         let rendered = NSMutableAttributedString(string: "")
+        let byteCount = nativeContentByteCount(of: sections)
+        let syntaxEnabled = PBHighlighting.shouldHighlightSource(byteCount: UInt(byteCount))
+        var runBudget = NativeSyntaxRunBudget()
+        if !syntaxEnabled {
+            logger.debug("Rendering large source document with lightweight coloring")
+        }
         for section in sections {
+            if shouldCancel() {
+                logger.debug("Cancelled source rendering between sections")
+                break
+            }
             support.appendSectionTitle(section.displayTitle, to: rendered)
-            rendered.append(support.styledBody(PBHighlighting.highlightedString(
-                forText: section.text,
-                path: section.highlightingPath
-            )))
+            rendered.append(syntaxStyler.attributedString(
+                for: section.text,
+                path: section.highlightingPath,
+                syntaxEnabled: syntaxEnabled,
+                runBudget: &runBudget
+            ))
+        }
+        if runBudget.isExhausted {
+            logger.debug("Syntax run budget exhausted while rendering source")
         }
         return NativeRenderResult(attributedString: rendered)
     }
 
     @objc(renderBlameSections:)
     func renderBlame(sections: [NativeContentSection]) -> NativeRenderResult {
+        renderBlame(sections: sections, shouldCancel: { false })
+    }
+
+    @objc(renderBlameSections:shouldCancel:)
+    func renderBlame(
+        sections: [NativeContentSection],
+        shouldCancel: NativeRenderCancellation
+    ) -> NativeRenderResult {
         let rendered = NSMutableAttributedString(string: "")
+        let syntaxEnabled = PBHighlighting.shouldHighlightSource(
+            byteCount: UInt(nativeContentByteCount(of: sections))
+        )
+        var runBudget = NativeSyntaxRunBudget()
+        if !syntaxEnabled {
+            logger.debug("Rendering large blame document with lightweight coloring")
+        }
         for section in sections {
+            if shouldCancel() {
+                logger.debug("Cancelled blame rendering between sections")
+                break
+            }
             let records = blameRecords(from: section.text)
             let code = records.map(\.code).joined(separator: "\n") + (records.isEmpty ? "" : "\n")
-            let highlighted = PBHighlighting.highlightedString(
-                forText: code,
-                path: section.highlightingPath
+            let highlighted = syntaxStyler.attributedString(
+                for: code,
+                path: section.highlightingPath,
+                syntaxEnabled: syntaxEnabled,
+                runBudget: &runBudget
             )
             support.appendSectionTitle(section.displayTitle, to: rendered)
             var codeLocation = 0
@@ -195,20 +249,33 @@ final nonisolated class NativeTextRenderer: NSObject {
                     ])
                 ))
                 let range = NSRange(location: codeLocation, length: (line as NSString).length)
-                rendered.append(support.styledBody(
-                    highlighted.attributedSubstring(from: range)
-                ))
+                rendered.append(highlighted.attributedSubstring(from: range))
                 codeLocation += range.length
             }
+        }
+        if runBudget.isExhausted {
+            logger.debug("Syntax run budget exhausted while rendering blame")
         }
         return NativeRenderResult(attributedString: rendered)
     }
 
     @objc(renderHistorySections:)
     func renderHistory(sections: [NativeContentSection]) -> NativeRenderResult {
+        renderHistory(sections: sections, shouldCancel: { false })
+    }
+
+    @objc(renderHistorySections:shouldCancel:)
+    func renderHistory(
+        sections: [NativeContentSection],
+        shouldCancel: NativeRenderCancellation
+    ) -> NativeRenderResult {
         let rendered = NSMutableAttributedString(string: "")
         var linkPayloads: [String: [String: Any]] = [:]
         for section in sections {
+            if shouldCancel() {
+                logger.debug("Cancelled history rendering between sections")
+                break
+            }
             support.appendSectionTitle(section.displayTitle, to: rendered)
             for entry in section.entries {
                 let subject = entry["subject"] as? String ?? ""
@@ -286,6 +353,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
     ]
 
     private let support: NativeRenderingSupport
+    private let syntaxStyler: NativeSyntaxStyler
     private let parser: DiffDocumentParser
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "NativeDiffRenderer")
 
@@ -295,10 +363,12 @@ final nonisolated class NativeDiffRenderer: NSObject {
         titleAttributes: [NSAttributedString.Key: Any],
         parser: DiffDocumentParser
     ) {
-        support = NativeRenderingSupport(
+        let renderingSupport = NativeRenderingSupport(
             baseAttributes: baseAttributes,
             titleAttributes: titleAttributes
         )
+        support = renderingSupport
+        syntaxStyler = NativeSyntaxStyler(baseAttributes: renderingSupport.baseAttributes)
         self.parser = parser
         super.init()
     }
@@ -310,24 +380,38 @@ final nonisolated class NativeDiffRenderer: NSObject {
         expandedImages: Set<String>,
         imageDataProvider: NativeImageDataProvider?
     ) -> NativeRenderResult {
+        render(
+            sections: sections,
+            collapsedFiles: collapsedFiles,
+            expandedImages: expandedImages,
+            imageDataProvider: imageDataProvider,
+            shouldCancel: { false }
+        )
+    }
+
+    @objc(renderSections:collapsedFiles:expandedImages:imageDataProvider:shouldCancel:)
+    func render(
+        sections: [NativeContentSection],
+        collapsedFiles: Set<String>,
+        expandedImages: Set<String>,
+        imageDataProvider: NativeImageDataProvider?,
+        shouldCancel: NativeRenderCancellation
+    ) -> NativeRenderResult {
         let rendered = NSMutableAttributedString(string: "")
         var linkPayloads: [String: [String: Any]] = [:]
-        var diffByteCount = 0
-        for section in sections {
-            let sectionByteCount = section.text.lengthOfBytes(using: .utf8)
-            let (sum, overflow) = diffByteCount.addingReportingOverflow(sectionByteCount)
-            if overflow {
-                diffByteCount = Int.max
-                break
-            }
-            diffByteCount = sum
-        }
+        let diffByteCount = nativeContentByteCount(of: sections)
         let shouldHighlightSyntax = PBHighlighting.shouldHighlightDiff(byteCount: UInt(diffByteCount))
+        var runBudget = NativeSyntaxRunBudget()
+        var loggedRunBudgetExhaustion = false
         if !shouldHighlightSyntax {
             logger.debug("Rendering large diff document with lightweight coloring")
         }
 
         for (sectionIndex, section) in sections.enumerated() {
+            if shouldCancel() {
+                logger.debug("Cancelled diff rendering between sections")
+                break
+            }
             support.appendSectionTitle(section.title, to: rendered)
             if section.text.isEmpty {
                 rendered.append(NSAttributedString(
@@ -346,10 +430,13 @@ final nonisolated class NativeDiffRenderer: NSObject {
                     diffLayout: section.diffLayout,
                     suppressionPatterns: section.suppressionPatterns,
                     shouldHighlightSyntax: shouldHighlightSyntax,
+                    runBudget: &runBudget,
+                    loggedRunBudgetExhaustion: &loggedRunBudgetExhaustion,
                     collapsedFiles: collapsedFiles,
                     expandedImages: expandedImages,
                     imageSource: section.imageSource,
                     imageDataProvider: imageDataProvider,
+                    shouldCancel: shouldCancel,
                     linkPayloads: &linkPayloads,
                     rendered: rendered
                 )
@@ -366,10 +453,13 @@ final nonisolated class NativeDiffRenderer: NSObject {
         diffLayout: Int,
         suppressionPatterns: [String],
         shouldHighlightSyntax: Bool,
+        runBudget: inout NativeSyntaxRunBudget,
+        loggedRunBudgetExhaustion: inout Bool,
         collapsedFiles: Set<String>,
         expandedImages: Set<String>,
         imageSource: [String: Any],
         imageDataProvider: NativeImageDataProvider?,
+        shouldCancel: NativeRenderCancellation,
         linkPayloads: inout [String: [String: Any]],
         rendered: NSMutableAttributedString
     ) {
@@ -378,10 +468,14 @@ final nonisolated class NativeDiffRenderer: NSObject {
         var currentPath = document.fallbackPath
         var collapsed = false
         var currentHunk: NativeDiffHunk?
-        var currentHunkSyntax: [Int: NSAttributedString] = [:]
+        var currentHunkSyntax: [Int: [NativeSyntaxStyleRun]] = [:]
         var sideBySideSkipThrough = -1
 
         for (index, line) in lines.enumerated() {
+            if index.isMultiple(of: 128), shouldCancel() {
+                logger.debug("Cancelled diff rendering between line batches")
+                return
+            }
             if index <= sideBySideSkipThrough {
                 continue
             }
@@ -416,10 +510,22 @@ final nonisolated class NativeDiffRenderer: NSObject {
                 continue
             }
             if let hunk = document.hunksByStartIndex[NSNumber(value: index)] {
+                if shouldCancel() {
+                    logger.debug("Cancelled diff rendering between hunks")
+                    return
+                }
                 currentHunk = hunk
                 currentHunkSyntax = shouldHighlightSyntax
-                    ? syntaxHighlights(for: hunk.lines, path: currentPath)
+                    ? syntaxHighlights(
+                        for: hunk.lines,
+                        path: currentPath,
+                        runBudget: &runBudget
+                    )
                     : [:]
+                if runBudget.isExhausted, !loggedRunBudgetExhaustion {
+                    logger.debug("Syntax run budget exhausted; rendering remaining diff lines lightly")
+                    loggedRunBudgetExhaustion = true
+                }
                 appendDiffLine(line, to: rendered)
                 rendered.append(NSAttributedString(string: "  "))
                 if context == "staged" {
@@ -500,7 +606,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
             } else {
                 counterpart = nil
             }
-            let syntaxBody: NSAttributedString? = if let currentHunk, index < currentHunk.endIndex {
+            let syntaxRuns: [NativeSyntaxStyleRun]? = if let currentHunk, index < currentHunk.endIndex {
                 currentHunkSyntax[index - currentHunk.startIndex]
             } else {
                 nil
@@ -509,7 +615,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
                 appendDiffLine(
                     line,
                     counterpart: counterpart,
-                    syntaxBody: syntaxBody,
+                    syntaxRuns: syntaxRuns,
                     newline: true,
                     to: rendered
                 )
@@ -519,7 +625,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
             appendDiffLine(
                 line,
                 counterpart: counterpart,
-                syntaxBody: syntaxBody,
+                syntaxRuns: syntaxRuns,
                 newline: false,
                 to: rendered
             )
@@ -598,7 +704,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
 
     private func appendSideBySideHunk(
         _ hunk: NativeDiffHunk,
-        syntaxHighlights: [Int: NSAttributedString],
+        syntaxHighlights: [Int: [NativeSyntaxStyleRun]],
         to rendered: NSMutableAttributedString
     ) {
         rendered.append(NSAttributedString(
@@ -617,12 +723,12 @@ final nonisolated class NativeDiffRenderer: NSObject {
             let leftRendered = attributedDiffLine(
                 leftString,
                 counterpart: right.map(sideColumn),
-                syntaxBody: sideSyntaxBody(leftIndex.flatMap { syntaxHighlights[$0] }, originalLine: left)
+                syntaxRuns: leftIndex.flatMap { syntaxHighlights[$0] }
             )
             let rightRendered = attributedDiffLine(
                 rightString,
                 counterpart: left.map(sideColumn),
-                syntaxBody: sideSyntaxBody(rightIndex.flatMap { syntaxHighlights[$0] }, originalLine: right)
+                syntaxRuns: rightIndex.flatMap { syntaxHighlights[$0] }
             )
             rendered.append(leftRendered)
             rendered.append(NSAttributedString(
@@ -682,37 +788,13 @@ final nonisolated class NativeDiffRenderer: NSObject {
         return lineString.padding(toLength: width, withPad: " ", startingAt: 0)
     }
 
-    private func sideSyntaxBody(
-        _ syntaxBody: NSAttributedString?,
-        originalLine: String?
-    ) -> NSAttributedString? {
-        guard let syntaxBody, let originalLine else { return nil }
-        let targetLength = 57
-        let result = NSMutableAttributedString(attributedString: syntaxBody)
-        if (originalLine as NSString).length > 58 {
-            let retainedLength = min(targetLength - 1, result.length)
-            if result.length > retainedLength {
-                result.deleteCharacters(in: NSRange(
-                    location: retainedLength,
-                    length: result.length - retainedLength
-                ))
-            }
-            let attributes = retainedLength > 0
-                ? result.attributes(at: retainedLength - 1, effectiveRange: nil)
-                : support.baseAttributes
-            result.append(NSAttributedString(string: "…", attributes: attributes))
-        }
-        if result.length < targetLength {
-            result.append(NSAttributedString(
-                string: String(repeating: " ", count: targetLength - result.length),
-                attributes: support.baseAttributes
-            ))
-        }
-        return result
-    }
-
-    private func syntaxHighlights(for hunkLines: [String], path: String) -> [Int: NSAttributedString] {
+    private func syntaxHighlights(
+        for hunkLines: [String],
+        path: String,
+        runBudget: inout NativeSyntaxRunBudget
+    ) -> [Int: [NativeSyntaxStyleRun]] {
         guard ApplicationSettings.syntaxTheme != .plain,
+              !runBudget.isExhausted,
               PBHighlighting.languageName(forPath: path) != nil
         else { return [:] }
 
@@ -741,21 +823,33 @@ final nonisolated class NativeDiffRenderer: NSObject {
             }
         }
 
-        var highlights: [Int: NSAttributedString] = [:]
+        var highlights: [Int: [NativeSyntaxStyleRun]] = [:]
+        let splitBudget = !oldRanges.isEmpty && !newRanges.isEmpty
+        let oldRunLimit = splitBudget
+            ? max(1, runBudget.remainingRunCount / 2)
+            : runBudget.remainingRunCount
+        var oldRunBudget = NativeSyntaxRunBudget(maximumRunCount: oldRunLimit)
         if !oldRanges.isEmpty {
-            let highlighted = support.styledBody(
-                PBHighlighting.highlightedString(forText: oldText as String, path: path)
+            let oldHighlights = syntaxStyler.styleRuns(
+                for: oldText as String,
+                path: path,
+                targetRanges: oldRanges,
+                runBudget: &oldRunBudget
             )
-            for (index, range) in oldRanges where NSMaxRange(range) <= highlighted.length {
-                highlights[index] = highlighted.attributedSubstring(from: range)
+            for (index, runs) in oldHighlights {
+                highlights[index] = runs
             }
+            runBudget.consumeRuns(oldRunLimit - oldRunBudget.remainingRunCount)
         }
-        if !newRanges.isEmpty {
-            let highlighted = support.styledBody(
-                PBHighlighting.highlightedString(forText: newText as String, path: path)
+        if !newRanges.isEmpty, !runBudget.isExhausted {
+            let newHighlights = syntaxStyler.styleRuns(
+                for: newText as String,
+                path: path,
+                targetRanges: newRanges,
+                runBudget: &runBudget
             )
-            for (index, range) in newRanges where NSMaxRange(range) <= highlighted.length {
-                highlights[index] = highlighted.attributedSubstring(from: range)
+            for (index, runs) in newHighlights {
+                highlights[index] = runs
             }
         }
         return highlights
@@ -764,7 +858,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
     private func attributedDiffLine(
         _ line: String,
         counterpart: String?,
-        syntaxBody: NSAttributedString?
+        syntaxRuns: [NativeSyntaxStyleRun]?
     ) -> NSMutableAttributedString {
         var attributes = support.baseAttributes
         if line.hasPrefix("+"), !line.hasPrefix("+++") {
@@ -780,21 +874,15 @@ final nonisolated class NativeDiffRenderer: NSObject {
             attributes[.foregroundColor] = NSColor.secondaryLabelColor
         }
 
-        let result: NSMutableAttributedString
-        if let syntaxBody,
-           (line as NSString).length > 0,
-           syntaxBody.length == (line as NSString).length - 1
-        {
-            result = NSMutableAttributedString(
-                string: (line as NSString).substring(to: 1),
-                attributes: attributes
+        let result = NSMutableAttributedString(string: line, attributes: attributes)
+        let bodyRange = NSRange(location: 0, length: max(0, result.length - 1))
+        for run in syntaxRuns ?? [] {
+            let visibleRange = NSIntersectionRange(run.range, bodyRange)
+            guard visibleRange.length > 0 else { continue }
+            result.addAttributes(
+                run.attributes,
+                range: NSRange(location: visibleRange.location + 1, length: visibleRange.length)
             )
-            result.append(syntaxBody)
-            if let background = attributes[.backgroundColor] {
-                result.addAttribute(.backgroundColor, value: background, range: NSRange(location: 0, length: result.length))
-            }
-        } else {
-            result = NSMutableAttributedString(string: line, attributes: attributes)
         }
 
         if let counterpart, (counterpart as NSString).length > 1, (line as NSString).length > 1 {
@@ -829,11 +917,11 @@ final nonisolated class NativeDiffRenderer: NSObject {
     private func appendDiffLine(
         _ line: String,
         counterpart: String? = nil,
-        syntaxBody: NSAttributedString? = nil,
+        syntaxRuns: [NativeSyntaxStyleRun]? = nil,
         newline: Bool = true,
         to rendered: NSMutableAttributedString
     ) {
-        rendered.append(attributedDiffLine(line, counterpart: counterpart, syntaxBody: syntaxBody))
+        rendered.append(attributedDiffLine(line, counterpart: counterpart, syntaxRuns: syntaxRuns))
         if newline {
             rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
         }

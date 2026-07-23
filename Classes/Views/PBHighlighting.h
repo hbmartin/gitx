@@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSAttributedString *)highlightedStringForText:(NSString *)text path:(NSString *)path;
 + (nullable NSString *)languageNameForPath:(NSString *)path;
 + (BOOL)shouldHighlightDiffWithByteCount:(NSUInteger)byteCount;
++ (BOOL)shouldHighlightSourceWithByteCount:(NSUInteger)byteCount;
 @end
 
 NS_ASSUME_NONNULL_END

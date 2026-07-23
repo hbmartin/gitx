@@ -299,6 +299,35 @@ final class GitXPerformanceTests: XCTestCase {
         XCTAssertNotNil(lastLanguage)
     }
 
+    func testWarmSyntaxHighlightingCachePerformance() {
+        let defaults = UserDefaults.standard
+        let originalTheme = defaults.object(forKey: "PBSyntaxTheme")
+        defer {
+            if let originalTheme {
+                defaults.set(originalTheme, forKey: "PBSyntaxTheme")
+            } else {
+                defaults.removeObject(forKey: "PBSyntaxTheme")
+            }
+        }
+        defaults.set(PBSyntaxTheme.xcode.rawValue, forKey: "PBSyntaxTheme")
+        let source = "{\n" + (0 ..< 300)
+            .map { "\"cachedValue\($0)\": \($0)" }
+            .joined(separator: ",\n") + "\n}"
+        _ = PBHighlighting.highlightedString(forText: source, path: "Cached.json")
+        var renderedLength = 0
+
+        measure {
+            for _ in 0 ..< 100 {
+                renderedLength = PBHighlighting.highlightedString(
+                    forText: source,
+                    path: "Cached.json"
+                ).length
+            }
+        }
+
+        XCTAssertEqual(renderedLength, (source as NSString).length)
+    }
+
     func testLargeIndexSnapshotParsingAndReductionPerformance() {
         let parser = PBIndexStatusParser()
         let reducer = PBIndexSnapshotReducer()

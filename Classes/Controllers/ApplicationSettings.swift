@@ -53,6 +53,8 @@ enum ChangedFilesSortMode: Int {
 final nonisolated class ApplicationSettings: NSObject {
     @objc static let diffTextTypographyDidChangeNotificationName =
         "PBDiffTextTypographyDidChangeNotification"
+    @objc static let nativeContentAppearanceDidChangeNotificationName =
+        "PBNativeContentAppearanceDidChangeNotification"
 
     private enum Key {
         static let openDisposition = "PBOpenDisposition"
@@ -140,7 +142,14 @@ final nonisolated class ApplicationSettings: NSObject {
 
     @objc static var syntaxTheme: SyntaxTheme {
         get { enumValue(Key.syntaxTheme, fallback: .xcode) }
-        set { defaults.set(newValue.rawValue, forKey: Key.syntaxTheme) }
+        set {
+            guard newValue != syntaxTheme else { return }
+            defaults.set(newValue.rawValue, forKey: Key.syntaxTheme)
+            NotificationCenter.default.post(
+                name: .nativeContentAppearanceDidChange,
+                object: nil
+            )
+        }
     }
 
     @objc static var diffFontName: String {
@@ -173,22 +182,22 @@ final nonisolated class ApplicationSettings: NSObject {
 
     @objc static var addedTextColor: NSColor {
         get { color(Key.addedTextColor, fallback: NSColor(red: 0.08, green: 0.46, blue: 0.18, alpha: 1)) }
-        set { setColor(newValue, key: Key.addedTextColor) }
+        set { setDiffColor(newValue, current: addedTextColor, key: Key.addedTextColor) }
     }
 
     @objc static var removedTextColor: NSColor {
         get { color(Key.removedTextColor, fallback: NSColor(red: 0.72, green: 0.12, blue: 0.13, alpha: 1)) }
-        set { setColor(newValue, key: Key.removedTextColor) }
+        set { setDiffColor(newValue, current: removedTextColor, key: Key.removedTextColor) }
     }
 
     @objc static var addedBackgroundColor: NSColor {
         get { color(Key.addedBackgroundColor, fallback: NSColor(red: 0.20, green: 0.70, blue: 0.30, alpha: 0.13)) }
-        set { setColor(newValue, key: Key.addedBackgroundColor) }
+        set { setDiffColor(newValue, current: addedBackgroundColor, key: Key.addedBackgroundColor) }
     }
 
     @objc static var removedBackgroundColor: NSColor {
         get { color(Key.removedBackgroundColor, fallback: NSColor(red: 0.90, green: 0.20, blue: 0.20, alpha: 0.12)) }
-        set { setColor(newValue, key: Key.removedBackgroundColor) }
+        set { setDiffColor(newValue, current: removedBackgroundColor, key: Key.removedBackgroundColor) }
     }
 
     @objc static var terminalBundleIdentifier: String? {
@@ -245,9 +254,21 @@ final nonisolated class ApplicationSettings: NSObject {
         return color
     }
 
-    private static func setColor(_ color: NSColor, key: String) {
-        if let data = try? NSKeyedArchiver.archivedData(withRootObject: color, requiringSecureCoding: true) {
-            defaults.set(data, forKey: key)
-        }
+    private static func setColor(_ color: NSColor, key: String) -> Bool {
+        guard let data = try? NSKeyedArchiver.archivedData(
+            withRootObject: color,
+            requiringSecureCoding: true
+        ) else { return false }
+        defaults.set(data, forKey: key)
+        return true
+    }
+
+    private static func setDiffColor(_ color: NSColor, current: NSColor, key: String) {
+        guard !color.isEqual(current) else { return }
+        guard setColor(color, key: key) else { return }
+        NotificationCenter.default.post(
+            name: .nativeContentAppearanceDidChange,
+            object: nil
+        )
     }
 }

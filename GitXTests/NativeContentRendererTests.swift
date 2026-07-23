@@ -105,6 +105,25 @@ final class NativeContentRendererTests: XCTestCase {
         )
     }
 
+    private func foregroundColor(
+        in attributedString: NSAttributedString,
+        matching text: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> NSColor {
+        let range = (attributedString.string as NSString).range(of: text)
+        XCTAssertNotEqual(range.location, NSNotFound, file: file, line: line)
+        return try XCTUnwrap(
+            attributedString.attribute(
+                .foregroundColor,
+                at: range.location,
+                effectiveRange: nil
+            ) as? NSColor,
+            file: file,
+            line: line
+        )
+    }
+
     private var baseAttributes: [NSAttributedString.Key: Any] {
         [
             .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
@@ -156,6 +175,129 @@ final class NativeContentRendererTests: XCTestCase {
         XCTAssertTrue(historyResult.attributedString.string.contains("Ada  •  Today  •  0123456789ab"))
         XCTAssertEqual(historyResult.linkPayloads.values.first?["type"] as? String, "commit")
         XCTAssertEqual(historyResult.linkPayloads.values.first?["sha"] as? String, sha)
+    }
+
+    func testTextRendererCancellationStopsBetweenSections() {
+        let renderer = PBNativeTextRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes
+        )
+        let sections = [
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionPathKey: "First.swift",
+                PBNativeSectionTextKey: "let first = 1\n",
+            ]),
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionPathKey: "Second.swift",
+                PBNativeSectionTextKey: "let second = 2\n",
+            ]),
+        ]
+        var cancellationChecks = 0
+
+        let result = renderer.renderSourceSections(sections, shouldCancel: {
+            cancellationChecks += 1
+            return cancellationChecks > 1
+        })
+
+        XCTAssertTrue(result.attributedString.string.contains("let first = 1"))
+        XCTAssertFalse(result.attributedString.string.contains("let second = 2"))
+
+        cancellationChecks = 0
+        let blameResult = renderer.renderBlameSections(sections, shouldCancel: {
+            cancellationChecks += 1
+            return cancellationChecks > 1
+        })
+        XCTAssertTrue(blameResult.attributedString.string.contains("First.swift"))
+        XCTAssertFalse(blameResult.attributedString.string.contains("Second.swift"))
+
+        cancellationChecks = 0
+        let historyResult = renderer.renderHistorySections(sections, shouldCancel: {
+            cancellationChecks += 1
+            return cancellationChecks > 1
+        })
+        XCTAssertTrue(historyResult.attributedString.string.contains("First.swift"))
+        XCTAssertFalse(historyResult.attributedString.string.contains("Second.swift"))
+    }
+
+    func testDenseSourceAndBlameStopAddingSyntaxRunsAfterDocumentBudget() throws {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer { restoreTheme() }
+        PBApplicationSettings.syntaxTheme = .xcode
+        let renderer = PBNativeTextRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes
+        )
+        let source = (0 ..< 3000).map { "let value\($0) = \($0)" }.joined(separator: "\n") + "\n"
+        XCTAssertLessThan(source.utf8.count, 200 * 1024)
+
+        let renderedSource = renderer.renderSourceSections([
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionPathKey: "Dense.swift",
+                PBNativeSectionTextKey: source,
+            ]),
+        ]).attributedString
+        let earlySourceColor = try foregroundColor(in: renderedSource, matching: "let value0")
+        let lateSourceColor = try foregroundColor(in: renderedSource, matching: "let value2999")
+        XCTAssertFalse(earlySourceColor.isEqual(lateSourceColor))
+
+        let sha = "0123456789abcdef0123456789abcdef01234567"
+        var blame = "\(sha) 1 1 1\nauthor Ada\nsummary Dense\n\tlet value0 = 0\n"
+        for index in 1 ..< 2400 {
+            blame += "\(sha) \(index + 1) \(index + 1)\n\tlet value\(index) = \(index)\n"
+        }
+        XCTAssertLessThan(blame.utf8.count, 200 * 1024)
+        let renderedBlame = renderer.renderBlameSections([
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionPathKey: "Dense.swift",
+                PBNativeSectionTextKey: blame,
+            ]),
+        ]).attributedString
+        let earlyBlameColor = try foregroundColor(in: renderedBlame, matching: "let value0")
+        let lateBlameColor = try foregroundColor(in: renderedBlame, matching: "let value2399")
+        XCTAssertFalse(earlyBlameColor.isEqual(lateBlameColor))
+    }
+
+    func testSyntaxCacheSupportsConcurrentWarmReads() {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer { restoreTheme() }
+        PBApplicationSettings.syntaxTheme = .xcode
+        let source = (0 ..< 300).map { "let cached\($0) = \($0)" }.joined(separator: "\n")
+        let expectedLength = (source as NSString).length
+        _ = PBHighlighting.highlightedString(forText: source, path: "Cached.swift")
+
+        DispatchQueue.concurrentPerform(iterations: 32) { _ in
+            _ = PBHighlighting.highlightedString(forText: source, path: "Cached.swift")
+        }
+
+        XCTAssertEqual(
+            PBHighlighting.highlightedString(forText: source, path: "Cached.swift").length,
+            expectedLength
+        )
+    }
+
+    func testLargeBlameUsesLightweightColoring() throws {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer { restoreTheme() }
+        PBApplicationSettings.syntaxTheme = .xcode
+        let sha = "0123456789abcdef0123456789abcdef01234567"
+        let record = "\(sha) 1 1 1\nauthor Ada\nsummary Large\n\tlet value = 1\n"
+        let blame = String(repeating: record, count: 3000)
+        XCTAssertGreaterThan(blame.utf8.count, 200 * 1024)
+        let renderer = PBNativeTextRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes
+        )
+
+        let rendered = renderer.renderBlameSections([
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionPathKey: "Large.swift",
+                PBNativeSectionTextKey: blame,
+            ]),
+        ]).attributedString
+
+        XCTAssertTrue(
+            try foregroundColor(in: rendered, matching: "let value").isEqual(NSColor.textColor)
+        )
     }
 
     func testDiffFontSettingsPersistClampAndProvidePlainThemeFallback() throws {
@@ -240,6 +382,369 @@ final class NativeContentRendererTests: XCTestCase {
             XCTAssertEqual(smallHighlighted.familyName, smallPlain.familyName)
             XCTAssertEqual(largeHighlighted.familyName, largePlain.familyName)
         }
+    }
+
+    func testUnknownAndUnsupportedPathsUseExplicitPlainFallback() throws {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer { restoreTheme() }
+        PBApplicationSettings.syntaxTheme = .xcode
+
+        XCTAssertNil(PBHighlighting.languageName(forPath: "Example.ex"))
+        let highlighted = PBHighlighting.highlightedString(
+            forText: "let value = 1\n",
+            path: "notes.unknown"
+        )
+
+        XCTAssertTrue(
+            try foregroundColor(in: highlighted, matching: "let").isEqual(NSColor.textColor)
+        )
+    }
+
+    func testLargeSourceUsesLightweightColoring() throws {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer { restoreTheme() }
+        PBApplicationSettings.syntaxTheme = .xcode
+        let source = String(repeating: "let value = 1\n", count: 16000)
+        XCTAssertGreaterThan(source.utf8.count, 200 * 1024)
+        let renderer = PBNativeTextRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes
+        )
+
+        let rendered = renderer.renderSourceSections([
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionPathKey: "Large.swift",
+                PBNativeSectionTextKey: source,
+            ]),
+        ]).attributedString
+
+        let finalLineRange = (rendered.string as NSString).range(
+            of: "let value = 1",
+            options: .backwards
+        )
+        let color = try XCTUnwrap(rendered.attribute(
+            .foregroundColor,
+            at: finalLineRange.location,
+            effectiveRange: nil
+        ) as? NSColor)
+        XCTAssertTrue(color.isEqual(NSColor.textColor))
+    }
+
+    func testDenseDiffStopsAddingSyntaxRunsAfterDocumentBudget() throws {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer { restoreTheme() }
+        PBApplicationSettings.syntaxTheme = .xcode
+        var diff = """
+        diff --git a/Dense.swift b/Dense.swift
+        --- a/Dense.swift
+        +++ b/Dense.swift
+        @@ -1,1800 +1,1800 @@
+
+        """
+        for index in 0 ..< 1800 {
+            diff += "-let old\(index) = \(index)\n+let new\(index) = \(index + 1)\n"
+        }
+        XCTAssertLessThan(diff.utf8.count, 200 * 1024)
+        let renderer = PBNativeDiffRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes,
+            parser: PBDiffDocumentParser()
+        )
+
+        let rendered = renderer.renderSections(
+            [PBNativeContentSection(dictionary: [
+                PBNativeSectionTextKey: diff,
+                PBNativeSectionContextKey: "readOnly",
+            ])],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        ).attributedString
+
+        let earlyColor = try foregroundColor(in: rendered, matching: "let new0")
+        let lateColor = try foregroundColor(in: rendered, matching: "let new1799")
+        XCTAssertFalse(earlyColor.isEqual(PBApplicationSettings.addedTextColor))
+        XCTAssertTrue(lateColor.isEqual(PBApplicationSettings.addedTextColor))
+    }
+
+    func testDiffRendererCancellationStopsAtSectionLineBatchAndHunkBoundaries() {
+        let renderer = PBNativeDiffRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes,
+            parser: PBDiffDocumentParser()
+        )
+        let empty = PBNativeContentSection(dictionary: [PBNativeSectionTextKey: ""])
+        let diff = PBNativeContentSection(dictionary: [
+            PBNativeSectionTextKey: """
+            diff --git a/Example.swift b/Example.swift
+            --- a/Example.swift
+            +++ b/Example.swift
+            @@ -1 +1 @@
+            -let old = 1
+            +let new = 2
+
+            """,
+        ])
+
+        var checks = 0
+        let sectionCancelled = renderer.renderSections(
+            [empty, diff],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil,
+            shouldCancel: {
+                checks += 1
+                return checks == 2
+            }
+        )
+        XCTAssertFalse(sectionCancelled.attributedString.string.contains("Example.swift"))
+
+        checks = 0
+        let batchCancelled = renderer.renderSections(
+            [diff],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil,
+            shouldCancel: {
+                checks += 1
+                return checks == 2
+            }
+        )
+        XCTAssertTrue(batchCancelled.attributedString.string.isEmpty)
+
+        checks = 0
+        let hunkCancelled = renderer.renderSections(
+            [diff],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil,
+            shouldCancel: {
+                checks += 1
+                return checks == 3
+            }
+        )
+        XCTAssertTrue(hunkCancelled.attributedString.string.contains("Example.swift"))
+        XCTAssertFalse(hunkCancelled.attributedString.string.contains("@@ -1 +1 @@"))
+    }
+
+    func testAppearanceSettingsPostNotificationForEffectiveChanges() {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        let restoreAddedText = preserveDefault("PBDiffAddedTextColor")
+        defer {
+            restoreAddedText()
+            restoreTheme()
+        }
+        UserDefaults.standard.set(PBSyntaxTheme.xcode.rawValue, forKey: "PBSyntaxTheme")
+        let changed = expectation(description: "native content appearance changed")
+        changed.expectedFulfillmentCount = 2
+        changed.assertForOverFulfill = true
+        let token = NotificationCenter.default.addObserver(
+            forName: Notification.Name("PBNativeContentAppearanceDidChangeNotification"),
+            object: nil,
+            queue: nil
+        ) { _ in
+            changed.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        PBApplicationSettings.syntaxTheme = .github
+        PBApplicationSettings.addedTextColor = .systemPurple
+
+        wait(for: [changed], timeout: 0.1)
+    }
+
+    @MainActor
+    func testLiveSyntaxThemeRerendersCurrentSource() throws {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer { restoreTheme() }
+        UserDefaults.standard.set(PBSyntaxTheme.xcode.rawValue, forKey: "PBSyntaxTheme")
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        view.showSourceSections([[
+            PBNativeSectionPathKey: "Example.swift",
+            PBNativeSectionTextKey: "let value = 1\n",
+        ]])
+        waitForText("let value = 1", in: view)
+        let selection = (view.textView.string as NSString).range(of: "value")
+        view.textView.setSelectedRange(selection)
+        XCTAssertFalse(
+            try foregroundColor(
+                in: view.textView.attributedString(),
+                matching: "let"
+            ).isEqual(NSColor.textColor)
+        )
+        let rerendered = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                guard let color = try? self.foregroundColor(
+                    in: view.textView.attributedString(),
+                    matching: "let"
+                ) else { return false }
+                return color.isEqual(NSColor.textColor)
+            },
+            object: view
+        )
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            PBApplicationSettings.syntaxTheme = .plain
+        }
+
+        wait(for: [rerendered], timeout: 10)
+        XCTAssertEqual(view.textView.selectedRange(), selection)
+    }
+
+    @MainActor
+    func testLiveAppearanceChangesRerenderCurrentBlameAndDiff() throws {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        let restoreAddedText = preserveDefault("PBDiffAddedTextColor")
+        defer {
+            restoreAddedText()
+            restoreTheme()
+        }
+        UserDefaults.standard.set(PBSyntaxTheme.xcode.rawValue, forKey: "PBSyntaxTheme")
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        let sha = "0123456789abcdef0123456789abcdef01234567"
+        view.showBlameSections([[
+            PBNativeSectionPathKey: "Example.swift",
+            PBNativeSectionTextKey: "\(sha) 1 1 1\nauthor Ada\nsummary First\n\tlet value = 1\n",
+        ]])
+        waitForText("let value = 1", in: view)
+
+        PBApplicationSettings.syntaxTheme = .plain
+        let plainBlame = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (try? self.foregroundColor(
+                    in: view.textView.attributedString(),
+                    matching: "let"
+                ).isEqual(NSColor.textColor)) == true
+            },
+            object: view
+        )
+        wait(for: [plainBlame], timeout: 10)
+
+        PBApplicationSettings.addedTextColor = .systemGreen
+        view.showDiffSections([[
+            PBNativeSectionTextKey: """
+            diff --git a/Example.swift b/Example.swift
+            --- a/Example.swift
+            +++ b/Example.swift
+            @@ -0,0 +1 @@
+            +let added = 1
+
+            """,
+            PBNativeSectionContextKey: "readOnly",
+        ]])
+        waitForText("let added = 1", in: view)
+        let selection = (view.textView.string as NSString).range(of: "added")
+        view.textView.setSelectedRange(selection)
+        XCTAssertTrue(
+            try foregroundColor(
+                in: view.textView.attributedString(),
+                matching: "let added"
+            ).isEqual(NSColor.systemGreen)
+        )
+        let purpleDiff = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (try? self.foregroundColor(
+                    in: view.textView.attributedString(),
+                    matching: "let added"
+                ).isEqual(NSColor.systemPurple)) == true
+            },
+            object: view
+        )
+
+        PBApplicationSettings.addedTextColor = .systemPurple
+
+        wait(for: [purpleDiff], timeout: 10)
+        XCTAssertEqual(view.textView.selectedRange(), selection)
+
+        view.showMessage("Appearance message")
+        PBApplicationSettings.addedTextColor = .systemOrange
+        XCTAssertEqual(view.textView.string, "Appearance message")
+    }
+
+    @MainActor
+    func testLiveFontChangePreservesItalicSyntaxTraits() throws {
+        let restoreSize = preserveDefault("PBDiffFontSize")
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer {
+            restoreTheme()
+            restoreSize()
+        }
+        UserDefaults.standard.set(12, forKey: "PBDiffFontSize")
+        UserDefaults.standard.set(PBSyntaxTheme.xcode.rawValue, forKey: "PBSyntaxTheme")
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        view.showSourceSections([[
+            PBNativeSectionPathKey: "README.md",
+            PBNativeSectionTextKey: "*emphasis*\n",
+        ]])
+        waitForText("emphasis", in: view)
+        XCTAssertTrue(
+            try font(in: view.textView.attributedString(), matching: "emphasis")
+                .fontDescriptor.symbolicTraits.contains(.italic)
+        )
+
+        PBApplicationSettings.diffFontSize = 18
+
+        let restyledFont = try font(in: view.textView.attributedString(), matching: "emphasis")
+        XCTAssertEqual(restyledFont.pointSize, 18)
+        XCTAssertTrue(restyledFont.fontDescriptor.symbolicTraits.contains(.italic))
+    }
+
+    @MainActor
+    func testPendingHistoryRenderRestartsAfterTypographyChange() throws {
+        let restoreSize = preserveDefault("PBDiffFontSize")
+        defer { restoreSize() }
+        UserDefaults.standard.set(12, forKey: "PBDiffFontSize")
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        let queue = try XCTUnwrap(view.value(forKey: "renderQueue") as? OperationQueue)
+        queue.isSuspended = true
+        view.showHistorySections([[
+            PBNativeSectionTitleKey: "History",
+            PBNativeSectionEntriesKey: [[
+                "subject": "Subject",
+                "author": "Ada",
+                "date": "Today",
+                "sha": "0123456789abcdef0123456789abcdef01234567",
+            ]],
+        ]])
+
+        PBApplicationSettings.diffFontSize = 18
+        queue.isSuspended = false
+
+        waitForText("Subject", in: view)
+        XCTAssertEqual(try? font(in: view.textView.attributedString(), matching: "Subject").pointSize, 19)
+    }
+
+    @MainActor
+    func testFinalDiffCacheEvictsLeastRecentlyUsedIdentifier() throws {
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        for index in 0 ... 8 {
+            view.showDiffSections(
+                [[
+                    PBNativeSectionTextKey: """
+                    diff --git a/file.txt b/file.txt
+                    --- a/file.txt
+                    +++ b/file.txt
+                    @@ -0,0 +1 @@
+                    +entry-\(index)
+
+                    """,
+                    PBNativeSectionContextKey: "readOnly",
+                ]],
+                cacheIdentifier: "cache-\(index)",
+                preserveScrollPosition: true
+            )
+            waitForText("entry-\(index)", in: view)
+        }
+
+        let cachedResults = try XCTUnwrap(view.value(forKey: "cachedDiffResults") as? NSDictionary)
+        let cachedSections = try XCTUnwrap(view.value(forKey: "cachedDiffSections") as? NSDictionary)
+        let cachedScrollOrigins = try XCTUnwrap(view.value(forKey: "cachedDiffScrollOrigins") as? NSDictionary)
+        XCTAssertEqual(cachedResults.count, 8)
+        XCTAssertEqual(cachedSections.count, 8)
+        XCTAssertLessThanOrEqual(cachedScrollOrigins.count, 8)
+        XCTAssertNil(cachedResults["cache-0"])
+        XCTAssertNil(cachedSections["cache-0"])
+        XCTAssertNil(cachedScrollOrigins["cache-0"])
     }
 
     func testTypographyPreservesItalicSyntaxTraits() throws {
