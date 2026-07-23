@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pathlib
 import unittest
 
 from support import ROOT
@@ -46,7 +45,7 @@ class PinnedToolsTests(unittest.TestCase):
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
 
         self.assertNotIn("26.3", build_workflow + verify_workflow)
-        self.assertEqual(build_workflow.count("xcode: 26.2"), 2)
+        self.assertEqual(build_workflow.count("xcode: 26.2"), 1)
         self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 6)
 
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:

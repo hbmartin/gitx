@@ -550,6 +550,9 @@ final class NativeContentRendererTests: XCTestCase {
         PBApplicationSettings.syntaxTheme = .github
         PBApplicationSettings.addedTextColor = .systemPurple
 
+        // The settings setters post synchronously on the calling thread, so both
+        // notifications have already been delivered; the short timeout only
+        // guards against that contract changing to asynchronous delivery.
         wait(for: [changed], timeout: 0.1)
     }
 
@@ -695,7 +698,7 @@ final class NativeContentRendererTests: XCTestCase {
         defer { restoreSize() }
         UserDefaults.standard.set(12, forKey: "PBDiffFontSize")
         let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
-        let queue = try XCTUnwrap(view.value(forKey: "renderQueue") as? OperationQueue)
+        let queue = view.renderQueueForTesting
         queue.isSuspended = true
         view.showHistorySections([[
             PBNativeSectionTitleKey: "History",
@@ -712,6 +715,35 @@ final class NativeContentRendererTests: XCTestCase {
 
         waitForText("Subject", in: view)
         XCTAssertEqual(try? font(in: view.textView.attributedString(), matching: "Subject").pointSize, 19)
+    }
+
+    @MainActor
+    func testCompletedRenderAwaitingDeliveryRestartsAfterTypographyChange() throws {
+        let restoreSize = preserveDefault("PBDiffFontSize")
+        defer { restoreSize() }
+        UserDefaults.standard.set(12, forKey: "PBDiffFontSize")
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        view.showSourceSections([[
+            PBNativeSectionPathKey: "Example.txt",
+            PBNativeSectionTextKey: "pending delivery\n",
+        ]])
+        // Busy-wait without spinning the main run loop so the finished render's
+        // completion stays queued on the main queue when the typography change
+        // arrives — the window in which the generation bump would drop it.
+        let queue = view.renderQueueForTesting
+        let deadline = Date(timeIntervalSinceNow: 5)
+        while queue.operationCount > 0, Date() < deadline {
+            usleep(1000)
+        }
+        XCTAssertEqual(queue.operationCount, 0)
+
+        PBApplicationSettings.diffFontSize = 18
+
+        waitForText("pending delivery", in: view)
+        XCTAssertEqual(
+            try font(in: view.textView.attributedString(), matching: "pending delivery").pointSize,
+            18
+        )
     }
 
     @MainActor
@@ -736,9 +768,9 @@ final class NativeContentRendererTests: XCTestCase {
             waitForText("entry-\(index)", in: view)
         }
 
-        let cachedResults = try XCTUnwrap(view.value(forKey: "cachedDiffResults") as? NSDictionary)
-        let cachedSections = try XCTUnwrap(view.value(forKey: "cachedDiffSections") as? NSDictionary)
-        let cachedScrollOrigins = try XCTUnwrap(view.value(forKey: "cachedDiffScrollOrigins") as? NSDictionary)
+        let cachedResults = view.cachedDiffResultsForTesting
+        let cachedSections = view.cachedDiffSectionsForTesting
+        let cachedScrollOrigins = view.cachedDiffScrollOriginsForTesting
         XCTAssertEqual(cachedResults.count, 8)
         XCTAssertEqual(cachedSections.count, 8)
         XCTAssertLessThanOrEqual(cachedScrollOrigins.count, 8)

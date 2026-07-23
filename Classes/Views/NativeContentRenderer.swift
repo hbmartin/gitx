@@ -120,7 +120,10 @@ private nonisolated func nativeContentByteCount(
     of sections: [NativeContentSection]
 ) -> Int {
     sections.reduce(0) { byteCount, section in
-        byteCount + section.text.lengthOfBytes(using: .utf8)
+        let (sum, overflow) = byteCount.addingReportingOverflow(
+            section.text.lengthOfBytes(using: .utf8)
+        )
+        return overflow ? Int.max : sum
     }
 }
 
@@ -793,7 +796,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
         path: String,
         runBudget: inout NativeSyntaxRunBudget
     ) -> [Int: [NativeSyntaxStyleRun]] {
-        guard ApplicationSettings.syntaxTheme != .plain,
+        guard syntaxStyler.hasTheme,
               !runBudget.isExhausted,
               PBHighlighting.languageName(forPath: path) != nil
         else { return [:] }

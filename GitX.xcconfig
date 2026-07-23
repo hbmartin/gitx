@@ -3,7 +3,6 @@
 
 CODE_SIGN_IDENTITY = -
 ARCHS = arm64
-VALID_ARCHS = arm64
 
 // Default repo for UI screenshot tests. Override on CI via:
 //   xcodebuild ... GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo

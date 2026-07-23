@@ -23,9 +23,6 @@ jobs:
       matrix:
         include:
           - xcode: 26.2
-            runner: macos-26-intel
-            abi: x86_64
-          - xcode: 26.2
             runner: macos-26
             abi: arm64
     steps:
@@ -241,13 +238,7 @@ jobs:
           commit-ish: HEAD
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: GitX-x86_64.dmg
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
           name: GitX-arm64.dmg
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: GitX-x86_64.zip
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: GitX-arm64.zip
@@ -272,8 +263,6 @@ jobs:
           prerelease: ${{ env.PRE_RELEASE }}
           name: ${{steps.tagger.outputs.tag}}
           files: |
-            GitX-x86_64.dmg
-            GitX-x86_64.zip
             GitX-arm64.dmg
             GitX-arm64.zip
         env:
@@ -293,24 +282,42 @@ jobs:
           path: brew
           persist-credentials: false
           ref: main
-      - name: Show shasum
+      - name: Update Homebrew cask
+        env:
+          RELEASE_TAG: ${{ steps.tagger.outputs.tag }}
         run: |
-          find . -name "gitx.rb"
-          shax86=$(shasum -a 256 GitX-x86_64.dmg | cut -d " " -f1)
-          echo "x86 sha256=$shax86"
           shaarm64=$(shasum -a 256 GitX-arm64.dmg | cut -d " " -f1)
           echo "arm64 sha256=$shaarm64"
-          cd brew/Casks/g
-          {
-            sed -n 1,3p gitx.rb
-            echo "  version \"${{ steps.tagger.outputs.tag }}\""
-            echo "  sha256 arm:   \"$shaarm64\","
-            echo "         intel: \"$shax86\""
-            sed -n 7,33p gitx.rb
-          } > gitx.rb.new
-          cat gitx.rb.new
-          cp gitx.rb.new gitx.rb
-          rm gitx.rb.new
+          cat > brew/Casks/g/gitx.rb <<EOF
+          cask "gitx" do
+            version "$RELEASE_TAG"
+            sha256 "$shaarm64"
+
+            url "https://github.com/gitx/gitx/releases/download/#{version}/GitX-arm64.dmg"
+            name "GitX"
+            desc "Git GUI"
+            homepage "https://github.com/gitx/gitx"
+
+            livecheck do
+              url :url
+              strategy :github_latest
+            end
+
+            depends_on arch: :arm64
+            depends_on macos: :ventura
+
+            app "GitX.app"
+            binary "#{appdir}/GitX.app/Contents/Resources/gitx"
+
+            zap trash: [
+              "~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/nl.frim.gitx.sfl*",
+              "~/Library/Caches/nl.frim.GitX",
+              "~/Library/Preferences/nl.frim.GitX.plist",
+              "~/Library/Saved Application State/nl.frim.GitX.savedState",
+            ]
+          end
+          EOF
+          cat brew/Casks/g/gitx.rb
       - name: Create Pull Request in brew https://github.com/Homebrew/homebrew-cask
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8
         if: ${{ env.PRE_RELEASE == 'false' }}

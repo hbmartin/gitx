@@ -37,15 +37,17 @@ class ReleaseTaskTests(unittest.TestCase):
         self.assertIn("GitX-arm64.dmg", result.stdout)
 
     def test_release_task_rejects_architecture_arguments(self) -> None:
-        result = subprocess.run(
-            [self.task, "x86_64"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        for arch in ("x86_64", "arm64", "universal"):
+            with self.subTest(arch=arch):
+                result = subprocess.run(
+                    [self.task, arch],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Unknown argument: x86_64", result.stderr)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"Unknown argument: {arch}", result.stderr)
 
 
 if __name__ == "__main__":
