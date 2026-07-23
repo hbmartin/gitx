@@ -458,8 +458,14 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (instancetype)initWithBaseAttributes:(NSDictionary<NSAttributedStringKey, id> *)baseAttributes
 					titleAttributes:(NSDictionary<NSAttributedStringKey, id> *)titleAttributes;
 - (PBNativeRenderResult *)renderSourceSections:(NSArray<PBNativeContentSection *> *)sections;
+- (PBNativeRenderResult *)renderSourceSections:(NSArray<PBNativeContentSection *> *)sections
+							 shouldCancel:(BOOL (^)(void))shouldCancel;
 - (PBNativeRenderResult *)renderBlameSections:(NSArray<PBNativeContentSection *> *)sections;
+- (PBNativeRenderResult *)renderBlameSections:(NSArray<PBNativeContentSection *> *)sections
+							shouldCancel:(BOOL (^)(void))shouldCancel;
 - (PBNativeRenderResult *)renderHistorySections:(NSArray<PBNativeContentSection *> *)sections;
+- (PBNativeRenderResult *)renderHistorySections:(NSArray<PBNativeContentSection *> *)sections
+							  shouldCancel:(BOOL (^)(void))shouldCancel;
 @end
 
 @interface PBNativeDiffRenderer : NSObject
@@ -470,6 +476,11 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 						  collapsedFiles:(NSSet<NSString *> *)collapsedFiles
 						  expandedImages:(NSSet<NSString *> *)expandedImages
 					   imageDataProvider:(nullable NSData * (^)(NSString *path, NSInteger section, NSDictionary<NSString *, id> *imageSource))imageDataProvider;
+- (PBNativeRenderResult *)renderSections:(NSArray<PBNativeContentSection *> *)sections
+						  collapsedFiles:(NSSet<NSString *> *)collapsedFiles
+						  expandedImages:(NSSet<NSString *> *)expandedImages
+					   imageDataProvider:(nullable NSData * (^)(NSString *path, NSInteger section, NSDictionary<NSString *, id> *imageSource))imageDataProvider
+						   shouldCancel:(BOOL (^)(void))shouldCancel;
 @end
 
 @protocol PBIndexCommandRunning <NSObject>

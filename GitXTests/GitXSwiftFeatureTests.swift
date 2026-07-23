@@ -762,6 +762,9 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(PBHighlighting.shouldHighlightDiff(withByteCount: 0))
         XCTAssertTrue(PBHighlighting.shouldHighlightDiff(withByteCount: 200 * 1024))
         XCTAssertFalse(PBHighlighting.shouldHighlightDiff(withByteCount: 200 * 1024 + 1))
+        XCTAssertTrue(PBHighlighting.shouldHighlightSource(withByteCount: 0))
+        XCTAssertTrue(PBHighlighting.shouldHighlightSource(withByteCount: 200 * 1024))
+        XCTAssertFalse(PBHighlighting.shouldHighlightSource(withByteCount: 200 * 1024 + 1))
     }
 
     func testApplicationSettingsRoundTripAndPaneActions() throws {
