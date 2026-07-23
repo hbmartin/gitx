@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/PhraseHQ/HighlightKit.git",
       "state" : {
-        "revision" : "b323d4a052dba9155120587686e54ef535852235",
-        "version" : "0.1.1"
+        "revision" : "524c185b0553756498c1b6a1765e8d119c4623a6",
+        "version" : "0.2.0"
       }
     },
     {

@@ -101,32 +101,6 @@ final nonisolated class NativeContentTypography: NSObject {
         return result
     }
 
-    func styledString(
-        _ attributedString: NSAttributedString,
-        role: NativeContentTypographyRole
-    ) -> NSAttributedString {
-        guard attributedString.length > 0 else { return attributedString }
-        let result = NSMutableAttributedString(attributedString: attributedString)
-        let fullRange = NSRange(location: 0, length: attributedString.length)
-        result.addAttribute(
-            .nativeContentTypographyRole,
-            value: role.rawValue,
-            range: fullRange
-        )
-        result.addAttribute(.font, value: font(for: role), range: fullRange)
-        attributedString.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-            result.addAttribute(
-                .font,
-                value: self.font(
-                    for: role,
-                    preservingTraitsOf: value as? NSFont
-                ),
-                range: range
-            )
-        }
-        return result
-    }
-
     /// Invoked from PBNativeContentView's Objective-C wiring.
     @objc(restyledString:)
     func restyledString(_ attributedString: NSAttributedString) -> NSAttributedString { // swiftlint:disable:this unused_declaration
@@ -173,7 +147,9 @@ final nonisolated class NativeContentTypography: NSObject {
             let descriptor = font.fontDescriptor.addingAttributes([
                 .traits: [NSFontDescriptor.TraitKey.weight: weight],
             ])
-            font = NSFont(descriptor: descriptor, size: pointSize) ?? font
+            if let weightedFont = NSFont(descriptor: descriptor, size: pointSize) {
+                font = weightedFont
+            }
         }
         guard let existingFont else { return font }
         let existingTraits = existingFont.fontDescriptor.symbolicTraits
@@ -185,7 +161,9 @@ final nonisolated class NativeContentTypography: NSObject {
             targetTraits.insert(.italic)
         }
         let descriptor = font.fontDescriptor.withSymbolicTraits(targetTraits)
-        font = NSFont(descriptor: descriptor, size: pointSize) ?? font
+        if let traitFont = NSFont(descriptor: descriptor, size: pointSize) {
+            font = traitFont
+        }
         return font
     }
 }

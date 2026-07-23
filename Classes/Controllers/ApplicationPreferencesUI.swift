@@ -518,6 +518,9 @@ extension Notification.Name {
     nonisolated static let diffTextTypographyDidChange = Notification.Name(
         ApplicationSettings.diffTextTypographyDidChangeNotificationName
     )
+    nonisolated static let nativeContentAppearanceDidChange = Notification.Name(
+        ApplicationSettings.nativeContentAppearanceDidChangeNotificationName
+    )
     nonisolated static let historyTraversalSettingsDidChange = Notification.Name("PBHistoryTraversalSettingsDidChangeNotification")
     nonisolated static let historyTreeSettingsDidChange = Notification.Name("PBHistoryTreeSettingsDidChangeNotification")
 }
