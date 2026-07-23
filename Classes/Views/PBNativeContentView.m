@@ -38,6 +38,7 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 @property (nonatomic) NSArray<NSDictionary *> *currentTextSections;
 @property (nonatomic) PBNativeContentKind currentContentKind;
 @property (nonatomic) NSUInteger renderGeneration;
+@property (nonatomic) NSUInteger appliedRenderGeneration;
 @property (nonatomic) NSOperationQueue *renderQueue;
 @property (nonatomic) PBDiffDocumentParser *diffParser;
 @property (nonatomic) PBPartialPatchBuilder *partialPatchBuilder;
@@ -198,6 +199,7 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 			 scrollOrigin:(nullable NSValue *)scrollOrigin
 {
 	if (generation != self.renderGeneration) return;
+	self.appliedRenderGeneration = generation;
 	NSArray<NSValue *> *selectedRanges = scrollOrigin ? self.textView.selectedRanges : nil;
 	self.linkPayloads = linkPayloads ? [linkPayloads mutableCopy] : [NSMutableDictionary dictionary];
 	[self.textView.textStorage setAttributedString:string];
@@ -283,14 +285,17 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 	}
 	NSArray<NSValue *> *selectedRanges = self.textView.selectedRanges;
 	NSDictionary<NSString *, NSNumber *> *anchor = [self currentViewportAnchor];
-	BOOL shouldRestartPendingRender = self.renderQueue.operationCount > 0;
+	// A finished render's completion can still be queued on the main queue while
+	// operationCount is already 0; the generation bump below would drop it, so a
+	// restart is also needed whenever the displayed content lags the generation.
+	BOOL shouldRestartPendingRender = self.renderQueue.operationCount > 0 ||
+		self.appliedRenderGeneration != self.renderGeneration;
 	NSValue *scrollOrigin = [NSValue valueWithPoint:self.scrollView.contentView.bounds.origin];
 	[self.renderQueue cancelAllOperations];
 	self.renderGeneration++;
 	self.typography = [PBNativeContentTypography currentTypography];
 	[self configureRenderers];
-	[self.cachedDiffResults removeAllObjects];
-	[self.cachedDiffSections removeAllObjects];
+	[self invalidateCachedDiffRenders];
 	NSAttributedString *restyledString = [self.typography restyledString:self.textView.attributedString];
 	[self.textView.textStorage setAttributedString:restyledString];
 	self.textView.selectedRanges = [self validSelectedRanges:selectedRanges textLength:restyledString.length];
@@ -299,7 +304,20 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 	NSLog(@"[GitX] Applied native content typography %@ at %.1f pt",
 		  PBApplicationSettings.diffFontName,
 		  PBApplicationSettings.diffFontSize);
-	if (shouldRestartPendingRender) [self rerenderCurrentContentWithScrollOrigin:scrollOrigin];
+	if (shouldRestartPendingRender) {
+		[self rerenderCurrentContentWithScrollOrigin:scrollOrigin];
+	} else {
+		self.appliedRenderGeneration = self.renderGeneration;
+	}
+}
+
+- (void)invalidateCachedDiffRenders
+{
+	// cachedDiffIdentifierOrder is deliberately left intact: it is the LRU index
+	// for all per-identifier state, including cachedDiffScrollOrigins, which
+	// survive render invalidation so reselected diffs restore their position.
+	[self.cachedDiffResults removeAllObjects];
+	[self.cachedDiffSections removeAllObjects];
 }
 
 - (void)rerenderCurrentContentWithScrollOrigin:(NSValue *)scrollOrigin
@@ -334,8 +352,7 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 	}
 	NSValue *scrollOrigin = [NSValue valueWithPoint:self.scrollView.contentView.bounds.origin];
 	[self configureRenderers];
-	[self.cachedDiffResults removeAllObjects];
-	[self.cachedDiffSections removeAllObjects];
+	[self invalidateCachedDiffRenders];
 	[self rerenderCurrentContentWithScrollOrigin:scrollOrigin];
 	NSLog(@"[GitX] Re-rendered native content after syntax or diff appearance change");
 }
@@ -575,6 +592,30 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 - (void)scrollPageDown
 {
 	[self.textView scrollPageDown:self];
+}
+
+@end
+
+@implementation PBNativeContentView (GitXTesting)
+
+- (NSOperationQueue *)renderQueueForTesting
+{
+	return self.renderQueue;
+}
+
+- (NSDictionary<NSString *, PBNativeRenderResult *> *)cachedDiffResultsForTesting
+{
+	return [self.cachedDiffResults copy];
+}
+
+- (NSDictionary<NSString *, NSArray<NSDictionary *> *> *)cachedDiffSectionsForTesting
+{
+	return [self.cachedDiffSections copy];
+}
+
+- (NSDictionary<NSString *, NSValue *> *)cachedDiffScrollOriginsForTesting
+{
+	return [self.cachedDiffScrollOrigins copy];
 }
 
 @end

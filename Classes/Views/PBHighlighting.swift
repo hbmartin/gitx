@@ -32,14 +32,19 @@ nonisolated struct NativeSyntaxStyleRun {
 private final nonisolated class NativeSyntaxCacheKey: NSObject {
     let language: String
     let text: String
+    private let precomputedHash: Int
 
     init(language: String, text: String) {
         self.language = language
         self.text = text
+        var hasher = Hasher()
+        hasher.combine(language)
+        hasher.combine(text)
+        precomputedHash = hasher.finalize()
     }
 
     override var hash: Int {
-        language.hashValue &* 31 &+ text.hashValue
+        precomputedHash
     }
 
     override func isEqual(_ object: Any?) -> Bool {
@@ -108,6 +113,10 @@ nonisolated struct NativeSyntaxStyler {
         paragraph.defaultTabInterval = 32
         paragraph.lineBreakMode = .byClipping
         paragraphStyle = paragraph.copy() as! NSParagraphStyle
+    }
+
+    var hasTheme: Bool {
+        theme != nil
     }
 
     func attributedString(

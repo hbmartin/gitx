@@ -57,6 +57,11 @@ You can also build and run on the command line. Once you've created the config f
 you may use [the script shared here](https://github.com/gitx/gitx/discussions/366#discussion-4897466).
 GitX builds for arm64 only and requires an Apple Silicon Mac.
 
+**Known toolchain issue:** Xcode 26.3 fails to type-check the large Swift grammar
+expression in HighlightKit 0.2.0 (the pinned syntax-highlighting dependency), so
+the project does not currently build with that Xcode release. Use Xcode 26.2 —
+which CI is pinned to — until the issue is resolved upstream in HighlightKit.
+
 ### Apple Silicon
 
 This project is supported by MacStadium Open Source Developer Program with a free Mac mini for our CI. Thank you !

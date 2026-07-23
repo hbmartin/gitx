@@ -483,6 +483,13 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 						   shouldCancel:(BOOL (^)(void))shouldCancel;
 @end
 
+@interface PBNativeContentView (GitXTesting)
+@property (nonatomic, readonly) NSOperationQueue *renderQueueForTesting;
+@property (nonatomic, readonly) NSDictionary<NSString *, PBNativeRenderResult *> *cachedDiffResultsForTesting;
+@property (nonatomic, readonly) NSDictionary<NSString *, NSArray<NSDictionary<NSString *, id> *> *> *cachedDiffSectionsForTesting;
+@property (nonatomic, readonly) NSDictionary<NSString *, NSValue *> *cachedDiffScrollOriginsForTesting;
+@end
+
 @protocol PBIndexCommandRunning <NSObject>
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments
 										 input:(nullable NSString *)input
