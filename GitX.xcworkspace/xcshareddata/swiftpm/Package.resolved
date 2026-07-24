@@ -1,13 +1,13 @@
 {
-  "originHash" : "b78c1d822e7612b545c7be5eace27b7eb6b49fe2a5be332e602b033211b4aff8",
+  "originHash" : "8e00c34bcbea1878ed773f94095b74a17c2a42da461cea9e9adb029b66573375",
   "pins" : [
     {
       "identity" : "highlightkit",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/PhraseHQ/HighlightKit.git",
+      "location" : "https://github.com/hbmartin/HighlightKit.git",
       "state" : {
-        "revision" : "524c185b0553756498c1b6a1765e8d119c4623a6",
-        "version" : "0.2.0"
+        "revision" : "13b25eacc65a3e11833d98067a83a7ac48b0ed4b",
+        "version" : "0.3.0"
       }
     },
     {

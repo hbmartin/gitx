@@ -2626,10 +2626,10 @@
 /* Begin XCRemoteSwiftPackageReference section */
 		C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/PhraseHQ/HighlightKit.git";
+			repositoryURL = "https://github.com/hbmartin/HighlightKit.git";
 			requirement = {
 				kind = exactVersion;
-				version = 0.2.0;
+				version = 0.3.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
