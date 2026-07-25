@@ -7,17 +7,18 @@
 //
 
 #import "PBRepositoryFinder.h"
+#import "GitXApplicationLocator.h"
 #import "GitXScriptingConstants.h"
 #import "GitX.h"
 #import "PBHistorySearchController.h"
 
 #import <mach-o/dyld.h>
-#include <sys/param.h>
+#import <sys/param.h>
 
 
 #pragma mark GitX application lookup
 
-NSString *executablePath(void)
+static NSString *executablePath(void)
 {
 	char path[MAXPATHLEN];
 	uint32_t size = sizeof(path);
@@ -32,7 +33,7 @@ NSString *executablePath(void)
 	return [NSString stringWithUTF8String:resolved];
 }
 
-GitXApplication *gitXApplication(void)
+static GitXApplication *gitXApplication(void)
 {
 	// This tool ships inside the app bundle at GitX.app/Contents/Resources/gitx,
 	// so locate the app relative to the tool itself. Looking it up by bundle
@@ -40,12 +41,9 @@ GitXApplication *gitXApplication(void)
 	// identifier (e.g. Sparkle's embedded Updater.app in some releases),
 	// LaunchServices can resolve to a bundle without our scripting definition
 	// and every GitX command crashes with an unrecognized selector.
-	NSString *appPath = [[[[executablePath() stringByDeletingLastPathComponent] // Resources
-		stringByDeletingLastPathComponent] // Contents
-		stringByDeletingLastPathComponent] // GitX.app
-		stringByStandardizingPath];
-	if ([[appPath pathExtension] isEqualToString:@"app"])
-		return [SBApplication applicationWithURL:[NSURL fileURLWithPath:appPath]];
+	NSString *bundlePath = GitXApplicationBundlePathForToolPath(executablePath());
+	if (bundlePath)
+		return [SBApplication applicationWithURL:[NSURL fileURLWithPath:bundlePath]];
 
 	// Not inside an app bundle (e.g. running from the build directory)
 	return [SBApplication applicationWithBundleIdentifier:kGitXBundleIdentifier];

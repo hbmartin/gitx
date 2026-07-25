@@ -4,6 +4,7 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 
+#import "GitXApplicationLocator.h"
 #import "PBGitDefaults.h"
 #import "PBAutoFetchManager.h"
 #import "PBMacros.h"
@@ -336,6 +337,43 @@
 						 @"The CLI must explain its Apple-events use before macOS can authorize delivery to GitX");
 	XCTAssertEqualObjects(entitlements[@"com.apple.security.automation.apple-events"], @YES,
 						  @"The hardened CLI must be entitled to send its piped diff to the GitX app");
+}
+
+- (void)testEmbeddedCommandLineToolResolvesBackToItsApplicationBundle
+{
+	NSURL *commandLineToolURL = [NSBundle.mainBundle URLForResource:@"gitx" withExtension:nil];
+	XCTAssertNotNil(commandLineToolURL);
+
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(commandLineToolURL.path),
+						  NSBundle.mainBundle.bundlePath.stringByStandardizingPath,
+						  @"The CLI must find its own app bundle by path so it never depends on a bundle identifier "
+						  @"another bundle can claim");
+}
+
+- (void)testApplicationBundleLookupDerivesTheBundleFromAnEmbeddedToolPath
+{
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Applications/GitX.app/Contents/Resources/gitx"),
+						  @"/Applications/GitX.app");
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Applications/Tools/../GitX.app/Contents/Resources/gitx"),
+						  @"/Applications/GitX.app");
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Volumes/Ext Disk/Git X.app/Contents/Resources/gitx"),
+						  @"/Volumes/Ext Disk/Git X.app");
+}
+
+- (void)testApplicationBundleLookupRejectsToolsOutsideAnApplicationBundle
+{
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(nil));
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(@""));
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/usr/local/bin/gitx"),
+				 @"A tool outside a bundle must fall back to the bundle-identifier lookup");
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Users/example/Build/Products/Debug/gitx"),
+				 @"Running from a build directory must fall back to the bundle-identifier lookup");
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Applications/GitX.app/Contents/MacOS/GitX"),
+				 @"Only the tool shipped in Contents/Resources identifies the enclosing bundle");
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Applications/GitX.app/Contents/Resources/tools/gitx"),
+				 @"A deeper resource path must not be mistaken for the app bundle");
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Library/Frameworks/Sparkle.framework/Resources/gitx"),
+				 @"A non-app bundle claiming the identifier must never be treated as GitX");
 }
 
 - (void)testSpaceKeyRoutesSelectedFileRowsToStageAndUnstageActions
