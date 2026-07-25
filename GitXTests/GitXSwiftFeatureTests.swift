@@ -1106,18 +1106,22 @@ final class GitXSwiftFeatureTests: XCTestCase {
                 "\(filename) must reject a Spotlight match that does not contain the gitx tool"
             )
         }
-        XCTAssertTrue(try XCTUnwrap(scripts["open-repository.sh"]).contains("\"$APP/Contents/Resources/gitx\" \"$1\""))
-        XCTAssertTrue(try XCTUnwrap(scripts["open-finder.sh"]).contains("tell application \"Finder\" to POSIX path"))
-        XCTAssertTrue(try XCTUnwrap(scripts["show-recents.sh"]).contains("open -a \"$APP\" --args --welcome"))
-        XCTAssertTrue(try XCTUnwrap(scripts["start-clone.sh"]).contains("open -a \"$APP\" --args --clone"))
+        let openRepository = try XCTUnwrap(scripts["open-repository.sh"])
+        let openFinder = try XCTUnwrap(scripts["open-finder.sh"])
+        let showRecents = try XCTUnwrap(scripts["show-recents.sh"])
+        let startClone = try XCTUnwrap(scripts["start-clone.sh"])
+        XCTAssertTrue(openRepository.contains("\"$APP/Contents/Resources/gitx\" \"$1\""))
+        XCTAssertTrue(openRepository.contains("# @raycast.argument1 { \"type\": \"text\", \"placeholder\": \"Repository path\" }"))
+        XCTAssertTrue(openFinder.contains("tell application \"Finder\" to POSIX path"))
+        XCTAssertTrue(showRecents.contains("open -a \"$APP\" --args --welcome"))
+        XCTAssertTrue(startClone.contains("open -a \"$APP\" --args --clone"))
     }
 
     func testRaycastScriptCatalogQuotesApplicationPathsContainingShellMetacharacters() throws {
         let scripts = PBRaycastScriptCatalog.scriptContents(forApplicationPath: "/Volumes/Ben's Disk/Git X.app")
 
-        XCTAssertTrue(
-            try XCTUnwrap(scripts["open-repository.sh"]).contains("APP='/Volumes/Ben'\\''s Disk/Git X.app'")
-        )
+        let openRepository = try XCTUnwrap(scripts["open-repository.sh"])
+        XCTAssertTrue(openRepository.contains("APP='/Volumes/Ben'\\''s Disk/Git X.app'"))
         XCTAssertEqual(PBRaycastScriptCatalog.shellQuoted("$(rm -rf ~)"), "'$(rm -rf ~)'")
         XCTAssertEqual(PBRaycastScriptCatalog.shellQuoted("it's"), "'it'\\''s'")
     }
@@ -1154,8 +1158,9 @@ final class GitXSwiftFeatureTests: XCTestCase {
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
 
             let scripts = PBRaycastScriptCatalog.scriptContents(forApplicationPath: application.path)
+            let contents = try XCTUnwrap(scripts["open-repository.sh"])
             let script = directory.appendingPathComponent("open-repository.sh")
-            try XCTUnwrap(scripts["open-repository.sh"]).write(to: script, atomically: true, encoding: .utf8)
+            try contents.write(to: script, atomically: true, encoding: .utf8)
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
