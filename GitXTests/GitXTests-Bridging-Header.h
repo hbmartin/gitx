@@ -173,6 +173,12 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 + (BOOL)hasValidChecksumForScript:(NSString *)script NS_SWIFT_NAME(hasValidChecksum(for:));
 @end
 
+@interface PBRaycastScriptCatalog : NSObject
++ (NSDictionary<NSString *, NSString *> *)scriptContentsForApplicationPath:(NSString *)applicationPath
+	NS_SWIFT_NAME(scriptContents(forApplicationPath:));
++ (NSString *)shellQuotedValue:(NSString *)value NS_SWIFT_NAME(shellQuoted(_:));
+@end
+
 @interface PBRecentRepositoryStore : NSObject
 @property (class, readonly, strong) PBRecentRepositoryStore *shared;
 - (void)record:(NSURL *)url;

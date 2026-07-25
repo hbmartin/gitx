@@ -1084,6 +1084,94 @@ final class GitXSwiftFeatureTests: XCTestCase {
         PBIntegrationManager.shared.removeRaycastScripts(presenting: window)
     }
 
+    func testRaycastScriptCatalogTargetsAnApplicationPathInsteadOfABundleIdentifier() throws {
+        let scripts = PBRaycastScriptCatalog.scriptContents(forApplicationPath: "/Applications/GitX.app")
+
+        XCTAssertEqual(
+            Set(scripts.keys),
+            ["open-repository.sh", "open-finder.sh", "show-recents.sh", "start-clone.sh"]
+        )
+        for (filename, contents) in scripts {
+            XCTAssertTrue(contents.contains("APP='/Applications/GitX.app'"), filename)
+            XCTAssertFalse(
+                contents.contains("open -b "),
+                "\(filename) must not launch GitX by an identifier another bundle can claim"
+            )
+            XCTAssertFalse(
+                contents.contains("\\\""),
+                "\(filename) must not emit backslash-escaped quotes, which the shell reads literally"
+            )
+            XCTAssertTrue(
+                contents.contains("[ -x \"$candidate/Contents/Resources/gitx\" ] || continue"),
+                "\(filename) must reject a Spotlight match that does not contain the gitx tool"
+            )
+        }
+        XCTAssertTrue(try XCTUnwrap(scripts["open-repository.sh"]).contains("\"$APP/Contents/Resources/gitx\" \"$1\""))
+        XCTAssertTrue(try XCTUnwrap(scripts["open-finder.sh"]).contains("tell application \"Finder\" to POSIX path"))
+        XCTAssertTrue(try XCTUnwrap(scripts["show-recents.sh"]).contains("open -a \"$APP\" --args --welcome"))
+        XCTAssertTrue(try XCTUnwrap(scripts["start-clone.sh"]).contains("open -a \"$APP\" --args --clone"))
+    }
+
+    func testRaycastScriptCatalogQuotesApplicationPathsContainingShellMetacharacters() throws {
+        let scripts = PBRaycastScriptCatalog.scriptContents(forApplicationPath: "/Volumes/Ben's Disk/Git X.app")
+
+        XCTAssertTrue(
+            try XCTUnwrap(scripts["open-repository.sh"]).contains("APP='/Volumes/Ben'\\''s Disk/Git X.app'")
+        )
+        XCTAssertEqual(PBRaycastScriptCatalog.shellQuoted("$(rm -rf ~)"), "'$(rm -rf ~)'")
+        XCTAssertEqual(PBRaycastScriptCatalog.shellQuoted("it's"), "'it'\\''s'")
+    }
+
+    func testRaycastScriptsAreValidZshPrograms() throws {
+        try withTemporaryDirectory { directory in
+            for (filename, contents) in PBRaycastScriptCatalog.scriptContents(
+                forApplicationPath: "/Volumes/Ben's Disk/Git X.app"
+            ) {
+                let script = directory.appendingPathComponent(filename)
+                try contents.write(to: script, atomically: true, encoding: .utf8)
+
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                process.arguments = ["-n", script.path]
+                let errors = Pipe()
+                process.standardError = errors
+                try process.run()
+                let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                process.waitUntilExit()
+
+                XCTAssertEqual(process.terminationStatus, 0, "\(filename) is not valid zsh: \(message)")
+            }
+        }
+    }
+
+    func testRaycastRepositoryScriptForwardsItsArgumentToTheEmbeddedCommandLineTool() throws {
+        try withTemporaryDirectory { directory in
+            let application = directory.appendingPathComponent("Ben's Git X.app", isDirectory: true)
+            let resources = application.appendingPathComponent("Contents/Resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+            let tool = resources.appendingPathComponent("gitx")
+            try "#!/bin/sh\nprintf 'gitx:%s' \"$1\"\n".write(to: tool, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+
+            let scripts = PBRaycastScriptCatalog.scriptContents(forApplicationPath: application.path)
+            let script = directory.appendingPathComponent("open-repository.sh")
+            try XCTUnwrap(scripts["open-repository.sh"]).write(to: script, atomically: true, encoding: .utf8)
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = [script.path, "/tmp/some repository"]
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+
+            XCTAssertEqual(process.terminationStatus, 0)
+            XCTAssertEqual(String(decoding: data, as: UTF8.self), "gitx:/tmp/some repository")
+        }
+    }
+
     func testManagedScriptChecksumPolicyGeneratesAndValidatesManagedScripts() {
         let body = "#!/bin/zsh\n# @raycast.title Open GitX\necho ready\n"
 

@@ -251,6 +251,115 @@ final nonisolated class ManagedScriptChecksumPolicy: NSObject {
     }
 }
 
+@objc(PBRaycastScriptCatalog)
+final nonisolated class RaycastScriptCatalog: NSObject {
+    struct Script {
+        let filename: String
+        let contents: String
+    }
+
+    private static let bundleIdentifier = "net.phere.GitX"
+    private static let toolSubpath = "Contents/Resources/gitx"
+
+    /// Raycast commands for a GitX installed at `applicationPath`.
+    ///
+    /// The scripts must not resolve GitX by bundle identifier alone. Another
+    /// bundle on disk can claim net.phere.GitX — Sparkle's embedded Updater.app
+    /// did in releases built with a workspace-wide identifier override — and
+    /// Spotlight can return that one first. The running app's own path is baked
+    /// in, and the Spotlight fallback that keeps the commands working after the
+    /// app moves only accepts a bundle that actually contains the gitx tool.
+    static func scripts(applicationPath: String) -> [Script] {
+        [
+            Script(
+                filename: "open-repository.sh",
+                contents: script(
+                    title: "Open Repository Path in GitX",
+                    metadata: ["# @raycast.argument1 { \"type\": \"text\", \"placeholder\": \"Repository path\" }"],
+                    applicationPath: applicationPath,
+                    body: "\"$APP/\(toolSubpath)\" \"$1\""
+                )
+            ),
+            Script(
+                filename: "open-finder.sh",
+                contents: script(
+                    title: "Open Frontmost Finder Folder in GitX",
+                    applicationPath: applicationPath,
+                    body: """
+                    DIR=$(osascript -e 'tell application "Finder" to POSIX path of (target of front window as alias)') || exit 1
+                    [ -n "$DIR" ] || exit 1
+                    "$APP/\(toolSubpath)" "$DIR"
+                    """
+                )
+            ),
+            Script(
+                filename: "show-recents.sh",
+                contents: script(
+                    title: "Show GitX Recents",
+                    applicationPath: applicationPath,
+                    body: "open -a \"$APP\" --args --welcome"
+                )
+            ),
+            Script(
+                filename: "start-clone.sh",
+                contents: script(
+                    title: "Start GitX Clone",
+                    applicationPath: applicationPath,
+                    body: "open -a \"$APP\" --args --clone"
+                )
+            ),
+        ]
+    }
+
+    @objc(scriptContentsForApplicationPath:)
+    static func scriptContents(forApplicationPath applicationPath: String) -> [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: scripts(applicationPath: applicationPath)
+                .map { ($0.filename, $0.contents) }
+        )
+    }
+
+    /// Wraps a value in single quotes so the shell reads it literally, however
+    /// many spaces, quotes, or expansions it contains.
+    @objc(shellQuotedValue:)
+    static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func script(
+        title: String,
+        metadata: [String] = [],
+        applicationPath: String,
+        body: String
+    ) -> String {
+        let lines = [
+            "#!/bin/zsh",
+            "# GitX managed Raycast command v2",
+            "# @raycast.schemaVersion 1",
+            "# @raycast.mode silent",
+            "# @raycast.title \(title)",
+        ] + metadata + [resolveApplication(path: applicationPath), body]
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func resolveApplication(path: String) -> String {
+        """
+        APP=\(shellQuoted(path))
+        if [ ! -x "$APP/\(toolSubpath)" ]; then
+          APP=$(mdfind "kMDItemCFBundleIdentifier == '\(bundleIdentifier)'" | while IFS= read -r candidate; do
+            [ -x "$candidate/\(toolSubpath)" ] || continue
+            printf '%s\\n' "$candidate"
+            break
+          done)
+        fi
+        if [ ! -x "$APP/\(toolSubpath)" ]; then
+          echo "GitX.app could not be found." >&2
+          exit 1
+        fi
+        """
+    }
+}
+
 @objc(PBIntegrationManager)
 final class IntegrationManager: NSObject {
     @objc static let shared = IntegrationManager()
@@ -332,14 +441,8 @@ final class IntegrationManager: NSObject {
     }
 
     private var raycastScripts: [(filename: String, contents: String)] {
-        let appLookup = "APP=$(mdfind \\\"kMDItemCFBundleIdentifier == 'net.phere.GitX'\\\" | head -1)"
-        let header = "#!/bin/zsh\n# GitX managed Raycast command v1\n# @raycast.schemaVersion 1\n# @raycast.mode silent\n"
-        return [
-            ("open-repository.sh", header + "# @raycast.title Open Repository Path in GitX\n# @raycast.argument1 { \\\"type\\\": \\\"text\\\", \\\"placeholder\\\": \\\"Repository path\\\" }\n\(appLookup)\n\\\"$APP/Contents/Resources/gitx\\\" \\\"$1\\\"\n"),
-            ("open-finder.sh", header + "# @raycast.title Open Frontmost Finder Folder in GitX\n\(appLookup)\nDIR=$(osascript -e 'tell application \\\"Finder\\\" to POSIX path of (target of front window as alias)')\n\\\"$APP/Contents/Resources/gitx\\\" \\\"$DIR\\\"\n"),
-            ("show-recents.sh", header + "# @raycast.title Show GitX Recents\nopen -b net.phere.GitX --args --welcome\n"),
-            ("start-clone.sh", header + "# @raycast.title Start GitX Clone\nopen -b net.phere.GitX --args --clone\n"),
-        ].map { ($0.0, ManagedScriptChecksumPolicy.managedScript(for: $0.1)) }
+        RaycastScriptCatalog.scripts(applicationPath: Bundle.main.bundlePath)
+            .map { ($0.filename, ManagedScriptChecksumPolicy.managedScript(for: $0.contents)) }
     }
 
     private func present(title: String, message: String, window: NSWindow?) {
