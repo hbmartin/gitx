@@ -146,6 +146,12 @@ jobs:
       # end test
           
       - name: Build project
+        # Do not pass PRODUCT_BUNDLE_IDENTIFIER on the command line: it would
+        # override every target in the workspace, including Sparkle's embedded
+        # Updater.app, which would then claim the app's identifier and break
+        # any lookup that resolves GitX that way. Each target already sets its
+        # own identifier in the project file, and the step below fails the
+        # build if two bundles ever share one.
         run: xcodebuild -workspace GitX.xcworkspace -scheme GitX -archivePath ./GitX archive ARCHS="${{ matrix.abi }}"
       - name: Verify archived bundle identifiers
         run: python3 scripts/check_bundle_identifiers.py GitX.xcarchive/Products/Applications/GitX.app
