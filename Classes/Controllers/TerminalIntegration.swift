@@ -253,7 +253,7 @@ final nonisolated class ManagedScriptChecksumPolicy: NSObject {
 
 @objc(PBRaycastScriptCatalog)
 final nonisolated class RaycastScriptCatalog: NSObject {
-    struct Script {
+    struct Script: Sendable {
         let filename: String
         let contents: String
     }
