@@ -344,7 +344,7 @@
 	NSURL *commandLineToolURL = [NSBundle.mainBundle URLForResource:@"gitx" withExtension:nil];
 	XCTAssertNotNil(commandLineToolURL);
 
-	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(commandLineToolURL.path),
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(commandLineToolURL.path).stringByStandardizingPath,
 						  NSBundle.mainBundle.bundlePath.stringByStandardizingPath,
 						  @"The CLI must find its own app bundle by path so it never depends on a bundle identifier "
 						  @"another bundle can claim");
@@ -354,10 +354,11 @@
 {
 	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Applications/GitX.app/Contents/Resources/gitx"),
 						  @"/Applications/GitX.app");
-	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Applications/Tools/../GitX.app/Contents/Resources/gitx"),
-						  @"/Applications/GitX.app");
 	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Volumes/Ext Disk/Git X.app/Contents/Resources/gitx"),
 						  @"/Volumes/Ext Disk/Git X.app");
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Users/example/Desktop/GitX.app/Contents/Resources/gitx"),
+						  @"/Users/example/Desktop/GitX.app",
+						  @"Derivation must be lexical so it never depends on what exists on the running machine");
 }
 
 - (void)testApplicationBundleLookupRejectsToolsOutsideAnApplicationBundle

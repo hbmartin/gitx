@@ -20,12 +20,16 @@ NS_ASSUME_NONNULL_BEGIN
 /// Resolving the app by bundle identifier alone is unreliable: when another
 /// bundle on disk claims net.phere.GitX, LaunchServices can return a bundle
 /// without GitX's scripting definition and every command fails.
+///
+/// The derivation is purely lexical and touches no file system. Callers pass a
+/// path that is already resolved, so canonicalizing here would only add a
+/// dependency on what happens to exist on disk.
 static inline NSString *_Nullable GitXApplicationBundlePathForToolPath(NSString *_Nullable toolPath)
 {
 	if (toolPath.length == 0)
 		return nil;
 
-	NSString *resourcesPath = [[toolPath stringByStandardizingPath] stringByDeletingLastPathComponent];
+	NSString *resourcesPath = [toolPath stringByDeletingLastPathComponent];
 	if (![[resourcesPath lastPathComponent] isEqualToString:@"Resources"])
 		return nil;
 
