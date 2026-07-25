@@ -227,7 +227,9 @@ final class NativeContentRendererTests: XCTestCase {
             baseAttributes: baseAttributes,
             titleAttributes: titleAttributes
         )
-        let source = (0 ..< 3000).map { "let value\($0) = \($0)" }.joined(separator: "\n") + "\n"
+        let source = (0 ..< 4500).map {
+            "let value\($0) = \"text\" // comment \($0)"
+        }.joined(separator: "\n") + "\n"
         XCTAssertLessThan(source.utf8.count, 200 * 1024)
 
         let renderedSource = renderer.renderSourceSections([
@@ -237,7 +239,7 @@ final class NativeContentRendererTests: XCTestCase {
             ]),
         ]).attributedString
         let earlySourceColor = try foregroundColor(in: renderedSource, matching: "let value0")
-        let lateSourceColor = try foregroundColor(in: renderedSource, matching: "let value2999")
+        let lateSourceColor = try foregroundColor(in: renderedSource, matching: "let value4499")
         XCTAssertFalse(earlySourceColor.isEqual(lateSourceColor))
 
         let sha = "0123456789abcdef0123456789abcdef01234567"
@@ -384,12 +386,11 @@ final class NativeContentRendererTests: XCTestCase {
         }
     }
 
-    func testUnknownAndUnsupportedPathsUseExplicitPlainFallback() throws {
+    func testUnknownPathsUseExplicitPlainFallback() throws {
         let restoreTheme = preserveDefault("PBSyntaxTheme")
         defer { restoreTheme() }
         PBApplicationSettings.syntaxTheme = .xcode
 
-        XCTAssertNil(PBHighlighting.languageName(forPath: "Example.ex"))
         let highlighted = PBHighlighting.highlightedString(
             forText: "let value = 1\n",
             path: "notes.unknown"
@@ -397,6 +398,45 @@ final class NativeContentRendererTests: XCTestCase {
 
         XCTAssertTrue(
             try foregroundColor(in: highlighted, matching: "let").isEqual(NSColor.textColor)
+        )
+    }
+
+    func testRepositoryMetadataAndUnicodeDriveSyntaxHighlighting() throws {
+        let restoreTheme = preserveDefault("PBSyntaxTheme")
+        defer { restoreTheme() }
+        PBApplicationSettings.syntaxTheme = .xcode
+
+        let exactFilename = PBHighlighting.highlightedString(
+            forText: "BasedOnStyle: LLVM\nColumnLimit: 100\n",
+            path: ".clang-format"
+        )
+        XCTAssertFalse(
+            try foregroundColor(in: exactFilename, matching: "BasedOnStyle")
+                .isEqual(NSColor.textColor)
+        )
+
+        let unicode = PBHighlighting.highlightedString(
+            forText: "#!/usr/bin/env -S python3 -u\nprint(\"😀\")\n",
+            path: "script.py"
+        )
+        XCTAssertEqual(unicode.length, (unicode.string as NSString).length)
+        XCTAssertFalse(
+            try foregroundColor(in: unicode, matching: "print").isEqual(NSColor.textColor)
+        )
+
+        let source = """
+        #import <Foundation/Foundation.h>
+        @interface Example : NSObject
+        @property(nonatomic) NSInteger value;
+        @end
+        """
+        let ambiguousExtension = PBHighlighting.highlightedString(
+            forText: source,
+            path: "Example.m"
+        )
+        XCTAssertFalse(
+            try foregroundColor(in: ambiguousExtension, matching: "@interface")
+                .isEqual(NSColor.textColor)
         )
     }
 
@@ -693,7 +733,7 @@ final class NativeContentRendererTests: XCTestCase {
     }
 
     @MainActor
-    func testPendingHistoryRenderRestartsAfterTypographyChange() throws {
+    func testPendingHistoryRenderRestartsAfterTypographyChange() {
         let restoreSize = preserveDefault("PBDiffFontSize")
         defer { restoreSize() }
         UserDefaults.standard.set(12, forKey: "PBDiffFontSize")
@@ -747,7 +787,7 @@ final class NativeContentRendererTests: XCTestCase {
     }
 
     @MainActor
-    func testFinalDiffCacheEvictsLeastRecentlyUsedIdentifier() throws {
+    func testFinalDiffCacheEvictsLeastRecentlyUsedIdentifier() {
         let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
         for index in 0 ... 8 {
             view.showDiffSections(

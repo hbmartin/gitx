@@ -13,12 +13,6 @@ nonisolated struct NativeSyntaxRunBudget {
         remainingRunCount == 0
     }
 
-    mutating func consumeRun() -> Bool {
-        guard remainingRunCount > 0 else { return false }
-        remainingRunCount -= 1
-        return true
-    }
-
     mutating func consumeRuns(_ count: Int) {
         remainingRunCount = max(0, remainingRunCount - count)
     }
@@ -29,16 +23,77 @@ nonisolated struct NativeSyntaxStyleRun {
     let attributes: [NSAttributedString.Key: Any]
 }
 
+nonisolated struct NativeLanguageRequest {
+    let selection: LanguageSelection
+    let options: HighlightOptions
+    let cacheIdentity: String
+
+    static func named(_ language: String) -> NativeLanguageRequest {
+        NativeLanguageRequest(
+            selection: .named(language),
+            options: HighlightOptions(),
+            cacheIdentity: "named:\(language)"
+        )
+    }
+
+    static func automatic(_ languages: [String]) -> NativeLanguageRequest {
+        let languages = Array(Set(languages)).sorted()
+        return NativeLanguageRequest(
+            selection: .automatic,
+            options: HighlightOptions(automaticSubset: languages),
+            cacheIdentity: "automatic:\(languages.joined(separator: ","))"
+        )
+    }
+}
+
+private nonisolated struct NativeRepositoryLanguageIndex {
+    private let filenames: [String: [String]]
+    private let extensions: [String: [String]]
+
+    init(languages: [LanguageInfo]) {
+        var filenames: [String: Set<String>] = [:]
+        var extensions: [String: Set<String>] = [:]
+        for language in languages {
+            for filename in language.metadata.filenames {
+                filenames[filename, default: []].insert(language.name)
+            }
+            for fileExtension in language.metadata.fileExtensions {
+                extensions[fileExtension, default: []].insert(language.name)
+            }
+        }
+        self.filenames = filenames.mapValues { $0.sorted() }
+        self.extensions = extensions.mapValues { $0.sorted() }
+    }
+
+    func candidates(forPath path: String) -> [String] {
+        let filename = (path as NSString).lastPathComponent.lowercased()
+        if let exact = filenames[filename] {
+            return exact
+        }
+        var longestExtensionLength = -1
+        var candidates: [String] = []
+        for (fileExtension, languages) in extensions
+            where filename == fileExtension || filename.hasSuffix(".\(fileExtension)")
+        {
+            if fileExtension.count > longestExtensionLength {
+                longestExtensionLength = fileExtension.count
+                candidates = languages
+            }
+        }
+        return Array(Set(candidates)).sorted()
+    }
+}
+
 private final nonisolated class NativeSyntaxCacheKey: NSObject {
-    let language: String
+    let requestIdentity: String
     let text: String
     private let precomputedHash: Int
 
-    init(language: String, text: String) {
-        self.language = language
+    init(requestIdentity: String, text: String) {
+        self.requestIdentity = requestIdentity
         self.text = text
         var hasher = Hasher()
-        hasher.combine(language)
+        hasher.combine(requestIdentity)
         hasher.combine(text)
         precomputedHash = hasher.finalize()
     }
@@ -49,7 +104,7 @@ private final nonisolated class NativeSyntaxCacheKey: NSObject {
 
     override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? NativeSyntaxCacheKey else { return false }
-        return language == other.language && text == other.text
+        return requestIdentity == other.requestIdentity && text == other.text
     }
 }
 
@@ -62,25 +117,35 @@ private final nonisolated class NativeSyntaxCacheEntry: NSObject {
 }
 
 // swift6-safety-justification: NSCache synchronizes access and cached token results are immutable.
-private final nonisolated class NativeSyntaxHighlightCache: @unchecked Sendable {
+final nonisolated class NativeSyntaxHighlightCache: @unchecked Sendable {
     static let shared = NativeSyntaxHighlightCache()
 
     private let cache = NSCache<NativeSyntaxCacheKey, NativeSyntaxCacheEntry>()
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "SyntaxHighlightCache")
 
-    private init() {
+    init() {
         cache.countLimit = 64
         cache.totalCostLimit = 16 * 1024 * 1024
     }
 
-    func result(for text: String, language: String) -> HighlightResult {
-        let key = NativeSyntaxCacheKey(language: language, text: text)
+    func result(for text: String, request: NativeLanguageRequest) -> HighlightResult {
+        let key = NativeSyntaxCacheKey(requestIdentity: request.cacheIdentity, text: text)
         if let cached = cache.object(forKey: key) {
             logger.debug("Reusing cached syntax tokens")
             return cached.result
         }
 
-        let result = Highlighter.shared.highlight(text, as: language)
+        // Requests come only from the registered catalog. A bundled grammar failure is a
+        // configuration defect and must remain visible instead of silently becoming plain text.
+        let result = try! Highlighter.shared.highlight(
+            text,
+            selection: request.selection,
+            options: request.options,
+            budget: HighlightBudget(maximumTokens: PBHighlighting.maximumCachedTokenCount)
+        )
+        if result.isTruncated {
+            logger.debug("Cached a truncated bounded syntax-token result")
+        }
         let textCost = text.lengthOfBytes(using: .utf8)
         let estimatedCost = textCost + result.tokens.count * 64
         cache.setObject(
@@ -96,18 +161,22 @@ private final nonisolated class NativeSyntaxHighlightCache: @unchecked Sendable 
 nonisolated struct NativeSyntaxStyler {
     private let baseAttributes: [NSAttributedString.Key: Any]
     private let theme: HighlightTheme?
+    private let renderer: HighlightRenderer?
     private let paragraphStyle: NSParagraphStyle
+    private let logger = Logger(subsystem: "com.gitx.gitx", category: "SyntaxRenderer")
 
     init(
         baseAttributes: [NSAttributedString.Key: Any],
         syntaxTheme: SyntaxTheme = ApplicationSettings.syntaxTheme
     ) {
         self.baseAttributes = baseAttributes
-        theme = switch syntaxTheme {
+        let resolvedTheme: HighlightTheme? = switch syntaxTheme {
         case .xcode: .xcode
         case .github: .github
         case .plain: nil
         }
+        theme = resolvedTheme
+        renderer = resolvedTheme.map { HighlightRenderer(theme: $0) }
         let paragraph = NSMutableParagraphStyle()
         paragraph.tabStops = []
         paragraph.defaultTabInterval = 32
@@ -116,7 +185,7 @@ nonisolated struct NativeSyntaxStyler {
     }
 
     var hasTheme: Bool {
-        theme != nil
+        renderer != nil
     }
 
     func attributedString(
@@ -129,28 +198,24 @@ nonisolated struct NativeSyntaxStyler {
         defaultAttributes[.paragraphStyle] = paragraphStyle
         guard syntaxEnabled,
               let theme,
-              let language = PBHighlighting.languageName(forPath: path)
+              let renderer,
+              let request = PBHighlighting.languageRequest(forPath: path)
         else {
             return NSAttributedString(string: text, attributes: defaultAttributes)
         }
 
         defaultAttributes[.foregroundColor] = theme.foregroundColor
         let attributed = NSMutableAttributedString(string: text, attributes: defaultAttributes)
-        let result = NativeSyntaxHighlightCache.shared.result(for: text, language: language)
-        let fullLength = (text as NSString).length
-        var fontCache: [Int: NSFont] = [:]
-        for token in result.tokens {
-            guard NSMaxRange(token.range) <= fullLength,
-                  let style = theme.style(for: token)
-            else { continue }
-            let styleAttributes = attributes(
-                for: style,
-                fontCache: &fontCache
-            )
-            if !styleAttributes.isEmpty {
-                guard runBudget.consumeRun() else { break }
-                attributed.addAttributes(styleAttributes, range: token.range)
-            }
+        let result = NativeSyntaxHighlightCache.shared.result(for: text, request: request)
+        // Without explicit mappings, HighlightRenderer clips to the valid UTF-16 prefix.
+        let summary = try! renderer.apply(
+            result,
+            to: attributed,
+            options: HighlightRenderOptions(maximumRenderedRuns: runBudget.remainingRunCount)
+        )
+        runBudget.consumeRuns(summary.appliedRuns)
+        if summary.isTruncated {
+            logger.debug("Syntax rendering reached the bounded run limit")
         }
         return attributed
     }
@@ -161,87 +226,60 @@ nonisolated struct NativeSyntaxStyler {
         targetRanges: [Int: NSRange],
         runBudget: inout NativeSyntaxRunBudget
     ) -> [Int: [NativeSyntaxStyleRun]] {
-        guard let theme,
+        guard let renderer,
               !targetRanges.isEmpty,
-              let language = PBHighlighting.languageName(forPath: path)
+              let request = PBHighlighting.languageRequest(forPath: path)
         else { return [:] }
 
-        let result = NativeSyntaxHighlightCache.shared.result(for: text, language: language)
+        let result = NativeSyntaxHighlightCache.shared.result(for: text, request: request)
         let orderedRanges = targetRanges.sorted { lhs, rhs in
             lhs.value.location < rhs.value.location
         }
+        var baseFont = renderer.regularFont
+        if let configuredFont = baseAttributes[.font] as? NSFont {
+            baseFont = configuredFont
+        }
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [.font: baseFont]
+        )
+        let mappings = orderedRanges.map {
+            HighlightRangeMapping(sourceRange: $0.value, destinationRange: $0.value)
+        }
+        // Ranges are produced from this exact UTF-16 source, so invalid mappings are impossible.
+        let summary = try! renderer.apply(
+            result,
+            to: attributed,
+            mappings: mappings,
+            options: HighlightRenderOptions(maximumRenderedRuns: runBudget.remainingRunCount)
+        )
+        runBudget.consumeRuns(summary.appliedRuns)
+        if summary.isTruncated {
+            logger.debug("Mapped syntax rendering reached the bounded run limit")
+        }
+
         var runs: [Int: [NativeSyntaxStyleRun]] = [:]
-        var tokenIndex = 0
-        var fontCache: [Int: NSFont] = [:]
         for (targetIndex, targetRange) in orderedRanges {
-            while tokenIndex < result.tokens.count,
-                  NSMaxRange(result.tokens[tokenIndex].range) <= targetRange.location
-            {
-                tokenIndex += 1
-            }
-            var candidateIndex = tokenIndex
-            while candidateIndex < result.tokens.count {
-                let token = result.tokens[candidateIndex]
-                if token.range.location >= NSMaxRange(targetRange) {
-                    break
+            attributed.enumerateAttributes(in: targetRange) { attributes, range, _ in
+                var syntaxAttributes: [NSAttributedString.Key: Any] = [:]
+                if let color = attributes[.foregroundColor] {
+                    syntaxAttributes[.foregroundColor] = color
                 }
-                let intersection = NSIntersectionRange(token.range, targetRange)
-                if intersection.length > 0,
-                   let style = theme.style(for: token)
-                {
-                    let styleAttributes = attributes(
-                        for: style,
-                        fontCache: &fontCache
-                    )
-                    if !styleAttributes.isEmpty {
-                        guard runBudget.consumeRun() else { return runs }
-                        runs[targetIndex, default: []].append(NativeSyntaxStyleRun(
-                            range: NSRange(
-                                location: intersection.location - targetRange.location,
-                                length: intersection.length
-                            ),
-                            attributes: styleAttributes
-                        ))
-                    }
+                if let font = attributes[.font] as? NSFont, !font.isEqual(baseFont) {
+                    syntaxAttributes[.font] = font
                 }
-                candidateIndex += 1
+                if !syntaxAttributes.isEmpty {
+                    runs[targetIndex, default: []].append(NativeSyntaxStyleRun(
+                        range: NSRange(
+                            location: range.location - targetRange.location,
+                            length: range.length
+                        ),
+                        attributes: syntaxAttributes
+                    ))
+                }
             }
         }
         return runs
-    }
-
-    private func attributes(
-        for style: ScopeStyle,
-        fontCache: inout [Int: NSFont]
-    ) -> [NSAttributedString.Key: Any] {
-        var attributes: [NSAttributedString.Key: Any] = [:]
-        if let color = style.color {
-            attributes[.foregroundColor] = color
-        }
-        guard style.bold || style.italic,
-              let baseFont = baseAttributes[.font] as? NSFont
-        else { return attributes }
-
-        let key = (style.bold ? 1 : 0) | (style.italic ? 2 : 0)
-        if let cached = fontCache[key] {
-            attributes[.font] = cached
-            return attributes
-        }
-        var traits = baseFont.fontDescriptor.symbolicTraits
-        if style.bold {
-            traits.insert(.bold)
-        }
-        if style.italic {
-            traits.insert(.italic)
-        }
-        let descriptor = baseFont.fontDescriptor.withSymbolicTraits(traits)
-        var resolved = baseFont
-        if let traitFont = NSFont(descriptor: descriptor, size: baseFont.pointSize) {
-            resolved = traitFont
-        }
-        fontCache[key] = resolved
-        attributes[.font] = resolved
-        return attributes
     }
 }
 
@@ -249,52 +287,47 @@ nonisolated struct NativeSyntaxStyler {
 final nonisolated class PBHighlighting: NSObject {
     private static let maximumHighlightedDocumentByteCount = 200 * 1024
     static let maximumStyledRunCount = 4096
+    static let maximumCachedTokenCount = maximumStyledRunCount * 2
 
-    private static let extensionLanguages: [String: String] = [
-        "ada": "ada", "adb": "ada", "ads": "ada",
-        "applescript": "applescript", "s": "armasm", "asm": "armasm",
-        "sh": "bash", "bash": "bash", "zsh": "bash", "fish": "bash",
-        "c": "c", "h": "objectivec", "cc": "cpp", "cp": "cpp",
-        "cpp": "cpp", "cxx": "cpp", "hh": "cpp", "hpp": "cpp",
-        "cs": "csharp", "css": "css", "scss": "scss", "less": "less",
-        "dart": "dart", "diff": "diff", "patch": "diff",
-        "ex": "elixir", "exs": "elixir", "erl": "erlang", "hrl": "erlang",
-        "fs": "fsharp", "fsi": "fsharp", "fsx": "fsharp",
-        "f": "fortran", "f90": "fortran", "f95": "fortran",
-        "go": "go", "groovy": "groovy", "hs": "haskell",
-        "html": "xml", "htm": "xml", "xml": "xml", "svg": "xml",
-        "ini": "ini", "toml": "ini", "java": "java",
-        "js": "javascript", "mjs": "javascript", "cjs": "javascript",
-        "json": "json", "json5": "json", "kt": "kotlin", "kts": "kotlin",
-        "lua": "lua", "md": "markdown", "markdown": "markdown",
-        "m": "objectivec", "mm": "objectivec", "ml": "ocaml", "mli": "ocaml",
-        "pl": "perl", "pm": "perl", "php": "php", "ps1": "powershell",
-        "pro": "prolog", "properties": "properties", "py": "python",
-        "r": "r", "rb": "ruby", "rs": "rust", "scala": "scala",
-        "scm": "scheme", "sql": "sql", "swift": "swift",
-        "ts": "typescript", "tsx": "typescript", "vim": "vim",
-        "yaml": "yaml", "yml": "yaml",
+    private static let languageIndex = NativeRepositoryLanguageIndex(
+        languages: Highlighter.shared.languages
+    )
+    private static let compatibilityExtensionLanguages = [
+        "h": "objectivec",
+        "json5": "json",
+        "m": "objectivec",
+        "pro": "prolog",
+        "properties": "properties",
+        "zsh": "bash",
     ]
 
-    private static let supportedExtensionLanguages = extensionLanguages.filter {
-        Highlighter.shared.hasLanguage(named: $0.value)
+    private static func languageCandidates(forPath path: String) -> [String] {
+        let candidates = languageIndex.candidates(forPath: path)
+        if !candidates.isEmpty {
+            return candidates
+        }
+        let fileExtension = (path as NSString).pathExtension.lowercased()
+        if let language = compatibilityExtensionLanguages[fileExtension],
+           Highlighter.shared.hasLanguage(named: language)
+        {
+            return [language]
+        }
+        return []
+    }
+
+    static func languageRequest(forPath path: String) -> NativeLanguageRequest? {
+        let candidates = languageCandidates(forPath: path)
+        guard let language = candidates.first else { return nil }
+        return candidates.count == 1 ? .named(language) : .automatic(candidates)
     }
 
     @objc(languageNameForPath:)
     static func languageName(forPath path: String) -> String? {
-        let name = (path as NSString).lastPathComponent.lowercased()
-        let specialLanguage: String? = switch name {
-        case "dockerfile": "dockerfile"
-        case "makefile", "gnumakefile": "makefile"
-        case "cmakelists.txt": "cmake"
-        default: nil
-        }
-        if let specialLanguage,
-           Highlighter.shared.hasLanguage(named: specialLanguage)
-        {
-            return specialLanguage
-        }
-        return supportedExtensionLanguages[(name as NSString).pathExtension]
+        let candidates = languageCandidates(forPath: path)
+        guard candidates.count > 1 else { return candidates.first }
+        let fileExtension = (path as NSString).pathExtension.lowercased()
+        let preferred = compatibilityExtensionLanguages[fileExtension]
+        return (candidates.filter { $0 == preferred } + candidates).first
     }
 
     @objc(shouldHighlightDiffWithByteCount:)
