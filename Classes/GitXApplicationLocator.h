@@ -14,8 +14,8 @@ NS_ASSUME_NONNULL_BEGIN
 ///
 /// The tool ships at GitX.app/Contents/Resources/gitx, so the bundle is the
 /// grandparent of its enclosing directory. Returns nil unless the tool sits at
-/// exactly that location, which happens when it runs straight from a build
-/// directory; callers fall back to a bundle-identifier lookup in that case.
+/// exactly that location. A tool running straight from a build directory is the
+/// expected nil case; callers fall back to a bundle-identifier lookup for it.
 ///
 /// Resolving the app by bundle identifier alone is unreliable: when another
 /// bundle on disk claims net.phere.GitX, LaunchServices can return a bundle

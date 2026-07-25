@@ -312,6 +312,7 @@ final nonisolated class RaycastScriptCatalog: NSObject {
     }
 
     @objc(scriptContentsForApplicationPath:)
+    // swiftlint:disable:next unused_declaration
     static func scriptContents(forApplicationPath applicationPath: String) -> [String: String] {
         Dictionary(
             uniqueKeysWithValues: scripts(applicationPath: applicationPath)
