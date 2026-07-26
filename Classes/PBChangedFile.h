@@ -8,11 +8,11 @@
 
 #import <Cocoa/Cocoa.h>
 
-typedef enum {
+typedef NS_ENUM(NSInteger, PBChangedFileStatus) {
 	NEW,
 	MODIFIED,
 	DELETED
-} PBChangedFileStatus;
+};
 
 NS_ASSUME_NONNULL_BEGIN
 

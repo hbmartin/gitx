@@ -49,6 +49,18 @@ enum ChangedFilesSortMode: Int {
     case status
 }
 
+@objc(PBStagingListLayout)
+enum StagingListLayout: Int {
+    case sectionedList
+    case splitTables
+}
+
+@objc(PBStagingFileSortOrder)
+enum StagingFileSortOrder: Int {
+    case path
+    case status
+}
+
 @objc(PBApplicationSettings)
 final nonisolated class ApplicationSettings: NSObject {
     @objc static let diffTextTypographyDidChangeNotificationName =
@@ -80,6 +92,9 @@ final nonisolated class ApplicationSettings: NSObject {
         static let raycastScriptsDirectory = "PBRaycastScriptsDirectory"
         static let patchExportMode = "PBPatchExportMode"
         static let applicationIconStyle = ApplicationPreferenceKey.applicationIconStyle.rawValue
+        static let stagingListLayout = "PBStagingFileListLayout"
+        static let stagingFileSort = "PBStagingFileSortOrder"
+        static let stagingIgnoreWhitespace = "PBStagingIgnoreWhitespace"
     }
 
     private static var defaults: UserDefaults {
@@ -236,6 +251,21 @@ final nonisolated class ApplicationSettings: NSObject {
     @objc static var applicationIconStyle: ApplicationIconStyle {
         get { enumValue(Key.applicationIconStyle, fallback: .plusEyes) }
         set { defaults.set(newValue.rawValue, forKey: Key.applicationIconStyle) }
+    }
+
+    @objc static var stagingListLayout: StagingListLayout {
+        get { enumValue(Key.stagingListLayout, fallback: .sectionedList) }
+        set { defaults.set(newValue.rawValue, forKey: Key.stagingListLayout) }
+    }
+
+    @objc static var stagingFileSortOrder: StagingFileSortOrder {
+        get { enumValue(Key.stagingFileSort, fallback: .path) }
+        set { defaults.set(newValue.rawValue, forKey: Key.stagingFileSort) }
+    }
+
+    @objc static var stagingIgnoreWhitespace: Bool {
+        get { defaults.bool(forKey: Key.stagingIgnoreWhitespace) }
+        set { defaults.set(newValue, forKey: Key.stagingIgnoreWhitespace) }
     }
 
     private static func enumValue<Value: RawRepresentable>(

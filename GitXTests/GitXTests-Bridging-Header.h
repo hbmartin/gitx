@@ -65,6 +65,16 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 	PBChangedFilesSortModeStatus,
 };
 
+typedef NS_ENUM(NSInteger, PBStagingListLayout) {
+	PBStagingListLayoutSectionedList,
+	PBStagingListLayoutSplitTables,
+};
+
+typedef NS_ENUM(NSInteger, PBStagingFileSortOrder) {
+	PBStagingFileSortOrderPath,
+	PBStagingFileSortOrderStatus,
+};
+
 typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 	PBApplicationIconStylePlusEyes,
 	PBApplicationIconStyleBracketed,
@@ -107,6 +117,41 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @property (class, copy) NSString *raycastScriptsDirectory;
 @property (class) NSInteger patchExportMode;
 @property (class) PBApplicationIconStyle applicationIconStyle;
+@property (class) PBStagingListLayout stagingListLayout;
+@property (class) PBStagingFileSortOrder stagingFileSortOrder;
+@property (class) BOOL stagingIgnoreWhitespace;
+@end
+
+typedef NS_ENUM(NSInteger, PBStagingListSection) {
+	PBStagingListSectionStaged,
+	PBStagingListSectionUnstaged,
+};
+
+@interface PBStagingListRow : NSObject
+@property (nonatomic, readonly) BOOL isHeader;
+@property (nonatomic, readonly) PBStagingListSection section;
+@property (nonatomic, readonly, nullable) PBChangedFile *file;
+@end
+
+@interface PBStagingDiffRequest : NSObject
+- (instancetype)initWithFile:(PBChangedFile *)file staged:(BOOL)staged;
+@property (nonatomic, readonly) PBChangedFile *file;
+@property (nonatomic, readonly) BOOL staged;
+@end
+
+@interface PBStagingListViewModel : NSObject
+@property (nonatomic, copy) NSString *searchText;
+@property (nonatomic) PBStagingFileSortOrder sortOrder;
+- (NSArray<PBChangedFile *> *)filesInSection:(PBStagingListSection)section
+								 fromChanges:(NSArray<PBChangedFile *> *)changes;
+- (NSArray<PBStagingListRow *> *)flattenedRowsFromChanges:(NSArray<PBChangedFile *> *)changes;
+- (NSInteger)rowCheckboxStateForFile:(PBChangedFile *)file inSection:(PBStagingListSection)section;
+- (NSInteger)masterCheckboxStateForChanges:(NSArray<PBChangedFile *> *)changes
+								 inSection:(PBStagingListSection)section;
+- (NSArray<PBStagingDiffRequest *> *)diffRequestsForStagedSelection:(NSArray<PBChangedFile *> *)stagedSelection
+												   unstagedSelection:(NSArray<PBChangedFile *> *)unstagedSelection;
+- (NSArray<PBStagingDiffRequest *> *)diffRequestsForRows:(NSArray<PBStagingListRow *> *)rows
+										 selectedIndexes:(NSIndexSet *)selectedIndexes;
 @end
 
 @interface PBApplicationIconController : NSObject
