@@ -359,6 +359,9 @@
 	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Users/example/Desktop/GitX.app/Contents/Resources/gitx"),
 						  @"/Users/example/Desktop/GitX.app",
 						  @"Derivation must be lexical so it never depends on what exists on the running machine");
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Users/example/Build/../GitX.app/Contents/Resources/gitx"),
+						  @"/Users/example/Build/../GitX.app",
+						  @"Lexical derivation must retain parent-directory components rather than canonicalizing the path");
 }
 
 - (void)testApplicationBundleLookupRejectsToolsOutsideAnApplicationBundle

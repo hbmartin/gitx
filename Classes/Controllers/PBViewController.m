@@ -18,7 +18,7 @@
 @synthesize repository = repository;
 @synthesize windowController = superController;
 
-- (id)initWithRepository:(PBGitRepository *)theRepository superController:(PBGitWindowController *)controller
+- (nullable instancetype)initWithRepository:(PBGitRepository *)theRepository superController:(nullable PBGitWindowController *)controller
 {
 	NSString *nibName = [[[self class] description] stringByReplacingOccurrencesOfString:@"Controller"
 																			  withString:@"View"];

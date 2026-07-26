@@ -1119,6 +1119,13 @@ final class GitXSwiftFeatureTests: XCTestCase {
                 contents.contains("[ -x \"$candidate/Contents/Resources/gitx\" ] || continue"),
                 "\(filename) must reject a Spotlight match that does not contain the gitx tool"
             )
+            XCTAssertTrue(
+                contents.contains(
+                    "The embedded GitX command-line tool could not be found or is not executable. " +
+                        "Reinstall the Raycast commands from GitX Settings."
+                ),
+                "\(filename) must describe every route to the missing-tool failure"
+            )
         }
         let openRepository = try XCTUnwrap(scripts["open-repository.sh"])
         let openFinder = try XCTUnwrap(scripts["open-finder.sh"])

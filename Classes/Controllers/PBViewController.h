@@ -20,7 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (copy, nullable) NSString *status;
 @property (assign) BOOL isBusy;
 
-- (nullable id)initWithRepository:(PBGitRepository *)theRepository superController:(nullable PBGitWindowController *)controller;
+- (nullable instancetype)initWithRepository:(PBGitRepository *)theRepository superController:(nullable PBGitWindowController *)controller;
 
 /* closeView is called when the repository window will be closed */
 - (void)closeView;
