@@ -151,15 +151,24 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 
 @class PBStagingListViewModel;
 
+@interface PBStagingFileCellView : NSTableCellView
+@property (nonatomic, readonly) NSButton *checkbox;
+@property (nonatomic, readonly) NSTextField *pathField;
+@property (nonatomic, readonly) NSButton *overflowButton;
+@end
+
 @interface PBStagingFileListController : NSObject
 @property (nonatomic, readonly) PBStagingListViewModel *viewModel;
 @property (nonatomic, readonly) NSArrayController *unstagedFilesController;
 @property (nonatomic, readonly) NSArrayController *stagedFilesController;
 @property (nonatomic, readonly) NSTableView *unstagedTable;
 @property (nonatomic, readonly) NSTableView *stagedTable;
+@property (nonatomic, readonly) NSTableView *sectionedTable;
+@property (nonatomic, readonly) PBStagingListLayout layout;
 @property (nonatomic, readonly) NSInteger stagedFileCount;
 - (void)applyFilterAndSort;
 - (void)rearrange;
+- (void)setListLayout:(PBStagingListLayout)layout;
 - (NSArray<PBChangedFile *> *)selectedFilesForStagedContext:(BOOL)stagedContext;
 @end
 

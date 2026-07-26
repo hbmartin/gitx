@@ -238,6 +238,29 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         }
         contextParent.submenu = contextMenu
         optionsMenu.addItem(contextParent)
+        optionsMenu.addItem(.separator())
+
+        let combinedLayout = NSMenuItem(
+            title: NSLocalizedString("Combined list", comment: "Staging view options item"),
+            action: #selector(changeListLayout(_:)),
+            keyEquivalent: ""
+        )
+        combinedLayout.target = self
+        combinedLayout.tag = StagingListLayout.sectionedList.rawValue
+        optionsMenu.addItem(combinedLayout)
+        let splitLayout = NSMenuItem(
+            title: NSLocalizedString("Split sections", comment: "Staging view options item"),
+            action: #selector(changeListLayout(_:)),
+            keyEquivalent: ""
+        )
+        splitLayout.target = self
+        splitLayout.tag = StagingListLayout.splitTables.rawValue
+        optionsMenu.addItem(splitLayout)
+    }
+
+    @objc private func changeListLayout(_ sender: NSMenuItem) {
+        guard let newLayout = StagingListLayout(rawValue: sender.tag) else { return }
+        fileListController.setListLayout(newLayout)
     }
 
     @objc private func showOptionsMenu(_ sender: NSButton) {
@@ -785,7 +808,23 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         if action == #selector(openExternalDiff(_:)) {
             return !fileListController.currentDiffRequests.isEmpty
         }
-        let stagedContext = menuItem.menu === fileListController.stagedTable.menu
+        if action == #selector(changeListLayout(_:)) {
+            menuItem.state = fileListController.layout.rawValue == menuItem.tag ? .on : .off
+            return true
+        }
+        let isSectionedMenu = menuItem.menu === fileListController.sectionedTable.menu
+        if isSectionedMenu {
+            if action == #selector(stageFiles(_:)) {
+                return !fileListController.selectedFiles(stagedContext: false).isEmpty
+            }
+            if action == #selector(unstageFiles(_:)) {
+                return !fileListController.selectedFiles(stagedContext: true).isEmpty
+            }
+        }
+        let stagedContext = isSectionedMenu
+            ? fileListController.selectedFiles(stagedContext: false).isEmpty &&
+            !fileListController.selectedFiles(stagedContext: true).isEmpty
+            : menuItem.menu === fileListController.stagedTable.menu
         let filesForStaging = fileListController.selectedFiles(stagedContext: false)
         let filesForUnstaging = fileListController.selectedFiles(stagedContext: true)
         let selectedFiles = stagedContext ? filesForUnstaging : filesForStaging

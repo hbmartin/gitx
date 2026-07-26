@@ -611,6 +611,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testStagingPaneReplacesDetailViewForWorkingStateRow() throws {
+        let previousLayout = PBApplicationSettings.stagingListLayout
+        PBApplicationSettings.stagingListLayout = .sectionedList
+        defer { PBApplicationSettings.stagingListLayout = previousLayout }
+
         try fixture.write("staged addition\n", to: "staged-addition.txt")
         try fixture.git(["add", "staged-addition.txt"])
         try fixture.write("tracked modification\n", to: "nested/tracked.txt")
@@ -688,6 +692,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             _ = NSApp.sendAction(action, to: pane.searchField.target, from: pane.searchField)
         }
         XCTAssertEqual(fileList.stagedFileCount, 1)
+
+        XCTAssertEqual(fileList.layout, .sectionedList, "the sectioned list is the default layout")
+        XCTAssertEqual(fileList.sectionedTable.numberOfRows, 5, "two headers plus three pending files")
+        let untrackedRow = try XCTUnwrap(
+            (0 ..< fileList.sectionedTable.numberOfRows).first { row in
+                (fileList.sectionedTable.view(atColumn: 0, row: row, makeIfNecessary: true) as? PBStagingFileCellView)?
+                    .pathField.stringValue == "untracked.txt"
+            }
+        )
+        fileList.sectionedTable.selectRowIndexes(IndexSet(integer: untrackedRow), byExtendingSelection: false)
+        XCTAssertEqual(
+            fileList.selectedFiles(forStagedContext: false).map(\.path),
+            ["untracked.txt"],
+            "sectioned selection mirrors into the unstaged array controller"
+        )
+        XCTAssertFalse(
+            try XCTUnwrap(fileList.sectionedTable.delegate?.tableView?(fileList.sectionedTable, shouldSelectRow: 0)),
+            "section headers are not selectable"
+        )
+        fileList.setListLayout(.splitTables)
+        XCTAssertEqual(PBApplicationSettings.stagingListLayout, .splitTables)
+        XCTAssertTrue(fileList.unstagedTable.superview != nil, "split tables install when toggled")
+        fileList.setListLayout(.sectionedList)
+        XCTAssertEqual(PBApplicationSettings.stagingListLayout, .sectionedList)
+        XCTAssertTrue(fileList.sectionedTable.superview != nil, "the sectioned table reinstalls when toggled back")
 
         let previousWhitespace = PBApplicationSettings.stagingIgnoreWhitespace
         let previousContext = UserDefaults.standard.object(forKey: "PBStageDiffContextLines")
