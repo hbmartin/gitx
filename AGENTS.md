@@ -29,7 +29,7 @@
 - Run SwiftLint and SwiftFormat at the exact versions in `Mintfile` through `scripts/run_pinned_tool.sh`.
 - Treat the Objective-C header baseline, SwiftLint baseline, and exact analyzer-warning baseline as shrinking debt: remove stale entries in the same change that fixes them.
 - Treat the current files under `scripts/`, `Mintfile`, and applicable repo-local skills as canonical for verification policy. Ignore planning documents under `docs/` unless the user explicitly asks to use them.
-- After tests and verification pass, refresh the final Debug app at `/Volumes/ExtStor/gitx/build/GitX.app` and report that path.
+- After tests and verification pass, refresh the final Debug app at `build/GitX.app`, relative to the repository root, and report that path.
 
 ### Controllers
 - When changing a controller, extract the affected decision logic into a value type, presenter, or use-case object if that can be done with low churn.

@@ -210,4 +210,4 @@ Do not run zombies during leak measurement because zombie retention invalidates 
 - [ ] Xcode source membership has no missing or duplicate implementation.
 - [ ] Focused tests, full tests, static checks, coverage, and final build pass.
 - [ ] Risk-selected sanitizer, lifecycle, serialization, and UI checks pass.
-- [ ] The verified app exists at `/Volumes/ExtStor/gitx/build/GitX.app`.
+- [ ] The verified app exists at `build/GitX.app`, relative to the repository root.

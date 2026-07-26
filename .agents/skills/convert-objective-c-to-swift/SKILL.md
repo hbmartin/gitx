@@ -16,7 +16,7 @@ Migrate gitx production code toward Swift without treating compilation as proof 
 - Announce an automatic conversion in the working plan before editing. Proceed without separate approval only when it remains low risk and low churn.
 - Ask for explicit confirmation before combining a conversion with API redesign, concurrency migration, or broad refactoring. State the proposed scope, benefit, and compatibility impact. If the user declines, keep the conversion behavior-preserving.
 - Ask about big-picture structural opportunities instead of silently expanding the work.
-- Leave the final verified app at `/Volumes/ExtStor/gitx/build/GitX.app`.
+- Leave the final verified app at `build/GitX.app`, relative to the repository root.
 
 ## Execute the workflow
 
@@ -131,7 +131,7 @@ Always:
 3. Run the full `GitXTests` suite with code coverage enabled.
 4. Run `scripts/check_coverage.py` on the result bundle and compare affected-file coverage before and after conversion.
 5. Update `scripts/coverage-baseline.json` when a covered implementation changes from `.m` to `.swift`, preserving or raising the previous floor. Use the checker’s `--record-improvements` mode to ratchet measured floors upward when coverage increases, then review the resulting baseline diff.
-6. Build the Debug app with the repository workspace and scheme, setting the final configuration output so the verified app exists at `/Volumes/ExtStor/gitx/build/GitX.app`.
+6. Build the Debug app with the repository workspace and scheme, setting the final configuration output so the verified app exists at `build/GitX.app`, relative to the repository root.
 7. Confirm the app bundle exists and is the product of the final commit.
 
 Run additional checks when the conversion introduces the matching risk:

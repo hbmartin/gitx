@@ -81,7 +81,7 @@ After committing production behavior, rerun the full correctness plan with cover
 
 Use the exact current plan names, commands, versions, and baselines found in the repository. Remove stale debt entries in the same change that fixes them.
 
-Build the final verified Debug app at `/Volumes/ExtStor/gitx/build/GitX.app`. Confirm that bundle exists and comes from the final commit.
+Build the final verified Debug app at `build/GitX.app`, relative to the repository root. Confirm that bundle exists and comes from the final commit.
 
 ## Report evidence
 
