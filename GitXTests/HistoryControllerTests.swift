@@ -325,7 +325,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.refresh(self)
         waitForHistory()
         historyController.updateView()
-        XCTAssertFalse(historyController.status.isEmpty)
+        XCTAssertEqual(historyController.status?.isEmpty, false)
         XCTAssertNotNil(tableCoordinator.tableView(historyController.commitList, rowViewForRow: 0))
     }
 
@@ -480,7 +480,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNil(historyController.commitController.value(forKey: "pinnedObject"))
         XCTAssertFalse(historyController.commitController.selectedObjects.isEmpty)
         historyController.updateStatus()
-        XCTAssertTrue(historyController.status.contains("commits loaded"))
+        XCTAssertEqual(historyController.status?.contains("commits loaded"), true)
     }
 
     func testHistoryTraversalRefreshPreservesExplicitColumnSortOverride() {

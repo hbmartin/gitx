@@ -88,13 +88,13 @@ The final committed production code was exercised through the repository's share
 | Performance plan | **3/3 passed**. Large-diff rendering averaged 0.053 seconds, revision parsing 0.008 seconds, and language classification 0.027 seconds. Result: `build/AuditGitXPerformance.xcresult`. The measurements were noisy (relative standard deviation above 10%), so they are regression guards rather than benchmark-quality estimates. |
 | Static verification | **Passed**: pinned SwiftFormat 0.62.1, pinned SwiftLint 0.63.2, changed-line Objective-C formatting, header interoperability, plist checks, and all 28 verification-tool tests. |
 | Analyzer | **Passed** with no first-party analyzer findings, no SwiftLint analyzer violations, and the exact checked-in baseline of 16 legacy deprecation warnings. |
-| Final app | **Build succeeded** and refreshed `/Volumes/ExtStor/gitx/build/GitX.app`. |
+| Final app | **Build succeeded** and refreshed `build/GitX.app`, relative to the repository root. |
 
 The UI, performance, and sanitizer plans completed before the final analyzer-only source annotation and coverage-floor ratchet. Those last changes do not alter runtime control flow. The final correctness plan, coverage check, Debug build, focused UI plan, and hands-on pass used the stabilized production source.
 
 ### Hands-on app observations
 
-The final Debug product was launched directly from `/Volumes/ExtStor/gitx/build/GitX.app` and driven through a disposable two-commit repository using the running AppKit UI:
+The final Debug product was launched directly from `build/GitX.app`, relative to the repository root, and driven through a disposable two-commit repository using the running AppKit UI:
 
 - Stage view showed `staged-new.txt` in both lists after staging two lines and adding a third. Selecting the staged entry rendered a two-line all-additions patch; selecting the unstaged entry rendered only `+unstaged third line` against the staged blob.
 - Editing `README.md` outside the running app caused the watcher to add it to Unstaged Changes immediately. The selected staged file and its rendered diff remained valid, and the app did not crash or stall.

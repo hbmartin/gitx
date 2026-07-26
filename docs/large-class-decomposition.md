@@ -160,7 +160,7 @@ After each preparation and extraction commit, run the focused tests for the affe
 7. Run `GitXThreadSanitizer` for index refresh coordination, render queues, callbacks, notifications, and shared state.
 8. Run pinned SwiftFormat and SwiftLint through `scripts/run_pinned_tool.sh`; do not substitute global versions.
 9. Inspect the generated Swift/Objective-C interfaces, validate `PBGitCommitView.xib`, and smoke-test source, blame, history, diff, staging, drag/drop, commit, hook failure, amend, and commit-and-push flows.
-10. Build and confirm the final Debug app at `/Volumes/ExtStor/gitx/build/GitX.app` from the final commit.
+10. Build and confirm the final Debug app at `build/GitX.app`, relative to the repository root, from the final commit.
 
 The planned seams do not alter pointer, C, Core Foundation, buffer, or unsafe-memory behavior, so `GitXAddressUndefined` is not part of the required matrix. If implementation would cross one of those boundaries, stop and obtain scope confirmation before proceeding.
 

@@ -152,6 +152,7 @@
 	_commitViewController = [[PBGitCommitController alloc] initWithRepository:self.repository superController:self];
 	_repositoryToolbarController = [[PBRepositoryToolbarController alloc] initWithWindowController:self];
 	_contentFirstResponders = [NSMapTable strongToWeakObjectsMapTable];
+	_initializedContentControllers = [NSHashTable weakObjectsHashTable];
 	[_repositoryToolbarController install];
 	_sidebarController.view.frame = sourceSplitView.bounds;
 	[sourceSplitView addSubview:_sidebarController.view];
@@ -204,8 +205,6 @@
 			[_contentFirstResponders setObject:firstResponder forKey:previousController];
 		}
 		[previousController removeObserver:self keyPath:@"status"];
-		previousController.view.hidden = YES;
-		[previousController.view removeFromSuperview];
 	}
 
 	contentController = controller;
@@ -238,13 +237,11 @@
 						  [weakSelf updateStatus];
 					  }];
 	CFTimeInterval elapsed = CFAbsoluteTimeGetCurrent() - start;
-	NSLog(@"[GitX][Performance] %@ repository view in %.3f ms (first mount: %@, budget: %.0f ms)",
+	NSLog(@"[GitX][Performance] %@ %@ exclusively in %.3f ms (budget: %.0f ms, children: %lu, frame: %@)",
 		  firstMount ? @"Cold-mounted" : @"Warm-switched",
-		  elapsed * 1000.0,
-		  firstMount ? @"yes" : @"no",
-		  [PBPerformanceBudgets warmViewSwitchP95Seconds] * 1000.0);
-	NSLog(@"[GitX] Mounted %@ repository content exclusively (children: %lu, frame: %@)",
 		  NSStringFromClass(controller.class),
+		  elapsed * 1000.0,
+		  [PBPerformanceBudgets warmViewSwitchP95Seconds] * 1000.0,
 		  (unsigned long)contentSplitView.subviews.count,
 		  NSStringFromRect(controller.view.frame));
 }

@@ -97,10 +97,10 @@ Do not add a third-party test framework, snapshot library, linter, dead-code ana
 After post-commit verification succeeds, build the Debug app so the final bundle is exactly:
 
 ```text
-/Volumes/ExtStor/gitx/build/GitX.app
+build/GitX.app
 ```
 
-Use the current workspace and `GitX` scheme, direct Derived Data to the repository's ignored `build/` area, and set the final configuration output so this path is refreshed. Confirm the bundle exists after the build and corresponds to the final commit; do not report a stale pre-change bundle.
+Resolve this path relative to the repository root. Use the current workspace and `GitX` scheme, direct Derived Data to the repository's ignored `build/` area, and set the final configuration output so this path is refreshed. Confirm the bundle exists after the build and corresponds to the final commit; do not report a stale pre-change bundle.
 
 ## Failure handling and reporting
 
