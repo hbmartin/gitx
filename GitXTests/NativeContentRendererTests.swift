@@ -1322,6 +1322,129 @@ final class NativeContentRendererTests: XCTestCase {
         XCTAssertFalse(result.attributedString.string.contains("Stage line"))
     }
 
+    func testStagingChromeRendersHunkHeadersButtonsAndGutters() {
+        let renderer = PBNativeDiffRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes,
+            parser: PBDiffDocumentParser()
+        )
+        let diff = """
+        diff --git a/file.swift b/file.swift
+        index 1111111..2222222 100644
+        --- a/file.swift
+        +++ b/file.swift
+        @@ -1,2 +1,2 @@
+        -let old = 1
+        +let new = 2
+         tail
+        @@ -10,3 +10,4 @@
+         context1
+        +added
+         context2
+         context3
+
+        """
+        let section = PBNativeContentSection(dictionary: [
+            PBNativeSectionTextKey: diff,
+            PBNativeSectionContextKey: "unstaged",
+            PBNativeSectionDiffLayoutKey: 1,
+            PBNativeSectionStagingChromeKey: true,
+        ])
+
+        let result = renderer.renderSections(
+            [section],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        )
+        let rendered = result.attributedString.string
+
+        XCTAssertTrue(rendered.contains("Hunk 1 : Lines 1-2"))
+        XCTAssertTrue(rendered.contains("Hunk 2 : Lines 10-13"))
+        XCTAssertFalse(rendered.contains("@@ -1,2 +1,2 @@"))
+        XCTAssertTrue(rendered.contains("\u{00A0}Stage hunk\u{00A0}"))
+        XCTAssertTrue(rendered.contains("\u{00A0}Discard hunk\u{00A0}"))
+        XCTAssertFalse(rendered.contains("Before"), "staging chrome must force the unified layout")
+        XCTAssertTrue(rendered.contains("   1      │ -let old = 1"))
+        XCTAssertTrue(rendered.contains("        1 │ +let new = 2"))
+        XCTAssertTrue(rendered.contains("   2    2 │  tail"))
+        XCTAssertTrue(rendered.contains("  10   10 │  context1"))
+        XCTAssertTrue(rendered.contains("       11 │ +added"))
+        XCTAssertTrue(rendered.contains("Stage line"), "line staging must survive the staging chrome")
+        let stagePatches = result.linkPayloads.values.compactMap { payload -> String? in
+            guard payload["action"] as? String == "stage" else { return nil }
+            return payload["patch"] as? String
+        }
+        XCTAssertTrue(
+            stagePatches.contains { $0.contains("@@ -1,2 +1,2 @@") },
+            "the applied patch must keep the raw hunk header"
+        )
+    }
+
+    func testStagingChromeHandlesDeletionNoNewlineAndUntrackedHunks() {
+        let renderer = PBNativeDiffRenderer(
+            baseAttributes: baseAttributes,
+            titleAttributes: titleAttributes,
+            parser: PBDiffDocumentParser()
+        )
+        let stagedDeletion = """
+        diff --git a/gone.txt b/gone.txt
+        --- a/gone.txt
+        +++ b/gone.txt
+        @@ -5,2 +4,0 @@
+        -five
+        -six
+        \\ No newline at end of file
+
+        """
+        let untracked = """
+        diff --git a/new.txt b/new.txt
+        new file mode 100644
+        --- /dev/null
+        +++ b/new.txt
+        @@ -0,0 +1,3 @@
+        +one
+        +two
+        +three
+
+        """
+        let sections = [
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionTextKey: stagedDeletion,
+                PBNativeSectionContextKey: "staged",
+                PBNativeSectionStagingChromeKey: true,
+            ]),
+            PBNativeContentSection(dictionary: [
+                PBNativeSectionTextKey: untracked,
+                PBNativeSectionContextKey: "unstaged",
+                PBNativeSectionStagingChromeKey: true,
+            ]),
+        ]
+
+        let result = renderer.renderSections(
+            sections,
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        )
+        let rendered = result.attributedString.string
+
+        XCTAssertTrue(
+            rendered.contains("Hunk 1 : Lines 5-6"),
+            "a pure deletion hunk describes the removed old-side span"
+        )
+        XCTAssertTrue(rendered.contains("\u{00A0}Unstage hunk\u{00A0}"))
+        XCTAssertTrue(rendered.contains("   5      │ -five"))
+        XCTAssertTrue(rendered.contains("   6      │ -six"))
+        XCTAssertTrue(rendered.contains("          │ \\ No newline at end of file"))
+        XCTAssertTrue(
+            rendered.contains("Hunk 1 : Lines 1-3"),
+            "hunk ordinals restart for each file"
+        )
+        XCTAssertTrue(rendered.contains("        1 │ +one"))
+        XCTAssertTrue(rendered.contains("        3 │ +three"))
+    }
+
     func testDiffRendererSupportsSideBySideAndSuppressedFiles() {
         let renderer = PBNativeDiffRenderer(
             baseAttributes: baseAttributes,

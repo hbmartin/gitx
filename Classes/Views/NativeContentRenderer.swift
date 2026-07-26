@@ -55,6 +55,11 @@ private nonisolated enum NativeLinkAction {
     }
 }
 
+private nonisolated enum NativeLinkStyle {
+    case link
+    case button
+}
+
 private nonisolated struct NativeRenderingSupport {
     let typography: NativeContentTypography
     let baseAttributes: [NSAttributedString.Key: Any]
@@ -99,19 +104,35 @@ private nonisolated struct NativeRenderingSupport {
     func appendLink(
         title: String,
         action: NativeLinkAction,
+        style: NativeLinkStyle = .link,
         linkPayloads: inout [String: [String: Any]],
         to result: NSMutableAttributedString
     ) -> URL {
         let url = URL(string: "gitx-action://\(UUID().uuidString)")!
         linkPayloads[url.absoluteString] = action.payload
-        result.append(NSAttributedString(
-            string: title,
-            attributes: attributes(for: .link, merging: [
-                .link: url,
-                .foregroundColor: NSColor.linkColor,
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
-            ])
-        ))
+        switch style {
+        case .link:
+            result.append(NSAttributedString(
+                string: title,
+                attributes: attributes(for: .link, merging: [
+                    .link: url,
+                    .foregroundColor: NSColor.linkColor,
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                ])
+            ))
+        case .button:
+            // NSTextView cannot draw borders or rounded corners from string
+            // attributes alone, so the button look is a padded pill of
+            // background color around an un-underlined label.
+            result.append(NSAttributedString(
+                string: "\u{00A0}\(title)\u{00A0}",
+                attributes: attributes(for: .link, merging: [
+                    .link: url,
+                    .foregroundColor: NSColor.labelColor,
+                    .backgroundColor: NSColor.quaternaryLabelColor,
+                ])
+            ))
+        }
         return url
     }
 }
@@ -430,7 +451,11 @@ final nonisolated class NativeDiffRenderer: NSObject {
                     context: section.context,
                     sectionIndex: sectionIndex,
                     fallbackPath: section.path,
-                    diffLayout: section.diffLayout,
+                    // Staging chrome always renders unified: the side-by-side
+                    // path has no per-line staging links, so honoring it would
+                    // silently drop line staging from the staging pane.
+                    diffLayout: section.stagingChrome ? DiffLayout.unified.rawValue : section.diffLayout,
+                    stagingChrome: section.stagingChrome,
                     suppressionPatterns: section.suppressionPatterns,
                     shouldHighlightSyntax: shouldHighlightSyntax,
                     runBudget: &runBudget,
@@ -454,6 +479,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
         sectionIndex: Int,
         fallbackPath: String,
         diffLayout: Int,
+        stagingChrome: Bool,
         suppressionPatterns: [String],
         shouldHighlightSyntax: Bool,
         runBudget: inout NativeSyntaxRunBudget,
@@ -473,6 +499,9 @@ final nonisolated class NativeDiffRenderer: NSObject {
         var currentHunk: NativeDiffHunk?
         var currentHunkSyntax: [Int: [NativeSyntaxStyleRun]] = [:]
         var sideBySideSkipThrough = -1
+        var hunkOrdinal = 0
+        var oldLineNumber = 0
+        var newLineNumber = 0
 
         for (index, line) in lines.enumerated() {
             if index.isMultiple(of: 128), shouldCancel() {
@@ -486,6 +515,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
                 currentPath = file.path
                 currentHunk = nil
                 currentHunkSyntax = [:]
+                hunkOrdinal = 0
                 let fileKey = "\(sectionIndex):\(currentPath)"
                 let suppressed = matchesSuppression(path: currentPath, patterns: suppressionPatterns) &&
                     !expandedImages.contains("suppression:\(fileKey)")
@@ -529,7 +559,21 @@ final nonisolated class NativeDiffRenderer: NSObject {
                     logger.debug("Syntax run budget exhausted; rendering remaining diff lines lightly")
                     loggedRunBudgetExhaustion = true
                 }
-                appendDiffLine(line, to: rendered)
+                hunkOrdinal += 1
+                let stagingSpan = stagingChrome ? NativeDiffHunk.lineSpan(forHeader: line) : nil
+                if let stagingSpan {
+                    oldLineNumber = stagingSpan.oldStart
+                    newLineNumber = stagingSpan.newStart
+                    rendered.append(NSAttributedString(
+                        string: hunkHeaderTitle(ordinal: hunkOrdinal, span: stagingSpan),
+                        attributes: support.attributes(for: .metadata, merging: [
+                            .foregroundColor: NSColor.secondaryLabelColor,
+                        ])
+                    ))
+                } else {
+                    appendDiffLine(line, to: rendered)
+                }
+                let linkStyle: NativeLinkStyle = stagingSpan != nil ? .button : .link
                 rendered.append(NSAttributedString(string: "  "))
                 if context == "staged" {
                     support.appendLink(
@@ -538,6 +582,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
                             comment: "Action to unstage all lines in a diff hunk"
                         ),
                         action: .diff(action: "unstage", patch: hunk.patch),
+                        style: linkStyle,
                         linkPayloads: &linkPayloads,
                         to: rendered
                     )
@@ -548,6 +593,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
                             comment: "Action to stage all lines in a diff hunk"
                         ),
                         action: .diff(action: "stage", patch: hunk.patch),
+                        style: linkStyle,
                         linkPayloads: &linkPayloads,
                         to: rendered
                     )
@@ -558,6 +604,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
                             comment: "Action to discard all changes in a diff hunk"
                         ),
                         action: .diff(action: "discard", patch: hunk.patch),
+                        style: linkStyle,
                         linkPayloads: &linkPayloads,
                         to: rendered
                     )
@@ -613,6 +660,14 @@ final nonisolated class NativeDiffRenderer: NSObject {
                 currentHunkSyntax[index - currentHunk.startIndex]
             } else {
                 nil
+            }
+            if stagingChrome, let hunk = currentHunk, index > hunk.startIndex, index < hunk.endIndex {
+                rendered.append(NSAttributedString(
+                    string: gutterText(for: line, oldLine: &oldLineNumber, newLine: &newLineNumber),
+                    attributes: support.attributes(for: .metadata, merging: [
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                    ])
+                ))
             }
             guard changedLine, context != "readOnly", let currentHunk else {
                 appendDiffLine(
@@ -695,6 +750,51 @@ final nonisolated class NativeDiffRenderer: NSObject {
             }
             rendered.append(NSAttributedString(string: "\n", attributes: support.baseAttributes))
         }
+    }
+
+    private func hunkHeaderTitle(ordinal: Int, span: NativeHunkLineSpan) -> String {
+        let start: Int
+        let count: Int
+        if span.newCount > 0 {
+            start = span.newStart
+            count = span.newCount
+        } else {
+            // A pure deletion has no new-side lines; describe the removed span.
+            start = span.oldStart
+            count = span.oldCount
+        }
+        let lines = count > 1
+            ? String(format: NSLocalizedString(
+                "Lines %d-%d",
+                comment: "Line span in a staging hunk header"
+            ), start, start + count - 1)
+            : String(format: NSLocalizedString(
+                "Line %d",
+                comment: "Single line in a staging hunk header"
+            ), start)
+        return String(format: NSLocalizedString(
+            "Hunk %d : %@",
+            comment: "Staging hunk header title"
+        ), ordinal, lines)
+    }
+
+    private func gutterText(for line: String, oldLine: inout Int, newLine: inout Int) -> String {
+        if line.hasPrefix("+") {
+            defer { newLine += 1 }
+            return String(format: "     %4d │ ", newLine)
+        }
+        if line.hasPrefix("-") {
+            defer { oldLine += 1 }
+            return String(format: "%4d      │ ", oldLine)
+        }
+        if line.hasPrefix("\\") {
+            return "          │ "
+        }
+        defer {
+            oldLine += 1
+            newLine += 1
+        }
+        return String(format: "%4d %4d │ ", oldLine, newLine)
     }
 
     private func matchesSuppression(path: String, patterns: [String]) -> Bool {
