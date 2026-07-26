@@ -70,17 +70,16 @@ private nonisolated struct NativeRepositoryLanguageIndex {
         if let exact = filenames[filename] {
             return exact
         }
-        var longestExtensionLength = -1
-        var candidates: [String] = []
-        for (fileExtension, languages) in extensions
-            where filename == fileExtension || filename.hasSuffix(".\(fileExtension)")
-        {
-            if fileExtension.count > longestExtensionLength {
-                longestExtensionLength = fileExtension.count
-                candidates = languages
+
+        var possibleExtension = filename
+        while !possibleExtension.isEmpty {
+            if let candidates = extensions[possibleExtension] {
+                return candidates
             }
+            guard let separator = possibleExtension.firstIndex(of: ".") else { break }
+            possibleExtension = String(possibleExtension[possibleExtension.index(after: separator)...])
         }
-        return Array(Set(candidates)).sorted()
+        return []
     }
 }
 
@@ -117,13 +116,13 @@ private final nonisolated class NativeSyntaxCacheEntry: NSObject {
 }
 
 // swift6-safety-justification: NSCache synchronizes access and cached token results are immutable.
-final nonisolated class NativeSyntaxHighlightCache: @unchecked Sendable {
+private final nonisolated class NativeSyntaxHighlightCache: @unchecked Sendable {
     static let shared = NativeSyntaxHighlightCache()
 
     private let cache = NSCache<NativeSyntaxCacheKey, NativeSyntaxCacheEntry>()
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "SyntaxHighlightCache")
 
-    init() {
+    private init() {
         cache.countLimit = 64
         cache.totalCostLimit = 16 * 1024 * 1024
     }
@@ -197,6 +196,7 @@ nonisolated struct NativeSyntaxStyler {
         var defaultAttributes = baseAttributes
         defaultAttributes[.paragraphStyle] = paragraphStyle
         guard syntaxEnabled,
+              !runBudget.isExhausted,
               let theme,
               let renderer,
               let request = PBHighlighting.languageRequest(forPath: path)
@@ -226,7 +226,8 @@ nonisolated struct NativeSyntaxStyler {
         targetRanges: [Int: NSRange],
         runBudget: inout NativeSyntaxRunBudget
     ) -> [Int: [NativeSyntaxStyleRun]] {
-        guard let renderer,
+        guard !runBudget.isExhausted,
+              let renderer,
               !targetRanges.isEmpty,
               let request = PBHighlighting.languageRequest(forPath: path)
         else { return [:] }
@@ -326,8 +327,13 @@ final nonisolated class PBHighlighting: NSObject {
         let candidates = languageCandidates(forPath: path)
         guard candidates.count > 1 else { return candidates.first }
         let fileExtension = (path as NSString).pathExtension.lowercased()
-        let preferred = compatibilityExtensionLanguages[fileExtension]
-        return (candidates.filter { $0 == preferred } + candidates).first
+        var selectedLanguage = candidates.first
+        if let preferred = compatibilityExtensionLanguages[fileExtension],
+           candidates.contains(preferred)
+        {
+            selectedLanguage = preferred
+        }
+        return selectedLanguage
     }
 
     @objc(shouldHighlightDiffWithByteCount:)

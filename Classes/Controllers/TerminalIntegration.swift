@@ -354,7 +354,7 @@ final nonisolated class RaycastScriptCatalog: NSObject {
           done)
         fi
         if [ ! -x "$APP/\(toolSubpath)" ]; then
-          echo "GitX.app was not found. Reinstall the Raycast commands from GitX Settings." >&2
+          echo "The embedded GitX command-line tool could not be found or is not executable. Reinstall the Raycast commands from GitX Settings." >&2
           exit 1
         fi
         """
