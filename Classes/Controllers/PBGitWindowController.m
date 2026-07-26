@@ -31,6 +31,7 @@
 	PBWorkspaceActionCoordinator *_workspaceActionCoordinator;
 	PBRepositoryToolbarController *_repositoryToolbarController;
 	NSMapTable<PBViewController *, NSResponder *> *_contentFirstResponders;
+	NSHashTable<PBViewController *> *_initializedContentControllers;
 
 	__weak IBOutlet NSView *sourceListControlsView;
 	__weak IBOutlet NSSplitView *splitView;
@@ -183,7 +184,12 @@
 
 - (void)removeAllContentSubViews
 {
-	while (contentSplitView.subviews.count > 0) [contentSplitView.subviews.lastObject removeFromSuperviewWithoutNeedingDisplay];
+	while (contentSplitView.subviews.count > 0) {
+		NSView *view = contentSplitView.subviews.lastObject;
+		view.hidden = YES;
+		[view removeFromSuperview];
+	}
+	[contentSplitView setNeedsDisplay:YES];
 }
 
 - (void)changeContentController:(PBViewController *)controller
@@ -199,17 +205,28 @@
 		}
 		[previousController removeObserver:self keyPath:@"status"];
 		previousController.view.hidden = YES;
+		[previousController.view removeFromSuperview];
 	}
 
 	contentController = controller;
-	BOOL firstMount = controller.view.superview != contentSplitView;
+	if (!_initializedContentControllers) _initializedContentControllers = [NSHashTable weakObjectsHashTable];
+	BOOL firstMount = ![_initializedContentControllers containsObject:controller];
+	controller.view.frame = contentSplitView.bounds;
+	controller.view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+	controller.view.hidden = NO;
+	for (NSView *mountedView in contentSplitView.subviews.copy) {
+		if (mountedView != controller.view) {
+			mountedView.hidden = YES;
+			[mountedView removeFromSuperview];
+		}
+	}
+	[contentSplitView addSubview:controller.view];
 	if (firstMount) {
-		controller.view.frame = contentSplitView.bounds;
-		controller.view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-		[contentSplitView addSubview:controller.view];
+		[_initializedContentControllers addObject:controller];
 		[controller updateView];
 	}
-	controller.view.hidden = NO;
+	[controller.view setNeedsDisplay:YES];
+	[contentSplitView setNeedsDisplay:YES];
 	NSResponder *firstResponder = [_contentFirstResponders objectForKey:controller] ?: controller.firstResponder;
 	if (firstResponder) [self.window makeFirstResponder:firstResponder];
 	[_repositoryToolbarController setHistoryMode:controller == _historyViewController];
@@ -226,6 +243,10 @@
 		  elapsed * 1000.0,
 		  firstMount ? @"yes" : @"no",
 		  [PBPerformanceBudgets warmViewSwitchP95Seconds] * 1000.0);
+	NSLog(@"[GitX] Mounted %@ repository content exclusively (children: %lu, frame: %@)",
+		  NSStringFromClass(controller.class),
+		  (unsigned long)contentSplitView.subviews.count,
+		  NSStringFromRect(controller.view.frame));
 }
 
 - (void)showCommitView:(id)sender
