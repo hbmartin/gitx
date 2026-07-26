@@ -53,7 +53,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)setTreeView:(id)sender;
 - (IBAction)setBranchFilter:(id)sender;
 
-- (IBAction)refresh:(id)sender;
+- (IBAction)refresh:(nullable id)sender;
 - (IBAction)toggleQLPreviewPanel:(id)sender;
 - (IBAction)openSelectedFile:(id)sender;
 
