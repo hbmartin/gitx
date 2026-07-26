@@ -11,22 +11,26 @@
 #import "PBGitRepository.h"
 #import "PBGitWindowController.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBViewController : NSViewController
 
-@property (nonatomic, weak, readonly) PBGitRepository *repository;
-@property (weak, readonly) PBGitWindowController *windowController;
-@property (copy) NSString *status;
+@property (nonatomic, weak, readonly, nullable) PBGitRepository *repository;
+@property (weak, readonly, nullable) PBGitWindowController *windowController;
+@property (copy, nullable) NSString *status;
 @property (assign) BOOL isBusy;
 
-- (id)initWithRepository:(PBGitRepository *)theRepository superController:(PBGitWindowController *)controller;
+- (nullable id)initWithRepository:(PBGitRepository *)theRepository superController:(nullable PBGitWindowController *)controller;
 
 /* closeView is called when the repository window will be closed */
 - (void)closeView;
 
-/* Updateview is called every time it is loaded into the main view */
+/* updateView is called once, the first time the controller's view is mounted into the repository window; warm switches remount the view without calling it again */
 - (void)updateView;
 
-- (NSResponder *)firstResponder;
-- (IBAction)refresh:(id)sender;
+- (nullable NSResponder *)firstResponder;
+- (IBAction)refresh:(nullable id)sender;
 
 @end
+
+NS_ASSUME_NONNULL_END

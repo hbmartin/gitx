@@ -78,7 +78,8 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
                   let ref = commit.refs.object(at: Int(referenceIndex)) as? PBGitRef,
                   ref.isBranch,
                   commit.sha.isEmpty == false,
-                  liveCheckedOutReferenceName(in: owner.repository) != ref.ref
+                  let repository = owner.repository,
+                  liveCheckedOutReferenceName(in: repository) != ref.ref
             else {
                 logger.debug("Rejected branch drag source")
                 return false
@@ -167,6 +168,7 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
     func didDoubleClickCommitList(_ sender: Any?) {
         guard let tableView = sender as? NSTableView ?? commitList,
               let owner,
+              let repository = owner.repository,
               let commits = owner.commitController.arrangedObjects as? [PBGitCommit]
         else { return }
         let location = mouseLocation(in: tableView)
@@ -179,7 +181,7 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
               let ref = commits[row].refs.object(at: Int(index)) as? PBGitRef
         else { return }
         do {
-            _ = try owner.repository.checkoutRefish(ref)
+            _ = try repository.checkoutRefish(ref)
         } catch {
             owner.windowController?.showErrorSheet(error)
         }
@@ -224,8 +226,9 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
                   $0.ref == payload.referenceName
               }),
               reference.isBranch,
-              liveCheckedOutReferenceName(in: owner.repository) != payload.referenceName,
-              liveReferenceSHA(payload.referenceName, in: owner.repository) == payload.sourceSHA
+              let repository = owner.repository,
+              liveCheckedOutReferenceName(in: repository) != payload.referenceName,
+              liveReferenceSHA(payload.referenceName, in: repository) == payload.sourceSHA
         else {
             return nil
         }
