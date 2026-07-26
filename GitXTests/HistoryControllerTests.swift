@@ -610,6 +610,84 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(reloaded.isSidebarGroupVisible("Remotes"))
     }
 
+    func testStagingPaneReplacesDetailViewForWorkingStateRow() throws {
+        try fixture.write("staged addition\n", to: "staged-addition.txt")
+        try fixture.git(["add", "staged-addition.txt"])
+        try fixture.write("tracked modification\n", to: "nested/tracked.txt")
+        try fixture.write("brand new\n", to: "untracked.txt")
+        refreshIndex()
+        historyController.updateUncommittedChanges()
+
+        let workingState = try XCTUnwrap(
+            historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
+        )
+        historyController.selectedCommitDetailsIndex = 0
+        historyController.commitController.setSelectedObjects([workingState])
+        historyController.updateKeys()
+        pumpRunLoop()
+
+        let pane = try XCTUnwrap(
+            historyController.value(forKey: "stagingViewController") as? PBStagingViewController,
+            "selecting the working-state row in Detail mode must create the staging pane"
+        )
+        XCTAssertNotNil(pane.view.superview)
+        XCTAssertFalse(pane.view.isHidden)
+        let webView = try XCTUnwrap(
+            (historyController.value(forKey: "webHistoryController") as? NSObject)?.value(forKey: "view") as? NSView
+        )
+        XCTAssertTrue(webView.isHidden, "the detail web view hides while the staging pane is shown")
+
+        let fileList = pane.fileListController
+        XCTAssertEqual(fileList.unstagedTable.accessibilityIdentifier(), "UnstagedFiles")
+        XCTAssertEqual(fileList.stagedTable.accessibilityIdentifier(), "StagedFiles")
+        XCTAssertEqual(fileList.unstagedTable.tag, 0)
+        XCTAssertEqual(fileList.stagedTable.tag, 1)
+        XCTAssertEqual(pane.commitMessageView.accessibilityIdentifier(), "CommitMessage")
+        XCTAssertEqual(fileList.stagedFileCount, 1)
+        let unstagedPaths = (fileList.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.map(\.path)
+        XCTAssertEqual(unstagedPaths, ["nested/tracked.txt", "untracked.txt"])
+
+        let untracked = try XCTUnwrap(
+            (fileList.unstagedFilesController.arrangedObjects as? [PBChangedFile])?
+                .first { $0.path == "untracked.txt" }
+        )
+        fileList.unstagedFilesController.setSelectedObjects([untracked])
+        pumpRunLoop(for: 0.5)
+        let renderedUntracked = pane.diffPaneController.contentView.textView.string
+        XCTAssertTrue(
+            renderedUntracked.contains("Hunk 1 : Line 1"),
+            "untracked files render as stageable synthetic hunks:\n\(renderedUntracked)"
+        )
+        XCTAssertTrue(renderedUntracked.contains("\u{00A0}Stage hunk\u{00A0}"))
+        XCTAssertTrue(renderedUntracked.contains("│ +brand new"))
+
+        let staged = try XCTUnwrap(
+            (fileList.stagedFilesController.arrangedObjects as? [PBChangedFile])?.first
+        )
+        fileList.unstagedFilesController.setSelectedObjects([])
+        fileList.stagedFilesController.setSelectedObjects([staged])
+        pumpRunLoop(for: 0.5)
+        let renderedStaged = pane.diffPaneController.contentView.textView.string
+        XCTAssertTrue(
+            renderedStaged.contains("\u{00A0}Unstage hunk\u{00A0}"),
+            "staged selections render unstage buttons:\n\(renderedStaged)"
+        )
+
+        let regularCommit = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.setSelectedObjects([regularCommit])
+        historyController.updateKeys()
+        pumpRunLoop()
+        XCTAssertTrue(pane.view.isHidden, "selecting a commit hides the staging pane again")
+        XCTAssertFalse(webView.isHidden)
+        XCTAssertEqual(historyController.webCommits.first, regularCommit)
+
+        try fixture.git(["reset", "--quiet", "staged-addition.txt"])
+        try fixture.git(["checkout", "--quiet", "--", "nested/tracked.txt"])
+        try fixture.git(["clean", "-fdq"])
+        refreshIndex()
+        historyController.updateUncommittedChanges()
+    }
+
     func testWorkingStateDiffRefreshesInBackgroundAndReusesCachedRendering() throws {
         try fixture.write("cached working state\n", to: "cached.txt")
         refreshIndex()

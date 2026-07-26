@@ -28,6 +28,16 @@
 								}];
 }
 
+- (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText retryHandler:(void (^)(void))retryHandler
+{
+	[PBCommitHookFailedSheet beginWithMessageText:messageText
+										 infoText:infoText
+								 windowController:self
+								completionHandler:^(__unused id sheet, NSModalResponse response) {
+									if (response == NSModalResponseOK && retryHandler) retryHandler();
+								}];
+}
+
 - (void)showMessageSheet:(NSString *)messageText infoText:(NSString *)infoText
 {
 	[PBGitXMessageSheet beginSheetWithMessage:messageText info:infoText windowController:self];

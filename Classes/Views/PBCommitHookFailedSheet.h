@@ -19,6 +19,11 @@
 			commitController:(PBGitCommitController *)controller
 		   completionHandler:(RJSheetCompletionHandler)handler;
 
++ (void)beginWithMessageText:(NSString *)message
+					infoText:(NSString *)info
+			windowController:(PBGitWindowController *)windowController
+		   completionHandler:(RJSheetCompletionHandler)handler;
+
 - (IBAction)forceCommit:(id)sender;
 
 @property (nonatomic, strong) PBGitCommitController *commitController;

@@ -139,6 +139,39 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 @property (nonatomic, readonly) BOOL staged;
 @end
 
+@class PBStagingDiffRequest;
+
+@interface PBStagingDiffPaneController : NSObject
+@property (nonatomic, readonly) PBNativeContentView *contentView;
+@property (nonatomic) NSUInteger contextLines;
+@property (nonatomic) BOOL ignoreWhitespace;
+- (void)renderRequests:(NSArray<PBStagingDiffRequest *> *)requests;
+- (void)rerenderCurrentRequests;
+@end
+
+@class PBStagingListViewModel;
+
+@interface PBStagingFileListController : NSObject
+@property (nonatomic, readonly) PBStagingListViewModel *viewModel;
+@property (nonatomic, readonly) NSArrayController *unstagedFilesController;
+@property (nonatomic, readonly) NSArrayController *stagedFilesController;
+@property (nonatomic, readonly) NSTableView *unstagedTable;
+@property (nonatomic, readonly) NSTableView *stagedTable;
+@property (nonatomic, readonly) NSInteger stagedFileCount;
+- (void)applyFilterAndSort;
+- (void)rearrange;
+- (NSArray<PBChangedFile *> *)selectedFilesForStagedContext:(BOOL)stagedContext;
+@end
+
+@interface PBStagingViewController : NSViewController
+@property (nonatomic, readonly) PBStagingFileListController *fileListController;
+@property (nonatomic, readonly) PBStagingDiffPaneController *diffPaneController;
+@property (nonatomic, readonly) NSTextView *commitMessageView;
+- (void)updateView;
+- (void)closeView;
+- (void)reloadPushRemotes;
+@end
+
 @interface PBStagingListViewModel : NSObject
 @property (nonatomic, copy) NSString *searchText;
 @property (nonatomic) PBStagingFileSortOrder sortOrder;

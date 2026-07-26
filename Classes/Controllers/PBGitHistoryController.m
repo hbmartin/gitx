@@ -61,7 +61,10 @@
 	PBHistoryTreePresentation *treePresentation;
 	PBHistoryMenuBuilder *menuBuilder;
 	PBHistoryTableInteractionCoordinator *tableInteractionCoordinator;
+	PBStagingViewController *stagingViewController;
 }
+
+- (void)setStagingPaneVisible:(BOOL)visible;
 
 - (void)updateBranchFilterMatrix;
 - (void)restoreFileBrowserSelection;
@@ -262,8 +265,8 @@
 			if (wasSelected) {
 				if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex)
 					[self updateKeys];
-				else
-					[webHistoryController refreshDisplayedContent];
+				// In the Details tab the staging pane observes the index
+				// itself, so no explicit refresh is needed here.
 			}
 		}
 	} else {
@@ -319,6 +322,7 @@
 
 	PBGitCommit *firstSelectedCommit = self.selectedCommits.firstObject;
 	if (!firstSelectedCommit) {
+		[self setStagingPaneVisible:NO];
 		self.gitTree = nil;
 		if (self.webCommits.count) self.webCommits = @[];
 		return;
@@ -326,13 +330,49 @@
 	self.selectedCommitDetailsIndex = [stateCoordinator detailIndexForCurrentIndex:self.selectedCommitDetailsIndex selectionCount:self.selectedCommits.count];
 
 	if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex) {
+		[self setStagingPaneVisible:NO];
 		self.gitTree = [treePresentation treeForCommit:firstSelectedCommit];
 		[self restoreFileBrowserSelection];
 	} else {
 		// kHistoryDetailViewIndex
+		BOOL showStagingPane = self.selectedCommits.count == 1 &&
+			[firstSelectedCommit isKindOfClass:PBUncommittedChanges.class];
+		[self setStagingPaneVisible:showStagingPane];
+		if (showStagingPane) {
+			// The staging pane owns the working-state presentation; leave
+			// webCommits untouched so the hidden detail view neither renders
+			// the read-only working-state diff nor loses its last commit.
+			return;
+		}
 		if (![self.webCommits isEqualToArray:self.selectedCommits]) {
 			self.webCommits = self.selectedCommits;
 		}
+	}
+}
+
+- (void)setStagingPaneVisible:(BOOL)visible
+{
+	if (visible && !stagingViewController) {
+		stagingViewController = [[PBStagingViewController alloc] initWithRepository:self.repository hostController:self];
+		NSView *hostView = webHistoryController.view.superview;
+		NSView *paneView = stagingViewController.view;
+		paneView.translatesAutoresizingMaskIntoConstraints = NO;
+		[hostView addSubview:paneView];
+		[NSLayoutConstraint activateConstraints:@[
+			[paneView.topAnchor constraintEqualToAnchor:hostView.topAnchor],
+			[paneView.bottomAnchor constraintEqualToAnchor:hostView.bottomAnchor],
+			[paneView.leadingAnchor constraintEqualToAnchor:hostView.leadingAnchor],
+			[paneView.trailingAnchor constraintEqualToAnchor:hostView.trailingAnchor],
+		]];
+		NSLog(@"[GitX] Created the staging pane inside the Details tab");
+	}
+	if (!stagingViewController)
+		return;
+
+	stagingViewController.view.hidden = !visible;
+	webHistoryController.view.hidden = visible;
+	if (visible) {
+		[stagingViewController updateView];
 	}
 }
 
@@ -534,6 +574,8 @@
 
 	[webHistoryController closeView];
 	[fileView closeView];
+	[stagingViewController closeView];
+	stagingViewController = nil;
 
 	[super closeView];
 }

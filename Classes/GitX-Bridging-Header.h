@@ -62,6 +62,8 @@
 #import "PBNativeContentView.h"
 #import "PBSourceViewItem.h"
 #import "PBGitTree.h"
+// StagingViewController.swift needs these:
+#import "PBCommitMessageView.h"
 
 // The bridging header declares no APIs of its own, but retain an explicit
 // nullability region so it follows the same interoperability contract as

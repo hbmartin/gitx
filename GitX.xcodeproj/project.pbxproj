@@ -232,6 +232,10 @@
 		C0DECE000000000000000002 /* CommitMenuPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */; };
 		C0DECD000000000000000001 /* CommitTableInteractionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECD000000000000000011 /* CommitTableInteractionCoordinator.swift */; };
 		C0DE57A600000000000000A1 /* StagingListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B1 /* StagingListViewModel.swift */; };
+		C0DE57A600000000000000A3 /* StagingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B3 /* StagingViewController.swift */; };
+		C0DE57A600000000000000A4 /* StagingFileListController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B4 /* StagingFileListController.swift */; };
+		C0DE57A600000000000000A5 /* StagingDiffPaneController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */; };
+		C0DE57A600000000000000A6 /* StagingFileCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B6 /* StagingFileCellView.swift */; };
 		C0DE57A600000000000000A2 /* StagingListViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */; };
 		C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA0000000000000000002 /* HistoryControllerTests.swift */; };
 		C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */; };
@@ -843,6 +847,10 @@
 		C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMenuPresenterTests.swift; sourceTree = "<group>"; };
 		C0DECD000000000000000011 /* CommitTableInteractionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitTableInteractionCoordinator.swift; sourceTree = "<group>"; };
 		C0DE57A600000000000000B1 /* StagingListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingListViewModel.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B3 /* StagingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingViewController.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B4 /* StagingFileListController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingFileListController.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffPaneController.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B6 /* StagingFileCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingFileCellView.swift; sourceTree = "<group>"; };
 		C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingListViewModelTests.swift; sourceTree = "<group>"; };
 		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
@@ -1181,6 +1189,9 @@
 				C0DECE000000000000000011 /* CommitMenuPresenter.swift */,
 				C0DECD000000000000000011 /* CommitTableInteractionCoordinator.swift */,
 				C0DE57A600000000000000B1 /* StagingListViewModel.swift */,
+				C0DE57A600000000000000B3 /* StagingViewController.swift */,
+				C0DE57A600000000000000B4 /* StagingFileListController.swift */,
+				C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */,
 				4A5D763014A9A9CC00DF6C68 /* PBGitHistoryController.h */,
 				4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */,
 				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
@@ -1356,6 +1367,7 @@
 				C0DE10000000000000000004 /* PBNativeContentView.m */,
 				C0DEAF000000000000000011 /* NativeContentModels.swift */,
 				C0DEAE000000000000000011 /* NativeContentRenderer.swift */,
+				C0DE57A600000000000000B6 /* StagingFileCellView.swift */,
 				C0DE45200000000000000011 /* NativeContentTypography.swift */,
 				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
 				C01400000000000000000013 /* CommitProgressSheetController.swift */,
@@ -1930,6 +1942,10 @@
 				C0DECE000000000000000001 /* CommitMenuPresenter.swift in Sources */,
 				C0DECD000000000000000001 /* CommitTableInteractionCoordinator.swift in Sources */,
 				C0DE57A600000000000000A1 /* StagingListViewModel.swift in Sources */,
+				C0DE57A600000000000000A3 /* StagingViewController.swift in Sources */,
+				C0DE57A600000000000000A4 /* StagingFileListController.swift in Sources */,
+				C0DE57A600000000000000A5 /* StagingDiffPaneController.swift in Sources */,
+				C0DE57A600000000000000A6 /* StagingFileCellView.swift in Sources */,
 				C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */,
 				C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */,
 				C0DEB0000000000000000003 /* HistoryTableInteractionCoordinator.swift in Sources */,

@@ -30,6 +30,18 @@
 						  completionHandler:handler];
 }
 
++ (void)beginWithMessageText:(NSString *)message
+					infoText:(NSString *)info
+			windowController:(PBGitWindowController *)windowController
+		   completionHandler:(RJSheetCompletionHandler)handler
+{
+	PBCommitHookFailedSheet *sheet = [[self alloc] initWithWindowNibName:@"PBCommitHookFailedSheet"
+														windowController:windowController];
+	[sheet beginMessageSheetWithMessageText:message
+								   infoText:info
+						  completionHandler:handler];
+}
+
 - (id)initWithWindowNibName:(NSString *)windowNibName
 			  andController:(PBGitCommitController *)controller;
 {
