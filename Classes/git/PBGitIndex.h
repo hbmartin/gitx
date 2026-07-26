@@ -77,6 +77,7 @@ extern NSString *PBGitIndexOperationFailed;
 // Intra-file changes
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;
 - (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context;
+- (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context ignoreWhitespace:(BOOL)ignoreWhitespace;
 
 @end
 

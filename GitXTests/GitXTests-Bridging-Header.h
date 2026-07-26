@@ -624,6 +624,14 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 						parentTree:(NSString *)parentTree
 					  contextLines:(NSUInteger)contextLines
 							 error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (nullable NSString *)diffForPath:(NSString *)path
+							status:(NSInteger)status
+				  hasStagedChanges:(BOOL)hasStagedChanges
+							staged:(BOOL)staged
+						parentTree:(NSString *)parentTree
+					  contextLines:(NSUInteger)contextLines
+				  ignoreWhitespace:(BOOL)ignoreWhitespace
+							 error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
 @end
 
 @interface PBCommitRemotePresentation : NSObject

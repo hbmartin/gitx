@@ -145,4 +145,45 @@ final class IndexMutationServiceTests: XCTestCase {
             ]
         )
     }
+
+    func testDiffInsertsIgnoreWhitespaceFlagAfterContext() {
+        let runner = CommandRunnerFake()
+        runner.results = [.success("staged"), .success("unstaged")]
+        let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
+
+        XCTAssertEqual(
+            service.diff(
+                forPath: "partial.txt",
+                status: 1,
+                hasStagedChanges: true,
+                staged: true,
+                parentTree: "HEAD^",
+                contextLines: 3,
+                ignoreWhitespace: true,
+                error: nil
+            ),
+            "staged"
+        )
+        XCTAssertEqual(
+            service.diff(
+                forPath: "partial.txt",
+                status: 1,
+                hasStagedChanges: true,
+                staged: false,
+                parentTree: "HEAD^",
+                contextLines: 3,
+                ignoreWhitespace: true,
+                error: nil
+            ),
+            "unstaged"
+        )
+
+        XCTAssertEqual(
+            runner.calls.map(\.arguments),
+            [
+                ["diff-index", "-U3", "-w", "--cached", "HEAD^", "--", "partial.txt"],
+                ["diff-files", "-U3", "-w", "--", "partial.txt"],
+            ]
+        )
+    }
 }

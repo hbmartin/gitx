@@ -122,11 +122,37 @@ final nonisolated class IndexMutationService: NSObject {
         contextLines: UInt,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> String? {
-        let context = "-U\(contextLines)"
+        diff(
+            forPath: path,
+            status: status,
+            hasStagedChanges: hasStagedChanges,
+            staged: staged,
+            parentTree: parentTree,
+            contextLines: contextLines,
+            ignoreWhitespace: false,
+            error: outputError
+        )
+    }
+
+    @objc(diffForPath:status:hasStagedChanges:staged:parentTree:contextLines:ignoreWhitespace:error:)
+    func diff(
+        forPath path: String,
+        status: Int,
+        hasStagedChanges: Bool,
+        staged: Bool,
+        parentTree: String,
+        contextLines: UInt,
+        ignoreWhitespace: Bool,
+        error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
+    ) -> String? {
+        var diffOptions = ["-U\(contextLines)"]
+        if ignoreWhitespace {
+            diffOptions.append("-w")
+        }
         do {
             if staged {
                 return try runner.output(
-                    arguments: ["diff-index", context, "--cached", parentTree, "--", path],
+                    arguments: ["diff-index"] + diffOptions + ["--cached", parentTree, "--", path],
                     input: nil,
                     environment: nil
                 )
@@ -146,7 +172,7 @@ final nonisolated class IndexMutationService: NSObject {
                 )
             }
             return try runner.output(
-                arguments: ["diff-files", context, "--", path],
+                arguments: ["diff-files"] + diffOptions + ["--", path],
                 input: nil,
                 environment: nil
             )

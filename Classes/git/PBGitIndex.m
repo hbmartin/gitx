@@ -469,6 +469,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context
 {
+	return [self diffForFile:file staged:staged contextLines:context ignoreWhitespace:NO];
+}
+
+- (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context ignoreWhitespace:(BOOL)ignoreWhitespace
+{
 	NSError *error = nil;
 	NSString *output = [self.mutationService diffForPath:file.path
 												  status:file.status
@@ -476,6 +481,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 												  staged:staged
 											  parentTree:self.parentTree
 											contextLines:context
+										ignoreWhitespace:ignoreWhitespace
 												   error:&error];
 	if (!output)
 		PBLogError(error);
