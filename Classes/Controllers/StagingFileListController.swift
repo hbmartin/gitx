@@ -22,6 +22,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     /// Fired (coalesced upstream) whenever either list's selection changes.
     @objc var onSelectionChange: (() -> Void)?
 
+    // swift6-safety-justification: The value is never read or written; only its
+    // stable address distinguishes this class's KVO registrations.
     private nonisolated(unsafe) static var selectionContext = 0
 
     private let index: PBGitIndex
@@ -113,7 +115,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
             return
         }
-        // Array-controller selection only mutates on the main thread.
+        // swift6-safety-justification: NSArrayController selection only mutates
+        // on the main thread, so this KVO callback always arrives there.
         MainActor.assumeIsolated {
             onSelectionChange?()
         }

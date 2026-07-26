@@ -167,6 +167,7 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 @property (nonatomic, readonly) PBStagingFileListController *fileListController;
 @property (nonatomic, readonly) PBStagingDiffPaneController *diffPaneController;
 @property (nonatomic, readonly) NSTextView *commitMessageView;
+@property (nonatomic, readonly) NSSearchField *searchField;
 - (void)updateView;
 - (void)closeView;
 - (void)reloadPushRemotes;

@@ -28,6 +28,10 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     private let amendButton = NSButton(checkboxWithTitle: NSLocalizedString("Amend", comment: "Amend checkbox in the staging pane"), target: nil, action: nil)
     private let pushAfterCommitButton = NSButton(checkboxWithTitle: NSLocalizedString("Push to", comment: "Push-after-commit checkbox in the staging pane"), target: nil, action: nil)
     private let pushRemotePopUpButton = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let sortPopUpButton = NSPopUpButton(frame: .zero, pullsDown: false)
+    @objc let searchField = NSSearchField()
+    private let optionsButton = NSButton(title: "", target: nil, action: nil)
+    private let optionsMenu = NSMenu()
 
     private var index: PBGitIndex {
         repository.index
@@ -78,11 +82,26 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         outerSplit.dividerStyle = .thin
         outerSplit.autosaveName = "StagingPaneMain"
 
+        let listColumn = NSView()
+        listColumn.translatesAutoresizingMaskIntoConstraints = false
+        let headerBar = makeHeaderBar()
+        listColumn.addSubview(headerBar)
+        listColumn.addSubview(fileListController.view)
+        NSLayoutConstraint.activate([
+            headerBar.topAnchor.constraint(equalTo: listColumn.topAnchor),
+            headerBar.leadingAnchor.constraint(equalTo: listColumn.leadingAnchor),
+            headerBar.trailingAnchor.constraint(equalTo: listColumn.trailingAnchor),
+            fileListController.view.topAnchor.constraint(equalTo: headerBar.bottomAnchor),
+            fileListController.view.leadingAnchor.constraint(equalTo: listColumn.leadingAnchor),
+            fileListController.view.trailingAnchor.constraint(equalTo: listColumn.trailingAnchor),
+            fileListController.view.bottomAnchor.constraint(equalTo: listColumn.bottomAnchor),
+        ])
+
         let composerSplit = NSSplitView()
         composerSplit.isVertical = false
         composerSplit.dividerStyle = .thin
         composerSplit.autosaveName = "StagingPaneComposer"
-        composerSplit.addArrangedSubview(fileListController.view)
+        composerSplit.addArrangedSubview(listColumn)
         composerSplit.addArrangedSubview(makeComposerView())
 
         outerSplit.addArrangedSubview(composerSplit)
@@ -127,6 +146,143 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     private func renderSelectedDiffs() {
         diffPaneController.render(fileListController.currentDiffRequests)
+    }
+
+    // MARK: Header bar
+
+    private func makeHeaderBar() -> NSView {
+        sortPopUpButton.addItem(withTitle: NSLocalizedString(
+            "Pending files, sorted by path",
+            comment: "Staging header sort choice"
+        ))
+        sortPopUpButton.lastItem?.tag = StagingFileSortOrder.path.rawValue
+        sortPopUpButton.addItem(withTitle: NSLocalizedString(
+            "Pending files, sorted by status",
+            comment: "Staging header sort choice"
+        ))
+        sortPopUpButton.lastItem?.tag = StagingFileSortOrder.status.rawValue
+        sortPopUpButton.selectItem(withTag: ApplicationSettings.stagingFileSortOrder.rawValue)
+        sortPopUpButton.target = self
+        sortPopUpButton.action = #selector(sortOrderChanged(_:))
+        sortPopUpButton.bezelStyle = .texturedRounded
+        sortPopUpButton.setAccessibilityIdentifier("StagingSortOrder")
+
+        searchField.placeholderString = NSLocalizedString("Search", comment: "Staging file search placeholder")
+        searchField.sendsSearchStringImmediately = true
+        searchField.sendsWholeSearchString = false
+        searchField.target = self
+        searchField.action = #selector(searchChanged(_:))
+        searchField.setAccessibilityIdentifier("StagingSearch")
+
+        buildOptionsMenu()
+        optionsButton.image = NSImage(
+            systemSymbolName: "ellipsis.circle",
+            accessibilityDescription: NSLocalizedString("View options", comment: "Staging view options button")
+        )
+        optionsButton.imagePosition = .imageOnly
+        optionsButton.isBordered = false
+        optionsButton.target = self
+        optionsButton.action = #selector(showOptionsMenu(_:))
+        optionsButton.setAccessibilityIdentifier("StagingViewOptions")
+
+        let bar = NSStackView(views: [sortPopUpButton, NSView(), searchField, optionsButton])
+        bar.orientation = .horizontal
+        bar.spacing = 6
+        bar.edgeInsets = NSEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 120).isActive = true
+        bar.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        return bar
+    }
+
+    private func buildOptionsMenu() {
+        optionsMenu.autoenablesItems = true
+        let externalDiff = NSMenuItem(
+            title: NSLocalizedString("External Diff", comment: "Staging view options item"),
+            action: #selector(openExternalDiff(_:)),
+            keyEquivalent: ""
+        )
+        externalDiff.target = self
+        optionsMenu.addItem(externalDiff)
+        optionsMenu.addItem(.separator())
+
+        let showWhitespace = NSMenuItem(
+            title: NSLocalizedString("Show whitespace", comment: "Staging view options item"),
+            action: #selector(changeWhitespaceVisibility(_:)),
+            keyEquivalent: ""
+        )
+        showWhitespace.target = self
+        showWhitespace.tag = 0
+        optionsMenu.addItem(showWhitespace)
+        let ignoreWhitespace = NSMenuItem(
+            title: NSLocalizedString("Ignore whitespace", comment: "Staging view options item"),
+            action: #selector(changeWhitespaceVisibility(_:)),
+            keyEquivalent: ""
+        )
+        ignoreWhitespace.target = self
+        ignoreWhitespace.tag = 1
+        optionsMenu.addItem(ignoreWhitespace)
+        optionsMenu.addItem(.separator())
+
+        let contextParent = NSMenuItem(
+            title: NSLocalizedString("Lines of context", comment: "Staging view options submenu title"),
+            action: nil,
+            keyEquivalent: ""
+        )
+        let contextMenu = NSMenu()
+        for lines in [1, 3, 6, 12, 25, 50, 100] {
+            let item = NSMenuItem(title: "\(lines)", action: #selector(changeContextLines(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = lines
+            contextMenu.addItem(item)
+        }
+        contextParent.submenu = contextMenu
+        optionsMenu.addItem(contextParent)
+    }
+
+    @objc private func showOptionsMenu(_ sender: NSButton) {
+        optionsMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    @objc private func sortOrderChanged(_ sender: NSPopUpButton) {
+        let order = StagingFileSortOrder(rawValue: sender.selectedTag()) ?? .path
+        ApplicationSettings.stagingFileSortOrder = order
+        fileListController.viewModel.sortOrder = order
+        fileListController.applyFilterAndSort()
+        NSLog("[GitX] Staging file sort changed to %ld", order.rawValue)
+    }
+
+    @objc private func searchChanged(_ sender: NSSearchField) {
+        fileListController.viewModel.searchText = sender.stringValue
+        fileListController.applyFilterAndSort()
+    }
+
+    @objc private func changeWhitespaceVisibility(_ sender: NSMenuItem) {
+        diffPaneController.ignoreWhitespace = sender.tag == 1
+        NSLog("[GitX] Staging diffs now %@ whitespace", sender.tag == 1 ? "ignore" : "show")
+    }
+
+    @objc private func changeContextLines(_ sender: NSMenuItem) {
+        diffPaneController.contextLines = UInt(max(0, sender.tag))
+        NSLog("[GitX] Staging diff context set to %ld line(s)", sender.tag)
+    }
+
+    @objc private func openExternalDiff(_ sender: Any?) {
+        let requests = fileListController.currentDiffRequests
+        guard let request = requests.first else { return }
+        var arguments = ["difftool", "-y", "--no-prompt"]
+        if request.staged {
+            arguments.append("--cached")
+        }
+        arguments.append(contentsOf: ["--", request.file.path])
+        NSLog("[GitX] Launching external diff for %@", request.file.path)
+        let task = repository.task(withArguments: arguments)
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { [weak self] _, error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                self?.windowController?.showErrorSheet(error as NSError)
+            }
+        }
     }
 
     // MARK: Composer construction
@@ -618,6 +774,17 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard let action = menuItem.action else { return false }
+        if action == #selector(changeWhitespaceVisibility(_:)) {
+            menuItem.state = diffPaneController.ignoreWhitespace == (menuItem.tag == 1) ? .on : .off
+            return true
+        }
+        if action == #selector(changeContextLines(_:)) {
+            menuItem.state = diffPaneController.contextLines == UInt(menuItem.tag) ? .on : .off
+            return true
+        }
+        if action == #selector(openExternalDiff(_:)) {
+            return !fileListController.currentDiffRequests.isEmpty
+        }
         let stagedContext = menuItem.menu === fileListController.stagedTable.menu
         let filesForStaging = fileListController.selectedFiles(stagedContext: false)
         let filesForUnstaging = fileListController.selectedFiles(stagedContext: true)

@@ -673,6 +673,35 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             "staged selections render unstage buttons:\n\(renderedStaged)"
         )
 
+        pane.searchField.stringValue = "nested"
+        if let action = pane.searchField.action {
+            _ = NSApp.sendAction(action, to: pane.searchField.target, from: pane.searchField)
+        }
+        XCTAssertEqual(
+            (fileList.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.map(\.path),
+            ["nested/tracked.txt"],
+            "the header search filters both lists by path substring"
+        )
+        XCTAssertEqual(fileList.stagedFileCount, 0)
+        pane.searchField.stringValue = ""
+        if let action = pane.searchField.action {
+            _ = NSApp.sendAction(action, to: pane.searchField.target, from: pane.searchField)
+        }
+        XCTAssertEqual(fileList.stagedFileCount, 1)
+
+        let previousWhitespace = PBApplicationSettings.stagingIgnoreWhitespace
+        let previousContext = UserDefaults.standard.object(forKey: "PBStageDiffContextLines")
+        pane.diffPaneController.ignoreWhitespace = true
+        XCTAssertTrue(PBApplicationSettings.stagingIgnoreWhitespace)
+        pane.diffPaneController.contextLines = 6
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "PBStageDiffContextLines"), 6)
+        pane.diffPaneController.ignoreWhitespace = previousWhitespace
+        if let previousContext = previousContext as? Int {
+            pane.diffPaneController.contextLines = UInt(previousContext)
+        } else {
+            UserDefaults.standard.removeObject(forKey: "PBStageDiffContextLines")
+        }
+
         let regularCommit = try XCTUnwrap(loadedCommits().first)
         historyController.commitController.setSelectedObjects([regularCommit])
         historyController.updateKeys()
