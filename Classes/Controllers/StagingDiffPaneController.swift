@@ -95,18 +95,15 @@ final class StagingDiffPaneController: NSObject {
 
     private func section(for request: StagingDiffRequest) -> [String: Any] {
         let file = request.file
-        var diff = repository.index.diff(
-            for: file,
-            staged: request.staged,
-            contextLines: contextLines,
-            ignoreWhitespace: ignoreWhitespace
-        ) ?? ""
         let isUntracked = file.status == .NEW && !file.hasStagedChanges
-        if isUntracked, !diff.isEmpty {
-            // Untracked files come back as raw contents; wrap them into a
-            // synthetic new-file diff so their hunks and lines are stageable.
-            diff = SyntheticUntrackedDiffFormatterBridge.diff(path: file.path, contents: diff)
-        }
+        let diff = isUntracked
+            ? syntheticUntrackedDiff(for: file)
+            : repository.index.diff(
+                for: file,
+                staged: request.staged,
+                contextLines: contextLines,
+                ignoreWhitespace: ignoreWhitespace
+            ) ?? ""
         let sideTitle = request.staged
             ? NSLocalizedString("Staged", comment: "Staging diff section prefix for staged changes")
             : NSLocalizedString("Unstaged", comment: "Staging diff section prefix for unstaged changes")
@@ -117,6 +114,42 @@ final class StagingDiffPaneController: NSObject {
             PBNativeSectionContextKey: request.staged ? "staged" : "unstaged",
             PBNativeSectionStagingChromeKey: true,
         ]
+    }
+
+    private func syntheticUntrackedDiff(for file: PBChangedFile) -> String {
+        guard let workingDirectoryURL = repository.workingDirectoryURL() else {
+            NSLog("[GitX] Cannot build an untracked diff for %@ without a working directory", file.path)
+            return ""
+        }
+        let fileURL = workingDirectoryURL.appendingPathComponent(file.path)
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            let fileType = attributes[.type] as? FileAttributeType
+            let contents: String
+            let fileMode: SyntheticUntrackedFileMode
+            switch fileType {
+            case .typeRegular:
+                var encoding = String.Encoding.utf8
+                contents = try String(contentsOf: fileURL, usedEncoding: &encoding)
+                let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
+                fileMode = permissions & 0o111 == 0 ? .regular : .executable
+            case .typeSymbolicLink:
+                contents = try FileManager.default.destinationOfSymbolicLink(atPath: fileURL.path)
+                fileMode = .symbolicLink
+            default:
+                NSLog("[GitX] Unsupported untracked worktree object at %@", file.path)
+                return ""
+            }
+            NSLog("[GitX] Building a synthetic untracked diff for %@ with mode %@", file.path, fileMode.gitMode)
+            return SyntheticUntrackedDiffFormatterBridge.diff(
+                path: file.path,
+                contents: contents,
+                fileMode: fileMode
+            )
+        } catch {
+            NSLog("[GitX] Failed to load untracked worktree data for %@: %@", file.path, error.localizedDescription)
+            return ""
+        }
     }
 
     private func cacheIdentifier(for requests: [StagingDiffRequest]) -> String {

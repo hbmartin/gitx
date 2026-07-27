@@ -531,8 +531,15 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly) NSDictionary<NSNumber *, PBNativeDiffHunk *> *hunksByStartIndex;
 @end
 
+typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
+	PBSyntheticUntrackedFileModeRegular,
+	PBSyntheticUntrackedFileModeExecutable,
+	PBSyntheticUntrackedFileModeSymbolicLink,
+};
+
 @interface PBSyntheticUntrackedDiffFormatter : NSObject
 + (NSString *)diffForPath:(NSString *)path contents:(NSString *)contents;
++ (NSString *)diffForPath:(NSString *)path contents:(NSString *)contents fileMode:(PBSyntheticUntrackedFileMode)fileMode;
 @end
 
 @interface PBPartialPatchBuilder : NSObject
@@ -581,6 +588,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly) NSDictionary<NSString *, PBNativeRenderResult *> *cachedDiffResultsForTesting;
 @property (nonatomic, readonly) NSDictionary<NSString *, NSArray<NSDictionary<NSString *, id> *> *> *cachedDiffSectionsForTesting;
 @property (nonatomic, readonly) NSDictionary<NSString *, NSValue *> *cachedDiffScrollOriginsForTesting;
+- (BOOL)textView:(NSTextView *)textView clickedOnLink:(id)link atIndex:(NSUInteger)charIndex;
 @end
 
 @protocol PBIndexCommandRunning <NSObject>

@@ -362,8 +362,27 @@ final nonisolated class DiffDocumentParser: NSObject {
     }
 }
 
+@objc(PBSyntheticUntrackedFileMode)
+enum SyntheticUntrackedFileMode: Int {
+    case regular
+    case executable
+    case symbolicLink
+
+    nonisolated var gitMode: String {
+        switch self {
+        case .regular: "100644"
+        case .executable: "100755"
+        case .symbolicLink: "120000"
+        }
+    }
+}
+
 private nonisolated enum SyntheticUntrackedDiffFormatter {
-    static func diff(path: String, contents: String) -> String {
+    static func diff(
+        path: String,
+        contents: String,
+        fileMode: SyntheticUntrackedFileMode = .regular
+    ) -> String {
         guard !contents.isEmpty else { return "" }
         let endsWithNewline = contents.hasSuffix("\n")
         var lines = contents.components(separatedBy: "\n")
@@ -378,7 +397,7 @@ private nonisolated enum SyntheticUntrackedDiffFormatter {
         }
         let header = [
             "diff --git \(sourcePath) \(destinationPath)",
-            "new file mode 100644",
+            "new file mode \(fileMode.gitMode)",
             "--- /dev/null",
             "+++ \(destinationPath)",
             "@@ -0,0 +1,\(lines.count) @@",
@@ -411,6 +430,15 @@ final nonisolated class SyntheticUntrackedDiffFormatterBridge: NSObject {
     @objc(diffForPath:contents:)
     static func diff(path: String, contents: String) -> String {
         SyntheticUntrackedDiffFormatter.diff(path: path, contents: contents)
+    }
+
+    @objc(diffForPath:contents:fileMode:)
+    static func diff(
+        path: String,
+        contents: String,
+        fileMode: SyntheticUntrackedFileMode
+    ) -> String {
+        SyntheticUntrackedDiffFormatter.diff(path: path, contents: contents, fileMode: fileMode)
     }
 }
 

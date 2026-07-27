@@ -695,14 +695,64 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
     }
 
-    private func waitForIndexUpdate(during block: () -> Void) {
+    private func waitForIndexUpdate(during block: () throws -> Void) rethrows {
         let updated = expectation(
             forNotification: NSNotification.Name(PBGitIndexIndexUpdated),
             object: repository.index
         )
-        block()
+        try block()
         wait(for: [updated], timeout: 10)
         pumpRunLoop()
+    }
+
+    private func selectUnstagedFile(_ path: String, in pane: PBStagingViewController) throws {
+        let files = try XCTUnwrap(
+            pane.fileListController.unstagedFilesController.arrangedObjects as? [PBChangedFile]
+        )
+        let file = try XCTUnwrap(files.first { $0.path == path })
+        pane.fileListController.unstagedFilesController.setSelectedObjects([file])
+        XCTAssertTrue(waitForCondition {
+            pane.diffPaneController.contentView.textView.string.contains(path)
+        })
+    }
+
+    private func activateNativeDiffAction(_ title: String, in pane: PBStagingViewController) throws {
+        let contentView = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition {
+            contentView.textView.string.contains(title)
+        })
+        let range = (contentView.textView.string as NSString).range(of: title)
+        XCTAssertNotEqual(range.location, NSNotFound)
+        let link = try XCTUnwrap(
+            contentView.textView.textStorage?.attribute(.link, at: range.location, effectiveRange: nil)
+        )
+        XCTAssertTrue(contentView.textView(contentView.textView, clickedOnLink: link, at: UInt(range.location)))
+    }
+
+    func testPartialStagingPreservesExecutableAndSymbolicLinkModes() throws {
+        try fixture.write("first line\nsecond line\n", to: "executable.sh")
+        let executableURL = URL(fileURLWithPath: fixture.path).appendingPathComponent("executable.sh")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executableURL.path)
+
+        let brokenLinkURL = URL(fileURLWithPath: fixture.path).appendingPathComponent("broken-link")
+        try FileManager.default.createSymbolicLink(atPath: brokenLinkURL.path, withDestinationPath: "missing-target")
+
+        let pane = try openStagingPane()
+        try selectUnstagedFile("executable.sh", in: pane)
+        try waitForIndexUpdate {
+            try activateNativeDiffAction("Stage line", in: pane)
+        }
+        let executableEntry = try fixture.git(["ls-files", "--stage", "--", "executable.sh"])
+        XCTAssertTrue(executableEntry.hasPrefix("100755 "), executableEntry)
+        XCTAssertEqual(try fixture.git(["show", ":executable.sh"]), "first line\n")
+
+        try selectUnstagedFile("broken-link", in: pane)
+        try waitForIndexUpdate {
+            try activateNativeDiffAction("Stage hunk", in: pane)
+        }
+        let linkEntry = try fixture.git(["ls-files", "--stage", "--", "broken-link"])
+        XCTAssertTrue(linkEntry.hasPrefix("120000 "), linkEntry)
+        XCTAssertEqual(try fixture.git(["show", ":broken-link"]), "missing-target")
     }
 
     func testCommitTableInteractionCoordinatorStagingDragAndFocusFlows() throws {
