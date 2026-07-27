@@ -15,20 +15,26 @@
 - (id)initWithPosition:(long)p andLines:(struct PBGitGraphLine *)l
 {
 	position = p;
-	lines = l;
+	@synchronized(self) {
+		lines = l;
+	}
 
 	return self;
 }
 
 - (struct PBGitGraphLine *)lines
 {
-	return lines;
+	@synchronized(self) {
+		return lines;
+	}
 }
 
 - (void)setLines:(struct PBGitGraphLine *)l
 {
-	free(lines);
-	lines = l;
+	@synchronized(self) {
+		free(lines);
+		lines = l;
+	}
 }
 
 - (NSString *)description

@@ -9,14 +9,14 @@ final class CommitMenuPresenterTests: XCTestCase {
         XCTAssertTrue(emptyStage.hidden)
 
         let stagedFile = file("folder/staged.txt", status: 1, unstaged: false)
-        let singleUnstage = presentation("unstageFiles:", staged: [stagedFile])
+        let singleUnstage = presentation("unstageFiles:", files: [stagedFile])
         XCTAssertEqual(singleUnstage.title, "Unstage “staged.txt”")
         XCTAssertTrue(singleUnstage.enabled)
         XCTAssertFalse(singleUnstage.hidden)
 
         let manyStage = presentation(
             "stageFiles:",
-            unstaged: [file("one.txt"), file("folder/two.txt")]
+            files: [file("one.txt"), file("folder/two.txt")]
         )
         XCTAssertEqual(manyStage.title, "Stage 2 Files")
         XCTAssertTrue(manyStage.enabled)
@@ -24,29 +24,29 @@ final class CommitMenuPresenterTests: XCTestCase {
 
     func testDiscardAndTrashPreserveNewAndMixedSelectionRules() {
         let newFile = file("new.txt")
-        let discardNew = presentation("discardFiles:", unstaged: [newFile])
+        let discardNew = presentation("discardFiles:", files: [newFile])
         XCTAssertTrue(discardNew.enabled)
         XCTAssertTrue(discardNew.hidden)
 
-        let trashNew = presentation("moveToTrash:", unstaged: [newFile])
+        let trashNew = presentation("moveToTrash:", files: [newFile])
         XCTAssertEqual(trashNew.title, "Move “new.txt” to Trash")
         XCTAssertTrue(trashNew.enabled)
         XCTAssertFalse(trashNew.hidden)
 
         let modified = file("modified.txt", status: 1)
         let mixed = [newFile, modified]
-        let discardMixed = presentation("discardFiles:", unstaged: mixed)
+        let discardMixed = presentation("discardFiles:", files: mixed)
         XCTAssertEqual(discardMixed.title, "Discard changes to 2 Files…")
         XCTAssertFalse(discardMixed.hidden)
-        let forceMixed = presentation("discardFilesForcibly:", unstaged: mixed)
+        let forceMixed = presentation("discardFilesForcibly:", files: mixed)
         XCTAssertTrue(forceMixed.alternate)
         XCTAssertFalse(forceMixed.hidden)
-        XCTAssertTrue(presentation("moveToTrash:", unstaged: mixed).hidden)
+        XCTAssertTrue(presentation("moveToTrash:", files: mixed).hidden)
     }
 
     func testDiscardRequiresAnUnstagedChangeAndHandlesEmptyBoundary() {
         let stagedOnly = file("staged.txt", status: 1, unstaged: false)
-        XCTAssertFalse(presentation("discardFiles:", unstaged: [stagedOnly]).enabled)
+        XCTAssertFalse(presentation("discardFiles:", files: [stagedOnly]).enabled)
 
         let emptyDiscard = presentation("discardFiles:")
         XCTAssertFalse(emptyDiscard.enabled)
@@ -59,38 +59,39 @@ final class CommitMenuPresenterTests: XCTestCase {
     func testOpenTitlesHandleFilesAndSubmodules() {
         let selected = [file("folder/submodule", status: 1)]
         XCTAssertEqual(
-            presentation("openFiles:", unstaged: selected).title,
+            presentation("openFiles:", files: selected).title,
             "Open “submodule”"
         )
         XCTAssertEqual(
-            presentation("openFiles:", unstaged: selected, submodule: true).title,
+            presentation("openFiles:", files: selected, submodule: true).title,
             "Open Submodule “folder/submodule” in GitX"
         )
         XCTAssertFalse(presentation("openFiles:").enabled)
     }
 
-    func testIgnoreAndRevealRespectTableContextAndSelectionCount() {
+    func testIgnoreAndRevealRespectResolvedSelectionAndSelectionCount() {
         let selected = [file("one.txt")]
-        let ignore = presentation("ignoreFiles:", unstaged: selected)
+        let ignore = presentation("ignoreFiles:", files: selected)
         XCTAssertTrue(ignore.enabled)
         XCTAssertFalse(ignore.hidden)
 
-        let stagedIgnore = presentation(
-            "ignoreFiles:",
-            unstaged: selected,
-            staged: selected,
-            stagedContext: true
-        )
-        XCTAssertFalse(stagedIgnore.enabled)
-        XCTAssertTrue(stagedIgnore.hidden)
+        let emptyIgnore = presentation("ignoreFiles:")
+        XCTAssertFalse(emptyIgnore.enabled)
+        XCTAssertTrue(emptyIgnore.hidden)
 
-        let reveal = presentation("revealInFinder:", unstaged: selected)
+        let reveal = presentation("revealInFinder:", files: selected)
         XCTAssertEqual(reveal.title, "Reveal “one.txt” in Finder")
         XCTAssertTrue(reveal.enabled)
-        let manyReveal = presentation("revealInFinder:", unstaged: [file("one"), file("two")])
+        let manyReveal = presentation("revealInFinder:", files: [file("one"), file("two")])
         XCTAssertEqual(manyReveal.title, "Reveal 2 Files in Finder")
         XCTAssertTrue(manyReveal.enabled)
         XCTAssertFalse(manyReveal.hidden)
+    }
+
+    func testTrashIsHiddenWhenTheOriginatingSurfaceDoesNotAllowIt() {
+        let trash = presentation("moveToTrash:", files: [file("new.txt")], allowsTrash: false)
+
+        XCTAssertTrue(trash.hidden)
     }
 
     func testAmendPrepareAndUnknownActionsReturnExternalState() {
@@ -107,7 +108,7 @@ final class CommitMenuPresenterTests: XCTestCase {
     func testMainMenuPresentationDoesNotOverwriteContextualProperties() {
         let result = presentation(
             "stageFiles:",
-            unstaged: [file("one.txt")],
+            files: [file("one.txt")],
             contextual: false
         )
         XCTAssertNil(result.title)
@@ -118,7 +119,7 @@ final class CommitMenuPresenterTests: XCTestCase {
 
         let reveal = presentation(
             "revealInFinder:",
-            unstaged: [file("one.txt")],
+            files: [file("one.txt")],
             contextual: false
         )
         XCTAssertNil(reveal.title)
@@ -132,9 +133,8 @@ final class CommitMenuPresenterTests: XCTestCase {
 
     private func presentation(
         _ action: String,
-        unstaged: [PBCommitMenuFile] = [],
-        staged: [PBCommitMenuFile] = [],
-        stagedContext: Bool = false,
+        files: [PBCommitMenuFile] = [],
+        allowsTrash: Bool = true,
         contextual: Bool = true,
         submodule: Bool = false,
         amend: Bool = false,
@@ -143,10 +143,8 @@ final class CommitMenuPresenterTests: XCTestCase {
     ) -> PBCommitMenuPresentation {
         PBCommitMenuPresenter.presentation(
             action: NSSelectorFromString(action),
-            unstagedFiles: unstaged,
-            stagedFiles: staged,
-            isStagedContext: stagedContext,
-            allowsTrash: !stagedContext,
+            resolvedFiles: files,
+            allowsTrash: allowsTrash,
             isContextualMenu: contextual,
             singleSelectionIsSubmodule: submodule,
             isAmend: amend,

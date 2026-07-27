@@ -82,12 +82,10 @@ private nonisolated enum CommitMenuAction: String {
 
 @objc(PBCommitMenuPresenter)
 final nonisolated class CommitMenuPresenter: NSObject {
-    @objc(presentationForAction:unstagedFiles:stagedFiles:isStagedContext:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:)
+    @objc(presentationForAction:resolvedFiles:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:)
     static func presentation(
         action: Selector?,
-        unstagedFiles: [CommitMenuFile],
-        stagedFiles: [CommitMenuFile],
-        isStagedContext: Bool,
+        resolvedFiles: [CommitMenuFile],
         allowsTrash: Bool,
         isContextualMenu: Bool,
         singleSelectionIsSubmodule: Bool,
@@ -96,7 +94,6 @@ final nonisolated class CommitMenuPresenter: NSObject {
         fallbackEnabled: Bool
     ) -> CommitMenuPresentation {
         let action = CommitMenuAction(selector: action)
-        let selectedFiles = isStagedContext ? stagedFiles : unstagedFiles
         let mutation: CommitMenuMutation
 
         switch action {
@@ -104,32 +101,32 @@ final nonisolated class CommitMenuPresenter: NSObject {
             mutation = CommitMenuMutation(
                 title: contextualTitle(
                     isContextualMenu,
-                    files: unstagedFiles,
+                    files: resolvedFiles,
                     single: NSLocalizedString("Stage “%@”", comment: "Stage file menu item (single file with name)"),
                     multiple: NSLocalizedString("Stage %i Files", comment: "Stage file menu item (multiple files with number)"),
                     empty: NSLocalizedString("Stage", comment: "Stage file menu item (empty selection)")
                 ),
-                enabled: !unstagedFiles.isEmpty,
-                hidden: contextualValue(isContextualMenu, unstagedFiles.isEmpty)
+                enabled: !resolvedFiles.isEmpty,
+                hidden: contextualValue(isContextualMenu, resolvedFiles.isEmpty)
             )
         case .unstage:
             mutation = CommitMenuMutation(
                 title: contextualTitle(
                     isContextualMenu,
-                    files: stagedFiles,
+                    files: resolvedFiles,
                     single: NSLocalizedString("Unstage “%@”", comment: "Unstage file menu item (single file with name)"),
                     multiple: NSLocalizedString("Unstage %i Files", comment: "Unstage file menu item (multiple files with number)"),
                     empty: NSLocalizedString("Unstage", comment: "Unstage file menu item (empty selection)")
                 ),
-                enabled: !stagedFiles.isEmpty,
-                hidden: contextualValue(isContextualMenu, stagedFiles.isEmpty)
+                enabled: !resolvedFiles.isEmpty,
+                hidden: contextualValue(isContextualMenu, resolvedFiles.isEmpty)
             )
         case .discard:
-            let shouldTrash = shouldTrashInsteadOfDiscard(unstagedFiles)
+            let shouldTrash = shouldTrashInsteadOfDiscard(resolvedFiles)
             mutation = CommitMenuMutation(
                 title: contextualTitle(
                     isContextualMenu,
-                    files: unstagedFiles,
+                    files: resolvedFiles,
                     single: NSLocalizedString(
                         "Discard changes to “%@”…",
                         comment: "Discard changes menu item (single file with name)"
@@ -140,15 +137,15 @@ final nonisolated class CommitMenuPresenter: NSObject {
                     ),
                     empty: NSLocalizedString("Discard…", comment: "Discard changes menu item (empty selection)")
                 ),
-                enabled: canDiscard(unstagedFiles),
+                enabled: canDiscard(resolvedFiles),
                 hidden: contextualValue(isContextualMenu, shouldTrash)
             )
         case .forceDiscard:
-            let shouldHide = shouldTrashInsteadOfDiscard(unstagedFiles)
+            let shouldHide = shouldTrashInsteadOfDiscard(resolvedFiles)
             mutation = CommitMenuMutation(
                 title: contextualTitle(
                     isContextualMenu,
-                    files: unstagedFiles,
+                    files: resolvedFiles,
                     single: NSLocalizedString(
                         "Discard changes to “%@”",
                         comment: "Force Discard changes menu item (single file with name)"
@@ -159,38 +156,38 @@ final nonisolated class CommitMenuPresenter: NSObject {
                     ),
                     empty: NSLocalizedString("Discard", comment: "Force Discard changes menu item (empty selection)")
                 ),
-                enabled: canDiscard(unstagedFiles),
+                enabled: canDiscard(resolvedFiles),
                 hidden: contextualValue(isContextualMenu, shouldHide),
                 alternate: contextualValue(isContextualMenu, !shouldHide)
             )
         case .trash:
-            let isVisible = shouldTrashInsteadOfDiscard(unstagedFiles) && allowsTrash
+            let isVisible = shouldTrashInsteadOfDiscard(resolvedFiles) && allowsTrash
             mutation = CommitMenuMutation(
                 title: contextualTitle(
                     isContextualMenu,
-                    files: unstagedFiles,
+                    files: resolvedFiles,
                     single: NSLocalizedString("Move “%@” to Trash", comment: "Move to Trash menu item (single file with name)"),
                     multiple: NSLocalizedString("Move %i Files to Trash", comment: "Move to Trash menu item (multiple files with number)"),
                     empty: NSLocalizedString("Move to Trash", comment: "Move to Trash menu item (empty selection)")
                 ),
-                enabled: canDiscard(unstagedFiles),
+                enabled: canDiscard(resolvedFiles),
                 hidden: contextualValue(isContextualMenu, !isVisible)
             )
         case .open:
             mutation = CommitMenuMutation(
                 title: openTitle(
                     isContextualMenu: isContextualMenu,
-                    files: selectedFiles,
+                    files: resolvedFiles,
                     singleSelectionIsSubmodule: singleSelectionIsSubmodule
                 ),
-                enabled: !selectedFiles.isEmpty
+                enabled: !resolvedFiles.isEmpty
             )
         case .ignore:
-            let isActive = !selectedFiles.isEmpty && !isStagedContext
+            let isActive = !resolvedFiles.isEmpty
             mutation = CommitMenuMutation(
                 title: contextualTitle(
                     isContextualMenu,
-                    files: selectedFiles,
+                    files: resolvedFiles,
                     single: NSLocalizedString("Ignore “%@”", comment: "Ignore File menu item (single file with name)"),
                     multiple: NSLocalizedString("Ignore %i Files", comment: "Ignore File menu item (multiple files with number)"),
                     empty: NSLocalizedString("Ignore", comment: "Ignore File menu item (empty selection)")
@@ -199,11 +196,11 @@ final nonisolated class CommitMenuPresenter: NSObject {
                 hidden: contextualValue(isContextualMenu, !isActive)
             )
         case .reveal:
-            let isActive = !selectedFiles.isEmpty
+            let isActive = !resolvedFiles.isEmpty
             mutation = CommitMenuMutation(
                 title: contextualTitle(
                     isContextualMenu,
-                    files: selectedFiles,
+                    files: resolvedFiles,
                     single: NSLocalizedString(
                         "Reveal “%@” in Finder",
                         comment: "Reveal File in Finder contextual menu item (single file with name)"

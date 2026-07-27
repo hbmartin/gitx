@@ -299,12 +299,20 @@ static PBApplicationPreferences *PBPreferences(void)
 
 + (BOOL)notifyAboutFetchedCommitsForRepositoryURL:(NSURL *)repositoryURL
 {
+	if (!repositoryURL) {
+		NSLog(@"[GitX] Returning the disabled fetch-notification default for a missing repository URL");
+		return NO;
+	}
 	NSDictionary *settings = [PBPreferences() dictionaryForKey:kAutoFetchRepositoryNotifications];
 	return [settings[[self repositoryDefaultsKeyForURL:repositoryURL]] boolValue];
 }
 
 + (void)setNotifyAboutFetchedCommits:(BOOL)enabled forRepositoryURL:(NSURL *)repositoryURL
 {
+	if (!repositoryURL) {
+		NSLog(@"[GitX] Ignored a fetch-notification update for a missing repository URL");
+		return;
+	}
 	NSMutableDictionary *settings = [[PBPreferences() dictionaryForKey:kAutoFetchRepositoryNotifications] mutableCopy] ?: [NSMutableDictionary dictionary];
 	NSString *key = [self repositoryDefaultsKeyForURL:repositoryURL];
 	if (key.length) settings[key] = @(enabled);

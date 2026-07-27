@@ -398,6 +398,21 @@ final class GitXSwiftFeatureTests: XCTestCase {
         }
     }
 
+    func testRepositoryNotificationDefaultsIgnoreNilRepositoryURLs() {
+        let restoreDefault = preservePersistentDefault(forKey: "PBAutoFetchRepositoryNotifications")
+        defer { restoreDefault() }
+        let existing = ["existing-repository": true]
+        UserDefaults.standard.set(existing, forKey: "PBAutoFetchRepositoryNotifications")
+
+        XCTAssertFalse(PBGitDefaults.notifyAboutFetchedCommits(forRepositoryURL: nil))
+        PBGitDefaults.setNotifyAboutFetchedCommits(false, forRepositoryURL: nil)
+
+        XCTAssertEqual(
+            UserDefaults.standard.dictionary(forKey: "PBAutoFetchRepositoryNotifications") as? [String: Bool],
+            existing
+        )
+    }
+
     func testRepositoryFinderDiscoversWorktreesNestedPathsAndBareRepositories() throws {
         try withTemporaryDirectory { root in
             let worktree = root.appendingPathComponent("unicode-ü", isDirectory: true)

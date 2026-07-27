@@ -439,6 +439,7 @@
 	[revisionList loadRevisionsWithCompletionBlock:^{
 		[superseded fulfill];
 	}];
+	XCTAssertTrue(revisionList.isParsing);
 	[revisionList loadRevisionsWithCompletionBlock:^{
 		[latest fulfill];
 	}];
@@ -828,6 +829,17 @@
 	XCTAssertGreaterThanOrEqual(mergeCommit.lineInfo.nLines, 3);
 	XCTAssertTrue([mergeCommit.lineInfo.description containsString:@"position:"]);
 	XCTAssertTrue([mergeCommit.lineInfo.debugDescription containsString:@"colorIndex:"]);
+}
+
+- (void)testGraphCellInfoReplacesItsOwnedLineBuffer
+{
+	struct PBGitGraphLine *initialLines = calloc(1, sizeof(struct PBGitGraphLine));
+	PBGraphCellInfo *cellInfo = [[PBGraphCellInfo alloc] initWithPosition:1 andLines:initialLines];
+	XCTAssertEqual(cellInfo.lines, initialLines);
+
+	struct PBGitGraphLine *replacementLines = calloc(1, sizeof(struct PBGitGraphLine));
+	cellInfo.lines = replacementLines;
+	XCTAssertEqual(cellInfo.lines, replacementLines);
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured

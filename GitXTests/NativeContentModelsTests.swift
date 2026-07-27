@@ -155,6 +155,21 @@ final class NativeContentModelsTests: XCTestCase {
             PBSyntheticUntrackedDiffFormatter.diff(forPath: "newline.txt", contents: "\n")
                 .hasSuffix("@@ -0,0 +1,1 @@\n+\n")
         )
+
+        XCTAssertTrue(
+            PBSyntheticUntrackedDiffFormatter.diff(
+                forPath: "script.sh",
+                contents: "#!/bin/sh\n",
+                fileMode: .executable
+            ).contains("new file mode 100755\n")
+        )
+        let symbolicLink = PBSyntheticUntrackedDiffFormatter.diff(
+            forPath: "broken-link",
+            contents: "missing-target",
+            fileMode: .symbolicLink
+        )
+        XCTAssertTrue(symbolicLink.contains("new file mode 120000\n"))
+        XCTAssertTrue(symbolicLink.hasSuffix("+missing-target\n\\ No newline at end of file\n"))
     }
 
     func testPatchBuilderSelectsForwardAndReverseChanges() {

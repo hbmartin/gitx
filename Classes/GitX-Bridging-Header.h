@@ -69,4 +69,11 @@
 // nullability region so it follows the same interoperability contract as
 // first-party declaration headers.
 NS_ASSUME_NONNULL_BEGIN
+
+// StagingDiffPaneController.swift snapshots this existing private index
+// decision before dispatching immutable diff work off the main thread.
+@interface PBGitIndex (PBStagingDiffLoading)
+@property (nonatomic, copy, readonly) NSString *parentTree;
+@end
+
 NS_ASSUME_NONNULL_END

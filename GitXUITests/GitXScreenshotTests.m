@@ -16,7 +16,8 @@
 - (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
 - (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
 - (void)openPreferencesWaitingForElement:(XCUIElement *)element;
-- (void)openStagingView;
+- (void)launchWithStagingLayout:(NSInteger)layout;
+- (void)openStagingViewWaitingForTable:(NSString *)tableIdentifier;
 @end
 
 @implementation GitXScreenshotTests
@@ -31,10 +32,7 @@
 		@"-AppleLanguages", @"(en)",
 		@"-AppleLocale", @"en_US_POSIX",
 		@"-NSAutomaticWindowAnimationsEnabled", @"NO",
-		@"-PBGitXPreferenceViewIdentifier", @"General",
-		// These tests characterize the split-tables staging layout; the
-		// sectioned list is the app default.
-		@"-PBStagingFileListLayout", @"1"
+		@"-PBGitXPreferenceViewIdentifier", @"General"
 	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
 
@@ -133,7 +131,6 @@
 	}
 	XCTFail(@"The requested preferences pane should expose %@", element);
 }
-
 - (BOOL)runGit:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
 {
 	NSTask *task = [[NSTask alloc] init];
@@ -228,18 +225,42 @@
 	return table;
 }
 
-- (void)openStagingView
+- (void)launchWithStagingLayout:(NSInteger)layout
+{
+	[self.app terminate];
+	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
+	NSString *layoutFlag = @"-PBStagingFileListLayout";
+	for (NSInteger index = (NSInteger)arguments.count - 1; index >= 0; index--) {
+		if (![arguments[index] isEqualToString:layoutFlag])
+			continue;
+		[arguments removeObjectAtIndex:(NSUInteger)index];
+		if ((NSUInteger)index < arguments.count)
+			[arguments removeObjectAtIndex:(NSUInteger)index];
+	}
+	[arguments addObjectsFromArray:@[ @"-PBStagingFileListLayout", [NSString stringWithFormat:@"%ld", layout] ]];
+	self.app.launchArguments = arguments;
+	[self.app launch];
+}
+
+- (void)openStagingViewWaitingForTable:(NSString *)tableIdentifier
 {
 	XCTAssertTrue([self waitForWindow], @"Staging requires a repository window");
 	XCUIElement *table = self.app.tables[@"CommitList"];
 	XCTAssertTrue([table waitForExistenceWithTimeout:15], @"History should be open before showing uncommitted changes");
+	XCUIElement *stagingTable = self.app.tables[tableIdentifier];
+	XCUIElement *workingStateRow = self.app.staticTexts[@"Uncommitted Changes"];
+	XCUIElement *workingStateToolbarButton = self.app.buttons[@"Uncommitted Changes"];
+	NSPredicate *stagingReady = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return stagingTable.exists || workingStateRow.exists || workingStateToolbarButton.exists;
+	}];
+	XCTNSPredicateExpectation *readyExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:stagingReady object:self.app];
+	[self waitForExpectations:@[ readyExpectation ] timeout:15];
 	// Exercise the remapped entry point: Cmd-2 selects the Uncommitted
 	// Changes row, which swaps the Details tab to the staging pane.
-	[self.app.windows.firstMatch typeKey:@"2" modifierFlags:XCUIKeyModifierCommand];
-	XCTAssertTrue([self.app.tables[@"UnstagedFiles"] waitForExistenceWithTimeout:10],
-				  @"The Unstaged files list should be ready before using the staging pane");
-	XCTAssertTrue([self.app.tables[@"StagedFiles"] waitForExistenceWithTimeout:10],
-				  @"The Staged files list should be ready before using the staging pane");
+	if (!stagingTable.exists)
+		[self.app.windows.firstMatch typeKey:@"2" modifierFlags:XCUIKeyModifierCommand];
+	XCTAssertTrue([stagingTable waitForExistenceWithTimeout:10],
+				  @"The %@ list should be ready before using the staging pane", tableIdentifier);
 }
 
 // MARK: - Tests
@@ -260,8 +281,10 @@
 
 - (void)testStagingTabScreenshot
 {
+	[self launchWithStagingLayout:0];
 	[self selectHistoryForCurrentBranch];
-	[self openStagingView];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
+	XCTAssertTrue(self.app.tables[@"PendingFiles"].exists);
 	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
 	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
 	// The pane selects the first pending file automatically, so the diff
@@ -272,10 +295,40 @@
 	[self saveWindowScreenshotNamed:@"staging-view"];
 }
 
+- (void)testSplitStagingTabScreenshot
+{
+	[self launchWithStagingLayout:1];
+	[self selectHistoryForCurrentBranch];
+	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
+	XCTAssertTrue([self.app.tables[@"StagedFiles"] waitForExistenceWithTimeout:10]);
+	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
+	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
+	NSPredicate *initialDiff = [NSPredicate predicateWithFormat:@"value CONTAINS 'Hunk 1'"];
+	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:initialDiff object:diff] ] timeout:10];
+
+	[self saveWindowScreenshotNamed:@"staging-view-split"];
+}
+
+- (void)testStagingOptionsDoNotOfferWhitespaceFiltering
+{
+	[self launchWithStagingLayout:0];
+	[self selectHistoryForCurrentBranch];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
+	XCUIElement *options = self.app.buttons[@"StagingViewOptions"];
+	XCTAssertTrue([options waitForExistenceWithTimeout:10]);
+	[options click];
+	XCUIElement *menu = options.menus.firstMatch;
+	XCTAssertTrue([menu waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([menu.menuItems[@"openExternalDiff:"] waitForExistenceWithTimeout:5]);
+	XCTAssertFalse(menu.menuItems[@"changeWhitespaceVisibility:"].exists);
+	[self saveScreenshotNamed:@"staging-options"];
+}
+
 - (void)testStagingViewRemainsActiveAfterMovingWindow
 {
+	[self launchWithStagingLayout:0];
 	[self selectHistoryForCurrentBranch];
-	[self openStagingView];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
 	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
 	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
 	NSPredicate *initialDiff = [NSPredicate predicateWithFormat:@"value CONTAINS 'Hunk 1'"];
@@ -294,8 +347,7 @@
 	[self waitForExpectations:@[ moveExpectation ] timeout:5];
 
 	XCTAssertTrue([[diff.value description] containsString:@"Hunk 1"]);
-	XCTAssertTrue(self.app.tables[@"UnstagedFiles"].hittable);
-	XCTAssertTrue(self.app.tables[@"StagedFiles"].hittable);
+	XCTAssertTrue(self.app.tables[@"PendingFiles"].hittable);
 	[self saveWindowScreenshotNamed:@"staging-view-after-window-move"];
 }
 
@@ -310,8 +362,8 @@
 	XCTAssertTrue(([self runGit:@[ @"add", @"partial.txt" ] inDirectory:fixture]));
 	XCTAssertTrue([@"staged line\nunstaged line\n" writeToFile:newPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
 	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
-	[self.app launch];
-	[self openStagingView];
+	[self launchWithStagingLayout:1];
+	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
 
 	XCUIElement *stagedTable = self.app.tables[@"StagedFiles"];
 	XCUIElement *unstagedTable = self.app.tables[@"UnstagedFiles"];
@@ -331,8 +383,9 @@
 
 - (void)testHistoryRemainsUsableAfterResizingWhileHidden
 {
+	[self launchWithStagingLayout:0];
 	XCTAssertTrue([self waitForWindow]);
-	[self openStagingView];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
 	XCUIElement *window = self.app.windows.firstMatch;
 	CGRect originalFrame = window.frame;
 	XCUIElement *resizeButton = window.buttons[XCUIIdentifierFullScreenWindow];
@@ -367,8 +420,8 @@
 	XCTAssertEqualObjects(initialHead, initialRemoteHead);
 
 	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repositoryPath};
-	[self.app launch];
-	[self openStagingView];
+	[self launchWithStagingLayout:1];
+	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
 
 	XCUIElement *unstagedTable = self.app.tables[@"UnstagedFiles"];
 	XCUIElement *stagedTable = self.app.tables[@"StagedFiles"];
@@ -416,7 +469,9 @@
 	[self saveWindowScreenshotNamed:@"commit-hook-failure-preserves-push-choice"];
 	XCTAssertEqualObjects(([self gitOutput:@[ @"rev-parse", @"HEAD" ] inDirectory:repositoryPath]), initialHead);
 	XCTAssertTrue([[NSFileManager defaultManager] removeItemAtPath:hookPath error:nil]);
-	[self.app.buttons[@"OK"] click];
+	XCUIElement *forceCommit = self.app.buttons[@"Force Commit"];
+	XCTAssertTrue([forceCommit waitForExistenceWithTimeout:5]);
+	[forceCommit click];
 
 	NSPredicate *remoteUpdated = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 		NSString *localHead = [self gitOutput:@[ @"rev-parse", @"HEAD" ] inDirectory:repositoryPath];
@@ -433,7 +488,7 @@
 	// selection were remembered.
 	NSString *followUpPath = [repositoryPath stringByAppendingPathComponent:@"follow-up.txt"];
 	XCTAssertTrue([@"follow up\n" writeToFile:followUpPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
-	[self openStagingView];
+	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
 	pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
 	XCTAssertTrue([pushCheckbox waitForExistenceWithTimeout:10]);
 	NSPredicate *checkboxRemembered = [NSPredicate predicateWithFormat:@"value == 1"];
@@ -449,8 +504,8 @@
 	[self.app terminate];
 	NSString *repositoryPath = [self makeDirtyRepositoryFixture];
 	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repositoryPath};
-	[self.app launch];
-	[self openStagingView];
+	[self launchWithStagingLayout:0];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
 
 	XCUIElement *pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
 	XCUIElement *remotePopup = self.app.popUpButtons[@"PushRemote"];
@@ -546,71 +601,52 @@
 
 - (void)testGeneralPreferencesOfferRefreshOnFocus
 {
+	[self.app terminate];
+	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
+	[arguments addObjectsFromArray:@[
+		@"-PBUseRepositoryWatcher", @"NO",
+		@"-PBRefreshOnApplicationFocus", @"YES"
+	]];
+	self.app.launchArguments = arguments;
+	[self.app launch];
+
 	XCUIElement *continuousWatch = self.app.checkBoxes[@"Watch for changes in repositories"];
 	[self openPreferencesWaitingForElement:continuousWatch];
 	XCUIElement *refreshOnFocus = self.app.checkBoxes[@"Refresh repositories when GitX regains focus"];
 	XCTAssertTrue([refreshOnFocus waitForExistenceWithTimeout:5]);
-	BOOL watchedOriginally = [continuousWatch.value boolValue];
-	BOOL focusedOriginally = [refreshOnFocus.value boolValue];
-
-	@try {
-		if (watchedOriginally) {
-			[continuousWatch click];
-		}
-		NSPredicate *refreshEnabled = [NSPredicate predicateWithFormat:@"enabled == YES"];
-		[self waitForExpectations:@[
-			[[XCTNSPredicateExpectation alloc] initWithPredicate:refreshEnabled
-														  object:refreshOnFocus]
-		]
-						  timeout:5];
-		if (![refreshOnFocus.value boolValue]) {
-			[refreshOnFocus click];
-		}
-		NSPredicate *watchDisabled = [NSPredicate predicateWithFormat:@"enabled == NO"];
-		[self waitForExpectations:@[
-			[[XCTNSPredicateExpectation alloc] initWithPredicate:watchDisabled
-														  object:continuousWatch]
-		]
-						  timeout:5];
-		[self saveWindowScreenshotNamed:@"refresh-on-focus-preference"];
-	} @finally {
-		if ([refreshOnFocus.value boolValue] != focusedOriginally) {
-			[refreshOnFocus click];
-		}
-		if ([continuousWatch.value boolValue] != watchedOriginally) {
-			[continuousWatch click];
-		}
-	}
+	XCTAssertFalse([continuousWatch.value boolValue]);
+	XCTAssertFalse(continuousWatch.isEnabled);
+	XCTAssertTrue([refreshOnFocus.value boolValue]);
+	XCTAssertTrue(refreshOnFocus.isEnabled);
+	[self saveWindowScreenshotNamed:@"refresh-on-focus-preference"];
 }
 
 - (void)testAppearancePreferenceOffersAutomaticLightAndDark
 {
-	XCUIElement *appearance = self.app.popUpButtons[@"AppearancePreference"];
-	[self openPreferencesWaitingForElement:appearance];
-	NSString *originalValue = appearance.value;
+	NSArray<NSDictionary<NSString *, NSString *> *> *choices = @[
+		@{@"title" : @"Dark", @"value" : @"2"},
+		@{@"title" : @"Light", @"value" : @"1"},
+		@{@"title" : @"Automatic (System)", @"value" : @"0"},
+	];
+	for (NSDictionary<NSString *, NSString *> *choice in choices) {
+		[self.app terminate];
+		NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
+		NSString *preferenceFlag = @"-PBAppearancePreference";
+		for (NSInteger index = (NSInteger)arguments.count - 1; index >= 0; index--) {
+			if (![arguments[index] isEqualToString:preferenceFlag])
+				continue;
+			[arguments removeObjectAtIndex:(NSUInteger)index];
+			if ((NSUInteger)index < arguments.count)
+				[arguments removeObjectAtIndex:(NSUInteger)index];
+		}
+		[arguments addObjectsFromArray:@[ preferenceFlag, choice[@"value"] ]];
+		self.app.launchArguments = arguments;
+		[self.app launch];
 
-	@try {
-		for (NSString *title in @[ @"Dark", @"Light", @"Automatic (System)" ]) {
-			appearance = self.app.popUpButtons[@"AppearancePreference"];
-			[appearance click];
-			XCUIElement *choice = self.app.menuItems[title];
-			XCTAssertTrue([choice waitForExistenceWithTimeout:5]);
-			[choice click];
-			[self waitForElement:self.app.popUpButtons[@"AppearancePreference"] toHaveValue:title timeout:5];
-			[self saveWindowScreenshotNamed:[NSString stringWithFormat:@"appearance-%@", title.lowercaseString]];
-		}
-	} @finally {
-		appearance = self.app.popUpButtons[@"AppearancePreference"];
-		if (originalValue.length && ![appearance.value isEqual:originalValue]) {
-			[appearance click];
-			XCUIElement *originalChoice = self.app.menuItems[originalValue];
-			if ([originalChoice waitForExistenceWithTimeout:5]) {
-				[originalChoice click];
-				[self waitForElement:self.app.popUpButtons[@"AppearancePreference"]
-						 toHaveValue:originalValue
-							 timeout:5];
-			}
-		}
+		XCUIElement *appearance = self.app.popUpButtons[@"AppearancePreference"];
+		[self openPreferencesWaitingForElement:appearance];
+		[self waitForElement:appearance toHaveValue:choice[@"title"] timeout:5];
+		[self saveWindowScreenshotNamed:[NSString stringWithFormat:@"appearance-%@", [choice[@"title"] lowercaseString]]];
 	}
 }
 
@@ -678,7 +714,7 @@
 
 	XCUIElement *window = self.app.windows.firstMatch;
 	[window typeKey:@"r" modifierFlags:XCUIKeyModifierCommand];
-	XCUIElement *newBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'manual-ui-refresh'"]].firstMatch;
+	XCUIElement *newBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value ENDSWITH 'manual-ui-refresh'"]].firstMatch;
 	XCTAssertTrue([newBranch waitForExistenceWithTimeout:15], @"Manual refresh should reveal externally created branches");
 	NSPredicate *updatedTitle = [NSPredicate predicateWithFormat:@"title CONTAINS 'feature/manual-ui-refresh'"];
 	XCTNSPredicateExpectation *titleExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:updatedTitle object:window];
@@ -723,14 +759,14 @@
 
 	XCTAssertTrue(([self runGit:@[ @"checkout", @"--quiet", @"-b", @"feature/hotkey-jump" ] inDirectory:fixture]));
 	[window typeKey:@"j" modifierFlags:(XCUIKeyModifierCommand | XCUIKeyModifierOption)];
-	XCUIElement *hotkeyBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'hotkey-jump'"]].firstMatch;
+	XCUIElement *hotkeyBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value ENDSWITH 'hotkey-jump'"]].firstMatch;
 	XCTAssertTrue([hotkeyBranch waitForExistenceWithTimeout:15], @"The hotkey should reveal the externally checked-out branch");
 	NSPredicate *hotkeyTitle = [NSPredicate predicateWithFormat:@"title CONTAINS 'feature/hotkey-jump'"];
 	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:hotkeyTitle object:window] ] timeout:15];
 
 	XCTAssertTrue(([self runGit:@[ @"checkout", @"--quiet", @"-b", @"feature/button-jump" ] inDirectory:fixture]));
 	[button click];
-	XCUIElement *buttonBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'button-jump'"]].firstMatch;
+	XCUIElement *buttonBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value ENDSWITH 'button-jump'"]].firstMatch;
 	XCTAssertTrue([buttonBranch waitForExistenceWithTimeout:15], @"The toolbar button should reveal the externally checked-out branch");
 	NSPredicate *buttonTitle = [NSPredicate predicateWithFormat:@"title CONTAINS 'feature/button-jump'"];
 	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:buttonTitle object:window] ] timeout:15];

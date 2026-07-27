@@ -42,6 +42,11 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     private var syncingExclusiveSelection = false
     private var observingSelections = false
 
+    private struct SectionedDrop {
+        let target: StagingListSection
+        let files: [PBChangedFile]
+    }
+
     @objc(initWithRepository:index:)
     init(repository: PBGitRepository, index: PBGitIndex) {
         self.index = index
@@ -171,28 +176,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     /// Re-filters, re-sorts, and refreshes the section headers after an index
     /// update or a search/sort change.
     @objc func applyFilterAndSort() {
-        let query = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        var unstagedPredicate = NSPredicate(format: "hasUnstagedChanges == 1")
-        var stagedPredicate = NSPredicate(format: "hasStagedChanges == 1")
-        if !query.isEmpty {
-            let search = NSPredicate(format: "path CONTAINS[cd] %@", query)
-            unstagedPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [unstagedPredicate, search])
-            stagedPredicate = NSCompoundPredicate(andPredicateWithSubpredicates: [stagedPredicate, search])
-        }
-        unstagedFilesController.filterPredicate = unstagedPredicate
-        stagedFilesController.filterPredicate = stagedPredicate
-
-        let sortDescriptors: [NSSortDescriptor] = switch viewModel.sortOrder {
-        case .status:
-            [
-                NSSortDescriptor(key: "status", ascending: false),
-                NSSortDescriptor(key: "path", ascending: true),
-            ]
-        case .path:
-            [NSSortDescriptor(key: "path", ascending: true)]
-        }
-        unstagedFilesController.sortDescriptors = sortDescriptors
-        stagedFilesController.sortDescriptors = sortDescriptors
+        unstagedFilesController.filterPredicate = viewModel.filterPredicate(for: .unstaged)
+        stagedFilesController.filterPredicate = viewModel.filterPredicate(for: .staged)
+        unstagedFilesController.sortDescriptors = viewModel.sortDescriptors
+        stagedFilesController.sortDescriptors = viewModel.sortDescriptors
 
         rearrange()
     }
@@ -211,6 +198,15 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         guard newLayout != layout else { return }
         layout = newLayout
         ApplicationSettings.stagingListLayout = newLayout
+        if newLayout == .splitTables,
+           !stagedFilesController.selectionIndexes.isEmpty,
+           !unstagedFilesController.selectionIndexes.isEmpty
+        {
+            syncingExclusiveSelection = true
+            unstagedFilesController.setSelectionIndexes(IndexSet())
+            syncingExclusiveSelection = false
+            NSLog("[GitX] Preserved the staged side while restoring split-table selection exclusivity")
+        }
         installLayoutView()
         rearrange()
         NSLog("[GitX] Staging file list layout switched to %@", newLayout == .sectionedList ? "sectioned list" : "split tables")
@@ -291,7 +287,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc var stagedFileCount: Int {
-        (stagedFilesController.arrangedObjects as? [Any])?.count ?? 0
+        viewModel.stagedFileCount(from: index.indexChanges)
     }
 
     @objc func clearSelections() {
@@ -330,6 +326,30 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     func selectedFiles(stagedContext: Bool) -> [PBChangedFile] {
         let controller = stagedContext ? stagedFilesController : unstagedFilesController
         return controller.selectedObjects as? [PBChangedFile] ?? []
+    }
+
+    @objc(resolvedSelectionForAction:contextualMenu:)
+    func resolvedSelection(
+        for action: StagingFileAction,
+        contextualMenu: NSMenu?
+    ) -> StagingActionSelection {
+        let context: StagingSelectionContext
+        if layout == .sectionedList {
+            context = .sectioned
+        } else if contextualMenu === stagedTable.menu {
+            context = .splitStaged
+        } else if contextualMenu === unstagedTable.menu {
+            context = .splitUnstaged
+        } else {
+            context = .splitAutomatic
+        }
+        let files = viewModel.resolvedFiles(
+            for: action,
+            context: context,
+            stagedSelection: selectedFiles(stagedContext: true),
+            unstagedSelection: selectedFiles(stagedContext: false)
+        )
+        return StagingActionSelection(action: action, files: files)
     }
 
     @objc var currentDiffRequests: [StagingDiffRequest] {
@@ -500,6 +520,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             syncControllersFromSectionedSelection()
             return
         }
+        guard layout == .splitTables else { return }
         // Selecting in one split table deselects the other so the diff pane
         // shows exactly the side the user chose, like the reference design.
         guard !syncingExclusiveSelection, table.numberOfSelectedRows > 0 else { return }
@@ -522,10 +543,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
 
     func tableView(_ tableView: NSTableView, writeRowsWith rowIndexes: IndexSet, to pboard: NSPasteboard) -> Bool {
         if tableView === sectionedTable {
-            let draggable = rowIndexes.filter { sectionedRows.indices.contains($0) && !sectionedRows[$0].isHeader }
-            guard !draggable.isEmpty else { return false }
+            let payload = viewModel.sectionedDragPayload(rows: sectionedRows, selectedIndexes: rowIndexes)
+            guard !payload.isEmpty else { return false }
             pboard.declareTypes([Self.sectionedDragType], owner: self)
-            pboard.setPropertyList(draggable.map { $0 }, forType: Self.sectionedDragType)
+            pboard.setPropertyList(payload, forType: Self.sectionedDragType)
             return true
         }
         return interactionCoordinator.writeRows(with: rowIndexes, from: tableView, to: pboard)
@@ -540,9 +561,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         guard tableView === sectionedTable else {
             return interactionCoordinator.validateDrop(info, in: tableView)
         }
-        guard info.draggingPasteboard.propertyList(forType: Self.sectionedDragType) != nil,
-              targetSection(forDropRow: row) != nil
-        else { return [] }
+        guard sectionedDrop(info, row: row) != nil else {
+            NSLog("[GitX] Rejected a sectioned staging drop without current cross-section entries")
+            return []
+        }
         return .copy
     }
 
@@ -555,21 +577,30 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         guard tableView === sectionedTable else {
             return interactionCoordinator.acceptDrop(info, in: tableView)
         }
-        guard let rawRows = info.draggingPasteboard.propertyList(forType: Self.sectionedDragType) as? [Int],
-              let target = targetSection(forDropRow: row)
-        else { return false }
-        let files = rawRows
-            .filter { sectionedRows.indices.contains($0) }
-            .compactMap { sectionedRows[$0].file }
-        guard !files.isEmpty else { return false }
-        if target == .staged {
-            NSLog("[GitX] Staging %ld dropped file(s) in the sectioned list", files.count)
-            index.stageFiles(files)
+        guard let drop = sectionedDrop(info, row: row) else {
+            NSLog("[GitX] Rejected a malformed, stale, or same-section staging drop")
+            return false
+        }
+        if drop.target == .staged {
+            NSLog("[GitX] Staging %ld dropped file(s) in the sectioned list", drop.files.count)
+            index.stageFiles(drop.files)
         } else {
-            NSLog("[GitX] Unstaging %ld dropped file(s) in the sectioned list", files.count)
-            index.unstageFiles(files)
+            NSLog("[GitX] Unstaging %ld dropped file(s) in the sectioned list", drop.files.count)
+            index.unstageFiles(drop.files)
         }
         return true
+    }
+
+    private func sectionedDrop(_ info: NSDraggingInfo, row: Int) -> SectionedDrop? {
+        guard let target = targetSection(forDropRow: row),
+              let files = viewModel.resolvedDropFiles(
+                  from: info.draggingPasteboard.propertyList(forType: Self.sectionedDragType),
+                  rows: sectionedRows,
+                  destinationSection: target
+              ),
+              !files.isEmpty
+        else { return nil }
+        return SectionedDrop(target: target, files: files)
     }
 
     /// The drop target is the section of the row at the drop location; every

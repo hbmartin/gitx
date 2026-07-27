@@ -120,13 +120,35 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @property (class) PBApplicationIconStyle applicationIconStyle;
 @property (class) PBStagingListLayout stagingListLayout;
 @property (class) PBStagingFileSortOrder stagingFileSortOrder;
-@property (class) BOOL stagingIgnoreWhitespace;
 @end
 
 typedef NS_ENUM(NSInteger, PBStagingListSection) {
 	PBStagingListSectionStaged,
 	PBStagingListSectionUnstaged,
 };
+
+typedef NS_ENUM(NSInteger, PBStagingFileAction) {
+	PBStagingFileActionStage,
+	PBStagingFileActionUnstage,
+	PBStagingFileActionDiscard,
+	PBStagingFileActionForceDiscard,
+	PBStagingFileActionOpen,
+	PBStagingFileActionReveal,
+	PBStagingFileActionIgnore,
+	PBStagingFileActionTrash,
+};
+
+typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
+	PBStagingSelectionContextSectioned,
+	PBStagingSelectionContextSplitStaged,
+	PBStagingSelectionContextSplitUnstaged,
+	PBStagingSelectionContextSplitAutomatic,
+};
+
+@interface PBStagingActionSelection : NSObject
+@property (nonatomic, readonly) PBStagingFileAction action;
+@property (nonatomic, readonly) NSArray<PBChangedFile *> *files;
+@end
 
 @interface PBStagingListRow : NSObject
 @property (nonatomic, readonly) BOOL isHeader;
@@ -145,7 +167,6 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 @interface PBStagingDiffPaneController : NSObject
 @property (nonatomic, readonly) PBNativeContentView *contentView;
 @property (nonatomic) NSUInteger contextLines;
-@property (nonatomic) BOOL ignoreWhitespace;
 - (void)renderRequests:(NSArray<PBStagingDiffRequest *> *)requests;
 - (void)rerenderCurrentRequests;
 @end
@@ -156,6 +177,14 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 @property (nonatomic, readonly) NSButton *checkbox;
 @property (nonatomic, readonly) NSTextField *pathField;
 @property (nonatomic, readonly) NSButton *overflowButton;
+- (void)configureWithFile:(PBChangedFile *)file checkboxState:(NSInteger)checkboxState
+	NS_SWIFT_NAME(configure(with:checkboxState:));
+@end
+
+@interface PBStagingSectionHeaderView : NSView
+@property (nonatomic, readonly) NSButton *masterCheckbox;
+- (void)configureWithTitle:(NSString *)title fileCount:(NSInteger)fileCount masterState:(NSInteger)masterState
+	NS_SWIFT_NAME(configure(title:fileCount:masterState:));
 @end
 
 @interface PBCommitTableInteractionCoordinator : NSObject
@@ -185,6 +214,8 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 - (void)rearrange;
 - (void)setListLayout:(PBStagingListLayout)layout;
 - (NSArray<PBChangedFile *> *)selectedFilesForStagedContext:(BOOL)stagedContext;
+- (PBStagingActionSelection *)resolvedSelectionForAction:(PBStagingFileAction)action
+								  contextualMenu:(nullable NSMenu *)contextualMenu;
 @end
 
 @interface PBCommitMessageTransformer : NSObject
@@ -200,6 +231,7 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 - (void)updateView;
 - (void)closeView;
 - (void)reloadPushRemotes;
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem;
 @end
 
 @interface PBStagingListViewModel : NSObject
@@ -208,6 +240,16 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 - (NSArray<PBChangedFile *> *)filesInSection:(PBStagingListSection)section
 								 fromChanges:(NSArray<PBChangedFile *> *)changes;
 - (NSArray<PBStagingListRow *> *)flattenedRowsFromChanges:(NSArray<PBChangedFile *> *)changes;
+- (NSInteger)stagedFileCountFromChanges:(NSArray<PBChangedFile *> *)changes;
+- (NSArray<PBChangedFile *> *)resolvedFilesForAction:(PBStagingFileAction)action
+									 context:(PBStagingSelectionContext)context
+							 stagedSelection:(NSArray<PBChangedFile *> *)stagedSelection
+						   unstagedSelection:(NSArray<PBChangedFile *> *)unstagedSelection;
+- (NSArray<NSDictionary<NSString *, id> *> *)sectionedDragPayloadForRows:(NSArray<PBStagingListRow *> *)rows
+												 selectedIndexes:(NSIndexSet *)selectedIndexes;
+- (nullable NSArray<PBChangedFile *> *)resolvedDropFilesFromPropertyList:(nullable id)propertyList
+														 rows:(NSArray<PBStagingListRow *> *)rows
+											  destinationSection:(PBStagingListSection)destinationSection;
 - (NSInteger)rowCheckboxStateForFile:(PBChangedFile *)file inSection:(PBStagingListSection)section;
 - (NSInteger)masterCheckboxStateForChanges:(NSArray<PBChangedFile *> *)changes
 								 inSection:(PBStagingListSection)section;
@@ -317,6 +359,8 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 
 @interface PBHistoryStateCoordinator : NSObject
 - (NSArray<PBGitCommit *> *)normalizedSelection:(NSArray<PBGitCommit *> *)selection;
+- (BOOL)shouldShowStagingForSelection:(NSArray<PBGitCommit *> *)selection
+	NS_SWIFT_NAME(shouldShowStaging(for:));
 - (nullable NSArray<PBGitCommit *> *)preservedSelection:(NSArray<PBGitCommit *> *)selection
                                               inContent:(NSArray<PBGitCommit *> *)content;
 - (PBHistoryBranchFilterPresentation *)branchFilterPresentationForSimpleBranch:(BOOL)simpleBranch
@@ -531,8 +575,15 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly) NSDictionary<NSNumber *, PBNativeDiffHunk *> *hunksByStartIndex;
 @end
 
+typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
+	PBSyntheticUntrackedFileModeRegular,
+	PBSyntheticUntrackedFileModeExecutable,
+	PBSyntheticUntrackedFileModeSymbolicLink,
+};
+
 @interface PBSyntheticUntrackedDiffFormatter : NSObject
 + (NSString *)diffForPath:(NSString *)path contents:(NSString *)contents;
++ (NSString *)diffForPath:(NSString *)path contents:(NSString *)contents fileMode:(PBSyntheticUntrackedFileMode)fileMode;
 @end
 
 @interface PBPartialPatchBuilder : NSObject
@@ -581,6 +632,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly) NSDictionary<NSString *, PBNativeRenderResult *> *cachedDiffResultsForTesting;
 @property (nonatomic, readonly) NSDictionary<NSString *, NSArray<NSDictionary<NSString *, id> *> *> *cachedDiffSectionsForTesting;
 @property (nonatomic, readonly) NSDictionary<NSString *, NSValue *> *cachedDiffScrollOriginsForTesting;
+- (BOOL)textView:(NSTextView *)textView clickedOnLink:(id)link atIndex:(NSUInteger)charIndex;
 @end
 
 @protocol PBIndexCommandRunning <NSObject>
@@ -833,16 +885,14 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 
 @interface PBCommitMenuPresenter : NSObject
 + (PBCommitMenuPresentation *)presentationForAction:(SEL _Nullable)action
-									  unstagedFiles:(NSArray<PBCommitMenuFile *> *)unstagedFiles
-										stagedFiles:(NSArray<PBCommitMenuFile *> *)stagedFiles
-									isStagedContext:(BOOL)isStagedContext
+									   resolvedFiles:(NSArray<PBCommitMenuFile *> *)resolvedFiles
 										allowsTrash:(BOOL)allowsTrash
 								   isContextualMenu:(BOOL)isContextualMenu
 						 singleSelectionIsSubmodule:(BOOL)singleSelectionIsSubmodule
 											isAmend:(BOOL)isAmend
 								  prepareHookExists:(BOOL)prepareHookExists
 									fallbackEnabled:(BOOL)fallbackEnabled
-	NS_SWIFT_NAME(presentation(action:unstagedFiles:stagedFiles:isStagedContext:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:));
+	NS_SWIFT_NAME(presentation(action:resolvedFiles:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:));
 @end
 
 @interface PBCommitList : NSTableView

@@ -94,7 +94,6 @@ final nonisolated class ApplicationSettings: NSObject {
         static let applicationIconStyle = ApplicationPreferenceKey.applicationIconStyle.rawValue
         static let stagingListLayout = "PBStagingFileListLayout"
         static let stagingFileSort = "PBStagingFileSortOrder"
-        static let stagingIgnoreWhitespace = "PBStagingIgnoreWhitespace"
     }
 
     private static var defaults: UserDefaults {
@@ -261,11 +260,6 @@ final nonisolated class ApplicationSettings: NSObject {
     @objc static var stagingFileSortOrder: StagingFileSortOrder {
         get { enumValue(Key.stagingFileSort, fallback: .path) }
         set { defaults.set(newValue.rawValue, forKey: Key.stagingFileSort) }
-    }
-
-    @objc static var stagingIgnoreWhitespace: Bool {
-        get { defaults.bool(forKey: Key.stagingIgnoreWhitespace) }
-        set { defaults.set(newValue, forKey: Key.stagingIgnoreWhitespace) }
     }
 
     private static func enumValue<Value: RawRepresentable>(
