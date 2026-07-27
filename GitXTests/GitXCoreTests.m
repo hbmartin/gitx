@@ -12,6 +12,7 @@
 #import "PBGitDefaults.h"
 #import "PBGitGrapher.h"
 #import "PBGitHistoryList.h"
+#import "PBGitHistoryController.h"
 #import "PBGitIndex.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
@@ -25,6 +26,7 @@
 #import "PBUncommittedChanges.h"
 #import "PBWorkingTree.h"
 #import "PBTask.h"
+#import "PBWebHistoryController.h"
 
 @interface PBNativeContentView (GitXCoreTests)
 - (nullable NSString *)patchWithFileHeader:(NSArray<NSString *> *)fileHeader
@@ -38,6 +40,17 @@
 - (NSSet<GTOID *> *)baseCommits;
 @end
 
+@interface PBGitBinary (GitXCoreTests)
++ (nullable NSString *)versionForPath:(nullable NSString *)path;
++ (nullable NSString *)extractGitVersion:(nullable NSString *)versionString;
++ (BOOL)acceptBinary:(nullable NSString *)path;
+@end
+
+@interface PBGitCommit (GitXCoreTests)
+@property (nonatomic, readonly) NSString *dateString;
+- (BOOL)isOnSameBranchAs:(nullable PBGitCommit *)otherCommit;
+@end
+
 @interface PBGitCommit (GitXCoreGraphTests)
 - (void)setParents:(NSArray<GTOID *> *)parents;
 @end
@@ -45,6 +58,21 @@
 @interface PBGitIndex (GitXCoreTests)
 - (void)postCommitUpdate:(NSString *)update;
 - (void)postCommitOutput:(NSString *)output;
+@end
+
+@interface PBGitRevList (GitXCoreTests)
+- (void)updateCommits:(NSArray<PBGitCommit *> *)revisions
+			operation:(NSOperation *)operation
+		   generation:(NSUInteger)generation;
+- (BOOL)isLoadGenerationCurrent:(NSUInteger)generation;
+@end
+
+@interface PBWebHistoryController (GitXCoreTests)
+- (NSUInteger)beginContentGeneration;
+- (nullable NSString *)runGitArguments:(NSArray<NSString *> *)arguments
+							generation:(NSUInteger)generation
+								 error:(NSError **)error;
+- (nullable NSData *)dataForGitObject:(NSString *)object imageSource:(NSDictionary<NSString *, id> *)imageSource;
 @end
 
 @interface PBGitRepository (GitXCoreHookTests)
@@ -269,6 +297,27 @@
 @end
 
 @implementation GitXRefAndRevisionTests
+
+- (void)testGitBinaryDiscoveryCompatibilitySurface
+{
+	XCTAssertNil([PBGitBinary versionForPath:nil]);
+	XCTAssertNil([PBGitBinary versionForPath:@"/path/that/does/not/exist"]);
+	XCTAssertNil([PBGitBinary extractGitVersion:nil]);
+	XCTAssertNil([PBGitBinary extractGitVersion:@"not a git version"]);
+	XCTAssertEqualObjects([PBGitBinary extractGitVersion:@"git version 2.51.0 (Apple Git-155)"], @"2.51.0");
+
+	XCTAssertFalse([PBGitBinary acceptBinary:nil]);
+	XCTAssertFalse([PBGitBinary acceptBinary:@" \n"]);
+	XCTAssertFalse([PBGitBinary acceptBinary:@"/path/that/does/not/exist"]);
+	NSString *configuredPath = PBGitBinary.path;
+	XCTAssertTrue([PBGitBinary acceptBinary:[configuredPath stringByAppendingString:@"\n"]]);
+	XCTAssertEqualObjects(PBGitBinary.path, configuredPath);
+	XCTAssertNotNil(PBGitBinary.version);
+
+	NSArray<NSString *> *locations = PBGitBinary.searchLocations;
+	XCTAssertTrue([locations containsObject:@"/usr/bin/git"]);
+	XCTAssertTrue([PBGitBinary.notFoundError containsString:@"/usr/bin/git"]);
+}
 
 - (void)testRefClassificationAndNames
 {
@@ -835,6 +884,109 @@
 	XCTAssertGreaterThanOrEqual(mergeCommit.lineInfo.nLines, 3);
 	XCTAssertTrue([mergeCommit.lineInfo.description containsString:@"position:"]);
 	XCTAssertTrue([mergeCommit.lineInfo.debugDescription containsString:@"colorIndex:"]);
+}
+
+- (void)testCommitMetadataCompatibilityAccessors
+{
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+	PBGitCommit *commit = self.repository.headCommit;
+
+	XCTAssertNotNil(commit);
+	XCTAssertGreaterThan(commit.dateString.length, (NSUInteger)0);
+	XCTAssertEqualObjects(commit.message, @"initial commit\n");
+	XCTAssertEqualObjects(commit.author, @"GitX Test");
+	XCTAssertEqualObjects(commit.authorEmail, @"gitx-tests@example.invalid");
+	XCTAssertEqualObjects(commit.committer, @"GitX Test");
+	XCTAssertEqualObjects(commit.committerEmail, @"gitx-tests@example.invalid");
+	XCTAssertGreaterThan(commit.committerDate.length, (NSUInteger)0);
+	XCTAssertEqual(commit.treeContents.count, commit.tree.children.count);
+	XCTAssertEqual(commit.hash, commit.OID.hash);
+	XCTAssertFalse([commit isOnSameBranchAs:nil]);
+}
+
+- (void)testRevisionListPublishesIncrementalBatches
+{
+	NSError *error = nil;
+	NSString *firstSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(firstSHA, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"second\n" toPath:@"second.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"second commit" error:&error], @"%@", error);
+	NSString *secondSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(secondSHA, @"%@", error);
+
+	GTCommit *firstGTCommit = [self.repository.gtRepo lookUpObjectBySHA:firstSHA objectType:GTObjectTypeCommit error:&error];
+	GTCommit *secondGTCommit = [self.repository.gtRepo lookUpObjectBySHA:secondSHA objectType:GTObjectTypeCommit error:&error];
+	XCTAssertNotNil(firstGTCommit, @"%@", error);
+	XCTAssertNotNil(secondGTCommit, @"%@", error);
+	PBGitCommit *firstCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:firstGTCommit];
+	PBGitCommit *secondCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:secondGTCommit];
+
+	PBGitRevList *revisionList = [[PBGitRevList alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]
+			   shouldGraph:NO];
+	[revisionList setValue:@1 forKey:@"loadGeneration"];
+	[revisionList setValue:@YES forKey:@"resetCommits"];
+	[revisionList setValue:[NSMutableSet set] forKey:@"publishedSHAs"];
+	NSOperation *operation = [NSBlockOperation blockOperationWithBlock:^{
+	}];
+
+	[revisionList updateCommits:@[ firstCommit ] operation:operation generation:1];
+	XCTAssertEqualObjects([revisionList.commits valueForKey:@"SHA"], (@[ firstSHA ]));
+	[revisionList updateCommits:@[ secondCommit ] operation:operation generation:1];
+	XCTAssertEqualObjects([revisionList.commits valueForKey:@"SHA"], (@[ firstSHA, secondSHA ]));
+
+	NSOperationQueue *operationQueue = [revisionList valueForKey:@"operationQueue"];
+	operationQueue.suspended = YES;
+	NSBlockOperation *pendingOperation = [NSBlockOperation blockOperationWithBlock:^{
+	}];
+	[operationQueue addOperation:pendingOperation];
+	XCTAssertTrue(revisionList.isParsing);
+	[pendingOperation cancel];
+	operationQueue.suspended = NO;
+	[operationQueue waitUntilAllOperationsAreFinished];
+	XCTAssertFalse(revisionList.isParsing);
+}
+
+- (void)testRevisionListChecksLoadGenerationAcrossQueues
+{
+	PBGitRevList *revisionList = [[PBGitRevList alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]
+			   shouldGraph:NO];
+	[revisionList setValue:@7 forKey:@"loadGeneration"];
+	XCTAssertTrue([revisionList isLoadGenerationCurrent:7]);
+	XCTAssertFalse([revisionList isLoadGenerationCurrent:8]);
+
+	XCTestExpectation *backgroundCheck = [self expectationWithDescription:@"background generation check"];
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+		XCTAssertTrue([revisionList isLoadGenerationCurrent:7]);
+		[backgroundCheck fulfill];
+	});
+	[self waitForExpectations:@[ backgroundCheck ] timeout:2.0];
+}
+
+- (void)testWebHistoryGitRunnerExecutesForCurrentGeneration
+{
+	PBGitHistoryController *historyController = [[PBGitHistoryController alloc]
+		initWithRepository:self.repository
+		   superController:nil];
+	PBWebHistoryController *webHistoryController = [PBWebHistoryController new];
+	webHistoryController.repository = self.repository;
+	[webHistoryController setValue:historyController forKey:@"historyController"];
+	NSUInteger generation = [webHistoryController beginContentGeneration];
+	NSError *error = nil;
+
+	NSString *output = [webHistoryController runGitArguments:@[ @"rev-parse", @"--is-inside-work-tree" ]
+												  generation:generation
+													   error:&error];
+
+	XCTAssertNil(error);
+	XCTAssertEqualObjects([output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet], @"true");
+	XCTAssertNil([webHistoryController dataForGitObject:@"HEAD:missing.png" imageSource:@{}]);
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured
@@ -2332,6 +2484,23 @@
 
 
 @implementation PBTaskCoreTests
+
+- (void)testInitializationSucceedsWhenDebugLoggingIsEnabled
+{
+	NSString *key = @"Show Debug Messages";
+	id previousValue = [NSUserDefaults.standardUserDefaults objectForKey:key];
+	[self addTeardownBlock:^{
+		if (previousValue)
+			[NSUserDefaults.standardUserDefaults setObject:previousValue forKey:key];
+		else
+			[NSUserDefaults.standardUserDefaults removeObjectForKey:key];
+	}];
+	[NSUserDefaults.standardUserDefaults setBool:YES forKey:key];
+
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+
+	XCTAssertNotNil(task);
+}
 
 - (void)testClassAsyncLaunchReturnsCommandOutput
 {

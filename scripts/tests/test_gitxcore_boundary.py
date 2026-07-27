@@ -19,6 +19,15 @@ class GitXCoreBoundaryTests(unittest.TestCase):
 
             self.assertEqual(self.module.boundary_failures(root), [])
 
+    def test_missing_swift_sources_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+
+            self.assertEqual(
+                self.module.boundary_failures(root),
+                [f"No Swift sources were found under {root}"],
+            )
+
     def test_ui_and_global_runtime_dependencies_fail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

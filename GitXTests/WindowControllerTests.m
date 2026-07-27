@@ -36,6 +36,7 @@
 #import "GLFileView.h"
 #import "PBNativeContentView.h"
 #import "PBRemoteProgressSheet.h"
+#import "PBSourceViewBadge.h"
 #import "PBSourceViewItem.h"
 #import "PBSourceViewItems.h"
 #import "PBTask.h"
@@ -123,6 +124,7 @@
 
 @interface GLFileView (WindowControllerTests)
 - (NSArray<NSDictionary *> *)historyEntriesForTree:(PBGitTree *)file;
+- (void)splitView:(NSSplitView *)splitView resizeSubviewsWithOldSize:(NSSize)oldSize;
 @end
 
 @interface PBApplicationSettings : NSObject
@@ -143,6 +145,10 @@
 @interface PBWindowRepositoryWithoutGitURLs : PBGitRepository
 @end
 
+@interface PBWindowRepositoryWithGitURLOnly : PBGitRepository
+@property (nonatomic, strong) NSURL *testGitURL;
+@end
+
 @interface PBWelcomeWindowController : NSWindowController
 + (instancetype)shared;
 - (void)show;
@@ -153,6 +159,52 @@
 @interface PBRepositoryUISettings : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 @property (nonatomic) BOOL pushAfterCommit;
+@end
+
+@interface PBSourceViewBadge (WindowControllerTests)
++ (NSColor *)badgeHighlightColor;
++ (NSColor *)badgeBackgroundColor;
++ (NSColor *)badgeColorForCell:(NSTableCellView *)cell;
++ (NSColor *)badgeTextColorForCell:(NSTableCellView *)cell;
++ (NSImage *)badge:(NSString *)badge forCell:(NSTableCellView *)cell;
+@end
+
+@interface PBSourceViewBadgeTestWindow : NSWindow
+@property (nonatomic) BOOL testMainWindow;
+@property (nonatomic) BOOL testKeyWindow;
+@end
+
+@interface PBSourceViewBadgeTestCell : NSTableCellView
+@property (nonatomic) NSBackgroundStyle testBackgroundStyle;
+@property (nonatomic) NSWindow *testWindow;
+@end
+
+@implementation PBSourceViewBadgeTestWindow
+
+- (BOOL)isMainWindow
+{
+	return self.testMainWindow;
+}
+
+- (BOOL)isKeyWindow
+{
+	return self.testKeyWindow;
+}
+
+@end
+
+@implementation PBSourceViewBadgeTestCell
+
+- (NSBackgroundStyle)backgroundStyle
+{
+	return self.testBackgroundStyle;
+}
+
+- (NSWindow *)window
+{
+	return self.testWindow;
+}
+
 @end
 
 @implementation PBWindowHistoryTreeLogStub
@@ -177,7 +229,8 @@
 
 @implementation PBWindowRepositoryWithoutGitURLs
 
-- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray *)arguments error:(NSError **)error
+- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray<NSString *> *)arguments
+										   error:(NSError *_Nullable *_Nullable)error
 {
 	return @"";
 }
@@ -194,6 +247,51 @@
 
 @end
 
+@implementation PBWindowRepositoryWithGitURLOnly
+
+- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray<NSString *> *)arguments
+										   error:(NSError *_Nullable *_Nullable)error
+{
+	return @".git/common\n";
+}
+
+- (nullable NSURL *)gitURL
+{
+	return self.testGitURL;
+}
+
+- (nullable NSURL *)workingDirectoryURL
+{
+	return nil;
+}
+
+@end
+
+@interface RepositoryUISettingsTests : XCTestCase
+@end
+
+@implementation RepositoryUISettingsTests
+
+- (void)testRepositoryUISettingsUsesGitURLForRelativeCommonDirectoryWithoutWorkingDirectory
+{
+	id originalSettings = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRepositoryUISettings"];
+	PBWindowRepositoryWithGitURLOnly *repository = [PBWindowRepositoryWithGitURLOnly new];
+	repository.testGitURL = [NSURL fileURLWithPath:@"/tmp/GitXGitURLOnly" isDirectory:YES];
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:repository];
+
+	settings.pushAfterCommit = YES;
+	NSURL *commonDirectory = [repository.testGitURL URLByAppendingPathComponent:@".git/common" isDirectory:YES];
+	NSString *repositoryKey = commonDirectory.standardizedURL.URLByResolvingSymlinksInPath.path;
+	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
+	XCTAssertEqualObjects(allSettings[repositoryKey][@"pushAfterCommit"], @YES);
+	if (originalSettings)
+		[NSUserDefaults.standardUserDefaults setObject:originalSettings forKey:@"PBRepositoryUISettings"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRepositoryUISettings"];
+}
+
+@end
+
 @interface PBGitWindowController (WindowControllerTests)
 - (void)applicationDidBecomeActive:(NSNotification *)notification;
 - (void)refreshPreferenceDidChange:(nullable NSNotification *)notification;
@@ -203,6 +301,9 @@
 - (nullable NSArray<NSURL *> *)selectedURLsFromSender:(id)sender;
 - (nullable id<PBGitRefish>)refishForSender:(id)sender refishTypes:(nullable NSArray<NSString *> *)types;
 - (nullable PBGitRef *)selectedRef;
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem
+			 remoteTitle:(NSString *)remoteTitle
+			  plainTitle:(NSString *)plainTitle;
 - (BOOL)isShowingCommitView;
 - (IBAction)toolbarFetch:(id)sender;
 - (IBAction)toolbarPull:(id)sender;
@@ -2137,6 +2238,13 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSMenuItem *fetch = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Fetch", nil) action:@selector(fetchRemote:) keyEquivalent:@""];
 	XCTAssertTrue([self.controller validateMenuItem:fetch]);
 	XCTAssertTrue([fetch.title containsString:@"origin"]);
+	PBGitRef *untrackedBranch = [PBGitRef refFromString:@"refs/heads/untracked"];
+	outline.testItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:untrackedBranch]];
+	NSMenuItem *plainFetch = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+	self.repository.trackingRef = nil;
+	XCTAssertFalse([self.controller validateMenuItem:plainFetch remoteTitle:@"Fetch “%@”" plainTitle:@"Fetch"]);
+	XCTAssertEqualObjects(plainFetch.title, @"Fetch");
+	self.repository.trackingRef = self.remoteBranchRef;
 
 	PBSourceViewItem *remoteItem = [PBSourceViewItem itemWithTitle:@"origin"];
 	remoteItem.revSpecifier = [[PBGitRevSpecifier alloc] initWithRef:self.remoteBranchRef];
@@ -2650,6 +2758,39 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	}
 }
 
+- (void)testRepositoryDocumentNamesDetachedRepository
+{
+	NSString *name = [NSString stringWithFormat:@"GitXDetachedNaming-%@", NSUUID.UUID.UUIDString];
+	NSURL *detachedURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name] isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:detachedURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	@try {
+		[self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] directory:detachedURL];
+		[self git:@[ @"config", @"user.name", @"GitX Tests" ] directory:detachedURL];
+		[self git:@[ @"config", @"user.email", @"gitx-tests@example.invalid" ] directory:detachedURL];
+		[@"initial\n" writeToURL:[detachedURL URLByAppendingPathComponent:@"tracked.txt"]
+					  atomically:YES
+						encoding:NSUTF8StringEncoding
+						   error:NULL];
+		[self git:@[ @"add", @"--all" ] directory:detachedURL];
+		[self git:@[ @"commit", @"--quiet", @"-m", @"initial" ] directory:detachedURL];
+		[self git:@[ @"checkout", @"--detach", @"--quiet", @"HEAD" ] directory:detachedURL];
+
+		NSError *error = nil;
+		PBGitRepositoryDocument *document = [[PBGitRepositoryDocument alloc] initWithContentsOfURL:detachedURL
+																							ofType:PBGitRepositoryDocumentType
+																							 error:&error];
+		XCTAssertNotNil(document, @"%@", error);
+		XCTAssertTrue(document.repository.gtRepo.isHEADDetached);
+		XCTAssertTrue([document.displayName containsString:@"detached HEAD"]);
+		[document close];
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:detachedURL error:NULL];
+	}
+}
+
 - (void)testRepositoryDeallocatesAfterIndexServicesCreated
 {
 	// Regression: PBIndexMutationService retained its repository strongly, forming the cycle
@@ -3047,6 +3188,28 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(entries.firstObject[@"sha"], @"abc123456789");
 }
 
+- (void)testFileViewResizePreservesMinimumRightPaneWidth
+{
+	GLFileView *fileView = [GLFileView new];
+	NSSplitView *splitView = [[NSSplitView alloc] initWithFrame:NSMakeRect(0, 0, 300, 200)];
+	NSView *leftView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 220, 200)];
+	NSView *rightView = [[NSView alloc] initWithFrame:NSMakeRect(221, 0, 79, 200)];
+	leftView.wantsLayer = YES;
+	leftView.layer.backgroundColor = NSColor.controlBackgroundColor.CGColor;
+	rightView.wantsLayer = YES;
+	rightView.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
+	[splitView addSubview:leftView];
+	[splitView addSubview:rightView];
+
+	[fileView splitView:splitView resizeSubviewsWithOldSize:NSMakeSize(500, 200)];
+
+	XCTAssertEqualWithAccuracy(rightView.frame.size.width, 180, 0.01);
+	XCTAssertEqualWithAccuracy(leftView.frame.size.width,
+							   splitView.frame.size.width - splitView.dividerThickness - 180,
+							   0.01);
+	[self attachScreenshotOfView:splitView name:@"File view minimum right pane width"];
+}
+
 - (void)testWelcomeWindowSearchAndCloseActions
 {
 	PBWelcomeWindowController *welcome = PBWelcomeWindowController.shared;
@@ -3094,10 +3257,66 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testRepositoryUISettingsAcceptRepositoryWithoutGitURLs
 {
+	id originalSettings = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRepositoryUISettings"];
 	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:[PBWindowRepositoryWithoutGitURLs new]];
 
 	XCTAssertNotNil(settings);
 	XCTAssertFalse(settings.pushAfterCommit);
+	settings.pushAfterCommit = YES;
+	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
+	XCTAssertEqualObjects(allSettings[@"/"][@"pushAfterCommit"], @YES);
+	if (originalSettings)
+		[NSUserDefaults.standardUserDefaults setObject:originalSettings forKey:@"PBRepositoryUISettings"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRepositoryUISettings"];
+}
+
+- (void)testSourceViewBadgeColorsAndRenderingAcrossWindowStates
+{
+	PBSourceViewBadgeTestWindow *window = [[PBSourceViewBadgeTestWindow alloc]
+		initWithContentRect:NSZeroRect
+				  styleMask:NSWindowStyleMaskBorderless
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	PBSourceViewBadgeTestCell *cell = [PBSourceViewBadgeTestCell new];
+	cell.testWindow = window;
+
+	cell.testBackgroundStyle = NSBackgroundStyleEmphasized;
+	window.testKeyWindow = YES;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], NSColor.whiteColor);
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell],
+						  [PBSourceViewBadge badgeBackgroundColor]);
+
+	window.testKeyWindow = NO;
+	window.testMainWindow = YES;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell],
+						  [PBSourceViewBadge badgeHighlightColor]);
+	window.testMainWindow = NO;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell],
+						  [PBSourceViewBadge badgeBackgroundColor]);
+
+	cell.testBackgroundStyle = NSBackgroundStyleNormal;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell],
+						  [PBSourceViewBadge badgeBackgroundColor]);
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], NSColor.whiteColor);
+	window.testMainWindow = YES;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell],
+						  [PBSourceViewBadge badgeHighlightColor]);
+
+	NSImage *checkedBadge = [PBSourceViewBadge checkedOutBadgeForCell:cell];
+	NSImage *numericBadge = [PBSourceViewBadge numericBadge:123456 forCell:cell];
+	NSImage *directBadge = [PBSourceViewBadge badge:@"7" forCell:cell];
+	XCTAssertGreaterThan(checkedBadge.size.width, (CGFloat)0);
+	XCTAssertGreaterThan(numericBadge.size.width, checkedBadge.size.width);
+	XCTAssertGreaterThan(directBadge.size.height, (CGFloat)0);
+	NSImageView *checkedPreview = [NSImageView imageViewWithImage:checkedBadge];
+	NSImageView *numericPreview = [NSImageView imageViewWithImage:numericBadge];
+	NSImageView *directPreview = [NSImageView imageViewWithImage:directBadge];
+	NSStackView *badgePreview = [NSStackView stackViewWithViews:@[ checkedPreview, numericPreview, directPreview ]];
+	badgePreview.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+	badgePreview.spacing = 8;
+	badgePreview.frame = NSMakeRect(0, 0, 260, 40);
+	[self attachScreenshotOfView:badgePreview name:@"Source view badges across window states"];
 }
 
 - (void)testRepositorySettingsStoreReadsAndWritesLocalValues

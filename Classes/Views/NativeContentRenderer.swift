@@ -530,7 +530,10 @@ final nonisolated class NativeDiffRenderer: NSObject {
                     loggedRunBudgetExhaustion = true
                 }
                 appendDiffLine(line, to: rendered)
-                rendered.append(NSAttributedString(string: "  "))
+                rendered.append(NSAttributedString(
+                    string: "  ",
+                    attributes: support.baseAttributes
+                ))
                 if context == "staged" {
                     support.appendLink(
                         title: NSLocalizedString(
@@ -551,7 +554,10 @@ final nonisolated class NativeDiffRenderer: NSObject {
                         linkPayloads: &linkPayloads,
                         to: rendered
                     )
-                    rendered.append(NSAttributedString(string: "   "))
+                    rendered.append(NSAttributedString(
+                        string: "   ",
+                        attributes: support.baseAttributes
+                    ))
                     support.appendLink(
                         title: NSLocalizedString(
                             "Discard hunk",
@@ -562,7 +568,10 @@ final nonisolated class NativeDiffRenderer: NSObject {
                         to: rendered
                     )
                 }
-                rendered.append(NSAttributedString(string: "\n"))
+                rendered.append(NSAttributedString(
+                    string: "\n",
+                    attributes: support.baseAttributes
+                ))
                 if diffLayout == DiffLayout.sideBySide.rawValue {
                     appendSideBySideHunk(
                         hunk,

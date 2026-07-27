@@ -109,6 +109,11 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @property (class) PBApplicationIconStyle applicationIconStyle;
 @end
 
+@interface PBNativeContentTypography : NSObject
+- (instancetype)initWithFontName:(NSString *)fontName baseSize:(CGFloat)baseSize;
+- (NSAttributedString *)restyledString:(NSAttributedString *)attributedString;
+@end
+
 @interface PBApplicationIconController : NSObject
 + (NSImage *)imageForStyle:(PBApplicationIconStyle)style NS_SWIFT_NAME(image(for:));
 + (void)applySelectedIcon;
@@ -141,7 +146,6 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 										  directory:(NSString *)directory
 											command:(NSString *)command
 	NS_SWIFT_NAME(launchArguments(identifier:directory:command:));
-- (NSArray<NSString *> *)commandArguments:(NSString *)command;
 - (NSArray<NSString *> *)argumentTokens:(NSString *)string;
 - (NSArray<NSString *> *)customArgumentsForTemplate:(NSString *)template
                                            directory:(NSString *)directory
