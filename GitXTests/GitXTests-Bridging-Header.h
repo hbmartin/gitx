@@ -167,6 +167,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @interface PBStagingDiffPaneController : NSObject
 @property (nonatomic, readonly) PBNativeContentView *contentView;
 @property (nonatomic) NSUInteger contextLines;
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
 - (void)renderRequests:(NSArray<PBStagingDiffRequest *> *)requests;
 - (void)rerenderCurrentRequests;
 @end

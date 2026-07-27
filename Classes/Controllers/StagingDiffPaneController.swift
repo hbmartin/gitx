@@ -29,9 +29,15 @@ private final class StagingDiffPaneDelegateAdapter: NSObject, PBNativeContentVie
 /// untracked diffs read only the snapshotted working-directory URL.
 // swift6-safety-justification: The wrapped service is confined to one serial queue and receives only Sendable snapshots.
 private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sendable {
+    // Strong on purpose: production runs on the coordinator's background queue and can
+    // outlive the pane, while the mutation service reaches the repository only through
+    // unowned references. This keeps the repository alive until queued work drains.
+    // It is not a cycle — the repository never owns the staging pane.
+    private let repository: PBGitRepository
     private let mutationService: IndexMutationService
 
     init(repository: PBGitRepository) {
+        self.repository = repository
         mutationService = IndexMutationService(repository: repository)
     }
 
