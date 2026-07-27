@@ -1,6 +1,5 @@
 #import "PBWebHistoryController.h"
 #import "PBNativeContentView.h"
-#import "PBUncommittedChanges.h"
 #import "PBGitRepository.h"
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitIndex.h"
@@ -24,7 +23,6 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 @property (nonatomic) dispatch_queue_t renderQueue;
 @property (nonatomic) NSUInteger contentGeneration;
 @property (nonatomic) PBTask *activeTask;
-@property (nonatomic) PBWorkingStateDiffCache *workingStateCache;
 @end
 
 @implementation PBWebHistoryController
@@ -37,7 +35,6 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	[super awakeFromNib];
 	self.nativeView.delegate = self;
 	self.renderQueue = dispatch_queue_create("com.gitx.history-render", DISPATCH_QUEUE_SERIAL);
-	self.workingStateCache = [[PBWorkingStateDiffCache alloc] init];
 
 	self.presentationControl = [NSSegmentedControl segmentedControlWithLabels:@[ @"Sequential", @"Combined" ]
 																 trackingMode:NSSegmentSwitchTrackingSelectOne
@@ -236,32 +233,6 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 	} ];
 }
 
-- (NSString *)syntheticUntrackedDiffForFile:(PBChangedFile *)file
-{
-	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:PBApplicationSettings.diffContextLines] ?: @"";
-	return [PBSyntheticUntrackedDiffFormatter diffForPath:file.path contents:contents];
-}
-
-- (nullable NSArray<NSDictionary *> *)workingStateSectionsForChanges:(NSArray<PBChangedFile *> *)changes
-														 imageSource:(NSDictionary<NSString *, id> *)imageSource
-														  generation:(NSUInteger)generation
-{
-	NSString *staged = [self runGitArguments:[self diffArgumentsWithTail:@[ @"--cached", @"--find-renames", @"--no-ext-diff" ]] generation:generation error:nil];
-	if (!staged || ![self isGenerationCurrent:generation]) return nil;
-	NSString *unstagedOutput = [self runGitArguments:[self diffArgumentsWithTail:@[ @"--find-renames", @"--no-ext-diff" ]] generation:generation error:nil];
-	if (!unstagedOutput || ![self isGenerationCurrent:generation]) return nil;
-	NSMutableString *unstaged = [unstagedOutput mutableCopy];
-	for (PBChangedFile *file in changes) {
-		if (![self isGenerationCurrent:generation]) return nil;
-		BOOL untracked = file.status == NEW && !file.hasStagedChanges;
-		if (untracked && file.hasUnstagedChanges) [unstaged appendString:[self syntheticUntrackedDiffForFile:file]];
-	}
-	return @[
-		@{PBNativeSectionTitleKey : @"Staged Changes", PBNativeSectionTextKey : staged, PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource},
-		@{PBNativeSectionTitleKey : @"Unstaged Changes", PBNativeSectionTextKey : unstaged, PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource},
-	];
-}
-
 - (void)changeContentTo:(NSArray<PBGitCommit *> *)commits
 {
 	CFAbsoluteTime requestStarted = CFAbsoluteTimeGetCurrent();
@@ -275,50 +246,8 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 		[self.nativeView showMessage:@"No commit selected"];
 		return;
 	}
-	if ([requestedCommits.firstObject isKindOfClass:PBUncommittedChanges.class]) {
-		self.presentationControl.hidden = YES;
-		NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
-		NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:@[ @":" ] workingTree:YES];
-		NSString *cacheIdentifier = [NSString stringWithFormat:@"working-state-%ld", (long)selectedLayout];
-		PBWorkingStateDiffSnapshot *cachedSnapshot = [self.workingStateCache snapshotForLayout:selectedLayout];
-		if (cachedSnapshot) {
-			self->diff = cachedSnapshot.renderedDiff;
-			[self.nativeView showDiffSections:cachedSnapshot.sections
-							  cacheIdentifier:cacheIdentifier
-					   preserveScrollPosition:YES];
-			CFTimeInterval cachedElapsed = CFAbsoluteTimeGetCurrent() - requestStarted;
-			NSLog(@"[GitX][Performance] Displayed cached Uncommitted Changes in %.3f ms (budget: %.0f ms)",
-				  cachedElapsed * 1000.0,
-				  [PBPerformanceBudgets cachedWorkingStateFeedbackSeconds] * 1000.0);
-		} else {
-			[self.nativeView showMessage:@"Loading changes…"];
-		}
-		dispatch_async(self.renderQueue, ^{
-			NSArray<NSDictionary *> *sections = [self workingStateSectionsForChanges:changes imageSource:imageSource generation:generation];
-			sections = [self sections:sections applyingDiffLayout:selectedLayout];
-			if (!sections) return;
-			dispatch_async(dispatch_get_main_queue(), ^{
-				if (![self isGenerationCurrent:generation]) return;
-				NSString *renderedDiff = [[sections valueForKey:PBNativeSectionTextKey] componentsJoinedByString:@"\n"];
-				BOOL shouldReplace = [PBWorkingStateRefreshPolicy shouldReplaceDisplayedDiff:self->diff renderedDiff:renderedDiff];
-				[self.workingStateCache storeSections:sections renderedDiff:renderedDiff layout:selectedLayout];
-				self->diff = renderedDiff;
-				if (shouldReplace) {
-					[self.nativeView showDiffSections:sections
-									  cacheIdentifier:cacheIdentifier
-							   preserveScrollPosition:YES];
-				}
-				CFTimeInterval freshElapsed = CFAbsoluteTimeGetCurrent() - requestStarted;
-				NSLog(@"[GitX][Performance] Refreshed Uncommitted Changes in %.3f ms (%lu files, %lu bytes, budget: %.0f ms)",
-					  freshElapsed * 1000.0,
-					  changes.count,
-					  [renderedDiff lengthOfBytesUsingEncoding:NSUTF8StringEncoding],
-					  [PBPerformanceBudgets freshWorkingStateP95Seconds] * 1000.0);
-			});
-		});
-		return;
-	}
-
+	// The Uncommitted Changes row is presented by the staging pane, so this
+	// controller only ever renders immutable commits.
 	NSArray<PBGitCommit *> *ordered = [self oldestFirst:requestedCommits];
 	NSArray<PBCommitRenderInput *> *inputs = [self renderInputsForCommits:ordered];
 	NSMutableArray<NSDictionary<NSString *, id> *> *imageSources = [NSMutableArray arrayWithCapacity:inputs.count];
@@ -348,7 +277,6 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 - (void)closeView
 {
 	[self beginContentGeneration];
-	[self.workingStateCache removeAll];
 	[super closeView];
 }
 

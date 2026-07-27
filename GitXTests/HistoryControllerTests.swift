@@ -1054,6 +1054,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let directoryTask = PBTask(launchPath: "/usr/bin/true", arguments: [], inDirectory: fixture.path)
         try directoryTask.launch()
 
+        let slowTask = PBTask(launchPath: "/bin/sleep", arguments: ["30"], inDirectory: nil)
+        let cancelled = expectation(description: "terminated task reports an error")
+        slowTask.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            XCTAssertNotNil(error, "terminating a running task surfaces an error")
+            cancelled.fulfill()
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+        slowTask.terminate()
+        wait(for: [cancelled], timeout: 10)
+
         let webController = historyController.value(forKey: "webHistoryController") as? NSObject
         webController?.perform(NSSelectorFromString("refreshDisplayedContent"))
         pumpRunLoop()
@@ -1193,46 +1203,6 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try fixture.git(["clean", "-fdq"])
         refreshIndex()
         historyController.updateUncommittedChanges()
-    }
-
-    func testWorkingStateDiffRefreshesInBackgroundAndReusesCachedRendering() throws {
-        try fixture.write("cached working state\n", to: "cached.txt")
-        refreshIndex()
-        historyController.updateUncommittedChanges()
-        let workingState = try XCTUnwrap(
-            historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
-        )
-        let webController = try XCTUnwrap(
-            historyController.value(forKey: "webHistoryController") as? NSObject
-        )
-        let nativeView = try XCTUnwrap(webController.value(forKey: "nativeView") as? PBNativeContentView)
-        let changeContent = NSSelectorFromString("changeContentTo:")
-
-        _ = webController.perform(changeContent, with: [workingState])
-        XCTAssertTrue(waitForCondition {
-            (webController.value(forKey: "diff") as? String)?.contains("+cached working state") == true &&
-                nativeView.textView.string.contains("cached working state")
-        })
-
-        nativeView.showMessage("Cache sentinel")
-        _ = webController.perform(changeContent, with: [workingState])
-        XCTAssertTrue(
-            nativeView.textView.string.contains("cached working state"),
-            "A repeat Working State selection should synchronously restore its memory cache"
-        )
-        pumpRunLoop(for: 0.5)
-
-        try fixture.write("refreshed working state\n", to: "cached.txt")
-        refreshIndex()
-        historyController.updateUncommittedChanges()
-        let refreshedWorkingState = try XCTUnwrap(
-            historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
-        )
-        _ = webController.perform(changeContent, with: [refreshedWorkingState])
-        XCTAssertTrue(waitForCondition {
-            (webController.value(forKey: "diff") as? String)?.contains("+refreshed working state") == true &&
-                nativeView.textView.string.contains("refreshed working state")
-        })
     }
 
     func testReferenceCommitStashAndPathMenuMatrices() throws {

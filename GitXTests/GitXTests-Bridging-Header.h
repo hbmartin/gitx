@@ -385,11 +385,6 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 				 authorDate:(NSString *)authorDate;
 @end
 
-@interface PBWorkingStateRefreshPolicy : NSObject
-+ (BOOL)shouldReplaceDisplayedDiff:(nullable NSString *)displayedDiff
-					  renderedDiff:(NSString *)renderedDiff;
-@end
-
 @interface PBPerformanceBudgets : NSObject
 @property (class, nonatomic, readonly) double mainThreadBlockSeconds;
 @property (class, nonatomic, readonly) double cachedWorkingStateFeedbackSeconds;
@@ -398,21 +393,6 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 @property (class, nonatomic, readonly) NSInteger representativeDiffByteCount;
 @property (class, nonatomic, readonly) NSInteger stressChangedFileCount;
 @property (class, nonatomic, readonly) NSInteger stressDiffByteCount;
-@end
-
-@interface PBWorkingStateDiffSnapshot : NSObject
-@property (nonatomic, copy, readonly) NSArray<NSDictionary<NSString *, id> *> *sections;
-@property (nonatomic, copy, readonly) NSString *renderedDiff;
-@end
-
-@interface PBWorkingStateDiffCache : NSObject
-- (nullable PBWorkingStateDiffSnapshot *)snapshotForLayout:(NSInteger)layout
-	NS_SWIFT_NAME(snapshot(forLayout:));
-- (void)storeSections:(NSArray<NSDictionary<NSString *, id> *> *)sections
-		 renderedDiff:(NSString *)renderedDiff
-			   layout:(NSInteger)layout
-	NS_SWIFT_NAME(store(sections:renderedDiff:layout:));
-- (void)removeAll;
 @end
 
 typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
