@@ -92,19 +92,17 @@ final nonisolated class NativeDiffHunk: NSObject {
             in: header,
             range: NSRange(location: 0, length: text.length)
         ) else { return nil }
-        func number(at rangeIndex: Int, fallback: Int?) -> Int? {
+        func number(at rangeIndex: Int) -> Int? {
             let range = match.range(at: rangeIndex)
-            guard range.location != NSNotFound else { return fallback }
-            return Int(text.substring(with: range)) ?? fallback
+            guard range.location != NSNotFound else { return nil }
+            return Int(text.substring(with: range))
         }
-        guard let oldStart = number(at: 1, fallback: nil),
-              let newStart = number(at: 3, fallback: nil)
-        else { return nil }
+        guard let oldStart = number(at: 1), let newStart = number(at: 3) else { return nil }
         return NativeHunkLineSpan(
             oldStart: oldStart,
-            oldCount: number(at: 2, fallback: 1) ?? 1,
+            oldCount: number(at: 2) ?? 1,
             newStart: newStart,
-            newCount: number(at: 4, fallback: 1) ?? 1
+            newCount: number(at: 4) ?? 1
         )
     }
 

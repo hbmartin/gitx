@@ -100,9 +100,9 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 	return [[self windowControllers] objectAtIndex:0];
 }
 
-- (IBAction)showCommitView:(id)sender
+- (IBAction)showUncommittedChanges:(id)sender
 {
-	[[self windowController] showCommitView:sender];
+	[[self windowController] showUncommittedChanges:sender];
 }
 
 - (IBAction)showHistoryView:(id)sender
@@ -165,14 +165,12 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 	}
 
 	self.repository.currentBranch = [self.repository addBranch:revListSpecifier];
-	[PBGitDefaults setShowStageView:NO];
 	[self.windowController showHistoryView:self];
 }
 
 - (void)handleBranchFilterEventForFilter:(PBGitXBranchFilterType)filter additionalArguments:(NSArray *)arguments
 {
 	self.repository.currentBranchFilter = filter;
-	[PBGitDefaults setShowStageView:NO];
 	[self.windowController showHistoryView:self];
 
 	// treat any additional arguments as a rev-list specifier
@@ -190,8 +188,7 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 	NSString *firstArgument = [arguments objectAtIndex:0];
 
 	if ([firstArgument isEqualToString:@"-c"] || [firstArgument isEqualToString:@"--commit"]) {
-		[PBGitDefaults setShowStageView:YES];
-		[self.windowController showCommitView:self];
+		[self.windowController showUncommittedChanges:self];
 		return;
 	}
 
@@ -220,7 +217,6 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 	NSDictionary *arguments = [command arguments];
 	NSString *searchString = [arguments objectForKey:kGitXFindSearchStringKey];
 	if (searchString) {
-		[PBGitDefaults setShowStageView:NO];
 		[self.windowController showHistoryView:self];
 		PBHistorySearchMode mode = PBSearchModeForInteger([[arguments objectForKey:kGitXFindInModeKey] integerValue]);
 		[self.windowController setHistorySearch:searchString mode:mode];

@@ -8,13 +8,13 @@
 
 #import <Cocoa/Cocoa.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 typedef NS_ENUM(NSInteger, PBChangedFileStatus) {
 	NEW,
 	MODIFIED,
 	DELETED
 };
-
-NS_ASSUME_NONNULL_BEGIN
 
 @interface PBChangedFile : NSObject {
 	NSString *path;

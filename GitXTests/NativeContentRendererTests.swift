@@ -1443,6 +1443,40 @@ final class NativeContentRendererTests: XCTestCase {
         )
         XCTAssertTrue(rendered.contains("        1 │ +one"))
         XCTAssertTrue(rendered.contains("        3 │ +three"))
+
+        let countlessHeader = """
+        diff --git a/single.txt b/single.txt
+        --- a/single.txt
+        +++ b/single.txt
+        @@ -1 +1 @@
+        -old single
+        +new single
+
+        """
+        let countless = renderer.renderSections(
+            [PBNativeContentSection(dictionary: [
+                PBNativeSectionTextKey: countlessHeader,
+                PBNativeSectionContextKey: "unstaged",
+                PBNativeSectionStagingChromeKey: true,
+            ])],
+            collapsedFiles: [],
+            expandedImages: [],
+            imageDataProvider: nil
+        )
+        XCTAssertTrue(
+            countless.attributedString.string.contains("Hunk 1 : Line 1"),
+            "hunk headers without explicit counts default both sides to one line"
+        )
+
+        let quoted = PBSyntheticUntrackedDiffFormatter.diff(
+            forPath: "weird \"ü\" name.txt",
+            contents: "quoted contents\n"
+        )
+        XCTAssertTrue(
+            quoted.contains("diff --git"),
+            "paths that need git quoting still produce a parseable synthetic diff: \(quoted)"
+        )
+        XCTAssertTrue(quoted.contains("+quoted contents"))
     }
 
     func testDiffRendererSupportsSideBySideAndSuppressedFiles() {

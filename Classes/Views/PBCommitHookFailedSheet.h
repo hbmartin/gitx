@@ -8,16 +8,13 @@
 
 #import <Cocoa/Cocoa.h>
 
-#import "PBGitCommitController.h"
 #import "PBGitXMessageSheet.h"
 
+@class PBGitWindowController;
+
+NS_ASSUME_NONNULL_BEGIN
 
 @interface PBCommitHookFailedSheet : PBGitXMessageSheet
-
-+ (void)beginWithMessageText:(NSString *)message
-					infoText:(NSString *)info
-			commitController:(PBGitCommitController *)controller
-		   completionHandler:(RJSheetCompletionHandler)handler;
 
 + (void)beginWithMessageText:(NSString *)message
 					infoText:(NSString *)info
@@ -26,6 +23,6 @@
 
 - (IBAction)forceCommit:(id)sender;
 
-@property (nonatomic, strong) PBGitCommitController *commitController;
-
 @end
+
+NS_ASSUME_NONNULL_END

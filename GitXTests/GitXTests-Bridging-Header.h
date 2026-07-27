@@ -21,6 +21,7 @@
 #import "PBGitRevisionCell.h"
 #import "PBHistorySearchController.h"
 #import "RepositoryIgnoreTestSupport.h"
+#import "PBGitBinary.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -157,7 +158,21 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 @property (nonatomic, readonly) NSButton *overflowButton;
 @end
 
+@interface PBCommitTableInteractionCoordinator : NSObject
+- (void)stageSelectedFiles;
+- (void)unstageSelectedFiles;
+- (void)toggleStagingForTableView:(NSTableView *)tableView;
+- (void)focusTable:(NSTableView *)tableView;
+- (BOOL)handleCommandSelector:(SEL)commandSelector;
+- (void)displayCell:(id)cell forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row inTableView:(NSTableView *)tableView;
+- (void)didDoubleClickTableView:(NSTableView *)tableView;
+- (BOOL)writeRowsWithIndexes:(NSIndexSet *)rowIndexes fromTableView:(NSTableView *)tableView toPasteboard:(NSPasteboard *)pasteboard;
+- (NSDragOperation)validateDrop:(id<NSDraggingInfo>)info inTableView:(NSTableView *)tableView;
+- (BOOL)acceptDrop:(id<NSDraggingInfo>)info inTableView:(NSTableView *)tableView;
+@end
+
 @interface PBStagingFileListController : NSObject
+@property (nonatomic, readonly) PBCommitTableInteractionCoordinator *interactionCoordinator;
 @property (nonatomic, readonly) PBStagingListViewModel *viewModel;
 @property (nonatomic, readonly) NSArrayController *unstagedFilesController;
 @property (nonatomic, readonly) NSArrayController *stagedFilesController;
@@ -170,6 +185,11 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 - (void)rearrange;
 - (void)setListLayout:(PBStagingListLayout)layout;
 - (NSArray<PBChangedFile *> *)selectedFilesForStagedContext:(BOOL)stagedContext;
+@end
+
+@interface PBCommitMessageTransformer : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (nullable NSString *)transformMessage:(NSString *)message error:(NSError *_Nullable *_Nullable)error;
 @end
 
 @interface PBStagingViewController : NSViewController
@@ -371,7 +391,6 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 @end
 
 @interface PBPerformanceBudgets : NSObject
-@property (class, nonatomic, readonly) double warmViewSwitchP95Seconds;
 @property (class, nonatomic, readonly) double mainThreadBlockSeconds;
 @property (class, nonatomic, readonly) double cachedWorkingStateFeedbackSeconds;
 @property (class, nonatomic, readonly) double freshWorkingStateP95Seconds;
@@ -787,7 +806,6 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 @interface PBRepositoryToolbarController : NSObject
 - (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
 - (void)install;
-- (void)setHistoryMode:(BOOL)historyMode;
 - (void)updateWithStatus:(NSString *)status busy:(BOOL)busy baseWindowTitle:(NSString *)baseWindowTitle;
 - (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar
 			  itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier

@@ -10,9 +10,8 @@
 #import "PBViewController.h"
 #import "PBGitBinary.h"
 #import "PBGitCommit.h"
-#import "PBGitCommitController.h"
-#import "PBGitDefaults.h"
 #import "PBGitHistoryController.h"
+#import "PBGitIndex.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
 #import "PBGitRepositoryDocument.h"
@@ -22,7 +21,6 @@
 	__weak PBViewController *contentController;
 	PBGitSidebarController *_sidebarController;
 	PBGitHistoryController *_historyViewController;
-	PBGitCommitController *_commitViewController;
 	PBRepositoryFocusRefreshCoordinator *_focusRefreshCoordinator;
 	PBRepositoryActionContextResolver *_actionContextResolver;
 	PBRepositoryRemoteActionCoordinator *_remoteActionCoordinator;
@@ -30,7 +28,6 @@
 	PBRepositoryStashActionCoordinator *_stashActionCoordinator;
 	PBWorkspaceActionCoordinator *_workspaceActionCoordinator;
 	PBRepositoryToolbarController *_repositoryToolbarController;
-	NSMapTable<PBViewController *, NSResponder *> *_contentFirstResponders;
 	NSHashTable<PBViewController *> *_initializedContentControllers;
 
 	__weak IBOutlet NSView *sourceListControlsView;
@@ -94,10 +91,8 @@
 	[_focusRefreshCoordinator cancel];
 	[self.sidebarViewController closeView];
 	[self.historyViewController closeView];
-	[self.commitViewController closeView];
 	_sidebarController = nil;
 	_historyViewController = nil;
-	_commitViewController = nil;
 	_repositoryToolbarController = nil;
 	[[PBWelcomeWindowController shared] showIfNeededAfterDelay];
 }
@@ -108,12 +103,16 @@
 		[self ensureActionCoordinators];
 		return _workspaceActionCoordinator.hasWorkingDirectory;
 	}
-	if (menuItem.action == @selector(showCommitView:)) {
-		menuItem.state = contentController == _commitViewController;
+	if (menuItem.action == @selector(showUncommittedChanges:)) {
+		menuItem.state = self.isUncommittedChangesSelected;
 		return !self.repository.isBareRepository;
 	}
 	if (menuItem.action == @selector(showHistoryView:)) {
-		menuItem.state = contentController != _commitViewController;
+		menuItem.state = !self.isUncommittedChangesSelected;
+		return !self.repository.isBareRepository;
+	}
+	if (menuItem.action == @selector(toggleAmendCommit:)) {
+		menuItem.state = self.repository.index.isAmend ? NSControlStateValueOn : NSControlStateValueOff;
 		return !self.repository.isBareRepository;
 	}
 	if (menuItem.action == @selector(fetchRemote:))
@@ -149,9 +148,7 @@
 	self.window.representedURL = self.repository.workingDirectoryURL;
 	_sidebarController = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:self];
 	_historyViewController = [[PBGitHistoryController alloc] initWithRepository:self.repository superController:self];
-	_commitViewController = [[PBGitCommitController alloc] initWithRepository:self.repository superController:self];
 	_repositoryToolbarController = [[PBRepositoryToolbarController alloc] initWithWindowController:self];
-	_contentFirstResponders = [NSMapTable strongToWeakObjectsMapTable];
 	_initializedContentControllers = [NSHashTable weakObjectsHashTable];
 	[_repositoryToolbarController install];
 	_sidebarController.view.frame = sourceSplitView.bounds;
@@ -183,28 +180,14 @@
 	[_focusRefreshCoordinator applicationDidBecomeActive];
 }
 
-- (void)removeAllContentSubViews
-{
-	while (contentSplitView.subviews.count > 0) {
-		NSView *view = contentSplitView.subviews.lastObject;
-		view.hidden = YES;
-		[view removeFromSuperview];
-	}
-	[contentSplitView setNeedsDisplay:YES];
-}
-
 - (void)changeContentController:(PBViewController *)controller
 {
 	if (!controller || contentController == controller) return;
-	CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
 	PBViewController *previousController = contentController;
 	if (previousController) {
-		NSResponder *firstResponder = self.window.firstResponder;
-		if ([firstResponder isKindOfClass:NSView.class] &&
-			[(NSView *)firstResponder isDescendantOf:previousController.view]) {
-			[_contentFirstResponders setObject:firstResponder forKey:previousController];
-		}
 		[previousController removeObserver:self keyPath:@"status"];
+		previousController.view.hidden = YES;
+		[previousController.view removeFromSuperview];
 	}
 
 	contentController = controller;
@@ -213,22 +196,13 @@
 	controller.view.frame = contentSplitView.bounds;
 	controller.view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 	controller.view.hidden = NO;
-	for (NSView *mountedView in contentSplitView.subviews.copy) {
-		if (mountedView != controller.view) {
-			mountedView.hidden = YES;
-			[mountedView removeFromSuperview];
-		}
-	}
 	[contentSplitView addSubview:controller.view];
 	if (firstMount) {
 		[_initializedContentControllers addObject:controller];
 		[controller updateView];
 	}
-	[controller.view setNeedsDisplay:YES];
-	[contentSplitView setNeedsDisplay:YES];
-	NSResponder *firstResponder = [_contentFirstResponders objectForKey:controller] ?: controller.firstResponder;
+	NSResponder *firstResponder = controller.firstResponder;
 	if (firstResponder) [self.window makeFirstResponder:firstResponder];
-	[_repositoryToolbarController setHistoryMode:controller == _historyViewController];
 	__weak typeof(self) weakSelf = self;
 	[controller addObserver:self
 					keyPath:@"status"
@@ -236,22 +210,16 @@
 					  block:^(__unused MAKVONotification *note) {
 						  [weakSelf updateStatus];
 					  }];
-	CFTimeInterval elapsed = CFAbsoluteTimeGetCurrent() - start;
-	NSLog(@"[GitX][Performance] %@ %@ exclusively in %.3f ms (budget: %.0f ms, children: %lu, frame: %@)",
-		  firstMount ? @"Cold-mounted" : @"Warm-switched",
-		  NSStringFromClass(controller.class),
-		  elapsed * 1000.0,
-		  [PBPerformanceBudgets warmViewSwitchP95Seconds] * 1000.0,
-		  (unsigned long)contentSplitView.subviews.count,
-		  NSStringFromRect(controller.view.frame));
+	NSLog(@"[GitX] Mounted %@ (first mount: %@)", NSStringFromClass(controller.class), firstMount ? @"yes" : @"no");
 }
 
-- (void)showCommitView:(id)sender
+- (void)showUncommittedChanges:(id)sender
 {
-	NSLog(@"Switching repository window to Commit view");
-	[_sidebarController selectStage];
-	[self changeContentController:_commitViewController];
+	NSLog(@"[GitX] Showing the Uncommitted Changes row");
+	[self showHistoryView:sender];
+	[_historyViewController selectUncommittedChanges];
 }
+
 - (void)showHistoryView:(id)sender
 {
 	NSLog(@"Switching repository window to History view");
@@ -259,9 +227,19 @@
 	[self changeContentController:_historyViewController];
 }
 
-- (BOOL)isShowingCommitView
+- (BOOL)isUncommittedChangesSelected
 {
-	return contentController == _commitViewController;
+	return _historyViewController.uncommittedChangesSelected;
+}
+
+- (IBAction)toggleAmendCommit:(id)sender
+{
+	// Toggling amend refreshes the index against HEAD^, which repopulates
+	// indexChanges and pins the Uncommitted Changes row even on a clean
+	// tree; the pending selection then lands on it.
+	PBGitIndex *index = self.repository.index;
+	index.amend = !index.isAmend;
+	[self showUncommittedChanges:sender];
 }
 
 - (void)updateStatus

@@ -9,7 +9,6 @@
 #import "PBGitSidebarController.h"
 #import "PBSourceViewItems.h"
 #import "PBGitHistoryController.h"
-#import "PBGitCommitController.h"
 #import "NSOutlineViewExt.h"
 #import "PBAddRemoteSheet.h"
 #import "PBGitDefaults.h"
@@ -33,7 +32,6 @@
 	NSMutableArray *items;
 
 	/* Specific things */
-	PBSourceViewItem *stage;
 
 	PBSourceViewItem *branches, *remotes, *tags, *others, *submodules, *stashes;
 	PBBranchSidebarPresentation *branchPresentation;
@@ -129,10 +127,7 @@
 
 	[self menuNeedsUpdate:[actionButton menu]];
 
-	if ([PBGitDefaults showStageView])
-		[self selectStage];
-	else
-		[self selectCurrentBranch];
+	[self selectCurrentBranch];
 
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(expandCollapseItem:) name:NSOutlineViewItemWillExpandNotification object:sourceView];
 	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(expandCollapseItem:) name:NSOutlineViewItemWillCollapseNotification object:sourceView];
@@ -155,20 +150,15 @@
 
 - (void)reloadSidebarPresentation
 {
-	BOOL stageSelected = [PBGitDefaults showStageView];
 	PBGitRevSpecifier *viewedRev = self.repository.currentBranch;
 	[self populateList];
-	if (stageSelected) {
-		[self selectStage];
+	PBSourceViewItem *item = [self itemForRev:viewedRev];
+	if (item) {
+		[sourceView PBExpandItem:item expandParents:YES];
+		NSInteger row = [sourceView rowForItem:item];
+		if (row >= 0) [sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
 	} else {
-		PBSourceViewItem *item = [self itemForRev:viewedRev];
-		if (item) {
-			[sourceView PBExpandItem:item expandParents:YES];
-			NSInteger row = [sourceView rowForItem:item];
-			if (row >= 0) [sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
-		} else {
-			[self selectCurrentBranch];
-		}
+		[self selectCurrentBranch];
 	}
 }
 
@@ -178,17 +168,6 @@
 	PBSourceViewItem *item = [sourceView itemAtRow:index];
 
 	return item;
-}
-
-- (void)selectStage
-{
-	NSInteger row = [sourceView rowForItem:stage];
-	if (row < 0) {
-		[self selectCurrentBranch];
-		return;
-	}
-	NSIndexSet *index = [NSIndexSet indexSetWithIndex:row];
-	[sourceView selectRowIndexes:index byExtendingSelection:NO];
 }
 
 - (void)selectCurrentBranch
@@ -265,10 +244,9 @@
 
 - (void)reloadSidebarAfterReferencesChange
 {
-	BOOL stageSelected = [PBGitDefaults showStageView];
 	PBGitRevSpecifier *viewedRev = self.repository.currentBranch;
 	PBGitRevSpecifier *newHead = self.repository.headRef;
-	BOOL followHead = [PBHistoryRefreshSelectionPolicy shouldFollowCheckedOutBranchWithStageSelected:stageSelected
+	BOOL followHead = [PBHistoryRefreshSelectionPolicy shouldFollowCheckedOutBranchWithStageSelected:NO
 																						   viewedRef:viewedRev.simpleRef
 																					 previousHeadRef:self.lastKnownHeadRef.simpleRef];
 	if (followHead && newHead && ![viewedRev isEqual:newHead]) {
@@ -277,21 +255,17 @@
 	}
 
 	[self populateList];
-	if (stageSelected) {
-		[self selectStage];
-	} else {
-		PBSourceViewItem *item = [self itemForRev:viewedRev];
-		if (item) {
-			[sourceView PBExpandItem:item expandParents:YES];
-			NSInteger row = [sourceView rowForItem:item];
-			if (row >= 0)
-				[sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
-		}
+	PBSourceViewItem *item = [self itemForRev:viewedRev];
+	if (item) {
+		[sourceView PBExpandItem:item expandParents:YES];
+		NSInteger row = [sourceView rowForItem:item];
+		if (row >= 0)
+			[sourceView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
 	}
 
-	NSLog(@"[GitX] Refreshed sidebar refs: HEAD %@ -> %@, followed=%@, stage=%@",
+	NSLog(@"[GitX] Refreshed sidebar refs: HEAD %@ -> %@, followed=%@",
 		  self.lastKnownHeadRef.simpleRef ?: @"(none)", newHead.simpleRef ?: @"(none)",
-		  followHead ? @"yes" : @"no", stageSelected ? @"yes" : @"no");
+		  followHead ? @"yes" : @"no");
 	self.lastKnownHeadRef = newHead;
 }
 
@@ -363,12 +337,6 @@
 		}
 
 		[windowController changeContentController:windowController.historyViewController];
-		[PBGitDefaults setShowStageView:NO];
-	}
-
-	if (item == stage) {
-		[windowController changeContentController:windowController.commitViewController];
-		[PBGitDefaults setShowStageView:YES];
 	}
 
 	[self updateActionMenu];
@@ -493,9 +461,7 @@
 	PBSourceViewItem *project = [PBSourceViewItem groupItemWithTitle:[repository projectName]];
 	project.uncollapsible = YES;
 
-	stage = [PBSourceViewStageItem stageItem];
 	PBRepositoryUISettings *uiSettings = [[PBRepositoryUISettings alloc] initWithRepository:repository];
-	if ([uiSettings isSidebarGroupVisible:@"Stage"]) [project addChild:stage];
 
 	branches = [PBSourceViewItem groupItemWithTitle:@"Branches"];
 	remotes = [PBSourceViewItem groupItemWithTitle:@"Remotes"];

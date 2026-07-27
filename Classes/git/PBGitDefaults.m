@@ -24,7 +24,6 @@
 #define kShowOpenPanelOnLaunch @"PBShowOpenPanelOnLaunch"
 #define kShouldCheckoutBranch @"PBShouldCheckoutBranch"
 #define kRecentCloneDestination @"PBRecentCloneDestination"
-#define kShowStageView @"PBShowStageView"
 #define kOpenPreviousDocumentsOnLaunch @"PBOpenPreviousDocumentsOnLaunch"
 #define kPreviousDocumentPaths @"PBPreviousDocumentPaths"
 #define kBranchFilterState @"PBBranchFilter"
@@ -158,16 +157,6 @@ static PBApplicationPreferences *PBPreferences(void)
 + (void)setRecentCloneDestination:(NSString *)path
 {
 	[PBPreferences() setObject:path forKey:kRecentCloneDestination];
-}
-
-+ (BOOL)showStageView
-{
-	return [PBPreferences() boolForKey:kShowStageView];
-}
-
-+ (void)setShowStageView:(BOOL)suppress
-{
-	[PBPreferences() setBool:suppress forKey:kShowStageView];
 }
 
 + (BOOL)openPreviousDocumentsOnLaunch

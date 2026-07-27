@@ -31,7 +31,10 @@
 		@"-AppleLanguages", @"(en)",
 		@"-AppleLocale", @"en_US_POSIX",
 		@"-NSAutomaticWindowAnimationsEnabled", @"NO",
-		@"-PBGitXPreferenceViewIdentifier", @"General"
+		@"-PBGitXPreferenceViewIdentifier", @"General",
+		// These tests characterize the split-tables staging layout; the
+		// sectioned list is the app default.
+		@"-PBStagingFileListLayout", @"1"
 	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
 
@@ -228,15 +231,15 @@
 - (void)openStagingView
 {
 	XCTAssertTrue([self waitForWindow], @"Staging requires a repository window");
-	XCUIElement *sidebar = self.app.outlines[@"RepositorySidebar"];
-	XCTAssertTrue([sidebar waitForExistenceWithTimeout:10], @"The repository sidebar should be accessible");
-	XCUIElement *stageItem = sidebar.staticTexts[@"Stage"];
-	XCTAssertTrue([stageItem waitForExistenceWithTimeout:10], @"The Stage item should be visible in the sidebar");
-	[stageItem click];
+	XCUIElement *table = self.app.tables[@"CommitList"];
+	XCTAssertTrue([table waitForExistenceWithTimeout:15], @"History should be open before showing uncommitted changes");
+	// Exercise the remapped entry point: Cmd-2 selects the Uncommitted
+	// Changes row, which swaps the Details tab to the staging pane.
+	[self.app.windows.firstMatch typeKey:@"2" modifierFlags:XCUIKeyModifierCommand];
 	XCTAssertTrue([self.app.tables[@"UnstagedFiles"] waitForExistenceWithTimeout:10],
-				  @"The Unstaged Changes table should be ready before using the Stage view");
+				  @"The Unstaged files list should be ready before using the staging pane");
 	XCTAssertTrue([self.app.tables[@"StagedFiles"] waitForExistenceWithTimeout:10],
-				  @"The Staged Changes table should be ready before using the Stage view");
+				  @"The Staged files list should be ready before using the staging pane");
 }
 
 // MARK: - Tests
@@ -411,11 +414,6 @@
 	XCTAssertTrue([[NSFileManager defaultManager] removeItemAtPath:hookPath error:nil]);
 	[self.app.buttons[@"OK"] click];
 
-	pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
-	NSPredicate *checkboxRemembered = [NSPredicate predicateWithFormat:@"value == 1"];
-	XCTNSPredicateExpectation *rememberedExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:checkboxRemembered object:pushCheckbox];
-	[self waitForExpectations:@[ rememberedExpectation ] timeout:15];
-
 	NSPredicate *remoteUpdated = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 		NSString *localHead = [self gitOutput:@[ @"rev-parse", @"HEAD" ] inDirectory:repositoryPath];
 		NSString *remoteHead = [self gitOutput:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] inDirectory:repositoryPath];
@@ -424,6 +422,21 @@
 	XCTNSPredicateExpectation *pushExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:remoteUpdated object:repositoryPath];
 	[self waitForExpectations:@[ pushExpectation ] timeout:20];
 	[self saveWindowScreenshotNamed:@"commit-and-push-retry-succeeded"];
+
+	// The successful commit leaves the repository clean, so the staging
+	// pane dismisses with the Uncommitted Changes row. Re-dirty the
+	// repository and reopen the pane to prove the push choice and remote
+	// selection were remembered.
+	NSString *followUpPath = [repositoryPath stringByAppendingPathComponent:@"follow-up.txt"];
+	XCTAssertTrue([@"follow up\n" writeToFile:followUpPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
+	[self openStagingView];
+	pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
+	XCTAssertTrue([pushCheckbox waitForExistenceWithTimeout:10]);
+	NSPredicate *checkboxRemembered = [NSPredicate predicateWithFormat:@"value == 1"];
+	XCTNSPredicateExpectation *rememberedExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:checkboxRemembered object:pushCheckbox];
+	[self waitForExpectations:@[ rememberedExpectation ] timeout:15];
+	remotePopup = self.app.popUpButtons[@"PushRemote"];
+	XCTAssertTrue([remotePopup waitForExistenceWithTimeout:10]);
 	XCTAssertEqualObjects(remotePopup.value, @"backup", @"Remembering the checkbox should preserve the remote selection");
 }
 

@@ -137,6 +137,9 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         reloadPushRemotes()
         fileListController.rearrange()
         commitButton.isEnabled = fileListController.stagedFileCount > 0
+        if fileListController.currentDiffRequests.isEmpty {
+            fileListController.selectInitialFile()
+        }
         renderSelectedDiffs()
     }
 
@@ -311,6 +314,10 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     // MARK: Composer construction
 
     private func configureCommitMessageView() {
+        // The message view is built in code, so AppKit never sends it
+        // awakeFromNib; invoke it directly to apply the text-substitution
+        // preferences and register the guide-ruler observers.
+        commitMessageView.awakeFromNib()
         commitMessageView.repository = repository
         commitMessageView.delegate = self
         commitMessageView.setAccessibilityIdentifier("CommitMessage")
@@ -784,7 +791,16 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     // MARK: NSTextViewDelegate
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        fileListController.interactionCoordinator.handle(commandSelector: commandSelector)
+        if fileListController.layout == .sectionedList {
+            if commandSelector == #selector(NSResponder.insertTab(_:)) ||
+                commandSelector == #selector(NSResponder.insertBacktab(_:))
+            {
+                fileListController.focusFileList()
+                return true
+            }
+            return false
+        }
+        return fileListController.interactionCoordinator.handle(commandSelector: commandSelector)
     }
 
     // MARK: Menu validation

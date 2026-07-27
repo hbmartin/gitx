@@ -12,13 +12,11 @@
 
 @class PBSourceViewItem;
 @class PBGitHistoryController;
-@class PBGitCommitController;
 
 NS_ASSUME_NONNULL_BEGIN
 
 @interface PBGitSidebarController : PBViewController <NSMenuDelegate>
 
-- (void)selectStage;
 - (void)selectCurrentBranch;
 
 - (NSMenu *)menuForRow:(NSInteger)row;

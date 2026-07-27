@@ -62,6 +62,7 @@
 	PBHistoryMenuBuilder *menuBuilder;
 	PBHistoryTableInteractionCoordinator *tableInteractionCoordinator;
 	PBStagingViewController *stagingViewController;
+	BOOL pendingUncommittedSelection;
 }
 
 - (void)setStagingPaneVisible:(BOOL)visible;
@@ -224,7 +225,11 @@
 											 selector:@selector(historyTraversalSettingsDidChange:)
 												 name:@"PBHistoryTraversalSettingsDidChangeNotification"
 											   object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationDidBecomeActive:) name:NSApplicationDidBecomeActiveNotification object:nil];
 	[self updateUncommittedChanges];
+	// Populate the Uncommitted Changes row on open; the History view owns
+	// the index lifecycle now that the standalone Commit view is gone.
+	[repository.index refresh];
 
 	[super awakeFromNib];
 }
@@ -247,14 +252,37 @@
 	[self.repository forceUpdateRevisions];
 }
 
+- (BOOL)uncommittedChangesSelected
+{
+	return [self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class];
+}
+
+- (void)selectUncommittedChanges
+{
+	if (uncommittedChanges) {
+		self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
+		[commitController setSelectedObjects:@[ uncommittedChanges ]];
+		return;
+	}
+	// The row only exists while the repository is dirty; refresh the index
+	// and let updateUncommittedChanges consume this intent when it appears.
+	NSLog(@"[GitX] Deferring Uncommitted Changes selection until the index refresh lands");
+	pendingUncommittedSelection = YES;
+	[self.repository.index refresh];
+}
+
 - (void)updateUncommittedChanges
 {
-	BOOL wasSelected = [self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class];
+	BOOL consumedPendingSelection = pendingUncommittedSelection;
+	BOOL wasSelected = self.uncommittedChangesSelected || pendingUncommittedSelection;
+	pendingUncommittedSelection = NO;
 	BOOL isDirty = self.repository.index.indexChanges.count > 0;
 	if (isDirty) {
 		if (!uncommittedChanges) {
 			uncommittedChanges = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
 			((PBHistoryArrayController *)commitController).pinnedObject = uncommittedChanges;
+			if (consumedPendingSelection)
+				self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
 			if (wasSelected) [commitController setSelectedObjects:@[ uncommittedChanges ]];
 		} else {
 			[uncommittedChanges refreshFromRepository];
@@ -262,6 +290,10 @@
 			NSUInteger row = [arrangedCommits indexOfObjectIdenticalTo:uncommittedChanges];
 			if (row != NSNotFound)
 				[commitList reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row] columnIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, commitList.numberOfColumns)]];
+			if (consumedPendingSelection) {
+				self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
+				[commitController setSelectedObjects:@[ uncommittedChanges ]];
+			}
 			if (wasSelected) {
 				if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex)
 					[self updateKeys];
@@ -287,6 +319,26 @@
 	if (eventType & PBGitRepositoryWatcherEventTypeGitDirectory) {
 		// refresh if the .git repository is modified
 		[self refresh:self];
+	}
+	if (eventType & (PBGitRepositoryWatcherEventTypeWorkingDirectory | PBGitRepositoryWatcherEventTypeIndex)) {
+		// Keep the Uncommitted Changes row and staging pane current; the
+		// History view owns this refresh now that the standalone Commit
+		// view is gone.
+		[self.repository.index refresh];
+	}
+}
+
+- (void)applicationDidBecomeActive:(NSNotification *)notification
+{
+	// Skip hidden windows: the stat-cache refresh writes .git/index, and a
+	// headless controller (e.g. app-hosted tests) must not trigger watcher
+	// churn for a window nobody can see.
+	if (!self.view.window.isVisible)
+		return;
+	BOOL shouldRefresh = [PBRepositoryRefreshPolicy shouldRefreshStatCacheAfterApplicationActivation];
+	NSLog(@"[GitX] Application activation %@ the index stat-cache refresh", shouldRefresh ? @"triggered" : @"skipped");
+	if (shouldRefresh) {
+		[self.repository.index refreshStatCache];
 	}
 }
 

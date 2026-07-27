@@ -377,52 +377,6 @@ final class GitXPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(checksum, 0)
     }
 
-    func testWarmHistoryCommitSwitchMeetsInteractionBudgets() throws {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
-        let controller = PBGitWindowController(window: window)
-        let container = NSView(frame: window.contentView?.bounds ?? .zero)
-        window.contentView = container
-        controller.setValue(container, forKey: "contentSplitView")
-
-        let repository = PBGitRepository()
-        let history = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
-        let commit = try XCTUnwrap(PBViewController(repository: repository, superController: controller))
-        history.view = NSView(frame: container.bounds)
-        commit.view = NSView(frame: container.bounds)
-        controller.setValue(history, forKey: "historyViewController")
-        controller.setValue(commit, forKey: "commitViewController")
-        let toolbarController = PBRepositoryToolbarController(windowController: controller)
-        controller.setValue(toolbarController, forKey: "repositoryToolbarController")
-        toolbarController.install()
-
-        controller.changeContentController(history)
-        controller.changeContentController(commit)
-        var samples: [TimeInterval] = []
-        for index in 0 ..< 80 {
-            let destination = index.isMultiple(of: 2) ? history : commit
-            samples.append(elapsed {
-                controller.changeContentController(destination)
-            })
-        }
-
-        let p95 = percentile95(samples)
-        attachMeasurements("Warm History-Commit view switch", samples: samples)
-        XCTAssertLessThanOrEqual(p95, PBPerformanceBudgets.warmViewSwitchP95Seconds)
-        XCTAssertLessThanOrEqual(
-            p95,
-            PBPerformanceBudgets.mainThreadBlockSeconds,
-            "Warm switching must fit in one 60 Hz frame at p95"
-        )
-        XCTAssertNil(history.view.superview)
-        XCTAssertIdentical(commit.view.superview, container)
-        XCTAssertEqual(container.subviews.count, 1)
-    }
-
     func testCachedWorkingStateFeedbackMeetsBudget() {
         let fixture = diffFixture(
             fileCount: PBPerformanceBudgets.representativeChangedFileCount,

@@ -298,6 +298,33 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         stagedFilesController.setSelectionIndexes(IndexSet())
     }
 
+    /// Selects the first pending file (unstaged first) so the diff pane has
+    /// content the moment the pane appears.
+    @objc func selectInitialFile() {
+        if let first = (unstagedFilesController.arrangedObjects as? [PBChangedFile])?.first {
+            unstagedFilesController.setSelectedObjects([first])
+        } else if let first = (stagedFilesController.arrangedObjects as? [PBChangedFile])?.first {
+            stagedFilesController.setSelectedObjects([first])
+        } else {
+            return
+        }
+        if layout == .sectionedList {
+            restoreSectionedSelectionFromControllers()
+        }
+    }
+
+    @objc func focusFileList() {
+        let table: NSTableView = layout == .sectionedList ? sectionedTable : unstagedTable
+        if table.numberOfRows > 0, table.numberOfSelectedRows == 0 {
+            if table === sectionedTable {
+                selectInitialFile()
+            } else {
+                table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            }
+        }
+        table.window?.makeFirstResponder(table)
+    }
+
     @objc(selectedFilesForStagedContext:)
     func selectedFiles(stagedContext: Bool) -> [PBChangedFile] {
         let controller = stagedContext ? stagedFilesController : unstagedFilesController

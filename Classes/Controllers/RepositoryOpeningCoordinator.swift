@@ -744,7 +744,7 @@ final class WindowSessionCoordinator: NSObject {
                 "frame": NSStringFromRect(window.frame),
                 "group": group,
                 "order": groupWindows.firstIndex(of: window) ?? 0,
-                "commitMode": controller.isShowingCommitView,
+                "commitMode": controller.isUncommittedChangesSelected(),
                 "active": window.isKeyWindow,
             ])
         }
@@ -806,7 +806,7 @@ final class WindowSessionCoordinator: NSObject {
                             window.setFrame(NSRectFromString(frame), display: false)
                         }
                         if records[recordIndex]["commitMode"] as? Bool == true {
-                            controller.showCommitView(self)
+                            controller.showUncommittedChanges(self)
                         } else {
                             controller.showHistoryView(self)
                         }

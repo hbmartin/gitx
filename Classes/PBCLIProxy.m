@@ -52,7 +52,7 @@
 	}
 
 	if ([arguments count] > 0 && ([[arguments objectAtIndex:0] isEqualToString:@"--commit"] || [[arguments objectAtIndex:0] isEqualToString:@"-c"]))
-		[document showCommitView:self];
+		[document showUncommittedChanges:self];
 	else {
 		PBGitRevSpecifier *rev = [[PBGitRevSpecifier alloc] initWithParameters:arguments];
 		rev.workingDirectory = url;

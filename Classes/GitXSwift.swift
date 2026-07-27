@@ -70,7 +70,6 @@ final nonisolated class WorkingStateRefreshPolicy: NSObject { // swiftlint:disab
 /// Shared performance budgets for repository view switching and Working State feedback.
 @objc(PBPerformanceBudgets)
 final nonisolated class PerformanceBudgets: NSObject { // swiftlint:disable:this unused_declaration
-    @objc static let warmViewSwitchP95Seconds = 0.050
     @objc static let mainThreadBlockSeconds = 0.016
     @objc static let cachedWorkingStateFeedbackSeconds = 0.050
     @objc static let freshWorkingStateP95Seconds = 0.250
