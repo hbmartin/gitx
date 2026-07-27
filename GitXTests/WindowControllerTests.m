@@ -230,7 +230,8 @@
 
 @implementation PBWindowRepositoryWithoutGitURLs
 
-- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray *)arguments error:(NSError **)error
+- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray<NSString *> *)arguments
+										   error:(NSError *_Nullable *_Nullable)error
 {
 	return self.testCommonGitDirectoryOutput ?: @"";
 }
@@ -249,7 +250,8 @@
 
 @implementation PBWindowRepositoryWithGitURLOnly
 
-- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray *)arguments error:(NSError **)error
+- (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray<NSString *> *)arguments
+										   error:(NSError *_Nullable *_Nullable)error
 {
 	return @".git/common\n";
 }
@@ -2505,6 +2507,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSSplitView *splitView = [[NSSplitView alloc] initWithFrame:NSMakeRect(0, 0, 300, 200)];
 	NSView *leftView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 220, 200)];
 	NSView *rightView = [[NSView alloc] initWithFrame:NSMakeRect(221, 0, 79, 200)];
+	leftView.wantsLayer = YES;
+	leftView.layer.backgroundColor = NSColor.controlBackgroundColor.CGColor;
+	rightView.wantsLayer = YES;
+	rightView.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
 	[splitView addSubview:leftView];
 	[splitView addSubview:rightView];
 
@@ -2514,6 +2520,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualWithAccuracy(leftView.frame.size.width,
 							   splitView.frame.size.width - splitView.dividerThickness - 180,
 							   0.01);
+	[self attachScreenshotOfView:splitView name:@"File view minimum right pane width"];
 }
 
 - (void)testWelcomeWindowSearchAndCloseActions
@@ -2650,6 +2657,14 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertGreaterThan(checkedBadge.size.width, (CGFloat)0);
 	XCTAssertGreaterThan(numericBadge.size.width, checkedBadge.size.width);
 	XCTAssertGreaterThan(directBadge.size.height, (CGFloat)0);
+	NSImageView *checkedPreview = [NSImageView imageViewWithImage:checkedBadge];
+	NSImageView *numericPreview = [NSImageView imageViewWithImage:numericBadge];
+	NSImageView *directPreview = [NSImageView imageViewWithImage:directBadge];
+	NSStackView *badgePreview = [NSStackView stackViewWithViews:@[ checkedPreview, numericPreview, directPreview ]];
+	badgePreview.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+	badgePreview.spacing = 8;
+	badgePreview.frame = NSMakeRect(0, 0, 260, 40);
+	[self attachScreenshotOfView:badgePreview name:@"Source view badges across window states"];
 }
 
 - (void)testRepositorySettingsStoreReadsAndWritesLocalValues

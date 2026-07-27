@@ -86,6 +86,21 @@ final class NativeContentRendererTests: XCTestCase {
         root.subviews + root.subviews.flatMap(descendants(of:))
     }
 
+    @MainActor
+    private func attachScreenshot(of view: NSView, named name: String) throws {
+        view.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(
+            view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        )
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let screenshot = NSImage(size: view.bounds.size)
+        screenshot.addRepresentation(representation)
+        let attachment = XCTAttachment(image: screenshot)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     private func role(
         in attributedString: NSAttributedString,
         matching text: String,
@@ -749,6 +764,35 @@ final class NativeContentRendererTests: XCTestCase {
         XCTAssertEqual(try role(in: view.textView.attributedString(), matching: "Already styled"), "status")
     }
 
+    func testRestylingMixedRunsDoesNotTrustCurrentFirstRun() throws {
+        let currentFont = NSFont.monospacedSystemFont(ofSize: 18, weight: .regular)
+        let typography = PBNativeContentTypography(
+            fontName: currentFont.fontName,
+            baseSize: 18
+        )
+        let currentRun = typography.restyledString(NSAttributedString(
+            string: "Current",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .regular),
+            ]
+        ))
+        let mixedRuns = NSMutableAttributedString(attributedString: currentRun)
+        mixedRuns.append(NSAttributedString(
+            string: " stale",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 9, weight: .regular),
+                NSAttributedString.Key("PBNativeContentTypographyRole"): "legacy",
+            ]
+        ))
+
+        let restyled = typography.restyledString(mixedRuns)
+
+        XCTAssertEqual(try font(in: restyled, matching: "Current").pointSize, 18)
+        XCTAssertEqual(try role(in: restyled, matching: "Current"), "body")
+        XCTAssertEqual(try font(in: restyled, matching: "stale").pointSize, 18)
+        XCTAssertEqual(try role(in: restyled, matching: "stale"), "body")
+    }
+
     @MainActor
     func testPendingHistoryRenderRestartsAfterTypographyChange() {
         let restoreSize = preserveDefault("PBDiffFontSize")
@@ -1263,6 +1307,10 @@ final class NativeContentRendererTests: XCTestCase {
         XCTAssertEqual(
             try role(in: view.textView.attributedString(), matching: "Legacy content"),
             "body"
+        )
+        try attachScreenshot(
+            of: view,
+            named: "Unclassified native content after live font change"
         )
     }
 

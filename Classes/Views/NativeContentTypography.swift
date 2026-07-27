@@ -135,16 +135,27 @@ final nonisolated class NativeContentTypography: NSObject {
     }
 
     private func usesCurrentTypography(_ attributedString: NSAttributedString) -> Bool {
-        let attributes = attributedString.attributes(at: 0, effectiveRange: nil)
-        guard let existingFont = attributes[.font] as? NSFont,
-              let roleName = attributes[.nativeContentTypographyRole] as? String,
-              let role = NativeContentTypographyRole(rawValue: roleName)
-        else {
-            return false
+        let fullRange = NSRange(location: 0, length: attributedString.length)
+        var allRunsAreCurrent = true
+        attributedString.enumerateAttributes(in: fullRange) { attributes, _, stop in
+            guard let existingFont = attributes[.font] as? NSFont,
+                  let roleName = attributes[.nativeContentTypographyRole] as? String,
+                  let role = NativeContentTypographyRole(rawValue: roleName)
+            else {
+                allRunsAreCurrent = false
+                stop.pointee = true
+                return
+            }
+            let expectedFont = font(for: role, preservingTraitsOf: existingFont)
+            guard existingFont.fontName == expectedFont.fontName,
+                  existingFont.pointSize == expectedFont.pointSize
+            else {
+                allRunsAreCurrent = false
+                stop.pointee = true
+                return
+            }
         }
-        let expectedFont = font(for: role, preservingTraitsOf: existingFont)
-        return existingFont.fontName == expectedFont.fontName &&
-            existingFont.pointSize == expectedFont.pointSize
+        return allRunsAreCurrent
     }
 
     private func font(

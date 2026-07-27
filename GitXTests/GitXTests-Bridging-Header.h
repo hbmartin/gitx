@@ -280,6 +280,11 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 										 selectedIndexes:(NSIndexSet *)selectedIndexes;
 @end
 
+@interface PBNativeContentTypography : NSObject
+- (instancetype)initWithFontName:(NSString *)fontName baseSize:(CGFloat)baseSize;
+- (NSAttributedString *)restyledString:(NSAttributedString *)attributedString;
+@end
+
 @interface PBApplicationIconController : NSObject
 + (NSImage *)imageForStyle:(PBApplicationIconStyle)style NS_SWIFT_NAME(image(for:));
 + (void)applySelectedIcon;

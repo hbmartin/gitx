@@ -26,9 +26,11 @@ NS_ASSUME_NONNULL_BEGIN
 				 authorDate:(NSString *)authorDate;
 @end
 
+@class PBGitRepositoryWatcherEventPath;
+
 @interface PBGitRepositoryWatcher (GitXTests)
 - (nullable NSDate *)fileModificationDateAtPath:(NSString *)path;
-- (void)handleGitDirEventCallback:(NSArray *)eventPaths;
+- (void)handleGitDirEventCallback:(NSArray<PBGitRepositoryWatcherEventPath *> *)eventPaths;
 @end
 
 @interface PBGitRepositoryWatcherEventPath : NSObject
