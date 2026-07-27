@@ -122,6 +122,7 @@
 
 @interface GLFileView (WindowControllerTests)
 - (NSArray<NSDictionary *> *)historyEntriesForTree:(PBGitTree *)file;
+- (void)splitView:(NSSplitView *)splitView resizeSubviewsWithOldSize:(NSSize)oldSize;
 @end
 
 @interface PBApplicationSettings : NSObject
@@ -2496,6 +2497,23 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(entries.firstObject[@"author"], @"Ada");
 	XCTAssertEqualObjects(entries.firstObject[@"date"], @"now");
 	XCTAssertEqualObjects(entries.firstObject[@"sha"], @"abc123456789");
+}
+
+- (void)testFileViewResizePreservesMinimumRightPaneWidth
+{
+	GLFileView *fileView = [GLFileView new];
+	NSSplitView *splitView = [[NSSplitView alloc] initWithFrame:NSMakeRect(0, 0, 300, 200)];
+	NSView *leftView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 220, 200)];
+	NSView *rightView = [[NSView alloc] initWithFrame:NSMakeRect(221, 0, 79, 200)];
+	[splitView addSubview:leftView];
+	[splitView addSubview:rightView];
+
+	[fileView splitView:splitView resizeSubviewsWithOldSize:NSMakeSize(500, 200)];
+
+	XCTAssertEqualWithAccuracy(rightView.frame.size.width, 180, 0.01);
+	XCTAssertEqualWithAccuracy(leftView.frame.size.width,
+							   splitView.frame.size.width - splitView.dividerThickness - 180,
+							   0.01);
 }
 
 - (void)testWelcomeWindowSearchAndCloseActions
