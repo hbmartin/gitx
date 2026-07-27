@@ -937,6 +937,51 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(fileList.stagedFileCount, 0)
     }
 
+    func testStagingLayoutsShareLocalizedFilteringAndOrdering() throws {
+        for path in [
+            "Alpha.txt",
+            "alpha-lower.txt",
+            "Café.swift",
+            "CAFE-two.swift",
+            "zeta.txt",
+        ] {
+            try fixture.write("\(path)\n", to: path)
+        }
+        refreshIndex()
+        let pane = try openStagingPane()
+        let fileList = pane.fileListController
+        let model = fileList.viewModel
+
+        func visibleSectionedPaths() -> [String] {
+            fileList.setListLayout(.sectionedList)
+            return (0 ..< fileList.sectionedTable.numberOfRows).compactMap { row in
+                (fileList.sectionedTable.view(atColumn: 0, row: row, makeIfNecessary: true)
+                    as? PBStagingFileCellView)?.pathField.stringValue
+            }
+        }
+
+        for sortOrder in [PBStagingFileSortOrder.path, .status] {
+            model.searchText = ""
+            model.sortOrder = sortOrder
+            fileList.applyFilterAndSort()
+            let expected = model.files(in: .unstaged, fromChanges: repository.index.indexChanges).map(\.path)
+            let split = (fileList.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.map(\.path)
+            XCTAssertEqual(split, expected, "split tables must use the view model's localized ordering")
+            XCTAssertEqual(visibleSectionedPaths(), expected)
+        }
+
+        model.searchText = "cafe"
+        model.sortOrder = .path
+        fileList.applyFilterAndSort()
+        let expectedFiltered = ["CAFE-two.swift", "Café.swift"]
+        XCTAssertEqual(model.files(in: .unstaged, fromChanges: repository.index.indexChanges).map(\.path), expectedFiltered)
+        XCTAssertEqual(
+            (fileList.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.map(\.path),
+            expectedFiltered
+        )
+        XCTAssertEqual(visibleSectionedPaths(), expectedFiltered)
+    }
+
     func testCommitTableInteractionCoordinatorStagingDragAndFocusFlows() throws {
         try fixture.write("alpha.txt\n", to: "alpha.txt")
         try fixture.write("beta.txt\n", to: "beta.txt")

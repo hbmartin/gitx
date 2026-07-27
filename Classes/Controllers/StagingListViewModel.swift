@@ -102,17 +102,42 @@ final nonisolated class StagingListViewModel: NSObject {
 
     @objc(filesInSection:fromChanges:)
     func files(in section: StagingListSection, from changes: [PBChangedFile]) -> [PBChangedFile] {
-        let members = changes.filter { file in
-            switch section {
-            case .staged: file.hasStagedChanges
-            case .unstaged: file.hasUnstagedChanges
-            }
-        }
+        let predicate = filterPredicate(for: section)
+        return sorted(changes.filter { predicate.evaluate(with: $0) })
+    }
+
+    func filterPredicate(for section: StagingListSection) -> NSPredicate {
+        let requiresStagedChanges = section == .staged
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matching = query.isEmpty
-            ? members
-            : members.filter { $0.path.localizedCaseInsensitiveContains(query) }
-        return sorted(matching)
+        return NSPredicate { object, _ in
+            guard let file = object as? PBChangedFile else { return false }
+            let belongsToSection = requiresStagedChanges
+                ? file.hasStagedChanges
+                : file.hasUnstagedChanges
+            guard belongsToSection, !query.isEmpty else { return belongsToSection }
+            return file.path.range(
+                of: query,
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            ) != nil
+        }
+    }
+
+    var sortDescriptors: [NSSortDescriptor] {
+        let localizedPath = NSSortDescriptor(key: "path", ascending: true) { left, right in
+            guard let left = left as? String, let right = right as? String else { return .orderedSame }
+            let localized = left.localizedCaseInsensitiveCompare(right)
+            return localized == .orderedSame ? left.compare(right, options: .literal) : localized
+        }
+        switch sortOrder {
+        case .path:
+            return [localizedPath]
+        case .status:
+            return [
+                NSSortDescriptor(key: "status", ascending: false),
+                localizedPath,
+            ]
+        }
     }
 
     @objc(flattenedRowsFromChanges:)
@@ -275,20 +300,7 @@ final nonisolated class StagingListViewModel: NSObject {
     }
 
     private func sorted(_ files: [PBChangedFile]) -> [PBChangedFile] {
-        switch sortOrder {
-        case .path:
-            files.sorted {
-                $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending
-            }
-        case .status:
-            files.sorted {
-                if $0.status != $1.status {
-                    $0.status.rawValue > $1.status.rawValue
-                } else {
-                    $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending
-                }
-            }
-        }
+        (files as NSArray).sortedArray(using: sortDescriptors).compactMap { $0 as? PBChangedFile }
     }
 
     private func resolvedSplitFiles(

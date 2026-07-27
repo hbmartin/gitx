@@ -31,12 +31,12 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(unstaged.map(\.path), ["partial.txt", "unstaged.txt", "untracked.txt"])
     }
 
-    func testSearchFilterMatchesPathSubstringCaseInsensitively() {
+    func testSearchFilterMatchesPathSubstringCaseAndDiacriticInsensitively() {
         let model = PBStagingListViewModel()
-        model.searchText = "  Weather "
+        model.searchText = "  cafe "
         let changes = [
-            file("components/WeatherApp.tsx"),
-            file("components/WeeklyWeather.tsx"),
+            file("components/CaféApp.tsx"),
+            file("components/CAFEWeather.tsx"),
             file("lib/utils.ts"),
         ]
 
@@ -44,7 +44,7 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertEqual(
             unstaged.map(\.path),
-            ["components/WeatherApp.tsx", "components/WeeklyWeather.tsx"]
+            ["components/CaféApp.tsx", "components/CAFEWeather.tsx"]
         )
     }
 
