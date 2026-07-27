@@ -733,6 +733,23 @@ final class NativeContentRendererTests: XCTestCase {
     }
 
     @MainActor
+    func testRepeatedTypographyNotificationPreservesCurrentStyling() throws {
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        view.showMessage("Already styled")
+        let initialFont = try font(in: view.textView.attributedString(), matching: "Already styled")
+
+        NotificationCenter.default.post(
+            name: Notification.Name("PBDiffTextTypographyDidChangeNotification"),
+            object: nil
+        )
+
+        let resultingFont = try font(in: view.textView.attributedString(), matching: "Already styled")
+        XCTAssertEqual(resultingFont.fontName, initialFont.fontName)
+        XCTAssertEqual(resultingFont.pointSize, initialFont.pointSize)
+        XCTAssertEqual(try role(in: view.textView.attributedString(), matching: "Already styled"), "status")
+    }
+
+    @MainActor
     func testPendingHistoryRenderRestartsAfterTypographyChange() {
         let restoreSize = preserveDefault("PBDiffFontSize")
         defer { restoreSize() }

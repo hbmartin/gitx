@@ -12,6 +12,7 @@
 #import "PBGitDefaults.h"
 #import "PBGitGrapher.h"
 #import "PBGitHistoryList.h"
+#import "PBGitHistoryController.h"
 #import "PBGitIndex.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
@@ -25,6 +26,7 @@
 #import "PBUncommittedChanges.h"
 #import "PBWorkingTree.h"
 #import "PBTask.h"
+#import "PBWebHistoryController.h"
 
 @interface PBNativeContentView (GitXCoreTests)
 - (nullable NSString *)patchWithFileHeader:(NSArray<NSString *> *)fileHeader
@@ -62,6 +64,15 @@
 - (void)updateCommits:(NSArray<PBGitCommit *> *)revisions
 			operation:(NSOperation *)operation
 		   generation:(NSUInteger)generation;
+- (BOOL)isLoadGenerationCurrent:(NSUInteger)generation;
+@end
+
+@interface PBWebHistoryController (GitXCoreTests)
+- (NSUInteger)beginContentGeneration;
+- (nullable NSString *)runGitArguments:(NSArray<NSString *> *)arguments
+							generation:(NSUInteger)generation
+								 error:(NSError **)error;
+- (nullable NSData *)dataForGitObject:(NSString *)object imageSource:(NSDictionary<NSString *, id> *)imageSource;
 @end
 
 @interface PBGitRepository (GitXCoreHookTests)
@@ -938,6 +949,44 @@
 	operationQueue.suspended = NO;
 	[operationQueue waitUntilAllOperationsAreFinished];
 	XCTAssertFalse(revisionList.isParsing);
+}
+
+- (void)testRevisionListChecksLoadGenerationAcrossQueues
+{
+	PBGitRevList *revisionList = [[PBGitRevList alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]
+			   shouldGraph:NO];
+	[revisionList setValue:@7 forKey:@"loadGeneration"];
+	XCTAssertTrue([revisionList isLoadGenerationCurrent:7]);
+	XCTAssertFalse([revisionList isLoadGenerationCurrent:8]);
+
+	XCTestExpectation *backgroundCheck = [self expectationWithDescription:@"background generation check"];
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+		XCTAssertTrue([revisionList isLoadGenerationCurrent:7]);
+		[backgroundCheck fulfill];
+	});
+	[self waitForExpectations:@[ backgroundCheck ] timeout:2.0];
+}
+
+- (void)testWebHistoryGitRunnerExecutesForCurrentGeneration
+{
+	PBGitHistoryController *historyController = [[PBGitHistoryController alloc]
+		initWithRepository:self.repository
+		   superController:nil];
+	PBWebHistoryController *webHistoryController = [PBWebHistoryController new];
+	webHistoryController.repository = self.repository;
+	[webHistoryController setValue:historyController forKey:@"historyController"];
+	NSUInteger generation = [webHistoryController beginContentGeneration];
+	NSError *error = nil;
+
+	NSString *output = [webHistoryController runGitArguments:@[ @"rev-parse", @"--is-inside-work-tree" ]
+												  generation:generation
+													   error:&error];
+
+	XCTAssertNil(error);
+	XCTAssertEqualObjects([output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet], @"true");
+	XCTAssertNil([webHistoryController dataForGitObject:@"HEAD:missing.png" imageSource:@{}]);
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured
@@ -2435,6 +2484,23 @@
 
 
 @implementation PBTaskCoreTests
+
+- (void)testInitializationHonorsDebugLoggingPreference
+{
+	NSString *key = @"Show Debug Messages";
+	id previousValue = [NSUserDefaults.standardUserDefaults objectForKey:key];
+	[self addTeardownBlock:^{
+		if (previousValue)
+			[NSUserDefaults.standardUserDefaults setObject:previousValue forKey:key];
+		else
+			[NSUserDefaults.standardUserDefaults removeObjectForKey:key];
+	}];
+	[NSUserDefaults.standardUserDefaults setBool:YES forKey:key];
+
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+
+	XCTAssertNotNil(task);
+}
 
 - (void)testClassAsyncLaunchReturnsCommandOutput
 {
