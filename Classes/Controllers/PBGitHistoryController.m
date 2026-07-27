@@ -61,7 +61,11 @@
 	PBHistoryTreePresentation *treePresentation;
 	PBHistoryMenuBuilder *menuBuilder;
 	PBHistoryTableInteractionCoordinator *tableInteractionCoordinator;
+	PBStagingViewController *stagingViewController;
+	BOOL pendingUncommittedSelection;
 }
+
+- (void)setStagingPaneVisible:(BOOL)visible;
 
 - (void)updateBranchFilterMatrix;
 - (void)restoreFileBrowserSelection;
@@ -221,7 +225,11 @@
 											 selector:@selector(historyTraversalSettingsDidChange:)
 												 name:@"PBHistoryTraversalSettingsDidChangeNotification"
 											   object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(applicationDidBecomeActive:) name:NSApplicationDidBecomeActiveNotification object:nil];
 	[self updateUncommittedChanges];
+	// Populate the Uncommitted Changes row on open; the History view owns
+	// the index lifecycle now that the standalone Commit view is gone.
+	[repository.index refresh];
 
 	[super awakeFromNib];
 }
@@ -244,14 +252,37 @@
 	[self.repository forceUpdateRevisions];
 }
 
+- (BOOL)uncommittedChangesSelected
+{
+	return [self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class];
+}
+
+- (void)selectUncommittedChanges
+{
+	if (uncommittedChanges) {
+		self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
+		[commitController setSelectedObjects:@[ uncommittedChanges ]];
+		return;
+	}
+	// The row only exists while the repository is dirty; refresh the index
+	// and let updateUncommittedChanges consume this intent when it appears.
+	NSLog(@"[GitX] Deferring Uncommitted Changes selection until the index refresh lands");
+	pendingUncommittedSelection = YES;
+	[self.repository.index refresh];
+}
+
 - (void)updateUncommittedChanges
 {
-	BOOL wasSelected = [self.selectedCommits.firstObject isKindOfClass:PBUncommittedChanges.class];
+	BOOL consumedPendingSelection = pendingUncommittedSelection;
+	BOOL wasSelected = self.uncommittedChangesSelected || pendingUncommittedSelection;
+	pendingUncommittedSelection = NO;
 	BOOL isDirty = self.repository.index.indexChanges.count > 0;
 	if (isDirty) {
 		if (!uncommittedChanges) {
 			uncommittedChanges = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
 			((PBHistoryArrayController *)commitController).pinnedObject = uncommittedChanges;
+			if (consumedPendingSelection)
+				self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
 			if (wasSelected) [commitController setSelectedObjects:@[ uncommittedChanges ]];
 		} else {
 			[uncommittedChanges refreshFromRepository];
@@ -259,11 +290,15 @@
 			NSUInteger row = [arrangedCommits indexOfObjectIdenticalTo:uncommittedChanges];
 			if (row != NSNotFound)
 				[commitList reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row] columnIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, commitList.numberOfColumns)]];
+			if (consumedPendingSelection) {
+				self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
+				[commitController setSelectedObjects:@[ uncommittedChanges ]];
+			}
 			if (wasSelected) {
 				if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex)
 					[self updateKeys];
-				else
-					[webHistoryController refreshDisplayedContent];
+				// In the Details tab the staging pane observes the index
+				// itself, so no explicit refresh is needed here.
 			}
 		}
 	} else {
@@ -284,6 +319,26 @@
 	if (eventType & PBGitRepositoryWatcherEventTypeGitDirectory) {
 		// refresh if the .git repository is modified
 		[self refresh:self];
+	}
+	if (eventType & (PBGitRepositoryWatcherEventTypeWorkingDirectory | PBGitRepositoryWatcherEventTypeIndex)) {
+		// Keep the Uncommitted Changes row and staging pane current; the
+		// History view owns this refresh now that the standalone Commit
+		// view is gone.
+		[self.repository.index refresh];
+	}
+}
+
+- (void)applicationDidBecomeActive:(NSNotification *)notification
+{
+	// Skip hidden windows: the stat-cache refresh writes .git/index, and a
+	// headless controller (e.g. app-hosted tests) must not trigger watcher
+	// churn for a window nobody can see.
+	if (!self.view.window.isVisible)
+		return;
+	BOOL shouldRefresh = [PBRepositoryRefreshPolicy shouldRefreshStatCacheAfterApplicationActivation];
+	NSLog(@"[GitX] Application activation %@ the index stat-cache refresh", shouldRefresh ? @"triggered" : @"skipped");
+	if (shouldRefresh) {
+		[self.repository.index refreshStatCache];
 	}
 }
 
@@ -319,6 +374,7 @@
 
 	PBGitCommit *firstSelectedCommit = self.selectedCommits.firstObject;
 	if (!firstSelectedCommit) {
+		[self setStagingPaneVisible:NO];
 		self.gitTree = nil;
 		if (self.webCommits.count) self.webCommits = @[];
 		return;
@@ -326,13 +382,49 @@
 	self.selectedCommitDetailsIndex = [stateCoordinator detailIndexForCurrentIndex:self.selectedCommitDetailsIndex selectionCount:self.selectedCommits.count];
 
 	if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex) {
+		[self setStagingPaneVisible:NO];
 		self.gitTree = [treePresentation treeForCommit:firstSelectedCommit];
 		[self restoreFileBrowserSelection];
 	} else {
 		// kHistoryDetailViewIndex
+		BOOL showStagingPane = self.selectedCommits.count == 1 &&
+			[firstSelectedCommit isKindOfClass:PBUncommittedChanges.class];
+		[self setStagingPaneVisible:showStagingPane];
+		if (showStagingPane) {
+			// The staging pane owns the working-state presentation; leave
+			// webCommits untouched so the hidden detail view neither renders
+			// the read-only working-state diff nor loses its last commit.
+			return;
+		}
 		if (![self.webCommits isEqualToArray:self.selectedCommits]) {
 			self.webCommits = self.selectedCommits;
 		}
+	}
+}
+
+- (void)setStagingPaneVisible:(BOOL)visible
+{
+	if (visible && !stagingViewController) {
+		stagingViewController = [[PBStagingViewController alloc] initWithRepository:self.repository hostController:self];
+		NSView *hostView = webHistoryController.view.superview;
+		NSView *paneView = stagingViewController.view;
+		paneView.translatesAutoresizingMaskIntoConstraints = NO;
+		[hostView addSubview:paneView];
+		[NSLayoutConstraint activateConstraints:@[
+			[paneView.topAnchor constraintEqualToAnchor:hostView.topAnchor],
+			[paneView.bottomAnchor constraintEqualToAnchor:hostView.bottomAnchor],
+			[paneView.leadingAnchor constraintEqualToAnchor:hostView.leadingAnchor],
+			[paneView.trailingAnchor constraintEqualToAnchor:hostView.trailingAnchor],
+		]];
+		NSLog(@"[GitX] Created the staging pane inside the Details tab");
+	}
+	if (!stagingViewController)
+		return;
+
+	stagingViewController.view.hidden = !visible;
+	webHistoryController.view.hidden = visible;
+	if (visible) {
+		[stagingViewController updateView];
 	}
 }
 
@@ -534,6 +626,8 @@
 
 	[webHistoryController closeView];
 	[fileView closeView];
+	[stagingViewController closeView];
+	stagingViewController = nil;
 
 	[super closeView];
 }

@@ -16,6 +16,7 @@ final nonisolated class NativeContentSection: NSObject {
     @objc let highlightingPath: String
     @objc let diffLayout: Int
     @objc let suppressionPatterns: [String]
+    @objc let stagingChrome: Bool
 
     @objc(initWithDictionary:)
     init(dictionary: [String: Any]) {
@@ -31,6 +32,7 @@ final nonisolated class NativeContentSection: NSObject {
         diffLayout = (dictionary[PBNativeSectionDiffLayoutKey] as? NSNumber)?.intValue ??
             ApplicationSettings.diffLayout.rawValue
         suppressionPatterns = dictionary[PBNativeSectionSuppressionPatternsKey] as? [String] ?? []
+        stagingChrome = (dictionary[PBNativeSectionStagingChromeKey] as? NSNumber)?.boolValue ?? false
         super.init()
     }
 
@@ -54,6 +56,13 @@ final nonisolated class NativeDiffFile: NSObject {
     }
 }
 
+nonisolated struct NativeHunkLineSpan {
+    let oldStart: Int
+    let oldCount: Int
+    let newStart: Int
+    let newCount: Int
+}
+
 @objc(PBNativeDiffHunk)
 final nonisolated class NativeDiffHunk: NSObject {
     @objc let startIndex: Int
@@ -69,6 +78,32 @@ final nonisolated class NativeDiffHunk: NSObject {
         self.fileHeader = fileHeader
         patch = (fileHeader + lines).joined(separator: "\n") + "\n"
         super.init()
+    }
+
+    private static let spanExpression = try! NSRegularExpression( // swiftlint:disable:this force_try
+        pattern: "^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@"
+    )
+
+    /// Old/new line numbers parsed from a `@@ -a,b +c,d @@` hunk header.
+    /// Counts default to 1 when git omits them.
+    static func lineSpan(forHeader header: String) -> NativeHunkLineSpan? {
+        let text = header as NSString
+        guard let match = spanExpression.firstMatch(
+            in: header,
+            range: NSRange(location: 0, length: text.length)
+        ) else { return nil }
+        func number(at rangeIndex: Int) -> Int? {
+            let range = match.range(at: rangeIndex)
+            guard range.location != NSNotFound else { return nil }
+            return Int(text.substring(with: range))
+        }
+        guard let oldStart = number(at: 1), let newStart = number(at: 3) else { return nil }
+        return NativeHunkLineSpan(
+            oldStart: oldStart,
+            oldCount: number(at: 2) ?? 1,
+            newStart: newStart,
+            newCount: number(at: 4) ?? 1
+        )
     }
 
     @objc(blockIndexesStartingAtIndex:)

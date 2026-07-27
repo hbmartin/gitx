@@ -9,6 +9,7 @@ NSString *const PBNativeSectionEntriesKey = @"entries";
 NSString *const PBNativeSectionImageSourceKey = @"imageSource";
 NSString *const PBNativeSectionDiffLayoutKey = @"diffLayout";
 NSString *const PBNativeSectionSuppressionPatternsKey = @"suppressionPatterns";
+NSString *const PBNativeSectionStagingChromeKey = @"stagingChrome";
 NSString *const PBNativeImageSourceRevisionsKey = @"revisions";
 NSString *const PBNativeImageSourceWorkingTreeKey = @"workingTree";
 NSString *const PBNativeImageSourceWorkingTreeURLKey = @"workingTreeURL";

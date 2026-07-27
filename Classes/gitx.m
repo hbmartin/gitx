@@ -75,7 +75,7 @@ void usage(char const *programName)
 	printf("                           send the gitx commands to the repository located at <path>\n");
 	printf("\n");
 	printf("Commit/Stage view\n");
-	printf("    -c, --commit           start GitX in commit/stage mode\n");
+	printf("    -c, --commit           open GitX showing uncommitted changes\n");
 	printf("\n");
 	printf("Branch filter options\n");
 	printf("    Add an optional branch or tag name to select that branch using the given branch filter\n");

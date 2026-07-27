@@ -42,7 +42,6 @@ final nonisolated class RepositoryUISettings: NSObject {
     @objc var sidebarVisibility: [String: Bool] {
         get {
             value(for: "sidebarVisibility") as? [String: Bool] ?? [
-                "Stage": true,
                 "Remotes": true,
                 "Tags": true,
                 "Stashes": true,

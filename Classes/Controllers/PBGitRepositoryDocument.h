@@ -12,6 +12,8 @@
 @class PBGitRevSpecifier;
 @class PBGitWindowController;
 
+NS_ASSUME_NONNULL_BEGIN
+
 extern NSString *PBGitRepositoryDocumentType;
 
 @interface PBGitRepositoryDocument : NSDocument
@@ -22,11 +24,13 @@ extern NSString *PBGitRepositoryDocumentType;
 // Scripting Bridge
 - (void)findInModeScriptCommand:(NSScriptCommand *)command;
 
-- (IBAction)showCommitView:(id)sender;
+- (IBAction)showUncommittedChanges:(id)sender;
 - (IBAction)showHistoryView:(id)sender;
 
 - (void)selectRevisionSpecifier:(PBGitRevSpecifier *)specifier;
 
-- (PBGitWindowController *)windowController;
+- (nullable PBGitWindowController *)windowController;
 
 @end
+
+NS_ASSUME_NONNULL_END

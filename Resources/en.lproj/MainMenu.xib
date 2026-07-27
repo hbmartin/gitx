@@ -369,10 +369,10 @@
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="Repository" id="937">
                         <items>
-                            <menuItem title="Commit…" keyEquivalent="2" id="codex-repository-commit">
-                                <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                            <menuItem title="Show Uncommitted Changes" id="codex-repository-commit">
+                                <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
-                                    <action selector="showCommitView:" target="-1" id="codex-repository-commit-action"/>
+                                    <action selector="showUncommittedChanges:" target="-1" id="codex-repository-commit-action"/>
                                 </connections>
                             </menuItem>
                             <menuItem title="Repository Settings…" id="codex-repository-settings">
@@ -570,9 +570,9 @@ DQ
                                     <action selector="showHistoryView:" target="-1" id="930"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Commit" keyEquivalent="2" id="928">
+                            <menuItem title="Uncommitted Changes" keyEquivalent="2" id="928">
                                 <connections>
-                                    <action selector="showCommitView:" target="-1" id="931"/>
+                                    <action selector="showUncommittedChanges:" target="-1" id="931"/>
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="929"/>

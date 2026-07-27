@@ -2,7 +2,6 @@
 
 #import "PBCommitHookFailedSheet.h"
 #import "PBError.h"
-#import "PBGitCommitController.h"
 #import "PBGitDefaults.h"
 #import "PBGitRepository.h"
 #import "PBGitXMessageSheet.h"
@@ -18,13 +17,13 @@
 	[PBRepositorySettingsController beginSheetForRepository:self.repository windowController:self];
 }
 
-- (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText commitController:(PBGitCommitController *)controller
+- (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText retryHandler:(void (^)(void))retryHandler
 {
 	[PBCommitHookFailedSheet beginWithMessageText:messageText
 										 infoText:infoText
-								 commitController:controller
+								 windowController:self
 								completionHandler:^(__unused id sheet, NSModalResponse response) {
-									if (response == NSModalResponseOK) [self.commitViewController forceCommit:self];
+									if (response == NSModalResponseOK && retryHandler) retryHandler();
 								}];
 }
 

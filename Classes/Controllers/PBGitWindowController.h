@@ -11,7 +11,6 @@
 
 @class PBViewController;
 @class PBGitSidebarController;
-@class PBGitCommitController;
 @class PBGitHistoryController;
 @class PBGitRepository;
 @class RJModalRepoSheet;
@@ -27,15 +26,14 @@ NS_ASSUME_NONNULL_BEGIN
 /* This is assign because that's what NSWindowController says :-S */
 @property (assign) PBGitRepositoryDocument *document;
 @property (readonly, nullable) PBGitHistoryController *historyViewController;
-@property (readonly, nullable) PBGitCommitController *commitViewController;
 @property (readonly, nullable) PBGitSidebarController *sidebarViewController;
 
 - (instancetype)init;
 
 - (void)changeContentController:(PBViewController *)controller;
-- (BOOL)isShowingCommitView;
+- (BOOL)isUncommittedChangesSelected;
 
-- (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText commitController:(PBGitCommitController *)controller;
+- (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText retryHandler:(void (^)(void))retryHandler;
 
 - (void)showMessageSheet:(NSString *)messageText infoText:(NSString *)infoText;
 - (void)showErrorSheet:(NSError *)error;
@@ -44,8 +42,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)openURLs:(NSArray<NSURL *> *)fileURLs;
 - (void)revealURLsInFinder:(NSArray<NSURL *> *)fileURLs;
 
-- (IBAction)showCommitView:(id)sender;
+- (IBAction)showUncommittedChanges:(id)sender;
 - (IBAction)showHistoryView:(id)sender;
+- (IBAction)toggleAmendCommit:(id)sender;
 - (IBAction)openFiles:(id)sender;
 - (IBAction)revealInFinder:(id)sender;
 - (IBAction)openInTerminal:(id)sender;

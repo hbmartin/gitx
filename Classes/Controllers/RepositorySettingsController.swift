@@ -37,7 +37,7 @@ final class RepositorySettingsController: NSWindowController, NSToolbarDelegate,
     private let notifyButton = NSButton()
     private let rulesTextView = NSTextView()
     private let sidebarButtons: [String: NSButton] = Dictionary(
-        uniqueKeysWithValues: ["Stage", "Remotes", "Tags", "Stashes", "Submodules", "Other"].map {
+        uniqueKeysWithValues: ["Remotes", "Tags", "Stashes", "Submodules", "Other"].map {
             ($0, NSButton())
         }
     )

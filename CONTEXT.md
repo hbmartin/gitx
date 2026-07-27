@@ -1,6 +1,6 @@
 # GitX Repository History
 
-GitX presents immutable repository history alongside the repository's mutable working state. These terms distinguish revisions, selections, and comparisons consistently across History, Tree, and Commit views.
+GitX presents immutable repository history alongside the repository's mutable working state. These terms distinguish revisions, selections, and comparisons consistently across the History view, its Tree mode, and the Staging Pane.
 
 ## Language
 
@@ -20,9 +20,9 @@ _Avoid_: Dirty commit, working-tree commit
 The repository perspective for inspecting immutable Commits alongside the selectable Uncommitted Changes entry.
 _Avoid_: History mode, revisions view
 
-**Commit View**:
-The repository perspective for staging Working State changes and composing the next Commit.
-_Avoid_: Stage view, commit mode
+**Staging Pane**:
+The Details-tab presentation of the Uncommitted Changes entry, used for staging Working State changes and composing the next Commit.
+_Avoid_: Commit view, stage view, commit mode
 
 **Sequential Diff**:
 The ordered presentation of each selected Commit's own patch, from oldest to newest.

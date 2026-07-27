@@ -12,34 +12,19 @@
 
 @implementation PBCommitHookFailedSheet
 
-@synthesize commitController;
-
 #pragma mark -
 #pragma mark PBCommitHookFailedSheet
 
-
 + (void)beginWithMessageText:(NSString *)message
 					infoText:(NSString *)info
-			commitController:(PBGitCommitController *)controller
-		   completionHandler:(RJSheetCompletionHandler)handler;
+			windowController:(PBGitWindowController *)windowController
+		   completionHandler:(RJSheetCompletionHandler)handler
 {
 	PBCommitHookFailedSheet *sheet = [[self alloc] initWithWindowNibName:@"PBCommitHookFailedSheet"
-														   andController:controller];
+														windowController:windowController];
 	[sheet beginMessageSheetWithMessageText:message
 								   infoText:info
 						  completionHandler:handler];
-}
-
-- (id)initWithWindowNibName:(NSString *)windowNibName
-			  andController:(PBGitCommitController *)controller;
-{
-	self = [self initWithWindowNibName:windowNibName windowController:controller.windowController];
-	if (!self)
-		return nil;
-
-	self.commitController = controller;
-
-	return self;
 }
 
 - (IBAction)forceCommit:(id)sender

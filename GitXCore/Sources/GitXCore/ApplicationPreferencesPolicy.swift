@@ -23,7 +23,6 @@ public enum ApplicationPreferenceKey: String, CaseIterable, Sendable {
     case customTerminalArguments = "PBCustomTerminalArguments"
     case raycastScriptsDirectory = "PBRaycastScriptsDirectory"
     case patchExportMode = "PBPatchExportMode"
-    case showStageView = "PBShowStageView"
     case branchFilter = "PBBranchFilter"
     case historySearchMode = "PBHistorySearchMode"
     case appearance = "PBAppearancePreference"

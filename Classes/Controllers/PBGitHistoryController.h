@@ -37,6 +37,14 @@ NS_ASSUME_NONNULL_BEGIN
 @property (readonly) BOOL singleCommitSelected;
 @property (readonly) BOOL singleNonHeadCommitSelected;
 
+/// YES when the pinned Uncommitted Changes row is the current selection.
+@property (readonly) BOOL uncommittedChangesSelected;
+
+/// Selects the pinned Uncommitted Changes row, refreshing the index first if
+/// the row does not exist yet. On a clean repository this degrades to plain
+/// History.
+- (void)selectUncommittedChanges;
+
 - (BOOL)hasNonlinearPath;
 - (NSMenu *)tableColumnMenu;
 - (void)selectCommit:(GTOID *)commit;

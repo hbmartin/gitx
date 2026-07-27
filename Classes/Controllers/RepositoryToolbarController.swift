@@ -7,20 +7,9 @@ import OSLog
 /// Objective-C callers are not visible to SwiftLint's analyzer.
 @objc(PBRepositoryToolbarController)
 final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftlint:disable:this unused_declaration
-    private enum Mode {
-        case history
-        case commit
-
-        var toolbarIdentifier: NSToolbar.Identifier {
-            switch self {
-            case .history: "GitX.Repository.HistoryToolbar"
-            case .commit: "GitX.Repository.CommitToolbar"
-            }
-        }
-    }
+    private static let toolbarIdentifier = NSToolbar.Identifier("GitX.Repository.HistoryToolbar")
 
     private enum Item {
-        static let history = NSToolbarItem.Identifier("GitX.Toolbar.History")
         static let commit = NSToolbarItem.Identifier("GitX.Toolbar.Commit")
         static let fetch = NSToolbarItem.Identifier("GitX.Toolbar.Fetch")
         static let pull = NSToolbarItem.Identifier("GitX.Toolbar.Pull")
@@ -43,9 +32,8 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
     }
 
     private weak var windowController: PBGitWindowController?
-    private var mode: Mode = .history
-    private var toolbars: [Mode: NSToolbar] = [:]
-    private var statusViews: [Mode: StatusViews] = [:]
+    private var toolbar: NSToolbar?
+    private var statusViews: StatusViews?
     private var currentStatus = ""
     private var currentBusy = false
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryToolbar")
@@ -57,15 +45,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
     }
 
     @objc func install() {
-        installToolbar(for: .history)
-    }
-
-    @objc(setHistoryMode:)
-    // swiftlint:disable:next unused_declaration
-    func setHistoryMode(_ historyMode: Bool) {
-        let requested: Mode = historyMode ? .history : .commit
-        guard requested != mode || windowController?.window?.toolbar == nil else { return }
-        installToolbar(for: requested)
+        installToolbar()
     }
 
     @objc(updateWithStatus:busy:baseWindowTitle:)
@@ -79,24 +59,23 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         }
     }
 
-    private func installToolbar(for mode: Mode) {
+    private func installToolbar() {
         guard let window = windowController?.window else { return }
         let start = ProcessInfo.processInfo.systemUptime
-        self.mode = mode
-        let reused = toolbars[mode] != nil
-        let toolbar = toolbars[mode] ?? makeToolbar(for: mode)
-        toolbars[mode] = toolbar
-        window.toolbar = toolbar
+        let reused = toolbar != nil
+        let installed = toolbar ?? makeToolbar()
+        toolbar = installed
+        window.toolbar = installed
         window.toolbarStyle = .expanded
         applyCurrentStatus()
         let elapsed = ProcessInfo.processInfo.systemUptime - start
         logger.info(
-            "Installed repository toolbar mode, cached: \(reused, privacy: .public), elapsed: \(elapsed, format: .fixed(precision: 4))s"
+            "Installed repository toolbar, cached: \(reused, privacy: .public), elapsed: \(elapsed, format: .fixed(precision: 4))s"
         )
     }
 
-    private func makeToolbar(for mode: Mode) -> NSToolbar {
-        let toolbar = NSToolbar(identifier: mode.toolbarIdentifier)
+    private func makeToolbar() -> NSToolbar {
+        let toolbar = NSToolbar(identifier: Self.toolbarIdentifier)
         toolbar.delegate = self
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
@@ -106,7 +85,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
     }
 
     private func applyCurrentStatus() {
-        guard let views = statusViews[mode] else { return }
+        guard let views = statusViews else { return }
         views.label.stringValue = currentStatus.isEmpty ? "Ready" : currentStatus
         if currentBusy {
             views.spinner.startAnimation(nil)
@@ -117,44 +96,27 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         }
     }
 
-    private func mode(for toolbar: NSToolbar) -> Mode {
-        toolbar.identifier == Mode.commit.toolbarIdentifier ? .commit : .history
-    }
-
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        switch mode(for: toolbar) {
-        case .history:
-            [
-                Item.commit,
-                .flexibleSpace,
-                Item.actions,
-                Item.addRemote,
-                Item.fetch,
-                Item.pull,
-                Item.push,
-                .flexibleSpace,
-                Item.jump,
-                Item.viewRemote,
-                Item.reveal,
-                Item.terminal,
-                Item.refreshStatus,
-                Item.repositorySettings,
-            ]
-        case .commit:
-            [
-                Item.history,
-                .flexibleSpace,
-                Item.refreshStatus,
-                Item.reveal,
-                Item.terminal,
-                Item.repositorySettings,
-            ]
-        }
+        [
+            Item.commit,
+            .flexibleSpace,
+            Item.actions,
+            Item.addRemote,
+            Item.fetch,
+            Item.pull,
+            Item.push,
+            .flexibleSpace,
+            Item.jump,
+            Item.viewRemote,
+            Item.reveal,
+            Item.terminal,
+            Item.refreshStatus,
+            Item.repositorySettings,
+        ]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            Item.history,
             Item.commit,
             Item.fetch,
             Item.pull,
@@ -180,11 +142,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         if itemIdentifier == Item.refreshStatus {
-            return statusItem(
-                identifier: itemIdentifier,
-                mode: mode(for: toolbar),
-                isActualInsertion: flag
-            )
+            return statusItem(identifier: itemIdentifier, isActualInsertion: flag)
         }
         if itemIdentifier == Item.actions {
             return actionsItem(identifier: itemIdentifier)
@@ -223,7 +181,6 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
 
     private func statusItem(
         identifier: NSToolbarItem.Identifier,
-        mode: Mode,
         isActualInsertion: Bool
     ) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: identifier)
@@ -266,7 +223,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         view.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         item.view = view
         if isActualInsertion {
-            statusViews[mode] = StatusViews(label: label, spinner: spinner)
+            statusViews = StatusViews(label: label, spinner: spinner)
         }
         logger.debug(
             "Created repository status item, actual insertion: \(isActualInsertion, privacy: .public)"
@@ -299,10 +256,8 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         let grayBottom = NSColor(calibratedWhite: 0.43, alpha: 1)
 
         switch identifier {
-        case Item.history:
-            return Descriptor(label: "History", toolTip: "Show repository history", symbol: "clock.arrow.circlepath", action: #selector(PBGitWindowController.showHistoryView(_:)), topColor: blueTop, bottomColor: blueBottom)
         case Item.commit:
-            return Descriptor(label: "Commit", toolTip: "Show the commit view", symbol: "checkmark.circle", action: #selector(PBGitWindowController.showCommitView(_:)), topColor: greenTop, bottomColor: greenBottom)
+            return Descriptor(label: "Commit", toolTip: "Show uncommitted changes", symbol: "checkmark.circle", action: #selector(PBGitWindowController.showUncommittedChanges(_:)), topColor: greenTop, bottomColor: greenBottom)
         case Item.fetch:
             return Descriptor(label: "Fetch", toolTip: "Fetch all remotes", symbol: "arrow.down", action: NSSelectorFromString("toolbarFetch:"), topColor: blueTop, bottomColor: blueBottom)
         case Item.pull:

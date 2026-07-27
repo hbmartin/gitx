@@ -21,6 +21,7 @@
 #import "PBGitRevisionCell.h"
 #import "PBHistorySearchController.h"
 #import "RepositoryIgnoreTestSupport.h"
+#import "PBGitBinary.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -65,6 +66,16 @@ typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 	PBChangedFilesSortModeStatus,
 };
 
+typedef NS_ENUM(NSInteger, PBStagingListLayout) {
+	PBStagingListLayoutSectionedList,
+	PBStagingListLayoutSplitTables,
+};
+
+typedef NS_ENUM(NSInteger, PBStagingFileSortOrder) {
+	PBStagingFileSortOrderPath,
+	PBStagingFileSortOrderStatus,
+};
+
 typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 	PBApplicationIconStylePlusEyes,
 	PBApplicationIconStyleBracketed,
@@ -107,6 +118,103 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @property (class, copy) NSString *raycastScriptsDirectory;
 @property (class) NSInteger patchExportMode;
 @property (class) PBApplicationIconStyle applicationIconStyle;
+@property (class) PBStagingListLayout stagingListLayout;
+@property (class) PBStagingFileSortOrder stagingFileSortOrder;
+@property (class) BOOL stagingIgnoreWhitespace;
+@end
+
+typedef NS_ENUM(NSInteger, PBStagingListSection) {
+	PBStagingListSectionStaged,
+	PBStagingListSectionUnstaged,
+};
+
+@interface PBStagingListRow : NSObject
+@property (nonatomic, readonly) BOOL isHeader;
+@property (nonatomic, readonly) PBStagingListSection section;
+@property (nonatomic, readonly, nullable) PBChangedFile *file;
+@end
+
+@interface PBStagingDiffRequest : NSObject
+- (instancetype)initWithFile:(PBChangedFile *)file staged:(BOOL)staged;
+@property (nonatomic, readonly) PBChangedFile *file;
+@property (nonatomic, readonly) BOOL staged;
+@end
+
+@class PBStagingDiffRequest;
+
+@interface PBStagingDiffPaneController : NSObject
+@property (nonatomic, readonly) PBNativeContentView *contentView;
+@property (nonatomic) NSUInteger contextLines;
+@property (nonatomic) BOOL ignoreWhitespace;
+- (void)renderRequests:(NSArray<PBStagingDiffRequest *> *)requests;
+- (void)rerenderCurrentRequests;
+@end
+
+@class PBStagingListViewModel;
+
+@interface PBStagingFileCellView : NSTableCellView
+@property (nonatomic, readonly) NSButton *checkbox;
+@property (nonatomic, readonly) NSTextField *pathField;
+@property (nonatomic, readonly) NSButton *overflowButton;
+@end
+
+@interface PBCommitTableInteractionCoordinator : NSObject
+- (void)stageSelectedFiles;
+- (void)unstageSelectedFiles;
+- (void)toggleStagingForTableView:(NSTableView *)tableView;
+- (void)focusTable:(NSTableView *)tableView;
+- (BOOL)handleCommandSelector:(SEL)commandSelector;
+- (void)displayCell:(id)cell forTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)row inTableView:(NSTableView *)tableView;
+- (void)didDoubleClickTableView:(NSTableView *)tableView;
+- (BOOL)writeRowsWithIndexes:(NSIndexSet *)rowIndexes fromTableView:(NSTableView *)tableView toPasteboard:(NSPasteboard *)pasteboard;
+- (NSDragOperation)validateDrop:(id<NSDraggingInfo>)info inTableView:(NSTableView *)tableView;
+- (BOOL)acceptDrop:(id<NSDraggingInfo>)info inTableView:(NSTableView *)tableView;
+@end
+
+@interface PBStagingFileListController : NSObject
+@property (nonatomic, readonly) PBCommitTableInteractionCoordinator *interactionCoordinator;
+@property (nonatomic, readonly) PBStagingListViewModel *viewModel;
+@property (nonatomic, readonly) NSArrayController *unstagedFilesController;
+@property (nonatomic, readonly) NSArrayController *stagedFilesController;
+@property (nonatomic, readonly) NSTableView *unstagedTable;
+@property (nonatomic, readonly) NSTableView *stagedTable;
+@property (nonatomic, readonly) NSTableView *sectionedTable;
+@property (nonatomic, readonly) PBStagingListLayout layout;
+@property (nonatomic, readonly) NSInteger stagedFileCount;
+- (void)applyFilterAndSort;
+- (void)rearrange;
+- (void)setListLayout:(PBStagingListLayout)layout;
+- (NSArray<PBChangedFile *> *)selectedFilesForStagedContext:(BOOL)stagedContext;
+@end
+
+@interface PBCommitMessageTransformer : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (nullable NSString *)transformMessage:(NSString *)message error:(NSError *_Nullable *_Nullable)error;
+@end
+
+@interface PBStagingViewController : NSViewController
+@property (nonatomic, readonly) PBStagingFileListController *fileListController;
+@property (nonatomic, readonly) PBStagingDiffPaneController *diffPaneController;
+@property (nonatomic, readonly) NSTextView *commitMessageView;
+@property (nonatomic, readonly) NSSearchField *searchField;
+- (void)updateView;
+- (void)closeView;
+- (void)reloadPushRemotes;
+@end
+
+@interface PBStagingListViewModel : NSObject
+@property (nonatomic, copy) NSString *searchText;
+@property (nonatomic) PBStagingFileSortOrder sortOrder;
+- (NSArray<PBChangedFile *> *)filesInSection:(PBStagingListSection)section
+								 fromChanges:(NSArray<PBChangedFile *> *)changes;
+- (NSArray<PBStagingListRow *> *)flattenedRowsFromChanges:(NSArray<PBChangedFile *> *)changes;
+- (NSInteger)rowCheckboxStateForFile:(PBChangedFile *)file inSection:(PBStagingListSection)section;
+- (NSInteger)masterCheckboxStateForChanges:(NSArray<PBChangedFile *> *)changes
+								 inSection:(PBStagingListSection)section;
+- (NSArray<PBStagingDiffRequest *> *)diffRequestsForStagedSelection:(NSArray<PBChangedFile *> *)stagedSelection
+												   unstagedSelection:(NSArray<PBChangedFile *> *)unstagedSelection;
+- (NSArray<PBStagingDiffRequest *> *)diffRequestsForRows:(NSArray<PBStagingListRow *> *)rows
+										 selectedIndexes:(NSIndexSet *)selectedIndexes;
 @end
 
 @interface PBApplicationIconController : NSObject
@@ -277,13 +385,7 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 				 authorDate:(NSString *)authorDate;
 @end
 
-@interface PBWorkingStateRefreshPolicy : NSObject
-+ (BOOL)shouldReplaceDisplayedDiff:(nullable NSString *)displayedDiff
-					  renderedDiff:(NSString *)renderedDiff;
-@end
-
 @interface PBPerformanceBudgets : NSObject
-@property (class, nonatomic, readonly) double warmViewSwitchP95Seconds;
 @property (class, nonatomic, readonly) double mainThreadBlockSeconds;
 @property (class, nonatomic, readonly) double cachedWorkingStateFeedbackSeconds;
 @property (class, nonatomic, readonly) double freshWorkingStateP95Seconds;
@@ -291,21 +393,6 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @property (class, nonatomic, readonly) NSInteger representativeDiffByteCount;
 @property (class, nonatomic, readonly) NSInteger stressChangedFileCount;
 @property (class, nonatomic, readonly) NSInteger stressDiffByteCount;
-@end
-
-@interface PBWorkingStateDiffSnapshot : NSObject
-@property (nonatomic, copy, readonly) NSArray<NSDictionary<NSString *, id> *> *sections;
-@property (nonatomic, copy, readonly) NSString *renderedDiff;
-@end
-
-@interface PBWorkingStateDiffCache : NSObject
-- (nullable PBWorkingStateDiffSnapshot *)snapshotForLayout:(NSInteger)layout
-	NS_SWIFT_NAME(snapshot(forLayout:));
-- (void)storeSections:(NSArray<NSDictionary<NSString *, id> *> *)sections
-		 renderedDiff:(NSString *)renderedDiff
-			   layout:(NSInteger)layout
-	NS_SWIFT_NAME(store(sections:renderedDiff:layout:));
-- (void)removeAll;
 @end
 
 typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
@@ -624,6 +711,14 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 						parentTree:(NSString *)parentTree
 					  contextLines:(NSUInteger)contextLines
 							 error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (nullable NSString *)diffForPath:(NSString *)path
+							status:(NSInteger)status
+				  hasStagedChanges:(BOOL)hasStagedChanges
+							staged:(BOOL)staged
+						parentTree:(NSString *)parentTree
+					  contextLines:(NSUInteger)contextLines
+				  ignoreWhitespace:(BOOL)ignoreWhitespace
+							 error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
 @end
 
 @interface PBCommitRemotePresentation : NSObject
@@ -691,7 +786,6 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 @interface PBRepositoryToolbarController : NSObject
 - (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
 - (void)install;
-- (void)setHistoryMode:(BOOL)historyMode;
 - (void)updateWithStatus:(NSString *)status busy:(BOOL)busy baseWindowTitle:(NSString *)baseWindowTitle;
 - (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar
 			  itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier

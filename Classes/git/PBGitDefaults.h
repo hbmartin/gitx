@@ -21,6 +21,8 @@ typedef NS_ENUM(NSInteger, PBAppearancePreference) {
 	PBAppearancePreferenceDark = 2,
 };
 
+NS_ASSUME_NONNULL_BEGIN
+
 extern NSString *const PBGitHistorySortingPreferenceDidChangeNotification;
 extern NSString *const PBAutoFetchPreferencesDidChangeNotification;
 extern NSString *const PBAppearancePreferenceDidChangeNotification;
@@ -38,16 +40,14 @@ extern NSString *const PBAppearancePreferenceDidChangeNotification;
 + (BOOL)showWhitespaceDifferences;
 + (BOOL)shouldCheckoutBranch;
 + (void)setShouldCheckoutBranch:(BOOL)shouldCheckout;
-+ (NSString *)recentCloneDestination;
++ (nullable NSString *)recentCloneDestination;
 + (void)setRecentCloneDestination:(NSString *)path;
-+ (BOOL)showStageView;
-+ (void)setShowStageView:(BOOL)suppress;
 + (NSInteger)branchFilter;
 + (void)setBranchFilter:(NSInteger)state;
 + (NSInteger)historySearchMode;
 + (void)setHistorySearchMode:(NSInteger)mode;
 + (BOOL)useRepositoryWatcher;
-+ (NSString *)terminalHandler;
++ (nullable NSString *)terminalHandler;
 + (PBAppearancePreference)appearancePreference;
 + (void)setAppearancePreference:(PBAppearancePreference)preference;
 + (BOOL)historyColumnSortingEnabled;
@@ -56,8 +56,8 @@ extern NSString *const PBAppearancePreferenceDidChangeNotification;
 + (void)setAutoFetchScope:(PBAutoFetchScope)scope;
 + (NSInteger)autoFetchIntervalMinutes;
 + (void)setAutoFetchIntervalMinutes:(NSInteger)minutes;
-+ (BOOL)notifyAboutFetchedCommitsForRepositoryURL:(NSURL *)repositoryURL;
-+ (void)setNotifyAboutFetchedCommits:(BOOL)enabled forRepositoryURL:(NSURL *)repositoryURL;
++ (BOOL)notifyAboutFetchedCommitsForRepositoryURL:(nullable NSURL *)repositoryURL;
++ (void)setNotifyAboutFetchedCommits:(BOOL)enabled forRepositoryURL:(nullable NSURL *)repositoryURL;
 
 
 // Suppressed Dialog Warnings
@@ -66,3 +66,5 @@ extern NSString *const PBAppearancePreferenceDidChangeNotification;
 + (void)resetAllDialogWarnings;
 
 @end
+
+NS_ASSUME_NONNULL_END

@@ -47,6 +47,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             shownErrors.append(error as NSError)
         }
 
+        private(set) var shownMessages: [(message: String, info: String)] = []
+        private(set) var hookFailureRetryHandlers: [() -> Void] = []
+        private(set) var performedPushes = 0
+
+        override func showMessageSheet(_ messageText: String, infoText: String) {
+            shownMessages.append((messageText, infoText))
+        }
+
+        override func showCommitHookFailedSheet(
+            _ messageText: String,
+            infoText: String,
+            retryHandler: @escaping () -> Void
+        ) {
+            shownMessages.append((messageText, infoText))
+            hookFailureRetryHandlers.append(retryHandler)
+        }
+
+        override func performPush(
+            forBranch branchRef: PBGitRef?,
+            toRemote remoteRef: PBGitRef?,
+            requiresConfirmation: Bool
+        ) {
+            performedPushes += 1
+        }
+
         override func confirmDialog(
             _ alert: NSAlert,
             suppressionIdentifier identifier: String?,
@@ -586,6 +611,50 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         scroll(historyController, selector, 0)
     }
 
+    func testApplicationDelegateCoversActivationAndFileOpens() throws {
+        // These app-delegate paths only run when the host application is
+        // activated or receives file-open events, which never happens
+        // deterministically in a headless suite; drive them directly.
+        let delegate = try XCTUnwrap(NSApp.delegate as? NSObject)
+        delegate.perform(
+            NSSelectorFromString("applicationDidBecomeActive:"),
+            with: NSNotification(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        )
+        _ = delegate.perform(NSSelectorFromString("application:openFiles:"), with: NSApp, with: [fixture.path])
+        pumpRunLoop(for: 1.0)
+        for window in NSApp.windows
+            where window.windowController is PBGitWindowController && window !== windowController.window
+        {
+            window.close()
+        }
+        for window in NSApp.windows where window.title.contains("Welcome") {
+            window.close()
+        }
+    }
+
+    func testCommitMessageTransformerAppliesRulesAndSurfacesRuleErrors() throws {
+        try fixture.git(["config", "--local", "gitx.commitMessageReplacementRules", #"JIRA-(\d+) => ISSUE $1"#])
+        var transformer = PBCommitMessageTransformer(repository: repository)
+        XCTAssertEqual(try transformer.transformMessage("Fix JIRA-42 properly"), "Fix ISSUE 42 properly")
+
+        try fixture.git(["config", "--local", "gitx.commitMessageReplacementRules", "rule-without-separator"])
+        transformer = PBCommitMessageTransformer(repository: repository)
+        XCTAssertThrowsError(try transformer.transformMessage("anything")) { error in
+            XCTAssertTrue(
+                error.localizedDescription.contains("1"),
+                "the missing-separator error names the offending line: \(error.localizedDescription)"
+            )
+        }
+
+        try fixture.git(["config", "--local", "gitx.commitMessageReplacementRules", "([ => broken"])
+        transformer = PBCommitMessageTransformer(repository: repository)
+        XCTAssertThrowsError(try transformer.transformMessage("anything")) { error in
+            XCTAssertFalse(error.localizedDescription.isEmpty)
+        }
+
+        try fixture.git(["config", "--local", "--unset", "gitx.commitMessageReplacementRules"])
+    }
+
     func testRepositoryUISettingsPersistCommitAndSidebarChoices() {
         let defaultsKey = "PBRepositoryUISettings"
         let defaults = UserDefaults.standard
@@ -610,44 +679,557 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(reloaded.isSidebarGroupVisible("Remotes"))
     }
 
-    func testWorkingStateDiffRefreshesInBackgroundAndReusesCachedRendering() throws {
-        try fixture.write("cached working state\n", to: "cached.txt")
+    @discardableResult
+    private func openStagingPane() throws -> PBStagingViewController {
+        historyController.selectedCommitDetailsIndex = 0
         refreshIndex()
         historyController.updateUncommittedChanges()
         let workingState = try XCTUnwrap(
             historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
         )
-        let webController = try XCTUnwrap(
-            historyController.value(forKey: "webHistoryController") as? NSObject
+        historyController.commitController.setSelectedObjects([workingState])
+        historyController.updateKeys()
+        pumpRunLoop()
+        return try XCTUnwrap(
+            historyController.value(forKey: "stagingViewController") as? PBStagingViewController
         )
-        let nativeView = try XCTUnwrap(webController.value(forKey: "nativeView") as? PBNativeContentView)
-        let changeContent = NSSelectorFromString("changeContentTo:")
+    }
 
-        _ = webController.perform(changeContent, with: [workingState])
-        XCTAssertTrue(waitForCondition {
-            (webController.value(forKey: "diff") as? String)?.contains("+cached working state") == true &&
-                nativeView.textView.string.contains("cached working state")
-        })
+    private func waitForIndexUpdate(during block: () -> Void) {
+        let updated = expectation(
+            forNotification: NSNotification.Name(PBGitIndexIndexUpdated),
+            object: repository.index
+        )
+        block()
+        wait(for: [updated], timeout: 10)
+        pumpRunLoop()
+    }
 
-        nativeView.showMessage("Cache sentinel")
-        _ = webController.perform(changeContent, with: [workingState])
+    func testCommitTableInteractionCoordinatorStagingDragAndFocusFlows() throws {
+        try fixture.write("alpha.txt\n", to: "alpha.txt")
+        try fixture.write("beta.txt\n", to: "beta.txt")
+        let pane = try openStagingPane()
+        let fileList = pane.fileListController
+        fileList.setListLayout(.splitTables)
+        let coordinator = fileList.interactionCoordinator
+
+        let unstaged = fileList.unstagedFilesController
+        let staged = fileList.stagedFilesController
+        let alpha = try XCTUnwrap(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.first { $0.path == "alpha.txt" }
+        )
+        unstaged.setSelectedObjects([alpha])
+        waitForIndexUpdate { coordinator.stageSelectedFiles() }
         XCTAssertTrue(
-            nativeView.textView.string.contains("cached working state"),
-            "A repeat Working State selection should synchronously restore its memory cache"
+            (staged.arrangedObjects as? [PBChangedFile])?.contains { $0.path == "alpha.txt" } == true,
+            "stageSelectedFiles moves the selection into the staged list"
         )
-        pumpRunLoop(for: 0.5)
 
-        try fixture.write("refreshed working state\n", to: "cached.txt")
+        let stagedAlpha = try XCTUnwrap(
+            (staged.arrangedObjects as? [PBChangedFile])?.first { $0.path == "alpha.txt" }
+        )
+        staged.setSelectedObjects([stagedAlpha])
+        waitForIndexUpdate { coordinator.toggleStaging(for: fileList.stagedTable) }
+        XCTAssertFalse(
+            (staged.arrangedObjects as? [PBChangedFile])?.contains { $0.path == "alpha.txt" } == true
+        )
+
+        let beta = try XCTUnwrap(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.first { $0.path == "beta.txt" }
+        )
+        unstaged.setSelectedObjects([beta])
+        let betaRow = try XCTUnwrap(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.firstIndex { $0.path == "beta.txt" }
+        )
+        pumpRunLoop()
+        XCTAssertGreaterThan(fileList.unstagedTable.numberOfRows, 0)
+        fileList.unstagedTable.selectRowIndexes(IndexSet(integer: betaRow), byExtendingSelection: false)
+        pumpRunLoop()
+        XCTAssertTrue(fileList.unstagedTable.selectedRowIndexes.contains(betaRow))
+        waitForIndexUpdate { coordinator.didDoubleClick(fileList.unstagedTable) }
+        XCTAssertTrue(
+            (staged.arrangedObjects as? [PBChangedFile])?.contains { $0.path == "beta.txt" } == true,
+            "double-click stages the clicked row"
+        )
+
+        coordinator.focusTable(fileList.unstagedTable)
+        XCTAssertTrue(coordinator.handleCommand(#selector(NSResponder.insertTab(_:))))
+        XCTAssertTrue(coordinator.handleCommand(#selector(NSResponder.insertBacktab(_:))))
+        XCTAssertFalse(coordinator.handleCommand(#selector(NSResponder.insertNewline(_:))))
+        let column = try XCTUnwrap(fileList.unstagedTable.tableColumns.first)
+        coordinator.displayCell(NSCell(), for: column, row: 0, in: fileList.unstagedTable)
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("GitXStagingCoordinatorTests"))
+        pasteboard.clearContents()
+        let unstagedRows = IndexSet(integer: 0)
+        XCTAssertTrue(
+            coordinator.writeRows(with: unstagedRows, from: fileList.unstagedTable, to: pasteboard)
+        )
+        let info = DraggingInfoFake(pasteboard: pasteboard)
+        XCTAssertEqual(coordinator.validateDrop(info, in: fileList.stagedTable), .copy)
+        waitForIndexUpdate {
+            XCTAssertTrue(coordinator.acceptDrop(info, in: fileList.stagedTable))
+        }
+        XCTAssertEqual(fileList.stagedFileCount, 2, "the dragged unstaged file lands in the staged list")
+
+        let sameSource = DraggingInfoFake(pasteboard: pasteboard)
+        sameSource.draggingSource = fileList.unstagedTable
+        XCTAssertEqual(
+            coordinator.validateDrop(sameSource, in: fileList.unstagedTable),
+            [],
+            "drags within the same table are rejected"
+        )
+        let emptyPasteboard = NSPasteboard(name: NSPasteboard.Name("GitXStagingCoordinatorTestsEmpty"))
+        emptyPasteboard.clearContents()
+        XCTAssertFalse(coordinator.acceptDrop(DraggingInfoFake(pasteboard: emptyPasteboard), in: fileList.stagedTable))
+
+        XCTAssertFalse(
+            coordinator.writeRows(with: IndexSet(integer: 99), from: fileList.unstagedTable, to: pasteboard),
+            "out-of-range drag rows are rejected"
+        )
+        let fileChangesType = NSPasteboard.PasteboardType("GitFileChangedType")
+        let corruptPasteboard = NSPasteboard(name: NSPasteboard.Name("GitXStagingCoordinatorTestsCorrupt"))
+        corruptPasteboard.clearContents()
+        corruptPasteboard.declareTypes([fileChangesType], owner: nil)
+        corruptPasteboard.setData(Data([0x00, 0x01, 0x02]), forType: fileChangesType)
+        XCTAssertFalse(
+            coordinator.acceptDrop(DraggingInfoFake(pasteboard: corruptPasteboard), in: fileList.stagedTable),
+            "corrupt drag payloads are rejected"
+        )
+        let staleRowsPasteboard = NSPasteboard(name: NSPasteboard.Name("GitXStagingCoordinatorTestsStale"))
+        staleRowsPasteboard.clearContents()
+        staleRowsPasteboard.declareTypes([fileChangesType], owner: nil)
+        try staleRowsPasteboard.setData(
+            NSKeyedArchiver.archivedData(withRootObject: NSIndexSet(index: 99), requiringSecureCoding: true),
+            forType: fileChangesType
+        )
+        XCTAssertFalse(
+            coordinator.acceptDrop(DraggingInfoFake(pasteboard: staleRowsPasteboard), in: fileList.stagedTable),
+            "drag rows that no longer exist are rejected"
+        )
+
+        pumpRunLoop()
+        let stagedFiles = staged.arrangedObjects as? [PBChangedFile] ?? []
+        staged.setSelectedObjects(stagedFiles)
+        fileList.stagedTable.selectRowIndexes(
+            IndexSet(integersIn: 0 ..< stagedFiles.count),
+            byExtendingSelection: false
+        )
+        pumpRunLoop()
+        XCTAssertTrue(
+            coordinator.writeRows(
+                with: IndexSet(integer: 0),
+                from: fileList.stagedTable,
+                to: pasteboard
+            )
+        )
+        coordinator.toggleStaging(for: fileList.unstagedTable)
+        waitForIndexUpdate { coordinator.didDoubleClick(fileList.stagedTable) }
+        XCTAssertEqual(fileList.stagedFileCount, 0, "double-clicking staged rows unstages them")
+    }
+
+    func testStagingPaneCommitWorkflowComposerAndNotifications() throws {
+        try fixture.write("compose body\n", to: "compose.txt")
+        try fixture.git(["add", "compose.txt"])
+        let pane = try openStagingPane()
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        let messageView = pane.commitMessageView
+
+        messageView.string = ""
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        XCTAssertEqual(stub.shownMessages.last?.message, "Missing commit message")
+
+        messageView.string = "Subject line"
+        pane.perform(NSSelectorFromString("signOff:"), with: nil)
+        XCTAssertTrue(
+            messageView.string.contains("Signed-off-by: GitX Tests <gitx-tests@example.invalid>"),
+            "sign-off appends the configured author: \(messageView.string)"
+        )
+
+        let hooksDirectory = URL(fileURLWithPath: fixture.path).appendingPathComponent(".git/hooks")
+        let prepareHook = hooksDirectory.appendingPathComponent("prepare-commit-msg")
+        try FileManager.default.createDirectory(at: hooksDirectory, withIntermediateDirectories: true)
+        try "#!/bin/sh\necho \"prepared subject\" > \"$1\"\n".write(to: prepareHook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: prepareHook.path)
+        pane.perform(NSSelectorFromString("prepareCommitMessage:"), with: nil)
+        XCTAssertTrue(messageView.string.contains("prepared subject"))
+        try FileManager.default.removeItem(at: prepareHook)
+
+        let initialHead = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        messageView.string = "Staging pane commit"
+        let committed = expectation(
+            forNotification: NSNotification.Name(PBGitIndexFinishedCommit),
+            object: repository.index
+        )
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        wait(for: [committed], timeout: 20)
+        pumpRunLoop(for: 0.5)
+        let newHead = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertNotEqual(newHead, initialHead)
+        XCTAssertEqual(messageView.string, "", "a successful commit clears the composer")
+        XCTAssertEqual(
+            try fixture.git(["log", "-1", "--pretty=%s"]).trimmingCharacters(in: .whitespacesAndNewlines),
+            "Staging pane commit"
+        )
+
+        NotificationCenter.default.post(
+            name: NSNotification.Name(PBGitIndexCommitFailed),
+            object: repository.index,
+            userInfo: ["description": "synthetic failure"]
+        )
+        XCTAssertEqual(stub.shownMessages.last?.message, "Commit failed")
+        XCTAssertEqual(stub.shownMessages.last?.info, "synthetic failure")
+
+        NotificationCenter.default.post(
+            name: NSNotification.Name(PBGitIndexCommitHookFailed),
+            object: repository.index,
+            userInfo: ["description": "synthetic hook failure"]
+        )
+        XCTAssertEqual(stub.shownMessages.last?.message, "Commit hook failed")
+        let retry = try XCTUnwrap(stub.hookFailureRetryHandlers.last)
+        retry()
+        XCTAssertEqual(
+            stub.shownMessages.last?.message,
+            "No changes to commit",
+            "retrying with a clean tree walks the force-commit validation path"
+        )
+
+        historyController.selectUncommittedChanges()
+        pumpRunLoop(for: 0.5)
+        XCTAssertFalse(
+            historyController.uncommittedChangesSelected,
+            "selecting uncommitted changes on a clean repository degrades to plain history"
+        )
+        historyController.perform(
+            NSSelectorFromString("applicationDidBecomeActive:"),
+            with: NSNotification(name: NSApplication.didBecomeActiveNotification, object: nil)
+        )
+
+        waitForIndexUpdate {
+            stub.toggleAmendCommit(self)
+        }
+        XCTAssertTrue(repository.index.isAmend)
+        XCTAssertTrue(
+            messageView.string.contains("Staging pane commit"),
+            "amend repopulates the composer with the last commit message"
+        )
+        XCTAssertTrue(historyController.uncommittedChangesSelected == false || pane.view.isHidden == false)
+        waitForIndexUpdate {
+            pane.perform(NSSelectorFromString("toggleAmendCommit:"), with: nil)
+        }
+        XCTAssertFalse(repository.index.isAmend)
+    }
+
+    func testStagingPaneMenusFileActionsAndViewOptions() throws {
+        try fixture.write("modify me\n", to: "nested/tracked.txt")
+        try fixture.write("junk\n", to: "junk.txt")
+        try fixture.write("ignored candidate\n", to: "ignore-me.txt")
+        try fixture.write("staged\n", to: "staged.txt")
+        try fixture.git(["add", "staged.txt"])
+        let pane = try openStagingPane()
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        let fileList = pane.fileListController
+        fileList.setListLayout(.splitTables)
+        let unstaged = fileList.unstagedFilesController
+        let staged = fileList.stagedFilesController
+        unstaged.setSelectedObjects(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
+        )
+        staged.setSelectedObjects(staged.arrangedObjects as? [PBChangedFile] ?? [])
+
+        for menu in [fileList.unstagedTable.menu, fileList.stagedTable.menu, fileList.sectionedTable.menu] {
+            try pane.perform(NSSelectorFromString("menuNeedsUpdate:"), with: XCTUnwrap(menu))
+        }
+
+        let contextItem = NSMenuItem()
+        contextItem.tag = 6
+        pane.perform(NSSelectorFromString("changeContextLines:"), with: contextItem)
+        XCTAssertEqual(pane.diffPaneController.contextLines, 6)
+        contextItem.tag = 3
+        pane.perform(NSSelectorFromString("changeContextLines:"), with: contextItem)
+
+        let whitespaceItem = NSMenuItem()
+        whitespaceItem.tag = 1
+        pane.perform(NSSelectorFromString("changeWhitespaceVisibility:"), with: whitespaceItem)
+        XCTAssertTrue(pane.diffPaneController.ignoreWhitespace)
+        whitespaceItem.tag = 0
+        pane.perform(NSSelectorFromString("changeWhitespaceVisibility:"), with: whitespaceItem)
+        XCTAssertFalse(pane.diffPaneController.ignoreWhitespace)
+
+        let layoutItem = NSMenuItem()
+        layoutItem.tag = PBStagingListLayout.sectionedList.rawValue
+        pane.perform(NSSelectorFromString("changeListLayout:"), with: layoutItem)
+        XCTAssertEqual(fileList.layout, .sectionedList)
+        let delegate = try XCTUnwrap(pane.commitMessageView.delegate)
+        _ = delegate.textView?(pane.commitMessageView, doCommandBy: #selector(NSResponder.insertTab(_:)))
+        layoutItem.tag = PBStagingListLayout.splitTables.rawValue
+        pane.perform(NSSelectorFromString("changeListLayout:"), with: layoutItem)
+        _ = delegate.textView?(pane.commitMessageView, doCommandBy: #selector(NSResponder.insertBacktab(_:)))
+
+        let sortPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        sortPopup.addItem(withTitle: "status")
+        sortPopup.lastItem?.tag = PBStagingFileSortOrder.status.rawValue
+        sortPopup.selectItem(withTag: PBStagingFileSortOrder.status.rawValue)
+        pane.perform(NSSelectorFromString("sortOrderChanged:"), with: sortPopup)
+        XCTAssertEqual(PBApplicationSettings.stagingFileSortOrder, .status)
+        sortPopup.addItem(withTitle: "path")
+        sortPopup.lastItem?.tag = PBStagingFileSortOrder.path.rawValue
+        sortPopup.selectItem(withTag: PBStagingFileSortOrder.path.rawValue)
+        pane.perform(NSSelectorFromString("sortOrderChanged:"), with: sortPopup)
+        XCTAssertEqual(PBApplicationSettings.stagingFileSortOrder, .path)
+
+        // Selecting in the staged table above cleared the unstaged selection
+        // (split-table selections are mutually exclusive); re-select before
+        // staging.
+        unstaged.setSelectedObjects(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
+        )
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("stageFiles:"), with: nil) }
+        XCTAssertTrue(
+            (staged.arrangedObjects as? [PBChangedFile])?.contains { $0.path == "nested/tracked.txt" } == true
+        )
+        staged.setSelectedObjects(
+            (staged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
+        )
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("unstageFiles:"), with: nil) }
+
+        unstaged.setSelectedObjects(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
+        )
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("discardFilesForcibly:"), with: nil) }
+        XCTAssertEqual(
+            try fixture.git(["status", "--porcelain", "--", "nested/tracked.txt"]).trimmingCharacters(in: .whitespacesAndNewlines),
+            "",
+            "forcible discard restores the tracked file"
+        )
+
+        let confirmations = stub.confirmationCount
+        try fixture.write("discard me\n", to: "nested/tracked.txt")
+        refreshIndex()
+        unstaged.setSelectedObjects(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
+        )
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("discardFiles:"), with: nil) }
+        XCTAssertGreaterThan(stub.confirmationCount, confirmations, "plain discard confirms first")
+
+        unstaged.setSelectedObjects(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "ignore-me.txt" } ?? []
+        )
+        let ignoreItem = NSMenuItem()
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("ignoreFiles:"), with: ignoreItem) }
+        let gitignore = URL(fileURLWithPath: fixture.path).appendingPathComponent(".gitignore")
+        XCTAssertTrue(
+            (try? String(contentsOf: gitignore, encoding: .utf8))?.contains("ignore-me.txt") == true
+        )
+
+        unstaged.setSelectedObjects(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "junk.txt" } ?? []
+        )
+        let trashItem = NSMenuItem()
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("moveToTrash:"), with: trashItem) }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: URL(fileURLWithPath: fixture.path).appendingPathComponent("junk.txt").path),
+            "move to trash removes the working-tree file"
+        )
+
+        let dragPasteboard = NSPasteboard(name: NSPasteboard.Name("GitXStagingMessageDrag"))
+        dragPasteboard.clearContents()
+        let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        dragPasteboard.declareTypes([filenamesType], owner: nil)
+        let workingDirectory = repository.workingDirectory() ?? fixture.path
+        dragPasteboard.setPropertyList(
+            [(workingDirectory as NSString).appendingPathComponent("staged.txt")],
+            forType: filenamesType
+        )
+        pane.commitMessageView.string = ""
+        _ = pane.commitMessageView.performDragOperation(DraggingInfoFake(pasteboard: dragPasteboard))
+        let rewritten = dragPasteboard.readObjects(forClasses: [NSString.self], options: nil) as? [String]
+        XCTAssertEqual(
+            rewritten,
+            ["staged.txt"],
+            "dropped files are rewritten to repository-relative paths"
+        )
+
+        let regularCommit = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.setSelectedObjects([regularCommit])
+        historyController.updateKeys()
+        historyController.selectUncommittedChanges()
+        pumpRunLoop()
+        XCTAssertTrue(
+            historyController.uncommittedChangesSelected,
+            "selecting uncommitted changes with the row present selects it directly"
+        )
+
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        try fixture.write("tree refresh\n", to: "nested/tracked.txt")
         refreshIndex()
         historyController.updateUncommittedChanges()
-        let refreshedWorkingState = try XCTUnwrap(
+        historyController.selectedCommitDetailsIndex = 0
+        historyController.updateKeys()
+
+        let amendItem = NSMenuItem(title: "Amend", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
+        _ = stub.validateMenuItem(amendItem)
+        let uncommittedItem = NSMenuItem(title: "Uncommitted", action: NSSelectorFromString("showUncommittedChanges:"), keyEquivalent: "")
+        _ = stub.validateMenuItem(uncommittedItem)
+        let historyItem = NSMenuItem(title: "History", action: NSSelectorFromString("showHistoryView:"), keyEquivalent: "")
+        _ = stub.validateMenuItem(historyItem)
+
+        XCTAssertFalse(PBGitBinary.searchLocations().isEmpty)
+        XCTAssertNotNil(PBGitBinary.version())
+        XCTAssertFalse(PBGitBinary.notFoundError().isEmpty)
+        let directoryTask = PBTask(launchPath: "/usr/bin/true", arguments: [], inDirectory: fixture.path)
+        try directoryTask.launch()
+
+        let slowTask = PBTask(launchPath: "/bin/sleep", arguments: ["30"], inDirectory: nil)
+        let cancelled = expectation(description: "terminated task reports an error")
+        slowTask.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            XCTAssertNotNil(error, "terminating a running task surfaces an error")
+            cancelled.fulfill()
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+        slowTask.terminate()
+        wait(for: [cancelled], timeout: 10)
+
+        let webController = historyController.value(forKey: "webHistoryController") as? NSObject
+        webController?.perform(NSSelectorFromString("refreshDisplayedContent"))
+        pumpRunLoop()
+    }
+
+    func testStagingPaneReplacesDetailViewForWorkingStateRow() throws {
+        let previousLayout = PBApplicationSettings.stagingListLayout
+        PBApplicationSettings.stagingListLayout = .sectionedList
+        defer { PBApplicationSettings.stagingListLayout = previousLayout }
+
+        try fixture.write("staged addition\n", to: "staged-addition.txt")
+        try fixture.git(["add", "staged-addition.txt"])
+        try fixture.write("tracked modification\n", to: "nested/tracked.txt")
+        try fixture.write("brand new\n", to: "untracked.txt")
+        refreshIndex()
+        historyController.updateUncommittedChanges()
+
+        let workingState = try XCTUnwrap(
             historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
         )
-        _ = webController.perform(changeContent, with: [refreshedWorkingState])
-        XCTAssertTrue(waitForCondition {
-            (webController.value(forKey: "diff") as? String)?.contains("+refreshed working state") == true &&
-                nativeView.textView.string.contains("refreshed working state")
-        })
+        historyController.selectedCommitDetailsIndex = 0
+        historyController.commitController.setSelectedObjects([workingState])
+        historyController.updateKeys()
+        pumpRunLoop()
+
+        let pane = try XCTUnwrap(
+            historyController.value(forKey: "stagingViewController") as? PBStagingViewController,
+            "selecting the working-state row in Detail mode must create the staging pane"
+        )
+        XCTAssertNotNil(pane.view.superview)
+        XCTAssertFalse(pane.view.isHidden)
+        let webView = try XCTUnwrap(
+            (historyController.value(forKey: "webHistoryController") as? NSObject)?.value(forKey: "view") as? NSView
+        )
+        XCTAssertTrue(webView.isHidden, "the detail web view hides while the staging pane is shown")
+
+        let fileList = pane.fileListController
+        XCTAssertEqual(fileList.unstagedTable.accessibilityIdentifier(), "UnstagedFiles")
+        XCTAssertEqual(fileList.stagedTable.accessibilityIdentifier(), "StagedFiles")
+        XCTAssertEqual(fileList.unstagedTable.tag, 0)
+        XCTAssertEqual(fileList.stagedTable.tag, 1)
+        XCTAssertEqual(pane.commitMessageView.accessibilityIdentifier(), "CommitMessage")
+        XCTAssertEqual(fileList.stagedFileCount, 1)
+        let unstagedPaths = (fileList.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.map(\.path)
+        XCTAssertEqual(unstagedPaths, ["nested/tracked.txt", "untracked.txt"])
+
+        let untracked = try XCTUnwrap(
+            (fileList.unstagedFilesController.arrangedObjects as? [PBChangedFile])?
+                .first { $0.path == "untracked.txt" }
+        )
+        fileList.unstagedFilesController.setSelectedObjects([untracked])
+        pumpRunLoop(for: 0.5)
+        let renderedUntracked = pane.diffPaneController.contentView.textView.string
+        XCTAssertTrue(
+            renderedUntracked.contains("Hunk 1 : Line 1"),
+            "untracked files render as stageable synthetic hunks:\n\(renderedUntracked)"
+        )
+        XCTAssertTrue(renderedUntracked.contains("\u{00A0}Stage hunk\u{00A0}"))
+        XCTAssertTrue(renderedUntracked.contains("│ +brand new"))
+
+        let staged = try XCTUnwrap(
+            (fileList.stagedFilesController.arrangedObjects as? [PBChangedFile])?.first
+        )
+        fileList.unstagedFilesController.setSelectedObjects([])
+        fileList.stagedFilesController.setSelectedObjects([staged])
+        pumpRunLoop(for: 0.5)
+        let renderedStaged = pane.diffPaneController.contentView.textView.string
+        XCTAssertTrue(
+            renderedStaged.contains("\u{00A0}Unstage hunk\u{00A0}"),
+            "staged selections render unstage buttons:\n\(renderedStaged)"
+        )
+
+        pane.searchField.stringValue = "nested"
+        if let action = pane.searchField.action {
+            _ = NSApp.sendAction(action, to: pane.searchField.target, from: pane.searchField)
+        }
+        XCTAssertEqual(
+            (fileList.unstagedFilesController.arrangedObjects as? [PBChangedFile])?.map(\.path),
+            ["nested/tracked.txt"],
+            "the header search filters both lists by path substring"
+        )
+        XCTAssertEqual(fileList.stagedFileCount, 0)
+        pane.searchField.stringValue = ""
+        if let action = pane.searchField.action {
+            _ = NSApp.sendAction(action, to: pane.searchField.target, from: pane.searchField)
+        }
+        XCTAssertEqual(fileList.stagedFileCount, 1)
+
+        XCTAssertEqual(fileList.layout, .sectionedList, "the sectioned list is the default layout")
+        XCTAssertEqual(fileList.sectionedTable.numberOfRows, 5, "two headers plus three pending files")
+        let untrackedRow = try XCTUnwrap(
+            (0 ..< fileList.sectionedTable.numberOfRows).first { row in
+                (fileList.sectionedTable.view(atColumn: 0, row: row, makeIfNecessary: true) as? PBStagingFileCellView)?
+                    .pathField.stringValue == "untracked.txt"
+            }
+        )
+        fileList.sectionedTable.selectRowIndexes(IndexSet(integer: untrackedRow), byExtendingSelection: false)
+        XCTAssertEqual(
+            fileList.selectedFiles(forStagedContext: false).map(\.path),
+            ["untracked.txt"],
+            "sectioned selection mirrors into the unstaged array controller"
+        )
+        XCTAssertFalse(
+            try XCTUnwrap(fileList.sectionedTable.delegate?.tableView?(fileList.sectionedTable, shouldSelectRow: 0)),
+            "section headers are not selectable"
+        )
+        fileList.setListLayout(.splitTables)
+        XCTAssertEqual(PBApplicationSettings.stagingListLayout, .splitTables)
+        XCTAssertTrue(fileList.unstagedTable.superview != nil, "split tables install when toggled")
+        fileList.setListLayout(.sectionedList)
+        XCTAssertEqual(PBApplicationSettings.stagingListLayout, .sectionedList)
+        XCTAssertTrue(fileList.sectionedTable.superview != nil, "the sectioned table reinstalls when toggled back")
+
+        let previousWhitespace = PBApplicationSettings.stagingIgnoreWhitespace
+        let previousContext = UserDefaults.standard.object(forKey: "PBStageDiffContextLines")
+        pane.diffPaneController.ignoreWhitespace = true
+        XCTAssertTrue(PBApplicationSettings.stagingIgnoreWhitespace)
+        pane.diffPaneController.contextLines = 6
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "PBStageDiffContextLines"), 6)
+        pane.diffPaneController.ignoreWhitespace = previousWhitespace
+        if let previousContext = previousContext as? Int {
+            pane.diffPaneController.contextLines = UInt(previousContext)
+        } else {
+            UserDefaults.standard.removeObject(forKey: "PBStageDiffContextLines")
+        }
+
+        let regularCommit = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.setSelectedObjects([regularCommit])
+        historyController.updateKeys()
+        pumpRunLoop()
+        XCTAssertTrue(pane.view.isHidden, "selecting a commit hides the staging pane again")
+        XCTAssertFalse(webView.isHidden)
+        XCTAssertEqual(historyController.webCommits.first, regularCommit)
+
+        try fixture.git(["reset", "--quiet", "staged-addition.txt"])
+        try fixture.git(["checkout", "--quiet", "--", "nested/tracked.txt"])
+        try fixture.git(["clean", "-fdq"])
+        refreshIndex()
+        historyController.updateUncommittedChanges()
     }
 
     func testReferenceCommitStashAndPathMenuMatrices() throws {

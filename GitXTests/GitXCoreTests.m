@@ -582,8 +582,6 @@
 {
 	NSError *error = nil;
 	NSString *remotePath = [self.fixture.path stringByAppendingString:@"-sidebar-remote.git"];
-	BOOL previousShowStageView = PBGitDefaults.showStageView;
-	[PBGitDefaults setShowStageView:NO];
 	@try {
 		XCTAssertNotNil(([self.fixture git:@[ @"init", @"--bare", @"--quiet", remotePath ] error:&error]), @"%@", error);
 		PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
@@ -604,7 +602,6 @@
 		XCTAssertTrue([remoteNames containsObject:@"cli-added"], @"The sidebar should not require fetched tracking refs to show a configured remote");
 		[sidebar closeView];
 	} @finally {
-		[PBGitDefaults setShowStageView:previousShowStageView];
 		[[NSFileManager defaultManager] removeItemAtPath:remotePath error:nil];
 	}
 }
@@ -613,22 +610,18 @@
 {
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:nil];
 	(void)sidebar.view;
-	BOOL previousShowStageView = PBGitDefaults.showStageView;
 	@try {
-		[PBGitDefaults setShowStageView:NO];
 		[sidebar selectCurrentBranch];
 		[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
 																		   object:self.repository]];
 
 		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
 
-		[PBGitDefaults setShowStageView:YES];
 		[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
 																		   object:self.repository]];
 
 		XCTAssertGreaterThanOrEqual(sidebar.sourceView.selectedRow, (NSInteger)0);
 	} @finally {
-		[PBGitDefaults setShowStageView:previousShowStageView];
 		[sidebar closeView];
 	}
 }

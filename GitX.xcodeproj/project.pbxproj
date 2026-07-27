@@ -41,7 +41,6 @@
 		4A5D75FB14A9A90500DF6C68 /* OpenRecentPopup.xib in Resources */ = {isa = PBXBuildFile; fileRef = 4A5D75BA14A9A90500DF6C68 /* OpenRecentPopup.xib */; };
 		4A5D75FC14A9A90500DF6C68 /* PBCommitHookFailedSheet.xib in Resources */ = {isa = PBXBuildFile; fileRef = 4A5D75BB14A9A90500DF6C68 /* PBCommitHookFailedSheet.xib */; };
 		4A5D75FD14A9A90500DF6C68 /* PBDiffWindow.xib in Resources */ = {isa = PBXBuildFile; fileRef = 4A5D75BC14A9A90500DF6C68 /* PBDiffWindow.xib */; };
-		4A5D75FE14A9A90500DF6C68 /* PBGitCommitView.xib in Resources */ = {isa = PBXBuildFile; fileRef = 4A5D75BD14A9A90500DF6C68 /* PBGitCommitView.xib */; };
 		4A5D75FF14A9A90500DF6C68 /* PBGitHistoryView.xib in Resources */ = {isa = PBXBuildFile; fileRef = 4A5D75BE14A9A90500DF6C68 /* PBGitHistoryView.xib */; };
 		4A5D760014A9A90500DF6C68 /* PBGitSidebarView.xib in Resources */ = {isa = PBXBuildFile; fileRef = 4A5D75BF14A9A90500DF6C68 /* PBGitSidebarView.xib */; };
 		4A5D760114A9A90500DF6C68 /* PBGitXMessageSheet.xib in Resources */ = {isa = PBXBuildFile; fileRef = 4A5D75C014A9A90500DF6C68 /* PBGitXMessageSheet.xib */; };
@@ -58,7 +57,6 @@
 		4A5D76E214A9A9CC00DF6C68 /* DBPrefsWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D762914A9A9CC00DF6C68 /* DBPrefsWindowController.m */; };
 		4A5D76E314A9A9CC00DF6C68 /* OpenRecentController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D762B14A9A9CC00DF6C68 /* OpenRecentController.m */; };
 		4A5D76E414A9A9CC00DF6C68 /* PBDiffWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D762D14A9A9CC00DF6C68 /* PBDiffWindowController.m */; };
-		4A5D76E514A9A9CC00DF6C68 /* PBGitCommitController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D762F14A9A9CC00DF6C68 /* PBGitCommitController.m */; };
 		4A5D76E614A9A9CC00DF6C68 /* PBGitHistoryController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */; };
 		4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */; };
 		4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.m */; };
@@ -67,7 +65,6 @@
 		4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763F14A9A9CC00DF6C68 /* PBRepositoryDocumentController.m */; };
 		4A5D76EE14A9A9CC00DF6C68 /* PBServicesController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764114A9A9CC00DF6C68 /* PBServicesController.m */; };
 		4A5D76EF14A9A9CC00DF6C68 /* PBViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764314A9A9CC00DF6C68 /* PBViewController.m */; };
-		4A5D76F014A9A9CC00DF6C68 /* PBWebChangesController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764514A9A9CC00DF6C68 /* PBWebChangesController.m */; };
 		4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764714A9A9CC00DF6C68 /* PBWebController.m */; };
 		4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764914A9A9CC00DF6C68 /* PBWebDiffController.m */; };
 		4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.m */; };
@@ -90,7 +87,6 @@
 		4A5D770714A9A9CC00DF6C68 /* PBSourceViewOtherRevItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D767614A9A9CC00DF6C68 /* PBSourceViewOtherRevItem.m */; };
 		4A5D770814A9A9CC00DF6C68 /* PBSourceViewGitRemoteBranchItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D767814A9A9CC00DF6C68 /* PBSourceViewGitRemoteBranchItem.m */; };
 		4A5D770914A9A9CC00DF6C68 /* PBSourceViewGitRemoteItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D767A14A9A9CC00DF6C68 /* PBSourceViewGitRemoteItem.m */; };
-		4A5D770A14A9A9CC00DF6C68 /* PBSourceViewStageItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D767C14A9A9CC00DF6C68 /* PBSourceViewStageItem.m */; };
 		4A5D770B14A9A9CC00DF6C68 /* PBSourceViewGitTagItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D767E14A9A9CC00DF6C68 /* PBSourceViewGitTagItem.m */; };
 		4A5D770C14A9A9CC00DF6C68 /* PBGitTree.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D768014A9A9CC00DF6C68 /* PBGitTree.m */; };
 		4A5D770D14A9A9CC00DF6C68 /* PBError.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D768214A9A9CC00DF6C68 /* PBError.m */; };
@@ -143,7 +139,6 @@
 		4DF173E621A1A67C003CD3CE /* MAKVONotificationCenter.m in Sources */ = {isa = PBXBuildFile; fileRef = 4DF173E521A1A67A003CD3CE /* MAKVONotificationCenter.m */; };
 		4DF173E921A1D60A003CD3CE /* NSAppearance+PBDarkMode.m in Sources */ = {isa = PBXBuildFile; fileRef = 4DF173E821A1D60A003CD3CE /* NSAppearance+PBDarkMode.m */; };
 		50660A551FD6F48A004342B0 /* PBSidebarList.m in Sources */ = {isa = PBXBuildFile; fileRef = 50660A541FD6F48A004342B0 /* PBSidebarList.m */; };
-		507367411FD1F54E003F73E1 /* PBGitCommitTableViewCell.m in Sources */ = {isa = PBXBuildFile; fileRef = 507367401FD1F54E003F73E1 /* PBGitCommitTableViewCell.m */; };
 		508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m in Sources */ = {isa = PBXBuildFile; fileRef = 508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m */; };
 		50DCC65A20111E4000999D3D /* PBGitRevisionRow.m in Sources */ = {isa = PBXBuildFile; fileRef = 50DCC65920111E4000999D3D /* PBGitRevisionRow.m */; };
 		551BF176112F3F4B00265053 /* gitx_askpasswd in Resources */ = {isa = PBXBuildFile; fileRef = 551BF111112F371800265053 /* gitx_askpasswd */; };
@@ -231,6 +226,12 @@
 		C0DECE000000000000000001 /* CommitMenuPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECE000000000000000011 /* CommitMenuPresenter.swift */; };
 		C0DECE000000000000000002 /* CommitMenuPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */; };
 		C0DECD000000000000000001 /* CommitTableInteractionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECD000000000000000011 /* CommitTableInteractionCoordinator.swift */; };
+		C0DE57A600000000000000A1 /* StagingListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B1 /* StagingListViewModel.swift */; };
+		C0DE57A600000000000000A3 /* StagingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B3 /* StagingViewController.swift */; };
+		C0DE57A600000000000000A4 /* StagingFileListController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B4 /* StagingFileListController.swift */; };
+		C0DE57A600000000000000A5 /* StagingDiffPaneController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */; };
+		C0DE57A600000000000000A6 /* StagingFileCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B6 /* StagingFileCellView.swift */; };
+		C0DE57A600000000000000A2 /* StagingListViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */; };
 		C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA0000000000000000002 /* HistoryControllerTests.swift */; };
 		C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */; };
 		C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB0000000000000000012 /* HistoryMenuBuilder.swift */; };
@@ -530,7 +531,6 @@
 		4A5D75BA14A9A90500DF6C68 /* OpenRecentPopup.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = OpenRecentPopup.xib; sourceTree = "<group>"; };
 		4A5D75BB14A9A90500DF6C68 /* PBCommitHookFailedSheet.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = PBCommitHookFailedSheet.xib; sourceTree = "<group>"; };
 		4A5D75BC14A9A90500DF6C68 /* PBDiffWindow.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = PBDiffWindow.xib; sourceTree = "<group>"; };
-		4A5D75BD14A9A90500DF6C68 /* PBGitCommitView.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = PBGitCommitView.xib; sourceTree = "<group>"; };
 		4A5D75BE14A9A90500DF6C68 /* PBGitHistoryView.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = PBGitHistoryView.xib; sourceTree = "<group>"; };
 		4A5D75BF14A9A90500DF6C68 /* PBGitSidebarView.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = PBGitSidebarView.xib; sourceTree = "<group>"; };
 		4A5D75C014A9A90500DF6C68 /* PBGitXMessageSheet.xib */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.xib; path = PBGitXMessageSheet.xib; sourceTree = "<group>"; };
@@ -542,8 +542,6 @@
 		4A5D762B14A9A9CC00DF6C68 /* OpenRecentController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = OpenRecentController.m; sourceTree = "<group>"; };
 		4A5D762C14A9A9CC00DF6C68 /* PBDiffWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBDiffWindowController.h; sourceTree = "<group>"; };
 		4A5D762D14A9A9CC00DF6C68 /* PBDiffWindowController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBDiffWindowController.m; sourceTree = "<group>"; };
-		4A5D762E14A9A9CC00DF6C68 /* PBGitCommitController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitCommitController.h; sourceTree = "<group>"; };
-		4A5D762F14A9A9CC00DF6C68 /* PBGitCommitController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitCommitController.m; sourceTree = "<group>"; };
 		4A5D763014A9A9CC00DF6C68 /* PBGitHistoryController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; lineEnding = 0; path = PBGitHistoryController.h; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objcpp; };
 		4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = PBGitHistoryController.m; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
 		C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryStateCoordinator.swift; sourceTree = "<group>"; };
@@ -569,8 +567,6 @@
 		4A5D764114A9A9CC00DF6C68 /* PBServicesController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBServicesController.m; sourceTree = "<group>"; };
 		4A5D764214A9A9CC00DF6C68 /* PBViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBViewController.h; sourceTree = "<group>"; };
 		4A5D764314A9A9CC00DF6C68 /* PBViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBViewController.m; sourceTree = "<group>"; };
-		4A5D764414A9A9CC00DF6C68 /* PBWebChangesController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBWebChangesController.h; sourceTree = "<group>"; };
-		4A5D764514A9A9CC00DF6C68 /* PBWebChangesController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBWebChangesController.m; sourceTree = "<group>"; };
 		4A5D764614A9A9CC00DF6C68 /* PBWebController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBWebController.h; sourceTree = "<group>"; };
 		4A5D764714A9A9CC00DF6C68 /* PBWebController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBWebController.m; sourceTree = "<group>"; };
 		4A5D764814A9A9CC00DF6C68 /* PBWebDiffController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBWebDiffController.h; sourceTree = "<group>"; };
@@ -616,8 +612,6 @@
 		4A5D767814A9A9CC00DF6C68 /* PBSourceViewGitRemoteBranchItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBSourceViewGitRemoteBranchItem.m; sourceTree = "<group>"; };
 		4A5D767914A9A9CC00DF6C68 /* PBSourceViewGitRemoteItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBSourceViewGitRemoteItem.h; sourceTree = "<group>"; };
 		4A5D767A14A9A9CC00DF6C68 /* PBSourceViewGitRemoteItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBSourceViewGitRemoteItem.m; sourceTree = "<group>"; };
-		4A5D767B14A9A9CC00DF6C68 /* PBSourceViewStageItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBSourceViewStageItem.h; sourceTree = "<group>"; };
-		4A5D767C14A9A9CC00DF6C68 /* PBSourceViewStageItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBSourceViewStageItem.m; sourceTree = "<group>"; };
 		4A5D767D14A9A9CC00DF6C68 /* PBSourceViewGitTagItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBSourceViewGitTagItem.h; sourceTree = "<group>"; };
 		4A5D767E14A9A9CC00DF6C68 /* PBSourceViewGitTagItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBSourceViewGitTagItem.m; sourceTree = "<group>"; };
 		4A5D767F14A9A9CC00DF6C68 /* PBGitTree.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitTree.h; sourceTree = "<group>"; };
@@ -727,8 +721,6 @@
 		4DF173E821A1D60A003CD3CE /* NSAppearance+PBDarkMode.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "NSAppearance+PBDarkMode.m"; sourceTree = "<group>"; };
 		50660A531FD6F48A004342B0 /* PBSidebarList.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBSidebarList.h; sourceTree = "<group>"; };
 		50660A541FD6F48A004342B0 /* PBSidebarList.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBSidebarList.m; sourceTree = "<group>"; };
-		5073673F1FD1F54E003F73E1 /* PBGitCommitTableViewCell.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitCommitTableViewCell.h; sourceTree = "<group>"; };
-		507367401FD1F54E003F73E1 /* PBGitCommitTableViewCell.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBGitCommitTableViewCell.m; sourceTree = "<group>"; };
 		508E268B1FD317FC00CE9FE0 /* PBSidebarTableViewCell.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBSidebarTableViewCell.h; sourceTree = "<group>"; };
 		508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBSidebarTableViewCell.m; sourceTree = "<group>"; };
 		50DCC65820111E4000999D3D /* PBGitRevisionRow.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitRevisionRow.h; sourceTree = "<group>"; };
@@ -840,6 +832,12 @@
 		C0DECE000000000000000011 /* CommitMenuPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMenuPresenter.swift; sourceTree = "<group>"; };
 		C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMenuPresenterTests.swift; sourceTree = "<group>"; };
 		C0DECD000000000000000011 /* CommitTableInteractionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitTableInteractionCoordinator.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B1 /* StagingListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingListViewModel.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B3 /* StagingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingViewController.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B4 /* StagingFileListController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingFileListController.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffPaneController.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B6 /* StagingFileCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingFileCellView.swift; sourceTree = "<group>"; };
+		C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingListViewModelTests.swift; sourceTree = "<group>"; };
 		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
 		C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryActionContextResolver.swift; sourceTree = "<group>"; };
@@ -1080,7 +1078,6 @@
 				4A5D75BA14A9A90500DF6C68 /* OpenRecentPopup.xib */,
 				4A5D75BB14A9A90500DF6C68 /* PBCommitHookFailedSheet.xib */,
 				4A5D75BC14A9A90500DF6C68 /* PBDiffWindow.xib */,
-				4A5D75BD14A9A90500DF6C68 /* PBGitCommitView.xib */,
 				4A5D75BE14A9A90500DF6C68 /* PBGitHistoryView.xib */,
 				4A5D75BF14A9A90500DF6C68 /* PBGitSidebarView.xib */,
 				4A5D75C014A9A90500DF6C68 /* PBGitXMessageSheet.xib */,
@@ -1171,11 +1168,13 @@
 				4A5D762B14A9A9CC00DF6C68 /* OpenRecentController.m */,
 				4A5D762C14A9A9CC00DF6C68 /* PBDiffWindowController.h */,
 				4A5D762D14A9A9CC00DF6C68 /* PBDiffWindowController.m */,
-				4A5D762E14A9A9CC00DF6C68 /* PBGitCommitController.h */,
-				4A5D762F14A9A9CC00DF6C68 /* PBGitCommitController.m */,
 				C0DECF000000000000000011 /* CommitControllerPolicies.swift */,
 				C0DECE000000000000000011 /* CommitMenuPresenter.swift */,
 				C0DECD000000000000000011 /* CommitTableInteractionCoordinator.swift */,
+				C0DE57A600000000000000B1 /* StagingListViewModel.swift */,
+				C0DE57A600000000000000B3 /* StagingViewController.swift */,
+				C0DE57A600000000000000B4 /* StagingFileListController.swift */,
+				C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */,
 				4A5D763014A9A9CC00DF6C68 /* PBGitHistoryController.h */,
 				4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */,
 				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
@@ -1209,8 +1208,6 @@
 				4A5D764114A9A9CC00DF6C68 /* PBServicesController.m */,
 				4A5D764214A9A9CC00DF6C68 /* PBViewController.h */,
 				4A5D764314A9A9CC00DF6C68 /* PBViewController.m */,
-				4A5D764414A9A9CC00DF6C68 /* PBWebChangesController.h */,
-				4A5D764514A9A9CC00DF6C68 /* PBWebChangesController.m */,
 				4A5D764614A9A9CC00DF6C68 /* PBWebController.h */,
 				4A5D764714A9A9CC00DF6C68 /* PBWebController.m */,
 				4A5D764814A9A9CC00DF6C68 /* PBWebDiffController.h */,
@@ -1288,8 +1285,6 @@
 				4A5D767814A9A9CC00DF6C68 /* PBSourceViewGitRemoteBranchItem.m */,
 				4A5D767914A9A9CC00DF6C68 /* PBSourceViewGitRemoteItem.h */,
 				4A5D767A14A9A9CC00DF6C68 /* PBSourceViewGitRemoteItem.m */,
-				4A5D767B14A9A9CC00DF6C68 /* PBSourceViewStageItem.h */,
-				4A5D767C14A9A9CC00DF6C68 /* PBSourceViewStageItem.m */,
 				4A5D767D14A9A9CC00DF6C68 /* PBSourceViewGitTagItem.h */,
 				4A5D767E14A9A9CC00DF6C68 /* PBSourceViewGitTagItem.m */,
 				A2F8D0E917AAB95E00580B84 /* PBSourceViewGitStashItem.h */,
@@ -1351,6 +1346,7 @@
 				C0DE10000000000000000004 /* PBNativeContentView.m */,
 				C0DEAF000000000000000011 /* NativeContentModels.swift */,
 				C0DEAE000000000000000011 /* NativeContentRenderer.swift */,
+				C0DE57A600000000000000B6 /* StagingFileCellView.swift */,
 				C0DE45200000000000000011 /* NativeContentTypography.swift */,
 				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
 				C01400000000000000000013 /* CommitProgressSheetController.swift */,
@@ -1381,8 +1377,6 @@
 				50DCC65920111E4000999D3D /* PBGitRevisionRow.m */,
 				4A5D76CE14A9A9CC00DF6C68 /* PBGitXMessageSheet.h */,
 				4A5D76CF14A9A9CC00DF6C68 /* PBGitXMessageSheet.m */,
-				5073673F1FD1F54E003F73E1 /* PBGitCommitTableViewCell.h */,
-				507367401FD1F54E003F73E1 /* PBGitCommitTableViewCell.m */,
 				508E268B1FD317FC00CE9FE0 /* PBSidebarTableViewCell.h */,
 				508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m */,
 				4A5D76D414A9A9CC00DF6C68 /* PBQLOutlineView.h */,
@@ -1459,6 +1453,7 @@
 				C05900000000000000000011 /* RepositoryIgnoreTestSupport.m */,
 				C0DEE0000000000000000012 /* IndexSnapshotTests.swift */,
 				C0DEE0000000000000000015 /* IndexMutationServiceTests.swift */,
+				C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */,
 				C0DEE0000000000000000017 /* IndexCommitServiceTests.swift */,
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
 				C0DEAF000000000000000012 /* NativeContentModelsTests.swift */,
@@ -1819,7 +1814,6 @@
 				4A5D75FC14A9A90500DF6C68 /* PBCommitHookFailedSheet.xib in Resources */,
 				978357AD189C074500ADC689 /* BranchTemplate.pdf in Resources */,
 				4A5D75FD14A9A90500DF6C68 /* PBDiffWindow.xib in Resources */,
-				4A5D75FE14A9A90500DF6C68 /* PBGitCommitView.xib in Resources */,
 				4A5D75FF14A9A90500DF6C68 /* PBGitHistoryView.xib in Resources */,
 				97CF01FB18A6C5BB00E30F2B /* new_file.pdf in Resources */,
 				4A5D760014A9A90500DF6C68 /* PBGitSidebarView.xib in Resources */,
@@ -1923,6 +1917,11 @@
 				C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */,
 				C0DECE000000000000000001 /* CommitMenuPresenter.swift in Sources */,
 				C0DECD000000000000000001 /* CommitTableInteractionCoordinator.swift in Sources */,
+				C0DE57A600000000000000A1 /* StagingListViewModel.swift in Sources */,
+				C0DE57A600000000000000A3 /* StagingViewController.swift in Sources */,
+				C0DE57A600000000000000A4 /* StagingFileListController.swift in Sources */,
+				C0DE57A600000000000000A5 /* StagingDiffPaneController.swift in Sources */,
+				C0DE57A600000000000000A6 /* StagingFileCellView.swift in Sources */,
 				C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */,
 				C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */,
 				C0DEB0000000000000000003 /* HistoryTableInteractionCoordinator.swift in Sources */,
@@ -1959,7 +1958,6 @@
 				4A5D76E214A9A9CC00DF6C68 /* DBPrefsWindowController.m in Sources */,
 				4A5D76E314A9A9CC00DF6C68 /* OpenRecentController.m in Sources */,
 				4A5D76E414A9A9CC00DF6C68 /* PBDiffWindowController.m in Sources */,
-				4A5D76E514A9A9CC00DF6C68 /* PBGitCommitController.m in Sources */,
 				4A5D76E614A9A9CC00DF6C68 /* PBGitHistoryController.m in Sources */,
 				4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.m in Sources */,
 				508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m in Sources */,
@@ -1971,7 +1969,6 @@
 				4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.m in Sources */,
 				4A5D76EE14A9A9CC00DF6C68 /* PBServicesController.m in Sources */,
 				4A5D76EF14A9A9CC00DF6C68 /* PBViewController.m in Sources */,
-				4A5D76F014A9A9CC00DF6C68 /* PBWebChangesController.m in Sources */,
 				4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */,
 				4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */,
 				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.m in Sources */,
@@ -1998,7 +1995,6 @@
 				4A5D770714A9A9CC00DF6C68 /* PBSourceViewOtherRevItem.m in Sources */,
 				4A5D770814A9A9CC00DF6C68 /* PBSourceViewGitRemoteBranchItem.m in Sources */,
 				4A5D770914A9A9CC00DF6C68 /* PBSourceViewGitRemoteItem.m in Sources */,
-				4A5D770A14A9A9CC00DF6C68 /* PBSourceViewStageItem.m in Sources */,
 				4A5D770B14A9A9CC00DF6C68 /* PBSourceViewGitTagItem.m in Sources */,
 				4A5D770C14A9A9CC00DF6C68 /* PBGitTree.m in Sources */,
 				4A5D770D14A9A9CC00DF6C68 /* PBError.m in Sources */,
@@ -2023,7 +2019,6 @@
 				4A5D772614A9A9CC00DF6C68 /* PBAddRemoteSheet.m in Sources */,
 				4A5D772714A9A9CC00DF6C68 /* PBCloneRepositoryPanel.m in Sources */,
 				4A5D772A14A9A9CC00DF6C68 /* PBCommitHookFailedSheet.m in Sources */,
-				507367411FD1F54E003F73E1 /* PBGitCommitTableViewCell.m in Sources */,
 				4A5D772B14A9A9CC00DF6C68 /* PBCommitMessageView.m in Sources */,
 				4A5D772C14A9A9CC00DF6C68 /* PBCreateBranchSheet.m in Sources */,
 				4DF173E921A1D60A003CD3CE /* NSAppearance+PBDarkMode.m in Sources */,
@@ -2073,6 +2068,7 @@
 				C05900000000000000000001 /* RepositoryIgnoreTestSupport.m in Sources */,
 				C0DEE0000000000000000002 /* IndexSnapshotTests.swift in Sources */,
 				C0DEE0000000000000000005 /* IndexMutationServiceTests.swift in Sources */,
+				C0DE57A600000000000000A2 /* StagingListViewModelTests.swift in Sources */,
 				C0DEE0000000000000000007 /* IndexCommitServiceTests.swift in Sources */,
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
 				C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */,
