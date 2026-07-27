@@ -39,6 +39,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     private let sectionedScroll = NSScrollView()
     private var sectionedRows: [StagingListRow] = []
     private var syncingSectionedSelection = false
+    private var syncingExclusiveSelection = false
     private var observingSelections = false
 
     @objc(initWithRepository:index:)
@@ -493,8 +494,22 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard notification.object as? NSTableView === sectionedTable, !syncingSectionedSelection else { return }
-        syncControllersFromSectionedSelection()
+        guard let table = notification.object as? NSTableView else { return }
+        if table === sectionedTable {
+            guard !syncingSectionedSelection else { return }
+            syncControllersFromSectionedSelection()
+            return
+        }
+        // Selecting in one split table deselects the other so the diff pane
+        // shows exactly the side the user chose, like the reference design.
+        guard !syncingExclusiveSelection, table.numberOfSelectedRows > 0 else { return }
+        syncingExclusiveSelection = true
+        if table === stagedTable, !unstagedFilesController.selectionIndexes.isEmpty {
+            unstagedFilesController.setSelectionIndexes(IndexSet())
+        } else if table === unstagedTable, !stagedFilesController.selectionIndexes.isEmpty {
+            stagedFilesController.setSelectionIndexes(IndexSet())
+        }
+        syncingExclusiveSelection = false
     }
 
     @objc func fileChangesTableViewDidRequestStagingToggle(_ tableView: PBFileChangesTableView) {

@@ -264,7 +264,10 @@
 	[self openStagingView];
 	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
 	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
-	[self waitForElement:diff toHaveValue:@"No file selected" timeout:10];
+	// The pane selects the first pending file automatically, so the diff
+	// pane opens on a staging-chrome hunk rather than a placeholder.
+	NSPredicate *initialDiff = [NSPredicate predicateWithFormat:@"value CONTAINS 'Hunk 1'"];
+	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:initialDiff object:diff] ] timeout:10];
 
 	[self saveWindowScreenshotNamed:@"staging-view"];
 }
@@ -275,7 +278,8 @@
 	[self openStagingView];
 	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
 	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
-	[self waitForElement:diff toHaveValue:@"No file selected" timeout:10];
+	NSPredicate *initialDiff = [NSPredicate predicateWithFormat:@"value CONTAINS 'Hunk 1'"];
+	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:initialDiff object:diff] ] timeout:10];
 
 	XCUIElement *window = self.app.windows.firstMatch;
 	CGRect originalFrame = window.frame;
@@ -289,7 +293,7 @@
 	XCTNSPredicateExpectation *moveExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:frameChanged object:window];
 	[self waitForExpectations:@[ moveExpectation ] timeout:5];
 
-	XCTAssertEqualObjects(diff.value, @"No file selected");
+	XCTAssertTrue([[diff.value description] containsString:@"Hunk 1"]);
 	XCTAssertTrue(self.app.tables[@"UnstagedFiles"].hittable);
 	XCTAssertTrue(self.app.tables[@"StagedFiles"].hittable);
 	[self saveWindowScreenshotNamed:@"staging-view-after-window-move"];
@@ -405,7 +409,7 @@
 	NSString *hookPath = [repositoryPath stringByAppendingPathComponent:@".git/hooks/pre-commit"];
 	XCTAssertTrue([@"#!/bin/sh\nexit 1\n" writeToFile:hookPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
 	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:hookPath error:nil]);
-	[self.app.buttons[@"Commit"] click];
+	[self.app.buttons[@"CommitButton"] click];
 	XCUIElement *hookFailure = self.app.staticTexts[@"Commit hook failed"];
 	XCTAssertTrue([hookFailure waitForExistenceWithTimeout:10]);
 	XCTAssertEqualObjects(pushCheckbox.value, @1, @"A failed commit must leave commit-and-push armed for retry");

@@ -115,7 +115,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         commitButton.action = #selector(commit(_:))
         commitButton.keyEquivalent = "\r"
         commitButton.keyEquivalentModifierMask = .command
-        commitButton.setAccessibilityIdentifier("Commit")
+        commitButton.setAccessibilityIdentifier("CommitButton")
         commitButton.isEnabled = false
 
         amendButton.bind(NSBindingName.value, to: index, withKeyPath: "amend", options: nil)

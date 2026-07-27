@@ -611,6 +611,27 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         scroll(historyController, selector, 0)
     }
 
+    func testApplicationDelegateCoversActivationAndFileOpens() throws {
+        // These app-delegate paths only run when the host application is
+        // activated or receives file-open events, which never happens
+        // deterministically in a headless suite; drive them directly.
+        let delegate = try XCTUnwrap(NSApp.delegate as? NSObject)
+        delegate.perform(
+            NSSelectorFromString("applicationDidBecomeActive:"),
+            with: NSNotification(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        )
+        _ = delegate.perform(NSSelectorFromString("application:openFiles:"), with: NSApp, with: [fixture.path])
+        pumpRunLoop(for: 1.0)
+        for window in NSApp.windows
+            where window.windowController is PBGitWindowController && window !== windowController.window
+        {
+            window.close()
+        }
+        for window in NSApp.windows where window.title.contains("Welcome") {
+            window.close()
+        }
+    }
+
     func testCommitMessageTransformerAppliesRulesAndSurfacesRuleErrors() throws {
         try fixture.git(["config", "--local", "gitx.commitMessageReplacementRules", #"JIRA-(\d+) => ISSUE $1"#])
         var transformer = PBCommitMessageTransformer(repository: repository)
@@ -957,6 +978,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         pane.perform(NSSelectorFromString("sortOrderChanged:"), with: sortPopup)
         XCTAssertEqual(PBApplicationSettings.stagingFileSortOrder, .path)
 
+        // Selecting in the staged table above cleared the unstaged selection
+        // (split-table selections are mutually exclusive); re-select before
+        // staging.
+        unstaged.setSelectedObjects(
+            (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
+        )
         waitForIndexUpdate { pane.perform(NSSelectorFromString("stageFiles:"), with: nil) }
         XCTAssertTrue(
             (staged.arrangedObjects as? [PBChangedFile])?.contains { $0.path == "nested/tracked.txt" } == true
