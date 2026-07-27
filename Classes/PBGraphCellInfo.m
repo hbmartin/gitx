@@ -12,8 +12,22 @@
 @implementation PBGraphCellInfo
 @synthesize nLines, position, numColumns, sign;
 
+// Threading contract: instances are created and configured on the history graph
+// queue, then published to the main thread through PBGitCommit's atomic lineInfo
+// property. The @synchronized pair on the manual `lines` accessors gives the
+// main-thread reader visibility of the background-written buffer pointer; the
+// scalar properties are atomic by declaration. The returned buffer stays valid
+// for the receiver's lifetime because nothing replaces it after publication --
+// setLines: frees the previous buffer and must never run concurrently with a
+// reader that still uses a previously returned pointer.
 - (id)initWithPosition:(long)p andLines:(struct PBGitGraphLine *)l
 {
+	self = [super init];
+	if (!self) {
+		free(l);
+		return nil;
+	}
+
 	position = p;
 	@synchronized(self) {
 		lines = l;
