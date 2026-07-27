@@ -47,6 +47,112 @@ final class StagingListViewModelTests: XCTestCase {
         )
     }
 
+    func testStagedCountIgnoresSearchFiltering() {
+        let model = PBStagingListViewModel()
+        model.searchText = "visible"
+        let changes = [
+            file("hidden-staged.txt", staged: true, unstaged: false),
+            file("visible-unstaged.txt"),
+        ]
+
+        XCTAssertTrue(model.files(in: .staged, fromChanges: changes).isEmpty)
+        XCTAssertEqual(model.stagedFileCount(fromChanges: changes), 1)
+    }
+
+    func testSectionedActionSelectionsUseTheCorrectSideAndDeduplicatedUnion() {
+        let model = PBStagingListViewModel()
+        let staged = file("staged.txt", staged: true, unstaged: false)
+        let partial = file("partial.txt", staged: true, unstaged: true)
+        let unstaged = file("unstaged.txt")
+        let stagedSelection = [staged, partial]
+        let unstagedSelection = [partial, unstaged]
+
+        for action in [
+            PBStagingFileAction.stage,
+            .discard,
+            .forceDiscard,
+            .ignore,
+            .trash,
+        ] {
+            XCTAssertEqual(
+                model.resolvedFiles(
+                    for: action,
+                    context: .sectioned,
+                    stagedSelection: stagedSelection,
+                    unstagedSelection: unstagedSelection
+                ).map(\.path),
+                ["partial.txt", "unstaged.txt"]
+            )
+        }
+        XCTAssertEqual(
+            model.resolvedFiles(
+                for: .unstage,
+                context: .sectioned,
+                stagedSelection: stagedSelection,
+                unstagedSelection: unstagedSelection
+            ).map(\.path),
+            ["staged.txt", "partial.txt"]
+        )
+        for action in [PBStagingFileAction.open, .reveal] {
+            XCTAssertEqual(
+                model.resolvedFiles(
+                    for: action,
+                    context: .sectioned,
+                    stagedSelection: stagedSelection,
+                    unstagedSelection: unstagedSelection
+                ).map(\.path),
+                ["staged.txt", "partial.txt", "unstaged.txt"],
+                "sectioned navigation is staged-first and de-duplicates a partially staged path"
+            )
+        }
+    }
+
+    func testSplitActionSelectionsRemainScopedToTheSoleActiveSide() {
+        let model = PBStagingListViewModel()
+        let staged = file("staged.txt", staged: true, unstaged: false)
+        let unstaged = file("unstaged.txt")
+
+        XCTAssertEqual(
+            model.resolvedFiles(
+                for: .open,
+                context: .splitStaged,
+                stagedSelection: [staged],
+                unstagedSelection: [unstaged]
+            ).map(\.path),
+            ["staged.txt"]
+        )
+        XCTAssertTrue(model.resolvedFiles(
+            for: .discard,
+            context: .splitStaged,
+            stagedSelection: [staged],
+            unstagedSelection: [unstaged]
+        ).isEmpty)
+        XCTAssertEqual(
+            model.resolvedFiles(
+                for: .ignore,
+                context: .splitUnstaged,
+                stagedSelection: [staged],
+                unstagedSelection: [unstaged]
+            ).map(\.path),
+            ["unstaged.txt"]
+        )
+        XCTAssertEqual(
+            model.resolvedFiles(
+                for: .reveal,
+                context: .splitAutomatic,
+                stagedSelection: [staged],
+                unstagedSelection: []
+            ).map(\.path),
+            ["staged.txt"]
+        )
+        XCTAssertTrue(model.resolvedFiles(
+            for: .open,
+            context: .splitAutomatic,
+            stagedSelection: [staged],
+            unstagedSelection: [unstaged]
+        ).isEmpty, "ambiguous split selections cannot accidentally become a union")
+    }
+
     func testStatusSortOrdersDeletionsFirstThenPath() {
         let model = PBStagingListViewModel()
         model.sortOrder = .status
@@ -134,5 +240,86 @@ final class StagingListViewModelTests: XCTestCase {
         )
         XCTAssertEqual(requests.map(\.file.path), ["staged.txt", "unstaged.txt"])
         XCTAssertEqual(requests.map(\.staged), [true, false])
+    }
+
+    func testSectionedDragPayloadUsesStablePathsAndSourceSections() {
+        let model = PBStagingListViewModel()
+        let staged = file("staged.txt", staged: true, unstaged: false)
+        let partial = file("partial.txt", staged: true, unstaged: true)
+        let unstaged = file("unstaged.txt")
+        let rows = model.flattenedRows(fromChanges: [staged, partial, unstaged])
+        let partialRows = rows.indices.filter { rows[$0].file?.path == "partial.txt" }
+        XCTAssertEqual(partialRows.count, 2)
+
+        let payload = model.sectionedDragPayload(for: rows, selectedIndexes: IndexSet(partialRows))
+        XCTAssertEqual(payload.compactMap { $0["path"] as? String }, ["partial.txt", "partial.txt"])
+        XCTAssertEqual(payload.compactMap { $0["sourceSection"] as? Int }, [0, 1])
+
+        XCTAssertEqual(
+            model.resolvedDropFiles(
+                fromPropertyList: [payload[0]],
+                rows: rows,
+                destinationSection: .staged
+            )?.map(\.path),
+            [],
+            "dragging the staged side back to Staged cannot stage the remaining worktree side"
+        )
+        XCTAssertEqual(
+            model.resolvedDropFiles(
+                fromPropertyList: [payload[1]],
+                rows: rows,
+                destinationSection: .staged
+            )?.map(\.path),
+            ["partial.txt"]
+        )
+    }
+
+    func testSectionedDropResolutionRejectsMalformedAndFiltersMixedStaleDuplicateEntries() {
+        let model = PBStagingListViewModel()
+        let staged = file("staged.txt", staged: true, unstaged: false)
+        let unstaged = file("unstaged.txt")
+        let rows = model.flattenedRows(fromChanges: [staged, unstaged])
+        let mixed: [[String: Any]] = [
+            ["path": "staged.txt", "sourceSection": PBStagingListSection.staged.rawValue],
+            ["path": "unstaged.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
+            ["path": "unstaged.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
+            ["path": "stale.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
+        ]
+
+        XCTAssertEqual(
+            model.resolvedDropFiles(
+                fromPropertyList: mixed,
+                rows: rows,
+                destinationSection: .staged
+            )?.map(\.path),
+            ["unstaged.txt"]
+        )
+        XCTAssertEqual(
+            model.resolvedDropFiles(
+                fromPropertyList: mixed,
+                rows: rows,
+                destinationSection: .unstaged
+            )?.map(\.path),
+            ["staged.txt"]
+        )
+        XCTAssertEqual(
+            model.resolvedDropFiles(fromPropertyList: [], rows: rows, destinationSection: .staged),
+            []
+        )
+
+        let malformed: [Any] = [
+            [0, 1],
+            [["path": "unstaged.txt"]],
+            [["path": "unstaged.txt", "sourceSection": "unstaged"]],
+            [["path": "unstaged.txt", "sourceSection": 1, "extra": true]],
+            [["path": "", "sourceSection": 1]],
+        ]
+        for propertyList in malformed {
+            XCTAssertNil(model.resolvedDropFiles(
+                fromPropertyList: propertyList,
+                rows: rows,
+                destinationSection: .staged
+            ))
+        }
     }
 }

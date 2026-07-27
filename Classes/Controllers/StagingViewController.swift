@@ -582,36 +582,44 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc func stageFiles(_ sender: Any?) {
-        fileListController.interactionCoordinator.stageSelectedFiles()
+        let selection = actionSelection(for: .stage, sender: sender)
+        guard !selection.files.isEmpty else { return }
+        NSLog("[GitX] Staging %ld file(s) from the resolved action selection", selection.files.count)
+        index.stageFiles(selection.files)
     }
 
     @objc func unstageFiles(_ sender: Any?) {
-        fileListController.interactionCoordinator.unstageSelectedFiles()
+        let selection = actionSelection(for: .unstage, sender: sender)
+        guard !selection.files.isEmpty else { return }
+        NSLog("[GitX] Unstaging %ld file(s) from the resolved action selection", selection.files.count)
+        index.unstageFiles(selection.files)
     }
 
     @objc func discardFiles(_ sender: Any?) {
-        discardChanges(for: fileListController.selectedFiles(stagedContext: false), force: false)
+        discardChanges(for: actionSelection(for: .discard, sender: sender).files, force: false)
     }
 
     @objc func discardFilesForcibly(_ sender: Any?) {
-        discardChanges(for: fileListController.selectedFiles(stagedContext: false), force: true)
+        discardChanges(for: actionSelection(for: .forceDiscard, sender: sender).files, force: true)
     }
 
     @objc func openFiles(_ sender: Any?) {
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
-        let urls = selectedFiles(for: sender).map { workingDirectoryURL.appendingPathComponent($0.path) }
+        let files = actionSelection(for: .open, sender: sender).files
+        let urls = files.map { workingDirectoryURL.appendingPathComponent($0.path) }
         windowController?.open(urls)
     }
 
     @objc func revealInFinder(_ sender: Any?) {
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
-        let urls = selectedFiles(for: sender).map { workingDirectoryURL.appendingPathComponent($0.path) }
+        let files = actionSelection(for: .reveal, sender: sender).files
+        let urls = files.map { workingDirectoryURL.appendingPathComponent($0.path) }
         windowController?.revealURLs(inFinder: urls)
     }
 
     @objc func moveToTrash(_ sender: Any?) {
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
-        let files = selectedFiles(for: sender)
+        let files = actionSelection(for: .trash, sender: sender).files
         guard !files.isEmpty else { return }
 
         let alert = NSAlert()
@@ -638,7 +646,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc func ignoreFiles(_ sender: Any?) {
-        let files = selectedFiles(for: sender)
+        let files = actionSelection(for: .ignore, sender: sender).files
         guard !files.isEmpty else { return }
         let paths = files.map(\.path).filter { !$0.isEmpty }
         do {
@@ -649,10 +657,17 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         index.refresh()
     }
 
-    private func selectedFiles(for sender: Any?) -> [PBChangedFile] {
-        guard let menuItem = sender as? NSMenuItem else { return [] }
-        let stagedContext = menuItem.menu === fileListController.stagedTable.menu
-        return fileListController.selectedFiles(stagedContext: stagedContext)
+    private func actionSelection(for action: StagingFileAction, sender: Any?) -> StagingActionSelection {
+        if let snapshot = (sender as? NSMenuItem)?.representedObject as? StagingActionSelection,
+           snapshot.action == action
+        {
+            NSLog("[GitX] Reusing a %ld-file staging menu selection snapshot", snapshot.files.count)
+            return snapshot
+        }
+        return fileListController.resolvedSelection(
+            for: action,
+            contextualMenu: (sender as? NSMenuItem)?.menu
+        )
     }
 
     // MARK: Notifications
@@ -801,27 +816,19 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             menuItem.state = fileListController.layout.rawValue == menuItem.tag ? .on : .off
             return true
         }
-        let isSectionedMenu = menuItem.menu === fileListController.sectionedTable.menu
-        if isSectionedMenu {
-            if action == #selector(stageFiles(_:)) {
-                return !fileListController.selectedFiles(stagedContext: false).isEmpty
-            }
-            if action == #selector(unstageFiles(_:)) {
-                return !fileListController.selectedFiles(stagedContext: true).isEmpty
-            }
+        let stagingAction = stagingFileAction(for: action)
+        let selection = stagingAction.map {
+            fileListController.resolvedSelection(for: $0, contextualMenu: menuItem.menu)
         }
-        let stagedContext = isSectionedMenu
-            ? fileListController.selectedFiles(stagedContext: false).isEmpty &&
-            !fileListController.selectedFiles(stagedContext: true).isEmpty
-            : menuItem.menu === fileListController.stagedTable.menu
-        let filesForStaging = fileListController.selectedFiles(stagedContext: false)
-        let filesForUnstaging = fileListController.selectedFiles(stagedContext: true)
-        let selectedFiles = stagedContext ? filesForUnstaging : filesForStaging
+        if let selection {
+            menuItem.representedObject = selection
+        }
+        let resolvedFiles = selection?.files ?? []
         let isInContextualMenu = menuItem.parent == nil
         let singleSelectionIsSubmodule = isInContextualMenu &&
             action == #selector(openFiles(_:)) &&
-            selectedFiles.count == 1 &&
-            (try? repository.submodule(atPath: selectedFiles[0].path)) != nil
+            resolvedFiles.count == 1 &&
+            (try? repository.submodule(atPath: resolvedFiles[0].path)) != nil
         let isAmend = action == #selector(toggleAmendCommit(_:)) && index.isAmend
         let prepareHookExists = action == #selector(prepareCommitMessage(_:)) &&
             repository.hookExists("prepare-commit-msg")
@@ -834,10 +841,9 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
         let presentation = CommitMenuPresenter.presentation(
             action: action,
-            unstagedFiles: menuFiles(filesForStaging),
-            stagedFiles: menuFiles(filesForUnstaging),
-            isStagedContext: stagedContext,
-            allowsTrash: !stagedContext,
+            resolvedFiles: menuFiles(resolvedFiles),
+            allowsTrash: fileListController.layout == .sectionedList ||
+                menuItem.menu !== fileListController.stagedTable.menu,
             isContextualMenu: isInContextualMenu,
             singleSelectionIsSubmodule: singleSelectionIsSubmodule,
             isAmend: isAmend,
@@ -857,6 +863,20 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             menuItem.state = NSControl.StateValue(rawValue: presentation.state)
         }
         return presentation.enabled
+    }
+
+    private func stagingFileAction(for selector: Selector) -> StagingFileAction? {
+        switch selector {
+        case #selector(stageFiles(_:)): .stage
+        case #selector(unstageFiles(_:)): .unstage
+        case #selector(discardFiles(_:)): .discard
+        case #selector(discardFilesForcibly(_:)): .forceDiscard
+        case #selector(openFiles(_:)): .open
+        case #selector(revealInFinder(_:)): .reveal
+        case #selector(ignoreFiles(_:)): .ignore
+        case #selector(moveToTrash(_:)): .trash
+        default: nil
+        }
     }
 }
 

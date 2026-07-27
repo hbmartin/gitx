@@ -127,6 +127,29 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 	PBStagingListSectionUnstaged,
 };
 
+typedef NS_ENUM(NSInteger, PBStagingFileAction) {
+	PBStagingFileActionStage,
+	PBStagingFileActionUnstage,
+	PBStagingFileActionDiscard,
+	PBStagingFileActionForceDiscard,
+	PBStagingFileActionOpen,
+	PBStagingFileActionReveal,
+	PBStagingFileActionIgnore,
+	PBStagingFileActionTrash,
+};
+
+typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
+	PBStagingSelectionContextSectioned,
+	PBStagingSelectionContextSplitStaged,
+	PBStagingSelectionContextSplitUnstaged,
+	PBStagingSelectionContextSplitAutomatic,
+};
+
+@interface PBStagingActionSelection : NSObject
+@property (nonatomic, readonly) PBStagingFileAction action;
+@property (nonatomic, readonly) NSArray<PBChangedFile *> *files;
+@end
+
 @interface PBStagingListRow : NSObject
 @property (nonatomic, readonly) BOOL isHeader;
 @property (nonatomic, readonly) PBStagingListSection section;
@@ -183,6 +206,8 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 - (void)rearrange;
 - (void)setListLayout:(PBStagingListLayout)layout;
 - (NSArray<PBChangedFile *> *)selectedFilesForStagedContext:(BOOL)stagedContext;
+- (PBStagingActionSelection *)resolvedSelectionForAction:(PBStagingFileAction)action
+								  contextualMenu:(nullable NSMenu *)contextualMenu;
 @end
 
 @interface PBCommitMessageTransformer : NSObject
@@ -198,6 +223,7 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 - (void)updateView;
 - (void)closeView;
 - (void)reloadPushRemotes;
+- (BOOL)validateMenuItem:(NSMenuItem *)menuItem;
 @end
 
 @interface PBStagingListViewModel : NSObject
@@ -206,6 +232,16 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 - (NSArray<PBChangedFile *> *)filesInSection:(PBStagingListSection)section
 								 fromChanges:(NSArray<PBChangedFile *> *)changes;
 - (NSArray<PBStagingListRow *> *)flattenedRowsFromChanges:(NSArray<PBChangedFile *> *)changes;
+- (NSInteger)stagedFileCountFromChanges:(NSArray<PBChangedFile *> *)changes;
+- (NSArray<PBChangedFile *> *)resolvedFilesForAction:(PBStagingFileAction)action
+									 context:(PBStagingSelectionContext)context
+							 stagedSelection:(NSArray<PBChangedFile *> *)stagedSelection
+						   unstagedSelection:(NSArray<PBChangedFile *> *)unstagedSelection;
+- (NSArray<NSDictionary<NSString *, id> *> *)sectionedDragPayloadForRows:(NSArray<PBStagingListRow *> *)rows
+												 selectedIndexes:(NSIndexSet *)selectedIndexes;
+- (nullable NSArray<PBChangedFile *> *)resolvedDropFilesFromPropertyList:(nullable id)propertyList
+														 rows:(NSArray<PBStagingListRow *> *)rows
+											  destinationSection:(PBStagingListSection)destinationSection;
 - (NSInteger)rowCheckboxStateForFile:(PBChangedFile *)file inSection:(PBStagingListSection)section;
 - (NSInteger)masterCheckboxStateForChanges:(NSArray<PBChangedFile *> *)changes
 								 inSection:(PBStagingListSection)section;
@@ -839,16 +875,14 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 
 @interface PBCommitMenuPresenter : NSObject
 + (PBCommitMenuPresentation *)presentationForAction:(SEL _Nullable)action
-									  unstagedFiles:(NSArray<PBCommitMenuFile *> *)unstagedFiles
-										stagedFiles:(NSArray<PBCommitMenuFile *> *)stagedFiles
-									isStagedContext:(BOOL)isStagedContext
+									   resolvedFiles:(NSArray<PBCommitMenuFile *> *)resolvedFiles
 										allowsTrash:(BOOL)allowsTrash
 								   isContextualMenu:(BOOL)isContextualMenu
 						 singleSelectionIsSubmodule:(BOOL)singleSelectionIsSubmodule
 											isAmend:(BOOL)isAmend
 								  prepareHookExists:(BOOL)prepareHookExists
 									fallbackEnabled:(BOOL)fallbackEnabled
-	NS_SWIFT_NAME(presentation(action:unstagedFiles:stagedFiles:isStagedContext:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:));
+	NS_SWIFT_NAME(presentation(action:resolvedFiles:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:));
 @end
 
 @interface PBCommitList : NSTableView

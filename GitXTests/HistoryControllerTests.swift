@@ -16,6 +16,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         private var fixedRepository: PBGitRepository!
         private(set) var shownErrors: [NSError] = []
         private(set) var confirmationCount = 0
+        private(set) var openedURLs: [URL] = []
+        private(set) var revealedURLs: [URL] = []
         var automaticallyConfirms = true
         private var pendingConfirmation: (() -> Void)?
 
@@ -45,6 +47,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         override func showErrorSheet(_ error: Error) {
             shownErrors.append(error as NSError)
+        }
+
+        override func open(_ fileURLs: [URL]) {
+            openedURLs = fileURLs
+        }
+
+        override func revealURLs(inFinder fileURLs: [URL]) {
+            revealedURLs = fileURLs
         }
 
         private(set) var shownMessages: [(message: String, info: String)] = []
@@ -790,6 +800,133 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try fixture.git(["show", ":nested/tracked.txt"]), " second\nadded\n")
     }
 
+    func testSectionedActionPolicyUsesOneSnapshotForMenusAndExecution() throws {
+        try fixture.write("staged\n", to: "staged-only.txt")
+        try fixture.write("staged portion\n", to: "partial.txt")
+        try fixture.git(["add", "staged-only.txt", "partial.txt"])
+        try fixture.write("staged portion\nworktree portion\n", to: "partial.txt")
+        try fixture.write("unstaged\n", to: "unstaged-only.txt")
+
+        let pane = try openStagingPane()
+        let fileList = pane.fileListController
+        fileList.setListLayout(.sectionedList)
+        XCTAssertEqual(fileList.layout, .sectionedList)
+        let stagedController = fileList.stagedFilesController
+        let unstagedController = fileList.unstagedFilesController
+        let stagedFiles = try XCTUnwrap(stagedController.arrangedObjects as? [PBChangedFile])
+        let unstagedFiles = try XCTUnwrap(unstagedController.arrangedObjects as? [PBChangedFile])
+        let stagedOnly = try XCTUnwrap(stagedFiles.first { $0.path == "staged-only.txt" })
+        let stagedPartial = try XCTUnwrap(stagedFiles.first { $0.path == "partial.txt" })
+        let unstagedPartial = try XCTUnwrap(unstagedFiles.first { $0.path == "partial.txt" })
+        let unstagedOnly = try XCTUnwrap(unstagedFiles.first { $0.path == "unstaged-only.txt" })
+        stagedController.setSelectedObjects([stagedOnly, stagedPartial])
+        unstagedController.setSelectedObjects([unstagedPartial, unstagedOnly])
+
+        let menu = try XCTUnwrap(fileList.sectionedTable.menu)
+        func item(_ selectorName: String) throws -> NSMenuItem {
+            try XCTUnwrap(menu.items.first { $0.action == NSSelectorFromString(selectorName) })
+        }
+        func snapshot(_ selectorName: String) throws -> (NSMenuItem, [String], Bool) {
+            let menuItem = try item(selectorName)
+            let enabled = pane.validate(menuItem)
+            let selection = try XCTUnwrap(menuItem.representedObject as? PBStagingActionSelection)
+            return (menuItem, selection.files.map(\.path), enabled)
+        }
+
+        let stage = try snapshot("stageFiles:")
+        XCTAssertEqual(stage.1, ["partial.txt", "unstaged-only.txt"])
+        XCTAssertEqual(stage.0.title, "Stage 2 Files")
+        XCTAssertTrue(stage.2)
+        let unstage = try snapshot("unstageFiles:")
+        XCTAssertEqual(unstage.1, ["partial.txt", "staged-only.txt"])
+        XCTAssertEqual(unstage.0.title, "Unstage 2 Files")
+        XCTAssertTrue(unstage.2)
+
+        for selector in ["discardFiles:", "discardFilesForcibly:", "ignoreFiles:", "moveToTrash:"] {
+            XCTAssertEqual(try snapshot(selector).1, ["partial.txt", "unstaged-only.txt"], selector)
+        }
+        let open = try snapshot("openFiles:")
+        let reveal = try snapshot("revealInFinder:")
+        let union = ["partial.txt", "staged-only.txt", "unstaged-only.txt"]
+        XCTAssertEqual(open.1, union)
+        XCTAssertEqual(open.0.title, "Open 3 Files")
+        XCTAssertEqual(reveal.1, union)
+        XCTAssertEqual(reveal.0.title, "Reveal 3 Files in Finder")
+
+        stagedController.setSelectedObjects([])
+        unstagedController.setSelectedObjects([])
+        pane.perform(NSSelectorFromString("openFiles:"), with: open.0)
+        pane.perform(NSSelectorFromString("revealInFinder:"), with: reveal.0)
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        XCTAssertEqual(stub.openedURLs.map(\.lastPathComponent), union)
+        XCTAssertEqual(stub.revealedURLs.map(\.lastPathComponent), union)
+
+        stagedController.setSelectedObjects([stagedOnly])
+        unstagedController.setSelectedObjects([])
+        for selector in ["discardFiles:", "discardFilesForcibly:", "ignoreFiles:", "moveToTrash:"] {
+            let stagedOnlyResult = try snapshot(selector)
+            XCTAssertTrue(stagedOnlyResult.1.isEmpty, selector)
+            XCTAssertFalse(stagedOnlyResult.2, selector)
+        }
+
+        stagedController.setSelectedObjects([stagedOnly])
+        unstagedController.setSelectedObjects([unstagedOnly])
+        fileList.setListLayout(.splitTables)
+        XCTAssertEqual(stagedController.selectedObjects.count, 1)
+        XCTAssertTrue(unstagedController.selectedObjects.isEmpty)
+        let splitMainItem = NSMenuItem(
+            title: "Open Files",
+            action: NSSelectorFromString("openFiles:"),
+            keyEquivalent: ""
+        )
+        let splitMainMenu = NSMenu()
+        splitMainMenu.addItem(splitMainItem)
+        XCTAssertTrue(pane.validate(splitMainItem))
+        XCTAssertEqual(
+            (splitMainItem.representedObject as? PBStagingActionSelection)?.files.map(\.path),
+            ["staged-only.txt"],
+            "a non-contextual split command uses the sole active side"
+        )
+
+        waitForIndexUpdate {
+            pane.perform(NSSelectorFromString("stageFiles:"), with: stage.0)
+        }
+        XCTAssertEqual(try fixture.git(["show", ":partial.txt"]), "staged portion\nworktree portion\n")
+        XCTAssertEqual(try fixture.git(["show", ":unstaged-only.txt"]), "unstaged\n")
+    }
+
+    func testFilteredStagedFileRemainsCommittable() throws {
+        try fixture.write("hidden staged change\n", to: "hidden-staged.txt")
+        try fixture.git(["add", "hidden-staged.txt"])
+        let pane = try openStagingPane()
+        let fileList = pane.fileListController
+
+        pane.searchField.stringValue = "does-not-match"
+        if let action = pane.searchField.action {
+            _ = NSApp.sendAction(action, to: pane.searchField.target, from: pane.searchField)
+        }
+        XCTAssertTrue((fileList.stagedFilesController.arrangedObjects as? [PBChangedFile])?.isEmpty == true)
+        XCTAssertEqual(fileList.stagedFileCount, 1)
+        let commitButton = try XCTUnwrap(
+            Mirror(reflecting: pane).children
+                .compactMap { $0.value as? NSButton }
+                .first { $0.accessibilityIdentifier() == "CommitButton" }
+        )
+        XCTAssertTrue(commitButton.isEnabled)
+
+        let initialHead = try fixture.git(["rev-parse", "HEAD"])
+        pane.commitMessageView.string = "Commit hidden staged file"
+        let committed = expectation(
+            forNotification: NSNotification.Name(PBGitIndexFinishedCommit),
+            object: repository.index
+        )
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        wait(for: [committed], timeout: 20)
+        pumpRunLoop()
+        XCTAssertNotEqual(try fixture.git(["rev-parse", "HEAD"]), initialHead)
+        XCTAssertEqual(fileList.stagedFileCount, 0)
+    }
+
     func testCommitTableInteractionCoordinatorStagingDragAndFocusFlows() throws {
         try fixture.write("alpha.txt\n", to: "alpha.txt")
         try fixture.write("beta.txt\n", to: "beta.txt")
@@ -911,6 +1048,123 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         coordinator.toggleStaging(for: fileList.unstagedTable)
         waitForIndexUpdate { coordinator.didDoubleClick(fileList.stagedTable) }
         XCTAssertEqual(fileList.stagedFileCount, 0, "double-clicking staged rows unstages them")
+    }
+
+    func testSectionedDragPayloadsOnlyMutateCurrentCrossSectionEntries() throws {
+        try fixture.write("staged only\n", to: "staged-only.txt")
+        try fixture.write("indexed portion\n", to: "partial.txt")
+        try fixture.git(["add", "staged-only.txt", "partial.txt"])
+        try fixture.write("indexed portion\nworktree portion\n", to: "partial.txt")
+        try fixture.write("unstaged only\n", to: "unstaged-only.txt")
+
+        let pane = try openStagingPane()
+        let fileList = pane.fileListController
+        fileList.setListLayout(.sectionedList)
+        let table = fileList.sectionedTable
+        let dataSource = try XCTUnwrap(table.dataSource)
+        let dragType = NSPasteboard.PasteboardType("GitXStagingSectionedRows")
+
+        func rows(for path: String) -> [Int] {
+            (0 ..< table.numberOfRows).filter { row in
+                (table.view(atColumn: 0, row: row, makeIfNecessary: true) as? PBStagingFileCellView)?
+                    .pathField.stringValue == path
+            }
+        }
+        func writeDrag(row: Int, name: String) throws -> NSPasteboard {
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name(name))
+            pasteboard.clearContents()
+            let selector = NSSelectorFromString("tableView:writeRowsWithIndexes:toPasteboard:")
+            typealias WriteRows = @convention(c) (
+                AnyObject,
+                Selector,
+                NSTableView,
+                NSIndexSet,
+                NSPasteboard
+            ) -> Bool
+            let writeRows = unsafeBitCast(fileList.method(for: selector), to: WriteRows.self)
+            XCTAssertTrue(writeRows(fileList, selector, table, NSIndexSet(index: row), pasteboard))
+            return pasteboard
+        }
+        func validate(_ pasteboard: NSPasteboard, targetRow: Int) -> NSDragOperation {
+            dataSource.tableView?(
+                table,
+                validateDrop: DraggingInfoFake(pasteboard: pasteboard),
+                proposedRow: targetRow,
+                proposedDropOperation: .above
+            ) ?? []
+        }
+        func accept(_ pasteboard: NSPasteboard, targetRow: Int) -> Bool {
+            dataSource.tableView?(
+                table,
+                acceptDrop: DraggingInfoFake(pasteboard: pasteboard),
+                row: targetRow,
+                dropOperation: .above
+            ) ?? false
+        }
+
+        let partialRows = rows(for: "partial.txt")
+        XCTAssertEqual(partialRows.count, 2)
+        let stagedPartialRow = try XCTUnwrap(partialRows.min())
+        let unstagedPartialRow = try XCTUnwrap(partialRows.max())
+        let sameSectionDrag = try writeDrag(row: stagedPartialRow, name: "GitXSectionedSameSection")
+        let encoded = try XCTUnwrap(sameSectionDrag.propertyList(forType: dragType) as? [[String: Any]])
+        XCTAssertEqual(encoded.first?["path"] as? String, "partial.txt")
+        XCTAssertEqual(encoded.first?["sourceSection"] as? Int, PBStagingListSection.staged.rawValue)
+        let indexedPartial = try fixture.git(["show", ":partial.txt"])
+        XCTAssertEqual(validate(sameSectionDrag, targetRow: 0), [])
+        XCTAssertFalse(accept(sameSectionDrag, targetRow: 0))
+        XCTAssertEqual(try fixture.git(["show", ":partial.txt"]), indexedPartial)
+        XCTAssertEqual(
+            try fixture.git(["status", "--porcelain", "--", "partial.txt"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "AM partial.txt"
+        )
+
+        let unstagedRow = try XCTUnwrap(rows(for: "unstaged-only.txt").first)
+        let stageDrag = try writeDrag(row: unstagedRow, name: "GitXSectionedStage")
+        XCTAssertEqual(validate(stageDrag, targetRow: 0), .copy)
+        waitForIndexUpdate {
+            XCTAssertTrue(accept(stageDrag, targetRow: 0))
+        }
+        XCTAssertFalse(try fixture.git(["ls-files", "--stage", "--", "unstaged-only.txt"]).isEmpty)
+
+        let stagedOnlyRow = try XCTUnwrap(rows(for: "staged-only.txt").first)
+        let unstageDrag = try writeDrag(row: stagedOnlyRow, name: "GitXSectionedUnstage")
+        XCTAssertEqual(validate(unstageDrag, targetRow: unstagedPartialRow), .copy)
+        waitForIndexUpdate {
+            XCTAssertTrue(accept(unstageDrag, targetRow: unstagedPartialRow))
+        }
+        XCTAssertTrue(try fixture.git(["ls-files", "--stage", "--", "staged-only.txt"]).isEmpty)
+
+        let mixedPasteboard = NSPasteboard(name: NSPasteboard.Name("GitXSectionedMixed"))
+        mixedPasteboard.clearContents()
+        mixedPasteboard.declareTypes([dragType], owner: nil)
+        mixedPasteboard.setPropertyList(
+            [
+                ["path": "unstaged-only.txt", "sourceSection": PBStagingListSection.staged.rawValue],
+                ["path": "staged-only.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
+                ["path": "staged-only.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
+                ["path": "stale.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
+            ],
+            forType: dragType
+        )
+        XCTAssertEqual(validate(mixedPasteboard, targetRow: 0), .copy)
+        waitForIndexUpdate {
+            XCTAssertTrue(accept(mixedPasteboard, targetRow: 0))
+        }
+        XCTAssertFalse(try fixture.git(["ls-files", "--stage", "--", "staged-only.txt"]).isEmpty)
+
+        for (name, propertyList) in [
+            ("Empty", [] as [[String: Any]]),
+            ("Malformed", [["path": "partial.txt", "sourceSection": 0, "extra": true]]),
+        ] {
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name("GitXSectioned\(name)"))
+            pasteboard.clearContents()
+            pasteboard.declareTypes([dragType], owner: nil)
+            pasteboard.setPropertyList(propertyList, forType: dragType)
+            XCTAssertEqual(validate(pasteboard, targetRow: 0), [])
+            XCTAssertFalse(accept(pasteboard, targetRow: 0))
+        }
     }
 
     func testStagingPaneCommitWorkflowComposerAndNotifications() throws {
@@ -1249,7 +1503,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             ["nested/tracked.txt"],
             "the header search filters both lists by path substring"
         )
-        XCTAssertEqual(fileList.stagedFileCount, 0)
+        XCTAssertEqual(fileList.stagedFileCount, 1, "search filtering does not change commit eligibility")
         pane.searchField.stringValue = ""
         if let action = pane.searchField.action {
             _ = NSApp.sendAction(action, to: pane.searchField.target, from: pane.searchField)
