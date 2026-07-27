@@ -177,6 +177,14 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @property (nonatomic, readonly) NSButton *checkbox;
 @property (nonatomic, readonly) NSTextField *pathField;
 @property (nonatomic, readonly) NSButton *overflowButton;
+- (void)configureWithFile:(PBChangedFile *)file checkboxState:(NSInteger)checkboxState
+	NS_SWIFT_NAME(configure(with:checkboxState:));
+@end
+
+@interface PBStagingSectionHeaderView : NSView
+@property (nonatomic, readonly) NSButton *masterCheckbox;
+- (void)configureWithTitle:(NSString *)title fileCount:(NSInteger)fileCount masterState:(NSInteger)masterState
+	NS_SWIFT_NAME(configure(title:fileCount:masterState:));
 @end
 
 @interface PBCommitTableInteractionCoordinator : NSObject
@@ -351,6 +359,8 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 
 @interface PBHistoryStateCoordinator : NSObject
 - (NSArray<PBGitCommit *> *)normalizedSelection:(NSArray<PBGitCommit *> *)selection;
+- (BOOL)shouldShowStagingForSelection:(NSArray<PBGitCommit *> *)selection
+	NS_SWIFT_NAME(shouldShowStaging(for:));
 - (nullable NSArray<PBGitCommit *> *)preservedSelection:(NSArray<PBGitCommit *> *)selection
                                               inContent:(NSArray<PBGitCommit *> *)content;
 - (PBHistoryBranchFilterPresentation *)branchFilterPresentationForSimpleBranch:(BOOL)simpleBranch

@@ -2272,6 +2272,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 	NSToolbarItem *commitItem = [toolbarController toolbar:historyToolbar itemForItemIdentifier:@"GitX.Toolbar.Commit" willBeInsertedIntoToolbar:NO];
 	XCTAssertNotNil(commitItem);
+	XCTAssertEqualObjects(commitItem.label, @"Uncommitted Changes");
 	XCTAssertEqual(commitItem.action, @selector(showUncommittedChanges:));
 	XCTAssertEqual(commitItem.target, self.controller);
 

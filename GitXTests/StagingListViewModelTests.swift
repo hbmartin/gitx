@@ -1,6 +1,7 @@
 import XCTest
 
-final class StagingListViewModelTests: XCTestCase {
+@MainActor
+final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
     private func file(
         _ path: String,
         status: PBChangedFileStatus = .MODIFIED,
@@ -221,6 +222,19 @@ final class StagingListViewModelTests: XCTestCase {
             model.masterCheckboxState(forChanges: [unstagedOnly], in: .unstaged),
             NSControl.StateValue.off.rawValue
         )
+    }
+
+    func testFileAndSectionControlsExposeLocalizedAccessibilityLabels() {
+        let changedFile = file("Sources/App.swift")
+        let cell = PBStagingFileCellView(frame: .zero)
+        cell.configure(with: changedFile, checkboxState: NSControl.StateValue.off.rawValue)
+        XCTAssertEqual(cell.checkbox.accessibilityLabel(), "Toggle staging for Sources/App.swift")
+        XCTAssertEqual(cell.overflowButton.accessibilityLabel(), "File actions for Sources/App.swift")
+
+        let header = PBStagingSectionHeaderView(frame: .zero)
+        header.configure(title: "Staged files", fileCount: 0, masterState: NSControl.StateValue.off.rawValue)
+        XCTAssertEqual(header.masterCheckbox.accessibilityLabel(), "Toggle Staged files")
+        XCTAssertFalse(header.masterCheckbox.isEnabled)
     }
 
     func testDiffRequestsOrderStagedSelectionsFirst() {

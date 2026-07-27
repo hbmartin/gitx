@@ -249,9 +249,10 @@
 	XCUIElement *table = self.app.tables[@"CommitList"];
 	XCTAssertTrue([table waitForExistenceWithTimeout:15], @"History should be open before showing uncommitted changes");
 	XCUIElement *stagingTable = self.app.tables[tableIdentifier];
-	XCUIElement *workingState = self.app.staticTexts[@"Uncommitted Changes"];
+	XCUIElement *workingStateRow = self.app.staticTexts[@"Uncommitted Changes"];
+	XCUIElement *workingStateToolbarButton = self.app.buttons[@"Uncommitted Changes"];
 	NSPredicate *stagingReady = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
-		return stagingTable.exists || workingState.exists;
+		return stagingTable.exists || workingStateRow.exists || workingStateToolbarButton.exists;
 	}];
 	XCTNSPredicateExpectation *readyExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:stagingReady object:self.app];
 	[self waitForExpectations:@[ readyExpectation ] timeout:15];

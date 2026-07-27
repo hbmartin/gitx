@@ -62,6 +62,20 @@ final class StagingFileCellView: NSTableCellView {
         pathField.toolTip = file.path
         iconView.image = file.icon()
         checkbox.state = NSControl.StateValue(rawValue: checkboxState)
+        checkbox.setAccessibilityLabel(String(
+            format: NSLocalizedString(
+                "Toggle staging for %@",
+                comment: "Accessibility label for a staging checkbox, including the file path"
+            ),
+            file.path
+        ))
+        overflowButton.setAccessibilityLabel(String(
+            format: NSLocalizedString(
+                "File actions for %@",
+                comment: "Accessibility label for a staging file action button, including the file path"
+            ),
+            file.path
+        ))
     }
 }
 
@@ -103,6 +117,13 @@ final class StagingSectionHeaderView: NSView {
         titleField.stringValue = fileCount > 0 ? "\(title) (\(fileCount))" : title
         masterCheckbox.state = NSControl.StateValue(rawValue: masterState)
         masterCheckbox.isEnabled = fileCount > 0
+        masterCheckbox.setAccessibilityLabel(String(
+            format: NSLocalizedString(
+                "Toggle %@",
+                comment: "Accessibility label for a staging section checkbox, including the section title"
+            ),
+            title
+        ))
     }
 }
 

@@ -37,6 +37,11 @@ final class HistoryStateCoordinator: NSObject {
         return [workingState]
     }
 
+    @objc(shouldShowStagingForSelection:)
+    func shouldShowStaging(for selection: [PBGitCommit]) -> Bool {
+        selection.count == 1 && selection[0] is PBUncommittedChanges
+    }
+
     @objc(preservedSelection:inContent:)
     func preservedSelection(_ selection: [PBGitCommit], in content: [PBGitCommit]) -> [PBGitCommit]? {
         guard !selection.isEmpty else { return nil }

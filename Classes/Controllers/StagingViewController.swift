@@ -73,6 +73,9 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         NotificationCenter.default.removeObserver(self)
         selectionCoalescer?.cancel()
         selectionCoalescer = nil
+        if amendButton.infoForBinding(.value) != nil {
+            amendButton.unbind(.value)
+        }
         fileListController.close()
     }
 
@@ -695,6 +698,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     @objc private func commitFinished(_ notification: Notification) {
         finishCommitProgressSheet()
+        host?.isBusy = false
         commitMessageView.isEditable = true
         commitMessageView.string = ""
         if let description = notification.userInfo?["description"] as? String {

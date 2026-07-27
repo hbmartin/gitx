@@ -387,8 +387,7 @@
 		[self restoreFileBrowserSelection];
 	} else {
 		// kHistoryDetailViewIndex
-		BOOL showStagingPane = self.selectedCommits.count == 1 &&
-			[firstSelectedCommit isKindOfClass:PBUncommittedChanges.class];
+		BOOL showStagingPane = [stateCoordinator shouldShowStagingForSelection:self.selectedCommits];
 		[self setStagingPaneVisible:showStagingPane];
 		if (showStagingPane) {
 			// The staging pane owns the working-state presentation; leave

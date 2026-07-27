@@ -401,6 +401,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === replacement)
 
         let stateCoordinator = PBHistoryStateCoordinator()
+        let decisionWorkingState = PBUncommittedChanges(repository: repository)
+        let stagingDecisionSelector = NSSelectorFromString("shouldShowStagingForSelection:")
+        XCTAssertTrue(stateCoordinator.responds(to: stagingDecisionSelector))
+        if stateCoordinator.responds(to: stagingDecisionSelector) {
+            XCTAssertTrue(stateCoordinator.shouldShowStaging(for: [decisionWorkingState]))
+            XCTAssertFalse(stateCoordinator.shouldShowStaging(for: []))
+            XCTAssertFalse(stateCoordinator.shouldShowStaging(for: [commits[0]]))
+            XCTAssertFalse(stateCoordinator.shouldShowStaging(for: [decisionWorkingState, commits[0]]))
+            XCTAssertFalse(stateCoordinator.shouldShowStaging(for: [decisionWorkingState, decisionWorkingState]))
+        }
         let secondReplacement = PBGitCommit(repository: repository, andCommit: commits[1].gtCommit)
         let duplicateSecondReplacement = PBGitCommit(repository: repository, andCommit: commits[1].gtCommit)
         let preserved = try XCTUnwrap(
@@ -1258,6 +1268,28 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             pane.perform(NSSelectorFromString("toggleAmendCommit:"), with: nil)
         }
         XCTAssertFalse(repository.index.isAmend)
+    }
+
+    func testStagingPaneTeardownUnbindsAmendAndSuccessfulCompletionClearsBusyState() throws {
+        try fixture.write("lifecycle\n", to: "lifecycle.txt")
+        let pane = try openStagingPane()
+        let amendButton = try XCTUnwrap(
+            controls(in: pane.view)
+                .compactMap { $0 as? NSButton }
+                .first { $0.title == "Amend" }
+        )
+        XCTAssertNotNil(amendButton.infoForBinding(.value))
+
+        historyController.isBusy = true
+        NotificationCenter.default.post(
+            name: NSNotification.Name(PBGitIndexFinishedCommit),
+            object: repository.index,
+            userInfo: ["description": "Commit finished"]
+        )
+        XCTAssertFalse(historyController.isBusy)
+
+        pane.closeView()
+        XCTAssertNil(amendButton.infoForBinding(.value))
     }
 
     func testStagingPaneMenusAndViewOptions() throws {
@@ -2563,6 +2595,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     private func flattenedTree(_ root: PBGitTree) -> [PBGitTree] {
         [root] + root.children.flatMap(flattenedTree)
+    }
+
+    private func controls(in view: NSView) -> [NSControl] {
+        view.subviews.flatMap { child -> [NSControl] in
+            var result = controls(in: child)
+            if let control = child as? NSControl {
+                result.insert(control, at: 0)
+            }
+            return result
+        }
     }
 
     private func firstLeafNode(in node: NSTreeNode) -> NSTreeNode? {

@@ -257,7 +257,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
 
         switch identifier {
         case Item.commit:
-            return Descriptor(label: "Commit", toolTip: "Show uncommitted changes", symbol: "checkmark.circle", action: #selector(PBGitWindowController.showUncommittedChanges(_:)), topColor: greenTop, bottomColor: greenBottom)
+            return Descriptor(label: "Uncommitted Changes", toolTip: "Show uncommitted changes", symbol: "checkmark.circle", action: #selector(PBGitWindowController.showUncommittedChanges(_:)), topColor: greenTop, bottomColor: greenBottom)
         case Item.fetch:
             return Descriptor(label: "Fetch", toolTip: "Fetch all remotes", symbol: "arrow.down", action: NSSelectorFromString("toolbarFetch:"), topColor: blueTop, bottomColor: blueBottom)
         case Item.pull:
