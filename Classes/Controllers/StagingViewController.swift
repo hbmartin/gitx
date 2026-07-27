@@ -209,24 +209,6 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         optionsMenu.addItem(externalDiff)
         optionsMenu.addItem(.separator())
 
-        let showWhitespace = NSMenuItem(
-            title: NSLocalizedString("Show whitespace", comment: "Staging view options item"),
-            action: #selector(changeWhitespaceVisibility(_:)),
-            keyEquivalent: ""
-        )
-        showWhitespace.target = self
-        showWhitespace.tag = 0
-        optionsMenu.addItem(showWhitespace)
-        let ignoreWhitespace = NSMenuItem(
-            title: NSLocalizedString("Ignore whitespace", comment: "Staging view options item"),
-            action: #selector(changeWhitespaceVisibility(_:)),
-            keyEquivalent: ""
-        )
-        ignoreWhitespace.target = self
-        ignoreWhitespace.tag = 1
-        optionsMenu.addItem(ignoreWhitespace)
-        optionsMenu.addItem(.separator())
-
         let contextParent = NSMenuItem(
             title: NSLocalizedString("Lines of context", comment: "Staging view options submenu title"),
             action: nil,
@@ -281,11 +263,6 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     @objc private func searchChanged(_ sender: NSSearchField) {
         fileListController.viewModel.searchText = sender.stringValue
         fileListController.applyFilterAndSort()
-    }
-
-    @objc private func changeWhitespaceVisibility(_ sender: NSMenuItem) {
-        diffPaneController.ignoreWhitespace = sender.tag == 1
-        NSLog("[GitX] Staging diffs now %@ whitespace", sender.tag == 1 ? "ignore" : "show")
     }
 
     @objc private func changeContextLines(_ sender: NSMenuItem) {
@@ -813,10 +790,6 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard let action = menuItem.action else { return false }
-        if action == #selector(changeWhitespaceVisibility(_:)) {
-            menuItem.state = diffPaneController.ignoreWhitespace == (menuItem.tag == 1) ? .on : .off
-            return true
-        }
         if action == #selector(changeContextLines(_:)) {
             menuItem.state = diffPaneController.contextLines == UInt(menuItem.tag) ? .on : .off
             return true

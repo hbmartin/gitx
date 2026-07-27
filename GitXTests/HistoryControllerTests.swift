@@ -755,6 +755,41 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try fixture.git(["show", ":broken-link"]), "missing-target")
     }
 
+    func testStagingAlwaysDisplaysWhitespaceAndAppliesTheDisplayedPatch() throws {
+        let defaults = UserDefaults.standard
+        let obsoleteKey = "PBStagingIgnoreWhitespace"
+        let previousValue = defaults.object(forKey: obsoleteKey)
+        defer {
+            if let previousValue {
+                defaults.set(previousValue, forKey: obsoleteKey)
+            } else {
+                defaults.removeObject(forKey: obsoleteKey)
+            }
+        }
+        defaults.set(true, forKey: obsoleteKey)
+        try fixture.write(" second\nadded\n", to: "nested/tracked.txt")
+
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        let rendered = pane.diffPaneController.contentView.textView.string
+        XCTAssertTrue(rendered.contains("│ -second"), rendered)
+        XCTAssertTrue(rendered.contains("│ + second"), rendered)
+        XCTAssertFalse(pane.responds(to: NSSelectorFromString("changeWhitespaceVisibility:")))
+
+        let optionsMenu = try XCTUnwrap(
+            Mirror(reflecting: pane).children
+                .compactMap { $0.value as? NSMenu }
+                .first { $0.items.contains { $0.title == "External Diff" } }
+        )
+        XCTAssertNil(optionsMenu.item(withTitle: "Show whitespace"))
+        XCTAssertNil(optionsMenu.item(withTitle: "Ignore whitespace"))
+
+        try waitForIndexUpdate {
+            try activateNativeDiffAction("Stage hunk", in: pane)
+        }
+        XCTAssertEqual(try fixture.git(["show", ":nested/tracked.txt"]), " second\nadded\n")
+    }
+
     func testCommitTableInteractionCoordinatorStagingDragAndFocusFlows() throws {
         try fixture.write("alpha.txt\n", to: "alpha.txt")
         try fixture.write("beta.txt\n", to: "beta.txt")
@@ -997,14 +1032,6 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(pane.diffPaneController.contextLines, 6)
         contextItem.tag = 3
         pane.perform(NSSelectorFromString("changeContextLines:"), with: contextItem)
-
-        let whitespaceItem = NSMenuItem()
-        whitespaceItem.tag = 1
-        pane.perform(NSSelectorFromString("changeWhitespaceVisibility:"), with: whitespaceItem)
-        XCTAssertTrue(pane.diffPaneController.ignoreWhitespace)
-        whitespaceItem.tag = 0
-        pane.perform(NSSelectorFromString("changeWhitespaceVisibility:"), with: whitespaceItem)
-        XCTAssertFalse(pane.diffPaneController.ignoreWhitespace)
 
         let layoutItem = NSMenuItem()
         layoutItem.tag = PBStagingListLayout.sectionedList.rawValue
@@ -1254,13 +1281,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(PBApplicationSettings.stagingListLayout, .sectionedList)
         XCTAssertTrue(fileList.sectionedTable.superview != nil, "the sectioned table reinstalls when toggled back")
 
-        let previousWhitespace = PBApplicationSettings.stagingIgnoreWhitespace
         let previousContext = UserDefaults.standard.object(forKey: "PBStageDiffContextLines")
-        pane.diffPaneController.ignoreWhitespace = true
-        XCTAssertTrue(PBApplicationSettings.stagingIgnoreWhitespace)
         pane.diffPaneController.contextLines = 6
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "PBStageDiffContextLines"), 6)
-        pane.diffPaneController.ignoreWhitespace = previousWhitespace
         if let previousContext = previousContext as? Int {
             pane.diffPaneController.contextLines = UInt(previousContext)
         } else {

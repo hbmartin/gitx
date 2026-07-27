@@ -44,25 +44,17 @@ final class StagingDiffPaneController: NSObject {
         }
     }
 
-    @objc var ignoreWhitespace: Bool {
-        didSet {
-            guard ignoreWhitespace != oldValue else { return }
-            ApplicationSettings.stagingIgnoreWhitespace = ignoreWhitespace
-            rerenderCurrentRequests()
-        }
-    }
-
     @objc(initWithRepository:)
     init(repository: PBGitRepository) {
         self.repository = repository
         contentView = PBNativeContentView(frame: .zero)
         let savedContext = UserDefaults.standard.object(forKey: Self.contextLinesKey) as? Int
         contextLines = UInt(max(0, savedContext ?? 3))
-        ignoreWhitespace = ApplicationSettings.stagingIgnoreWhitespace
         super.init()
         delegateAdapter.owner = self
         contentView.delegate = delegateAdapter
         contentView.translatesAutoresizingMaskIntoConstraints = false
+        NSLog("[GitX] Staging diffs include whitespace changes for patch integrity")
     }
 
     @objc(renderRequests:)
@@ -101,8 +93,7 @@ final class StagingDiffPaneController: NSObject {
             : repository.index.diff(
                 for: file,
                 staged: request.staged,
-                contextLines: contextLines,
-                ignoreWhitespace: ignoreWhitespace
+                contextLines: contextLines
             ) ?? ""
         let sideTitle = request.staged
             ? NSLocalizedString("Staged", comment: "Staging diff section prefix for staged changes")
@@ -156,7 +147,7 @@ final class StagingDiffPaneController: NSObject {
         let selection = requests
             .map { "\($0.staged ? "s" : "u"):\($0.file.path)" }
             .joined(separator: "|")
-        return "staging:\(selection):ctx\(contextLines):ws\(ignoreWhitespace ? 1 : 0)"
+        return "staging:\(selection):ctx\(contextLines)"
     }
 
     // MARK: Content-view actions (dispatched via the private delegate adapter)

@@ -120,7 +120,6 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @property (class) PBApplicationIconStyle applicationIconStyle;
 @property (class) PBStagingListLayout stagingListLayout;
 @property (class) PBStagingFileSortOrder stagingFileSortOrder;
-@property (class) BOOL stagingIgnoreWhitespace;
 @end
 
 typedef NS_ENUM(NSInteger, PBStagingListSection) {
@@ -145,7 +144,6 @@ typedef NS_ENUM(NSInteger, PBStagingListSection) {
 @interface PBStagingDiffPaneController : NSObject
 @property (nonatomic, readonly) PBNativeContentView *contentView;
 @property (nonatomic) NSUInteger contextLines;
-@property (nonatomic) BOOL ignoreWhitespace;
 - (void)renderRequests:(NSArray<PBStagingDiffRequest *> *)requests;
 - (void)rerenderCurrentRequests;
 @end
