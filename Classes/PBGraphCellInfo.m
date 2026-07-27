@@ -23,14 +23,11 @@
 - (id)initWithPosition:(long)p andLines:(struct PBGitGraphLine *)l
 {
 	self = [super init];
-	if (!self) {
-		free(l);
-		return nil;
-	}
-
-	position = p;
-	@synchronized(self) {
-		lines = l;
+	if (self) {
+		position = p;
+		@synchronized(self) {
+			lines = l;
+		}
 	}
 
 	return self;
