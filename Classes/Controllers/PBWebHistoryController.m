@@ -235,7 +235,6 @@ typedef NS_ENUM(NSInteger, PBMultiCommitDiffPresentation) {
 
 - (void)changeContentTo:(NSArray<PBGitCommit *> *)commits
 {
-	CFAbsoluteTime requestStarted = CFAbsoluteTimeGetCurrent();
 	NSArray<PBGitCommit *> *requestedCommits = [commits copy] ?: @[];
 	NSUInteger generation = [self beginContentGeneration];
 	self.displayedCommits = requestedCommits;

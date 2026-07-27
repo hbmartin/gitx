@@ -29,7 +29,7 @@ extern NSString *PBGitRepositoryDocumentType;
 
 - (void)selectRevisionSpecifier:(PBGitRevSpecifier *)specifier;
 
-- (PBGitWindowController *)windowController;
+- (nullable PBGitWindowController *)windowController;
 
 @end
 
