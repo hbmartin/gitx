@@ -16,7 +16,8 @@
 - (nullable NSString *)gitOutput:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory;
 - (nullable NSString *)configureOriginForRepository:(NSString *)repositoryPath;
 - (void)openPreferencesWaitingForElement:(XCUIElement *)element;
-- (void)openStagingView;
+- (void)launchWithStagingLayout:(NSInteger)layout;
+- (void)openStagingViewWaitingForTable:(NSString *)tableIdentifier;
 @end
 
 @implementation GitXScreenshotTests
@@ -31,10 +32,7 @@
 		@"-AppleLanguages", @"(en)",
 		@"-AppleLocale", @"en_US_POSIX",
 		@"-NSAutomaticWindowAnimationsEnabled", @"NO",
-		@"-PBGitXPreferenceViewIdentifier", @"General",
-		// These tests characterize the split-tables staging layout; the
-		// sectioned list is the app default.
-		@"-PBStagingFileListLayout", @"1"
+		@"-PBGitXPreferenceViewIdentifier", @"General"
 	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
 
@@ -228,7 +226,16 @@
 	return table;
 }
 
-- (void)openStagingView
+- (void)launchWithStagingLayout:(NSInteger)layout
+{
+	[self.app terminate];
+	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
+	[arguments addObjectsFromArray:@[ @"-PBStagingFileListLayout", [NSString stringWithFormat:@"%ld", layout] ]];
+	self.app.launchArguments = arguments;
+	[self.app launch];
+}
+
+- (void)openStagingViewWaitingForTable:(NSString *)tableIdentifier
 {
 	XCTAssertTrue([self waitForWindow], @"Staging requires a repository window");
 	XCUIElement *table = self.app.tables[@"CommitList"];
@@ -236,10 +243,8 @@
 	// Exercise the remapped entry point: Cmd-2 selects the Uncommitted
 	// Changes row, which swaps the Details tab to the staging pane.
 	[self.app.windows.firstMatch typeKey:@"2" modifierFlags:XCUIKeyModifierCommand];
-	XCTAssertTrue([self.app.tables[@"UnstagedFiles"] waitForExistenceWithTimeout:10],
-				  @"The Unstaged files list should be ready before using the staging pane");
-	XCTAssertTrue([self.app.tables[@"StagedFiles"] waitForExistenceWithTimeout:10],
-				  @"The Staged files list should be ready before using the staging pane");
+	XCTAssertTrue([self.app.tables[tableIdentifier] waitForExistenceWithTimeout:10],
+				  @"The %@ list should be ready before using the staging pane", tableIdentifier);
 }
 
 // MARK: - Tests
@@ -260,8 +265,10 @@
 
 - (void)testStagingTabScreenshot
 {
+	[self launchWithStagingLayout:0];
 	[self selectHistoryForCurrentBranch];
-	[self openStagingView];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
+	XCTAssertTrue(self.app.tables[@"PendingFiles"].exists);
 	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
 	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
 	// The pane selects the first pending file automatically, so the diff
@@ -272,10 +279,41 @@
 	[self saveWindowScreenshotNamed:@"staging-view"];
 }
 
+- (void)testSplitStagingTabScreenshot
+{
+	[self launchWithStagingLayout:1];
+	[self selectHistoryForCurrentBranch];
+	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
+	XCTAssertTrue([self.app.tables[@"StagedFiles"] waitForExistenceWithTimeout:10]);
+	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
+	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
+	NSPredicate *initialDiff = [NSPredicate predicateWithFormat:@"value CONTAINS 'Hunk 1'"];
+	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:initialDiff object:diff] ] timeout:10];
+
+	[self saveWindowScreenshotNamed:@"staging-view-split"];
+}
+
+- (void)testStagingOptionsDoNotOfferWhitespaceFiltering
+{
+	[self launchWithStagingLayout:0];
+	[self selectHistoryForCurrentBranch];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
+	XCUIElement *options = self.app.buttons[@"StagingViewOptions"];
+	XCTAssertTrue([options waitForExistenceWithTimeout:10]);
+	[options click];
+	XCUIElement *menu = self.app.menus.firstMatch;
+	XCTAssertTrue([menu waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([menu.menuItems[@"External Diff"] waitForExistenceWithTimeout:5]);
+	XCTAssertFalse(menu.menuItems[@"Show whitespace"].exists);
+	XCTAssertFalse(menu.menuItems[@"Ignore whitespace"].exists);
+	[self saveScreenshotNamed:@"staging-options"];
+}
+
 - (void)testStagingViewRemainsActiveAfterMovingWindow
 {
+	[self launchWithStagingLayout:0];
 	[self selectHistoryForCurrentBranch];
-	[self openStagingView];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
 	XCUIElement *diff = self.app.textViews[@"NativeContentText"];
 	XCTAssertTrue([diff waitForExistenceWithTimeout:10]);
 	NSPredicate *initialDiff = [NSPredicate predicateWithFormat:@"value CONTAINS 'Hunk 1'"];
@@ -294,8 +332,7 @@
 	[self waitForExpectations:@[ moveExpectation ] timeout:5];
 
 	XCTAssertTrue([[diff.value description] containsString:@"Hunk 1"]);
-	XCTAssertTrue(self.app.tables[@"UnstagedFiles"].hittable);
-	XCTAssertTrue(self.app.tables[@"StagedFiles"].hittable);
+	XCTAssertTrue(self.app.tables[@"PendingFiles"].hittable);
 	[self saveWindowScreenshotNamed:@"staging-view-after-window-move"];
 }
 
@@ -310,8 +347,8 @@
 	XCTAssertTrue(([self runGit:@[ @"add", @"partial.txt" ] inDirectory:fixture]));
 	XCTAssertTrue([@"staged line\nunstaged line\n" writeToFile:newPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
 	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
-	[self.app launch];
-	[self openStagingView];
+	[self launchWithStagingLayout:1];
+	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
 
 	XCUIElement *stagedTable = self.app.tables[@"StagedFiles"];
 	XCUIElement *unstagedTable = self.app.tables[@"UnstagedFiles"];
@@ -331,8 +368,9 @@
 
 - (void)testHistoryRemainsUsableAfterResizingWhileHidden
 {
+	[self launchWithStagingLayout:0];
 	XCTAssertTrue([self waitForWindow]);
-	[self openStagingView];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
 	XCUIElement *window = self.app.windows.firstMatch;
 	CGRect originalFrame = window.frame;
 	XCUIElement *resizeButton = window.buttons[XCUIIdentifierFullScreenWindow];
@@ -367,8 +405,8 @@
 	XCTAssertEqualObjects(initialHead, initialRemoteHead);
 
 	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repositoryPath};
-	[self.app launch];
-	[self openStagingView];
+	[self launchWithStagingLayout:1];
+	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
 
 	XCUIElement *unstagedTable = self.app.tables[@"UnstagedFiles"];
 	XCUIElement *stagedTable = self.app.tables[@"StagedFiles"];
@@ -433,7 +471,7 @@
 	// selection were remembered.
 	NSString *followUpPath = [repositoryPath stringByAppendingPathComponent:@"follow-up.txt"];
 	XCTAssertTrue([@"follow up\n" writeToFile:followUpPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
-	[self openStagingView];
+	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
 	pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
 	XCTAssertTrue([pushCheckbox waitForExistenceWithTimeout:10]);
 	NSPredicate *checkboxRemembered = [NSPredicate predicateWithFormat:@"value == 1"];
@@ -449,8 +487,8 @@
 	[self.app terminate];
 	NSString *repositoryPath = [self makeDirtyRepositoryFixture];
 	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repositoryPath};
-	[self.app launch];
-	[self openStagingView];
+	[self launchWithStagingLayout:0];
+	[self openStagingViewWaitingForTable:@"PendingFiles"];
 
 	XCUIElement *pushCheckbox = self.app.checkBoxes[@"PushAfterCommit"];
 	XCUIElement *remotePopup = self.app.popUpButtons[@"PushRemote"];

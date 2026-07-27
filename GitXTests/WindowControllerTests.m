@@ -2459,15 +2459,19 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 	PBWindowHookResponse = NSModalResponseOK;
 	__block BOOL retried = NO;
-	[self.controller showCommitHookFailedSheet:@"Hook" infoText:@"Failed" retryHandler:^{
-		retried = YES;
-	}];
+	[self.controller showCommitHookFailedSheet:@"Hook"
+									  infoText:@"Failed"
+								  retryHandler:^{
+									  retried = YES;
+								  }];
 	XCTAssertTrue(retried);
 	PBWindowHookResponse = NSModalResponseCancel;
 	__block BOOL retriedAfterCancel = NO;
-	[self.controller showCommitHookFailedSheet:@"Hook" infoText:@"Failed" retryHandler:^{
-		retriedAfterCancel = YES;
-	}];
+	[self.controller showCommitHookFailedSheet:@"Hook"
+									  infoText:@"Failed"
+								  retryHandler:^{
+									  retriedAfterCancel = YES;
+								  }];
 	XCTAssertFalse(retriedAfterCancel);
 	XCTAssertEqual(PBWindowHookCount, (NSUInteger)2);
 

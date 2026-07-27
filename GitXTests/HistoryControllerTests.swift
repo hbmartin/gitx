@@ -1081,6 +1081,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 NSIndexSet,
                 NSPasteboard
             ) -> Bool
+            // swift6-safety-justification: The Objective-C NSTableView data-source selector has this exact object-only ABI.
             let writeRows = unsafeBitCast(fileList.method(for: selector), to: WriteRows.self)
             XCTAssertTrue(writeRows(fileList, selector, table, NSIndexSet(index: row), pasteboard))
             return pasteboard
