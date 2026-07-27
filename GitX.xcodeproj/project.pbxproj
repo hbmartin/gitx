@@ -230,6 +230,8 @@
 		C0DE57A600000000000000A3 /* StagingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B3 /* StagingViewController.swift */; };
 		C0DE57A600000000000000A4 /* StagingFileListController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B4 /* StagingFileListController.swift */; };
 		C0DE57A600000000000000A5 /* StagingDiffPaneController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */; };
+		C0DE83000000000000000001 /* StagingDiffLoadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE83000000000000000003 /* StagingDiffLoadCoordinator.swift */; };
+		C0DE83000000000000000002 /* StagingDiffLoadCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE83000000000000000003 /* StagingDiffLoadCoordinator.swift */; };
 		C0DE57A600000000000000A6 /* StagingFileCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B6 /* StagingFileCellView.swift */; };
 		C0DE57A600000000000000A2 /* StagingListViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */; };
 		C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA0000000000000000002 /* HistoryControllerTests.swift */; };
@@ -266,6 +268,7 @@
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE81000000000000000002 /* GitBinaryTests.swift */; };
+		C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */; };
 		CC0000010000001 /* GitXScreenshotTests.m in Sources */ = {isa = PBXBuildFile; fileRef = CC0000020000002 /* GitXScreenshotTests.m */; };
 		D87127011229A21C00012334 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D87127001229A21C00012334 /* QuartzCore.framework */; };
 		D89E9B141218BA260097A90B /* ScriptingBridge.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D89E9AB21218A9DA0097A90B /* ScriptingBridge.framework */; };
@@ -837,6 +840,7 @@
 		C0DE57A600000000000000B3 /* StagingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingViewController.swift; sourceTree = "<group>"; };
 		C0DE57A600000000000000B4 /* StagingFileListController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingFileListController.swift; sourceTree = "<group>"; };
 		C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffPaneController.swift; sourceTree = "<group>"; };
+		C0DE83000000000000000003 /* StagingDiffLoadCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffLoadCoordinator.swift; sourceTree = "<group>"; };
 		C0DE57A600000000000000B6 /* StagingFileCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingFileCellView.swift; sourceTree = "<group>"; };
 		C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingListViewModelTests.swift; sourceTree = "<group>"; };
 		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
@@ -863,6 +867,7 @@
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
 		C0DE81000000000000000002 /* GitBinaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryTests.swift; sourceTree = "<group>"; };
+		C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffLoadCoordinatorTests.swift; sourceTree = "<group>"; };
 		CC0000020000002 /* GitXScreenshotTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXScreenshotTests.m; sourceTree = "<group>"; };
 		CC0000030000003 /* GitXUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitXUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D87127001229A21C00012334 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
@@ -1177,6 +1182,7 @@
 				C0DE57A600000000000000B3 /* StagingViewController.swift */,
 				C0DE57A600000000000000B4 /* StagingFileListController.swift */,
 				C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */,
+				C0DE83000000000000000003 /* StagingDiffLoadCoordinator.swift */,
 				4A5D763014A9A9CC00DF6C68 /* PBGitHistoryController.h */,
 				4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */,
 				C0DEB0000000000000000011 /* HistoryStateCoordinator.swift */,
@@ -1467,6 +1473,7 @@
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
 				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
 				C0DE81000000000000000002 /* GitBinaryTests.swift */,
+				C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */,
 				C01400000000000000000014 /* CommitProgressSheetControllerTests.swift */,
 				C0DE50000000000000000002 /* GitXPerformanceTests.swift */,
 				C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */,
@@ -1924,6 +1931,7 @@
 				C0DE57A600000000000000A3 /* StagingViewController.swift in Sources */,
 				C0DE57A600000000000000A4 /* StagingFileListController.swift in Sources */,
 				C0DE57A600000000000000A5 /* StagingDiffPaneController.swift in Sources */,
+				C0DE83000000000000000001 /* StagingDiffLoadCoordinator.swift in Sources */,
 				C0DE57A600000000000000A6 /* StagingFileCellView.swift in Sources */,
 				C0DEB0000000000000000001 /* HistoryStateCoordinator.swift in Sources */,
 				C0DEB0000000000000000002 /* HistoryMenuBuilder.swift in Sources */,
@@ -2083,6 +2091,8 @@
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
 				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
 				C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */,
+				C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */,
+				C0DE83000000000000000002 /* StagingDiffLoadCoordinator.swift in Sources */,
 				C01400000000000000000004 /* CommitProgressSheetControllerTests.swift in Sources */,
 				C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */,
 				C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */,

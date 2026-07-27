@@ -140,6 +140,9 @@
 @end
 
 @interface PBWindowRepositoryWithoutGitURLs : PBGitRepository
+@property (nonatomic, copy, nullable) NSString *testCommonGitDirectoryOutput;
+@property (nonatomic, strong, nullable) NSURL *testGitURL;
+@property (nonatomic, strong, nullable) NSURL *testWorkingDirectoryURL;
 @end
 
 @interface PBWelcomeWindowController : NSWindowController
@@ -178,17 +181,17 @@
 
 - (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray *)arguments error:(NSError **)error
 {
-	return @"";
+	return self.testCommonGitDirectoryOutput ?: @"";
 }
 
 - (nullable NSURL *)gitURL
 {
-	return nil;
+	return self.testGitURL;
 }
 
 - (nullable NSURL *)workingDirectoryURL
 {
-	return nil;
+	return self.testWorkingDirectoryURL;
 }
 
 @end
@@ -2241,6 +2244,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
 	XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
 	XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 860.0);
+	NSPopUpButton *appearancePopup = [preferences valueForKey:@"appearancePopup"];
+	XCTAssertEqualObjects([appearancePopup.itemArray valueForKey:@"title"],
+						  (@[ @"Automatic (System)", @"Light", @"Dark" ]));
 
 	[preferences close];
 }
@@ -2382,6 +2388,15 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 	XCTAssertNotNil(settings);
 	XCTAssertFalse(settings.pushAfterCommit);
+
+	PBWindowRepositoryWithoutGitURLs *absoluteRepository = [PBWindowRepositoryWithoutGitURLs new];
+	absoluteRepository.testCommonGitDirectoryOutput = @"/tmp/gitx-absolute-common-directory";
+	XCTAssertNotNil([[PBRepositoryUISettings alloc] initWithRepository:absoluteRepository]);
+
+	PBWindowRepositoryWithoutGitURLs *relativeRepository = [PBWindowRepositoryWithoutGitURLs new];
+	relativeRepository.testCommonGitDirectoryOutput = @".git";
+	relativeRepository.testWorkingDirectoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-relative-working-directory" isDirectory:YES];
+	XCTAssertNotNil([[PBRepositoryUISettings alloc] initWithRepository:relativeRepository]);
 }
 
 - (void)testRepositorySettingsStoreReadsAndWritesLocalValues
@@ -2398,6 +2413,15 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([store setBool:NO forKey:@"gitx.test.toolbarEnabled" error:&error]);
 	XCTAssertNil(error);
 	XCTAssertFalse([store boolForKey:@"gitx.test.toolbarEnabled" defaultValue:YES]);
+	XCTAssertTrue([store setString:@"develop" forKey:@"gitx.primaryBranch" error:&error]);
+	XCTAssertNil(error);
+	XCTAssertEqualObjects(store.detectedPrimaryBranch, @"develop");
+	[self git:@[ @"config", @"--local", @"--unset", @"gitx.primaryBranch" ] directory:self.repositoryURL];
+	[self git:@[ @"update-ref", @"refs/remotes/origin/main", @"HEAD" ] directory:self.repositoryURL];
+	[self git:@[ @"symbolic-ref", @"refs/remotes/origin/HEAD", @"refs/remotes/origin/main" ] directory:self.repositoryURL];
+	XCTAssertEqualObjects(store.detectedPrimaryBranch, @"main");
+	[self git:@[ @"symbolic-ref", @"--delete", @"refs/remotes/origin/HEAD" ] directory:self.repositoryURL];
+	[self git:@[ @"update-ref", @"-d", @"refs/remotes/origin/main" ] directory:self.repositoryURL];
 
 	[self git:@[ @"branch", @"-m", @"topic" ] directory:self.repositoryURL];
 	[self git:@[ @"tag", @"main" ] directory:self.repositoryURL];

@@ -24,6 +24,123 @@ private final class StagingDiffPaneDelegateAdapter: NSObject, PBNativeContentVie
     }
 }
 
+/// Produces diff text from immutable request values on the coordinator's
+/// serial queue. The service owns the Git command execution; synthetic
+/// untracked diffs read only the snapshotted working-directory URL.
+// swift6-safety-justification: The wrapped service is confined to one serial queue and receives only Sendable snapshots.
+private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sendable {
+    private let mutationService: IndexMutationService
+
+    init(repository: PBGitRepository) {
+        mutationService = IndexMutationService(repository: repository)
+    }
+
+    func produce(_ request: StagingDiffLoadRequest) -> StagingDiffProduction {
+        if request.syntheticUntracked {
+            return syntheticUntrackedDiff(for: request)
+        }
+
+        var error: NSError?
+        if let diff = mutationService.diff(
+            forPath: request.path,
+            status: request.status,
+            hasStagedChanges: request.hasStagedChanges,
+            staged: request.staged,
+            parentTree: request.parentTree,
+            contextLines: request.contextLines,
+            ignoreWhitespace: false,
+            error: &error
+        ) {
+            return .success(diff)
+        }
+        if let error {
+            return .failure(detail(for: error))
+        }
+        return .failure(NSLocalizedString(
+            "Git returned no diff data.",
+            comment: "Detail shown when Git fails to return a selected file's diff"
+        ))
+    }
+
+    private func syntheticUntrackedDiff(
+        for request: StagingDiffLoadRequest
+    ) -> StagingDiffProduction {
+        guard let workingDirectoryURL = request.workingDirectoryURL else {
+            return .failure(NSLocalizedString(
+                "The repository has no working directory.",
+                comment: "Detail shown when an untracked file diff cannot be loaded"
+            ))
+        }
+        let fileURL = workingDirectoryURL.appendingPathComponent(request.path)
+        do {
+            let fileManager = FileManager()
+            let attributes = try fileManager.attributesOfItem(atPath: fileURL.path)
+            let fileType = attributes[.type] as? FileAttributeType
+            let contents: String
+            let fileMode: SyntheticUntrackedFileMode
+            switch fileType {
+            case .typeRegular:
+                var encoding = String.Encoding.utf8
+                contents = try String(contentsOf: fileURL, usedEncoding: &encoding)
+                let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
+                fileMode = permissions & 0o111 == 0 ? .regular : .executable
+            case .typeSymbolicLink:
+                contents = try fileManager.destinationOfSymbolicLink(atPath: fileURL.path)
+                fileMode = .symbolicLink
+            default:
+                throw NSError(
+                    domain: "PBStagingDiffLoadError",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: String(
+                        format: NSLocalizedString(
+                            "The worktree object at %@ is not a regular file or symbolic link.",
+                            comment: "Detail shown for an unsupported untracked worktree object"
+                        ),
+                        request.path
+                    )]
+                )
+            }
+            NSLog(
+                "[GitX] Building a synthetic untracked diff for %@ with mode %@",
+                request.path,
+                fileMode.gitMode
+            )
+            return .success(SyntheticUntrackedDiffFormatterBridge.diff(
+                path: request.path,
+                contents: contents,
+                fileMode: fileMode
+            ))
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    private func detail(for error: NSError) -> String {
+        var parts = [error.localizedDescription]
+        if let reason = error.localizedFailureReason,
+           reason != error.localizedDescription
+        {
+            parts.append(reason)
+        }
+        if let status = error.userInfo[PBTaskTerminationStatusKey] as? NSNumber {
+            parts.append(String(
+                format: NSLocalizedString(
+                    "Exit status: %@",
+                    comment: "Git process exit status in a staging diff failure"
+                ),
+                status
+            ))
+        }
+        if let output = error.userInfo[PBTaskTerminationOutputKey] as? String {
+            let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedOutput.isEmpty {
+                parts.append(trimmedOutput)
+            }
+        }
+        return parts.joined(separator: "\n")
+    }
+}
+
 /// Owns the staging pane's diff surface: builds staged/unstaged sections with
 /// the staging chrome, keeps scroll position across index refreshes, and
 /// routes hunk/line actions back into the index.
@@ -35,6 +152,7 @@ final class StagingDiffPaneController: NSObject {
     private unowned let repository: PBGitRepository
     private var currentRequests: [StagingDiffRequest] = []
     private let delegateAdapter = StagingDiffPaneDelegateAdapter()
+    private let loadCoordinator: StagingDiffLoadCoordinator
 
     @objc var contextLines: UInt {
         didSet {
@@ -48,6 +166,8 @@ final class StagingDiffPaneController: NSObject {
     init(repository: PBGitRepository) {
         self.repository = repository
         contentView = PBNativeContentView(frame: .zero)
+        let producer = IndexMutationStagingDiffProducer(repository: repository)
+        loadCoordinator = StagingDiffLoadCoordinator(producer: producer.produce)
         let savedContext = UserDefaults.standard.object(forKey: Self.contextLinesKey) as? Int
         contextLines = UInt(max(0, savedContext ?? 3))
         super.init()
@@ -61,18 +181,39 @@ final class StagingDiffPaneController: NSObject {
     func render(_ requests: [StagingDiffRequest]) {
         currentRequests = requests
         guard !requests.isEmpty else {
+            loadCoordinator.invalidate()
             contentView.showMessage(NSLocalizedString(
                 "No file selected",
                 comment: "Placeholder in the staging diff pane when no file is selected"
             ))
             return
         }
-        NSLog("[GitX] Rendering %ld staging diff section(s)", requests.count)
-        contentView.showDiffSections(
-            requests.map(section(for:)),
-            cacheIdentifier: cacheIdentifier(for: requests),
-            preserveScrollPosition: true
-        )
+        let index = repository.index
+        let parentTree = index.parentTree
+        let workingDirectoryURL = repository.workingDirectoryURL()
+        let contextLines = contextLines
+        let snapshots = requests.map { request in
+            let file = request.file
+            return StagingDiffLoadRequest(
+                path: file.path,
+                status: file.status.rawValue,
+                hasStagedChanges: file.hasStagedChanges,
+                staged: request.staged,
+                parentTree: parentTree,
+                contextLines: contextLines,
+                workingDirectoryURL: workingDirectoryURL,
+                syntheticUntracked: file.status == .NEW && !file.hasStagedChanges
+            )
+        }
+        NSLog("[GitX] Scheduling %ld staging diff section(s)", snapshots.count)
+        loadCoordinator.schedule(snapshots) { [weak self] output in
+            guard let self else { return }
+            contentView.showDiffSections(
+                output.sections.map(nativeSection(from:)),
+                cacheIdentifier: output.cacheIdentifier,
+                preserveScrollPosition: true
+            )
+        }
     }
 
     @objc func rerenderCurrentRequests() {
@@ -82,72 +223,18 @@ final class StagingDiffPaneController: NSObject {
     @objc(showStateMessage:)
     func showStateMessage(_ message: String) {
         currentRequests = []
+        loadCoordinator.invalidate()
         contentView.showMessage(message)
     }
 
-    private func section(for request: StagingDiffRequest) -> [String: Any] {
-        let file = request.file
-        let isUntracked = file.status == .NEW && !file.hasStagedChanges
-        let diff = isUntracked
-            ? syntheticUntrackedDiff(for: file)
-            : repository.index.diff(
-                for: file,
-                staged: request.staged,
-                contextLines: contextLines
-            ) ?? ""
-        let sideTitle = request.staged
-            ? NSLocalizedString("Staged", comment: "Staging diff section prefix for staged changes")
-            : NSLocalizedString("Unstaged", comment: "Staging diff section prefix for unstaged changes")
+    private func nativeSection(from descriptor: StagingDiffSectionDescriptor) -> [String: Any] {
         return [
-            PBNativeSectionTitleKey: "\(sideTitle) — \(file.path)",
-            PBNativeSectionPathKey: file.path,
-            PBNativeSectionTextKey: diff,
-            PBNativeSectionContextKey: request.staged ? "staged" : "unstaged",
-            PBNativeSectionStagingChromeKey: true,
+            PBNativeSectionTitleKey: descriptor.title,
+            PBNativeSectionPathKey: descriptor.path,
+            PBNativeSectionTextKey: descriptor.text,
+            PBNativeSectionContextKey: descriptor.context,
+            PBNativeSectionStagingChromeKey: descriptor.stagingChrome,
         ]
-    }
-
-    private func syntheticUntrackedDiff(for file: PBChangedFile) -> String {
-        guard let workingDirectoryURL = repository.workingDirectoryURL() else {
-            NSLog("[GitX] Cannot build an untracked diff for %@ without a working directory", file.path)
-            return ""
-        }
-        let fileURL = workingDirectoryURL.appendingPathComponent(file.path)
-        do {
-            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-            let fileType = attributes[.type] as? FileAttributeType
-            let contents: String
-            let fileMode: SyntheticUntrackedFileMode
-            switch fileType {
-            case .typeRegular:
-                var encoding = String.Encoding.utf8
-                contents = try String(contentsOf: fileURL, usedEncoding: &encoding)
-                let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
-                fileMode = permissions & 0o111 == 0 ? .regular : .executable
-            case .typeSymbolicLink:
-                contents = try FileManager.default.destinationOfSymbolicLink(atPath: fileURL.path)
-                fileMode = .symbolicLink
-            default:
-                NSLog("[GitX] Unsupported untracked worktree object at %@", file.path)
-                return ""
-            }
-            NSLog("[GitX] Building a synthetic untracked diff for %@ with mode %@", file.path, fileMode.gitMode)
-            return SyntheticUntrackedDiffFormatterBridge.diff(
-                path: file.path,
-                contents: contents,
-                fileMode: fileMode
-            )
-        } catch {
-            NSLog("[GitX] Failed to load untracked worktree data for %@: %@", file.path, error.localizedDescription)
-            return ""
-        }
-    }
-
-    private func cacheIdentifier(for requests: [StagingDiffRequest]) -> String {
-        let selection = requests
-            .map { "\($0.staged ? "s" : "u"):\($0.file.path)" }
-            .joined(separator: "|")
-        return "staging:\(selection):ctx\(contextLines)"
     }
 
     // MARK: Content-view actions (dispatched via the private delegate adapter)

@@ -19,6 +19,16 @@
 #import "PBTask.h"
 #import "PBWebController.h"
 #import "NSAppearance+PBDarkMode.h"
+#import "PBSourceViewBadge.h"
+
+@interface PBSourceViewBadge (GitXFeatureTests)
+
++ (NSColor *)badgeHighlightColor;
++ (NSColor *)badgeBackgroundColor;
++ (NSColor *)badgeColorForCell:(NSTableCellView *)cell;
++ (NSColor *)badgeTextColorForCell:(NSTableCellView *)cell;
+
+@end
 
 @interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
 
@@ -1029,6 +1039,20 @@
 	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:4], 480);
 	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:5], 900);
 	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:20], 900);
+}
+
+- (void)testSourceViewBadgeCoversHighlightedAndNumericVariants
+{
+	NSTableCellView *cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 80, 22)];
+	XCTAssertNotNil([PBSourceViewBadge badgeHighlightColor]);
+	cell.backgroundStyle = NSBackgroundStyleNormal;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], [PBSourceViewBadge badgeBackgroundColor]);
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], NSColor.whiteColor);
+	XCTAssertNotNil([PBSourceViewBadge numericBadge:42 forCell:cell]);
+	cell.backgroundStyle = NSBackgroundStyleEmphasized;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], NSColor.whiteColor);
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], [PBSourceViewBadge badgeBackgroundColor]);
+	XCTAssertNotNil([PBSourceViewBadge checkedOutBadgeForCell:cell]);
 }
 
 @end

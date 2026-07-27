@@ -588,6 +588,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let currentRevList = try XCTUnwrap(
             historyList.value(forKey: "currentRevList") as? NSObject
         )
+        let graphQueue = try XCTUnwrap(
+            historyList.value(forKey: "graphQueue") as? OperationQueue
+        )
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            currentRevList.value(forKey: "parsing") as? Bool == false && graphQueue.operationCount == 0
+        })
         let currentCommits = currentRevList.value(forKey: "commits")
         let publishedCount = historyList.commits.count
         currentRevList.setValue(nil, forKey: "commits")
@@ -596,7 +602,6 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(historyList.commits.count, publishedCount)
         currentRevList.setValue("invalid payload", forKey: "commits")
         XCTAssertEqual(historyList.commits.count, publishedCount)
-        currentRevList.setValue(currentCommits, forKey: "commits")
         currentRevList.setValue(NSMutableArray(), forKey: "commits")
         historyList.commits = [commits[0]]
         historyList.setValue(true, forKey: "resetCommits")
@@ -605,6 +610,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(historyList.commits.count, 0)
         XCTAssertFalse(historyList.isUpdating)
         currentRevList.setValue(currentCommits, forKey: "commits")
+        XCTAssertTrue(waitForCondition(timeout: 10) { graphQueue.operationCount == 0 })
     }
 
     func testHistoryFirstCommitAndScrollBoundaries() {
@@ -635,6 +641,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         // These app-delegate paths only run when the host application is
         // activated or receives file-open events, which never happens
         // deterministically in a headless suite; drive them directly.
+        windowController.window?.orderOut(nil)
+        _ = historyController.perform(
+            NSSelectorFromString("applicationDidBecomeActive:"),
+            with: NSNotification(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        )
         let delegate = try XCTUnwrap(NSApp.delegate as? NSObject)
         delegate.perform(
             NSSelectorFromString("applicationDidBecomeActive:"),
@@ -808,6 +819,116 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             try activateNativeDiffAction("Stage hunk", in: pane)
         }
         XCTAssertEqual(try fixture.git(["show", ":nested/tracked.txt"]), " second\nadded\n")
+    }
+
+    func testStagingDiffContextChangesRerenderTheCurrentSelection() throws {
+        let defaults = UserDefaults.standard
+        let contextKey = "PBStageDiffContextLines"
+        let previousContext = defaults.object(forKey: contextKey)
+        defer {
+            if let previousContext {
+                defaults.set(previousContext, forKey: contextKey)
+            } else {
+                defaults.removeObject(forKey: contextKey)
+            }
+        }
+
+        let original = (1 ... 9).map { "context line \($0)" }.joined(separator: "\n") + "\n"
+        try fixture.write(original, to: "context.txt")
+        try fixture.git(["add", "context.txt"])
+        try fixture.git(["commit", "--quiet", "-m", "add context fixture"])
+        try fixture.write(
+            original.replacingOccurrences(of: "context line 5", with: "changed context line 5"),
+            to: "context.txt"
+        )
+
+        let pane = try openStagingPane()
+        pane.diffPaneController.contextLines = 0
+        try selectUnstagedFile("context.txt", in: pane)
+        XCTAssertFalse(pane.diffPaneController.contentView.textView.string.contains("context line 1"))
+
+        pane.diffPaneController.contextLines = 8
+        XCTAssertTrue(waitForCondition {
+            pane.diffPaneController.contentView.textView.string.contains("context line 1")
+        })
+    }
+
+    func testEmptyStagingSelectionImmediatelyInvalidatesPendingDiffs() throws {
+        try fixture.write("pending\n", to: "pending.txt")
+        let pane = try openStagingPane()
+        let pendingFile = try XCTUnwrap(
+            (pane.fileListController.unstagedFilesController.arrangedObjects as? [PBChangedFile])?
+                .first { $0.path == "pending.txt" }
+        )
+        pane.diffPaneController.renderRequests([
+            PBStagingDiffRequest(file: pendingFile, staged: false),
+        ])
+
+        pane.diffPaneController.renderRequests([])
+
+        XCTAssertTrue(pane.diffPaneController.contentView.textView.string.contains("No file selected"))
+    }
+
+    func testStagingDiffFailureShowsUnderlyingDetailWithoutControls() throws {
+        let missingPath = "missing-diff.txt"
+        try fixture.write("working state\n", to: "trigger.txt")
+        let missingURL = URL(fileURLWithPath: fixture.path).appendingPathComponent(missingPath)
+        let expectedDetail: String
+        do {
+            _ = try FileManager.default.attributesOfItem(atPath: missingURL.path)
+            XCTFail("the missing-file fixture unexpectedly exists")
+            return
+        } catch {
+            expectedDetail = error.localizedDescription
+        }
+        let missingFile = PBChangedFile(path: missingPath)
+        missingFile.status = .NEW
+        missingFile.hasStagedChanges = false
+        missingFile.hasUnstagedChanges = true
+        let pane = try openStagingPane()
+        try selectUnstagedFile("trigger.txt", in: pane)
+
+        pane.diffPaneController.renderRequests([
+            PBStagingDiffRequest(file: missingFile, staged: false),
+        ])
+
+        XCTAssertTrue(waitForCondition {
+            pane.diffPaneController.contentView.textView.string.contains("Diff unavailable — \(missingPath)")
+        })
+        let rendered = pane.diffPaneController.contentView.textView.string
+        XCTAssertTrue(rendered.contains("GitX could not load the diff for \(missingPath)."), rendered)
+        XCTAssertTrue(rendered.contains(expectedDetail), rendered)
+        XCTAssertFalse(rendered.contains("Stage hunk"), rendered)
+        XCTAssertFalse(rendered.contains("Stage line"), rendered)
+    }
+
+    func testTrackedStagingDiffFailureIncludesGitCommandDetail() throws {
+        try fixture.write("modified for a failing diff\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        let trackedFile = try XCTUnwrap(
+            (pane.fileListController.unstagedFilesController.arrangedObjects as? [PBChangedFile])?
+                .first { $0.path == "nested/tracked.txt" }
+        )
+        let indexURL = URL(fileURLWithPath: fixture.path).appendingPathComponent(".git/index")
+        let originalIndex = try Data(contentsOf: indexURL)
+        defer { try? originalIndex.write(to: indexURL, options: .atomic) }
+        try Data("invalid index".utf8).write(to: indexURL, options: .atomic)
+
+        pane.diffPaneController.renderRequests([
+            PBStagingDiffRequest(file: trackedFile, staged: false),
+        ])
+
+        XCTAssertTrue(waitForCondition {
+            pane.diffPaneController.contentView.textView.string.contains(
+                "Diff unavailable — nested/tracked.txt"
+            )
+        })
+        let rendered = pane.diffPaneController.contentView.textView.string
+        XCTAssertTrue(rendered.contains("Task exited unsuccessfully"), rendered)
+        XCTAssertTrue(rendered.contains("returned a non-zero return code"), rendered)
+        XCTAssertTrue(rendered.contains("Exit status:"), rendered)
+        XCTAssertTrue(rendered.contains("index file"), rendered)
     }
 
     func testSectionedActionPolicyUsesOneSnapshotForMenusAndExecution() throws {
@@ -996,7 +1117,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             (unstaged.arrangedObjects as? [PBChangedFile])?.first { $0.path == "alpha.txt" }
         )
         unstaged.setSelectedObjects([alpha])
-        waitForIndexUpdate { coordinator.stageSelectedFiles() }
+        waitForIndexUpdate {
+            _ = fileList.perform(
+                NSSelectorFromString("fileChangesTableViewDidRequestStagingToggle:"),
+                with: fileList.unstagedTable
+            )
+        }
         XCTAssertTrue(
             (staged.arrangedObjects as? [PBChangedFile])?.contains { $0.path == "alpha.txt" } == true,
             "stageSelectedFiles moves the selection into the staged list"
@@ -1563,7 +1689,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 .first { $0.path == "untracked.txt" }
         )
         fileList.unstagedFilesController.setSelectedObjects([untracked])
-        pumpRunLoop(for: 0.5)
+        XCTAssertTrue(waitForCondition {
+            pane.diffPaneController.contentView.textView.string.contains("Hunk 1 : Line 1")
+        })
         let renderedUntracked = pane.diffPaneController.contentView.textView.string
         XCTAssertTrue(
             renderedUntracked.contains("Hunk 1 : Line 1"),
@@ -1577,7 +1705,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         fileList.unstagedFilesController.setSelectedObjects([])
         fileList.stagedFilesController.setSelectedObjects([staged])
-        pumpRunLoop(for: 0.5)
+        XCTAssertTrue(waitForCondition {
+            pane.diffPaneController.contentView.textView.string.contains("\u{00A0}Unstage hunk\u{00A0}")
+        })
         let renderedStaged = pane.diffPaneController.contentView.textView.string
         XCTAssertTrue(
             renderedStaged.contains("\u{00A0}Unstage hunk\u{00A0}"),

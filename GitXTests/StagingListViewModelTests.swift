@@ -1,6 +1,7 @@
 import XCTest
 
 @MainActor
+// swift6-safety-justification: XCTest owns the test lifetime and all mutable access is confined to the main actor.
 final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
     private func file(
         _ path: String,
