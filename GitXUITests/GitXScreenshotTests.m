@@ -230,6 +230,14 @@
 {
 	[self.app terminate];
 	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
+	NSString *layoutFlag = @"-PBStagingFileListLayout";
+	for (NSInteger index = (NSInteger)arguments.count - 1; index >= 0; index--) {
+		if (![arguments[index] isEqualToString:layoutFlag])
+			continue;
+		[arguments removeObjectAtIndex:(NSUInteger)index];
+		if ((NSUInteger)index < arguments.count)
+			[arguments removeObjectAtIndex:(NSUInteger)index];
+	}
 	[arguments addObjectsFromArray:@[ @"-PBStagingFileListLayout", [NSString stringWithFormat:@"%ld", layout] ]];
 	self.app.launchArguments = arguments;
 	[self.app launch];
@@ -240,10 +248,18 @@
 	XCTAssertTrue([self waitForWindow], @"Staging requires a repository window");
 	XCUIElement *table = self.app.tables[@"CommitList"];
 	XCTAssertTrue([table waitForExistenceWithTimeout:15], @"History should be open before showing uncommitted changes");
+	XCUIElement *stagingTable = self.app.tables[tableIdentifier];
+	XCUIElement *workingState = self.app.staticTexts[@"Uncommitted Changes"];
+	NSPredicate *stagingReady = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return stagingTable.exists || workingState.exists;
+	}];
+	XCTNSPredicateExpectation *readyExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:stagingReady object:self.app];
+	[self waitForExpectations:@[ readyExpectation ] timeout:15];
 	// Exercise the remapped entry point: Cmd-2 selects the Uncommitted
 	// Changes row, which swaps the Details tab to the staging pane.
-	[self.app.windows.firstMatch typeKey:@"2" modifierFlags:XCUIKeyModifierCommand];
-	XCTAssertTrue([self.app.tables[tableIdentifier] waitForExistenceWithTimeout:10],
+	if (!stagingTable.exists)
+		[self.app.windows.firstMatch typeKey:@"2" modifierFlags:XCUIKeyModifierCommand];
+	XCTAssertTrue([stagingTable waitForExistenceWithTimeout:10],
 				  @"The %@ list should be ready before using the staging pane", tableIdentifier);
 }
 

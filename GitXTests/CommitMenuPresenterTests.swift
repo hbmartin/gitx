@@ -69,15 +69,15 @@ final class CommitMenuPresenterTests: XCTestCase {
         XCTAssertFalse(presentation("openFiles:").enabled)
     }
 
-    func testIgnoreAndRevealRespectTableContextAndSelectionCount() {
+    func testIgnoreAndRevealRespectResolvedSelectionAndSelectionCount() {
         let selected = [file("one.txt")]
         let ignore = presentation("ignoreFiles:", files: selected)
         XCTAssertTrue(ignore.enabled)
         XCTAssertFalse(ignore.hidden)
 
-        let stagedIgnore = presentation("ignoreFiles:")
-        XCTAssertFalse(stagedIgnore.enabled)
-        XCTAssertTrue(stagedIgnore.hidden)
+        let emptyIgnore = presentation("ignoreFiles:")
+        XCTAssertFalse(emptyIgnore.enabled)
+        XCTAssertTrue(emptyIgnore.hidden)
 
         let reveal = presentation("revealInFinder:", files: selected)
         XCTAssertEqual(reveal.title, "Reveal “one.txt” in Finder")
@@ -86,6 +86,12 @@ final class CommitMenuPresenterTests: XCTestCase {
         XCTAssertEqual(manyReveal.title, "Reveal 2 Files in Finder")
         XCTAssertTrue(manyReveal.enabled)
         XCTAssertFalse(manyReveal.hidden)
+    }
+
+    func testTrashIsHiddenWhenTheOriginatingSurfaceDoesNotAllowIt() {
+        let trash = presentation("moveToTrash:", files: [file("new.txt")], allowsTrash: false)
+
+        XCTAssertTrue(trash.hidden)
     }
 
     func testAmendPrepareAndUnknownActionsReturnExternalState() {
@@ -128,6 +134,7 @@ final class CommitMenuPresenterTests: XCTestCase {
     private func presentation(
         _ action: String,
         files: [PBCommitMenuFile] = [],
+        allowsTrash: Bool = true,
         contextual: Bool = true,
         submodule: Bool = false,
         amend: Bool = false,
@@ -137,7 +144,7 @@ final class CommitMenuPresenterTests: XCTestCase {
         PBCommitMenuPresenter.presentation(
             action: NSSelectorFromString(action),
             resolvedFiles: files,
-            allowsTrash: true,
+            allowsTrash: allowsTrash,
             isContextualMenu: contextual,
             singleSelectionIsSubmodule: submodule,
             isAmend: amend,

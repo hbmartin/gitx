@@ -254,6 +254,53 @@ final class PBTaskLifecycleTests: XCTestCase {
         }
     }
 
+    func testTerminationAfterObservableLaunchReturnsCancellationError() {
+        let markerURL = temporaryFileURL(named: "launched")
+        defer { try? FileManager.default.removeItem(at: markerURL) }
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf launched > \"$PB_TASK_MARKER\"; exec /bin/sleep 30",
+            ],
+            inDirectory: nil
+        )
+        task.additionalEnvironment = ["PB_TASK_MARKER": markerURL.path]
+        let cancelled = expectation(description: "terminated task reports an error")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            XCTAssertNotNil(error, "terminating a running task surfaces an error")
+            cancelled.fulfill()
+        }
+        let launched = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                FileManager.default.fileExists(atPath: markerURL.path)
+            },
+            object: markerURL as NSURL
+        )
+        wait(for: [launched], timeout: 5)
+        task.terminate()
+        wait(for: [cancelled], timeout: 10)
+    }
+
+    func testLaunchUsesRequestedWorkingDirectory() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gitx-pbtask-directory-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let task = PBTask(launchPath: "/bin/pwd", arguments: [], inDirectory: directoryURL.path)
+
+        try task.launch()
+
+        let outputPath = try XCTUnwrap(
+            task.standardOutputString()?.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        XCTAssertEqual(
+            URL(fileURLWithPath: outputPath).resolvingSymlinksInPath(),
+            directoryURL.resolvingSymlinksInPath()
+        )
+    }
+
     func testChildClosingStandardInputDuringLargeWriteDoesNotRaise() {
         // `head` exits after one byte, forcing the oversized write through PBTask's EPIPE cleanup path.
         let task = PBTask(

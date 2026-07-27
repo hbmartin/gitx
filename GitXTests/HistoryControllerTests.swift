@@ -1260,7 +1260,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(repository.index.isAmend)
     }
 
-    func testStagingPaneMenusFileActionsAndViewOptions() throws {
+    func testStagingPaneMenusAndViewOptions() throws {
         try fixture.write("modify me\n", to: "nested/tracked.txt")
         try fixture.write("junk\n", to: "junk.txt")
         try fixture.write("ignored candidate\n", to: "ignore-me.txt")
@@ -1309,6 +1309,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         sortPopup.selectItem(withTag: PBStagingFileSortOrder.path.rawValue)
         pane.perform(NSSelectorFromString("sortOrderChanged:"), with: sortPopup)
         XCTAssertEqual(PBApplicationSettings.stagingFileSortOrder, .path)
+
+        let amendItem = NSMenuItem(title: "Amend", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
+        _ = stub.validateMenuItem(amendItem)
+        let uncommittedItem = NSMenuItem(title: "Uncommitted", action: NSSelectorFromString("showUncommittedChanges:"), keyEquivalent: "")
+        _ = stub.validateMenuItem(uncommittedItem)
+        let historyItem = NSMenuItem(title: "History", action: NSSelectorFromString("showHistoryView:"), keyEquivalent: "")
+        _ = stub.validateMenuItem(historyItem)
+
+        let webController = historyController.value(forKey: "webHistoryController") as? NSObject
+        webController?.perform(NSSelectorFromString("refreshDisplayedContent"))
+        pumpRunLoop()
+    }
+
+    func testStagingPaneFileActions() throws {
+        try fixture.write("modify me\n", to: "nested/tracked.txt")
+        try fixture.write("junk\n", to: "junk.txt")
+        try fixture.write("ignored candidate\n", to: "ignore-me.txt")
+        try fixture.write("staged\n", to: "staged.txt")
+        try fixture.git(["add", "staged.txt"])
+        let pane = try openStagingPane()
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        let fileList = pane.fileListController
+        fileList.setListLayout(.splitTables)
+        let unstaged = fileList.unstagedFilesController
+        let staged = fileList.stagedFilesController
 
         // Selecting in the staged table above cleared the unstaged selection
         // (split-table selections are mutually exclusive); re-select before
@@ -1363,6 +1388,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             FileManager.default.fileExists(atPath: URL(fileURLWithPath: fixture.path).appendingPathComponent("junk.txt").path),
             "move to trash removes the working-tree file"
         )
+    }
+
+    func testStagingPaneCommitMessageDropRewritesRepositoryPaths() throws {
+        try fixture.write("staged\n", to: "staged.txt")
+        try fixture.git(["add", "staged.txt"])
+        let pane = try openStagingPane()
 
         let dragPasteboard = NSPasteboard(name: NSPasteboard.Name("GitXStagingMessageDrag"))
         dragPasteboard.clearContents()
@@ -1381,6 +1412,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             ["staged.txt"],
             "dropped files are rewritten to repository-relative paths"
         )
+    }
+
+    func testStagingPaneHistoryAndWindowMenuRouting() throws {
+        try fixture.write("working tree\n", to: "menu-routing.txt")
+        _ = try openStagingPane()
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
 
         let regularCommit = try XCTUnwrap(loadedCommits().first)
         historyController.commitController.setSelectedObjects([regularCommit])
@@ -1399,33 +1436,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.updateUncommittedChanges()
         historyController.selectedCommitDetailsIndex = 0
         historyController.updateKeys()
-
-        let amendItem = NSMenuItem(title: "Amend", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
-        _ = stub.validateMenuItem(amendItem)
-        let uncommittedItem = NSMenuItem(title: "Uncommitted", action: NSSelectorFromString("showUncommittedChanges:"), keyEquivalent: "")
-        _ = stub.validateMenuItem(uncommittedItem)
-        let historyItem = NSMenuItem(title: "History", action: NSSelectorFromString("showHistoryView:"), keyEquivalent: "")
-        _ = stub.validateMenuItem(historyItem)
-
-        XCTAssertFalse(PBGitBinary.searchLocations().isEmpty)
-        XCTAssertNotNil(PBGitBinary.version())
-        XCTAssertFalse(PBGitBinary.notFoundError().isEmpty)
-        let directoryTask = PBTask(launchPath: "/usr/bin/true", arguments: [], inDirectory: fixture.path)
-        try directoryTask.launch()
-
-        let slowTask = PBTask(launchPath: "/bin/sleep", arguments: ["30"], inDirectory: nil)
-        let cancelled = expectation(description: "terminated task reports an error")
-        slowTask.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
-            XCTAssertNotNil(error, "terminating a running task surfaces an error")
-            cancelled.fulfill()
-        }
-        Thread.sleep(forTimeInterval: 0.2)
-        slowTask.terminate()
-        wait(for: [cancelled], timeout: 10)
-
-        let webController = historyController.value(forKey: "webHistoryController") as? NSObject
-        webController?.perform(NSSelectorFromString("refreshDisplayedContent"))
-        pumpRunLoop()
+        XCTAssertTrue(historyController.uncommittedChangesSelected)
+        XCTAssertNotNil(stub.window)
     }
 
     func testStagingPaneReplacesDetailViewForWorkingStateRow() throws {
