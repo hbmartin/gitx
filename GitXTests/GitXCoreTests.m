@@ -2485,7 +2485,7 @@
 
 @implementation PBTaskCoreTests
 
-- (void)testInitializationHonorsDebugLoggingPreference
+- (void)testInitializationSucceedsWhenDebugLoggingIsEnabled
 {
 	NSString *key = @"Show Debug Messages";
 	id previousValue = [NSUserDefaults.standardUserDefaults objectForKey:key];

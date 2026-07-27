@@ -87,12 +87,16 @@ The per-user association among a local repository's Git remote, its Forge Reposi
 _Avoid_: Remote, account mapping
 
 **Primary Forge Repository**:
-The stable Forge Repository whose repository-level Pull Requests, Issues, checks, and reviews GitX presents for a local repository.
+The canonical Forge Repository identity for a local repository, which remains stable when the currently selected remote changes and supplies the Pull Requests, Issues, Check Rollups, and Review Rollups GitX presents.
 _Avoid_: Current remote, tracking remote
 
 **Pull Request**:
 A proposed integration of changes from a head branch into a base branch on a Forge.
 _Avoid_: Change request, merge request
+
+**Update Branch**:
+A separate, explicitly confirmed Pull Request action that asks the Forge to merge the current base branch into the head branch, then refreshes Forge state and local remote-tracking state. It is never performed automatically as part of Merge.
+_Avoid_: Sync branch, automatic update
 
 **Forge Overlay**:
 Cached Forge state presented alongside local Git state without replacing or blocking it.
@@ -105,3 +109,19 @@ _Avoid_: Build status, CI status
 **Review Rollup**:
 The aggregate Forge review decision for a Pull Request: Approved, Changes Requested, Review Required, or No Decision. Personal review attention is a separate state.
 _Avoid_: Review status, my review
+
+**Review Thread**:
+A sequence of Pull Request review comments anchored to a file, line, or contiguous same-side line range. A thread may be unresolved, resolved, or outdated independently of its comments.
+_Avoid_: Conversation, timeline thread
+
+**Suggested Change**:
+A structured replacement proposed in a Review Thread. GitX may apply it as an unstaged edit only when the Pull Request head is checked out, the target file has no uncommitted edits, and the original context matches exactly.
+_Avoid_: Patch, automatic commit
+
+**Attention Inbox**:
+GitX's account-wide, locally tracked collection of actionable Pull Request, review, check, mention, and assignment events derived from Forge data. Its seen state belongs to GitX and does not claim to reproduce or modify the Forge's notification inbox.
+_Avoid_: GitHub Notifications, notification mirror
+
+**Watched Forge Repository**:
+A Forge Repository that a user has explicitly included in an account's Attention Inbox. Opening or binding a repository in GitX adds it to the watched set; the user may remove it in Preferences.
+_Avoid_: GitHub watched repository, subscribed repository

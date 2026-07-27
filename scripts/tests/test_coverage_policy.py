@@ -28,7 +28,7 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertEqual(policy.groups, {})
 
     def test_policy_requires_explicit_groups(self) -> None:
-        with self.assertRaises(TypeError):
+        with self.assertRaises(TypeError):  # noqa: PT027 -- canonical runner is unittest
             self.module.CoveragePolicy("GitX.app", 0.5, {})
 
     def test_coverage_regressions_fail_against_the_policy(self) -> None:
