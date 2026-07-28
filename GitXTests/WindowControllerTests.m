@@ -2384,19 +2384,41 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testRepositoryUISettingsAcceptRepositoryWithoutGitURLs
 {
-	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:[PBWindowRepositoryWithoutGitURLs new]];
+	NSString *defaultsKey = @"PBRepositoryUISettings";
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id originalSettings = [defaults objectForKey:defaultsKey];
+	[defaults removeObjectForKey:defaultsKey];
+	@try {
+		PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:[PBWindowRepositoryWithoutGitURLs new]];
 
-	XCTAssertNotNil(settings);
-	XCTAssertFalse(settings.pushAfterCommit);
+		XCTAssertNotNil(settings);
+		XCTAssertFalse(settings.pushAfterCommit);
 
-	PBWindowRepositoryWithoutGitURLs *absoluteRepository = [PBWindowRepositoryWithoutGitURLs new];
-	absoluteRepository.testCommonGitDirectoryOutput = @"/tmp/gitx-absolute-common-directory";
-	XCTAssertNotNil([[PBRepositoryUISettings alloc] initWithRepository:absoluteRepository]);
+		NSString *absolutePath = @"/tmp/gitx-absolute-common-directory";
+		PBWindowRepositoryWithoutGitURLs *absoluteRepository = [PBWindowRepositoryWithoutGitURLs new];
+		absoluteRepository.testCommonGitDirectoryOutput = absolutePath;
+		PBRepositoryUISettings *absoluteSettings = [[PBRepositoryUISettings alloc] initWithRepository:absoluteRepository];
+		absoluteSettings.pushAfterCommit = YES;
 
-	PBWindowRepositoryWithoutGitURLs *relativeRepository = [PBWindowRepositoryWithoutGitURLs new];
-	relativeRepository.testCommonGitDirectoryOutput = @".git";
-	relativeRepository.testWorkingDirectoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-relative-working-directory" isDirectory:YES];
-	XCTAssertNotNil([[PBRepositoryUISettings alloc] initWithRepository:relativeRepository]);
+		NSURL *workingDirectoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-relative-working-directory" isDirectory:YES];
+		PBWindowRepositoryWithoutGitURLs *relativeRepository = [PBWindowRepositoryWithoutGitURLs new];
+		relativeRepository.testCommonGitDirectoryOutput = @".git";
+		relativeRepository.testWorkingDirectoryURL = workingDirectoryURL;
+		PBRepositoryUISettings *relativeSettings = [[PBRepositoryUISettings alloc] initWithRepository:relativeRepository];
+		relativeSettings.pushAfterCommit = NO;
+
+		NSString *absoluteKey = [[[[NSURL fileURLWithPath:absolutePath isDirectory:YES] standardizedURL] URLByResolvingSymlinksInPath] path];
+		NSString *relativeKey = [[[[workingDirectoryURL URLByAppendingPathComponent:@".git" isDirectory:YES] standardizedURL] URLByResolvingSymlinksInPath] path];
+		NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *storedSettings = [defaults dictionaryForKey:defaultsKey];
+		XCTAssertEqualObjects(storedSettings[absoluteKey][@"pushAfterCommit"], @YES);
+		XCTAssertEqualObjects(storedSettings[relativeKey][@"pushAfterCommit"], @NO);
+		XCTAssertEqual(storedSettings.count, (NSUInteger)2);
+	} @finally {
+		if (originalSettings)
+			[defaults setObject:originalSettings forKey:defaultsKey];
+		else
+			[defaults removeObjectForKey:defaultsKey];
+	}
 }
 
 - (void)testRepositorySettingsStoreReadsAndWritesLocalValues

@@ -269,7 +269,9 @@ final class PBTaskLifecycleTests: XCTestCase {
         let cancelled = expectation(description: "terminated task reports an error")
 
         task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
-            XCTAssertNotNil(error, "terminating a running task surfaces an error")
+            let cancellationError = error as NSError?
+            XCTAssertEqual(cancellationError?.domain, NSCocoaErrorDomain)
+            XCTAssertEqual(cancellationError?.code, NSUserCancelledError)
             cancelled.fulfill()
         }
         let launched = XCTNSPredicateExpectation(
