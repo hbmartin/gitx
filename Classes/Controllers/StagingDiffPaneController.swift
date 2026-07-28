@@ -36,9 +36,13 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
     private let repository: PBGitRepository
     private let mutationService: IndexMutationService
 
-    init(repository: PBGitRepository) {
+    init(repository: PBGitRepository, runner: IndexCommandRunning? = nil) {
         self.repository = repository
-        mutationService = IndexMutationService(repository: repository)
+        mutationService = if let runner {
+            IndexMutationService(repository: repository, runner: runner)
+        } else {
+            IndexMutationService(repository: repository)
+        }
     }
 
     func produce(_ request: StagingDiffLoadRequest) -> StagingDiffProduction {
@@ -169,10 +173,15 @@ final class StagingDiffPaneController: NSObject {
     }
 
     @objc(initWithRepository:)
-    init(repository: PBGitRepository) {
+    convenience init(repository: PBGitRepository) {
+        self.init(repository: repository, diffRunner: nil)
+    }
+
+    @objc(initWithRepository:diffRunner:)
+    init(repository: PBGitRepository, diffRunner: IndexCommandRunning?) {
         self.repository = repository
         contentView = PBNativeContentView(frame: .zero)
-        let producer = IndexMutationStagingDiffProducer(repository: repository)
+        let producer = IndexMutationStagingDiffProducer(repository: repository, runner: diffRunner)
         loadCoordinator = StagingDiffLoadCoordinator(producer: producer.produce)
         let savedContext = UserDefaults.standard.object(forKey: Self.contextLinesKey) as? Int
         contextLines = UInt(max(0, savedContext ?? 3))

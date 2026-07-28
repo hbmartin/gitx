@@ -39,6 +39,29 @@ final class PBTaskLifecycleTests: XCTestCase {
             .appendingPathComponent("gitx-pbtask-\(UUID().uuidString)-\(name)")
     }
 
+    func testDebugLoggingPreferenceStillRunsTask() throws {
+        let defaults = UserDefaults.standard
+        let key = "Show Debug Messages"
+        let previousValue = defaults.object(forKey: key)
+        defer {
+            if let previousValue {
+                defaults.set(previousValue, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+        defaults.set(true, forKey: key)
+        let task = PBTask(
+            launchPath: "/usr/bin/printf",
+            arguments: ["debug-enabled"],
+            inDirectory: nil
+        )
+
+        try task.launch()
+
+        XCTAssertEqual(task.standardOutputString(), "debug-enabled")
+    }
+
     func testParentExitSucceedsWhenDescendantKeepsOutputPipeOpen() {
         let task = PBTask(
             launchPath: "/bin/sh",
@@ -254,7 +277,7 @@ final class PBTaskLifecycleTests: XCTestCase {
         }
     }
 
-    func testTerminationAfterObservableLaunchReturnsCancellationError() {
+    func testTerminationAfterObservableLaunchReportsCaughtSignalError() {
         let markerURL = temporaryFileURL(named: "launched")
         defer { try? FileManager.default.removeItem(at: markerURL) }
         let task = PBTask(
@@ -266,13 +289,15 @@ final class PBTaskLifecycleTests: XCTestCase {
             inDirectory: nil
         )
         task.additionalEnvironment = ["PB_TASK_MARKER": markerURL.path]
-        let cancelled = expectation(description: "terminated task reports an error")
+        let terminated = expectation(description: "terminated task reports an error")
 
         task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
-            let cancellationError = error as NSError?
-            XCTAssertEqual(cancellationError?.domain, NSCocoaErrorDomain)
-            XCTAssertEqual(cancellationError?.code, NSUserCancelledError)
-            cancelled.fulfill()
+            // Unlike pre-launch cancellation, terminating a running task surfaces the
+            // child's death from SIGTERM, not a Cocoa user-cancelled error.
+            let terminationError = error as NSError?
+            XCTAssertEqual(terminationError?.domain, PBTaskErrorDomain)
+            XCTAssertEqual(terminationError?.code, Int(PBTaskErrorCode.caughtSignalError.rawValue))
+            terminated.fulfill()
         }
         let launched = XCTNSPredicateExpectation(
             predicate: NSPredicate { _, _ in
@@ -282,7 +307,7 @@ final class PBTaskLifecycleTests: XCTestCase {
         )
         wait(for: [launched], timeout: 5)
         task.terminate()
-        wait(for: [cancelled], timeout: 10)
+        wait(for: [terminated], timeout: 10)
     }
 
     func testLaunchUsesRequestedWorkingDirectory() throws {
