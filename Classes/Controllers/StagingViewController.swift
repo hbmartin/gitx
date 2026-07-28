@@ -661,10 +661,16 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     private func actionSelection(for action: StagingFileAction, sender: Any?) -> StagingActionSelection {
-        if let snapshot = (sender as? NSMenuItem)?.representedObject as? StagingActionSelection,
+        // The snapshot pins the exact files the presented menu titles described, so an
+        // index refresh between menu-open and click is deliberately ignored. Consuming
+        // it here keeps long-lived main-menu items from retaining the last selection
+        // between uses; the next validation pass stores a fresh snapshot.
+        if let menuItem = sender as? NSMenuItem,
+           let snapshot = menuItem.representedObject as? StagingActionSelection,
            snapshot.action == action
         {
-            NSLog("[GitX] Reusing a %ld-file staging menu selection snapshot", snapshot.files.count)
+            menuItem.representedObject = nil
+            NSLog("[GitX] Consumed a %ld-file staging menu selection snapshot", snapshot.files.count)
             return snapshot
         }
         return fileListController.resolvedSelection(

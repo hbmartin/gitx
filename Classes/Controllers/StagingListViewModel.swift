@@ -213,7 +213,10 @@ final nonisolated class StagingListViewModel: NSObject {
     /// rows, ignores stale entries, filters same-section entries, and
     /// de-duplicates paths without changing their payload order. `nil` means
     /// the payload itself was malformed; an empty array is valid but cannot
-    /// produce a drop.
+    /// produce a drop. The exact-key check is intentional: the payload lives
+    /// only for one drag inside one app session under a custom pasteboard
+    /// type, so writer and reader always share one schema, and anything else
+    /// on the pasteboard is by definition not ours.
     @objc(resolvedDropFilesFromPropertyList:rows:destinationSection:)
     func resolvedDropFiles(
         from propertyList: Any?,

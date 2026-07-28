@@ -85,6 +85,21 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 
 @interface PBApplicationPreferences : NSObject
 @property (nonatomic, readonly, strong) NSUserDefaults *userDefaults;
+- (void)registerDefaults:(NSDictionary<NSString *, id> *)defaults NS_SWIFT_NAME(registerDefaults(_:));
+- (nullable id)objectForKey:(NSString *)key NS_SWIFT_NAME(object(forKey:));
+- (nullable NSString *)stringForKey:(NSString *)key NS_SWIFT_NAME(string(forKey:));
+- (nullable NSArray *)arrayForKey:(NSString *)key NS_SWIFT_NAME(array(forKey:));
+- (nullable NSDictionary<NSString *, id> *)dictionaryForKey:(NSString *)key NS_SWIFT_NAME(dictionary(forKey:));
+- (nullable NSData *)dataForKey:(NSString *)key NS_SWIFT_NAME(data(forKey:));
+- (BOOL)boolForKey:(NSString *)key;
+- (NSInteger)integerForKey:(NSString *)key NS_SWIFT_NAME(integer(forKey:));
+- (double)doubleForKey:(NSString *)key NS_SWIFT_NAME(double(forKey:));
+- (void)setObject:(nullable id)value forKey:(NSString *)key NS_SWIFT_NAME(setObject(_:forKey:));
+- (void)setBool:(BOOL)value forKey:(NSString *)key NS_SWIFT_NAME(setBool(_:forKey:));
+- (void)setInteger:(NSInteger)value forKey:(NSString *)key NS_SWIFT_NAME(setInteger(_:forKey:));
+- (void)setDouble:(double)value forKey:(NSString *)key NS_SWIFT_NAME(setDouble(_:forKey:));
+- (void)removeObjectForKey:(NSString *)key NS_SWIFT_NAME(removeObject(forKey:));
+- (void)synchronize;
 @end
 
 @interface PBApplicationComposition : NSObject
@@ -167,6 +182,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @interface PBStagingDiffPaneController : NSObject
 @property (nonatomic, readonly) PBNativeContentView *contentView;
 @property (nonatomic) NSUInteger contextLines;
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
 - (void)renderRequests:(NSArray<PBStagingDiffRequest *> *)requests;
 - (void)rerenderCurrentRequests;
 @end

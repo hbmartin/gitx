@@ -991,6 +991,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let stub = try XCTUnwrap(windowController as? HistoryWindowController)
         XCTAssertEqual(stub.openedURLs.map(\.lastPathComponent), union)
         XCTAssertEqual(stub.revealedURLs.map(\.lastPathComponent), union)
+        XCTAssertNil(
+            open.0.representedObject,
+            "execution consumes the snapshot so menu items do not retain the last selection"
+        )
+        XCTAssertNil(reveal.0.representedObject)
 
         stagedController.setSelectedObjects([stagedOnly])
         unstagedController.setSelectedObjects([])
@@ -1024,6 +1029,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
         XCTAssertEqual(try fixture.git(["show", ":partial.txt"]), "staged portion\nworktree portion\n")
         XCTAssertEqual(try fixture.git(["show", ":unstaged-only.txt"]), "unstaged\n")
+        XCTAssertNil(stage.0.representedObject)
     }
 
     func testFilteredStagedFileRemainsCommittable() throws {
