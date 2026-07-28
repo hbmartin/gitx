@@ -30,6 +30,42 @@
 
 @end
 
+@interface PBSourceViewBadgeWindow : NSWindow
+
+@property (nonatomic) BOOL testMainWindow;
+@property (nonatomic) BOOL testKeyWindow;
+
+@end
+
+@implementation PBSourceViewBadgeWindow
+
+- (BOOL)isMainWindow
+{
+	return self.testMainWindow;
+}
+
+- (BOOL)isKeyWindow
+{
+	return self.testKeyWindow;
+}
+
+@end
+
+@interface PBSourceViewBadgeCell : NSTableCellView
+
+@property (nonatomic, strong) NSWindow *testWindow;
+
+@end
+
+@implementation PBSourceViewBadgeCell
+
+- (NSWindow *)window
+{
+	return self.testWindow;
+}
+
+@end
+
 @interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
 
 @property (nonatomic) NSUInteger stagingToggleCount;
@@ -1043,14 +1079,28 @@
 
 - (void)testSourceViewBadgeCoversHighlightedAndNumericVariants
 {
-	NSTableCellView *cell = [[NSTableCellView alloc] initWithFrame:NSMakeRect(0, 0, 80, 22)];
+	PBSourceViewBadgeCell *cell = [[PBSourceViewBadgeCell alloc] initWithFrame:NSMakeRect(0, 0, 80, 22)];
+	PBSourceViewBadgeWindow *window = [[PBSourceViewBadgeWindow alloc]
+		initWithContentRect:NSMakeRect(0, 0, 80, 22)
+				  styleMask:NSWindowStyleMaskBorderless
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	cell.testWindow = window;
 	XCTAssertNotNil([PBSourceViewBadge badgeHighlightColor]);
 	cell.backgroundStyle = NSBackgroundStyleNormal;
 	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], [PBSourceViewBadge badgeBackgroundColor]);
 	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], NSColor.whiteColor);
 	XCTAssertNotNil([PBSourceViewBadge numericBadge:42 forCell:cell]);
+
+	window.testMainWindow = YES;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], [PBSourceViewBadge badgeHighlightColor]);
 	cell.backgroundStyle = NSBackgroundStyleEmphasized;
 	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], NSColor.whiteColor);
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], [PBSourceViewBadge badgeHighlightColor]);
+
+	window.testMainWindow = NO;
+	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], [PBSourceViewBadge badgeBackgroundColor]);
+	window.testKeyWindow = YES;
 	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], [PBSourceViewBadge badgeBackgroundColor]);
 	XCTAssertNotNil([PBSourceViewBadge checkedOutBadgeForCell:cell]);
 }

@@ -2413,6 +2413,18 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 		XCTAssertEqualObjects(storedSettings[absoluteKey][@"pushAfterCommit"], @YES);
 		XCTAssertEqualObjects(storedSettings[relativeKey][@"pushAfterCommit"], @NO);
 		XCTAssertEqual(storedSettings.count, (NSUInteger)2);
+
+		// Fresh instances must re-derive the same repository identity. Use a
+		// non-default sentinel for the relative path so a missing lookup cannot pass.
+		PBWindowRepositoryWithoutGitURLs *absoluteReadBackRepository = [PBWindowRepositoryWithoutGitURLs new];
+		absoluteReadBackRepository.testCommonGitDirectoryOutput = absolutePath;
+		XCTAssertTrue([[PBRepositoryUISettings alloc] initWithRepository:absoluteReadBackRepository].pushAfterCommit);
+
+		relativeSettings.pushAfterCommit = YES;
+		PBWindowRepositoryWithoutGitURLs *relativeReadBackRepository = [PBWindowRepositoryWithoutGitURLs new];
+		relativeReadBackRepository.testCommonGitDirectoryOutput = @".git";
+		relativeReadBackRepository.testWorkingDirectoryURL = workingDirectoryURL;
+		XCTAssertTrue([[PBRepositoryUISettings alloc] initWithRepository:relativeReadBackRepository].pushAfterCommit);
 	} @finally {
 		if (originalSettings)
 			[defaults setObject:originalSettings forKey:defaultsKey];

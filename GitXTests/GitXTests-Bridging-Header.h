@@ -178,11 +178,14 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @class PBStagingDiffRequest;
+@protocol PBIndexCommandRunning;
 
 @interface PBStagingDiffPaneController : NSObject
 @property (nonatomic, readonly) PBNativeContentView *contentView;
 @property (nonatomic) NSUInteger contextLines;
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (instancetype)initWithRepository:(PBGitRepository *)repository
+				 diffRunner:(nullable id<PBIndexCommandRunning>)diffRunner;
 - (void)renderRequests:(NSArray<PBStagingDiffRequest *> *)requests;
 - (void)rerenderCurrentRequests;
 @end

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8239,
+  "minimumLineCoverage": 0.8242,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4339,
@@ -45,7 +45,7 @@
     "Classes/Controllers/RepositoryStashActionCoordinator.swift": 1.0,
     "Classes/Controllers/RepositoryToolbarController.swift": 0.973,
     "Classes/Controllers/StagingDiffLoadCoordinator.swift": 0.9952,
-    "Classes/Controllers/StagingDiffPaneController.swift": 0.7716,
+    "Classes/Controllers/StagingDiffPaneController.swift": 0.7777,
     "Classes/Controllers/StagingFileListController.swift": 0.8464,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
     "Classes/Controllers/StagingViewController.swift": 0.8837,
@@ -73,7 +73,7 @@
     "Classes/Util/PBEasyFS.m": 1.0,
     "Classes/Util/PBError.m": 1.0,
     "Classes/Util/PBProcessEnvironment.swift": 1.0,
-    "Classes/Util/PBTask.m": 0.9911,
+    "Classes/Util/PBTask.m": 0.9929,
     "Classes/Util/PBTerminalUtil.m": 0.0625,
     "Classes/Util/RJModalRepoSheet.m": 0.0,
     "Classes/Views/CommitProgressSheetController.swift": 0.983,
@@ -100,7 +100,7 @@
     "Classes/Views/PBQLTextView.m": 0.0,
     "Classes/Views/PBRemoteProgressSheet.m": 0.0,
     "Classes/Views/PBSidebarTableViewCell.m": 1.0,
-    "Classes/Views/PBSourceViewBadge.m": 0.9687,
+    "Classes/Views/PBSourceViewBadge.m": 1.0,
     "Classes/Views/PBSourceViewItem.m": 0.899,
     "Classes/Views/StagingFileCellView.swift": 1.0,
     "Classes/git/GitCommandRunning.swift": 1.0,
@@ -159,7 +159,7 @@
       ]
     },
     "Repository Configuration surfaces": {
-      "minimumLineCoverage": 0.7889,
+      "minimumLineCoverage": 0.7931,
       "files": [
         "Classes/Controllers/RepositorySettingsStore.swift",
         "Classes/Controllers/RepositorySettingsController.swift",
