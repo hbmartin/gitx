@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8239,
+  "minimumLineCoverage": 0.824,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4339,
@@ -159,7 +159,7 @@
       ]
     },
     "Repository Configuration surfaces": {
-      "minimumLineCoverage": 0.7889,
+      "minimumLineCoverage": 0.7917,
       "files": [
         "Classes/Controllers/RepositorySettingsStore.swift",
         "Classes/Controllers/RepositorySettingsController.swift",

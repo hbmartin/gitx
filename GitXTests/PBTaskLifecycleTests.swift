@@ -254,7 +254,7 @@ final class PBTaskLifecycleTests: XCTestCase {
         }
     }
 
-    func testTerminationAfterObservableLaunchReturnsCancellationError() {
+    func testTerminationAfterObservableLaunchReportsCaughtSignalError() {
         let markerURL = temporaryFileURL(named: "launched")
         defer { try? FileManager.default.removeItem(at: markerURL) }
         let task = PBTask(
@@ -269,9 +269,11 @@ final class PBTaskLifecycleTests: XCTestCase {
         let cancelled = expectation(description: "terminated task reports an error")
 
         task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
-            let cancellationError = error as NSError?
-            XCTAssertEqual(cancellationError?.domain, NSCocoaErrorDomain)
-            XCTAssertEqual(cancellationError?.code, NSUserCancelledError)
+            // Unlike pre-launch cancellation, terminating a running task surfaces the
+            // child's death from SIGTERM, not a Cocoa user-cancelled error.
+            let terminationError = error as NSError?
+            XCTAssertEqual(terminationError?.domain, PBTaskErrorDomain)
+            XCTAssertEqual(terminationError?.code, Int(PBTaskErrorCode.caughtSignalError.rawValue))
             cancelled.fulfill()
         }
         let launched = XCTNSPredicateExpectation(
