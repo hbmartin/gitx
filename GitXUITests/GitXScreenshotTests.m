@@ -599,7 +599,7 @@
 	[self saveWindowScreenshotNamed:@"history-fetch-preferences"];
 }
 
-- (void)testGeneralPreferencesOfferRefreshOnFocus
+- (void)testGeneralPreferencesOfferRefreshOnFocusWithoutCommitGuides
 {
 	[self.app terminate];
 	NSMutableArray<NSString *> *arguments = [self.app.launchArguments mutableCopy];
@@ -618,6 +618,7 @@
 	XCTAssertFalse(continuousWatch.isEnabled);
 	XCTAssertTrue([refreshOnFocus.value boolValue]);
 	XCTAssertTrue(refreshOnFocus.isEnabled);
+	XCTAssertFalse(self.app.checkBoxes[@"Show column guides in commit message"].exists);
 	[self saveWindowScreenshotNamed:@"refresh-on-focus-preference"];
 }
 

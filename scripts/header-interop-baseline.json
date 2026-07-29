@@ -36,7 +36,6 @@
     "Classes/Views/GLFileView.h",
     "Classes/Views/GitXTextView.h",
     "Classes/Views/PBCloneRepositoryPanel.h",
-    "Classes/Views/PBCommitMessageView.h",
     "Classes/Views/PBGitGradientBarView.h",
     "Classes/Views/PBGitXMessageSheet.h",
     "Classes/Views/PBQLOutlineView.h",

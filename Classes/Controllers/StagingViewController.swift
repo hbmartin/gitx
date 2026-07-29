@@ -295,8 +295,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     private func configureCommitMessageView() {
         // The message view is built in code, so AppKit never sends it
-        // awakeFromNib; invoke it directly to apply the text-substitution
-        // preferences and register the guide-ruler observers.
+        // awakeFromNib; invoke it directly to apply the text-substitution preferences.
         commitMessageView.awakeFromNib()
         commitMessageView.repository = repository
         commitMessageView.delegate = self

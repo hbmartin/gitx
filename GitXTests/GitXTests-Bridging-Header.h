@@ -15,6 +15,7 @@
 #import "PBUncommittedChanges.h"
 #import "PBHighlighting.h"
 #import "PBChangedFile.h"
+#import "PBCommitMessageView.h"
 #import "PBNativeContentView.h"
 #import "PBTask.h"
 #import "PBProcessEnvironment.h"
@@ -245,8 +246,9 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @interface PBStagingViewController : NSViewController
 @property (nonatomic, readonly) PBStagingFileListController *fileListController;
 @property (nonatomic, readonly) PBStagingDiffPaneController *diffPaneController;
-@property (nonatomic, readonly) NSTextView *commitMessageView;
+@property (nonatomic, readonly) PBCommitMessageView *commitMessageView;
 @property (nonatomic, readonly) NSSearchField *searchField;
+@property (nonatomic, readonly) NSResponder *paneFirstResponder;
 - (void)updateView;
 - (void)closeView;
 - (void)reloadPushRemotes;

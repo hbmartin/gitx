@@ -10,8 +10,12 @@
 
 @class PBGitRepository;
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBCommitMessageView : GitXTextView
 
-@property (nonatomic, weak) PBGitRepository *repository;
+@property (nonatomic, weak, nullable) PBGitRepository *repository;
 
 @end
+
+NS_ASSUME_NONNULL_END
