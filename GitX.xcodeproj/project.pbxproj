@@ -259,6 +259,7 @@
 		C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */; };
 		C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */; };
 		C0D0C0A00000000000000001 /* GitXCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0D0C0A00000000000000018 /* GitXCore */; };
+		F0A000000000000000000001 /* ForgeKit in Frameworks */ = {isa = PBXBuildFile; productRef = F0A000000000000000000018 /* ForgeKit */; };
 		C0D0C0A00000000000000002 /* ApplicationComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000011 /* ApplicationComposition.swift */; };
 		C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */; };
 		C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */; };
@@ -895,6 +896,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F0A000000000000000000001 /* ForgeKit in Frameworks */,
 				C0D0C0A00000000000000001 /* GitXCore in Frameworks */,
 				C0DE1000000000000000001A /* UserNotifications.framework in Frameworks */,
 				C0DE10000000000000000016 /* HighlightKit in Frameworks */,
@@ -1537,6 +1539,7 @@
 			);
 			name = GitX;
 			packageProductDependencies = (
+				F0A000000000000000000018 /* ForgeKit */,
 				C0D0C0A00000000000000018 /* GitXCore */,
 				C0DE10000000000000000018 /* HighlightKit */,
 			);
@@ -1618,6 +1621,7 @@
 			);
 			mainGroup = 29B97314FDCFA39411CA2CEA /* GitTest */;
 			packageReferences = (
+				F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */,
 				C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */,
 				C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */,
 			);
@@ -2639,6 +2643,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ForgeKit;
+		};
 		C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = GitXCore;
@@ -2657,6 +2665,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		F0A000000000000000000018 /* ForgeKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */;
+			productName = ForgeKit;
+		};
 		C0D0C0A00000000000000018 /* GitXCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */;
