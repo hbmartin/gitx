@@ -265,6 +265,12 @@
 	</suite>
 
 	<suite name="GitX Suite" code="GitX" description="Classes for GitX.">
+		<enumeration name="forge revision kind" code="FrRK">
+			<enumerator name="branch revision" code="FrBr" description="A branch name."/>
+			<enumerator name="tag revision" code="FrTg" description="A tag name."/>
+			<enumerator name="commit revision" code="FrCm" description="A commit identifier."/>
+		</enumeration>
+
         <!-- Override for the core open command: we handle options -->
 		<command name="open" code="aevtodoc" description="Open a document.">
 			<direct-parameter description="The file(s) to be opened.">
@@ -307,6 +313,101 @@
 			<parameter name="is bare" code="Bare" type="boolean" optional="yes" description="Indicates whether the created repository should be a bare repository.">
 				<cocoa key="isBare"/>
 			</parameter>
+		</command>
+
+		<command name="forge repository URL" code="GitXFrRp" description="Return the native Forge repository URL without opening it.">
+			<cocoa class="PBForgeDestinationScriptCommand"/>
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+				<cocoa key="document"/>
+			</parameter>
+			<result type="text" description="The provider-native destination URL."/>
+		</command>
+
+		<command name="forge branch URL" code="GitXFrBr" description="Return the native Forge branch URL without opening it.">
+			<cocoa class="PBForgeDestinationScriptCommand"/>
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+				<cocoa key="document"/>
+			</parameter>
+			<parameter name="branch" code="BrNm" type="text" description="The branch name.">
+				<cocoa key="branch"/>
+			</parameter>
+			<result type="text" description="The provider-native destination URL."/>
+		</command>
+
+		<command name="forge commit URL" code="GitXFrCm" description="Return the native Forge commit URL without opening it.">
+			<cocoa class="PBForgeDestinationScriptCommand"/>
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+				<cocoa key="document"/>
+			</parameter>
+			<parameter name="commit" code="CmID" type="text" description="The hexadecimal commit identifier.">
+				<cocoa key="commit"/>
+			</parameter>
+			<result type="text" description="The provider-native destination URL."/>
+		</command>
+
+		<command name="forge file URL" code="GitXFrFl" description="Return the native Forge file or line-range URL without opening it.">
+			<cocoa class="PBForgeDestinationScriptCommand"/>
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+				<cocoa key="document"/>
+			</parameter>
+			<parameter name="at revision" code="Revn" type="text" description="The branch, tag, or commit revision.">
+				<cocoa key="revision"/>
+			</parameter>
+			<parameter name="revision kind" code="RvKd" type="forge revision kind" description="Whether the revision is a branch, tag, or commit.">
+				<cocoa key="revisionKind"/>
+			</parameter>
+			<parameter name="path" code="Path" type="text" description="The repository-relative file path.">
+				<cocoa key="path"/>
+			</parameter>
+			<parameter name="start line" code="LnSt" type="integer" optional="yes" description="The optional first line, starting at one.">
+				<cocoa key="startLine"/>
+			</parameter>
+			<parameter name="end line" code="LnEn" type="integer" optional="yes" description="The optional last line; start line is required when this is supplied.">
+				<cocoa key="endLine"/>
+			</parameter>
+			<result type="text" description="The provider-native destination URL."/>
+		</command>
+
+		<command name="forge compare URL" code="GitXFrCp" description="Return the native Forge compare URL without opening it.">
+			<cocoa class="PBForgeDestinationScriptCommand"/>
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+				<cocoa key="document"/>
+			</parameter>
+			<parameter name="base revision" code="Base" type="text" description="The base branch, tag, or commit revision.">
+				<cocoa key="baseRevision"/>
+			</parameter>
+			<parameter name="base revision kind" code="BsKd" type="forge revision kind" description="Whether the base revision is a branch, tag, or commit.">
+				<cocoa key="baseRevisionKind"/>
+			</parameter>
+			<parameter name="head revision" code="Head" type="text" description="The head branch, tag, or commit revision.">
+				<cocoa key="headRevision"/>
+			</parameter>
+			<parameter name="head revision kind" code="HdKd" type="forge revision kind" description="Whether the head revision is a branch, tag, or commit.">
+				<cocoa key="headRevisionKind"/>
+			</parameter>
+			<result type="text" description="The provider-native destination URL."/>
+		</command>
+
+		<command name="forge pull request URL" code="GitXFrPR" description="Return the native Forge Pull Request URL without opening it.">
+			<cocoa class="PBForgeDestinationScriptCommand"/>
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+				<cocoa key="document"/>
+			</parameter>
+			<parameter name="number" code="Nmbr" type="integer" description="The Pull Request number.">
+				<cocoa key="number"/>
+			</parameter>
+			<result type="text" description="The provider-native destination URL."/>
+		</command>
+
+		<command name="forge issue URL" code="GitXFrIs" description="Return the native Forge Issue URL without opening it.">
+			<cocoa class="PBForgeDestinationScriptCommand"/>
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+				<cocoa key="document"/>
+			</parameter>
+			<parameter name="number" code="Nmbr" type="integer" description="The Issue number.">
+				<cocoa key="number"/>
+			</parameter>
+			<result type="text" description="The provider-native destination URL."/>
 		</command>
 
 		<command name="search" code="GitXSrch" description="Highlight commits that match the given search string.">

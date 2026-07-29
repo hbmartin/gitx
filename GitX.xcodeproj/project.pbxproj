@@ -266,6 +266,9 @@
 		C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000014 /* TerminalIntegration.swift */; };
 		C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */; };
 		C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */; };
+		C0DF00000000000000000001 /* RepositoryForgeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */; };
+		C0DF10000000000000000001 /* ForgeDestinationScriptCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */; };
+		C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF20000000000000000011 /* ForgeScriptingTests.swift */; };
 		C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
@@ -867,6 +870,9 @@
 		C0D0C0A00000000000000014 /* TerminalIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegration.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsStore.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPresentationPolicies.swift; sourceTree = "<group>"; };
+		C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeCoordinator.swift; sourceTree = "<group>"; };
+		C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeDestinationScriptCommand.swift; sourceTree = "<group>"; };
+		C0DF20000000000000000011 /* ForgeScriptingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeScriptingTests.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationCompositionTests.swift; sourceTree = "<group>"; };
 		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
@@ -1175,6 +1181,8 @@
 				C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */,
 				C0DEC3000000000000000011 /* RepositorySettingsController.swift */,
 				C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */,
+				C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */,
+				C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */,
 				C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */,
 				4A5D762814A9A9CC00DF6C68 /* DBPrefsWindowController.h */,
 				4A5D762914A9A9CC00DF6C68 /* DBPrefsWindowController.m */,
@@ -1466,6 +1474,7 @@
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
 				C0DE90000000000000000017 /* RepositoryServiceTests.swift */,
+				C0DF20000000000000000011 /* ForgeScriptingTests.swift */,
 				C05900000000000000000012 /* RepositoryIgnoreTestSupport.h */,
 				C05900000000000000000011 /* RepositoryIgnoreTestSupport.m */,
 				C0DEE0000000000000000012 /* IndexSnapshotTests.swift */,
@@ -1972,6 +1981,8 @@
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
 				C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */,
 				C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */,
+				C0DF00000000000000000001 /* RepositoryForgeCoordinator.swift in Sources */,
+				C0DF10000000000000000001 /* ForgeDestinationScriptCommand.swift in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
 				C0DE10000000000000000014 /* PBWorkingTree.m in Sources */,
@@ -2089,6 +2100,7 @@
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
+				C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */,
 				C05900000000000000000001 /* RepositoryIgnoreTestSupport.m in Sources */,
 				C0DEE0000000000000000002 /* IndexSnapshotTests.swift in Sources */,
 				C0DEE0000000000000000005 /* IndexMutationServiceTests.swift in Sources */,

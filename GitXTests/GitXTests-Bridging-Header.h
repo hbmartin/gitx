@@ -6,6 +6,7 @@
 #import "PBGitDefaults.h"
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
+#import "PBGitRepositoryDocument.h"
 #import "PBGitHistoryController.h"
 #import "PBViewController.h"
 #import "PBGitCommit.h"
@@ -869,6 +870,14 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 		  willBeInsertedIntoToolbar:(BOOL)flag;
 @end
 
+@interface PBRepositoryForgeLinkMenuPresenter : NSObject
++ (NSArray<NSMenuItem *> *)menuItemsForProviderName:(nullable NSString *)providerName
+								 forgeAvailable:(BOOL)forgeAvailable
+							 currentBranchName:(nullable NSString *)currentBranchName
+				 checkedOutCommitIdentifier:(nullable NSString *)checkedOutCommitIdentifier
+					 selectedCommitIdentifiers:(NSArray<NSString *> *)selectedCommitIdentifiers;
+@end
+
 @interface PBCommitMessageResult : NSObject
 @property (nonatomic, copy, readonly) NSString *message;
 @property (nonatomic, readonly) BOOL didAddSignOff;
@@ -1016,6 +1025,72 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @property (nonatomic) BOOL pushAfterCommit;
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *sidebarVisibility;
 - (BOOL)isSidebarGroupVisible:(NSString *)group;
+@end
+
+typedef NS_ENUM(NSInteger, PBRepositoryForgeBindingResolutionKind) {
+	PBRepositoryForgeBindingResolutionKindExisting,
+	PBRepositoryForgeBindingResolutionKindAutomatic,
+	PBRepositoryForgeBindingResolutionKindRequiresChoice,
+	PBRepositoryForgeBindingResolutionKindUnavailable,
+};
+
+typedef NS_ENUM(NSInteger, PBRepositoryForgeRevisionKind) {
+	PBRepositoryForgeRevisionKindBranch,
+	PBRepositoryForgeRevisionKindTag,
+	PBRepositoryForgeRevisionKindCommit,
+};
+
+typedef NS_ENUM(NSInteger, PBRepositoryForgeScriptingErrorCode) {
+	PBRepositoryForgeScriptingErrorCodeNoForgeRepository = 18001,
+	PBRepositoryForgeScriptingErrorCodeAmbiguousForgeRepository = 18002,
+	PBRepositoryForgeScriptingErrorCodeInvalidDestination = 18003,
+	PBRepositoryForgeScriptingErrorCodeAmbiguousDestination = 18004,
+	PBRepositoryForgeScriptingErrorCodeNoAvailableDestination = 18005,
+};
+
+@interface PBRepositoryForgeBindingCandidate : NSObject
+@property (nonatomic, readonly, copy) NSString *localRemoteName;
+@property (nonatomic, readonly, copy) NSString *providerName;
+@property (nonatomic, readonly, copy) NSString *repositoryLabel;
+@property (nonatomic, readonly, nullable) NSURL *repositoryURL;
+@end
+
+@interface PBRepositoryForgeBindingResolution : NSObject
+@property (nonatomic, readonly) PBRepositoryForgeBindingResolutionKind kind;
+@property (nonatomic, readonly, copy) NSArray<PBRepositoryForgeBindingCandidate *> *candidates;
+@property (nonatomic, readonly, copy, nullable) NSString *localRemoteName;
+@property (nonatomic, readonly, nullable) NSURL *repositoryURL;
+@property (nonatomic, readonly, copy, nullable) NSString *providerName;
+@end
+
+@interface PBRepositoryForgeCoordinator : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (PBRepositoryForgeBindingResolution *)resolveBinding;
+- (nullable PBRepositoryForgeBindingResolution *)selectCandidate:(PBRepositoryForgeBindingCandidate *)candidate
+														 error:(NSError * _Nullable * _Nullable)error;
+- (nullable NSURL *)repositoryURLWithError:(NSError * _Nullable * _Nullable)error;
+- (nullable NSURL *)branchURLForName:(NSString *)name
+									 error:(NSError * _Nullable * _Nullable)error;
+- (nullable NSURL *)commitURLForIdentifier:(NSString *)identifier
+										 error:(NSError * _Nullable * _Nullable)error;
+- (nullable NSURL *)fileURLForRevision:(NSString *)revision
+							  revisionKind:(PBRepositoryForgeRevisionKind)revisionKind
+										 path:(NSString *)path
+								 startLine:(nullable NSNumber *)startLine
+								   endLine:(nullable NSNumber *)endLine
+									 error:(NSError * _Nullable * _Nullable)error;
+- (nullable NSURL *)compareURLFromRevision:(NSString *)base
+									 baseKind:(PBRepositoryForgeRevisionKind)baseKind
+								toRevision:(NSString *)head
+									 headKind:(PBRepositoryForgeRevisionKind)headKind
+										error:(NSError * _Nullable * _Nullable)error;
+- (nullable NSURL *)pullRequestURLForNumber:(NSInteger)number
+											error:(NSError * _Nullable * _Nullable)error;
+- (nullable NSURL *)issueURLForNumber:(NSInteger)number
+									  error:(NSError * _Nullable * _Nullable)error;
+@end
+
+@interface PBForgeDestinationScriptCommand : NSScriptCommand
 @end
 
 NS_ASSUME_NONNULL_END

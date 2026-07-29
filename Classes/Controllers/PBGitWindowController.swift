@@ -15,6 +15,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var referenceActionCoordinator: RepositoryReferenceActionCoordinator?
     private var stashActionCoordinator: RepositoryStashActionCoordinator?
     private var workspaceActionCoordinator: WorkspaceActionCoordinator?
+    private var repositoryForgeCoordinator: RepositoryForgeCoordinator?
     private var repositoryToolbarController: RepositoryToolbarController?
     private var initializedContentControllers: NSHashTable<PBViewController>?
     private var contentStatusObservation: NSKeyValueObservation?
@@ -98,11 +99,18 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         historyViewController?.closeView()
         _sidebarController = nil
         _historyViewController = nil
+        repositoryForgeCoordinator = nil
         repositoryToolbarController = nil
         WelcomeWindowController.shared.showIfNeededAfterDelay()
     }
 
     @objc public dynamic func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if let action = RepositoryForgeLinkAction(selector: menuItem.action),
+           let model = RepositoryForgeLinkMenuPresenter.itemModel(action: action, context: forgeLinkContext)
+        {
+            RepositoryForgeLinkMenuPresenter.apply(model: model, to: menuItem)
+            return model.isEnabled
+        }
         if menuItem.action == #selector(revealInFinder(_:)) || menuItem.action == #selector(openInTerminal(_:)) {
             ensureActionCoordinators()
             return workspaceActionCoordinator?.hasWorkingDirectory == true
@@ -136,6 +144,35 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             )
         }
         return true
+    }
+
+    var forgeLinkContext: RepositoryForgeLinkContext {
+        let resolution = forgeCoordinator?.resolveBinding()
+        let headRef = repository?.headRef()?.ref()
+        let checkedOutRevision: RepositoryForgeLinkRevision?
+        if let headRef, headRef.isBranch, let branchName = headRef.branchName {
+            checkedOutRevision = .branch(branchName)
+        } else if let identifier = repository?.headOID()?.sha {
+            checkedOutRevision = .commit(identifier)
+        } else {
+            checkedOutRevision = nil
+        }
+        let selectedCommitIdentifiers = (_historyViewController?.selectedCommits ?? []).compactMap { commit in
+            commit is PBUncommittedChanges ? nil : commit.sha
+        }
+        return RepositoryForgeLinkContext(
+            providerName: resolution?.providerName,
+            isForgeAvailable: resolution?.binding != nil || resolution?.candidates.isEmpty == false,
+            checkedOutRevision: checkedOutRevision,
+            selectedCommitIdentifiers: selectedCommitIdentifiers
+        )
+    }
+
+    var forgeCoordinator: RepositoryForgeCoordinator? {
+        if repositoryForgeCoordinator == nil, let repository {
+            repositoryForgeCoordinator = RepositoryForgeCoordinator(repository: repository)
+        }
+        return repositoryForgeCoordinator
     }
 
     @objc(validateMenuItem:remoteTitle:plainTitle:)

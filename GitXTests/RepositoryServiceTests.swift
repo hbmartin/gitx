@@ -190,6 +190,239 @@ final class RepositoryServiceTests: XCTestCase {
     }
 }
 
+final class RepositoryForgeCoordinatorTests: XCTestCase {
+    private var originalComposition: PBApplicationComposition!
+    private var defaults: UserDefaults!
+    private var defaultsSuiteName: String!
+    private var repositoryURL: URL!
+    private var repository: PBGitRepository!
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        originalComposition = PBApplicationComposition.shared()
+        defaultsSuiteName = "GitXTests.RepositoryForgeCoordinator.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: defaultsSuiteName)
+        defaults.removePersistentDomain(forName: defaultsSuiteName)
+        PBApplicationComposition.setShared(PBApplicationComposition(userDefaults: defaults))
+
+        repositoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitXRepositoryForge-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        try runGit(["init", "--quiet", "--initial-branch=main"])
+        try runGit(["config", "user.name", "GitX Tests"])
+        try runGit(["config", "user.email", "gitx-tests@example.invalid"])
+        try "initial\n".write(
+            to: repositoryURL.appendingPathComponent("README.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try runGit(["add", "--all"])
+        try runGit(["commit", "--quiet", "-m", "initial"])
+        repository = try PBGitRepository(url: repositoryURL)
+    }
+
+    override func tearDownWithError() throws {
+        repository = nil
+        if let repositoryURL {
+            try? FileManager.default.removeItem(at: repositoryURL)
+        }
+        PBApplicationComposition.setShared(originalComposition)
+        defaults.removePersistentDomain(forName: defaultsSuiteName)
+        defaults = nil
+        defaultsSuiteName = nil
+        originalComposition = nil
+        try super.tearDownWithError()
+    }
+
+    func testUniqueRemotePersistsStableBindingThatRemainsAuthoritative() throws {
+        try addRemote("origin", url: "git@github.com:acme/widgets.git")
+
+        let automatic = PBRepositoryForgeCoordinator(repository: repository).resolveBinding()
+
+        XCTAssertEqual(automatic.kind, .automatic)
+        XCTAssertEqual(automatic.localRemoteName, "origin")
+        XCTAssertEqual(automatic.providerName, "GitHub")
+        XCTAssertEqual(automatic.repositoryURL?.absoluteString, "https://github.com/acme/widgets")
+        XCTAssertNotNil(persistedBindingData())
+
+        try runGit(["remote", "remove", "origin"])
+        try addRemote("upstream", url: "https://gitlab.com/other/project.git")
+        let existing = PBRepositoryForgeCoordinator(repository: repository).resolveBinding()
+
+        XCTAssertEqual(existing.kind, .existing)
+        XCTAssertEqual(existing.localRemoteName, "origin")
+        XCTAssertEqual(existing.providerName, "GitHub")
+        XCTAssertEqual(existing.repositoryURL?.absoluteString, "https://github.com/acme/widgets")
+    }
+
+    func testAmbiguousRemotesRetainLocalNamesAndRequireExplicitSelection() throws {
+        try addRemote("origin", url: "git@github.com:person/widgets.git")
+        try addRemote("upstream", url: "ssh://git@gitlab.com/organization/widgets.git")
+        let coordinator = PBRepositoryForgeCoordinator(repository: repository)
+
+        let resolution = coordinator.resolveBinding()
+
+        XCTAssertEqual(resolution.kind, .requiresChoice)
+        XCTAssertEqual(Set(resolution.candidates.map(\.localRemoteName)), ["origin", "upstream"])
+        XCTAssertNil(persistedBindingData())
+        assertScriptingError(.ambiguousForgeRepository) {
+            _ = try coordinator.repositoryURL()
+        }
+
+        let upstream = try XCTUnwrap(
+            resolution.candidates.first { $0.localRemoteName == "upstream" }
+        )
+        let selected = try coordinator.select(upstream)
+        XCTAssertEqual(selected.kind, .existing)
+        XCTAssertEqual(selected.localRemoteName, "upstream")
+        XCTAssertNotNil(persistedBindingData())
+        XCTAssertEqual(
+            try coordinator.repositoryURL().absoluteString,
+            "https://gitlab.com/organization/widgets"
+        )
+    }
+
+    func testCorruptBindingDecodesAsNilAndProducesDeterministicNoRepositoryError() {
+        setPersistedBindingData(Data("not-json".utf8))
+        let coordinator = PBRepositoryForgeCoordinator(repository: repository)
+
+        let resolution = coordinator.resolveBinding()
+
+        XCTAssertEqual(resolution.kind, .unavailable)
+        XCTAssertNil(resolution.localRemoteName)
+        assertScriptingError(.noForgeRepository) {
+            _ = try coordinator.repositoryURL()
+        }
+    }
+
+    func testScriptingConstructsEveryGitHubDestinationWithoutPersistingOrPresentingUI() throws {
+        try addRemote("origin", url: "ssh://git@github.com/acme/widgets.git")
+        let coordinator = PBRepositoryForgeCoordinator(repository: repository)
+        let commit = String(repeating: "a", count: 40)
+
+        XCTAssertEqual(
+            try coordinator.repositoryURL().absoluteString,
+            "https://github.com/acme/widgets"
+        )
+        XCTAssertEqual(
+            try coordinator.branchURL(forName: "feature/naïve").absoluteString,
+            "https://github.com/acme/widgets/tree/feature%2Fna%C3%AFve"
+        )
+        XCTAssertEqual(
+            try coordinator.commitURL(forIdentifier: commit).absoluteString,
+            "https://github.com/acme/widgets/commit/\(commit)"
+        )
+        XCTAssertEqual(
+            try coordinator.fileURL(
+                forRevision: "feature/naïve",
+                revisionKind: .branch,
+                path: "Sources/naïve file.swift",
+                startLine: 10,
+                endLine: 20
+            ).absoluteString,
+            "https://github.com/acme/widgets/blob/feature%2Fna%C3%AFve/Sources/na%C3%AFve%20file.swift#L10-L20"
+        )
+        XCTAssertEqual(
+            try coordinator.compareURL(
+                fromRevision: "main",
+                baseKind: .branch,
+                toRevision: "feature/naïve",
+                head: .branch
+            ).absoluteString,
+            "https://github.com/acme/widgets/compare/main...feature%2Fna%C3%AFve"
+        )
+        XCTAssertEqual(
+            try coordinator.pullRequestURL(forNumber: 12).absoluteString,
+            "https://github.com/acme/widgets/pull/12"
+        )
+        XCTAssertEqual(
+            try coordinator.issueURL(forNumber: 34).absoluteString,
+            "https://github.com/acme/widgets/issues/34"
+        )
+        XCTAssertNil(persistedBindingData(), "Read-only scripting must not silently create a binding")
+    }
+
+    func testScriptingRejectsInvalidDestinationWithStableErrorCode() throws {
+        try addRemote("origin", url: "https://github.com/acme/widgets.git")
+        let coordinator = PBRepositoryForgeCoordinator(repository: repository)
+
+        assertScriptingError(.invalidDestination) {
+            _ = try coordinator.fileURL(
+                forRevision: "main",
+                revisionKind: .branch,
+                path: "File.swift",
+                startLine: nil,
+                endLine: 8
+            )
+        }
+        assertScriptingError(.invalidDestination) {
+            _ = try coordinator.pullRequestURL(forNumber: 0)
+        }
+        XCTAssertNil(persistedBindingData())
+    }
+
+    private func assertScriptingError(
+        _ expectedCode: PBRepositoryForgeScriptingErrorCode,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        operation: () throws -> Void
+    ) {
+        XCTAssertThrowsError(try operation(), file: file, line: line) { error in
+            let error = error as NSError
+            XCTAssertEqual(error.domain, "com.gitx.forge.scripting", file: file, line: line)
+            XCTAssertEqual(error.code, expectedCode.rawValue, file: file, line: line)
+            XCTAssertFalse(error.localizedDescription.isEmpty, file: file, line: line)
+        }
+    }
+
+    private func addRemote(_ name: String, url: String) throws {
+        try runGit(["remote", "add", name, url])
+    }
+
+    private func persistedBindingData() -> Data? {
+        let allSettings = defaults.dictionary(forKey: "PBRepositoryUISettings") ?? [:]
+        let repositorySettings = allSettings[repositoryDefaultsKey] as? [String: Any]
+        return repositorySettings?["forgeRepositoryBinding"] as? Data
+    }
+
+    private func setPersistedBindingData(_ data: Data) {
+        defaults.set(
+            [repositoryDefaultsKey: ["forgeRepositoryBinding": data]],
+            forKey: "PBRepositoryUISettings"
+        )
+    }
+
+    private var repositoryDefaultsKey: String {
+        repositoryURL.appendingPathComponent(".git", isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+
+    private func runGit(_ arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = repositoryURL
+        process.standardOutput = FileHandle.nullDevice
+        let standardError = Pipe()
+        process.standardError = standardError
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let message = String(
+                decoding: standardError.fileHandleForReading.readDataToEndOfFile(),
+                as: UTF8.self
+            )
+            throw NSError(
+                domain: "RepositoryForgeCoordinatorTests",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+    }
+}
+
 @MainActor
 // swift6-safety-justification: XCTest owns the test case lifetime, while every mutable access is confined to the main actor.
 final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendable {

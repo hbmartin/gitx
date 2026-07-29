@@ -4,9 +4,175 @@ import AppKit
 // swiftlint:disable:next unused_import
 import OSLog
 
+enum RepositoryForgeLinkRevision: Equatable {
+    case branch(String)
+    case commit(String)
+}
+
+struct RepositoryForgeLinkContext: Equatable {
+    let providerName: String?
+    let isForgeAvailable: Bool
+    let checkedOutRevision: RepositoryForgeLinkRevision?
+    let selectedCommitIdentifiers: [String]
+}
+
+enum RepositoryForgeLinkAction: String, CaseIterable {
+    case repository = "viewForgeRepository:"
+    case checkedOutRevision = "viewForgeCheckedOutRevision:"
+    case selectedCommit = "viewForgeSelectedCommit:"
+    case compareSelectedCommits = "viewForgeSelectedComparison:"
+    case numberedItem = "showForgePullRequestOrIssue:"
+
+    init?(selector: Selector?) {
+        guard let selector else { return nil }
+        self.init(rawValue: NSStringFromSelector(selector))
+    }
+
+    var selector: Selector {
+        NSSelectorFromString(rawValue)
+    }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .repository: "GitX.Repository.ForgeLinks.Repository"
+        case .checkedOutRevision: "GitX.Repository.ForgeLinks.CheckedOutRevision"
+        case .selectedCommit: "GitX.Repository.ForgeLinks.SelectedCommit"
+        case .compareSelectedCommits: "GitX.Repository.ForgeLinks.CompareSelectedCommits"
+        case .numberedItem: "GitX.Repository.ForgeLinks.PullRequestOrIssue"
+        }
+    }
+}
+
+struct RepositoryForgeLinkMenuItemModel: Equatable {
+    let action: RepositoryForgeLinkAction
+    let title: String
+    let accessibilityLabel: String
+    let isEnabled: Bool
+    let isHidden: Bool
+}
+
+/// Supplies one contextual link model to both the toolbar pull-down and Repository menu.
+@objc(PBRepositoryForgeLinkMenuPresenter)
+final class RepositoryForgeLinkMenuPresenter: NSObject { // swiftlint:disable:this unused_declaration
+    static func itemModels(context: RepositoryForgeLinkContext) -> [RepositoryForgeLinkMenuItemModel] {
+        RepositoryForgeLinkAction.allCases.compactMap { itemModel(action: $0, context: context) }
+    }
+
+    static func itemModel(
+        action: RepositoryForgeLinkAction,
+        context: RepositoryForgeLinkContext
+    ) -> RepositoryForgeLinkMenuItemModel? {
+        let provider = context.providerName
+        let providerSuffix = provider.map { " on \($0)" } ?? ""
+        let enabled = context.isForgeAvailable
+        switch action {
+        case .repository:
+            return RepositoryForgeLinkMenuItemModel(
+                action: action,
+                title: "View Repository\(providerSuffix)",
+                accessibilityLabel: "View repository\(providerSuffix)",
+                isEnabled: enabled,
+                isHidden: false
+            )
+        case .checkedOutRevision:
+            let title: String
+            switch context.checkedOutRevision {
+            case let .branch(name):
+                title = "View Checked-Out Branch “\(name)”\(providerSuffix)"
+            case .commit:
+                title = "View Checked-Out Commit\(providerSuffix)"
+            case nil:
+                title = "View Checked-Out Revision\(providerSuffix)"
+            }
+            return RepositoryForgeLinkMenuItemModel(
+                action: action,
+                title: title,
+                accessibilityLabel: title,
+                isEnabled: enabled && context.checkedOutRevision != nil,
+                isHidden: context.checkedOutRevision == nil
+            )
+        case .selectedCommit:
+            let applicable = context.selectedCommitIdentifiers.count == 1
+            return RepositoryForgeLinkMenuItemModel(
+                action: action,
+                title: "View Selected Commit\(providerSuffix)",
+                accessibilityLabel: "View selected commit\(providerSuffix)",
+                isEnabled: enabled && applicable,
+                isHidden: !applicable
+            )
+        case .compareSelectedCommits:
+            let applicable = context.selectedCommitIdentifiers.count == 2
+            return RepositoryForgeLinkMenuItemModel(
+                action: action,
+                title: "Compare Selected Commits\(providerSuffix)",
+                accessibilityLabel: "Compare selected commits\(providerSuffix)",
+                isEnabled: enabled && applicable,
+                isHidden: !applicable
+            )
+        case .numberedItem:
+            return RepositoryForgeLinkMenuItemModel(
+                action: action,
+                title: "Pull Request or Issue…",
+                accessibilityLabel: "Open pull request or issue\(providerSuffix)",
+                isEnabled: enabled,
+                isHidden: false
+            )
+        }
+    }
+
+    static func menuItems(context: RepositoryForgeLinkContext) -> [NSMenuItem] {
+        let models = itemModels(context: context).filter { !$0.isHidden }
+        var items: [NSMenuItem] = []
+        for model in models {
+            if model.action == .numberedItem, !items.isEmpty {
+                items.append(.separator())
+            }
+            let item = NSMenuItem(title: model.title, action: model.action.selector, keyEquivalent: "")
+            apply(model: model, to: item)
+            item.target = nil
+            items.append(item)
+        }
+        return items
+    }
+
+    static func apply(model: RepositoryForgeLinkMenuItemModel, to item: NSMenuItem) {
+        item.title = model.title
+        item.isEnabled = model.isEnabled
+        item.isHidden = model.isHidden
+        item.identifier = NSUserInterfaceItemIdentifier(model.action.accessibilityIdentifier)
+        item.setAccessibilityIdentifier(model.action.accessibilityIdentifier)
+        item.setAccessibilityLabel(model.accessibilityLabel)
+    }
+
+    /// Objective-C-visible decision seam for app-hosted tests.
+    @objc(menuItemsForProviderName:forgeAvailable:currentBranchName:checkedOutCommitIdentifier:selectedCommitIdentifiers:)
+    static func menuItems(
+        providerName: String?,
+        forgeAvailable: Bool,
+        currentBranchName: String?,
+        checkedOutCommitIdentifier: String?,
+        selectedCommitIdentifiers: [String]
+    ) -> [NSMenuItem] {
+        let checkedOutRevision: RepositoryForgeLinkRevision?
+        if let currentBranchName {
+            checkedOutRevision = .branch(currentBranchName)
+        } else if let checkedOutCommitIdentifier {
+            checkedOutRevision = .commit(checkedOutCommitIdentifier)
+        } else {
+            checkedOutRevision = nil
+        }
+        return menuItems(context: RepositoryForgeLinkContext(
+            providerName: providerName,
+            isForgeAvailable: forgeAvailable,
+            checkedOutRevision: checkedOutRevision,
+            selectedCommitIdentifiers: selectedCommitIdentifiers
+        ))
+    }
+}
+
 /// Objective-C callers are not visible to SwiftLint's analyzer.
 @objc(PBRepositoryToolbarController)
-final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftlint:disable:this unused_declaration
+final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDelegate { // swiftlint:disable:this unused_declaration
     private static let toolbarIdentifier = NSToolbar.Identifier("GitX.Repository.HistoryToolbar")
 
     private enum Item {
@@ -147,6 +313,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         if itemIdentifier == Item.actions {
             return actionsItem(identifier: itemIdentifier)
         }
+        if itemIdentifier == Item.viewRemote {
+            return viewRemoteItem(identifier: itemIdentifier)
+        }
         let descriptor = descriptor(for: itemIdentifier)
         guard let descriptor else { return nil }
         let item = NSToolbarItem(itemIdentifier: itemIdentifier)
@@ -161,6 +330,47 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
         item.target = windowController
         item.action = descriptor.action
         return item
+    }
+
+    private func viewRemoteItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
+        let item = NSMenuToolbarItem(itemIdentifier: identifier)
+        item.label = "View Remote"
+        item.paletteLabel = "View Remote"
+        item.toolTip = "Open this repository or a contextual revision on its Git host"
+        item.image = ToolbarIconFactory.image(
+            symbol: "safari",
+            topColor: NSColor(calibratedRed: 0.43, green: 0.72, blue: 0.96, alpha: 1),
+            bottomColor: NSColor(calibratedRed: 0.12, green: 0.36, blue: 0.70, alpha: 1)
+        )
+        item.target = windowController
+        item.action = NSSelectorFromString("viewRemote:")
+
+        let menu = NSMenu(title: "View Remote")
+        menu.identifier = NSUserInterfaceItemIdentifier("GitX.Toolbar.ViewRemote.Menu")
+        menu.delegate = self
+        item.menu = menu
+        updateForgeLinkMenu(menu)
+        return item
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        updateForgeLinkMenu(menu)
+    }
+
+    private func updateForgeLinkMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let context = windowController?.forgeLinkContext ?? RepositoryForgeLinkContext(
+            providerName: nil,
+            isForgeAvailable: false,
+            checkedOutRevision: nil,
+            selectedCommitIdentifiers: []
+        )
+        for item in RepositoryForgeLinkMenuPresenter.menuItems(context: context) {
+            menu.addItem(item)
+        }
+        logger.debug(
+            "Updated Forge link menu provider=\(context.providerName ?? "unresolved", privacy: .public) itemCount=\(menu.items.count, privacy: .public)"
+        )
     }
 
     private func actionsItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
@@ -264,8 +474,6 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate { // swiftl
             return Descriptor(label: "Pull", toolTip: "Pull the checked-out branch", symbol: "arrow.down.to.line", action: NSSelectorFromString("toolbarPull:"), topColor: greenTop, bottomColor: greenBottom)
         case Item.push:
             return Descriptor(label: "Push", toolTip: "Push the checked-out branch", symbol: "arrow.up.to.line", action: NSSelectorFromString("toolbarPush:"), topColor: orangeTop, bottomColor: orangeBottom)
-        case Item.viewRemote:
-            return Descriptor(label: "View Remote", toolTip: "Open the checked-out branch on its Git host", symbol: "safari", action: NSSelectorFromString("viewRemote:"), topColor: blueTop, bottomColor: blueBottom)
         case Item.reveal:
             return Descriptor(label: "Show in Finder", toolTip: "Reveal the repository in Finder", symbol: "folder", action: #selector(PBGitWindowController.revealInFinder(_:)), topColor: blueTop, bottomColor: blueBottom)
         case Item.terminal:

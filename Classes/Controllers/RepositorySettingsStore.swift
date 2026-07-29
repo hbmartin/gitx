@@ -1,3 +1,4 @@
+import ForgeKit
 import Foundation
 import GitXCore
 
@@ -8,7 +9,9 @@ import OSLog
 @objc(PBRepositoryUISettings)
 final nonisolated class RepositoryUISettings: NSObject {
     private static let defaultsKey = "PBRepositoryUISettings"
+    private static let forgeRepositoryBindingKey = "forgeRepositoryBinding"
     private static let preferencesLock = NSLock()
+    private static let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryViewState")
     private let repositoryKey: String
 
     @objc(initWithRepository:)
@@ -56,6 +59,36 @@ final nonisolated class RepositoryUISettings: NSObject {
         sidebarVisibility[group] ?? true
     }
 
+    var forgeRepositoryBinding: ForgeRepositoryBinding? {
+        get {
+            guard let data = value(for: Self.forgeRepositoryBindingKey) as? Data else {
+                return nil
+            }
+            do {
+                return try JSONDecoder().decode(ForgeRepositoryBinding.self, from: data)
+            } catch {
+                Self.logger.error("Ignored an invalid persisted Forge Repository Binding")
+                return nil
+            }
+        }
+        set {
+            guard let newValue else {
+                removeValue(for: Self.forgeRepositoryBindingKey)
+                Self.logger.info("Removed the Forge Repository Binding from repository view state")
+                return
+            }
+            do {
+                let data = try JSONEncoder().encode(newValue)
+                setValue(data, for: Self.forgeRepositoryBindingKey)
+                Self.logger.info(
+                    "Saved a Forge Repository Binding provider=\(newValue.primaryRepository.forge.kind.rawValue, privacy: .public)"
+                )
+            } catch {
+                Self.logger.error("Could not encode the Forge Repository Binding")
+            }
+        }
+    }
+
     private func value(for key: String) -> Any? {
         Self.preferencesLock.lock()
         defer { Self.preferencesLock.unlock() }
@@ -69,6 +102,16 @@ final nonisolated class RepositoryUISettings: NSObject {
         var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         var repository = all[repositoryKey] as? [String: Any] ?? [:]
         repository[key] = value
+        all[repositoryKey] = repository
+        preferences.set(all, forKey: Self.defaultsKey)
+    }
+
+    private func removeValue(for key: String) {
+        Self.preferencesLock.lock()
+        defer { Self.preferencesLock.unlock() }
+        var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
+        var repository = all[repositoryKey] as? [String: Any] ?? [:]
+        repository.removeValue(forKey: key)
         all[repositoryKey] = repository
         preferences.set(all, forKey: Self.defaultsKey)
     }

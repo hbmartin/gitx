@@ -270,6 +270,109 @@ final class GitXSwiftFeatureTests: XCTestCase {
         add(attachment)
     }
 
+    func testViewRemoteToolbarItemIsContextualPullDownWithPreservedPrimaryAction() throws {
+        let windowController = PBGitWindowController(window: nil)
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+
+        let item = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.ViewRemote"),
+            willBeInsertedIntoToolbar: true
+        ) as? NSMenuToolbarItem)
+
+        XCTAssertEqual(item.itemIdentifier.rawValue, "GitX.Toolbar.ViewRemote")
+        XCTAssertEqual(item.label, "View Remote")
+        XCTAssertEqual(item.paletteLabel, "View Remote")
+        XCTAssertEqual(item.action, NSSelectorFromString("viewRemote:"))
+        XCTAssertTrue(item.target === windowController)
+        XCTAssertNotNil(item.image)
+        XCTAssertEqual(item.menu.identifier?.rawValue, "GitX.Toolbar.ViewRemote.Menu")
+        XCTAssertTrue(item.menu.delegate === toolbarController)
+        XCTAssertEqual(
+            item.menu.items.compactMap(\.action).map(NSStringFromSelector),
+            ["viewForgeRepository:", "showForgePullRequestOrIssue:"]
+        )
+        XCTAssertTrue(item.menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.target == nil })
+    }
+
+    func testForgeLinkPresenterUsesProviderFamilyAndOneSelectedCommit() {
+        for provider in ["GitHub", "GitLab", "Bitbucket"] {
+            let items = PBRepositoryForgeLinkMenuPresenter.menuItems(
+                forProviderName: provider,
+                forgeAvailable: true,
+                currentBranchName: "feature/forge-links",
+                checkedOutCommitIdentifier: nil,
+                selectedCommitIdentifiers: ["0123456789abcdef"]
+            )
+            let actionable = items.filter { !$0.isSeparatorItem }
+
+            XCTAssertEqual(actionable.map(\.title), [
+                "View Repository on \(provider)",
+                "View Checked-Out Branch “feature/forge-links” on \(provider)",
+                "View Selected Commit on \(provider)",
+                "Pull Request or Issue…",
+            ])
+            XCTAssertEqual(actionable.map { $0.identifier?.rawValue }, [
+                "GitX.Repository.ForgeLinks.Repository",
+                "GitX.Repository.ForgeLinks.CheckedOutRevision",
+                "GitX.Repository.ForgeLinks.SelectedCommit",
+                "GitX.Repository.ForgeLinks.PullRequestOrIssue",
+            ])
+            XCTAssertTrue(actionable.allSatisfy(\.isEnabled))
+            XCTAssertFalse(actionable.contains { $0.action == NSSelectorFromString("viewForgeSelectedComparison:") })
+        }
+    }
+
+    func testForgeLinkPresenterShowsDetachedCommitAndExactlyTwoCommitComparison() {
+        let items = PBRepositoryForgeLinkMenuPresenter.menuItems(
+            forProviderName: "GitHub",
+            forgeAvailable: true,
+            currentBranchName: nil,
+            checkedOutCommitIdentifier: "fedcba9876543210",
+            selectedCommitIdentifiers: ["aaaaaaaa", "bbbbbbbb"]
+        ).filter { !$0.isSeparatorItem }
+
+        XCTAssertEqual(items.map(\.title), [
+            "View Repository on GitHub",
+            "View Checked-Out Commit on GitHub",
+            "Compare Selected Commits on GitHub",
+            "Pull Request or Issue…",
+        ])
+        XCTAssertFalse(items.contains { $0.action == NSSelectorFromString("viewForgeSelectedCommit:") })
+        XCTAssertEqual(
+            items.first { $0.action == NSSelectorFromString("viewForgeSelectedComparison:") }?.identifier?.rawValue,
+            "GitX.Repository.ForgeLinks.CompareSelectedCommits"
+        )
+    }
+
+    func testForgeLinkPresenterHidesUnavailableContextRowsAndDisablesDestinations() {
+        let items = PBRepositoryForgeLinkMenuPresenter.menuItems(
+            forProviderName: nil,
+            forgeAvailable: false,
+            currentBranchName: nil,
+            checkedOutCommitIdentifier: nil,
+            selectedCommitIdentifiers: []
+        ).filter { !$0.isSeparatorItem }
+
+        XCTAssertEqual(items.map(\.title), ["View Repository", "Pull Request or Issue…"])
+        XCTAssertTrue(items.allSatisfy { !$0.isEnabled })
+    }
+
+    func testWindowControllerExposesForgeLinkResponderChainActions() {
+        let controller = PBGitWindowController(window: nil)
+
+        for selectorName in [
+            "viewForgeRepository:",
+            "viewForgeCheckedOutRevision:",
+            "viewForgeSelectedCommit:",
+            "viewForgeSelectedComparison:",
+            "showForgePullRequestOrIssue:",
+        ] {
+            XCTAssertTrue(controller.responds(to: NSSelectorFromString(selectorName)), selectorName)
+        }
+    }
+
     private func largeDiff(
         lineCount: Int,
         path: String = "Large.swift",

@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 import GitXCore
 
 // SwiftLint analyze misclassifies this import; Logger requires it at compile time.
@@ -144,9 +145,15 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         guard settings.bool(forKey: RepositorySettingsStore.autoOpenURLKey, defaultValue: false),
               let url = firstHTTPURL(in: output) else { return }
         if settings.bool(forKey: RepositorySettingsStore.requireHostMatchKey, defaultValue: true) {
-            guard let expectedHost = gitHost(
-                remoteURL(for: remoteName(for: remote, repository: repository), repository: repository)
-            ), expectedHost.caseInsensitiveCompare(url.host ?? "") == .orderedSame else {
+            guard let remoteURL = remoteURL(
+                for: remoteName(for: remote, repository: repository),
+                repository: repository
+            ), let parsed = try? ForgeRemoteParser.parse(remoteURL),
+            ForgeWebURLPolicy.postPushURL(
+                url,
+                matchesRemote: parsed.repository,
+                requireHostMatch: true
+            ) else {
                 logger.info("Ignored pushed URL because its host did not match the Git remote")
                 return
             }
@@ -161,10 +168,11 @@ final class RepositoryRemoteURLCoordinator: NSObject {
     @objc(viewRemoteForRepository:presentingWindow:)
     // swiftlint:disable:next unused_declaration
     func viewRemote(repository: PBGitRepository, presenting window: NSWindow?) {
-        guard let remoteName = chooseRemoteName(repository: repository, presenting: window),
-              let remoteURL = remoteURL(for: remoteName, repository: repository),
-              let baseURL = webBaseURL(for: remoteURL)
-        else {
+        let coordinator = RepositoryForgeCoordinator(repository: repository)
+        guard let binding = chooseBinding(
+            coordinator: coordinator,
+            presenting: window
+        ) else {
             present(
                 title: "No Web Remote Available",
                 message: "Configure a Git remote or a custom web URL template in Repository Settings.",
@@ -181,13 +189,27 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         let template = settings.string(forKey: RepositorySettingsStore.webURLTemplateKey)
         let url: URL?
         if !template.isEmpty {
-            let expanded = template
-                .replacingOccurrences(of: "{remoteURL}", with: baseURL.absoluteString)
-                .replacingOccurrences(of: "{branch}", with: urlComponent(branch))
-                .replacingOccurrences(of: "{sha}", with: urlComponent(sha))
-            url = URL(string: expanded)
+            url = try? ForgeWebURLPolicy.customURL(
+                template: template,
+                repository: binding.primaryRepository,
+                branch: branch,
+                commitID: sha,
+                requireOriginMatch: false
+            )
         } else {
-            url = providerURL(baseURL: baseURL, branch: branch, sha: sha)
+            let request: RepositoryForgeDestinationRequest
+            if !branch.isEmpty {
+                request = .branch(branch)
+            } else if !sha.isEmpty {
+                request = .commit(sha)
+            } else {
+                request = .repository
+            }
+            if case let .route(route) = coordinator.resolve(request) {
+                url = route.browserURL
+            } else {
+                url = nil
+            }
         }
         guard let url else {
             present(
@@ -203,25 +225,30 @@ final class RepositoryRemoteURLCoordinator: NSObject {
 
     @objc(firstHTTPURLInOutput:)
     func firstHTTPURL(in output: String) -> URL? {
-        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
-            return nil
-        }
-        let range = NSRange(output.startIndex..., in: output)
-        var result: URL?
-        detector.enumerateMatches(in: output, range: range) { match, _, stop in
-            guard let candidate = match?.url,
-                  candidate.scheme == "http" || candidate.scheme == "https" else { return }
-            result = candidate
-            stop.pointee = true
-        }
-        return result
+        ForgeWebURLPolicy.firstHTTPURL(in: output)
     }
 
     @objc(webURLForRemoteURL:branch:sha:)
     // swiftlint:disable:next unused_declaration
     func webURL(remoteURL: String, branch: String, sha: String) -> URL? {
-        guard let baseURL = webBaseURL(for: remoteURL) else { return nil }
-        return providerURL(baseURL: baseURL, branch: branch, sha: sha)
+        guard let parsed = try? ForgeRemoteParser.parse(remoteURL) else { return nil }
+        let destination: ForgeDestination
+        do {
+            if !branch.isEmpty {
+                destination = try .branch(parsed.repository, ForgeRefName(branch))
+            } else if !sha.isEmpty {
+                // The legacy facade has always treated a detached SHA as a
+                // browsable tree revision. Typed commit destinations use the
+                // new RepositoryForgeCoordinator commit route instead.
+                destination = try .branch(parsed.repository, ForgeRefName(sha))
+            } else {
+                destination = .repository(parsed.repository)
+            }
+            return try ForgeDestinationURLCodec.url(for: destination)
+        } catch {
+            logger.info("Rejected invalid legacy View Remote destination")
+            return nil
+        }
     }
 
     private func remoteName(for remote: PBGitRef?, repository: PBGitRepository) -> String? {
@@ -233,24 +260,36 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         return tracking.remoteName
     }
 
-    private func chooseRemoteName(repository: PBGitRepository, presenting window: NSWindow?) -> String? {
-        if let name = remoteName(for: nil, repository: repository) {
-            return name
+    private func chooseBinding(
+        coordinator: RepositoryForgeCoordinator,
+        presenting _: NSWindow?
+    ) -> ForgeRepositoryBinding? {
+        let resolution = coordinator.resolveBinding()
+        if let binding = resolution.binding {
+            return binding
         }
-        let remotes = repository.remotes() ?? []
-        if remotes.count == 1 {
-            return remotes[0]
+        guard resolution.kind == .requiresChoice, !resolution.candidates.isEmpty else {
+            return nil
         }
-        guard !remotes.isEmpty else { return nil }
         let alert = NSAlert()
-        alert.messageText = "Choose a Remote"
-        alert.informativeText = "The current commit has no upstream remote."
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
-        popup.addItems(withTitles: remotes)
+        alert.messageText = "Choose a Primary Forge Repository"
+        alert.informativeText = "GitX will keep this repository binding until you explicitly change it."
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 340, height: 26), pullsDown: false)
+        popup.addItems(withTitles: resolution.candidates.map {
+            "\($0.localRemoteName) — \($0.repositoryLabel) (\($0.providerName))"
+        })
         alert.accessoryView = popup
         alert.addButton(withTitle: "View Remote")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? popup.titleOfSelectedItem : nil
+        guard alert.runModal() == .alertFirstButtonReturn,
+              resolution.candidates.indices.contains(popup.indexOfSelectedItem),
+              let binding = try? coordinator.select(
+                  candidate: resolution.candidates[popup.indexOfSelectedItem]
+              ).binding
+        else {
+            return nil
+        }
+        return binding
     }
 
     private func remoteURL(for remoteName: String?, repository: PBGitRepository) -> String? {
@@ -258,64 +297,6 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         let output = try? repository.outputOfTask(withArguments: ["remote", "get-url", remoteName])
         let value = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : value
-    }
-
-    private func webBaseURL(for remoteURL: String) -> URL? {
-        normalizedRemote(remoteURL)?.url
-    }
-
-    private func normalizedRemote(_ remoteURL: String) -> (url: URL, host: String)? {
-        var candidate = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidate.isEmpty else { return nil }
-        if !candidate.contains("://"), let colon = candidate.firstIndex(of: ":") {
-            let authority = candidate[..<colon]
-            let path = candidate[candidate.index(after: colon)...]
-            guard !authority.contains("/"), !path.isEmpty else { return nil }
-            let host = authority.lastIndex(of: "@").map {
-                authority[authority.index(after: $0)...]
-            } ?? authority[authority.startIndex...]
-            guard !host.isEmpty else { return nil }
-            candidate = "https://\(host)/\(path)"
-        } else if candidate.hasPrefix("ssh://") {
-            guard var components = URLComponents(string: candidate) else { return nil }
-            components.scheme = "https"
-            components.user = nil
-            components.port = nil
-            candidate = components.string ?? candidate
-        } else if candidate.hasPrefix("git://") {
-            candidate = "https://" + candidate.dropFirst(6)
-        }
-        if candidate.hasSuffix(".git") {
-            candidate.removeLast(4)
-        }
-        guard let url = URL(string: candidate), let host = url.host else { return nil }
-        return (url, host)
-    }
-
-    private func providerURL(baseURL: URL, branch: String, sha: String) -> URL? {
-        let revision = branch.isEmpty ? sha : branch
-        guard !revision.isEmpty else { return baseURL }
-        let suffix: String
-        switch baseURL.host?.lowercased() ?? "" {
-        case let host where host.contains("gitlab"):
-            suffix = "/-/tree/\(urlComponent(revision))"
-        case let host where host.contains("bitbucket"):
-            suffix = "/src/\(urlComponent(revision))"
-        default:
-            suffix = "/tree/\(urlComponent(revision))"
-        }
-        return URL(string: baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + suffix)
-    }
-
-    private func gitHost(_ remoteURL: String?) -> String? {
-        guard let remoteURL else { return nil }
-        return normalizedRemote(remoteURL)?.host
-    }
-
-    private func urlComponent(_ string: String) -> String {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "?#")
-        return string.addingPercentEncoding(withAllowedCharacters: allowed) ?? string
     }
 
     private func present(title: String, message: String, window: NSWindow?) {

@@ -2507,7 +2507,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects([coordinator firstHTTPURLInOutput:@"remote: Open https://github.com/acme/repo/pull/7 to review."].absoluteString,
 						  @"https://github.com/acme/repo/pull/7");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"git@github.com:acme/repo.git" branch:@"feature/settings" sha:@"abc"].absoluteString,
-						  @"https://github.com/acme/repo/tree/feature/settings");
+						  @"https://github.com/acme/repo/tree/feature%2Fsettings");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"deploy@example.com:team/repo.git" branch:@"main" sha:@"abc"].absoluteString,
 						  @"https://example.com/team/repo/tree/main");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"ssh://git@gitlab.example/acme/repo.git" branch:@"main" sha:@"abc"].absoluteString,

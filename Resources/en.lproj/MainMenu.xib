@@ -381,6 +381,37 @@
                                     <action selector="showRepositorySettings:" target="-1" id="codex-repository-settings-action"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="View Repository" identifier="GitX.Repository.ForgeLinks.Repository" id="codex-forge-view-repository">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="viewForgeRepository:" target="-1" id="codex-forge-view-repository-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="View Checked-Out Revision" identifier="GitX.Repository.ForgeLinks.CheckedOutRevision" id="codex-forge-view-checked-out">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="viewForgeCheckedOutRevision:" target="-1" id="codex-forge-view-checked-out-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="View Selected Commit" identifier="GitX.Repository.ForgeLinks.SelectedCommit" id="codex-forge-view-selected">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="viewForgeSelectedCommit:" target="-1" id="codex-forge-view-selected-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Compare Selected Commits" identifier="GitX.Repository.ForgeLinks.CompareSelectedCommits" id="codex-forge-view-compare">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="viewForgeSelectedComparison:" target="-1" id="codex-forge-view-compare-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem isSeparatorItem="YES" id="codex-forge-destination-separator"/>
+                            <menuItem title="Pull Request or Issue…" identifier="GitX.Repository.ForgeLinks.PullRequestOrIssue" id="codex-forge-view-numbered">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="showForgePullRequestOrIssue:" target="-1" id="codex-forge-view-numbered-action"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="codex-repository-settings-separator"/>
                             <menuItem title="Create Tag…" keyEquivalent="t" id="949">
                                 <connections>
