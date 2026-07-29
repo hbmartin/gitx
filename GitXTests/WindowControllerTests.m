@@ -2496,7 +2496,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 		XCTAssertNotNil(repositoryWatcherControl);
 		XCTAssertTrue([repositoryWatcherControl isDescendantOf:preferences.window.contentView]);
 		NSRect watcherFrame = [repositoryWatcherControl convertRect:repositoryWatcherControl.bounds
-											 toView:preferences.window.contentView];
+															 toView:preferences.window.contentView];
 		XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, watcherFrame));
 		XCTAssertEqual(generalPrefsView.frame.size.height, 258.0);
 	} @finally {
