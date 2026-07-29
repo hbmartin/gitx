@@ -12,6 +12,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    /// AppKit creates KVO notifying subclasses while presenting sheets. Give the
+    /// Swift test double a stable Objective-C identity so that repeated app-hosted
+    /// fixtures do not depend on lazy mangled-class realization.
+    @objc(PBHistoryWindowControllerTestDouble)
     private final class HistoryWindowController: PBGitWindowController {
         private var fixedRepository: PBGitRepository!
         private(set) var shownErrors: [NSError] = []
