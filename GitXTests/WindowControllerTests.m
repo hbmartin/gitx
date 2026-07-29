@@ -2457,45 +2457,55 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testPreferencesWindowCharacterizesExistingToolbarAndSizing
 {
-	PBPrefsWindowController *preferences = [[PBPrefsWindowController alloc] initWithWindowNibName:@"Preferences"];
-	[preferences showWindow:nil];
-	NSArray<NSToolbarItemIdentifier> *identifiers = [preferences toolbarAllowedItemIdentifiers:preferences.window.toolbar];
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id previousViewIdentifier = [defaults objectForKey:@"PBGitXPreferenceViewIdentifier"];
+	[defaults setObject:@"General" forKey:@"PBGitXPreferenceViewIdentifier"];
+	PBPrefsWindowController *preferences = nil;
+	@try {
+		preferences = [[PBPrefsWindowController alloc] initWithWindowNibName:@"Preferences"];
+		[preferences showWindow:nil];
+		NSArray<NSToolbarItemIdentifier> *identifiers = [preferences toolbarAllowedItemIdentifiers:preferences.window.toolbar];
 
-	XCTAssertEqual(identifiers.count, (NSUInteger)8);
-	XCTAssertEqualObjects(identifiers, (@[ @"General", @"Dock Icon", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
-	XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
-	XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
-	XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
-	XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 860.0);
-	NSPopUpButton *appearancePopup = [preferences valueForKey:@"appearancePopup"];
-	XCTAssertEqualObjects([appearancePopup.itemArray valueForKey:@"title"],
-						  (@[ @"Automatic (System)", @"Light", @"Dark" ]));
-	NSView *generalPrefsView = [preferences valueForKey:@"generalPrefsView"];
-	NSMutableArray<NSView *> *pendingViews = [NSMutableArray arrayWithObject:preferences.window.contentView];
-	BOOL foundCommitGuideControl = NO;
-	NSButton *repositoryWatcherControl = nil;
-	while (pendingViews.count > 0) {
-		NSView *view = pendingViews.firstObject;
-		[pendingViews removeObjectAtIndex:0];
-		if ([view isKindOfClass:NSButton.class] &&
-			[((NSButton *)view).title isEqualToString:@"Show column guides in commit message"]) {
-			foundCommitGuideControl = YES;
+		XCTAssertEqual(identifiers.count, (NSUInteger)8);
+		XCTAssertEqualObjects(identifiers, (@[ @"General", @"Dock Icon", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
+		XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
+		XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
+		XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
+		XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 860.0);
+		NSPopUpButton *appearancePopup = [preferences valueForKey:@"appearancePopup"];
+		XCTAssertEqualObjects([appearancePopup.itemArray valueForKey:@"title"],
+							  (@[ @"Automatic (System)", @"Light", @"Dark" ]));
+		NSView *generalPrefsView = [preferences valueForKey:@"generalPrefsView"];
+		NSMutableArray<NSView *> *pendingViews = [NSMutableArray arrayWithObject:preferences.window.contentView];
+		BOOL foundCommitGuideControl = NO;
+		NSButton *repositoryWatcherControl = nil;
+		while (pendingViews.count > 0) {
+			NSView *view = pendingViews.firstObject;
+			[pendingViews removeObjectAtIndex:0];
+			if ([view isKindOfClass:NSButton.class] &&
+				[((NSButton *)view).title isEqualToString:@"Show column guides in commit message"]) {
+				foundCommitGuideControl = YES;
+			}
+			if ([view isKindOfClass:NSButton.class] &&
+				[((NSButton *)view).title isEqualToString:@"Watch for changes in repositories"]) {
+				repositoryWatcherControl = (NSButton *)view;
+			}
+			[pendingViews addObjectsFromArray:view.subviews];
 		}
-		if ([view isKindOfClass:NSButton.class] &&
-			[((NSButton *)view).title isEqualToString:@"Watch for changes in repositories"]) {
-			repositoryWatcherControl = (NSButton *)view;
-		}
-		[pendingViews addObjectsFromArray:view.subviews];
+		XCTAssertFalse(foundCommitGuideControl);
+		XCTAssertNotNil(repositoryWatcherControl);
+		XCTAssertTrue([repositoryWatcherControl isDescendantOf:preferences.window.contentView]);
+		NSRect watcherFrame = [repositoryWatcherControl convertRect:repositoryWatcherControl.bounds
+											 toView:preferences.window.contentView];
+		XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, watcherFrame));
+		XCTAssertEqual(generalPrefsView.frame.size.height, 258.0);
+	} @finally {
+		[preferences close];
+		if (previousViewIdentifier)
+			[defaults setObject:previousViewIdentifier forKey:@"PBGitXPreferenceViewIdentifier"];
+		else
+			[defaults removeObjectForKey:@"PBGitXPreferenceViewIdentifier"];
 	}
-	XCTAssertFalse(foundCommitGuideControl);
-	XCTAssertNotNil(repositoryWatcherControl);
-	XCTAssertTrue([repositoryWatcherControl isDescendantOf:preferences.window.contentView]);
-	NSRect watcherFrame = [repositoryWatcherControl convertRect:repositoryWatcherControl.bounds
-														 toView:preferences.window.contentView];
-	XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, watcherFrame));
-	XCTAssertEqual(generalPrefsView.frame.size.height, 258.0);
-
-	[preferences close];
 }
 
 - (void)testRepositoryToolbarInstallsSingleHistoryConfiguration
