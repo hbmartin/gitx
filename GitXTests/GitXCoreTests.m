@@ -72,6 +72,15 @@
 - (nullable NSString *)runGitArguments:(NSArray<NSString *> *)arguments
 							generation:(NSUInteger)generation
 								 error:(NSError **)error;
+- (NSArray *)renderInputsForCommits:(NSArray<PBGitCommit *> *)commits;
+- (NSDictionary<NSString *, id> *)imageSourceForRevisions:(NSArray<NSString *> *)revisions workingTree:(BOOL)workingTree;
+- (BOOL)inputsShareAncestryPath:(NSArray *)inputs generation:(NSUInteger)generation;
+- (nullable NSArray<NSDictionary *> *)sequentialSectionsForInputs:(NSArray *)inputs
+													 imageSources:(NSArray<NSDictionary<NSString *, id> *> *)imageSources
+													   generation:(NSUInteger)generation;
+- (nullable NSArray<NSDictionary *> *)combinedSectionsForInputs:(NSArray *)inputs
+													imageSource:(NSDictionary<NSString *, id> *)imageSource
+													 generation:(NSUInteger)generation;
 - (nullable NSData *)dataForGitObject:(NSString *)object imageSource:(NSDictionary<NSString *, id> *)imageSource;
 @end
 
@@ -992,6 +1001,50 @@
 	XCTAssertNil(error);
 	XCTAssertEqualObjects([output stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet], @"true");
 	XCTAssertNil([webHistoryController dataForGitObject:@"HEAD:missing.png" imageSource:@{}]);
+}
+
+- (void)testWebHistoryBuildsSequentialAndCombinedSectionsForAnAncestryPath
+{
+	NSError *error = nil;
+	NSString *firstSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(firstSHA, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"second line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"second commit" error:&error], @"%@", error);
+	NSString *secondSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(secondSHA, @"%@", error);
+
+	GTCommit *firstObject = [self.repository.gtRepo lookUpObjectBySHA:firstSHA objectType:GTObjectTypeCommit error:&error];
+	GTCommit *secondObject = [self.repository.gtRepo lookUpObjectBySHA:secondSHA objectType:GTObjectTypeCommit error:&error];
+	XCTAssertNotNil(firstObject, @"%@", error);
+	XCTAssertNotNil(secondObject, @"%@", error);
+	PBGitCommit *firstCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:firstObject];
+	PBGitCommit *secondCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:secondObject];
+	PBGitHistoryController *historyController = [[PBGitHistoryController alloc]
+		initWithRepository:self.repository
+		   superController:nil];
+	PBWebHistoryController *webHistoryController = [PBWebHistoryController new];
+	webHistoryController.repository = self.repository;
+	[webHistoryController setValue:historyController forKey:@"historyController"];
+	NSArray *inputs = [webHistoryController renderInputsForCommits:@[ firstCommit, secondCommit ]];
+	NSDictionary<NSString *, id> *firstImageSource = [webHistoryController imageSourceForRevisions:@[ firstSHA ] workingTree:NO];
+	NSDictionary<NSString *, id> *secondImageSource = [webHistoryController imageSourceForRevisions:@[ secondSHA ] workingTree:NO];
+	NSUInteger generation = [webHistoryController beginContentGeneration];
+
+	XCTAssertTrue([webHistoryController inputsShareAncestryPath:inputs generation:generation]);
+	NSArray<NSDictionary *> *sequential = [webHistoryController sequentialSectionsForInputs:inputs
+																			   imageSources:@[ firstImageSource, secondImageSource ]
+																				 generation:generation];
+	XCTAssertEqual(sequential.count, (NSUInteger)2);
+	XCTAssertTrue([sequential[1][@"text"] containsString:@"second line"]);
+	NSArray<NSDictionary *> *combined = [webHistoryController combinedSectionsForInputs:inputs
+																			imageSource:secondImageSource
+																			 generation:generation];
+	XCTAssertEqual(combined.count, (NSUInteger)1);
+	XCTAssertTrue([combined.firstObject[@"title"] containsString:@"Combined Diff"]);
+	NSData *trackedData = [webHistoryController dataForGitObject:@"HEAD:tracked.txt" imageSource:secondImageSource];
+	XCTAssertEqualObjects([[NSString alloc] initWithData:trackedData encoding:NSUTF8StringEncoding], @"second line\n");
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured

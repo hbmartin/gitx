@@ -16,6 +16,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var stashActionCoordinator: RepositoryStashActionCoordinator?
     private var workspaceActionCoordinator: WorkspaceActionCoordinator?
     private var repositoryForgeCoordinator: RepositoryForgeCoordinator?
+    final var repositoryForgeLinkUseCase: RepositoryForgeLinkUseCase?
     private var repositoryToolbarController: RepositoryToolbarController?
     private var initializedContentControllers: NSHashTable<PBViewController>?
     private var contentStatusObservation: NSKeyValueObservation?
@@ -100,6 +101,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         _sidebarController = nil
         _historyViewController = nil
         repositoryForgeCoordinator = nil
+        repositoryForgeLinkUseCase = nil
         repositoryToolbarController = nil
         WelcomeWindowController.shared.showIfNeededAfterDelay()
     }
@@ -170,9 +172,19 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     final var forgeCoordinator: RepositoryForgeCoordinator? {
         if repositoryForgeCoordinator == nil, let repository {
-            repositoryForgeCoordinator = RepositoryForgeCoordinator(repository: repository)
+            let coordinator = RepositoryForgeCoordinator(repository: repository)
+            repositoryForgeCoordinator = coordinator
+            repositoryForgeLinkUseCase = RepositoryForgeLinkUseCase(
+                coordinator: coordinator,
+                windowController: self
+            )
         }
         return repositoryForgeCoordinator
+    }
+
+    final var forgeLinkUseCase: RepositoryForgeLinkUseCase? {
+        _ = forgeCoordinator
+        return repositoryForgeLinkUseCase
     }
 
     @objc(validateMenuItem:remoteTitle:plainTitle:)

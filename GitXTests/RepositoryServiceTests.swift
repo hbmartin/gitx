@@ -282,6 +282,53 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testCandidateAccessorsDescribeEverySupportedProviderAndMixedResolution() throws {
+        try addRemote("github", url: "git@github.com:acme/widgets.git")
+        try addRemote("gitlab", url: "ssh://git@gitlab.com/group/project.git")
+        try addRemote("bitbucket", url: "https://bitbucket.org/team/toolkit.git")
+        try addRemote("unsupported", url: "http://example.com/acme/widgets.git")
+        let coordinator = PBRepositoryForgeCoordinator(repository: repository)
+
+        let resolution = coordinator.resolveBinding()
+
+        XCTAssertEqual(resolution.kind, .requiresChoice)
+        XCTAssertNil(resolution.localRemoteName)
+        XCTAssertNil(resolution.repositoryURL)
+        XCTAssertNil(resolution.providerName)
+        let candidates = Dictionary(uniqueKeysWithValues: resolution.candidates.map { ($0.localRemoteName, $0) })
+        XCTAssertEqual(candidates.count, 3)
+        XCTAssertEqual(candidates["github"]?.providerName, "GitHub")
+        XCTAssertEqual(candidates["github"]?.repositoryLabel, "acme/widgets")
+        XCTAssertEqual(candidates["github"]?.repositoryURL?.absoluteString, "https://github.com/acme/widgets")
+        XCTAssertEqual(candidates["gitlab"]?.providerName, "GitLab")
+        XCTAssertEqual(candidates["gitlab"]?.repositoryLabel, "group/project")
+        XCTAssertEqual(candidates["gitlab"]?.repositoryURL?.absoluteString, "https://gitlab.com/group/project")
+        XCTAssertEqual(candidates["bitbucket"]?.providerName, "Bitbucket")
+        XCTAssertEqual(candidates["bitbucket"]?.repositoryLabel, "team/toolkit")
+        XCTAssertEqual(
+            candidates["bitbucket"]?.repositoryURL?.absoluteString,
+            "https://bitbucket.org/team/toolkit"
+        )
+
+        let selected = try coordinator.select(XCTUnwrap(candidates["bitbucket"]))
+        XCTAssertEqual(selected.localRemoteName, "bitbucket")
+        XCTAssertEqual(selected.providerName, "Bitbucket")
+        XCTAssertEqual(selected.repositoryURL?.absoluteString, "https://bitbucket.org/team/toolkit")
+    }
+
+    @MainActor
+    func testSameProviderCandidatesExposeProviderBeforeBinding() throws {
+        try addRemote("origin", url: "https://github.com/acme/widgets.git")
+        try addRemote("upstream", url: "https://github.com/community/widgets.git")
+
+        let resolution = PBRepositoryForgeCoordinator(repository: repository).resolveBinding()
+
+        XCTAssertEqual(resolution.kind, .requiresChoice)
+        XCTAssertEqual(resolution.providerName, "GitHub")
+        XCTAssertNil(resolution.repositoryURL)
+    }
+
     func testCorruptBindingDecodesAsNilAndProducesDeterministicNoRepositoryError() {
         setPersistedBindingData(Data("not-json".utf8))
         let coordinator = PBRepositoryForgeCoordinator(repository: repository)
@@ -290,9 +337,38 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(resolution.kind, .unavailable)
         XCTAssertNil(resolution.localRemoteName)
+        XCTAssertNil(resolution.repositoryURL)
+        XCTAssertNil(resolution.providerName)
         assertScriptingError(.noForgeRepository) {
             _ = try coordinator.repositoryURL()
         }
+    }
+
+    @MainActor
+    func testRevisionFacadeCoversTagAndCommitKinds() throws {
+        try addRemote("origin", url: "https://github.com/acme/widgets.git")
+        let coordinator = PBRepositoryForgeCoordinator(repository: repository)
+        let commit = String(repeating: "b", count: 40)
+
+        XCTAssertEqual(
+            try coordinator.fileURL(
+                forRevision: "v2.0",
+                revisionKind: .tag,
+                path: "README.md",
+                startLine: nil,
+                endLine: nil
+            ).absoluteString,
+            "https://github.com/acme/widgets/blob/v2.0/README.md"
+        )
+        XCTAssertEqual(
+            try coordinator.compareURL(
+                fromRevision: commit,
+                baseKind: .commit,
+                toRevision: "v2.0",
+                head: .tag
+            ).absoluteString,
+            "https://github.com/acme/widgets/compare/\(commit)...v2.0"
+        )
     }
 
     func testScriptingConstructsEveryGitHubDestinationWithoutPersistingOrPresentingUI() throws {

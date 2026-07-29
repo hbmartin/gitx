@@ -15,6 +15,8 @@ final class ForgeScriptingTests: XCTestCase {
     }
 
     private let branchRevisionCode = NSNumber(value: UInt32(0x4672_4272))
+    private let tagRevisionCode = NSNumber(value: UInt32(0x4672_5467))
+    private let commitRevisionCode = NSNumber(value: UInt32(0x4672_436D))
     private var temporaryDirectories: [URL] = []
     private var documents: [NSDocument] = []
 
@@ -170,6 +172,85 @@ final class ForgeScriptingTests: XCTestCase {
             ),
             ("forge pull request URL", ["document": document, "number": true], 18003),
             ("forge issue URL", ["document": document, "number": 1.5], 18003),
+        ]
+
+        for (commandName, arguments, expectedCode) in malformed {
+            let command = try scriptCommand(named: commandName)
+            command.arguments = arguments
+
+            XCTAssertNil(command.performDefaultImplementation(), commandName)
+            XCTAssertEqual(command.scriptErrorNumber, expectedCode, commandName)
+            XCTAssertNotNil(command.scriptErrorString, commandName)
+        }
+    }
+
+    func testNSScriptCommandsParseTagCommitOptionalLinesAndSingleDocumentArrays() throws {
+        defer { cleanUpFixtures() }
+        let document = try openRepositoryDocument(remoteURLs: ["https://github.com/acme/widgets.git"])
+        let commit = String(repeating: "a", count: 40)
+        let cases: [(String, [String: Any], String)] = [
+            (
+                "forge file URL",
+                [
+                    "document": [document],
+                    "revision": "v1.0",
+                    "revisionKind": tagRevisionCode,
+                    "path": "README.md",
+                ],
+                "https://github.com/acme/widgets/blob/v1.0/README.md"
+            ),
+            (
+                "forge file URL",
+                [
+                    "document": document,
+                    "revision": commit,
+                    "revisionKind": commitRevisionCode,
+                    "path": "README.md",
+                    "startLine": 7,
+                ],
+                "https://github.com/acme/widgets/blob/\(commit)/README.md#L7"
+            ),
+            (
+                "forge compare URL",
+                [
+                    "document": document,
+                    "baseRevision": commit,
+                    "baseRevisionKind": commitRevisionCode,
+                    "headRevision": "v1.0",
+                    "headRevisionKind": tagRevisionCode,
+                ],
+                "https://github.com/acme/widgets/compare/\(commit)...v1.0"
+            ),
+        ]
+
+        for (commandName, arguments, expectedURL) in cases {
+            let command = try scriptCommand(named: commandName)
+            command.arguments = arguments
+
+            XCTAssertEqual(command.execute() as? String, expectedURL, commandName)
+            XCTAssertEqual(command.scriptErrorNumber, 0, commandName)
+            XCTAssertNil(command.scriptErrorString, commandName)
+        }
+    }
+
+    func testNSScriptCommandsRejectDocumentArraysUnknownEnumsAndNonFiniteNumbers() throws {
+        defer { cleanUpFixtures() }
+        let document = try openRepositoryDocument(remoteURLs: ["https://github.com/acme/widgets.git"])
+        let malformed: [(String, [String: Any], Int)] = [
+            ("forge repository URL", ["document": []], 18000),
+            ("forge repository URL", ["document": [document, document]], 18000),
+            ("forge branch URL", ["document": document, "branch": NSNumber(value: 1)], 18003),
+            ("forge issue URL", ["document": document, "number": Double.infinity], 18003),
+            (
+                "forge file URL",
+                [
+                    "document": document,
+                    "revision": "main",
+                    "revisionKind": NSNumber(value: UInt32.max),
+                    "path": "README.md",
+                ],
+                18003
+            ),
         ]
 
         for (commandName, arguments, expectedCode) in malformed {

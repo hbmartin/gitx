@@ -256,6 +256,7 @@
 		C0DEC5000000000000000001 /* CommitPatchExportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */; };
 		C0DEC6000000000000000001 /* HistoryTreePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC6000000000000000011 /* HistoryTreePresentation.swift */; };
 		C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.swift */; };
+		C0DF30000000000000000001 /* RepositoryForgeLinkUseCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF30000000000000000011 /* RepositoryForgeLinkUseCase.swift */; };
 		C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */; };
 		C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */; };
 		C0D0C0A00000000000000001 /* GitXCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0D0C0A00000000000000018 /* GitXCore */; };
@@ -561,6 +562,7 @@
 		C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitPatchExportCoordinator.swift; sourceTree = "<group>"; };
 		C0DEC6000000000000000011 /* HistoryTreePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryTreePresentation.swift; sourceTree = "<group>"; };
 		C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitWindowController+ToolbarActions.swift"; sourceTree = "<group>"; };
+		C0DF30000000000000000011 /* RepositoryForgeLinkUseCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeLinkUseCase.swift; sourceTree = "<group>"; };
 		C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMessageEditCoordinator.swift; sourceTree = "<group>"; };
 		C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiffSectionSettings.swift; sourceTree = "<group>"; };
 		4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarController.h; sourceTree = "<group>"; };
@@ -1182,6 +1184,7 @@
 				C0DEC3000000000000000011 /* RepositorySettingsController.swift */,
 				C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */,
 				C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */,
+				C0DF30000000000000000011 /* RepositoryForgeLinkUseCase.swift */,
 				C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */,
 				C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */,
 				4A5D762814A9A9CC00DF6C68 /* DBPrefsWindowController.h */,
@@ -1973,6 +1976,7 @@
 				C0DEC5000000000000000001 /* CommitPatchExportCoordinator.swift in Sources */,
 				C0DEC6000000000000000001 /* HistoryTreePresentation.swift in Sources */,
 				C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.swift in Sources */,
+				C0DF30000000000000000001 /* RepositoryForgeLinkUseCase.swift in Sources */,
 				C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */,
 				C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */,
 				C0D0C0A00000000000000002 /* ApplicationComposition.swift in Sources */,

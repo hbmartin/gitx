@@ -366,6 +366,95 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotNil(tableCoordinator.tableView(historyController.commitList, rowViewForRow: 0))
     }
 
+    func testCurrentBranchChangeClearsCommitSortDescriptors() {
+        historyController.commitController.sortDescriptors = [
+            NSSortDescriptor(key: "subject", ascending: true),
+        ]
+        XCTAssertFalse(historyController.commitController.sortDescriptors.isEmpty)
+
+        repository.currentBranch = PBGitRevSpecifier(parameters: ["HEAD~0"])
+
+        XCTAssertTrue(historyController.commitController.sortDescriptors.isEmpty)
+    }
+
+    func testRepositoryToolbarCreatesBranchAndTagItemsAndRejectsUnknownItems() throws {
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+
+        let branchItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.CreateBranch"),
+            willBeInsertedIntoToolbar: false
+        ))
+        XCTAssertEqual(branchItem.label, "New Branch")
+        XCTAssertEqual(branchItem.action, #selector(PBGitWindowController.createBranch(_:)))
+
+        let tagItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.CreateTag"),
+            willBeInsertedIntoToolbar: false
+        ))
+        XCTAssertEqual(tagItem.label, "New Tag")
+        XCTAssertEqual(tagItem.action, #selector(PBGitWindowController.createTag(_:)))
+
+        XCTAssertNil(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.Unknown"),
+            willBeInsertedIntoToolbar: false
+        ))
+    }
+
+    func testControllerWithoutCurrentBranchReloadsHeadDuringNibAwakening() throws {
+        let coldRepository = try PBGitRepository(url: URL(fileURLWithPath: fixture.path))
+        XCTAssertNil(coldRepository.currentBranch)
+        let coldWindowController = HistoryWindowController(repository: coldRepository)
+        let coldHistoryController = try XCTUnwrap(
+            PBGitHistoryController(
+                repository: coldRepository,
+                superController: coldWindowController
+            )
+        )
+        defer {
+            XCTAssertTrue(waitForCondition(timeout: 10) {
+                coldRepository.revisionList?.isUpdating != true
+            })
+            coldHistoryController.closeView()
+            coldRepository.revisionList?.cleanup()
+            coldWindowController.window?.orderOut(nil)
+            coldWindowController.window?.close()
+        }
+
+        _ = coldHistoryController.view
+
+        XCTAssertEqual(coldRepository.currentBranch?.simpleRef(), "refs/heads/main")
+    }
+
+    func testPendingUncommittedSelectionForcesDetailsForNewAndRefreshedWorkingState() throws {
+        XCTAssertNil(historyController.commitController.value(forKey: "pinnedObject"))
+        historyController.selectedCommitDetailsIndex = 1
+        try fixture.write("pending selection\n", to: "pending-selection.txt")
+
+        waitForIndexUpdate {
+            historyController.selectUncommittedChanges()
+        }
+
+        let workingState = try XCTUnwrap(
+            historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
+        )
+        XCTAssertEqual(historyController.selectedCommitDetailsIndex, 0)
+        XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === workingState)
+
+        let regularCommit = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.setSelectedObjects([regularCommit])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.setValue(true, forKey: "pendingUncommittedSelection")
+
+        historyController.updateUncommittedChanges()
+
+        XCTAssertEqual(historyController.selectedCommitDetailsIndex, 0)
+        XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === workingState)
+    }
+
     func testSelectionReconciliationWorkingStateStatusAndTreeRestoration() throws {
         let previousChangedFilesOnly = PBApplicationSettings.changedFilesOnly
         PBApplicationSettings.changedFilesOnly = false
@@ -1243,7 +1332,22 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 to: pasteboard
             )
         )
-        coordinator.toggleStaging(for: fileList.unstagedTable)
+        let unstageInfo = DraggingInfoFake(pasteboard: pasteboard)
+        waitForIndexUpdate {
+            XCTAssertTrue(coordinator.acceptDrop(unstageInfo, in: fileList.unstagedTable))
+        }
+        XCTAssertEqual(fileList.stagedFileCount, 1, "the dragged staged file lands in the unstaged list")
+
+        waitForIndexUpdate {
+            coordinator.toggleStaging(for: fileList.unstagedTable)
+        }
+        let remainingStagedFiles = staged.arrangedObjects as? [PBChangedFile] ?? []
+        staged.setSelectedObjects(remainingStagedFiles)
+        fileList.stagedTable.selectRowIndexes(
+            IndexSet(integersIn: 0 ..< remainingStagedFiles.count),
+            byExtendingSelection: false
+        )
+        pumpRunLoop()
         waitForIndexUpdate { coordinator.didDoubleClick(fileList.stagedTable) }
         XCTAssertEqual(fileList.stagedFileCount, 0, "double-clicking staged rows unstages them")
     }
@@ -1731,7 +1835,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         fileList.unstagedFilesController.setSelectedObjects([untracked])
         XCTAssertTrue(waitForCondition {
-            pane.diffPaneController.contentView.textView.string.contains("Hunk 1 : Line 1")
+            let rendered = pane.diffPaneController.contentView.textView.string
+            return rendered.contains("Hunk 1 : Line 1")
+                && rendered.contains("\u{00A0}Stage hunk\u{00A0}")
+                && rendered.contains("│ +brand new")
         })
         let renderedUntracked = pane.diffPaneController.contentView.textView.string
         XCTAssertTrue(

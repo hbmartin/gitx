@@ -53,7 +53,7 @@ struct RepositoryForgeLinkMenuItemModel: Equatable {
 
 /// Supplies one contextual link model to both the toolbar pull-down and Repository menu.
 @objc(PBRepositoryForgeLinkMenuPresenter)
-final class RepositoryForgeLinkMenuPresenter: NSObject { // swiftlint:disable:this unused_declaration
+final class RepositoryForgeLinkMenuPresenter: NSObject {
     static func itemModels(context: RepositoryForgeLinkContext) -> [RepositoryForgeLinkMenuItemModel] {
         RepositoryForgeLinkAction.allCases.compactMap { itemModel(action: $0, context: context) }
     }
@@ -146,6 +146,7 @@ final class RepositoryForgeLinkMenuPresenter: NSObject { // swiftlint:disable:th
 
     /// Objective-C-visible decision seam for app-hosted tests.
     @objc(menuItemsForProviderName:forgeAvailable:currentBranchName:checkedOutCommitIdentifier:selectedCommitIdentifiers:)
+    // swiftlint:disable:next unused_declaration
     static func menuItems(
         providerName: String?,
         forgeAvailable: Bool,
@@ -172,7 +173,7 @@ final class RepositoryForgeLinkMenuPresenter: NSObject { // swiftlint:disable:th
 
 /// Objective-C callers are not visible to SwiftLint's analyzer.
 @objc(PBRepositoryToolbarController)
-final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDelegate { // swiftlint:disable:this unused_declaration
+final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDelegate {
     private static let toolbarIdentifier = NSToolbar.Identifier("GitX.Repository.HistoryToolbar")
 
     private enum Item {

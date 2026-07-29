@@ -104,8 +104,13 @@
 
 @interface PBRepositoryRemoteURLCoordinator : NSObject
 + (instancetype)shared;
+- (void)handleSuccessfulPushOutput:(NSString *)output
+						repository:(PBGitRepository *)repository
+							remote:(nullable PBGitRef *)remote
+				  presentingWindow:(nullable NSWindow *)window;
 - (nullable NSURL *)firstHTTPURLInOutput:(NSString *)output;
 - (nullable NSURL *)webURLForRemoteURL:(NSString *)remoteURL branch:(NSString *)branch sha:(NSString *)sha;
+- (void)viewRemoteForRepository:(PBGitRepository *)repository presentingWindow:(nullable NSWindow *)window;
 @end
 
 @interface PBHistoryTreePresentation : NSObject
@@ -322,6 +327,11 @@
 - (IBAction)toolbarPull:(id)sender;
 - (IBAction)toolbarPush:(id)sender;
 - (IBAction)viewRemote:(id)sender;
+- (IBAction)viewForgeRepository:(id)sender;
+- (IBAction)viewForgeCheckedOutRevision:(id)sender;
+- (IBAction)viewForgeSelectedCommit:(id)sender;
+- (IBAction)viewForgeSelectedComparison:(id)sender;
+- (IBAction)showForgePullRequestOrIssue:(id)sender;
 @end
 
 static NSModalResponse PBWindowAlertResponse;
@@ -336,6 +346,7 @@ static NSModalResponse PBWindowCreateTagResponse;
 static NSModalResponse PBWindowHookResponse;
 static NSUInteger PBWindowWorkspaceOpenCount;
 static NSUInteger PBWindowWorkspaceRevealCount;
+static NSMutableArray<NSURL *> *PBWindowWorkspaceOpenedURLs;
 static NSUInteger PBWindowDocumentOpenCount;
 static NSMutableArray<NSURL *> *PBWindowDocumentOpenedURLs;
 static NSMutableDictionary<NSString *, NSError *> *PBWindowDocumentOpenErrorsByPath;
@@ -603,15 +614,24 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @end
 
 @interface NSWorkspace (WindowControllerTests)
+- (BOOL)pb_window_openURL:(NSURL *)url;
 - (void)pb_window_openURL:(NSURL *)url configuration:(NSWorkspaceOpenConfiguration *)configuration completionHandler:(void (^)(NSRunningApplication *_Nullable app, NSError *_Nullable error))completionHandler;
 - (void)pb_window_activateFileViewerSelectingURLs:(NSArray<NSURL *> *)fileURLs;
 @end
 
 @implementation NSWorkspace (WindowControllerTests)
 
+- (BOOL)pb_window_openURL:(NSURL *)url
+{
+	PBWindowWorkspaceOpenCount++;
+	[PBWindowWorkspaceOpenedURLs addObject:url];
+	return YES;
+}
+
 - (void)pb_window_openURL:(NSURL *)url configuration:(NSWorkspaceOpenConfiguration *)configuration completionHandler:(void (^)(NSRunningApplication *_Nullable app, NSError *_Nullable error))completionHandler
 {
 	PBWindowWorkspaceOpenCount++;
+	[PBWindowWorkspaceOpenedURLs addObject:url];
 	completionHandler(nil, nil);
 }
 
@@ -892,6 +912,25 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 }
 @end
 
+@interface PBWindowCommitStub : PBGitCommit
+@property (nonatomic, copy) NSString *testSHA;
+- (instancetype)initWithSHA:(NSString *)SHA;
+@end
+
+@implementation PBWindowCommitStub
+- (instancetype)initWithSHA:(NSString *)SHA
+{
+	self = [super init];
+	if (!self) return nil;
+	_testSHA = [SHA copy];
+	return self;
+}
+- (NSString *)SHA
+{
+	return self.testSHA;
+}
+@end
+
 @interface PBWindowOutlineView : NSOutlineView
 @property (nonatomic, strong, nullable) id testItem;
 @end
@@ -1103,6 +1142,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSwapClassMethods(PBCreateTagSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
 	PBSwapInstanceMethods(NSAlert.class, @selector(beginSheetModalForWindow:completionHandler:), @selector(pb_window_beginSheetModalForWindow:completionHandler:));
 	PBSwapInstanceMethods(NSAlert.class, @selector(runModal), @selector(pb_window_runModal));
+	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:), @selector(pb_window_openURL:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:configuration:completionHandler:), @selector(pb_window_openURL:configuration:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(activateFileViewerSelectingURLs:), @selector(pb_window_activateFileViewerSelectingURLs:));
 	PBSwapInstanceMethods(NSDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
@@ -1133,6 +1173,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSwapInstanceMethods(NSDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(activateFileViewerSelectingURLs:), @selector(pb_window_activateFileViewerSelectingURLs:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:configuration:completionHandler:), @selector(pb_window_openURL:configuration:completionHandler:));
+	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:), @selector(pb_window_openURL:));
 	PBSwapInstanceMethods(NSAlert.class, @selector(runModal), @selector(pb_window_runModal));
 	PBSwapInstanceMethods(NSAlert.class, @selector(beginSheetModalForWindow:completionHandler:), @selector(pb_window_beginSheetModalForWindow:completionHandler:));
 	PBSwapClassMethods(PBCreateTagSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
@@ -1208,6 +1249,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowHookResponse = NSModalResponseCancel;
 	PBWindowWorkspaceOpenCount = 0;
 	PBWindowWorkspaceRevealCount = 0;
+	PBWindowWorkspaceOpenedURLs = [NSMutableArray array];
 	PBWindowDocumentOpenCount = 0;
 	PBWindowDocumentOpenedURLs = [NSMutableArray array];
 	PBWindowDocumentOpenErrorsByPath = [NSMutableDictionary dictionary];
@@ -1263,6 +1305,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowDocumentOpenErrorsByPath = nil;
 	PBWindowPresentedAlerts = nil;
 	PBWindowAlertPresentationHook = nil;
+	PBWindowWorkspaceOpenedURLs = nil;
 	[NSFileManager.defaultManager removeItemAtURL:self.repositoryURL error:NULL];
 	[NSFileManager.defaultManager removeItemAtURL:self.remoteURL error:NULL];
 	[PBGitDefaults resetAllDialogWarnings];
@@ -1275,6 +1318,19 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSString *output = [PBTask outputForCommand:@"/usr/bin/git" arguments:arguments inDirectory:directory.path error:&error];
 	XCTAssertNotNil(output, @"git %@ failed: %@", arguments, error);
 	return output ?: @"";
+}
+
+- (void)configureForgeRemotes:(NSDictionary<NSString *, NSString *> *)remotes
+{
+	NSArray<NSString *> *existing = [[self git:@[ @"remote" ] directory:self.repositoryURL]
+		componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+	for (NSString *name in remotes) {
+		if ([existing containsObject:name])
+			[self git:@[ @"remote", @"set-url", name, remotes[name] ] directory:self.repositoryURL];
+		else
+			[self git:@[ @"remote", @"add", name, remotes[name] ] directory:self.repositoryURL];
+	}
+	self.repository.testRemotes = [remotes.allKeys sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
 }
 
 - (NSMenuItem *)menuItemWithObject:(nullable id)object
@@ -2514,6 +2570,281 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 						  @"https://gitlab.example/acme/repo/-/tree/main");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"https://bitbucket.org/acme/repo.git" branch:@"" sha:@"abc123"].absoluteString,
 						  @"https://bitbucket.org/acme/repo/src/abc123");
+}
+
+- (void)testViewingRemoteUsesTheLegacyCoordinatorWithAnAutomaticForgeBinding
+{
+	[self git:@[ @"remote", @"set-url", @"origin", @"https://github.com/acme/widgets.git" ] directory:self.repositoryURL];
+
+	[PBRepositoryRemoteURLCoordinator.shared viewRemoteForRepository:self.repository presentingWindow:nil];
+
+	XCTAssertEqual(PBWindowWorkspaceOpenCount, (NSUInteger)1);
+}
+
+- (void)testSuccessfulPushURLUsesRepositorySettingsAndMatchingRemoteHost
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/acme/widgets.git"}];
+	PBRepositorySettingsStore *settings = [[PBRepositorySettingsStore alloc] initWithRepository:self.repository];
+	NSError *error = nil;
+	XCTAssertTrue([settings setBool:YES forKey:@"gitx.autoOpenPushedURL" error:&error], @"%@", error);
+	XCTAssertTrue([settings setBool:YES forKey:@"gitx.requirePushedURLHostMatch" error:&error], @"%@", error);
+	NSUInteger openCount = PBWindowWorkspaceOpenedURLs.count;
+
+	[PBRepositoryRemoteURLCoordinator.shared
+		handleSuccessfulPushOutput:@"remote: Open https://github.com/acme/widgets/pull/42 to review."
+						repository:self.repository
+							remote:self.remoteBranchRef
+				  presentingWindow:nil];
+	[self pumpRunLoopFor:0.05];
+
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount + 1);
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/acme/widgets/pull/42");
+}
+
+- (void)testViewingRemoteHonorsRepositoryCustomURLTemplate
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/acme/widgets.git"}];
+	PBRepositorySettingsStore *settings = [[PBRepositorySettingsStore alloc] initWithRepository:self.repository];
+	NSError *error = nil;
+	XCTAssertTrue([settings setString:@"{remoteURL}/compare/{branch}"
+							   forKey:@"gitx.webURLTemplate"
+								error:&error],
+				  @"%@", error);
+
+	[PBRepositoryRemoteURLCoordinator.shared viewRemoteForRepository:self.repository presentingWindow:nil];
+
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/acme/widgets/compare/main");
+}
+
+- (void)testForgeActionsOpenRepositoryCheckedOutRevisionSelectedCommitAndComparison
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+
+	[self.controller viewForgeRepository:self];
+	[self.controller viewForgeCheckedOutRevision:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs, (@[
+							  [NSURL URLWithString:@"https://github.com/hbmartin/gitx"],
+							  [NSURL URLWithString:@"https://github.com/hbmartin/gitx/tree/main"],
+						  ]));
+
+	NSString *detachedSHA = self.repository.headOID.SHA;
+	[self git:@[ @"checkout", @"--quiet", @"--detach", detachedSHA ] directory:self.repositoryURL];
+	[self.repository readCurrentBranch];
+	[self.controller viewForgeCheckedOutRevision:self];
+	NSString *detachedURL = [NSString stringWithFormat:@"https://github.com/hbmartin/gitx/commit/%@", detachedSHA];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString, detachedURL);
+
+	PBWindowCommitStub *head = [[PBWindowCommitStub alloc] initWithSHA:@"1111111111111111111111111111111111111111"];
+	PBWindowCommitStub *base = [[PBWindowCommitStub alloc] initWithSHA:@"2222222222222222222222222222222222222222"];
+	PBWindowHistorySpy *history = [[PBWindowHistorySpy alloc] initWithRepository:self.repository superController:self.controller];
+	[self.controller setValue:history forKey:@"_historyViewController"];
+	history.selectedCommits = @[ head ];
+	[self.controller viewForgeSelectedCommit:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/hbmartin/gitx/commit/1111111111111111111111111111111111111111");
+
+	history.selectedCommits = @[ head, base ];
+	[self.controller viewForgeSelectedComparison:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/hbmartin/gitx/compare/2222222222222222222222222222222222222222...1111111111111111111111111111111111111111");
+
+	NSUInteger openCount = PBWindowWorkspaceOpenedURLs.count;
+	history.selectedCommits = @[];
+	[self.controller viewForgeSelectedCommit:self];
+	[self.controller viewForgeSelectedComparison:self];
+	history.selectedCommits = @[ head, base, head ];
+	[self.controller viewForgeSelectedCommit:self];
+	[self.controller viewForgeSelectedComparison:self];
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+
+	history.selectedCommits = @[ [[PBWindowCommitStub alloc] initWithSHA:@"not a commit"] ];
+	[self.controller viewForgeSelectedCommit:self];
+	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)1);
+	XCTAssertEqualObjects(self.controller.shownErrors.lastObject.domain, @"com.gitx.forge.scripting");
+	XCTAssertEqual(self.controller.shownErrors.lastObject.code, (NSInteger)18003);
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+
+	NSString *emptyName = [NSString stringWithFormat:@"GitXForgeUnborn-%@", NSUUID.UUID.UUIDString];
+	NSURL *emptyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:emptyName]
+								 isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:emptyURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	@try {
+		[self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] directory:emptyURL];
+		NSError *emptyError = nil;
+		PBWindowRepositorySpy *emptyRepository = [[PBWindowRepositorySpy alloc] initWithURL:emptyURL error:&emptyError];
+		XCTAssertNotNil(emptyRepository, @"%@", emptyError);
+		emptyRepository.testRemotes = @[];
+		[emptyRepository readCurrentBranch];
+		PBWindowControllerSpy *emptyController = [[PBWindowControllerSpy alloc] initWithRepository:emptyRepository];
+		[emptyController viewForgeCheckedOutRevision:self];
+		XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+		[emptyController.window orderOut:nil];
+		[emptyController.window close];
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:emptyURL error:NULL];
+	}
+}
+
+- (void)testForgeBindingChooserSupportsNilWindowCancelWindowSelectionAndDurableRetry
+{
+	[self configureForgeRemotes:@{
+		@"origin" : @"https://github.com/hbmartin/gitx.git",
+		@"upstream" : @"git@github.com:gitx/gitx.git",
+	}];
+
+	NSWindow *window = self.controller.window;
+	[self.controller setWindow:nil];
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	[self.controller viewForgeRepository:self];
+	XCTAssertEqual(PBWindowAlertAppModalCount, (NSUInteger)1);
+	XCTAssertEqual(PBWindowAlertSheetCount, (NSUInteger)0);
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, (NSUInteger)0);
+	NSAlert *cancelAlert = PBWindowPresentedAlerts.lastObject;
+	XCTAssertEqualObjects(cancelAlert.messageText, @"Choose Primary Repository");
+	XCTAssertEqualObjects([cancelAlert.buttons valueForKey:@"title"], (@[ @"Use Repository", @"Cancel" ]));
+	NSPopUpButton *cancelPopup = (NSPopUpButton *)cancelAlert.accessoryView;
+	XCTAssertTrue([cancelPopup isKindOfClass:NSPopUpButton.class]);
+	XCTAssertEqualObjects(cancelPopup.accessibilityIdentifier, @"GitX.ForgeLinks.RepositoryChoice");
+	XCTAssertEqualObjects(cancelPopup.accessibilityLabel, @"Primary repository");
+	XCTAssertEqual(cancelPopup.itemTitles.count, (NSUInteger)2);
+
+	[self.controller setWindow:window];
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if (![alert.messageText isEqualToString:@"Choose Primary Repository"]) return;
+		NSPopUpButton *popup = (NSPopUpButton *)alert.accessoryView;
+		[popup selectItemWithTitle:NSLocalizedString(@"GitHub — gitx/gitx (upstream)", nil)];
+	};
+	[self.controller viewForgeRepository:self];
+	XCTAssertEqual(PBWindowAlertSheetCount, (NSUInteger)1);
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString, @"https://github.com/gitx/gitx");
+
+	NSUInteger alertCount = PBWindowPresentedAlerts.count;
+	PBWindowControllerSpy *reloadedController = [[PBWindowControllerSpy alloc] initWithRepository:self.repository];
+	[reloadedController viewForgeRepository:self];
+	XCTAssertEqual(PBWindowPresentedAlerts.count, alertCount);
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString, @"https://github.com/gitx/gitx");
+	[reloadedController.window orderOut:nil];
+	[reloadedController.window close];
+}
+
+- (void)testForgeNumberPromptAndDestinationChooserAcceptAndCancelEveryVisiblePath
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, (NSUInteger)0);
+	NSAlert *numberAlert = PBWindowPresentedAlerts.lastObject;
+	XCTAssertEqualObjects(numberAlert.messageText, @"Open Pull Request or Issue");
+	XCTAssertEqualObjects([numberAlert.buttons valueForKey:@"title"], (@[ @"Continue", @"Cancel" ]));
+	NSTextField *field = (NSTextField *)numberAlert.accessoryView;
+	XCTAssertTrue([field isKindOfClass:NSTextField.class]);
+	XCTAssertEqualObjects(field.placeholderString, @"#123");
+	XCTAssertEqualObjects(field.accessibilityIdentifier, @"GitX.ForgeLinks.NumberedReference");
+	XCTAssertEqualObjects(field.accessibilityLabel, @"Pull Request or Issue reference");
+
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#42", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose a Destination"])
+			[(NSPopUpButton *)alert.accessoryView selectItemAtIndex:0];
+	};
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/hbmartin/gitx/pull/42");
+	NSAlert *destinationAlert = PBWindowPresentedAlerts.lastObject;
+	XCTAssertEqualObjects(destinationAlert.messageText, @"Choose a Destination");
+	XCTAssertEqualObjects([destinationAlert.buttons valueForKey:@"title"], (@[ @"Open", @"Cancel" ]));
+	NSPopUpButton *destinationPopup = (NSPopUpButton *)destinationAlert.accessoryView;
+	XCTAssertEqualObjects(destinationPopup.itemTitles, (@[
+							  @"hbmartin/gitx — Pull Request #42",
+							  @"hbmartin/gitx — Issue #42",
+						  ]));
+	XCTAssertEqualObjects(destinationPopup.accessibilityIdentifier, @"GitX.ForgeLinks.DestinationChoice");
+	XCTAssertEqualObjects(destinationPopup.accessibilityLabel, @"Pull Request or Issue destination");
+
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#42", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose a Destination"])
+			[(NSPopUpButton *)alert.accessoryView selectItemAtIndex:1];
+	};
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/hbmartin/gitx/issues/42");
+
+	NSUInteger openCount = PBWindowWorkspaceOpenedURLs.count;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#42", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose a Destination"])
+			PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	};
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+}
+
+- (void)testForgeNumberPromptChoosesAmbiguousBindingThenRetriesIntoDestinationChoice
+{
+	[self configureForgeRemotes:@{
+		@"origin" : @"https://github.com/hbmartin/gitx.git",
+		@"upstream" : @"git@github.com:gitx/gitx.git",
+	}];
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#42", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose Primary Repository"])
+			[(NSPopUpButton *)alert.accessoryView selectItemWithTitle:NSLocalizedString(@"GitHub — gitx/gitx (upstream)", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose a Destination"])
+			[(NSPopUpButton *)alert.accessoryView selectItemAtIndex:1];
+	};
+
+	[self.controller showForgePullRequestOrIssue:self];
+
+	XCTAssertEqualObjects([PBWindowPresentedAlerts valueForKey:@"messageText"], (@[
+							  @"Open Pull Request or Issue",
+							  @"Choose Primary Repository",
+							  @"Choose a Destination",
+						  ]));
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/gitx/gitx/issues/42");
+}
+
+- (void)testForgeMalformedNumberAndUnavailableRepositorySurfaceDeterministicErrors
+{
+	self.repository.testRemotes = @[];
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#9", nil)];
+	};
+	[self.controller viewForgeRepository:self];
+	XCTAssertEqual(self.controller.shownErrors.lastObject.code, (NSInteger)18001);
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)2);
+	XCTAssertEqual(self.controller.shownErrors.lastObject.code, (NSInteger)18001);
+
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+	PBWindowControllerSpy *malformedController = [[PBWindowControllerSpy alloc] initWithRepository:self.repository];
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"42", nil)];
+	};
+	[malformedController showForgePullRequestOrIssue:self];
+	XCTAssertEqual(malformedController.shownErrors.count, (NSUInteger)1);
+	XCTAssertEqualObjects(malformedController.shownErrors.lastObject.domain, @"com.gitx.forge.scripting");
+	XCTAssertEqual(malformedController.shownErrors.lastObject.code, (NSInteger)18003);
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, (NSUInteger)0);
+	[malformedController.window orderOut:nil];
+	[malformedController.window close];
 }
 
 - (void)testFileHistoryEntriesParseStructuredGitLogOutput

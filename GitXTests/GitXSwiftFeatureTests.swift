@@ -197,6 +197,11 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let windowController = PBGitWindowController(window: window)
         let toolbarController = PBRepositoryToolbarController(windowController: windowController)
         let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+        toolbarController.update(
+            withStatus: "Preparing fetch",
+            busy: true,
+            baseWindowTitle: "Repository"
+        )
         let item = try XCTUnwrap(toolbarController.toolbar(
             toolbar,
             itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.RefreshStatus"),
@@ -294,6 +299,36 @@ final class GitXSwiftFeatureTests: XCTestCase {
             ["viewForgeRepository:", "showForgePullRequestOrIssue:"]
         )
         XCTAssertTrue(item.menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.target == nil })
+    }
+
+    func testForgeMenuValidationAndOrphanToolbarFallback() throws {
+        let windowController = PBGitWindowController(window: nil)
+        let menuItem = NSMenuItem(
+            title: "Stale",
+            action: NSSelectorFromString("viewForgeRepository:"),
+            keyEquivalent: ""
+        )
+
+        XCTAssertFalse(windowController.validateMenuItem(menuItem))
+        XCTAssertEqual(menuItem.title, "View Repository")
+        XCTAssertFalse(menuItem.isEnabled)
+
+        var toolbarController: PBRepositoryToolbarController?
+        weak var releasedWindowController: PBGitWindowController?
+        autoreleasepool {
+            let transientWindowController = PBGitWindowController(window: nil)
+            releasedWindowController = transientWindowController
+            toolbarController = PBRepositoryToolbarController(windowController: transientWindowController)
+        }
+        XCTAssertNil(releasedWindowController)
+
+        let menu = NSMenu(title: "View Remote")
+        try XCTUnwrap(toolbarController).menuNeedsUpdate(menu)
+        XCTAssertEqual(
+            menu.items.filter { !$0.isSeparatorItem }.map(\.title),
+            ["View Repository", "Pull Request or Issue…"]
+        )
+        XCTAssertTrue(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
     }
 
     func testForgeLinkPresenterUsesProviderFamilyAndOneSelectedCommit() {
@@ -1224,6 +1259,12 @@ final class GitXSwiftFeatureTests: XCTestCase {
             ),
             presenting: parentWindow
         )
+        XCTAssertNotNil(parentWindow.attachedSheet)
+        dismissAttachedSheet(from: parentWindow)
+        launcher.completeApplicationLaunch(error: nil, presenting: nil)
+
+        PBApplicationSettings.customTerminalExecutable = "relative/path"
+        launcher.open(directory: directory, presenting: parentWindow)
         XCTAssertNotNil(parentWindow.attachedSheet)
         dismissAttachedSheet(from: parentWindow)
     }

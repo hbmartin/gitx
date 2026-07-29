@@ -1,4 +1,7 @@
 import Foundation
+
+// SwiftLint analyze misclassifies this import; Logger requires it at compile time.
+// swiftlint:disable:next unused_import
 import OSLog
 
 public enum ForgeNumberedDestinationKind: String, CaseIterable, Codable, Hashable, Sendable {

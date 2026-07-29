@@ -868,6 +868,7 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 - (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar
 			  itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier
 		  willBeInsertedIntoToolbar:(BOOL)flag;
+- (void)menuNeedsUpdate:(NSMenu *)menu;
 @end
 
 @interface PBRepositoryForgeLinkMenuPresenter : NSObject

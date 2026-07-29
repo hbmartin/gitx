@@ -292,21 +292,29 @@ final class RepositoryForgeCoordinator: NSObject {
     }
 
     @objc(repositoryURLWithError:)
+    // Cocoa Scripting invokes this Objective-C facade dynamically.
+    // swiftlint:disable:next unused_declaration
     func repositoryURL() throws -> URL {
         try scriptingURL(for: .repository)
     }
 
     @objc(branchURLForName:error:)
+    // Cocoa Scripting invokes this Objective-C facade dynamically.
+    // swiftlint:disable:next unused_declaration
     func branchURL(name: String) throws -> URL {
         try scriptingURL(for: .branch(name))
     }
 
     @objc(commitURLForIdentifier:error:)
+    // Cocoa Scripting invokes this Objective-C facade dynamically.
+    // swiftlint:disable:next unused_declaration
     func commitURL(identifier: String) throws -> URL {
         try scriptingURL(for: .commit(identifier))
     }
 
     @objc(fileURLForRevision:revisionKind:path:startLine:endLine:error:)
+    // Cocoa Scripting invokes this Objective-C facade dynamically.
+    // swiftlint:disable:next unused_declaration
     func fileURL(
         revision: String,
         revisionKind: RepositoryForgeRevisionKind,
@@ -323,6 +331,8 @@ final class RepositoryForgeCoordinator: NSObject {
     }
 
     @objc(compareURLFromRevision:baseKind:toRevision:headKind:error:)
+    // Cocoa Scripting invokes this Objective-C facade dynamically.
+    // swiftlint:disable:next unused_declaration
     func compareURL(
         base: String,
         baseKind: RepositoryForgeRevisionKind,
@@ -336,11 +346,15 @@ final class RepositoryForgeCoordinator: NSObject {
     }
 
     @objc(pullRequestURLForNumber:error:)
+    // Cocoa Scripting invokes this Objective-C facade dynamically.
+    // swiftlint:disable:next unused_declaration
     func pullRequestURL(number: Int) throws -> URL {
         try scriptingURL(for: .pullRequest(number))
     }
 
     @objc(issueURLForNumber:error:)
+    // Cocoa Scripting invokes this Objective-C facade dynamically.
+    // swiftlint:disable:next unused_declaration
     func issueURL(number: Int) throws -> URL {
         try scriptingURL(for: .issue(number))
     }
