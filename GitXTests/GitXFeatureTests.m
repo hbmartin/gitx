@@ -10,7 +10,7 @@
 #import "PBMacros.h"
 #import "PBGitRepository.h"
 #import "PBGitRepositoryDocument.h"
-#import "PBGitWindowController.h"
+#import "PBGitWindowControllerCompatibility.h"
 #import "PBHistoryArrayController.h"
 #import "PBHighlighting.h"
 #import "PBFileChangesTableView.h"

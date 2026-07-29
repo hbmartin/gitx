@@ -274,7 +274,7 @@ final class GitXPerformanceTests: XCTestCase {
 
     func testSourceLanguageClassificationPerformance() {
         let paths = [
-            "Classes/Controllers/PBGitWindowController.m",
+            "Classes/Controllers/PBGitWindowController.swift",
             "Classes/Views/PBHighlighting.swift",
             "Resources/source.css",
             "Dockerfile",

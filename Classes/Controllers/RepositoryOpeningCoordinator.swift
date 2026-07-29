@@ -744,7 +744,7 @@ final class WindowSessionCoordinator: NSObject {
                 "frame": NSStringFromRect(window.frame),
                 "group": group,
                 "order": groupWindows.firstIndex(of: window) ?? 0,
-                "commitMode": controller.isUncommittedChangesSelected(),
+                "commitMode": controller.isUncommittedChangesSelected,
                 "active": window.isKeyWindow,
             ])
         }

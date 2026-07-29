@@ -35,6 +35,8 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(controller.windowNibName, "RepositoryWindow")
         XCTAssertNil(controller.document)
         XCTAssertNil(controller.repository)
+        controller.repository = nil
+        XCTAssertNil(controller.repository)
 
         let selectors = [
             "changeContentController:",

@@ -27,7 +27,7 @@
 #import "PBGitSidebarController.h"
 #import "PBGitStash.h"
 #import "PBGitTree.h"
-#import "PBGitWindowController.h"
+#import "PBGitWindowControllerCompatibility.h"
 #import "PBGitXMessageSheet.h"
 #import "PBError.h"
 #import "PBFileChangesTableView.h"
@@ -266,6 +266,20 @@
 	return nil;
 }
 
+@end
+
+@interface PBWindowRemoteWithoutNameRef : PBGitRef
+@end
+
+@implementation PBWindowRemoteWithoutNameRef
+- (BOOL)isRemote
+{
+	return YES;
+}
+- (NSString *)remoteName
+{
+	return nil;
+}
 @end
 
 @interface RepositoryUISettingsTests : XCTestCase
@@ -957,6 +971,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 @interface PBWindowControllerSpy : PBGitWindowController
 @property (nonatomic, strong) PBWindowRepositorySpy *fixedRepository;
+@property (nonatomic, strong, nullable) PBGitRef *forcedSelectedRef;
 @property (nonatomic, strong) NSMutableArray<NSError *> *shownErrors;
 @property (nonatomic, strong) NSMutableArray<NSAlert *> *confirmations;
 @property (nonatomic) BOOL shouldConfirm;
@@ -995,6 +1010,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (PBGitRepository *)repository
 {
 	return self.fixedRepository;
+}
+- (PBGitRef *)selectedRef
+{
+	return self.forcedSelectedRef ?: super.selectedRef;
 }
 - (void)showErrorSheet:(NSError *)error
 {
@@ -1532,6 +1551,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	self.repository.trackingRef = nil;
 	XCTAssertFalse([self.controller validateMenuItem:plainFetch remoteTitle:@"Fetch “%@”" plainTitle:@"Fetch"]);
 	XCTAssertEqualObjects(plainFetch.title, @"Fetch");
+	PBWindowRemoteWithoutNameRef *unnamedRemote = [[PBWindowRemoteWithoutNameRef alloc] initWithString:@"refs/remotes/origin/main"];
+	self.controller.forcedSelectedRef = unnamedRemote;
+	NSMenuItem *unnamedRemoteFetch = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+	XCTAssertTrue([self.controller validateMenuItem:unnamedRemoteFetch remoteTitle:@"Fetch “%@”" plainTitle:@"Fetch"]);
+	XCTAssertEqualObjects(unnamedRemoteFetch.title, @"Fetch “(null)”");
+	self.controller.forcedSelectedRef = nil;
 	self.repository.trackingRef = self.remoteBranchRef;
 
 	PBSourceViewItem *remoteItem = [PBSourceViewItem itemWithTitle:@"origin"];
@@ -1898,6 +1923,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBGitRepositoryDocument *document = [[PBGitRepositoryDocument alloc] init];
 	[document setValue:self.repository forKey:@"_repository"];
 	directController.document = document;
+	[directController openURLs:nil];
+	[directController revealURLsInFinder:nil];
 	[directController openURLs:@[]];
 	[directController revealURLsInFinder:@[]];
 	[directController openURLs:@[ [self.repository.workingDirectoryURL URLByAppendingPathComponent:@"tracked.txt"] ]];

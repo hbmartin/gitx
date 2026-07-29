@@ -9,7 +9,8 @@
 #import <Cocoa/Cocoa.h>
 
 #import "PBGitRepository.h"
-#import "PBGitWindowController.h"
+
+@class PBGitWindowController;
 
 NS_ASSUME_NONNULL_BEGIN
 

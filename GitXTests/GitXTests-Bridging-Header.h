@@ -7,7 +7,6 @@
 #import "PBGitRef.h"
 #import "PBGitRepository.h"
 #import "PBGitHistoryController.h"
-#import "PBGitWindowController.h"
 #import "PBViewController.h"
 #import "PBGitCommit.h"
 #import "PBGitIndex.h"
@@ -23,6 +22,7 @@
 #import "PBHistorySearchController.h"
 #import "RepositoryIgnoreTestSupport.h"
 #import "PBGitBinary.h"
+#import "PBGitWindowControllerCompatibility.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
