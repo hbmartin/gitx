@@ -472,7 +472,42 @@ final class GitXSwiftFeatureTests: XCTestCase {
             let process = Process()
             process.executableURL = cliURL
             process.currentDirectoryURL = worktree
-            process.arguments = []
+            process.arguments = ["--git-dir=\(worktree.path)"]
+            var environment = ProcessInfo.processInfo.environment
+            environment["PWD"] = worktree.path
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+
+            try process.run()
+            process.waitUntilExit()
+
+            XCTAssertEqual(process.terminationReason, .exit)
+            XCTAssertEqual(process.terminationStatus, 2)
+        }
+    }
+
+    func testCommandLineToolOpensCurrentRepositoryBeforeReturningFromTest() throws {
+        try withTemporaryDirectory { worktree in
+            try runGit(["init", "--quiet"], in: worktree)
+
+            let normalizedWorktree = worktree.standardizedFileURL
+            let documentController = NSDocumentController.shared
+            defer {
+                for document in documentController.documents
+                    where document.fileURL?.standardizedFileURL == normalizedWorktree
+                {
+                    document.windowControllers.forEach { $0.window?.orderOut(nil) }
+                    documentController.removeDocument(document)
+                }
+                PBRecentRepositoryStore.shared.remove(normalizedWorktree)
+            }
+
+            let cliURL = try XCTUnwrap(Bundle.main.url(forResource: "gitx", withExtension: nil))
+            let process = Process()
+            process.executableURL = cliURL
+            process.currentDirectoryURL = worktree
             var environment = ProcessInfo.processInfo.environment
             environment["PWD"] = worktree.path
             process.environment = environment
@@ -485,6 +520,14 @@ final class GitXSwiftFeatureTests: XCTestCase {
 
             XCTAssertEqual(process.terminationReason, .exit)
             XCTAssertEqual(process.terminationStatus, 0)
+
+            let repositoryOpened = NSPredicate { _, _ in
+                documentController.documents.contains {
+                    $0.fileURL?.standardizedFileURL == normalizedWorktree
+                }
+            }
+            expectation(for: repositoryOpened, evaluatedWith: nil)
+            waitForExpectations(timeout: 5)
         }
     }
 
@@ -1042,6 +1085,17 @@ final class GitXSwiftFeatureTests: XCTestCase {
         )
         XCTAssertNotNil(parentWindow.attachedSheet)
         dismissAttachedSheet(from: parentWindow)
+    }
+
+    func testKittyNonEmptyCommandUsesPositionalArguments() {
+        XCTAssertEqual(
+            PBTerminalLauncher.shared.launchArguments(
+                identifier: "net.kovidgoyal.kitty",
+                directory: "/tmp/repo",
+                command: "git status"
+            ),
+            ["--directory", "/tmp/repo", "/bin/zsh", "-lc", "git status"]
+        )
     }
 
     func testRaycastManagedScriptsInstallUpdateAndRemove() throws {
