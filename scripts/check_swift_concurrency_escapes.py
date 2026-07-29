@@ -10,6 +10,17 @@ from collections.abc import Iterable
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+DEFAULT_PATHS = (
+    ROOT / "Classes",
+    ROOT / "GitXTests",
+    ROOT / "GitXUITests",
+    ROOT / "GitXCore" / "Sources" / "GitXCore",
+    ROOT / "ForgeKit" / "Sources" / "ForgeKit",
+    ROOT / "ForgeKit" / "Sources" / "GitHubForgeAdapter",
+)
+EXCLUDED_PATHS = (
+    ROOT / "ForgeKit" / "Sources" / "GitHubForgeAdapter" / "Generated",
+)
 JUSTIFICATION_MARKER = "swift6-safety-justification:"
 ESCAPE_PATTERNS = (
     re.compile(r"@unchecked\s+Sendable"),
@@ -24,9 +35,16 @@ ESCAPE_PATTERNS = (
 def swift_files(paths: Iterable[pathlib.Path]) -> Iterable[pathlib.Path]:
     for path in paths:
         if path.is_file() and path.suffix == ".swift":
-            yield path
+            if not any(path.is_relative_to(excluded) for excluded in EXCLUDED_PATHS):
+                yield path
         elif path.is_dir():
-            yield from sorted(path.rglob("*.swift"))
+            yield from (
+                candidate
+                for candidate in sorted(path.rglob("*.swift"))
+                if not any(
+                    candidate.is_relative_to(excluded) for excluded in EXCLUDED_PATHS
+                )
+            )
 
 
 def scan(paths: Iterable[pathlib.Path]) -> list[tuple[pathlib.Path, int, str]]:
@@ -50,7 +68,7 @@ def main() -> int:
         "paths",
         nargs="*",
         type=pathlib.Path,
-        default=[ROOT / "Classes", ROOT / "GitXTests"],
+        default=DEFAULT_PATHS,
     )
     args = parser.parse_args()
 

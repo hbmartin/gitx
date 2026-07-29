@@ -46,20 +46,20 @@ class PinnedToolsTests(unittest.TestCase):
 
         self.assertNotIn("26.3", build_workflow + verify_workflow)
         self.assertEqual(build_workflow.count("xcode: 26.2"), 1)
-        self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 6)
+        self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 7)
 
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         pinned_actions = {
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 6,
-            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 6,
+            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 7,
+            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 7,
             "actions/cache@caa296126883cff596d87d8935842f9db880ef25": 2,
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 5,
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 6,
         }
 
         for action, expected_count in pinned_actions.items():
             self.assertEqual(verify_workflow.count(action), expected_count)
-        self.assertEqual(verify_workflow.count("persist-credentials: false"), 6)
+        self.assertEqual(verify_workflow.count("persist-credentials: false"), 7)
         for mutable_tag in [
             "actions/checkout@v7",
             "maxim-lobanov/setup-xcode@v1",
@@ -81,6 +81,48 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch'", condition)
         self.assertIn("runs-on: [self-hosted, macOS, ARM64]", performance_job)
         self.assertIn("-testPlan GitXPerformance", performance_job)
+
+    def test_app_build_jobs_fetch_tags_for_version_generation(self) -> None:
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        for job, following_job in (
+            ("ui", "sanitizers"),
+            ("sanitizers", "performance"),
+        ):
+            job_text = verify_workflow.split(
+                f"\n  {job}:\n", maxsplit=1
+            )[1].split(f"\n  {following_job}:\n", maxsplit=1)[0]
+            self.assertIn("fetch-depth: 0", job_text)
+            self.assertIn("fetch-tags: true", job_text)
+
+        performance_job = verify_workflow.split("\n  performance:\n", maxsplit=1)[1]
+        self.assertIn("fetch-depth: 0", performance_job)
+        self.assertIn("fetch-tags: true", performance_job)
+
+        unit_job = verify_workflow.split(
+            "\n  unit-and-analyze:\n", maxsplit=1
+        )[1].split("\n  ui:\n", maxsplit=1)[0]
+        self.assertIn("fetch-depth: 0", unit_job)
+        self.assertIn("fetch-tags: true", unit_job)
+
+        build_job = build_workflow.split(
+            "\n  build-gitx:\n", maxsplit=1
+        )[1].split("\n  release:\n", maxsplit=1)[0]
+        self.assertIn("fetch-depth: 0", build_job)
+        self.assertIn("fetch-tags: true", build_job)
+
+    def test_forgekit_hostless_ci_runs_tests_and_coverage_gate(self) -> None:
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        forgekit_job = verify_workflow.split(
+            "\n  forgekit:\n", maxsplit=1
+        )[1].split("\n  static:\n", maxsplit=1)[0]
+
+        self.assertIn('--package-path ForgeKit', forgekit_job)
+        self.assertIn('--build-system swiftbuild', forgekit_job)
+        self.assertIn('--enable-code-coverage', forgekit_job)
+        self.assertIn('--swiftpm-scratch-path "$RUNNER_TEMP/ForgeKitBuild"', forgekit_job)
+        self.assertIn('--combined-output "$RUNNER_TEMP/ForgeKitCombinedCoverage.json"', forgekit_job)
+        self.assertIn('fetch-depth: 0', forgekit_job)
 
     def test_performance_suite_rejects_pull_requests_on_self_hosted_runner(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
