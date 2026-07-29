@@ -146,7 +146,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         return true
     }
 
-    var forgeLinkContext: RepositoryForgeLinkContext {
+    final var forgeLinkContext: RepositoryForgeLinkContext {
         let resolution = forgeCoordinator?.resolveBinding()
         let headRef = repository?.headRef()?.ref()
         let checkedOutRevision: RepositoryForgeLinkRevision?
@@ -168,7 +168,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         )
     }
 
-    var forgeCoordinator: RepositoryForgeCoordinator? {
+    final var forgeCoordinator: RepositoryForgeCoordinator? {
         if repositoryForgeCoordinator == nil, let repository {
             repositoryForgeCoordinator = RepositoryForgeCoordinator(repository: repository)
         }
