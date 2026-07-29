@@ -42,6 +42,9 @@
 #import "PBPrefsWindowController.h"
 #import "PBViewController.h"
 
+@implementation PBHistoryWindowControllerTestBase
+@end
+
 @interface PBRepositoryToolbarController : NSObject
 - (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
 - (void)install;

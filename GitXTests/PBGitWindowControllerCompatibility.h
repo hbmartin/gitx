@@ -101,4 +101,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+/// Objective-C layout barrier for Swift test doubles that subclass this
+/// compatibility mirror of the production Swift window controller.
+@interface PBHistoryWindowControllerTestBase : PBGitWindowController
+@end
+
 NS_ASSUME_NONNULL_END
