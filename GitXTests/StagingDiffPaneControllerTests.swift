@@ -49,6 +49,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
             withArguments _: [String],
             completion: @escaping (Data?, Error?) -> Void
         ) {
+            XCTFail("queued staging-diff production must not use the asynchronous data path")
             completion(nil, nil)
         }
 
