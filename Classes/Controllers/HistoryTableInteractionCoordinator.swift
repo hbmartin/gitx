@@ -143,12 +143,17 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         alert.addButton(withTitle: "Move")
         alert.addButton(withTitle: "Cancel")
 
-        guard let windowController = owner.windowController else { return false }
+        guard let windowController = owner.windowController,
+              let repository = windowController.repository
+        else {
+            logger.debug("Rejected branch move because the repository window is detached")
+            return false
+        }
         NSLog("[GitX] History reference move confirmation requested")
         windowController.confirmDialog(alert, suppressionIdentifier: kDialogAcceptDroppedRef) { [weak windowController] in
             guard let windowController else { return }
             do {
-                try RepositoryMutationService(repository: windowController.repository).updateReference(
+                try RepositoryMutationService(repository: repository).updateReference(
                     ref,
                     toPointAt: dropCommit,
                     expectedOldOID: oldCommit.sha

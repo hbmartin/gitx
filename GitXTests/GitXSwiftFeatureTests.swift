@@ -28,6 +28,42 @@ final class GitXSwiftFeatureTests: XCTestCase {
         }
     }
 
+    func testWindowControllerObjectiveCCompatibilitySurfaceBeforeConversion() {
+        let controller = PBGitWindowController()
+
+        XCTAssertEqual(NSStringFromClass(type(of: controller)), "PBGitWindowController")
+        XCTAssertEqual(controller.windowNibName, "RepositoryWindow")
+        XCTAssertNil(controller.document)
+        XCTAssertNil(controller.repository)
+
+        let selectors = [
+            "changeContentController:",
+            "showCommitHookFailedSheet:infoText:retryHandler:",
+            "showMessageSheet:infoText:",
+            "showErrorSheet:",
+            "confirmDialog:suppressionIdentifier:forAction:",
+            "showUncommittedChanges:",
+            "showHistoryView:",
+            "refresh:",
+            "viewRemote:",
+            "toolbarFetch:",
+            "toolbarPull:",
+            "toolbarPush:",
+        ].map(NSSelectorFromString)
+        for selector in selectors {
+            XCTAssertTrue(controller.responds(to: selector), "Missing Objective-C selector \(selector)")
+        }
+
+        controller.changeContentController(nil)
+        controller.open(nil)
+        controller.revealURLs(inFinder: nil)
+
+        let programmatic = PBGitWindowController(window: nil)
+        XCTAssertNil(programmatic.window)
+        XCTAssertNil(programmatic.document)
+        XCTAssertNil(programmatic.repository)
+    }
+
     func testCommitRenderInputFreezesPlainMetadataAndImageRevisions() {
         let input = PBCommitRenderInput(
             sha: "abcdef0123456789",

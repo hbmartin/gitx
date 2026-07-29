@@ -40,7 +40,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             fatalError("init(coder:) has not been implemented")
         }
 
-        override var repository: PBGitRepository {
+        override var repository: PBGitRepository? {
             get { fixedRepository }
             set { fixedRepository = newValue }
         }
@@ -49,12 +49,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             shownErrors.append(error as NSError)
         }
 
-        override func open(_ fileURLs: [URL]) {
-            openedURLs = fileURLs
+        override func open(_ fileURLs: [URL]?) {
+            openedURLs = fileURLs ?? []
         }
 
-        override func revealURLs(inFinder fileURLs: [URL]) {
-            revealedURLs = fileURLs
+        override func revealURLs(inFinder fileURLs: [URL]?) {
+            revealedURLs = fileURLs ?? []
         }
 
         private(set) var shownMessages: [(message: String, info: String)] = []
@@ -68,10 +68,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         override func showCommitHookFailedSheet(
             _ messageText: String,
             infoText: String,
-            retryHandler: @escaping () -> Void
+            retryHandler: (() -> Void)?
         ) {
             shownMessages.append((messageText, infoText))
-            hookFailureRetryHandlers.append(retryHandler)
+            if let retryHandler {
+                hookFailureRetryHandlers.append(retryHandler)
+            }
         }
 
         override func performPush(
@@ -2537,6 +2539,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             try XCTUnwrap(windowController as? HistoryWindowController).confirmationCount,
             0
         )
+    }
+
+    func testBranchMoveRejectsDetachedRepositoryWindow() throws {
+        let drag = try branchDragFixture()
+        let historyWindowController = try XCTUnwrap(windowController as? HistoryWindowController)
+        historyWindowController.repository = nil
+
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+        XCTAssertEqual(historyWindowController.confirmationCount, 0)
     }
 
     func testBranchMoveRejectsCopyOnlyMalformedLegacyAndWorkingStateDrops() throws {
