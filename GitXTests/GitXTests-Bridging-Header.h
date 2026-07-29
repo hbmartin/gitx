@@ -248,6 +248,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @property (nonatomic, readonly) PBStagingDiffPaneController *diffPaneController;
 @property (nonatomic, readonly) PBCommitMessageView *commitMessageView;
 @property (nonatomic, readonly) NSSearchField *searchField;
+@property (nonatomic, readonly) NSResponder *paneFirstResponder;
 - (void)updateView;
 - (void)closeView;
 - (void)reloadPushRemotes;

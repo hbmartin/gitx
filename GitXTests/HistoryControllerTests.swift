@@ -1603,6 +1603,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try fixture.write("staged\n", to: "staged.txt")
         try fixture.git(["add", "staged.txt"])
         let pane = try openStagingPane()
+        XCTAssertTrue(pane.paneFirstResponder === pane.commitMessageView)
 
         let dragPasteboard = NSPasteboard(name: NSPasteboard.Name("GitXStagingMessageDrag"))
         dragPasteboard.clearContents()

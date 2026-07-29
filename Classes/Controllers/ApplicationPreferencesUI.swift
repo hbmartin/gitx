@@ -280,7 +280,12 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         branchSort.action = #selector(SettingsPaneView.branchSortChanged(_:))
         view.addRow("Branch order:", control: branchSort)
         view.addSeparator()
-        legacyView.autoresizingMask = [.width]
+        let legacySize = legacyView.frame.size
+        legacyView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            legacyView.widthAnchor.constraint(equalToConstant: legacySize.width),
+            legacyView.heightAnchor.constraint(equalToConstant: legacySize.height),
+        ])
         view.addCustom(legacyView)
         return view
     }

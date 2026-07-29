@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8242,
+  "minimumLineCoverage": 0.8249,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4339,
@@ -48,7 +48,7 @@
     "Classes/Controllers/StagingDiffPaneController.swift": 0.7777,
     "Classes/Controllers/StagingFileListController.swift": 0.8464,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
-    "Classes/Controllers/StagingViewController.swift": 0.8837,
+    "Classes/Controllers/StagingViewController.swift": 0.887,
     "Classes/Controllers/WorkspaceActionCoordinator.swift": 0.9518,
     "Classes/GitXRelativeDateFormatter.m": 0.6666,
     "Classes/GitXSwift.swift": 1.0,
@@ -76,6 +76,7 @@
     "Classes/Util/PBTask.m": 0.9929,
     "Classes/Util/PBTerminalUtil.m": 0.0625,
     "Classes/Util/RJModalRepoSheet.m": 0.0,
+    "Classes/Views/CommitMessageDropPathPolicy.swift": 1.0,
     "Classes/Views/CommitProgressSheetController.swift": 0.983,
     "Classes/Views/GLFileView.m": 0.9124,
     "Classes/Views/GitXTextView.m": 0.44,
@@ -86,7 +87,7 @@
     "Classes/Views/PBAddRemoteSheet.m": 0.0,
     "Classes/Views/PBCloneRepositoryPanel.m": 0.0,
     "Classes/Views/PBCommitHookFailedSheet.m": 0.0,
-    "Classes/Views/PBCommitMessageView.m": 0.9032,
+    "Classes/Views/PBCommitMessageView.m": 1.0,
     "Classes/Views/PBCreateBranchSheet.m": 0.0,
     "Classes/Views/PBCreateTagSheet.m": 0.0,
     "Classes/Views/PBFileChangesTableView.swift": 0.8571,
@@ -112,7 +113,7 @@
     "Classes/git/IndexSnapshot.swift": 0.9722,
     "Classes/git/PBGitBinary.m": 0.6831,
     "Classes/git/PBGitCommit.m": 0.547,
-    "Classes/git/PBGitDefaults.m": 0.7955,
+    "Classes/git/PBGitDefaults.m": 0.8493,
     "Classes/git/PBGitGrapher.mm": 0.9508,
     "Classes/git/PBGitHistoryGrapher.m": 0.8679,
     "Classes/git/PBGitHistoryList.m": 0.9204,
@@ -151,7 +152,7 @@
   },
   "groups": {
     "Application Preferences surfaces": {
-      "minimumLineCoverage": 0.8786,
+      "minimumLineCoverage": 0.8792,
       "files": [
         "Classes/Controllers/ApplicationSettings.swift",
         "Classes/Controllers/ApplicationPreferencesUI.swift",
@@ -159,7 +160,7 @@
       ]
     },
     "Repository Configuration surfaces": {
-      "minimumLineCoverage": 0.7931,
+      "minimumLineCoverage": 0.7944,
       "files": [
         "Classes/Controllers/RepositorySettingsStore.swift",
         "Classes/Controllers/RepositorySettingsController.swift",

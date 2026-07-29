@@ -30,9 +30,6 @@ extern NSString *const PBAppearancePreferenceDidChangeNotification;
 @interface PBGitDefaults : NSObject {
 }
 
-+ (NSInteger)commitMessageViewVerticalLineLength;
-+ (NSInteger)commitMessageViewVerticalBodyLineLength;
-+ (BOOL)commitMessageViewHasVerticalLine;
 + (BOOL)isGistEnabled;
 + (BOOL)isGravatarEnabled;
 + (BOOL)confirmPublicGists;

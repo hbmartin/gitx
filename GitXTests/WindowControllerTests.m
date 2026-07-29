@@ -10,7 +10,6 @@
 #import "PBChangedFile.h"
 #import "PBCommitHookFailedSheet.h"
 #import "PBCommitList.h"
-#import "PBCommitMessageView.h"
 #import "PBCreateBranchSheet.h"
 #import "PBCreateTagSheet.h"
 #import "PBDiffWindowController.h"
@@ -2247,6 +2246,30 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSPopUpButton *appearancePopup = [preferences valueForKey:@"appearancePopup"];
 	XCTAssertEqualObjects([appearancePopup.itemArray valueForKey:@"title"],
 						  (@[ @"Automatic (System)", @"Light", @"Dark" ]));
+	NSView *generalPrefsView = [preferences valueForKey:@"generalPrefsView"];
+	NSMutableArray<NSView *> *pendingViews = [NSMutableArray arrayWithObject:preferences.window.contentView];
+	BOOL foundCommitGuideControl = NO;
+	NSButton *repositoryWatcherControl = nil;
+	while (pendingViews.count > 0) {
+		NSView *view = pendingViews.firstObject;
+		[pendingViews removeObjectAtIndex:0];
+		if ([view isKindOfClass:NSButton.class] &&
+			[((NSButton *)view).title isEqualToString:@"Show column guides in commit message"]) {
+			foundCommitGuideControl = YES;
+		}
+		if ([view isKindOfClass:NSButton.class] &&
+			[((NSButton *)view).title isEqualToString:@"Watch for changes in repositories"]) {
+			repositoryWatcherControl = (NSButton *)view;
+		}
+		[pendingViews addObjectsFromArray:view.subviews];
+	}
+	XCTAssertFalse(foundCommitGuideControl);
+	XCTAssertNotNil(repositoryWatcherControl);
+	XCTAssertTrue([repositoryWatcherControl isDescendantOf:preferences.window.contentView]);
+	NSRect watcherFrame = [repositoryWatcherControl convertRect:repositoryWatcherControl.bounds
+														 toView:preferences.window.contentView];
+	XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, watcherFrame));
+	XCTAssertEqual(generalPrefsView.frame.size.height, 258.0);
 
 	[preferences close];
 }
@@ -2458,6 +2481,11 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self git:@[ @"update-ref", @"-d", @"refs/remotes/origin/main" ] directory:self.repositoryURL];
 
 	[self git:@[ @"branch", @"-m", @"topic" ] directory:self.repositoryURL];
+	[self git:@[ @"branch", @"master" ] directory:self.repositoryURL];
+	[self.repository reloadRefs];
+	PBRepositorySettingsStore *masterFallbackStore = [[PBRepositorySettingsStore alloc] initWithRepository:self.repository];
+	XCTAssertEqualObjects(masterFallbackStore.detectedPrimaryBranch, @"master");
+	[self git:@[ @"branch", @"-D", @"master" ] directory:self.repositoryURL];
 	[self git:@[ @"tag", @"main" ] directory:self.repositoryURL];
 	[self.repository reloadRefs];
 	[self.repository readCurrentBranch];

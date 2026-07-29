@@ -26,12 +26,6 @@
       "count": 1
     },
     {
-      "path": "Classes/Views/PBCommitMessageView.m",
-      "category": "-Wdeprecated-declarations",
-      "message": "'NSFilenamesPboardType' is deprecated: first deprecated in macOS 10.14 - Create multiple pasteboard items with NSPasteboardTypeFileURL or kUTTypeFileURL instead",
-      "count": 2
-    },
-    {
       "path": "Classes/Views/PBQLOutlineView.m",
       "category": "-Wdeprecated-declarations",
       "message": "'NSFilesPromisePboardType' is deprecated: first deprecated in macOS 10.14",

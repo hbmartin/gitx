@@ -39,6 +39,26 @@ final class ApplicationCompositionTests: XCTestCase {
         XCTAssertEqual(PBGitDefaults.historySearchMode(), 2)
     }
 
+    func testLegacyGeneralDefaultsExcludeCommitGuidesAndForwardRemainingToggles() {
+        defaults.set(false, forKey: "PBEnableGist")
+        defaults.set(false, forKey: "PBEnableGravatar")
+        defaults.set(false, forKey: "PBConfirmPublicGists")
+        defaults.set(true, forKey: "PBGistPublic")
+
+        XCTAssertFalse(PBGitDefaults.isGistEnabled())
+        XCTAssertFalse(PBGitDefaults.isGravatarEnabled())
+        XCTAssertFalse(PBGitDefaults.confirmPublicGists())
+        XCTAssertTrue(PBGitDefaults.isGistPublic())
+
+        for removedKey in [
+            "PBCommitMessageViewHasVerticalLine",
+            "PBCommitMessageViewVerticalLineLength",
+            "PBCommitMessageViewVerticalBodyLineLength",
+        ] {
+            XCTAssertNil(defaults.object(forKey: removedKey))
+        }
+    }
+
     func testPreferenceWrappersForwardEveryAccessorToTheInjectedDefaults() {
         let preferences = PBApplicationComposition.shared().applicationPreferences
         preferences.registerDefaults(["GitXTests.registered": "fallback"])
