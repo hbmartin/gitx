@@ -700,6 +700,79 @@
 	[window typeKey:XCUIKeyboardKeyEscape modifierFlags:0];
 }
 
+- (void)testForgeNavigationMenusAndAmbiguousNumberChooserScreenshots
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"origin", @"https://github.com/hbmartin/gitx.git" ]
+					inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
+	[self.app activate];
+
+	XCUIElement *viewRemoteGroup =
+		[self.app.toolbars.groups containingType:XCUIElementTypeStaticText
+									  identifier:@"View Remote"]
+			.firstMatch;
+	XCTAssertTrue([viewRemoteGroup waitForExistenceWithTimeout:10],
+				  @"The repository toolbar should expose the View Remote item");
+	XCUIElement *viewRemote = viewRemoteGroup.menuButtons.firstMatch;
+	XCTAssertTrue([viewRemote waitForExistenceWithTimeout:10],
+				  @"The repository toolbar should expose the View Remote pull-down");
+	[viewRemote click];
+	XCUIElement *toolbarMenu = viewRemote.menus.firstMatch;
+	XCTAssertTrue([toolbarMenu waitForExistenceWithTimeout:5]);
+	XCUIElement *toolbarRepository = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.Repository"];
+	XCUIElement *toolbarNumber = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.PullRequestOrIssue"];
+	XCTAssertTrue([toolbarRepository waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([toolbarNumber waitForExistenceWithTimeout:5]);
+	XCTAssertEqualObjects(toolbarRepository.label, @"View repository on GitHub");
+	XCTAssertEqualObjects(toolbarNumber.label, @"Open pull request or issue on GitHub");
+	[self saveScreenshotNamed:@"m0-forge-navigation-toolbar-menu"];
+	[self.app.windows.firstMatch typeKey:XCUIKeyboardKeyEscape modifierFlags:0];
+	NSPredicate *menuDismissed = [NSPredicate predicateWithFormat:@"exists == NO"];
+	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:menuDismissed object:toolbarMenu] ]
+					  timeout:5];
+
+	XCUIElement *repositoryMenuBarItem = self.app.menuBars.menuBarItems[@"Repository"];
+	XCTAssertTrue([repositoryMenuBarItem waitForExistenceWithTimeout:5]);
+	[repositoryMenuBarItem click];
+	XCUIElement *repositoryMenu = repositoryMenuBarItem.menus.firstMatch;
+	XCTAssertTrue([repositoryMenu waitForExistenceWithTimeout:5]);
+	XCUIElement *repositoryItem = repositoryMenu.menuItems[@"GitX.Repository.ForgeLinks.Repository"];
+	XCUIElement *numberItem = repositoryMenu.menuItems[@"GitX.Repository.ForgeLinks.PullRequestOrIssue"];
+	XCTAssertTrue([repositoryItem waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([numberItem waitForExistenceWithTimeout:5]);
+	XCTAssertEqualObjects(repositoryItem.label, @"View repository on GitHub");
+	XCTAssertEqualObjects(numberItem.label, @"Open pull request or issue on GitHub");
+	[self saveScreenshotNamed:@"m0-forge-navigation-repository-menu"];
+	[numberItem click];
+
+	XCUIElement *referenceSheet = self.app.sheets.firstMatch;
+	XCUIElement *referencePrompt = referenceSheet.staticTexts[@"Open Pull Request or Issue"];
+	XCTAssertTrue([referencePrompt waitForExistenceWithTimeout:5]);
+	XCUIElement *referenceField = referenceSheet.textFields[@"GitX.ForgeLinks.NumberedReference"];
+	XCTAssertTrue([referenceField waitForExistenceWithTimeout:5]);
+	[referenceField click];
+	[referenceField typeText:@"#42"];
+	XCUIElement *continueButton = referenceSheet.buttons[@"Continue"];
+	XCTAssertTrue([continueButton waitForExistenceWithTimeout:5]);
+	[continueButton click];
+
+	XCUIElement *choiceSheet = self.app.sheets.firstMatch;
+	XCUIElement *choicePrompt = choiceSheet.staticTexts[@"Choose a Destination"];
+	XCTAssertTrue([choicePrompt waitForExistenceWithTimeout:5]);
+	XCUIElement *destinationChoice = choiceSheet.popUpButtons[@"GitX.ForgeLinks.DestinationChoice"];
+	XCTAssertTrue([destinationChoice waitForExistenceWithTimeout:5]);
+	[destinationChoice click];
+	XCUIElement *pullRequestChoice = destinationChoice.menuItems[@"hbmartin/gitx — Pull Request #42"];
+	XCUIElement *issueChoice = destinationChoice.menuItems[@"hbmartin/gitx — Issue #42"];
+	XCTAssertTrue([pullRequestChoice waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([issueChoice waitForExistenceWithTimeout:5]);
+	[self saveScreenshotNamed:@"m0-forge-navigation-number-destination-chooser"];
+}
+
 - (void)testManualRefreshUpdatesCheckedOutBranchAndSidebar
 {
 	[self.app terminate];
