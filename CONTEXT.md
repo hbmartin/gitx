@@ -82,6 +82,10 @@ _Avoid_: Git account, credential
 The single current authorization for a Forge Account, sourced from a GitHub App, GitHub CLI, or personal access token.
 _Avoid_: Account, identity
 
+**Unverified Write**:
+A repository capability whose write authority cannot be proven from Credential metadata but may be tested by an explicitly confirmed user operation. It is neither verified permission nor automatic authorization.
+_Avoid_: Allowed, missing permission
+
 **Forge Repository Binding**:
 The per-user association among a local repository's Git remote, its Forge Repository, and the preferred Forge Account.
 _Avoid_: Remote, account mapping
@@ -119,9 +123,17 @@ A structured replacement proposed in a Review Thread. GitX may apply it as an un
 _Avoid_: Patch, automatic commit
 
 **Attention Inbox**:
-GitX's account-wide, locally tracked collection of actionable Pull Request, review, check, mention, and assignment events derived from Forge data. Its seen state belongs to GitX and does not claim to reproduce or modify the Forge's notification inbox.
+GitX's account-wide, locally tracked collection of current actionable Pull Request, review, check, mention, and assignment states derived from Forge data. Its seen state belongs to GitX and does not claim to reproduce or modify the Forge's notification inbox.
 _Avoid_: GitHub Notifications, notification mirror
+
+**Attention Item**:
+One current actionable state in the Attention Inbox, identified independently of the comments or checks from which GitX derived it.
+_Avoid_: Notification event, activity-log entry
 
 **Watched Forge Repository**:
 A Forge Repository that a user has explicitly included in an account's Attention Inbox. Opening or binding a repository in GitX adds it to the watched set; the user may remove it in Preferences.
 _Avoid_: GitHub watched repository, subscribed repository
+
+**Forge Draft**:
+Unpublished Forge-authored text that GitX autosaves for one exact Forge Account and destination until it is published, discarded, expired, or removed with the account.
+_Avoid_: Draft Pull Request, exported draft
