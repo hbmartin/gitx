@@ -1609,8 +1609,17 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let filenamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
         dragPasteboard.declareTypes([filenamesType], owner: nil)
         let workingDirectory = repository.workingDirectory() ?? fixture.path
+        let similarlyPrefixedDirectory = workingDirectory + "-backup"
+        let externalPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("external.txt")
+            .path
         dragPasteboard.setPropertyList(
-            [(workingDirectory as NSString).appendingPathComponent("staged.txt")],
+            [
+                (workingDirectory as NSString).appendingPathComponent("staged.txt"),
+                workingDirectory,
+                (similarlyPrefixedDirectory as NSString).appendingPathComponent("outside.txt"),
+                externalPath,
+            ],
             forType: filenamesType
         )
         pane.commitMessageView.string = ""
@@ -1618,9 +1627,23 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let rewritten = dragPasteboard.readObjects(forClasses: [NSString.self], options: nil) as? [String]
         XCTAssertEqual(
             rewritten,
-            ["staged.txt"],
-            "dropped files are rewritten to repository-relative paths"
+            [
+                "staged.txt",
+                workingDirectory,
+                (similarlyPrefixedDirectory as NSString).appendingPathComponent("outside.txt"),
+                externalPath,
+            ],
+            "only files contained by the repository are rewritten to relative paths"
         )
+
+        pane.commitMessageView.repository = nil
+        dragPasteboard.clearContents()
+        dragPasteboard.declareTypes([filenamesType], owner: nil)
+        dragPasteboard.setPropertyList([externalPath], forType: filenamesType)
+        _ = pane.commitMessageView.performDragOperation(DraggingInfoFake(pasteboard: dragPasteboard))
+
+        let remainingPaths = dragPasteboard.readObjects(forClasses: [NSString.self], options: nil) as? [String]
+        XCTAssertEqual(remainingPaths, [], "a detached text view leaves the file drop to AppKit")
     }
 
     func testStagingPaneHistoryAndWindowMenuRouting() throws {
