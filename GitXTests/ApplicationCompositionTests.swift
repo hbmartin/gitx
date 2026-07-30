@@ -1,3 +1,4 @@
+import ForgeKit
 import XCTest
 
 final class ApplicationCompositionTests: XCTestCase {
@@ -134,5 +135,38 @@ final class ApplicationCompositionTests: XCTestCase {
 
         defaults.set(99, forKey: "PBApplicationIconStyle")
         XCTAssertEqual(PBApplicationSettings.applicationIconStyle, .plusEyes)
+    }
+
+    func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {
+        XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .balanced)
+        XCTAssertTrue(PBApplicationSettings.attentionAlertCategories.isEmpty)
+        XCTAssertEqual(PBApplicationSettings.attentionViewState, .defaultValue)
+
+        PBApplicationSettings.attentionPollingPreset = .conservative
+        PBApplicationSettings.attentionAlertCategories = [.assignments, .mentionsAndReplies]
+        let state = ForgeAttentionViewState(
+            scope: .all,
+            visibility: .active,
+            sortOrder: .oldestFirst,
+            kinds: [.assignment, .mention],
+            columns: [.repository, .title]
+        )
+        PBApplicationSettings.attentionViewState = state
+
+        XCTAssertEqual(defaults.string(forKey: "PBForgeAttentionPollingPreset"), "conservative")
+        XCTAssertEqual(
+            defaults.stringArray(forKey: "PBForgeAttentionAlertCategories"),
+            ["assignments", "mentionsAndReplies"]
+        )
+        XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .conservative)
+        XCTAssertEqual(PBApplicationSettings.attentionAlertCategories, [.assignments, .mentionsAndReplies])
+        XCTAssertEqual(PBApplicationSettings.attentionViewState, state)
+
+        defaults.set("future-preset", forKey: "PBForgeAttentionPollingPreset")
+        defaults.set(["mentionsAndReplies", "future-category"], forKey: "PBForgeAttentionAlertCategories")
+        defaults.set(Data([0x00]), forKey: "PBForgeAttentionViewState")
+        XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .balanced)
+        XCTAssertEqual(PBApplicationSettings.attentionAlertCategories, [.mentionsAndReplies])
+        XCTAssertEqual(PBApplicationSettings.attentionViewState, .defaultValue)
     }
 }

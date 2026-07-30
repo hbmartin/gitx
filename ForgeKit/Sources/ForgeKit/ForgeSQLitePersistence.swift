@@ -518,6 +518,58 @@ public actor ForgeSQLiteStore {
         )
     }
 
+    /// Enumerates one durable kind inside an exact Account partition. Callers
+    /// still validate decoded payload identity before treating rows as domain
+    /// values; this method only establishes the SQLite partition boundary.
+    public func durableRecords(
+        kind: ForgeSQLiteDurableKind,
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity? = nil
+    ) throws -> [ForgeSQLiteDurableRecord] {
+        if let repository, repository.forge != accountID.forge {
+            throw ForgeSQLiteError.mismatchedAccountForge
+        }
+        let connection = try activeConnection()
+        let account = try Self.encodedKey(accountID)
+        let rows: [ForgeSQLiteRow]
+        if let repository {
+            rows = try connection.query(
+                """
+                SELECT repository_key, record_key, payload, last_activity_at, expires_at
+                FROM forge_durable_records
+                WHERE kind = ? AND account_key = ? AND repository_key = ?
+                ORDER BY repository_key, record_key
+                """,
+                bindings: [
+                    .integer(Int64(kind.rawValue)), .blob(account),
+                    .blob(Self.encodedKey(repository)),
+                ]
+            )
+        } else {
+            rows = try connection.query(
+                """
+                SELECT repository_key, record_key, payload, last_activity_at, expires_at
+                FROM forge_durable_records
+                WHERE kind = ? AND account_key = ?
+                ORDER BY repository_key, record_key
+                """,
+                bindings: [.integer(Int64(kind.rawValue)), .blob(account)]
+            )
+        }
+        let decoder = JSONDecoder()
+        return try rows.map { row in
+            try ForgeSQLiteDurableRecord(
+                kind: kind,
+                accountID: accountID,
+                repository: decoder.decode(ForgeRepositoryIdentity.self, from: row.blob(0)),
+                key: row.blob(1),
+                payload: row.blob(2),
+                lastActivityAt: row.date(3),
+                expiresAt: row.optionalDate(4)
+            )
+        }
+    }
+
     @discardableResult
     public func deleteDurableRecord(
         kind: ForgeSQLiteDurableKind,
@@ -566,6 +618,55 @@ public actor ForgeSQLiteStore {
         }
         Self.logger.info("Removed \(removed) expired durable Forge records")
         return removed
+    }
+
+    @discardableResult
+    public func removeExpiredDurableRecords(
+        kind: ForgeSQLiteDurableKind,
+        at date: Date
+    ) throws -> Int {
+        guard date.timeIntervalSince1970.isFinite else {
+            throw ForgeSQLiteError.invalidTimestamp
+        }
+        let connection = try activeConnection()
+        let removed = try connection.changeCount {
+            try connection.execute(
+                """
+                DELETE FROM forge_durable_records
+                WHERE kind = ? AND expires_at IS NOT NULL AND expires_at <= ?
+                """,
+                bindings: [
+                    .integer(Int64(kind.rawValue)), .double(date.timeIntervalSince1970),
+                ]
+            )
+        }
+        Self.logger.info("Removed \(removed) expired durable Forge records of kind \(kind.rawValue)")
+        return removed
+    }
+
+    @discardableResult
+    public func deleteDurableRecords(
+        kind: ForgeSQLiteDurableKind,
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity
+    ) throws -> Int {
+        guard accountID.forge == repository.forge else {
+            throw ForgeSQLiteError.mismatchedAccountForge
+        }
+        let connection = try activeConnection()
+        let account = try Self.encodedKey(accountID)
+        let repositoryKey = try Self.encodedKey(repository)
+        return try connection.changeCount {
+            try connection.execute(
+                """
+                DELETE FROM forge_durable_records
+                WHERE kind = ? AND account_key = ? AND repository_key = ?
+                """,
+                bindings: [
+                    .integer(Int64(kind.rawValue)), .blob(account), .blob(repositoryKey),
+                ]
+            )
+        }
     }
 
     public func removeAccount(_ accountID: ForgeAccountID) throws {

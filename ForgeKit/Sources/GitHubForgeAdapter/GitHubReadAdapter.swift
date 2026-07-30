@@ -246,6 +246,29 @@ public actor GitHubReadAdapter {
         }
     }
 
+    /// Fetches the provider-owned current Attention candidate set. Unlike the
+    /// repository search field, these qualifiers are not user text and must not
+    /// be quoted into a literal phrase.
+    public func currentAttentionCandidates(
+        repository: ForgeRepositoryIdentity,
+        pageSize: Int = 100,
+        after: ForgePageCursor? = nil,
+        activityCount: Int = 100,
+        reviewThreadCount: Int = 100
+    ) async throws -> GitHubReadResult<ForgeAttentionCandidatePage> {
+        let authentication = try await validate(repository)
+        let query = try GitHubAPI.GitHubAttentionCandidatesQuery(
+            query: "repo:\(repository.owner)/\(repository.name) is:open involves:@me",
+            first: pageSizeValue(pageSize),
+            after: nullable(after?.value),
+            activityLast: pageSizeValue(activityCount),
+            reviewThreadFirst: pageSizeValue(reviewThreadCount)
+        )
+        return try await execute(query, repository: repository, authentication: authentication) { data in
+            try mapper.attentionCandidates(data: data, repository: repository)
+        }
+    }
+
     public func reviewThreads(
         repository: ForgeRepositoryIdentity,
         pullRequestNumber: ForgeItemNumber,

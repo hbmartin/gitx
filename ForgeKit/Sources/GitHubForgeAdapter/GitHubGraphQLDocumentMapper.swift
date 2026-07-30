@@ -1137,6 +1137,9 @@ private extension GitHubGraphQLDocumentMapper {
         let activities = try pullRequestActivities(node)
         let threads = try attentionReviewThreads(node.reviewThreads, repository: repository)
         return try ForgeAttentionCandidate(
+            subjectID: ForgeAttentionSubjectID(
+                node.fragments.gitHubPullRequestSummary.id
+            ),
             item: .pullRequest(pullRequestSummary(
                 node.fragments.gitHubPullRequestSummary,
                 repository: repository
@@ -1166,6 +1169,9 @@ private extension GitHubGraphQLDocumentMapper {
         ) { try actor($0.fragments.gitHubActor) }
         let activities = try issueActivities(node)
         return try ForgeAttentionCandidate(
+            subjectID: ForgeAttentionSubjectID(
+                node.fragments.gitHubIssueSummary.id
+            ),
             item: .issue(issueSummary(node.fragments.gitHubIssueSummary, repository: repository)),
             bodyMarkdown: .available(node.body),
             assignees: assignees.section,

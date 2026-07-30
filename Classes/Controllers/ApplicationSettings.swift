@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 import GitXCore
 
 @objc(PBOpenDisposition)
@@ -97,6 +98,9 @@ final nonisolated class ApplicationSettings: NSObject {
         static let stagingListLayout = "PBStagingFileListLayout"
         static let stagingFileSort = "PBStagingFileSortOrder"
         static let loadAvatars = "PBLoadForgeAvatars"
+        static let attentionPollingPreset = "PBForgeAttentionPollingPreset"
+        static let attentionAlertCategories = "PBForgeAttentionAlertCategories"
+        static let attentionViewState = "PBForgeAttentionViewState"
     }
 
     private static var defaults: UserDefaults {
@@ -279,6 +283,39 @@ final nonisolated class ApplicationSettings: NSObject {
     static func loadAvatars(in defaults: UserDefaults) -> Bool {
         guard defaults.object(forKey: Key.loadAvatars) != nil else { return true }
         return defaults.bool(forKey: Key.loadAvatars)
+    }
+
+    static var attentionPollingPreset: ForgeAttentionPollingPreset {
+        get {
+            guard let rawValue = defaults.string(forKey: Key.attentionPollingPreset),
+                  let preset = ForgeAttentionPollingPreset(rawValue: rawValue)
+            else { return .defaultValue }
+            return preset
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.attentionPollingPreset) }
+    }
+
+    static var attentionAlertCategories: Set<ForgeAttentionAlertCategory> {
+        get {
+            let rawValues = defaults.stringArray(forKey: Key.attentionAlertCategories) ?? []
+            return Set(rawValues.compactMap(ForgeAttentionAlertCategory.init(rawValue:)))
+        }
+        set {
+            defaults.set(newValue.map(\.rawValue).sorted(), forKey: Key.attentionAlertCategories)
+        }
+    }
+
+    static var attentionViewState: ForgeAttentionViewState {
+        get {
+            guard let data = defaults.data(forKey: Key.attentionViewState),
+                  let state = try? JSONDecoder().decode(ForgeAttentionViewState.self, from: data)
+            else { return .defaultValue }
+            return state
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Key.attentionViewState)
+        }
     }
 
     private static func enumValue<Value: RawRepresentable>(

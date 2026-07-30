@@ -90,6 +90,10 @@ final class GitHubReadAdapterTests: XCTestCase {
             reviewThreadCount: 1
         )
         XCTAssertEqual(attention.value.candidates.items.count, 2)
+        XCTAssertEqual(
+            attention.value.candidates.items.map(\.subjectID.value),
+            ["pr", "issue"]
+        )
         let threads = try await adapter.reviewThreads(
             repository: repository,
             pullRequestNumber: number,
@@ -126,6 +130,150 @@ final class GitHubReadAdapterTests: XCTestCase {
             try Self.requestPayload(requests[7])["variables"] as? [String: Any]
         )
         XCTAssertEqual(attentionVariables["query"] as? String, "repo:hbmartin/gitx \"is:open\"")
+    }
+
+    func testCurrentAttentionFetchUsesProviderControlledQueryAndBuildsRepositorySnapshot() async throws {
+        let capture = GitHubRequestCapture()
+        GitHubStubURLProtocol.setHandler { request in
+            _ = capture.record(request)
+            return try StubResponse(
+                status: 200,
+                headers: Self.successHeaders,
+                body: Self.response(operation: "GitHubAttentionCandidates")
+            )
+        }
+        let repository = try makeRepository()
+        let authentication = try makeAuthentication()
+        let watch = try ForgeWatchedRepository(
+            key: ForgeWatchedRepositoryKey(
+                accountID: authentication.account.id,
+                repository: repository
+            ),
+            addedAt: Date(timeIntervalSince1970: 1),
+            source: .preferences
+        )
+        let fetchedAt = Date(timeIntervalSince1970: 2)
+        let snapshot = try await GitHubAttentionSnapshotFetcher(
+            adapter: makeAdapter(),
+            now: { fetchedAt }
+        ).snapshot(for: watch)
+
+        XCTAssertEqual(snapshot.watchedRepositoryKey, watch.key)
+        XCTAssertEqual(snapshot.viewer.login, "octocat")
+        XCTAssertEqual(snapshot.candidates.map(\.subjectID.value), ["pr", "issue"])
+        XCTAssertEqual(snapshot.fetchedAt, fetchedAt)
+        XCTAssertEqual(snapshot.completeness, .complete)
+        let request = try XCTUnwrap(capture.requests.first)
+        let variables = try XCTUnwrap(
+            try Self.requestPayload(request)["variables"] as? [String: Any]
+        )
+        XCTAssertEqual(
+            variables["query"] as? String,
+            "repo:hbmartin/gitx is:open involves:@me"
+        )
+        XCTAssertEqual(variables["first"] as? Int, 100)
+        XCTAssertEqual(variables["activityLast"] as? Int, 100)
+        XCTAssertEqual(variables["reviewThreadFirst"] as? Int, 100)
+    }
+
+    func testAttentionSnapshotFetcherPaginatesPartialDataAndRejectsAccountOrViewerChanges() async throws {
+        func response(
+            hasNextPage: Bool,
+            viewer: [String: Any] = Self.actor,
+            includesProblem: Bool = false
+        ) throws -> Data {
+            var root = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: Self.response(operation: "GitHubAttentionCandidates")
+                ) as? [String: Any]
+            )
+            var data = try XCTUnwrap(root["data"] as? [String: Any])
+            var search = try XCTUnwrap(data["search"] as? [String: Any])
+            search["pageInfo"] = Self.pageInfo(
+                hasNextPage: hasNextPage,
+                endCursor: hasNextPage ? "next-attention" : nil
+            )
+            data["viewer"] = viewer
+            data["search"] = search
+            root["data"] = data
+            if includesProblem {
+                root["errors"] = [[
+                    "message": "redacted by adapter",
+                    "path": ["search", "nodes", 0],
+                    "extensions": ["type": "PARTIAL"],
+                ]]
+            }
+            return try JSONSerialization.data(withJSONObject: root)
+        }
+
+        let repository = try makeRepository()
+        let authentication = try makeAuthentication()
+        let watch = try ForgeWatchedRepository(
+            key: ForgeWatchedRepositoryKey(
+                accountID: authentication.account.id,
+                repository: repository
+            ),
+            addedAt: Date(timeIntervalSince1970: 1),
+            source: .preferences
+        )
+        let capture = GitHubRequestCapture()
+        let firstPage = try response(hasNextPage: true)
+        let secondPage = try response(hasNextPage: false, includesProblem: true)
+        GitHubStubURLProtocol.setHandler { request in
+            let index = capture.record(request)
+            return StubResponse(
+                status: 200,
+                headers: Self.successHeaders,
+                body: index == 0 ? firstPage : secondPage
+            )
+        }
+        let partial = try await GitHubAttentionSnapshotFetcher(
+            adapter: makeAdapter()
+        ).snapshot(for: watch)
+        XCTAssertEqual(partial.candidates.count, 4)
+        XCTAssertEqual(partial.completeness, .partial(unavailableSections: []))
+        XCTAssertEqual(capture.requests.count, 2)
+        let secondVariables = try XCTUnwrap(
+            try Self.requestPayload(capture.requests[1])["variables"] as? [String: Any]
+        )
+        XCTAssertEqual(secondVariables["after"] as? String, "next-attention")
+
+        let otherAccountID = try ForgeAccountID(forge: repository.forge, value: "other-account")
+        let otherWatch = try ForgeWatchedRepository(
+            key: ForgeWatchedRepositoryKey(accountID: otherAccountID, repository: repository),
+            addedAt: Date(timeIntervalSince1970: 1),
+            source: .preferences
+        )
+        let singlePage = try response(hasNextPage: false)
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(
+                status: 200,
+                headers: Self.successHeaders,
+                body: singlePage
+            )
+        }
+        await XCTAssertThrowsGitHubError(.authenticationRequired) {
+            try await GitHubAttentionSnapshotFetcher(adapter: self.makeAdapter())
+                .snapshot(for: otherWatch)
+        }
+
+        let viewerChangeCapture = GitHubRequestCapture()
+        var changedViewer = Self.actor
+        changedViewer["id"] = "different-viewer"
+        changedViewer["login"] = "different"
+        let changedViewerPage = try response(hasNextPage: false, viewer: changedViewer)
+        GitHubStubURLProtocol.setHandler { request in
+            let index = viewerChangeCapture.record(request)
+            return StubResponse(
+                status: 200,
+                headers: Self.successHeaders,
+                body: index == 0 ? firstPage : changedViewerPage
+            )
+        }
+        await XCTAssertThrowsGitHubError(.malformedResponse) {
+            try await GitHubAttentionSnapshotFetcher(adapter: self.makeAdapter())
+                .snapshot(for: watch)
+        }
     }
 
     func testHTTPFailuresClassifyRateLimitSAMLPermissionAuthenticationAndTransport() async throws {

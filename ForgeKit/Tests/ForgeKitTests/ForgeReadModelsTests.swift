@@ -125,7 +125,8 @@ final class ForgeReadModelsTests: XCTestCase {
             [.conversationComment, .review, .reviewReply]
         )
         XCTAssertEqual(try roundTrip(activity), activity)
-        let candidate = ForgeAttentionCandidate(
+        let candidate = try ForgeAttentionCandidate(
+            subjectID: ForgeAttentionSubjectID("pull-request-node"),
             item: pullRequestItem,
             bodyMarkdown: .available("body"),
             assignees: .available([actor]),

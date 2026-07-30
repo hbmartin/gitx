@@ -28,6 +28,26 @@ final class GitXSwiftFeatureTests: XCTestCase {
         }
     }
 
+    func testAttentionUnseenPresenterKeepsToolbarSidebarAndAccessibilityInSync() {
+        let empty = RepositoryAttentionUnseenPresenter.present(count: -1)
+        XCTAssertEqual(empty.count, 0)
+        XCTAssertNil(empty.badgeText)
+        XCTAssertEqual(empty.toolbarLabel, "Attention")
+        XCTAssertTrue(empty.toolbarAccessibilityLabel.contains("No unseen"))
+
+        let visible = RepositoryAttentionUnseenPresenter.present(count: 7)
+        XCTAssertEqual(visible.badgeText, "7")
+        XCTAssertEqual(visible.sidebarBadgeText, "7")
+        XCTAssertEqual(visible.toolbarLabel, "Attention (7)")
+        XCTAssertTrue(visible.toolbarToolTip.contains("7 unseen Attention items"))
+        XCTAssertTrue(visible.sidebarAccessibilityLabel.contains("7 unseen Attention items"))
+
+        let capped = RepositoryAttentionUnseenPresenter.present(count: 125)
+        XCTAssertEqual(capped.badgeText, "99+")
+        XCTAssertEqual(capped.toolbarLabel, "Attention (99+)")
+        XCTAssertTrue(capped.toolbarAccessibilityLabel.contains("125 unseen Attention items"))
+    }
+
     func testBasicHistorySearchPolicyCompatibilityPlan() {
         let plan = PBHistorySearchPolicy.plan(query: " subject ", mode: PBHistorySearchMode.basic.rawValue)
 

@@ -179,6 +179,7 @@ public struct ForgeAttentionActivity: Codable, Hashable, Sendable {
 }
 
 public struct ForgeAttentionCandidate: Codable, Hashable, Sendable {
+    public let subjectID: ForgeAttentionSubjectID
     public let item: ForgeRepositoryItem
     public let bodyMarkdown: ForgeReadSection<String>
     public let assignees: ForgeReadSection<[ForgeActor]>
@@ -188,6 +189,7 @@ public struct ForgeAttentionCandidate: Codable, Hashable, Sendable {
     public let reviewThreads: ForgeReadSection<[ForgeReviewThread]>
 
     public init(
+        subjectID: ForgeAttentionSubjectID,
         item: ForgeRepositoryItem,
         bodyMarkdown: ForgeReadSection<String>,
         assignees: ForgeReadSection<[ForgeActor]>,
@@ -196,6 +198,7 @@ public struct ForgeAttentionCandidate: Codable, Hashable, Sendable {
         activities: ForgeReadSection<[ForgeAttentionActivity]>,
         reviewThreads: ForgeReadSection<[ForgeReviewThread]>
     ) {
+        self.subjectID = subjectID
         self.item = item
         self.bodyMarkdown = bodyMarkdown
         self.assignees = assignees

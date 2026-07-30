@@ -60,7 +60,7 @@ public struct ForgeWatchedRepositoryKey: Codable, Hashable, Sendable {
         )
     }
 
-    fileprivate var schedulingKey: String {
+    var schedulingKey: String {
         "\(accountID.forge.kind.rawValue)|\(accountID.forge.origin.url.absoluteString)|\(accountID.value)|\(repository.canonicalKey)"
     }
 }
@@ -76,17 +76,46 @@ public struct ForgeWatchedRepository: Codable, Hashable, Sendable {
     public let addedAt: Date
     public let source: ForgeWatchSource
     public let includesBotReplies: Bool
+    public let baselineEstablishedAt: Date?
+    public let lastSuccessfulPollAt: Date?
 
     public init(
         key: ForgeWatchedRepositoryKey,
         addedAt: Date,
         source: ForgeWatchSource,
-        includesBotReplies: Bool = false
+        includesBotReplies: Bool = false,
+        baselineEstablishedAt: Date? = nil,
+        lastSuccessfulPollAt: Date? = nil
     ) {
         self.key = key
         self.addedAt = addedAt
         self.source = source
         self.includesBotReplies = includesBotReplies
+        self.baselineEstablishedAt = baselineEstablishedAt
+        self.lastSuccessfulPollAt = lastSuccessfulPollAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            key: container.decode(ForgeWatchedRepositoryKey.self, forKey: .key),
+            addedAt: container.decode(Date.self, forKey: .addedAt),
+            source: container.decode(ForgeWatchSource.self, forKey: .source),
+            includesBotReplies: container.decodeIfPresent(Bool.self, forKey: .includesBotReplies) ?? false,
+            baselineEstablishedAt: container.decodeIfPresent(Date.self, forKey: .baselineEstablishedAt),
+            lastSuccessfulPollAt: container.decodeIfPresent(Date.self, forKey: .lastSuccessfulPollAt)
+        )
+    }
+
+    public func recordingSuccessfulPoll(at date: Date, establishesBaseline: Bool) -> ForgeWatchedRepository {
+        ForgeWatchedRepository(
+            key: key,
+            addedAt: addedAt,
+            source: source,
+            includesBotReplies: includesBotReplies,
+            baselineEstablishedAt: baselineEstablishedAt ?? (establishesBaseline ? date : nil),
+            lastSuccessfulPollAt: date
+        )
     }
 }
 
@@ -336,6 +365,22 @@ public struct ForgeAttentionItem: Codable, Hashable, Sendable {
     public func reactivating(at date: Date) throws -> ForgeAttentionItem {
         try validateTransition(at: date)
         guard state != .active else { return replacing(lastUpdatedAt: date) }
+        return replacing(
+            state: .active,
+            seenState: .unseen,
+            lastTransitionAt: date,
+            lastUpdatedAt: date
+        )
+    }
+
+    /// Records a fresh qualifying cause while the item remains current.
+    ///
+    /// Opening or explicitly marking an item seen acknowledges only the causes
+    /// observed at that point. A later mention, reply, assignment, review
+    /// request, or failing-check transition must therefore make the item unseen
+    /// again even though its stable identity is unchanged.
+    public func noticingNewAction(at date: Date) throws -> ForgeAttentionItem {
+        try validateTransition(at: date)
         return replacing(
             state: .active,
             seenState: .unseen,

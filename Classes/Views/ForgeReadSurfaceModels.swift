@@ -325,6 +325,97 @@ struct ForgeReadListPresentation: Equatable, Sendable {
     let totalDescription: String?
 }
 
+/// Attention metadata wrapped around the same native repository-item row used
+/// by Pull Requests and Issues. This keeps list rendering consistent while the
+/// stable Attention identity remains available for seen/unseen actions.
+struct ForgeAttentionReadSurfaceRow: Equatable, Sendable {
+    let itemID: ForgeAttentionItemID
+    let repositoryName: String
+    let kindName: String
+    let isUnseen: Bool
+    let readRow: ForgeReadSurfaceRow
+    let accessibilityLabel: String
+
+    init(entry: ForgeAttentionInboxEntry) {
+        let item = entry.record.item
+        itemID = item.id
+        repositoryName = "\(item.id.repository.owner)/\(item.id.repository.name)"
+        kindName = Self.kindName(item.id.kind)
+        isUnseen = item.seenState == .unseen
+        readRow = ForgeReadSurfaceRow(item: entry.subject)
+        let seenDescription = isUnseen ? "Unseen" : "Seen"
+        accessibilityLabel = "\(seenDescription) \(kindName), \(repositoryName), \(readRow.accessibilityLabel)"
+    }
+
+    private static func kindName(_ kind: ForgeAttentionKind) -> String {
+        switch kind {
+        case .reviewRequest: "Review request"
+        case .mention: "Mention"
+        case .reply: "Reply"
+        case .assignment: "Assignment"
+        case .failedCheck: "Failed check"
+        }
+    }
+}
+
+struct ForgeAttentionReadPresentation: Equatable, Sendable {
+    let rows: [ForgeAttentionReadSurfaceRow]
+    let visibleColumns: Set<ForgeAttentionColumn>
+    let statusMessage: String?
+    let unseenCount: Int
+}
+
+/// Route carried from an account-wide Attention row into the existing native
+/// inspector. The repository travels with the item so All never accidentally
+/// reuses the current window's repository-bound service.
+struct ForgeAttentionInspectorRoute: Equatable, Sendable {
+    let itemID: ForgeAttentionItemID
+    let repository: ForgeRepositoryIdentity
+    let item: ForgeRepositoryItem
+    let destination: ForgeDestination
+}
+
+enum ForgeAttentionReadSurfacePresenter {
+    static func present(
+        entries: [ForgeAttentionInboxEntry],
+        query: ForgeAttentionInboxQuery
+    ) -> ForgeAttentionReadPresentation {
+        let filtered = query.applying(to: entries)
+        let rows = filtered.map(ForgeAttentionReadSurfaceRow.init)
+        let statusMessage: String?
+        if rows.isEmpty {
+            statusMessage = query.state.visibility == .unseenOnly
+                ? "No unseen items need your attention."
+                : "No current items need your attention."
+        } else {
+            statusMessage = nil
+        }
+        return ForgeAttentionReadPresentation(
+            rows: rows,
+            visibleColumns: query.state.columns,
+            statusMessage: statusMessage,
+            unseenCount: rows.reduce(into: 0) { count, row in
+                if row.isUnseen {
+                    count += 1
+                }
+            }
+        )
+    }
+
+    static func inspectorRoute(
+        for itemID: ForgeAttentionItemID,
+        in entries: [ForgeAttentionInboxEntry]
+    ) -> ForgeAttentionInspectorRoute? {
+        guard let entry = entries.first(where: { $0.record.item.id == itemID }) else { return nil }
+        return ForgeAttentionInspectorRoute(
+            itemID: itemID,
+            repository: entry.subject.repository,
+            item: entry.subject,
+            destination: entry.record.item.destination
+        )
+    }
+}
+
 struct ForgeReadSurfaceAccumulator: Sendable {
     private(set) var kind: ForgeReadSurfaceKind
     private(set) var query: ForgeReadSurfaceQuery

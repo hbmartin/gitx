@@ -4,6 +4,43 @@ import AppKit
 // swiftlint:disable:next unused_import
 import OSLog
 
+struct RepositoryAttentionUnseenPresentation: Equatable, Sendable {
+    let count: Int
+    let badgeText: String?
+    let toolbarLabel: String
+    let toolbarToolTip: String
+    let toolbarAccessibilityLabel: String
+    let sidebarBadgeText: String?
+    let sidebarAccessibilityLabel: String
+}
+
+/// One decision seam feeds both the repository toolbar and sidebar badges so
+/// their unseen counts and accessibility descriptions cannot drift apart.
+enum RepositoryAttentionUnseenPresenter {
+    static func present(count: Int) -> RepositoryAttentionUnseenPresentation {
+        let normalizedCount = max(0, count)
+        let badge = switch normalizedCount {
+        case 0: nil
+        case 1 ... 99: String(normalizedCount)
+        default: "99+"
+        }
+        let countDescription = switch normalizedCount {
+        case 0: "No unseen Attention items"
+        case 1: "1 unseen Attention item"
+        default: "\(normalizedCount) unseen Attention items"
+        }
+        return RepositoryAttentionUnseenPresentation(
+            count: normalizedCount,
+            badgeText: badge,
+            toolbarLabel: normalizedCount == 0 ? "Attention" : "Attention (\(badge ?? ""))",
+            toolbarToolTip: "Show Attention Inbox — \(countDescription)",
+            toolbarAccessibilityLabel: "Attention Inbox, \(countDescription)",
+            sidebarBadgeText: badge,
+            sidebarAccessibilityLabel: "Attention, \(countDescription)"
+        )
+    }
+}
+
 enum RepositoryForgeLinkRevision: Equatable {
     case branch(String)
     case commit(String)

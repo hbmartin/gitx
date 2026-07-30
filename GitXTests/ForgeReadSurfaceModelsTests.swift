@@ -316,6 +316,54 @@ final class ForgeReadSurfaceModelsTests: XCTestCase {
             XCTAssertEqual(error as? ForgeReadDetailsMergeError, .unavailableContinuation)
         }
     }
+
+    func testAttentionPresentationReusesReadRowsAndRoutesAccountWideInspectorByRepository() throws {
+        let repository = try Fixture.repository()
+        let accountID = try ForgeAccountID(forge: repository.forge, value: "account")
+        let summary = try Fixture.pullRequest(number: 41, title: "Review native Attention")
+        let itemID = try ForgeAttentionItemID(
+            accountID: accountID,
+            repository: repository,
+            kind: .reviewRequest,
+            subjectID: ForgeAttentionSubjectID("subject-41")
+        )
+        let item = try ForgeAttentionItem(
+            id: itemID,
+            destination: .pullRequest(repository, summary.number),
+            becameActionableAt: Fixture.date(41)
+        )
+        let entry = try ForgeAttentionInboxEntry(
+            record: ForgeAttentionRecord(
+                item: item,
+                sourceIdentifier: ForgeAttentionSubjectID("review-request-subject-41"),
+                sourceOccurredAt: Fixture.date(40)
+            ),
+            subject: .pullRequest(summary)
+        )
+        let query = ForgeAttentionInboxQuery(
+            accountID: accountID,
+            currentRepository: repository
+        )
+
+        let presentation = ForgeAttentionReadSurfacePresenter.present(
+            entries: [entry],
+            query: query
+        )
+        XCTAssertEqual(presentation.rows.map(\.readRow.title), ["Review native Attention"])
+        XCTAssertEqual(presentation.rows.map(\.kindName), ["Review request"])
+        XCTAssertEqual(presentation.rows.map(\.repositoryName), ["hbmartin/gitx"])
+        XCTAssertEqual(presentation.unseenCount, 1)
+        XCTAssertTrue(presentation.visibleColumns.contains(.repository))
+        XCTAssertTrue(presentation.rows[0].accessibilityLabel.contains("Unseen Review request"))
+
+        let route = try XCTUnwrap(ForgeAttentionReadSurfacePresenter.inspectorRoute(
+            for: itemID,
+            in: [entry]
+        ))
+        XCTAssertEqual(route.repository, repository)
+        XCTAssertEqual(route.item.destination, item.destination)
+        XCTAssertEqual(route.destination, item.destination)
+    }
 }
 
 private enum Fixture {
