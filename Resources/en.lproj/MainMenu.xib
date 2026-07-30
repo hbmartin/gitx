@@ -593,6 +593,12 @@ DQ
                                     <action selector="runToolbarCustomizationPalette:" target="-1" id="343"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Show Status Bar" identifier="GitX.View.ShowRepositoryStatusBar" id="codex-show-repository-status-bar">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="toggleRepositoryStatusBar:" target="-1" id="codex-toggle-repository-status-bar-action"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="847">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>

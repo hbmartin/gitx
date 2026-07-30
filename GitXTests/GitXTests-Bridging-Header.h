@@ -131,6 +131,7 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @end
 
 @interface PBApplicationSettings : NSObject
+@property (class) BOOL repositoryStatusBarVisible;
 @property (class) PBOpenDisposition openDisposition;
 @property (class) PBWindowRestorePolicy restorePolicy;
 @property (class) BOOL changedFilesOnly;
@@ -903,6 +904,9 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 - (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
 - (void)install;
 - (void)updateWithStatus:(NSString *)status busy:(BOOL)busy baseWindowTitle:(NSString *)baseWindowTitle;
+- (void)updateWithForgePersistentFailureText:(nullable NSString *)persistentFailureText
+	statusBarVisible:(BOOL)statusBarVisible
+	NS_SWIFT_NAME(updateForgeDiagnostic(persistentFailureText:statusBarVisible:));
 - (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar
 			  itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier
 		  willBeInsertedIntoToolbar:(BOOL)flag;
@@ -1062,6 +1066,7 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 @property (nonatomic) BOOL hideContainedBranches;
 @property (nonatomic) BOOL pushAfterCommit;
+@property (nonatomic) BOOL historyRepositoryFactsInspectorVisible;
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *sidebarVisibility;
 - (BOOL)isSidebarGroupVisible:(NSString *)group;
 @end

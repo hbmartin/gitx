@@ -197,6 +197,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private struct StatusViews {
         let label: NSTextField
         let spinner: NSProgressIndicator
+        let forgeWarning: NSButton
     }
 
     private weak var windowController: PBGitWindowController?
@@ -207,6 +208,8 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private var unseenAttentionCount = 0
     private var currentStatus = ""
     private var currentBusy = false
+    private var forgePersistentFailureText: String?
+    private var isRepositoryStatusBarVisible = true
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryToolbar")
 
     @objc(initWithWindowController:)
@@ -240,6 +243,13 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         }
     }
 
+    @objc(updateWithForgePersistentFailureText:statusBarVisible:)
+    func updateForgeDiagnostic(persistentFailureText: String?, statusBarVisible: Bool) {
+        forgePersistentFailureText = persistentFailureText
+        isRepositoryStatusBarVisible = statusBarVisible
+        applyCurrentStatus()
+    }
+
     private func installToolbar() {
         guard let window = windowController?.window else { return }
         let start = ProcessInfo.processInfo.systemUptime
@@ -268,6 +278,13 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private func applyCurrentStatus() {
         guard let views = statusViews else { return }
         views.label.stringValue = currentStatus.isEmpty ? "Ready" : currentStatus
+        let showsForgeWarning = !isRepositoryStatusBarVisible && forgePersistentFailureText != nil
+        views.forgeWarning.isHidden = !showsForgeWarning
+        views.forgeWarning.isEnabled = showsForgeWarning
+        views.forgeWarning.toolTip = forgePersistentFailureText.map { "\($0). Show Details" }
+        views.forgeWarning.setAccessibilityLabel(
+            forgePersistentFailureText.map { "\($0). Show details" } ?? "Forge status details"
+        )
         if currentBusy {
             views.spinner.startAnimation(nil)
             views.spinner.isHidden = false
@@ -520,7 +537,22 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         label.widthAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
         label.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true
 
-        let view = NSStackView(views: [refresh, spinner, label])
+        let forgeWarning = NSButton()
+        forgeWarning.image = NSImage(
+            systemSymbolName: "exclamationmark.triangle.fill",
+            accessibilityDescription: "Forge Unavailable"
+        )
+        forgeWarning.contentTintColor = .systemOrange
+        forgeWarning.bezelStyle = .inline
+        forgeWarning.isBordered = false
+        forgeWarning.imagePosition = .imageOnly
+        forgeWarning.target = windowController
+        forgeWarning.action = NSSelectorFromString("showForgeStatusDetails:")
+        forgeWarning.setAccessibilityIdentifier("GitX.Toolbar.ForgeWarning")
+        forgeWarning.isHidden = true
+        forgeWarning.widthAnchor.constraint(equalToConstant: 18).isActive = true
+
+        let view = NSStackView(views: [refresh, spinner, label, forgeWarning])
         view.orientation = .horizontal
         view.alignment = .centerY
         view.spacing = 5
@@ -529,12 +561,19 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         view.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         item.view = view
         if isActualInsertion {
-            statusViews = StatusViews(label: label, spinner: spinner)
+            statusViews = StatusViews(label: label, spinner: spinner, forgeWarning: forgeWarning)
         }
         logger.debug(
             "Created repository status item, actual insertion: \(isActualInsertion, privacy: .public)"
         )
         label.stringValue = currentStatus.isEmpty ? "Ready" : currentStatus
+        let showsForgeWarning = !isRepositoryStatusBarVisible && forgePersistentFailureText != nil
+        forgeWarning.isHidden = !showsForgeWarning
+        forgeWarning.isEnabled = showsForgeWarning
+        forgeWarning.toolTip = forgePersistentFailureText.map { "\($0). Show Details" }
+        forgeWarning.setAccessibilityLabel(
+            forgePersistentFailureText.map { "\($0). Show details" } ?? "Forge status details"
+        )
         if currentBusy {
             spinner.startAnimation(nil)
             spinner.isHidden = false

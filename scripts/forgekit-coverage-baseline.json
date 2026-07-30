@@ -24,6 +24,7 @@
     "ForgeKit/Sources/ForgeKit/ForgeRemoteParser.swift": 0.982,
     "ForgeKit/Sources/ForgeKit/ForgeRouting.swift": 0.9849,
     "ForgeKit/Sources/ForgeKit/ForgeSQLitePersistence.swift": 0.9958,
+    "ForgeKit/Sources/ForgeKit/ForgeStatusPresentation.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeWebURLPolicy.swift": 0.9777,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAnonymousRESTAdapter.swift": 0.9965,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAttentionSnapshotFetcher.swift": 0.9803,

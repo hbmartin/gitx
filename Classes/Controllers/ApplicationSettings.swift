@@ -98,6 +98,7 @@ final nonisolated class ApplicationSettings: NSObject {
         static let stagingListLayout = "PBStagingFileListLayout"
         static let stagingFileSort = "PBStagingFileSortOrder"
         static let loadAvatars = "PBLoadForgeAvatars"
+        static let repositoryStatusBarVisible = "PBRepositoryStatusBarVisible"
         static let attentionPollingPreset = "PBForgeAttentionPollingPreset"
         static let attentionAlertCategories = "PBForgeAttentionAlertCategories"
         static let attentionViewState = "PBForgeAttentionViewState"
@@ -282,6 +283,14 @@ final nonisolated class ApplicationSettings: NSObject {
             defaults.set(newValue, forKey: Key.loadAvatars)
             ForgeAvatarLoadingPreferenceCoordinator.shared.submit(newValue)
         }
+    }
+
+    @objc static var repositoryStatusBarVisible: Bool {
+        get {
+            guard defaults.object(forKey: Key.repositoryStatusBarVisible) != nil else { return true }
+            return defaults.bool(forKey: Key.repositoryStatusBarVisible)
+        }
+        set { defaults.set(newValue, forKey: Key.repositoryStatusBarVisible) }
     }
 
     static func loadAvatars(in defaults: UserDefaults) -> Bool {

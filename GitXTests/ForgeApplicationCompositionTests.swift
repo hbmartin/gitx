@@ -2,6 +2,119 @@ import ForgeKit
 import XCTest
 
 final class ForgeApplicationCompositionTests: XCTestCase {
+    func testOverlayLoaderPreparesCredentialFreeGitHubBindingWithPublicAccessAndSharedBudget() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgePublicOverlayComposition-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let services = ForgeApplicationServiceLoader {
+            try await ForgeApplicationServiceFactory.make(
+                forgeDirectory: root,
+                bindingCleaner: bindingCleaner,
+                keychain: CompositionKeychain(),
+                cliRunner: CompositionRunner()
+            )
+        }
+        let repository = try ForgeRepositoryIdentity(
+            forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")),
+            owner: "hbmartin",
+            name: "gitx"
+        )
+        let binding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository
+        )
+        let loader = RepositoryForgeOverlayLoader(
+            binding: binding,
+            services: services,
+            now: { Date(timeIntervalSince1970: 2_000_000) }
+        )
+
+        guard case let .ready(preparedRepository, context) = await loader.prepare() else {
+            return XCTFail("Credential-free public GitHub.com bindings should prepare anonymous reads")
+        }
+        XCTAssertEqual(preparedRepository, repository)
+        XCTAssertEqual(context.access, .publicAccess)
+        XCTAssertEqual(context.authentication, .publicAccess)
+        XCTAssertNil(context.credential)
+        let firstServices = try await services.services()
+        let secondServices = try await services.services()
+        XCTAssertTrue(firstServices.githubAnonymousRESTBudget === secondServices.githubAnonymousRESTBudget)
+        let facts = try ForgeRepositoryFacts(
+            repository: repository,
+            defaultBranch: .available(ForgeRefName("main")),
+            description: .available("Public"),
+            topics: .available([]),
+            visibility: .available(.public),
+            isArchived: .available(false),
+            forkRelationship: .available(.standalone)
+        )
+        let fetchedAt = Date(timeIntervalSince1970: 2_000_000)
+        try await context.cache.putRepositoryFacts(RepositoryForgeRemoteSnapshot(
+            value: facts,
+            fetchedAt: fetchedAt,
+            completeness: .partial(unavailableSections: [.repositoryFacts]),
+            cooldownDeadline: nil
+        ))
+        let accountID = try ForgeAccountID(forge: repository.forge, value: "account-node")
+        let accountPartition = try ForgeRepositoryPartitionKey(
+            cachePartition: .account(accountID),
+            repository: repository
+        )
+        let database = try XCTUnwrap(firstServices.database)
+        let accountCache = SQLiteRepositoryForgeOverlayCache(database: database, partition: accountPartition)
+        let publicValue = try await context.cache.cachedRepositoryFacts(accessedAt: fetchedAt)
+        let accountValue = try await accountCache.cachedRepositoryFacts(accessedAt: fetchedAt)
+        XCTAssertEqual(publicValue?.value, facts)
+        XCTAssertNil(accountValue, "public anonymous snapshots must never seed an account partition")
+    }
+
+    func testDefaultRefreshCoordinatorDiscoversAuthenticatedBoundRepository() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeBoundRefreshComposition-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let keychain = CompositionKeychain()
+        let accountStore = ForgeAccountStore(keychain: keychain)
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "bound-account")
+        let account = try await accountStore.addPersonalAccessToken(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("bound-pat"),
+            kind: .fineGrained,
+            token: Data("bound-token".utf8),
+            expiresAt: nil
+        )
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let binding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: accountID
+        )
+        try defaults.set([
+            "bound-repository": [
+                ForgeRepositoryBindingAccountCleaner.forgeBindingKey: JSONEncoder().encode(binding),
+            ],
+        ], forKey: ForgeRepositoryBindingAccountCleaner.repositorySettingsKey)
+
+        let services = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: root,
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+            keychain: keychain,
+            cliRunner: CompositionRunner()
+        )
+        let coordinator = try XCTUnwrap(services.refreshCoordinator)
+        let target = try ForgeRefreshTarget(
+            authentication: .credential(account.currentCredential.reference),
+            repository: repository
+        )
+        let interval = await coordinator.interval(for: target)
+        XCTAssertEqual(interval, ForgeRefreshPolicy.boundRepositoryInterval)
+        await coordinator.invalidate()
+    }
+
     func testForgeServicesAreLazyCoalescedAndEntirelyOffMainThread() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ForgeApplicationCompositionTests-\(UUID().uuidString)", isDirectory: true)

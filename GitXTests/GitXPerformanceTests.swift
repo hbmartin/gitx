@@ -138,6 +138,93 @@ final class GitXPerformanceTests: XCTestCase {
         return task.standardOutputString() ?? ""
     }
 
+    func testRepositoryStatusBarOverlayApplicationStaysWithinMainThreadBudget() throws {
+        let records = [
+            "# branch.oid 0123456789abcdef",
+            "# branch.head main",
+            "# branch.ab +12 -3",
+        ] + (0 ..< 500).map { index in
+            "1 MM N... 100644 100644 100644 a b Sources/File-\(index).swift"
+        }
+        let data = Data((records.joined(separator: "\0") + "\0").utf8)
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let forgeInput = try ForgeRepositoryStatusInput(
+            repository: ForgeRepositoryIdentity(
+                forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")),
+                owner: "hbmartin",
+                name: "gitx"
+            ),
+            access: .account(login: "octocat"),
+            freshness: .current(fetchedAt: now.addingTimeInterval(-300)),
+            diagnostic: .none
+        )
+        let statusBar = RepositoryStatusBarView(
+            frame: NSRect(x: 0, y: 0, width: 890, height: 29)
+        )
+        let samples = (0 ..< 200).map { _ in
+            elapsed {
+                let snapshot = RepositoryPorcelainStatusParser.parse(data, operation: .rebase)!
+                let local = RepositoryLocalStatusPresenter.present(snapshot, activityText: nil, isBusy: false)
+                let forge = ForgeRepositoryStatusPresenter.present(forgeInput, now: now)
+                statusBar.apply(local: local)
+                statusBar.apply(forge: forge)
+                statusBar.layoutSubtreeIfNeeded()
+            }
+        }
+        attachMeasurements("repository-status-overlay-application", samples: samples)
+        XCTAssertLessThan(percentile95(samples), 0.016)
+    }
+
+    func testHistoryCachedBadgeRenderingAndMainThreadApplicationMeetBudgets() throws {
+        let repository = try ForgeRepositoryIdentity(
+            forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")),
+            owner: "hbmartin",
+            name: "gitx"
+        )
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let states = try (0 ..< 200).map { index in
+            let identifier = String(repeating: "0", count: 36) + String(format: "%04x", index)
+            let overlay = try ForgeHistoryOverlay(
+                repository: repository,
+                commit: ForgeCommitID(identifier),
+                checkRollup: .available(index.isMultiple(of: 2) ? .succeeded : .running),
+                pullRequests: .available(ForgePage(items: [], totalCount: 0))
+            )
+            return RepositoryForgeOverlayValueState.value(RepositoryForgeOverlaySnapshot(
+                value: overlay,
+                fetchedAt: now,
+                isPartial: false,
+                isStale: false
+            ))
+        }
+        var presentations: [HistoryForgeBadgePresentation] = []
+        let renderingSamples = (0 ..< 100).map { _ in
+            elapsed {
+                presentations = states.map(HistoryForgeBadgePresenter.present)
+            }
+        }
+        attachMeasurements("history-cached-badge-rendering", samples: renderingSamples)
+        XCTAssertEqual(presentations.count, 200)
+        XCTAssertLessThan(percentile95(renderingSamples), 0.050)
+
+        let visiblePresentations = Array(presentations.prefix(40))
+        let cells = visiblePresentations.map { _ in
+            (NSTextField(labelWithString: ""), NSTextField(labelWithString: ""))
+        }
+        let applicationSamples = (0 ..< 200).map { _ in
+            elapsed {
+                for (index, presentation) in visiblePresentations.enumerated() {
+                    cells[index].0.stringValue = presentation.checkText
+                    cells[index].0.setAccessibilityLabel(presentation.checkAccessibilityLabel)
+                    cells[index].1.stringValue = presentation.pullRequestText
+                    cells[index].1.setAccessibilityLabel(presentation.pullRequestAccessibilityLabel)
+                }
+            }
+        }
+        attachMeasurements("history-visible-overlay-main-thread-application", samples: applicationSamples)
+        XCTAssertLessThan(percentile95(applicationSamples), 0.016)
+    }
+
     private func makeRepresentativeRepository() throws -> URL {
         let repositoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitx-working-state-performance-\(UUID().uuidString)")

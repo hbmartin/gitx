@@ -42,6 +42,11 @@ final nonisolated class RepositoryUISettings: NSObject {
         set { setValue(newValue, for: "pushAfterCommit") }
     }
 
+    @objc var historyRepositoryFactsInspectorVisible: Bool {
+        get { value(for: "historyRepositoryFactsInspectorVisible") as? Bool ?? false }
+        set { setValue(newValue, for: "historyRepositoryFactsInspectorVisible") }
+    }
+
     @objc var sidebarVisibility: [String: Bool] {
         get {
             value(for: "sidebarVisibility") as? [String: Bool] ?? [

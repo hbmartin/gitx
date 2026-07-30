@@ -808,11 +808,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let settings = PBRepositoryUISettings(repository: repository)
         settings.pushAfterCommit = true
         settings.hideContainedBranches = true
+        settings.historyRepositoryFactsInspectorVisible = true
         settings.sidebarVisibility = ["Stage": false]
 
         let reloaded = PBRepositoryUISettings(repository: repository)
         XCTAssertTrue(reloaded.pushAfterCommit)
         XCTAssertTrue(reloaded.hideContainedBranches)
+        XCTAssertTrue(reloaded.historyRepositoryFactsInspectorVisible)
         XCTAssertFalse(reloaded.isSidebarGroupVisible("Stage"))
         XCTAssertTrue(reloaded.isSidebarGroupVisible("Remotes"))
     }

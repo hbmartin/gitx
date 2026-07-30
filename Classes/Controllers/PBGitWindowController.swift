@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 
 /// Owns the repository window's AppKit wiring while routing decisions to focused coordinators.
 @objc(PBGitWindowController)
@@ -18,6 +19,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var repositoryForgeCoordinator: RepositoryForgeCoordinator?
     final var repositoryForgeLinkUseCase: RepositoryForgeLinkUseCase?
     private var repositoryToolbarController: RepositoryToolbarController?
+    private var repositoryStatusBarController: RepositoryStatusBarController?
+    private(set) final var repositoryForgeOverlaySession: RepositoryForgeOverlaySession?
+    private var repositoryLocalStatusLoader: RepositoryLocalStatusLoader?
+    private var repositoryLocalStatusSnapshot = RepositoryLocalStatusSnapshot.unavailable
     private var initializedContentControllers: NSHashTable<PBViewController>?
     private var contentStatusObservation: NSKeyValueObservation?
 
@@ -82,7 +87,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             gitExecutablePath: PBGitBinary.path()
         ) { [weak self] in
             guard let self else { return }
-            self.refresh(self)
+            self.refreshLocalRepositoryContent()
         }
     }
 
@@ -102,6 +107,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         _historyViewController = nil
         repositoryForgeCoordinator = nil
         repositoryForgeLinkUseCase = nil
+        repositoryStatusBarController?.invalidate()
+        repositoryForgeOverlaySession?.invalidate()
+        repositoryLocalStatusLoader?.cancel()
+        repositoryStatusBarController = nil
+        repositoryForgeOverlaySession = nil
+        repositoryLocalStatusLoader = nil
         repositoryToolbarController = nil
         WelcomeWindowController.shared.showIfNeededAfterDelay()
     }
@@ -128,6 +139,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         if menuItem.action == #selector(toggleAmendCommit(_:)) {
             menuItem.state = repository?.index.isAmend == true ? .on : .off
             return repository?.isBare() != true
+        }
+        if menuItem.action == #selector(toggleRepositoryStatusBar(_:)) {
+            menuItem.state = ApplicationSettings.repositoryStatusBarVisible ? .on : .off
+            return true
         }
         if menuItem.action == #selector(fetchRemote(_:)) {
             return validateMenuItem(menuItem, remoteTitle: "Fetch “%@”", plainTitle: "Fetch")
@@ -219,12 +234,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         window?.setFrameUsingName("GitX")
         window?.representedURL = repository?.workingDirectoryURL()
         if let repository {
+            installRepositoryForgeOverlaySession()
             _sidebarController = PBGitSidebarController(repository: repository, superController: self)
             _historyViewController = PBGitHistoryController(repository: repository, superController: self)
         }
         repositoryToolbarController = RepositoryToolbarController(windowController: self)
         initializedContentControllers = .weakObjects()
         repositoryToolbarController?.install()
+        installRepositoryStatusBar()
         if let sidebar = _sidebarController {
             sidebar.view.frame = .zero
             if let sourceSplitView {
@@ -250,19 +267,35 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             name: UserDefaults.didChangeNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(repositoryLocalStatusDidChange(_:)),
+            name: NSNotification.Name(PBGitIndexIndexUpdated),
+            object: repository?.index
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(repositoryRemoteOperationDidSucceed(_:)),
+            name: .repositoryRemoteOperationDidSucceed,
+            object: repository
+        )
         refreshPreferenceDidChange(nil)
+        repositoryLocalStatusLoader?.refresh()
     }
 
     @objc(applicationDidBecomeActive:)
     dynamic func applicationDidBecomeActive(_ notification: Notification) {
         ensureFocusRefreshCoordinator()
         focusRefreshCoordinator?.applicationDidBecomeActive()
+        repositoryForgeOverlaySession?.requestRefresh(reason: .applicationActivated)
     }
 
     @objc(refreshPreferenceDidChange:)
     dynamic func refreshPreferenceDidChange(_ notification: Notification?) {
         ensureFocusRefreshCoordinator()
         focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
+        repositoryStatusBarController?.setVisible(ApplicationSettings.repositoryStatusBarVisible)
+        updateToolbarForgeDiagnostic()
     }
 
     @objc dynamic func refreshIfRepositoryChangedSinceLastActivation() {
@@ -308,6 +341,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             NSStringFromClass(type(of: controller)),
             firstMount ? "yes" : "no"
         )
+        let forgeActivity: ForgeOverlayActivity = controller === _historyViewController
+            ? .affectedViewActive
+            : .otherOpenRepository
+        repositoryForgeOverlaySession?.setActivity(forgeActivity)
     }
 
     @IBAction dynamic func showUncommittedChanges(_ sender: Any?) {
@@ -349,6 +386,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             baseTitle = window.title
         }
         repositoryToolbarController?.update(status: displayedStatus, busy: busy, baseWindowTitle: baseTitle)
+        repositoryStatusBarController?.updateLocal(RepositoryLocalStatusPresenter.present(
+            repositoryLocalStatusSnapshot,
+            activityText: displayedStatus,
+            isBusy: busy
+        ))
         if busy {
             progressIndicator?.startAnimation(self)
             progressIndicator?.isHidden = false
@@ -653,9 +695,113 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @IBAction dynamic func refresh(_ sender: Any?) {
+        refreshLocalRepositoryContent()
+        repositoryForgeOverlaySession?.requestManualRefresh()
+    }
+
+    private func refreshLocalRepositoryContent() {
         contentController?.refresh(self)
+        repositoryLocalStatusLoader?.refresh()
         synchronizeWindowTitleWithDocumentName()
         NSLog("[GitX] Manual refresh synchronized window title: %@", window?.title ?? "")
+    }
+
+    @IBAction dynamic func toggleRepositoryStatusBar(_ sender: Any?) {
+        ApplicationSettings.repositoryStatusBarVisible.toggle()
+        repositoryStatusBarController?.setVisible(ApplicationSettings.repositoryStatusBarVisible)
+        updateToolbarForgeDiagnostic()
+        NSLog(
+            "[GitX] Repository status bar visibility changed: %@",
+            ApplicationSettings.repositoryStatusBarVisible ? "visible" : "hidden"
+        )
+    }
+
+    @objc(repositoryLocalStatusDidChange:)
+    private dynamic func repositoryLocalStatusDidChange(_ notification: Notification) {
+        repositoryLocalStatusLoader?.refresh()
+    }
+
+    @objc(repositoryRemoteOperationDidSucceed:)
+    private dynamic func repositoryRemoteOperationDidSucceed(_ notification: Notification) {
+        repositoryLocalStatusLoader?.refresh()
+        let operation = notification.userInfo?["operation"] as? String
+        let reason: ForgeRefreshReason = operation == "push" ? .localPushSucceeded : .localFetchSucceeded
+        repositoryForgeOverlaySession?.requestRefresh(reason: reason)
+    }
+
+    private func installRepositoryForgeOverlaySession() {
+        guard repositoryForgeOverlaySession == nil else { return }
+        let binding = forgeCoordinator?.resolveBinding().binding
+        let session = RepositoryForgeOverlaySession(
+            binding: binding,
+            services: ApplicationComposition.shared.forgeServices,
+            detailsHandler: { [weak self] action in
+                self?.presentForgeStatusDetails(action)
+            }
+        )
+        repositoryForgeOverlaySession = session
+        session.start()
+    }
+
+    private func installRepositoryStatusBar() {
+        guard let splitView, let contentView = window?.contentView, let repository else { return }
+        let controller = RepositoryStatusBarController(splitView: splitView, contentView: contentView)
+        controller.presentationDidChange = { [weak self] presentation in
+            self?.repositoryToolbarController?.updateForgeDiagnostic(
+                persistentFailureText: presentation.toolbarPersistentFailureText,
+                statusBarVisible: ApplicationSettings.repositoryStatusBarVisible
+            )
+        }
+        repositoryStatusBarController = controller
+        controller.install(visible: ApplicationSettings.repositoryStatusBarVisible)
+        repositoryLocalStatusLoader = RepositoryLocalStatusLoader(
+            repository: repository,
+            gitExecutablePath: PBGitBinary.path()
+        ) { [weak self] snapshot in
+            guard let self else { return }
+            self.repositoryLocalStatusSnapshot = snapshot
+            self.updateStatus()
+        }
+        if let repositoryForgeOverlaySession {
+            controller.bind(to: repositoryForgeOverlaySession)
+        }
+    }
+
+    private func updateToolbarForgeDiagnostic() {
+        repositoryToolbarController?.updateForgeDiagnostic(
+            persistentFailureText: repositoryStatusBarController?.currentForgePresentation.toolbarPersistentFailureText,
+            statusBarVisible: ApplicationSettings.repositoryStatusBarVisible
+        )
+    }
+
+    private func presentForgeStatusDetails(_ action: ForgeStatusDetailsAction) {
+        let details = RepositoryForgeDiagnosticDetailsPresenter.present(action)
+        let alert = NSAlert()
+        alert.messageText = details.title
+        var message = details.message
+        if action == .recoverForgeData,
+           let copy = repositoryForgeOverlaySession?.recoveryCopy
+        {
+            message += "\n\nRecovery copy: \(copy.url.lastPathComponent)"
+            alert.addButton(withTitle: "Reveal in Finder")
+            alert.addButton(withTitle: "OK")
+        } else {
+            alert.addButton(withTitle: "OK")
+        }
+        alert.informativeText = message
+        guard let window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn,
+                  action == .recoverForgeData,
+                  let copy = self?.repositoryForgeOverlaySession?.recoveryCopy
+            else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([copy.url])
+        }
+    }
+
+    @objc(showForgeStatusDetails:)
+    dynamic func showForgeStatusDetails(_ sender: Any?) {
+        repositoryStatusBarController?.requestCurrentDetails()
     }
 
     @IBAction dynamic func jumpToCheckedOutBranch(_ sender: Any?) {

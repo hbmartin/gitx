@@ -163,6 +163,11 @@ private final class SettingsPaneView: NSView {
         logger.info("Structured avatar loading preference changed")
     }
 
+    @objc func repositoryStatusBarVisibilityChanged(_ sender: NSButton) {
+        ApplicationSettings.repositoryStatusBarVisible = sender.state == .on
+        logger.info("Repository status bar preference changed visible=\(sender.state == .on, privacy: .public)")
+    }
+
     @objc func applicationIconChanged(_ sender: NSButton) {
         guard let style = ApplicationIconStyle(rawValue: sender.tag) else { return }
         for case let button as NSButton in sender.superview?.subviews ?? [] {
@@ -447,6 +452,13 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         loadAvatars.setAccessibilityIdentifier("LoadForgeAvatars")
         loadAvatars.setAccessibilityLabel("Load structured GitHub avatars")
         loadAvatars.toolTip = "Uses a credential-free connection only to GitHub's approved avatar host."
+        let statusBar = view.addCheckbox(
+            "Show repository status bar",
+            state: ApplicationSettings.repositoryStatusBarVisible,
+            action: #selector(SettingsPaneView.repositoryStatusBarVisibilityChanged(_:))
+        )
+        statusBar.setAccessibilityIdentifier("Settings.RepositoryStatusBarVisible")
+        statusBar.setAccessibilityLabel("Show repository status bar")
         view.addSeparator()
         view.addCustom(ForgeTrustedOriginsPreferencesView(
             store: ApplicationComposition.shared.forgeExternalLinkPreferences

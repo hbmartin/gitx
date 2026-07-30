@@ -137,6 +137,19 @@ final class ApplicationCompositionTests: XCTestCase {
         XCTAssertEqual(PBApplicationSettings.applicationIconStyle, .plusEyes)
     }
 
+    func testRepositoryStatusBarDefaultsVisibleAndPersistsApplicationWideChoice() {
+        XCTAssertNil(defaults.object(forKey: "PBRepositoryStatusBarVisible"))
+        XCTAssertTrue(PBApplicationSettings.repositoryStatusBarVisible)
+
+        PBApplicationSettings.repositoryStatusBarVisible = false
+        XCTAssertFalse(defaults.bool(forKey: "PBRepositoryStatusBarVisible"))
+        XCTAssertFalse(PBApplicationSettings.repositoryStatusBarVisible)
+
+        PBApplicationSettings.repositoryStatusBarVisible = true
+        XCTAssertTrue(defaults.bool(forKey: "PBRepositoryStatusBarVisible"))
+        XCTAssertTrue(PBApplicationSettings.repositoryStatusBarVisible)
+    }
+
     func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {
         XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .balanced)
         XCTAssertTrue(PBApplicationSettings.attentionAlertCategories.isEmpty)

@@ -390,6 +390,42 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         XCTAssertNil(defaults.dictionary(forKey: ForgeRepositoryBindingAccountCleaner.repositorySettingsKey))
     }
 
+    func testBindingProviderDiscoversValidPersistedBindingsOnceInStableOrder() throws {
+        let defaults = try makeDefaults()
+        let provider = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        XCTAssertTrue(provider.forgeRepositoryBindings().isEmpty)
+        let accountID = try makeAccountID("bound-account")
+        let firstRepository = try ForgeRepositoryIdentity(
+            forge: accountID.forge,
+            owner: "alpha",
+            name: "first"
+        )
+        let secondRepository = try ForgeRepositoryIdentity(
+            forge: accountID.forge,
+            owner: "beta",
+            name: "second"
+        )
+        let first = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: firstRepository,
+            preferredAccount: accountID
+        )
+        let second = try ForgeRepositoryBinding(
+            localRemoteName: "upstream",
+            primaryRepository: secondRepository,
+            preferredAccount: accountID
+        )
+        try defaults.set([
+            "second": [ForgeRepositoryBindingAccountCleaner.forgeBindingKey: JSONEncoder().encode(second)],
+            "first": [ForgeRepositoryBindingAccountCleaner.forgeBindingKey: JSONEncoder().encode(first)],
+            "duplicate": [ForgeRepositoryBindingAccountCleaner.forgeBindingKey: JSONEncoder().encode(first)],
+            "invalid": [ForgeRepositoryBindingAccountCleaner.forgeBindingKey: Data([0x00])],
+            "unrelated": "value",
+        ], forKey: ForgeRepositoryBindingAccountCleaner.repositorySettingsKey)
+
+        XCTAssertEqual(provider.forgeRepositoryBindings(), [first, second])
+    }
+
     func testRemovalDeletesAccountScopedStateAndPreservesTrustedOriginsAndOtherBindings() async throws {
         let defaults = try makeDefaults()
         let keychain = LifecycleKeychain()

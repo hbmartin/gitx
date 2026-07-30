@@ -40,6 +40,12 @@ private final nonisolated class RemoteOperationTarget: @unchecked Sendable {
 // swiftlint:disable unused_declaration
 @objc(PBRepositoryRemoteActionCoordinator)
 final class RepositoryRemoteActionCoordinator: NSObject {
+    private enum SuccessfulOperation: String {
+        case fetch
+        case pull
+        case push
+    }
+
     // Progress operations run after the initiating window action returns, so the
     // repository must remain alive until the progress sheet completes.
     private let repository: PBGitRepository
@@ -107,9 +113,12 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                 guard let self else { return }
                 if let error {
                     self.windowController?.showErrorSheet(error)
-                } else if let repositoryURL = self.repository.workingDirectoryURL() {
-                    PBAutoFetchManager.shared().recordManualFetchSucceeded(forRepositoryURL: repositoryURL)
+                } else {
+                    if let repositoryURL = self.repository.workingDirectoryURL() {
+                        PBAutoFetchManager.shared().recordManualFetchSucceeded(forRepositoryURL: repositoryURL)
+                    }
                     self.logger.debug("Fetch workflow completed")
+                    self.reportSuccess(.fetch)
                 }
             }
         )
@@ -142,6 +151,7 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                     self?.windowController?.showErrorSheet(error)
                 } else {
                     self?.logger.debug("Pull workflow completed")
+                    self?.reportSuccess(.pull)
                 }
             }
         )
@@ -174,6 +184,7 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                     } else {
                         self?.logger.debug("Push workflow completed")
                         if let self {
+                            self.reportSuccess(.push)
                             RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
                                 output: operationTarget.pushOutput,
                                 repository: self.repository,
@@ -209,6 +220,15 @@ final class RepositoryRemoteActionCoordinator: NSObject {
             return "\(verb) \(branch.refishType() ?? "") '\(branch.shortName())' to default remote"
         }
         return "\(verb) updates to remote \(remote?.remoteName ?? "")"
+    }
+
+    private func reportSuccess(_ operation: SuccessfulOperation) {
+        NotificationCenter.default.post(
+            name: .repositoryRemoteOperationDidSucceed,
+            object: repository,
+            userInfo: ["operation": operation.rawValue]
+        )
+        logger.debug("Published successful remote operation kind=\(operation.rawValue, privacy: .public)")
     }
 
     private func runProgress(

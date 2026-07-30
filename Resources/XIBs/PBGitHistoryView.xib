@@ -63,6 +63,8 @@
                 <string>SHA</string>
                 <string>relativeDateString</string>
                 <string>shortName</string>
+                <string>forgeCheckRollupText</string>
+                <string>forgePullRequestBadgeText</string>
             </declaredKeys>
             <connections>
                 <binding destination="-2" name="contentArray" keyPath="repository.revisionList.commits" id="58"/>
@@ -483,6 +485,92 @@
                                                                     <bool key="NSConditionallySetsEditable" value="YES"/>
                                                                 </dictionary>
                                                             </binding>
+                                                        </connections>
+                                                    </tableColumn>
+                                                    <tableColumn identifier="ForgeCheckRollupColumn" editable="NO" width="108" minWidth="78" maxWidth="160" hidden="YES" id="forge-check-column">
+                                                        <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="Checks">
+                                                            <font key="font" metaFont="smallSystem"/>
+                                                            <color key="textColor" name="headerTextColor" catalog="System" colorSpace="catalog"/>
+                                                            <color key="backgroundColor" name="headerColor" catalog="System" colorSpace="catalog"/>
+                                                        </tableHeaderCell>
+                                                        <textFieldCell key="dataCell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="NO" alignment="left" id="forge-check-data-cell">
+                                                            <font key="font" metaFont="system"/>
+                                                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
+                                                            <color key="backgroundColor" name="controlBackgroundColor" catalog="System" colorSpace="catalog"/>
+                                                        </textFieldCell>
+                                                        <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
+                                                        <prototypeCellViews>
+                                                            <tableCellView id="forge-check-cell-view">
+                                                                <rect key="frame" x="1" y="1" width="108" height="20"/>
+                                                                <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                                                                <subviews>
+                                                                    <textField identifier="GitX.History.CheckRollup" verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" translatesAutoresizingMaskIntoConstraints="NO" id="forge-check-field">
+                                                                        <rect key="frame" x="0.0" y="3" width="108" height="17"/>
+                                                                        <textFieldCell key="cell" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" title="—" id="forge-check-field-cell">
+                                                                            <font key="font" metaFont="smallSystem"/>
+                                                                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
+                                                                            <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
+                                                                            <connections>
+                                                                                <binding destination="forge-check-cell-view" name="value" keyPath="objectValue.forgeCheckRollupText" id="forge-check-cell-binding"/>
+                                                                            </connections>
+                                                                        </textFieldCell>
+                                                                    </textField>
+                                                                </subviews>
+                                                                <constraints>
+                                                                    <constraint firstItem="forge-check-field" firstAttribute="centerY" secondItem="forge-check-cell-view" secondAttribute="centerY" constant="-1" id="forge-check-center"/>
+                                                                    <constraint firstItem="forge-check-field" firstAttribute="leading" secondItem="forge-check-cell-view" secondAttribute="leading" constant="2" id="forge-check-leading"/>
+                                                                    <constraint firstAttribute="trailing" secondItem="forge-check-field" secondAttribute="trailing" constant="2" id="forge-check-trailing"/>
+                                                                </constraints>
+                                                                <connections>
+                                                                    <outlet property="textField" destination="forge-check-field" id="forge-check-field-outlet"/>
+                                                                </connections>
+                                                            </tableCellView>
+                                                        </prototypeCellViews>
+                                                        <connections>
+                                                            <binding destination="39" name="value" keyPath="arrangedObjects.forgeCheckRollupText" id="forge-check-column-binding"/>
+                                                        </connections>
+                                                    </tableColumn>
+                                                    <tableColumn identifier="ForgePullRequestBadgeColumn" editable="NO" width="88" minWidth="62" maxWidth="140" hidden="YES" id="forge-pr-column">
+                                                        <tableHeaderCell key="headerCell" lineBreakMode="truncatingTail" borderStyle="border" alignment="left" title="Pull Requests">
+                                                            <font key="font" metaFont="smallSystem"/>
+                                                            <color key="textColor" name="headerTextColor" catalog="System" colorSpace="catalog"/>
+                                                            <color key="backgroundColor" name="headerColor" catalog="System" colorSpace="catalog"/>
+                                                        </tableHeaderCell>
+                                                        <textFieldCell key="dataCell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="NO" alignment="left" id="forge-pr-data-cell">
+                                                            <font key="font" metaFont="system"/>
+                                                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
+                                                            <color key="backgroundColor" name="controlBackgroundColor" catalog="System" colorSpace="catalog"/>
+                                                        </textFieldCell>
+                                                        <tableColumnResizingMask key="resizingMask" resizeWithTable="YES" userResizable="YES"/>
+                                                        <prototypeCellViews>
+                                                            <tableCellView id="forge-pr-cell-view">
+                                                                <rect key="frame" x="1" y="1" width="88" height="20"/>
+                                                                <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                                                                <subviews>
+                                                                    <textField identifier="GitX.History.PullRequestBadges" verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" translatesAutoresizingMaskIntoConstraints="NO" id="forge-pr-field">
+                                                                        <rect key="frame" x="0.0" y="3" width="88" height="17"/>
+                                                                        <textFieldCell key="cell" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" title="—" id="forge-pr-field-cell">
+                                                                            <font key="font" metaFont="smallSystem"/>
+                                                                            <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
+                                                                            <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
+                                                                            <connections>
+                                                                                <binding destination="forge-pr-cell-view" name="value" keyPath="objectValue.forgePullRequestBadgeText" id="forge-pr-cell-binding"/>
+                                                                            </connections>
+                                                                        </textFieldCell>
+                                                                    </textField>
+                                                                </subviews>
+                                                                <constraints>
+                                                                    <constraint firstItem="forge-pr-field" firstAttribute="centerY" secondItem="forge-pr-cell-view" secondAttribute="centerY" constant="-1" id="forge-pr-center"/>
+                                                                    <constraint firstItem="forge-pr-field" firstAttribute="leading" secondItem="forge-pr-cell-view" secondAttribute="leading" constant="2" id="forge-pr-leading"/>
+                                                                    <constraint firstAttribute="trailing" secondItem="forge-pr-field" secondAttribute="trailing" constant="2" id="forge-pr-trailing"/>
+                                                                </constraints>
+                                                                <connections>
+                                                                    <outlet property="textField" destination="forge-pr-field" id="forge-pr-field-outlet"/>
+                                                                </connections>
+                                                            </tableCellView>
+                                                        </prototypeCellViews>
+                                                        <connections>
+                                                            <binding destination="39" name="value" keyPath="arrangedObjects.forgePullRequestBadgeText" id="forge-pr-column-binding"/>
                                                         </connections>
                                                     </tableColumn>
                                                     <tableColumn identifier="GitSVNRevision" width="96" minWidth="10" maxWidth="3.4028234663852886e+38" id="491">

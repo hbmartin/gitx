@@ -466,8 +466,17 @@ nonisolated protocol ForgeRepositoryBindingCleaning: Sendable {
     func removeBindings(for accountID: ForgeAccountID) throws
 }
 
+nonisolated protocol ForgeRepositoryBindingProviding: Sendable {
+    func forgeRepositoryBindings() -> [ForgeRepositoryBinding]
+}
+
 // swift6-safety-justification: The lock serializes every access to the shared UserDefaults repository settings.
-final nonisolated class ForgeRepositoryBindingAccountCleaner: ForgeRepositoryBindingCleaning, @unchecked Sendable {
+final nonisolated class ForgeRepositoryBindingAccountCleaner:
+    ForgeRepositoryBindingCleaning,
+    ForgeRepositoryBindingProviding,
+    // swift6-safety-justification: The lock serializes every access to shared UserDefaults repository settings.
+    @unchecked Sendable
+{
     static let repositorySettingsKey = "PBRepositoryUISettings"
     static let forgeBindingKey = "forgeRepositoryBinding"
 
@@ -498,6 +507,28 @@ final nonisolated class ForgeRepositoryBindingAccountCleaner: ForgeRepositoryBin
             }
             if changed {
                 userDefaults.set(repositorySettings, forKey: Self.repositorySettingsKey)
+            }
+        }
+    }
+
+    func forgeRepositoryBindings() -> [ForgeRepositoryBinding] {
+        lock.withLock {
+            guard let repositorySettings = userDefaults.dictionary(forKey: Self.repositorySettingsKey) else {
+                return []
+            }
+            let decoded = repositorySettings.values.compactMap { value -> ForgeRepositoryBinding? in
+                guard let settings = value as? [String: Any],
+                      let bindingData = settings[Self.forgeBindingKey] as? Data
+                else {
+                    return nil
+                }
+                return try? JSONDecoder().decode(ForgeRepositoryBinding.self, from: bindingData)
+            }
+            return Array(Set(decoded)).sorted { lhs, rhs in
+                let left = lhs.primaryRepository
+                let right = rhs.primaryRepository
+                return [left.forge.origin.url.absoluteString, left.owner, left.name]
+                    .lexicographicallyPrecedes([right.forge.origin.url.absoluteString, right.owner, right.name])
             }
         }
     }
