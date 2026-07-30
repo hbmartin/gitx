@@ -2024,7 +2024,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 {
 	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
 	PBGitSidebarController *presentationOnlySidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
-															 superController:self.controller];
+																						 superController:self.controller];
 	[presentationOnlySidebar synchronizeConfiguredRemotes];
 	[presentationOnlySidebar reloadSidebarPresentation];
 	PBSourceViewItem *fallbackForgeGroup = [presentationOnlySidebar valueForKey:@"forgeGroup"];
@@ -2034,7 +2034,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 	self.controller.interceptContentChange = YES;
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
-														 superController:self.controller];
+																		 superController:self.controller];
 	(void)sidebar.view;
 	NSOutlineView *outline = sidebar.sourceView;
 	[self pumpRunLoopFor:0.2];
@@ -2171,7 +2171,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
 
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
-														 superController:self.controller];
+																		 superController:self.controller];
 	(void)sidebar.view;
 	PBGitRevSpecifier *viewedBeforeUnavailableHead = self.repository.currentBranch;
 	[sidebar setValue:nil forKey:@"lastKnownHeadRef"];
