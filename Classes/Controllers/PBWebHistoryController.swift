@@ -412,7 +412,7 @@ open class PBWebHistoryController: PBWebController, PBNativeContentViewDelegate 
         let selectedLayout = layoutControl?.selectedSegment ?? 0
         guard !requestedCommits.isEmpty else {
             diff = ""
-            nativeView.showMessage("No commit selected")
+            nativeView?.showMessage("No commit selected")
             Self.logger.debug("Cleared history diff because no commit is selected")
             return
         }
@@ -432,7 +432,7 @@ open class PBWebHistoryController: PBWebController, PBNativeContentViewDelegate 
             requestedMode: requestedMode,
             selectedLayout: selectedLayout
         )
-        nativeView.showMessage("Loading diff…")
+        nativeView?.showMessage("Loading diff…")
         Self.logger.debug("Scheduled history diff rendering")
         renderQueue!.async { [self, request] in
             let combinedEnabled = request.inputs.count > 1 && inputsShareAncestryPath(
@@ -482,7 +482,7 @@ open class PBWebHistoryController: PBWebController, PBNativeContentViewDelegate 
                 diff = delivery.sections
                     .compactMap { $0[PBNativeSectionTextKey] as? String }
                     .joined(separator: "\n")
-                nativeView.showDiffSections(delivery.sections)
+                nativeView?.showDiffSections(delivery.sections)
                 Self.logger.debug("Installed history diff rendering")
             }
         }
@@ -587,18 +587,18 @@ open class PBWebHistoryController: PBWebController, PBNativeContentViewDelegate 
 
     @objc open dynamic func sendKey(_ key: String) {
         if key == "j" {
-            nativeView.textView.scrollLineDown(self)
+            nativeView?.textView.scrollLineDown(self)
         } else if key == "k" {
-            nativeView.textView.scrollLineUp(self)
+            nativeView?.textView.scrollLineUp(self)
         }
     }
 
     @objc open dynamic func scrollPageUp() {
-        nativeView.scrollPageUp()
+        nativeView?.scrollPageUp()
     }
 
     @objc open dynamic func scrollPageDown() {
-        nativeView.scrollPageDown()
+        nativeView?.scrollPageDown()
     }
 
     override open nonisolated func preferencesChanged() {

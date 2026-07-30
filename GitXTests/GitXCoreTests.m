@@ -1499,6 +1499,19 @@
 	[webHistoryController closeView];
 	XCTAssertNil(webHistoryController.nativeView);
 	XCTAssertEqual([[webHistoryController valueForKey:@"contentGeneration"] unsignedIntegerValue], generationBeforeClose + 1);
+
+	// PBWebController intentionally defers didLoad to the main queue. Closing a
+	// window before that callback arrives must retain Objective-C's nil-message
+	// behavior after this controller is implemented in Swift.
+	[webHistoryController didLoad];
+	[webHistoryController sendKey:@"j"];
+	[webHistoryController sendKey:@"k"];
+	[webHistoryController scrollPageUp];
+	[webHistoryController scrollPageDown];
+	[webHistoryController refreshDisplayedContent];
+	[webHistoryController preferencesChanged];
+	XCTAssertNil(webHistoryController.nativeView);
+	XCTAssertEqualObjects(webHistoryController.diff, @"");
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured
