@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8429,
+  "minimumLineCoverage": 0.8484,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4716,
@@ -12,6 +12,9 @@
     "Classes/Controllers/CommitPatchExportCoordinator.swift": 0.1421,
     "Classes/Controllers/CommitTableInteractionCoordinator.swift": 0.9818,
     "Classes/Controllers/DBPrefsWindowController.m": 0.6043,
+    "Classes/Controllers/ForgeAccountLifecycle.swift": 0.9792,
+    "Classes/Controllers/ForgeApplicationServices.swift": 0.9793,
+    "Classes/Controllers/ForgeCredentialStore.swift": 0.9646,
     "Classes/Controllers/ForgeDestinationScriptCommand.swift": 0.9585,
     "Classes/Controllers/GitXCoreAdapters.swift": 1.0,
     "Classes/Controllers/HistoryMenuBuilder.swift": 0.9666,
@@ -163,7 +166,7 @@
       ]
     },
     "Repository Configuration surfaces": {
-      "minimumLineCoverage": 0.8403,
+      "minimumLineCoverage": 0.8431,
       "files": [
         "Classes/Controllers/RepositorySettingsStore.swift",
         "Classes/Controllers/RepositorySettingsController.swift",

@@ -99,10 +99,13 @@ final nonisolated class ApplicationComposition: NSObject {
     }
 
     @objc let applicationPreferences: ApplicationPreferences
+    let forgeServices: ForgeApplicationServiceLoader
 
     @objc(initWithUserDefaults:)
     init(userDefaults: UserDefaults) {
         applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: userDefaults)
+        forgeServices = ForgeApplicationServiceLoader(bindingCleaner: bindingCleaner)
         super.init()
     }
 
