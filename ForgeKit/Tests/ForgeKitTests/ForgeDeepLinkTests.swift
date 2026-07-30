@@ -20,6 +20,12 @@ final class ForgeDeepLinkTests: XCTestCase {
                 path: ForgeFilePath("Sources/Native File.swift"),
                 selection: ForgeLineSelection(start: 7, end: 11)
             ),
+            .file(
+                fixture.repository,
+                revision: .tag(ForgeRefName("v1.0")),
+                path: ForgeFilePath("README.md"),
+                selection: nil
+            ),
             .compare(
                 fixture.repository,
                 base: .branch(ForgeRefName("main")),
@@ -36,10 +42,39 @@ final class ForgeDeepLinkTests: XCTestCase {
             XCTAssertNil(url.query)
             XCTAssertNil(url.fragment)
             let parsed = try ForgeDeepLinkCodec.parse(url, knownRepositories: [fixture.repository])
-            XCTAssertEqual(parsed.repository, destination.repository)
-            XCTAssertEqual(parsed.kind, destination.kind)
+            XCTAssertEqual(parsed, destination)
             XCTAssertEqual(try ForgeDeepLinkCodec.url(for: parsed), url)
         }
+    }
+
+    func testFileAndCompareGrammarEncodesEveryRevisionKindExplicitly() throws {
+        let fixture = try Fixture()
+        let file = try ForgeDestination.file(
+            fixture.repository,
+            revision: .commit(fixture.commit),
+            path: ForgeFilePath("Sources/File.swift"),
+            selection: ForgeLineSelection(start: 4, end: 8)
+        )
+        XCTAssertEqual(
+            try ForgeDeepLinkCodec.url(for: file).absoluteString,
+            "x-gitx://github.com/gitx/gitx/file/commit/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/lines/4/8/Sources/File.swift"
+        )
+        let comparison = try ForgeDestination.compare(
+            fixture.repository,
+            base: .branch(ForgeRefName("main")),
+            head: .opaque(ForgeRefName("refs/pull/42/head"))
+        )
+        XCTAssertEqual(
+            try ForgeDeepLinkCodec.url(for: comparison).absoluteString,
+            "x-gitx://github.com/gitx/gitx/compare/branch/main/opaque/refs%2Fpull%2F42%2Fhead"
+        )
+        XCTAssertEqual(
+            try ForgeDeepLinkCodec.parse(
+                ForgeDeepLinkCodec.url(for: comparison),
+                knownRepositories: [fixture.repository]
+            ),
+            comparison
+        )
     }
 
     func testCodecPreservesCustomOriginPortAndNestedOwner() throws {
@@ -109,13 +144,15 @@ final class ForgeDeepLinkTests: XCTestCase {
             "branch",
             "branch/-bad",
             "commit/not-a-sha",
-            "file/main/not-lines/0/0/File.swift",
-            "file/main/lines/not-a-number/1/File.swift",
-            "file/main/lines/2/1/File.swift",
-            "file/main/lines/0/1/File.swift",
-            "file/main/lines/0/0",
-            "compare/main",
-            "compare/main/-bad",
+            "file/unknown/main/lines/0/0/File.swift",
+            "file/branch/main/not-lines/0/0/File.swift",
+            "file/branch/main/lines/not-a-number/1/File.swift",
+            "file/branch/main/lines/2/1/File.swift",
+            "file/branch/main/lines/0/1/File.swift",
+            "file/branch/main/lines/0/0",
+            "compare/branch/main",
+            "compare/branch/main/unknown/feature",
+            "compare/branch/main/branch/-bad",
             "pull-request",
             "pull-request/0",
             "pull-request/nope",
@@ -244,6 +281,70 @@ final class ForgeDeepLinkTests: XCTestCase {
         XCTAssertEqual(
             ForgeDeepLinkRouter.route(commit, openCheckouts: [available]),
             .open(checkoutIdentifier: "window", destination: commit)
+        )
+    }
+
+    func testRouterRequiresFileCommitAndEveryCommitSideOfComparison() throws {
+        let fixture = try Fixture()
+        let otherCommit = try ForgeCommitID(String(repeating: "b", count: 40))
+        let file = try ForgeDestination.file(
+            fixture.repository,
+            revision: .commit(fixture.commit),
+            path: ForgeFilePath("README.md"),
+            selection: nil
+        )
+        let compare = try ForgeDestination.compare(
+            fixture.repository,
+            base: .commit(fixture.commit),
+            head: .commit(otherCommit)
+        )
+        let neither = try ForgeOpenCheckout(
+            identifier: "window",
+            repository: fixture.repository,
+            frontmostRank: 0
+        )
+        let baseOnly = try ForgeOpenCheckout(
+            identifier: "window",
+            repository: fixture.repository,
+            frontmostRank: 0,
+            availableCommits: [fixture.commit]
+        )
+        let headOnly = try ForgeOpenCheckout(
+            identifier: "window",
+            repository: fixture.repository,
+            frontmostRank: 0,
+            availableCommits: [otherCommit]
+        )
+        let both = try ForgeOpenCheckout(
+            identifier: "window",
+            repository: fixture.repository,
+            frontmostRank: 0,
+            availableCommits: [fixture.commit, otherCommit]
+        )
+
+        for destination in [file, compare] {
+            XCTAssertEqual(
+                ForgeDeepLinkRouter.route(destination, openCheckouts: [neither]),
+                .missingLocalObject(
+                    checkoutIdentifier: "window",
+                    destination: destination,
+                    actions: [.fetch, .openInBrowser]
+                )
+            )
+        }
+        for oneSideOnly in [baseOnly, headOnly] {
+            XCTAssertEqual(
+                ForgeDeepLinkRouter.route(compare, openCheckouts: [oneSideOnly]),
+                .missingLocalObject(
+                    checkoutIdentifier: "window",
+                    destination: compare,
+                    actions: [.fetch, .openInBrowser]
+                )
+            )
+        }
+        XCTAssertEqual(
+            ForgeDeepLinkRouter.route(compare, openCheckouts: [both]),
+            .open(checkoutIdentifier: "window", destination: compare)
         )
     }
 

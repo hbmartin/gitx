@@ -221,6 +221,46 @@ final class ForgePullRequestWorkflowTests: XCTestCase {
         )
     }
 
+    func testAuthoritativeCreateRejectionOpensOnlyExactRefetchedDuplicate() throws {
+        let fixture = try Fixture()
+        let key = try fixture.comparisonKey()
+        let rejection = try ForgeCreatePullRequestAuthoritativeRejection(
+            comparison: key,
+            message: "GitHub rejected Pull Request creation."
+        )
+        let exact = try fixture.pullRequest(number: 42)
+        let wrongBase = try fixture.pullRequest(
+            number: 43,
+            base: .available(ForgeBranchReference(
+                repository: fixture.repository,
+                name: ForgeRefName("release"),
+                commit: fixture.baseCommit
+            ))
+        )
+        let closed = try fixture.pullRequest(number: 44, state: .closed)
+
+        XCTAssertEqual(
+            ForgeCreatePullRequestReconciliationPolicy.decision(
+                rejection: rejection,
+                refreshedPullRequests: [wrongBase, closed]
+            ),
+            .preserveDraft(authoritativeMessage: rejection.message)
+        )
+        XCTAssertEqual(
+            ForgeCreatePullRequestReconciliationPolicy.decision(
+                rejection: rejection,
+                refreshedPullRequests: [wrongBase, exact]
+            ),
+            .openExisting(exact)
+        )
+        XCTAssertThrowsError(try ForgeCreatePullRequestAuthoritativeRejection(
+            comparison: key,
+            message: "\n"
+        )) {
+            XCTAssertEqual($0 as? ForgePullRequestMutationError, .invalidMessage)
+        }
+    }
+
     func testEditableSnapshotAndEditRequireExactUpdatedAt() throws {
         let fixture = try Fixture()
         let original = try ForgePullRequestEditableSnapshot(
@@ -267,43 +307,84 @@ final class ForgePullRequestWorkflowTests: XCTestCase {
 
     func testPushCreateWorkflowCoversNewAndOrdinaryPushPaths() throws {
         let fixture = try Fixture()
-        let form = try fixture.form()
+        let intent = try fixture.intent()
         let destination = try ForgeDestination.pullRequest(fixture.repository, ForgeItemNumber(21))
 
         var state = ForgePushPullRequestState.idle
-        state = try state.applying(.newPullRequest(branchAlreadyPushed: false, form: form))
-        XCTAssertEqual(state, .pushSheet(createPullRequestSelected: true))
+        state = try state.applying(.newPullRequest(branchAlreadyPushed: false, intent: intent))
+        XCTAssertEqual(state, .pushSheet(createPullRequestSelected: true, intent: intent))
         state = try state.applying(.beginPush(createPullRequestSelected: true))
-        XCTAssertEqual(state, .pushing(createPullRequestAfterSuccess: true))
-        state = try state.applying(.pushSucceededWithForm(form))
-        XCTAssertEqual(state, .createSheet(form))
+        XCTAssertEqual(state, .pushing(createPullRequestAfterSuccess: true, intent: intent))
+        state = try state.applying(.pushSucceeded)
+        XCTAssertEqual(state, .createSheet(intent))
         state = try state.applying(.creationSucceeded(destination))
         XCTAssertEqual(state, .completed(destination))
         XCTAssertEqual(try state.applying(.reset), .idle)
 
-        state = try ForgePushPullRequestState.idle.applying(.ordinaryPush)
+        state = try ForgePushPullRequestState.idle.applying(.ordinaryPush(intent: intent))
+        XCTAssertEqual(state, .pushSheet(createPullRequestSelected: false, intent: intent))
         state = try state.applying(.beginPush(createPullRequestSelected: false))
         XCTAssertEqual(try state.applying(.pushSucceeded), .idle)
         XCTAssertEqual(try state.applying(.pushFailed), .idle)
-        XCTAssertEqual(try ForgePushPullRequestState.pushSheet(createPullRequestSelected: false).applying(.cancel), .idle)
+        XCTAssertEqual(
+            try ForgePushPullRequestState.pushSheet(
+                createPullRequestSelected: false,
+                intent: intent
+            ).applying(.cancel),
+            .idle
+        )
     }
 
     func testPushCreateWorkflowPreservesCancelledAndFailedDrafts() throws {
         let fixture = try Fixture()
-        let form = try fixture.form()
+        let intent = try fixture.intent()
         let destination = try ForgeDestination.pullRequest(fixture.repository, ForgeItemNumber(22))
 
         let direct = try ForgePushPullRequestState.idle.applying(
-            .newPullRequest(branchAlreadyPushed: true, form: form)
+            .newPullRequest(branchAlreadyPushed: true, intent: intent)
         )
-        XCTAssertEqual(direct, .createSheet(form))
+        XCTAssertEqual(direct, .createSheet(intent))
         let cancelled = try direct.applying(.cancel)
-        XCTAssertEqual(cancelled, .draftPreserved(form))
-        XCTAssertEqual(try cancelled.applying(.reopenDraft), .createSheet(form))
+        XCTAssertEqual(cancelled, .draftPreserved(intent))
+        XCTAssertEqual(try cancelled.applying(.reopenDraft), .createSheet(intent))
         XCTAssertEqual(try cancelled.applying(.discardDraft), .idle)
-        XCTAssertEqual(try direct.applying(.creationFailed), .draftPreserved(form))
+        XCTAssertEqual(try direct.applying(.creationFailed), .draftPreserved(intent))
         XCTAssertEqual(try direct.applying(.existingPullRequest(destination)), .completed(destination))
         XCTAssertThrowsError(try ForgePushPullRequestState.idle.applying(.pushSucceeded)) {
+            XCTAssertEqual($0 as? ForgePullRequestWorkflowError, .invalidTransition)
+        }
+
+        let pushing = try ForgePushPullRequestState.idle
+            .applying(.newPullRequest(branchAlreadyPushed: false, intent: intent))
+            .applying(.beginPush(createPullRequestSelected: true))
+        XCTAssertEqual(try pushing.applying(.pushFailed), .draftPreserved(intent))
+        XCTAssertEqual(
+            try ForgePushPullRequestState.pushSheet(
+                createPullRequestSelected: true,
+                intent: intent
+            ).applying(.cancel),
+            .draftPreserved(intent)
+        )
+    }
+
+    func testPushIntentRejectsDraftIdentityThatDoesNotExactlyMatchForm() throws {
+        let fixture = try Fixture()
+        let form = try fixture.form()
+        let wrongIdentity = try ForgeDraftIdentity(
+            accountID: fixture.accountID,
+            destination: .createPullRequest(
+                repository: fixture.repository,
+                base: ForgeRefName("release"),
+                head: fixture.head.name
+            )
+        )
+        XCTAssertThrowsError(try ForgePushPullRequestIntent(form: form, draftIdentity: wrongIdentity)) {
+            XCTAssertEqual($0 as? ForgePullRequestWorkflowError, .mismatchedRepository)
+        }
+        XCTAssertThrowsError(try ForgePushPullRequestState.idle
+            .applying(.ordinaryPush(intent: nil))
+            .applying(.beginPush(createPullRequestSelected: true)))
+        {
             XCTAssertEqual($0 as? ForgePullRequestWorkflowError, .invalidTransition)
         }
     }
@@ -354,6 +435,7 @@ final class ForgePullRequestWorkflowTests: XCTestCase {
             "https://github.com/contributor/gitx.git#secret",
             "ssh://git:secret@github.com/contributor/gitx.git",
             "https:///missing-host",
+            "ssh://deploy@github.com/contributor/gitx.git",
         ] {
             XCTAssertThrowsError(try ForgeGitRemote(
                 name: "remote",
@@ -416,7 +498,7 @@ final class ForgePullRequestWorkflowTests: XCTestCase {
 
     func testCheckoutUsesUnsuffixedRemoteAndContributorFallbackForSymbolOnlyOwner() throws {
         let fixture = try Fixture(forkOwner: "🔥")
-        let url = try XCTUnwrap(URL(string: "https://github.com/fallback/gitx.git"))
+        let url = try XCTUnwrap(URL(string: "https://github.com/%F0%9F%94%A5/gitx.git"))
         let first = try ForgePullRequestCheckoutPolicy.plan(
             pullRequest: fixture.pullRequest(number: 5),
             workingState: .init(stagedCount: 0, unstagedCount: 0, untrackedCount: 0, conflictCount: 0),
@@ -459,6 +541,79 @@ final class ForgePullRequestWorkflowTests: XCTestCase {
         )) {
             XCTAssertEqual($0 as? ForgePullRequestWorkflowError, .headReferenceUnavailable)
         }
+    }
+
+    func testCheckoutRequiresRemoteURLToMatchExactHeadRepositoryAndSafeAuthority() throws {
+        let fixture = try Fixture()
+        let unsafeURLs = [
+            "https://example.com/contributor/gitx.git",
+            "https://github.com/other/gitx.git",
+            "https://github.com/contributor/other.git",
+            "https://github.com:443/contributor/gitx.git",
+            "ssh://git@github.com:22/contributor/gitx.git",
+            "https://token@github.com/contributor/gitx.git",
+            "ssh://deploy@github.com/contributor/gitx.git",
+            "https://github.com//contributor/gitx.git",
+            "https://github.com/contributor/gitx.git/",
+        ]
+        for rawURL in unsafeURLs {
+            XCTAssertThrowsError(try ForgePullRequestCheckoutPolicy.plan(
+                pullRequest: fixture.pullRequest(number: 42),
+                workingState: .init(stagedCount: 0, unstagedCount: 0, untrackedCount: 0, conflictCount: 0),
+                remotes: [],
+                existingLocalBranches: [],
+                headRemoteURL: XCTUnwrap(URL(string: rawURL))
+            ), rawURL) {
+                XCTAssertEqual($0 as? ForgePullRequestWorkflowError, .invalidRemoteURL, rawURL)
+            }
+        }
+
+        let mislabeled = try ForgeGitRemote(
+            name: "contributor",
+            repository: fixture.fork,
+            fetchURL: XCTUnwrap(URL(string: "https://github.com/other/gitx.git"))
+        )
+        XCTAssertThrowsError(try ForgePullRequestCheckoutPolicy.plan(
+            pullRequest: fixture.pullRequest(number: 42),
+            workingState: .init(stagedCount: 0, unstagedCount: 0, untrackedCount: 0, conflictCount: 0),
+            remotes: [mislabeled],
+            existingLocalBranches: [],
+            headRemoteURL: XCTUnwrap(URL(string: "https://github.com/contributor/gitx.git"))
+        )) {
+            XCTAssertEqual($0 as? ForgePullRequestWorkflowError, .invalidRemoteURL)
+        }
+
+        let gitLabFork = try ForgeRepositoryIdentity(
+            forge: fixture.otherForgeRepository.forge,
+            owner: "contributor",
+            name: "gitx"
+        )
+        let gitLabPullRequest = try ForgePullRequestSummary(
+            repository: fixture.otherForgeRepository,
+            number: ForgeItemNumber(45),
+            state: .open,
+            isDraft: false,
+            title: "GitLab Pull Request",
+            author: .unavailable(.notRequested),
+            head: .available(ForgeBranchReference(
+                repository: gitLabFork,
+                name: ForgeRefName("feature"),
+                commit: fixture.headCommit
+            )),
+            base: .unavailable(.notRequested),
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 2),
+            labels: .available([]),
+            checkRollup: .unavailable(.notRequested),
+            reviewRollup: .unavailable(.notRequested)
+        )
+        XCTAssertNoThrow(try ForgePullRequestCheckoutPolicy.plan(
+            pullRequest: gitLabPullRequest,
+            workingState: .init(stagedCount: 0, unstagedCount: 0, untrackedCount: 0, conflictCount: 0),
+            remotes: [],
+            existingLocalBranches: [],
+            headRemoteURL: XCTUnwrap(URL(string: "https://gitlab.com/contributor/gitx.git"))
+        ))
     }
 
     func testCheckoutPlanRejectsMismatchedRemoteAndMalformedRefspec() throws {
@@ -646,6 +801,19 @@ private struct Fixture {
             title: title,
             bodyMarkdown: "Body"
         )
+    }
+
+    func intent() throws -> ForgePushPullRequestIntent {
+        let form = try form()
+        let identity = try ForgeDraftIdentity(
+            accountID: accountID,
+            destination: .createPullRequest(
+                repository: repository,
+                base: base.name,
+                head: head.name
+            )
+        )
+        return try ForgePushPullRequestIntent(form: form, draftIdentity: identity)
     }
 
     func comparisonKey() throws -> ForgePullRequestComparisonKey {

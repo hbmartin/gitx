@@ -452,6 +452,43 @@ public enum ForgePostMergePolicy {
     public static let explicitActions = Set(ForgePostMergeAction.allCases)
 }
 
+public struct ForgeCreatePullRequestAuthoritativeRejection: Hashable, Sendable {
+    public let comparison: ForgePullRequestComparisonKey
+    public let message: String
+
+    public init(comparison: ForgePullRequestComparisonKey, message: String) throws {
+        guard ForgePathComponent.isNonemptyPrintable(message) else {
+            throw ForgePullRequestMutationError.invalidMessage
+        }
+        self.comparison = comparison
+        self.message = message
+    }
+}
+
+public enum ForgeCreatePullRequestReconciliationDecision: Hashable, Sendable {
+    case openExisting(ForgePullRequestSummary)
+    case preserveDraft(authoritativeMessage: String)
+}
+
+public enum ForgeCreatePullRequestReconciliationPolicy {
+    /// An authoritative create rejection is never converted into a guessed
+    /// duplicate. Only a freshly fetched, exact open base/head match may route
+    /// to an existing Pull Request; every other result preserves the draft and
+    /// the server's message without retrying.
+    public static func decision(
+        rejection: ForgeCreatePullRequestAuthoritativeRejection,
+        refreshedPullRequests: [ForgePullRequestSummary]
+    ) -> ForgeCreatePullRequestReconciliationDecision {
+        switch ForgeDuplicatePullRequestPolicy.decision(
+            for: rejection.comparison,
+            among: refreshedPullRequests
+        ) {
+        case let .openExisting(pullRequest): .openExisting(pullRequest)
+        case .create: .preserveDraft(authoritativeMessage: rejection.message)
+        }
+    }
+}
+
 public enum ForgeMutationResultState: Hashable, Sendable {
     case idle
     case executing

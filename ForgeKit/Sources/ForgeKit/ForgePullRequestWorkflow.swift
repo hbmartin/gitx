@@ -368,37 +368,67 @@ public struct ForgePullRequestEdit: Codable, Hashable, Sendable {
     }
 }
 
+public struct ForgePushPullRequestIntent: Hashable, Sendable {
+    public let form: ForgePullRequestCreationForm
+    public let draftIdentity: ForgeDraftIdentity
+
+    public init(form: ForgePullRequestCreationForm, draftIdentity: ForgeDraftIdentity) throws {
+        guard case let .createPullRequest(repository, base, head) = draftIdentity.destination,
+              repository == form.repository,
+              base == form.base.name,
+              head == form.head.name,
+              draftIdentity.accountID.forge == form.repository.forge,
+              draftIdentity.displayedPullRequestHead == nil
+        else {
+            throw ForgePullRequestWorkflowError.mismatchedRepository
+        }
+        self.form = form
+        self.draftIdentity = draftIdentity
+    }
+}
+
 public enum ForgePushPullRequestState: Hashable, Sendable {
     case idle
-    case pushSheet(createPullRequestSelected: Bool)
-    case pushing(createPullRequestAfterSuccess: Bool)
-    case createSheet(ForgePullRequestCreationForm)
-    case draftPreserved(ForgePullRequestCreationForm)
+    case pushSheet(createPullRequestSelected: Bool, intent: ForgePushPullRequestIntent?)
+    case pushing(createPullRequestAfterSuccess: Bool, intent: ForgePushPullRequestIntent?)
+    case createSheet(ForgePushPullRequestIntent)
+    case draftPreserved(ForgePushPullRequestIntent)
     case completed(ForgeDestination)
 
     public func applying(_ event: ForgePushPullRequestEvent) throws -> Self {
         switch (self, event) {
-        case (.idle, let .newPullRequest(branchAlreadyPushed, form)):
-            return branchAlreadyPushed ? .createSheet(form) : .pushSheet(createPullRequestSelected: true)
-        case (.idle, .ordinaryPush):
-            return .pushSheet(createPullRequestSelected: false)
-        case let (.pushSheet, .beginPush(createPullRequestSelected)):
-            return .pushing(createPullRequestAfterSuccess: createPullRequestSelected)
-        case (.pushing(false), .pushSucceeded):
+        case (.idle, let .newPullRequest(branchAlreadyPushed, intent)):
+            return branchAlreadyPushed
+                ? .createSheet(intent)
+                : .pushSheet(createPullRequestSelected: true, intent: intent)
+        case let (.idle, .ordinaryPush(intent)):
+            return .pushSheet(createPullRequestSelected: false, intent: intent)
+        case let (.pushSheet(_, intent), .beginPush(createPullRequestSelected)):
+            if createPullRequestSelected, intent == nil {
+                throw ForgePullRequestWorkflowError.invalidTransition
+            }
+            return .pushing(
+                createPullRequestAfterSuccess: createPullRequestSelected,
+                intent: intent
+            )
+        case (.pushing(false, _), .pushSucceeded):
             return .idle
-        case (.pushing(true), let .pushSucceededWithForm(form)):
-            return .createSheet(form)
+        case let (.pushing(true, intent?), .pushSucceeded):
+            return .createSheet(intent)
+        case let (.pushing(true, intent?), .pushFailed),
+             let (.pushSheet(true, intent?), .cancel):
+            return .draftPreserved(intent)
         case (.pushing, .pushFailed), (.pushSheet, .cancel):
             return .idle
-        case let (.createSheet(form), .cancel):
-            return .draftPreserved(form)
-        case let (.createSheet(form), .creationFailed):
-            return .draftPreserved(form)
+        case let (.createSheet(intent), .cancel):
+            return .draftPreserved(intent)
+        case let (.createSheet(intent), .creationFailed):
+            return .draftPreserved(intent)
         case let (.createSheet, .creationSucceeded(destination)),
              let (.createSheet, .existingPullRequest(destination)):
             return .completed(destination)
-        case let (.draftPreserved(form), .reopenDraft):
-            return .createSheet(form)
+        case let (.draftPreserved(intent), .reopenDraft):
+            return .createSheet(intent)
         case (.completed, .reset), (.draftPreserved, .discardDraft):
             return .idle
         default:
@@ -408,11 +438,10 @@ public enum ForgePushPullRequestState: Hashable, Sendable {
 }
 
 public enum ForgePushPullRequestEvent: Hashable, Sendable {
-    case newPullRequest(branchAlreadyPushed: Bool, form: ForgePullRequestCreationForm)
-    case ordinaryPush
+    case newPullRequest(branchAlreadyPushed: Bool, intent: ForgePushPullRequestIntent)
+    case ordinaryPush(intent: ForgePushPullRequestIntent?)
     case beginPush(createPullRequestSelected: Bool)
     case pushSucceeded
-    case pushSucceededWithForm(ForgePullRequestCreationForm)
     case pushFailed
     case cancel
     case creationSucceeded(ForgeDestination)
@@ -476,7 +505,7 @@ public struct ForgeGitRemote: Codable, Hashable, Sendable {
               components.password == nil,
               components.query == nil,
               components.fragment == nil,
-              scheme == "ssh" || components.user == nil
+              scheme == "ssh" ? (components.user == nil || components.user == "git") : components.user == nil
         else {
             throw ForgePullRequestWorkflowError.invalidRemoteURL
         }
@@ -570,6 +599,9 @@ public enum ForgePullRequestCheckoutPolicy {
             remote = try ForgeGitRemote(name: name, repository: head.repository, fetchURL: headRemoteURL)
             addsRemote = true
         }
+        guard remoteURL(remote.fetchURL, exactlyMatches: head.repository) else {
+            throw ForgePullRequestWorkflowError.invalidRemoteURL
+        }
         let localBranch = try collisionSafeBranchName(
             pullRequest: pullRequest.number,
             headOwner: head.repository.owner,
@@ -624,6 +656,42 @@ public enum ForgePullRequestCheckoutPolicy {
         return String(value.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "-" })
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
             .lowercased()
+    }
+
+    private static func remoteURL(
+        _ url: URL,
+        exactlyMatches repository: ForgeRepositoryIdentity
+    ) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.host?.lowercased() == repository.forge.origin.host.lowercased(),
+              components.port == repository.forge.origin.port,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.scheme?.lowercased() == "ssh"
+              ? (components.user == nil || components.user == "git")
+              : components.user == nil
+        else { return false }
+
+        guard components.percentEncodedPath.hasPrefix("/") else { return false }
+        let encodedPath = components.percentEncodedPath.dropFirst()
+            .split(separator: "/", omittingEmptySubsequences: false)
+        guard !encodedPath.isEmpty,
+              encodedPath.allSatisfy({ !$0.isEmpty })
+        else { return false }
+        var actual: [String] = []
+        for component in encodedPath {
+            guard let decoded = String(component).removingPercentEncoding else { return false }
+            actual.append(decoded.precomposedStringWithCanonicalMapping)
+        }
+        if actual[actual.count - 1].lowercased().hasSuffix(".git") {
+            actual[actual.count - 1].removeLast(4)
+        }
+        let expected = repository.ownerPathComponents + [repository.name]
+        if repository.forge.kind == .github {
+            return actual.map { $0.lowercased() } == expected.map { $0.lowercased() }
+        }
+        return actual == expected
     }
 }
 

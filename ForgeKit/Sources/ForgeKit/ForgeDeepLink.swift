@@ -38,7 +38,7 @@ public enum ForgeDeepLinkCodec {
         case let .commit(_, commit):
             path += ["commit", commit.value]
         case let .file(_, revision, file, selection):
-            path += ["file", revision.value]
+            path += ["file"] + encodedRevision(revision)
             if let selection {
                 path += ["lines", String(selection.start), String(selection.end)]
             } else {
@@ -46,7 +46,7 @@ public enum ForgeDeepLinkCodec {
             }
             path += file.components
         case let .compare(_, base, head):
-            path += ["compare", base.value, head.value]
+            path += ["compare"] + encodedRevision(base) + encodedRevision(head)
         case let .pullRequest(_, number):
             path += ["pull-request", String(number.rawValue)]
         case let .issue(_, number):
@@ -119,26 +119,27 @@ public enum ForgeDeepLinkCodec {
             guard route.count == 2 else { throw ForgeDeepLinkError.malformedRoute }
             return try mapped { try .commit(repository, ForgeCommitID(route[1])) }
         case "file":
-            guard route.count >= 6, route[2] == "lines" else {
+            guard route.count >= 7, route[3] == "lines" else {
                 throw ForgeDeepLinkError.malformedRoute
             }
-            let selection = try lineSelection(start: route[3], end: route[4])
-            let filePath = Array(route.dropFirst(5)).joined(separator: "/")
+            let revision = try decodedRevision(kind: route[1], value: route[2])
+            let selection = try lineSelection(start: route[4], end: route[5])
+            let filePath = Array(route.dropFirst(6)).joined(separator: "/")
             return try mapped {
                 try .file(
                     repository,
-                    revision: .opaque(ForgeRefName(route[1])),
+                    revision: revision,
                     path: ForgeFilePath(filePath),
                     selection: selection
                 )
             }
         case "compare":
-            guard route.count == 3 else { throw ForgeDeepLinkError.malformedRoute }
+            guard route.count == 5 else { throw ForgeDeepLinkError.malformedRoute }
             return try mapped {
                 try .compare(
                     repository,
-                    base: .opaque(ForgeRefName(route[1])),
-                    head: .opaque(ForgeRefName(route[2]))
+                    base: decodedRevision(kind: route[1], value: route[2]),
+                    head: decodedRevision(kind: route[3], value: route[4])
                 )
             }
         case "pull-request":
@@ -167,6 +168,27 @@ public enum ForgeDeepLinkCodec {
     private static func itemNumber(_ value: String) throws -> ForgeItemNumber {
         guard let integer = Int(value) else { throw ForgeDeepLinkError.malformedRoute }
         return try mapped { try ForgeItemNumber(integer) }
+    }
+
+    private static func encodedRevision(_ revision: ForgeRevision) -> [String] {
+        switch revision {
+        case let .branch(branch): ["branch", branch.value]
+        case let .tag(tag): ["tag", tag.value]
+        case let .commit(commit): ["commit", commit.value]
+        case let .opaque(value): ["opaque", value.value]
+        }
+    }
+
+    private static func decodedRevision(kind: String, value: String) throws -> ForgeRevision {
+        try mapped {
+            switch kind {
+            case "branch": try .branch(ForgeRefName(value))
+            case "tag": try .tag(ForgeRefName(value))
+            case "commit": try .commit(ForgeCommitID(value))
+            case "opaque": try .opaque(ForgeRefName(value))
+            default: throw ForgeDeepLinkError.malformedRoute
+            }
+        }
     }
 
     private static func mapped<Value>(_ body: () throws -> Value) throws -> Value {
@@ -274,7 +296,8 @@ public enum ForgeDeepLinkRouter {
                 destination: destination
             )
         }
-        if let commit = localCommitRequired(by: destination), !frontmost.availableCommits.contains(commit) {
+        let requiredCommits = localCommitsRequired(by: destination)
+        if !requiredCommits.isSubset(of: frontmost.availableCommits) {
             return .missingLocalObject(
                 checkoutIdentifier: frontmost.identifier,
                 destination: destination,
@@ -284,11 +307,19 @@ public enum ForgeDeepLinkRouter {
         return .open(checkoutIdentifier: frontmost.identifier, destination: destination)
     }
 
-    private static func localCommitRequired(by destination: ForgeDestination) -> ForgeCommitID? {
+    private static func localCommitsRequired(by destination: ForgeDestination) -> Set<ForgeCommitID> {
         switch destination {
-        case let .commit(_, commit): commit
-        case let .file(_, .commit(commit), _, _): commit
-        case .repository, .branch, .file, .compare, .pullRequest, .issue: nil
+        case let .commit(_, commit): [commit]
+        case let .file(_, .commit(commit), _, _): [commit]
+        case let .compare(_, base, head): Set([base, head].compactMap(\.commitID))
+        case .repository, .branch, .file, .pullRequest, .issue: []
         }
+    }
+}
+
+private extension ForgeRevision {
+    var commitID: ForgeCommitID? {
+        guard case let .commit(commit) = self else { return nil }
+        return commit
     }
 }

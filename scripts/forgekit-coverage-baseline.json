@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "ForgeKit handwritten sources",
-  "minimumLineCoverage": 0.9955,
+  "minimumLineCoverage": 0.9956,
   "files": {
     "ForgeKit/Sources/ForgeKit/ForgeAccount.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeAttention.swift": 1.0,
@@ -11,7 +11,7 @@
     "ForgeKit/Sources/ForgeKit/ForgeCachePolicy.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeCapability.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeCollaboration.swift": 1.0,
-    "ForgeKit/Sources/ForgeKit/ForgeDeepLink.swift": 0.989,
+    "ForgeKit/Sources/ForgeKit/ForgeDeepLink.swift": 0.9902,
     "ForgeKit/Sources/ForgeKit/ForgeDestination.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeDestinationURLCodec.swift": 0.9739,
     "ForgeKit/Sources/ForgeKit/ForgeDraft.swift": 1.0,
