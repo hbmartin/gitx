@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 
 // SwiftLint analyze misclassifies this import; Logger requires it at compile time.
 // swiftlint:disable:next unused_import
@@ -249,6 +250,150 @@ private final class SettingsPaneView: NSView {
     }
 }
 
+@MainActor
+private final class ForgeTrustedOriginsPreferencesView: NSView {
+    private final class RemoveButton: NSButton {
+        let origin: ForgeTrustedExternalOrigin
+
+        init(origin: ForgeTrustedExternalOrigin) {
+            self.origin = origin
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+    }
+
+    private let store: ForgeTrustedExternalOriginStore
+    private let rows = NSStackView()
+
+    init(store: ForgeTrustedExternalOriginStore) {
+        self.store = store
+        super.init(frame: NSRect(x: 0, y: 0, width: 690, height: 150))
+        configureView()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(originsChanged(_:)),
+            name: .forgeTrustedExternalOriginsDidChange,
+            object: store
+        )
+        reloadRows()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func configureView() {
+        translatesAutoresizingMaskIntoConstraints = false
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityIdentifier("ForgeTrustedExternalOrigins")
+        setAccessibilityLabel("Trusted external link origins")
+
+        let title = NSTextField(labelWithString: "Trusted external link origins")
+        title.font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        let detail = NSTextField(wrappingLabelWithString:
+            "Cross-origin HTTPS links listed here may open without another confirmation. "
+                + "Trust is exact and never applies to subdomains or alternate ports.")
+        detail.textColor = .secondaryLabelColor
+        detail.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        detail.maximumNumberOfLines = 2
+
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 5
+        rows.edgeInsets = NSEdgeInsets(top: 5, left: 7, bottom: 5, right: 7)
+        rows.translatesAutoresizingMaskIntoConstraints = false
+
+        let document = NSView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(rows)
+        let scrollView = NSScrollView()
+        scrollView.borderType = .bezelBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = document
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [title, detail, scrollView])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 690),
+            heightAnchor.constraint(equalToConstant: 150),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrollView.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            document.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            document.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            document.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            rows.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            rows.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            rows.topAnchor.constraint(equalTo: document.topAnchor),
+            rows.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+    }
+
+    @objc private func originsChanged(_: Notification) {
+        reloadRows()
+    }
+
+    @objc private func removeOrigin(_ sender: RemoveButton) {
+        store.remove(sender.origin)
+    }
+
+    private func reloadRows() {
+        for view in rows.arrangedSubviews.reversed() {
+            rows.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        let origins = store.sortedOrigins()
+        guard !origins.isEmpty else {
+            let empty = NSTextField(labelWithString: "No external origins are trusted.")
+            empty.textColor = .secondaryLabelColor
+            empty.setAccessibilityIdentifier("ForgeTrustedExternalOriginsEmpty")
+            rows.addArrangedSubview(empty)
+            return
+        }
+        for origin in origins {
+            let originString = origin.origin.url.absoluteString
+            let label = NSTextField(labelWithString: originString)
+            label.lineBreakMode = .byTruncatingMiddle
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let remove = RemoveButton(origin: origin)
+            remove.title = "Remove"
+            remove.bezelStyle = .rounded
+            remove.controlSize = .small
+            remove.target = self
+            remove.action = #selector(removeOrigin(_:))
+            remove.setAccessibilityIdentifier("RemoveForgeTrustedExternalOrigin")
+            remove.setAccessibilityLabel("Remove trusted origin \(originString)")
+            let row = NSStackView(views: [label, NSView(), remove])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 8
+            row.translatesAutoresizingMaskIntoConstraints = false
+            rows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rows.widthAnchor, constant: -14).isActive = true
+        }
+    }
+}
+
 /// Objective-C callers are not visible to SwiftLint's analyzer.
 @objc(PBSettingsViewFactory)
 final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_declaration
@@ -292,6 +437,10 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         loadAvatars.setAccessibilityIdentifier("LoadForgeAvatars")
         loadAvatars.setAccessibilityLabel("Load structured GitHub avatars")
         loadAvatars.toolTip = "Uses a credential-free connection only to GitHub's approved avatar host."
+        view.addSeparator()
+        view.addCustom(ForgeTrustedOriginsPreferencesView(
+            store: ApplicationComposition.shared.forgeExternalLinkPreferences
+        ))
         view.addSeparator()
         let legacySize = legacyView.frame.size
         legacyView.translatesAutoresizingMaskIntoConstraints = false

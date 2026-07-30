@@ -248,6 +248,18 @@ public struct ForgeExternalLinkConfirmation: Equatable, Sendable {
     public let origin: ForgeTrustedExternalOrigin
     public let displayHost: String
     public let asciiHost: String
+
+    public init(
+        url: URL,
+        origin: ForgeTrustedExternalOrigin,
+        displayHost: String,
+        asciiHost: String
+    ) {
+        self.url = url
+        self.origin = origin
+        self.displayHost = displayHost
+        self.asciiHost = asciiHost
+    }
 }
 
 public struct ForgeMailConfirmation: Equatable, Sendable {
@@ -257,6 +269,22 @@ public struct ForgeMailConfirmation: Equatable, Sendable {
     public let bcc: [String]
     public let subject: String?
     public let hasBody: Bool
+
+    public init(
+        url: URL,
+        to: [String],
+        cc: [String],
+        bcc: [String],
+        subject: String?,
+        hasBody: Bool
+    ) {
+        self.url = url
+        self.to = to
+        self.cc = cc
+        self.bcc = bcc
+        self.subject = subject
+        self.hasBody = hasBody
+    }
 }
 
 public enum ForgeMarkdownLinkActivation: Equatable, Sendable {

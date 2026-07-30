@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "ForgeKit handwritten sources",
-  "minimumLineCoverage": 0.9952,
+  "minimumLineCoverage": 0.9954,
   "files": {
     "ForgeKit/Sources/ForgeKit/ForgeAccount.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeAttention.swift": 1.0,
@@ -16,7 +16,7 @@
     "ForgeKit/Sources/ForgeKit/ForgeGitHubSlugUnicode13.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeIdentity.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeMarkdown.swift": 1.0,
-    "ForgeKit/Sources/ForgeKit/ForgeMarkdownLinkPolicy.swift": 0.9883,
+    "ForgeKit/Sources/ForgeKit/ForgeMarkdownLinkPolicy.swift": 0.9887,
     "ForgeKit/Sources/ForgeKit/ForgeMarkdownSanitizer.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeReadModels.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeRefreshPolicy.swift": 0.9927,

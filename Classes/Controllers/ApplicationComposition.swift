@@ -113,6 +113,7 @@ final nonisolated class ApplicationComposition: NSObject {
 
     @objc let applicationPreferences: ApplicationPreferences
     let forgeServices: ForgeApplicationServiceLoader
+    let forgeExternalLinkPreferences: ForgeTrustedExternalOriginStore
     private let automaticallyStartsForgeServices: Bool
     private let forgeServiceStartupLock = NSLock()
     private var didStartForgeServices = false
@@ -147,6 +148,7 @@ final nonisolated class ApplicationComposition: NSObject {
     ) {
         applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
         self.forgeServices = forgeServices
+        forgeExternalLinkPreferences = ForgeTrustedExternalOriginStore(defaults: userDefaults)
         self.automaticallyStartsForgeServices = automaticallyStartsForgeServices
         super.init()
     }

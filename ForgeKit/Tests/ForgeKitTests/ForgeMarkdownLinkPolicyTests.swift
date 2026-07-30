@@ -295,6 +295,40 @@ final class ForgeMarkdownLinkPolicyTests: XCTestCase {
         }
     }
 
+    func testExternalTrustNeverInheritsAcrossHostBoundariesOrEquivalentDefaultPortSpelling() throws {
+        let repository = try TestSupport.repository()
+        let trustedLink = try ForgeHTTPSLink("https://BÜCHER.example:443/path")
+        let trusted = ForgeTrustedExternalOrigin(origin: trustedLink.origin)
+
+        for openWithoutConfirmation in [
+            "https://bücher.example/other",
+            "https://xn--bcher-kva.example/encoded-host",
+        ] {
+            guard case .openHTTPS = try ForgeMarkdownLinkActivationPolicy.activation(
+                for: .https(ForgeHTTPSLink(openWithoutConfirmation)),
+                boundTo: repository,
+                trustedExternalOrigins: [trusted]
+            ) else {
+                return XCTFail("Equivalent exact origin should be trusted: \(openWithoutConfirmation)")
+            }
+        }
+
+        for requiresConfirmation in [
+            "https://sub.bücher.example/path",
+            "https://example/path",
+            "https://bücher.example:444/path",
+            "https://bücher.example.evil.test/path",
+        ] {
+            guard case .confirmHTTPS = try ForgeMarkdownLinkActivationPolicy.activation(
+                for: .https(ForgeHTTPSLink(requiresConfirmation)),
+                boundTo: repository,
+                trustedExternalOrigins: [trusted]
+            ) else {
+                return XCTFail("Non-exact origin must require confirmation: \(requiresConfirmation)")
+            }
+        }
+    }
+
     func testNativeActivationCannotEscapeTheExactBoundRepositoryAfterConstructionOrDecoding() throws {
         let bound = try TestSupport.repository()
         let sameOriginOther = try ForgeRepositoryIdentity(
