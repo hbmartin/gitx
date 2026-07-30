@@ -54,6 +54,37 @@ EXPECTED_READ_OPERATIONS = frozenset(
         "GitHubRepositoryItemSearch",
     }
 )
+EXPECTED_MUTATION_PREFLIGHT_OPERATIONS = frozenset(
+    {
+        "GitHubHeadBranchDeletionPreflight",
+        "GitHubPullRequestCreationPreflight",
+        "GitHubPullRequestMutationPreflight",
+        "GitHubReviewThreadMutationPreflight",
+        "GitHubSyncForkPreflight",
+    }
+)
+EXPECTED_MUTATION_OPERATIONS = frozenset(
+    {
+        "GitHubClosePullRequest",
+        "GitHubConvertPullRequestToDraft",
+        "GitHubCreatePullRequest",
+        "GitHubDeleteHeadBranch",
+        "GitHubEditPullRequest",
+        "GitHubEnterMergeQueue",
+        "GitHubLeaveMergeQueue",
+        "GitHubMarkPullRequestReady",
+        "GitHubMergePullRequest",
+        "GitHubPublishInlineReview",
+        "GitHubReopenPullRequest",
+        "GitHubReplyToReviewThread",
+        "GitHubResolveReviewThread",
+        "GitHubSubmitFormalReview",
+        "GitHubUnresolveReviewThread",
+        "GitHubUpdatePullRequestBranch",
+    }
+)
+EXPECTED_QUERY_OPERATIONS = EXPECTED_READ_OPERATIONS | EXPECTED_MUTATION_PREFLIGHT_OPERATIONS
+EXPECTED_OPERATIONS = EXPECTED_QUERY_OPERATIONS | EXPECTED_MUTATION_OPERATIONS
 PAGINATED_READ_OPERATIONS = EXPECTED_READ_OPERATIONS - {"GitHubRepositoryFacts"}
 ATTENTION_INPUTS = (
     "assignedActors",
@@ -157,6 +188,11 @@ EXPECTED_CONNECTIONS_BY_DEFINITION = {
         ConnectionExpectation(
             "pullRequests",
             (("first", ":", "$", "first"), ("after", ":", "$", "after")),
+        ),
+    ),
+    "GitHubPullRequestCreationPreflight": (
+        ConnectionExpectation(
+            "pullRequests", (("first", ":", "100"), ("after", ":", "$", "after"))
         ),
     ),
     "GitHubPullRequestReviewThreadComments": (
@@ -486,12 +522,21 @@ def operation_policy_failures(repository_root: pathlib.Path) -> list[str]:
         if len(definitions) > 1:
             failures.append(f"duplicate GraphQL operation definition: {name}")
         for kind, path, _ in definitions:
-            if kind != "query":
+            expected_kind = "mutation" if name in EXPECTED_MUTATION_OPERATIONS else "query"
+            if name not in EXPECTED_OPERATIONS:
                 relative = path.relative_to(repository_root).as_posix()
-                failures.append(f"{relative}: Milestone 1 operation {name} must be read-only")
+                failures.append(f"{relative}: GraphQL operation {name} is outside the accepted Milestone 1-3 surface")
+            elif kind != expected_kind:
+                relative = path.relative_to(repository_root).as_posix()
+                failures.append(
+                    f"{relative}: GraphQL operation {name} must be a {expected_kind}"
+                )
 
-    for name in sorted(EXPECTED_READ_OPERATIONS - declarations.keys()):
-        failures.append(f"missing required Milestone 1 GraphQL read operation: {name}")
+    for name in sorted(EXPECTED_OPERATIONS - declarations.keys()):
+        if name in EXPECTED_READ_OPERATIONS:
+            failures.append(f"missing required Milestone 1 GraphQL read operation: {name}")
+        else:
+            failures.append(f"missing required Milestones 2-3 GraphQL operation: {name}")
 
     for name in sorted(PAGINATED_READ_OPERATIONS & declarations.keys()):
         _, path, source = declarations[name][0]

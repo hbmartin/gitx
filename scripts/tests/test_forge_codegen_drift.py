@@ -134,7 +134,7 @@ class ForgeCodegenDriftTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertIn("not executable", failures[0])
 
-    def test_mutation_operation_is_rejected_from_milestone_one(self) -> None:
+    def test_out_of_scope_mutation_operation_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             prepare_repository(root, "exit 0\n")
@@ -147,7 +147,35 @@ class ForgeCodegenDriftTests(unittest.TestCase):
             failures = checker.operation_policy_failures(root)
 
         self.assertEqual(len(failures), 1)
-        self.assertIn("must be read-only", failures[0])
+        self.assertIn("outside the accepted Milestone 1-3 surface", failures[0])
+
+    def test_accepted_pull_request_and_review_mutations_are_required(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            prepare_repository(root, "exit 0\n")
+
+            failures = checker.operation_policy_failures(root)
+
+        self.assertEqual(failures, [])
+
+    def test_expected_mutation_cannot_be_declared_as_a_query(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            prepare_repository(root, "exit 0\n")
+            mutation_file = root / checker.OPERATIONS_ROOT / "PullRequestMutations.graphql"
+            source = mutation_file.read_text()
+            mutation_file.write_text(
+                source.replace(
+                    "mutation GitHubCreatePullRequest",
+                    "query GitHubCreatePullRequest",
+                    1,
+                )
+            )
+
+            failures = checker.operation_policy_failures(root)
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn("GitHubCreatePullRequest must be a mutation", failures[0])
 
     def test_missing_required_read_operation_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

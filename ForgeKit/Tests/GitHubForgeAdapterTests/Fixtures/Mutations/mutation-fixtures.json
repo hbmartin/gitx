@@ -1,0 +1,400 @@
+{
+  "repositoryIdentity": {
+    "__typename": "Repository",
+    "id": "repo-node",
+    "name": "gitx",
+    "nameWithOwner": "hbmartin/gitx",
+    "owner": {
+      "__typename": "User",
+      "login": "hbmartin"
+    }
+  },
+  "parentIdentity": {
+    "__typename": "Repository",
+    "id": "parent-node",
+    "name": "gitx",
+    "nameWithOwner": "gitx/gitx",
+    "owner": {
+      "__typename": "Organization",
+      "login": "gitx"
+    }
+  },
+  "pullRequest": {
+    "__typename": "PullRequest",
+    "id": "pr-node",
+    "number": 7,
+    "title": "Mutation adapter",
+    "body": "Provider-neutral body",
+    "state": "OPEN",
+    "isDraft": false,
+    "createdAt": "2026-07-29T12:00:00Z",
+    "updatedAt": "2026-07-29T12:30:00Z",
+    "closedAt": null,
+    "mergedAt": null,
+    "headRefName": "feature/github-mutations",
+    "headRefOid": "abcdef12",
+    "headRepository": {
+      "__typename": "Repository",
+      "id": "repo-node",
+      "name": "gitx",
+      "nameWithOwner": "hbmartin/gitx",
+      "owner": {
+        "__typename": "User",
+        "login": "hbmartin"
+      }
+    },
+    "baseRefName": "master",
+    "baseRefOid": "12345678",
+    "baseRepository": {
+      "__typename": "Repository",
+      "id": "repo-node",
+      "name": "gitx",
+      "nameWithOwner": "hbmartin/gitx",
+      "owner": {
+        "__typename": "User",
+        "login": "hbmartin"
+      }
+    }
+  },
+  "pullRequestPreflight": {
+    "__typename": "Repository",
+    "id": "repo-node",
+    "name": "gitx",
+    "nameWithOwner": "hbmartin/gitx",
+    "owner": {
+      "__typename": "User",
+      "login": "hbmartin"
+    },
+    "mergeCommitAllowed": true,
+    "squashMergeAllowed": true,
+    "rebaseMergeAllowed": true,
+    "viewerPermission": "WRITE",
+    "pullRequest": {
+      "__typename": "PullRequest",
+      "id": "pr-node",
+      "number": 7,
+      "title": "Mutation adapter",
+      "body": "Provider-neutral body",
+      "state": "OPEN",
+      "isDraft": false,
+      "createdAt": "2026-07-29T12:00:00Z",
+      "updatedAt": "2026-07-29T12:30:00Z",
+      "closedAt": null,
+      "mergedAt": null,
+      "headRefName": "feature/github-mutations",
+      "headRefOid": "abcdef12",
+      "headRepository": {
+        "__typename": "Repository",
+        "id": "repo-node",
+        "name": "gitx",
+        "nameWithOwner": "hbmartin/gitx",
+        "owner": {
+          "__typename": "User",
+          "login": "hbmartin"
+        }
+      },
+      "baseRefName": "master",
+      "baseRefOid": "12345678",
+      "baseRepository": {
+        "__typename": "Repository",
+        "id": "repo-node",
+        "name": "gitx",
+        "nameWithOwner": "hbmartin/gitx",
+        "owner": {
+          "__typename": "User",
+          "login": "hbmartin"
+        }
+      },
+      "viewerCanClose": true,
+      "viewerCanReopen": true,
+      "viewerCanUpdate": true,
+      "viewerCanUpdateBranch": true,
+      "mergeable": "MERGEABLE",
+      "reviewDecision": "APPROVED",
+      "statusCheckRollup": {
+        "__typename": "StatusCheckRollup",
+        "state": "SUCCESS"
+      },
+      "mergeQueueEntry": null
+    }
+  },
+  "creationPreflight": {
+    "repository": {
+      "__typename": "Repository",
+      "id": "repo-node",
+      "name": "gitx",
+      "nameWithOwner": "hbmartin/gitx",
+      "owner": {
+        "__typename": "User",
+        "login": "hbmartin"
+      },
+      "pullRequests": {
+        "__typename": "PullRequestConnection",
+        "totalCount": 0,
+        "pageInfo": {
+          "__typename": "PageInfo",
+          "hasPreviousPage": false,
+          "startCursor": null,
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": []
+      }
+    },
+    "headRepository": {
+      "__typename": "Repository",
+      "id": "repo-node",
+      "name": "gitx",
+      "nameWithOwner": "hbmartin/gitx",
+      "owner": {
+        "__typename": "User",
+        "login": "hbmartin"
+      }
+    }
+  },
+  "threadPreflight": {
+    "node": {
+      "__typename": "PullRequestReviewThread",
+      "id": "thread-node",
+      "isResolved": false,
+      "pullRequest": {
+        "__typename": "PullRequest",
+        "number": 7,
+        "headRefOid": "abcdef12",
+        "repository": {
+          "__typename": "Repository",
+          "id": "repo-node",
+          "name": "gitx",
+          "nameWithOwner": "hbmartin/gitx",
+          "owner": {
+            "__typename": "User",
+            "login": "hbmartin"
+          }
+        }
+      }
+    }
+  },
+  "syncPreflight": {
+    "repository": {
+      "__typename": "Repository",
+      "id": "repo-node",
+      "name": "gitx",
+      "nameWithOwner": "hbmartin/gitx",
+      "owner": {
+        "__typename": "User",
+        "login": "hbmartin"
+      },
+      "isFork": true,
+      "parent": {
+        "__typename": "Repository",
+        "id": "parent-node",
+        "name": "gitx",
+        "nameWithOwner": "gitx/gitx",
+        "owner": {
+          "__typename": "Organization",
+          "login": "gitx"
+        }
+      }
+    }
+  },
+  "headBranchPreflight": {
+    "repository": {
+      "__typename": "Repository",
+      "id": "repo-node",
+      "name": "gitx",
+      "nameWithOwner": "hbmartin/gitx",
+      "owner": {
+        "__typename": "User",
+        "login": "hbmartin"
+      },
+      "defaultBranchRef": {
+        "__typename": "Ref",
+        "name": "master"
+      },
+      "viewerPermission": "WRITE",
+      "ref": {
+        "__typename": "Ref",
+        "id": "ref-node",
+        "name": "feature/github-mutations",
+        "branchProtectionRule": null,
+        "target": {
+          "__typename": "Commit",
+          "oid": "abcdef12"
+        }
+      }
+    }
+  },
+  "mutationData": {
+    "GitHubCreatePullRequest": {
+      "createPullRequest": {
+        "__typename": "CreatePullRequestPayload",
+        "pullRequest": "$pullRequest"
+      }
+    },
+    "GitHubEditPullRequest": {
+      "updatePullRequest": {
+        "__typename": "UpdatePullRequestPayload",
+        "pullRequest": "$pullRequest"
+      }
+    },
+    "GitHubMarkPullRequestReady": {
+      "markPullRequestReadyForReview": {
+        "__typename": "MarkPullRequestReadyForReviewPayload",
+        "pullRequest": "$pullRequest"
+      }
+    },
+    "GitHubConvertPullRequestToDraft": {
+      "convertPullRequestToDraft": {
+        "__typename": "ConvertPullRequestToDraftPayload",
+        "pullRequest": "$pullRequest"
+      }
+    },
+    "GitHubClosePullRequest": {
+      "updatePullRequest": {
+        "__typename": "UpdatePullRequestPayload",
+        "pullRequest": "$pullRequest"
+      }
+    },
+    "GitHubReopenPullRequest": {
+      "updatePullRequest": {
+        "__typename": "UpdatePullRequestPayload",
+        "pullRequest": "$pullRequest"
+      }
+    },
+    "GitHubUpdatePullRequestBranch": {
+      "updatePullRequestBranch": {
+        "__typename": "UpdatePullRequestBranchPayload",
+        "pullRequest": "$pullRequest"
+      }
+    },
+    "GitHubMergePullRequest": {
+      "mergePullRequest": {
+        "__typename": "MergePullRequestPayload",
+        "pullRequest": "$pullRequest"
+      }
+    },
+    "GitHubEnterMergeQueue": {
+      "enqueuePullRequest": {
+        "__typename": "EnqueuePullRequestPayload",
+        "mergeQueueEntry": {
+          "__typename": "MergeQueueEntry",
+          "id": "queue-node",
+          "pullRequest": {
+            "__typename": "PullRequest",
+            "id": "pr-node",
+            "number": 7,
+            "headRefOid": "abcdef12",
+            "repository": "$repositoryIdentity"
+          }
+        }
+      }
+    },
+    "GitHubLeaveMergeQueue": {
+      "dequeuePullRequest": {
+        "__typename": "DequeuePullRequestPayload",
+        "mergeQueueEntry": {
+          "__typename": "MergeQueueEntry",
+          "id": "queue-node",
+          "pullRequest": {
+            "__typename": "PullRequest",
+            "id": "pr-node",
+            "number": 7,
+            "headRefOid": "abcdef12",
+            "repository": "$repositoryIdentity"
+          }
+        }
+      }
+    },
+    "GitHubDeleteHeadBranch": {
+      "deleteRef": {
+        "__typename": "DeleteRefPayload",
+        "clientMutationId": null
+      }
+    },
+    "GitHubPublishInlineReview": {
+      "addPullRequestReviewThread": {
+        "__typename": "AddPullRequestReviewThreadPayload",
+        "thread": {
+          "__typename": "PullRequestReviewThread",
+          "id": "thread-node",
+          "isResolved": false,
+          "isOutdated": false,
+          "pullRequest": {
+            "__typename": "PullRequest",
+            "number": 7,
+            "headRefOid": "abcdef12",
+            "repository": "$repositoryIdentity"
+          }
+        }
+      }
+    },
+    "GitHubReplyToReviewThread": {
+      "addPullRequestReviewThreadReply": {
+        "__typename": "AddPullRequestReviewThreadReplyPayload",
+        "comment": {
+          "__typename": "PullRequestReviewComment",
+          "id": "reply-node",
+          "pullRequest": {
+            "__typename": "PullRequest",
+            "number": 7,
+            "repository": "$repositoryIdentity"
+          }
+        }
+      }
+    },
+    "GitHubSubmitFormalReview": {
+      "addPullRequestReview": {
+        "__typename": "AddPullRequestReviewPayload",
+        "pullRequestReview": {
+          "__typename": "PullRequestReview",
+          "id": "review-node",
+          "state": "APPROVED",
+          "commit": {
+            "__typename": "Commit",
+            "oid": "abcdef12"
+          },
+          "pullRequest": {
+            "__typename": "PullRequest",
+            "number": 7,
+            "repository": "$repositoryIdentity"
+          }
+        }
+      }
+    },
+    "GitHubResolveReviewThread": {
+      "resolveReviewThread": {
+        "__typename": "ResolveReviewThreadPayload",
+        "thread": {
+          "__typename": "PullRequestReviewThread",
+          "id": "thread-node",
+          "isResolved": true,
+          "pullRequest": {
+            "__typename": "PullRequest",
+            "number": 7,
+            "repository": "$repositoryIdentity"
+          }
+        }
+      }
+    },
+    "GitHubUnresolveReviewThread": {
+      "unresolveReviewThread": {
+        "__typename": "UnresolveReviewThreadPayload",
+        "thread": {
+          "__typename": "PullRequestReviewThread",
+          "id": "thread-node",
+          "isResolved": false,
+          "pullRequest": {
+            "__typename": "PullRequest",
+            "number": 7,
+            "repository": "$repositoryIdentity"
+          }
+        }
+      }
+    }
+  },
+  "restSync": {
+    "message": "Successfully synced the fork",
+    "merge_type": "fast-forward",
+    "base_branch": "master"
+  }
+}

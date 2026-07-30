@@ -1,0 +1,145 @@
+query GitHubPullRequestMutationPreflight($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    ...GitHubRepositoryIdentity
+    id
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
+    viewerPermission
+    pullRequest(number: $number) {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+      viewerCanClose
+      viewerCanReopen
+      viewerCanUpdate
+      viewerCanUpdateBranch
+      mergeable
+      reviewDecision
+      statusCheckRollup {
+        state
+      }
+      mergeQueueEntry {
+        id
+      }
+    }
+  }
+}
+
+query GitHubPullRequestCreationPreflight(
+  $owner: String!
+  $name: String!
+  $headOwner: String!
+  $headName: String!
+  $baseRefName: String!
+  $headRefName: String!
+  $after: String
+) {
+  repository(owner: $owner, name: $name) {
+    ...GitHubRepositoryIdentity
+    id
+    pullRequests(
+      first: 100
+      after: $after
+      states: [OPEN]
+      baseRefName: $baseRefName
+      headRefName: $headRefName
+    ) {
+      totalCount
+      pageInfo {
+        ...GitHubPageInfo
+      }
+      nodes {
+        ...GitHubPullRequestMutationSnapshot
+        id
+        number
+        title
+        body
+        state
+        isDraft
+        createdAt
+        updatedAt
+        closedAt
+        mergedAt
+        headRefName
+        headRefOid
+        headRepository {
+          ...GitHubRepositoryIdentity
+        }
+        baseRefName
+        baseRefOid
+        baseRepository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+  headRepository: repository(owner: $headOwner, name: $headName) {
+    ...GitHubRepositoryIdentity
+    id
+  }
+}
+
+query GitHubReviewThreadMutationPreflight($id: ID!) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      id
+      isResolved
+      pullRequest {
+        number
+        headRefOid
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+}
+
+query GitHubHeadBranchDeletionPreflight($owner: String!, $name: String!, $qualifiedName: String!) {
+  repository(owner: $owner, name: $name) {
+    ...GitHubRepositoryIdentity
+    defaultBranchRef {
+      name
+    }
+    viewerPermission
+    ref(qualifiedName: $qualifiedName) {
+      id
+      name
+      branchProtectionRule {
+        id
+      }
+      target {
+        oid
+      }
+    }
+  }
+}
+
+query GitHubSyncForkPreflight($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    ...GitHubRepositoryIdentity
+    isFork
+    parent {
+      ...GitHubRepositoryIdentity
+    }
+  }
+}

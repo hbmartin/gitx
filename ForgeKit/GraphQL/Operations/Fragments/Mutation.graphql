@@ -1,0 +1,22 @@
+fragment GitHubPullRequestMutationSnapshot on PullRequest {
+  id
+  number
+  title
+  body
+  state
+  isDraft
+  createdAt
+  updatedAt
+  closedAt
+  mergedAt
+  headRefName
+  headRefOid
+  headRepository {
+    ...GitHubRepositoryIdentity
+  }
+  baseRefName
+  baseRefOid
+  baseRepository {
+    ...GitHubRepositoryIdentity
+  }
+}

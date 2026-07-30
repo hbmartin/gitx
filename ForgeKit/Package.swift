@@ -40,6 +40,10 @@ let package = Package(
                 .product(name: "Markdown", package: "swift-markdown"),
             ]
         ),
-        .testTarget(name: "GitHubForgeAdapterTests", dependencies: ["GitHubForgeAdapter"]),
+        .testTarget(
+            name: "GitHubForgeAdapterTests",
+            dependencies: ["GitHubForgeAdapter"],
+            resources: [.process("Fixtures")]
+        ),
     ]
 )

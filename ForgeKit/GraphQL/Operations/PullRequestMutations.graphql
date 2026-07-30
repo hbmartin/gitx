@@ -1,0 +1,261 @@
+mutation GitHubCreatePullRequest($input: CreatePullRequestInput!) {
+  createPullRequest(input: $input) {
+    pullRequest {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+    }
+  }
+}
+
+mutation GitHubEditPullRequest($input: UpdatePullRequestInput!) {
+  updatePullRequest(input: $input) {
+    pullRequest {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+    }
+  }
+}
+
+mutation GitHubMarkPullRequestReady($input: MarkPullRequestReadyForReviewInput!) {
+  markPullRequestReadyForReview(input: $input) {
+    pullRequest {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+    }
+  }
+}
+
+mutation GitHubConvertPullRequestToDraft($input: ConvertPullRequestToDraftInput!) {
+  convertPullRequestToDraft(input: $input) {
+    pullRequest {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+    }
+  }
+}
+
+mutation GitHubClosePullRequest($input: UpdatePullRequestInput!) {
+  updatePullRequest(input: $input) {
+    pullRequest {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+    }
+  }
+}
+
+mutation GitHubReopenPullRequest($input: UpdatePullRequestInput!) {
+  updatePullRequest(input: $input) {
+    pullRequest {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+    }
+  }
+}
+
+mutation GitHubUpdatePullRequestBranch($input: UpdatePullRequestBranchInput!) {
+  updatePullRequestBranch(input: $input) {
+    pullRequest {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+    }
+  }
+}
+
+mutation GitHubMergePullRequest($input: MergePullRequestInput!) {
+  mergePullRequest(input: $input) {
+    pullRequest {
+      ...GitHubPullRequestMutationSnapshot
+      id
+      number
+      title
+      body
+      state
+      isDraft
+      createdAt
+      updatedAt
+      closedAt
+      mergedAt
+      headRefName
+      headRefOid
+      headRepository {
+        ...GitHubRepositoryIdentity
+      }
+      baseRefName
+      baseRefOid
+      baseRepository {
+        ...GitHubRepositoryIdentity
+      }
+    }
+  }
+}
+
+mutation GitHubEnterMergeQueue($input: EnqueuePullRequestInput!) {
+  enqueuePullRequest(input: $input) {
+    mergeQueueEntry {
+      id
+      pullRequest {
+        id
+        number
+        headRefOid
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+}
+
+mutation GitHubLeaveMergeQueue($input: DequeuePullRequestInput!) {
+  dequeuePullRequest(input: $input) {
+    mergeQueueEntry {
+      id
+      pullRequest {
+        id
+        number
+        headRefOid
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+}
+
+mutation GitHubDeleteHeadBranch($input: DeleteRefInput!) {
+  deleteRef(input: $input) {
+    clientMutationId
+  }
+}
