@@ -24,6 +24,7 @@
     "ForgeKit/Sources/ForgeKit/ForgeRouting.swift": 0.9849,
     "ForgeKit/Sources/ForgeKit/ForgeSQLitePersistence.swift": 0.9954,
     "ForgeKit/Sources/ForgeKit/ForgeWebURLPolicy.swift": 0.9777,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubAnonymousRESTAdapter.swift": 0.9965,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthentication.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthenticationTransport.swift": 0.9971,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthorization.swift": 1.0,
