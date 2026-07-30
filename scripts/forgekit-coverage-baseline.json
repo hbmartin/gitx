@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "ForgeKit handwritten sources",
-  "minimumLineCoverage": 0.9939,
+  "minimumLineCoverage": 0.9948,
   "files": {
     "ForgeKit/Sources/ForgeKit/ForgeAccount.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeAttention.swift": 0.9968,
@@ -22,6 +22,8 @@
     "ForgeKit/Sources/ForgeKit/ForgeRouting.swift": 0.9849,
     "ForgeKit/Sources/ForgeKit/ForgeSQLitePersistence.swift": 0.9945,
     "ForgeKit/Sources/ForgeKit/ForgeWebURLPolicy.swift": 0.9777,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthentication.swift": 1.0,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthorization.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubForgeAdapter.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLValueMapper.swift": 1.0
   }

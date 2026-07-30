@@ -102,16 +102,33 @@ public struct ForgePermissionEnvelope: Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(grants: container.decode([ForgePermissionGrant].self, forKey: .grants))
     }
+}
+
+public struct ForgePermissionRequestEnvelope: Codable, Hashable, Sendable {
+    public let requirements: [ForgePermissionRequirement]
+
+    public init(requirements: [ForgePermissionRequirement]) throws {
+        var seen: Set<ForgeRepositoryPermission> = []
+        for requirement in requirements where !seen.insert(requirement.permission).inserted {
+            throw ForgeCapabilityModelError.duplicatePermission(requirement.permission)
+        }
+        self.requirements = requirements.sorted { $0.permission.rawValue < $1.permission.rawValue }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(requirements: container.decode([ForgePermissionRequirement].self, forKey: .requirements))
+    }
 
     /// The complete, predictable permission contract requested from the first
     /// authenticated GitHub App release through Milestone 3.
-    public static let milestone3 = try! ForgePermissionEnvelope(grants: [
-        ForgePermissionGrant(permission: .metadata, authority: .known(.read)),
-        ForgePermissionGrant(permission: .contents, authority: .known(.write)),
-        ForgePermissionGrant(permission: .pullRequests, authority: .known(.write)),
-        ForgePermissionGrant(permission: .issues, authority: .known(.write)),
-        ForgePermissionGrant(permission: .checks, authority: .known(.read)),
-        ForgePermissionGrant(permission: .commitStatuses, authority: .known(.read)),
+    public static let milestone3 = try! ForgePermissionRequestEnvelope(requirements: [
+        ForgePermissionRequirement(permission: .metadata, level: .read),
+        ForgePermissionRequirement(permission: .contents, level: .write),
+        ForgePermissionRequirement(permission: .pullRequests, level: .write),
+        ForgePermissionRequirement(permission: .issues, level: .write),
+        ForgePermissionRequirement(permission: .checks, level: .read),
+        ForgePermissionRequirement(permission: .commitStatuses, level: .read),
     ])
 }
 

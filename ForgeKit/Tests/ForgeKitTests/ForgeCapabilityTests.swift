@@ -3,24 +3,27 @@ import Foundation
 import XCTest
 
 final class ForgeCapabilityTests: XCTestCase {
-    func testMilestone3EnvelopeIsExactAndDoesNotContainNotificationsPermission() throws {
-        let levels = Dictionary(uniqueKeysWithValues: ForgePermissionEnvelope.milestone3.grants.map {
-            ($0.permission, $0.authority)
+    func testMilestone3RequestEnvelopeIsExactAndDoesNotContainObservedAuthority() throws {
+        let levels = Dictionary(uniqueKeysWithValues: ForgePermissionRequestEnvelope.milestone3.requirements.map {
+            ($0.permission, $0.level)
         })
         XCTAssertEqual(Set(levels.keys), Set(ForgeRepositoryPermission.allCases))
-        XCTAssertEqual(levels[.metadata], .known(.read))
-        XCTAssertEqual(levels[.contents], .known(.write))
-        XCTAssertEqual(levels[.pullRequests], .known(.write))
-        XCTAssertEqual(levels[.issues], .known(.write))
-        XCTAssertEqual(levels[.checks], .known(.read))
-        XCTAssertEqual(levels[.commitStatuses], .known(.read))
-        XCTAssertFalse(String(describing: ForgePermissionEnvelope.milestone3).localizedCaseInsensitiveContains("notification"))
+        XCTAssertEqual(levels[.metadata], .read)
+        XCTAssertEqual(levels[.contents], .write)
+        XCTAssertEqual(levels[.pullRequests], .write)
+        XCTAssertEqual(levels[.issues], .write)
+        XCTAssertEqual(levels[.checks], .read)
+        XCTAssertEqual(levels[.commitStatuses], .read)
+        XCTAssertFalse(
+            String(describing: ForgePermissionRequestEnvelope.milestone3)
+                .localizedCaseInsensitiveContains("notification")
+        )
         XCTAssertEqual(
             try JSONDecoder().decode(
-                ForgePermissionEnvelope.self,
-                from: JSONEncoder().encode(ForgePermissionEnvelope.milestone3)
+                ForgePermissionRequestEnvelope.self,
+                from: JSONEncoder().encode(ForgePermissionRequestEnvelope.milestone3)
             ),
-            ForgePermissionEnvelope.milestone3
+            ForgePermissionRequestEnvelope.milestone3
         )
     }
 
@@ -33,6 +36,13 @@ final class ForgeCapabilityTests: XCTestCase {
         XCTAssertThrowsError(try ForgePermissionEnvelope(grants: duplicate)) {
             XCTAssertEqual($0 as? ForgeCapabilityModelError, .duplicatePermission(.metadata))
         }
+        let duplicateRequests = [
+            ForgePermissionRequirement(permission: .metadata, level: .read),
+            ForgePermissionRequirement(permission: .metadata, level: .write),
+        ]
+        XCTAssertThrowsError(try ForgePermissionRequestEnvelope(requirements: duplicateRequests)) {
+            XCTAssertEqual($0 as? ForgeCapabilityModelError, .duplicatePermission(.metadata))
+        }
         struct UnvalidatedEnvelope: Encodable { let grants: [ForgePermissionGrant] }
         XCTAssertThrowsError(
             try JSONDecoder().decode(
@@ -42,6 +52,29 @@ final class ForgeCapabilityTests: XCTestCase {
         ) {
             XCTAssertEqual($0 as? ForgeCapabilityModelError, .duplicatePermission(.metadata))
         }
+        struct UnvalidatedRequestEnvelope: Encodable {
+            let requirements: [ForgePermissionRequirement]
+        }
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                ForgePermissionRequestEnvelope.self,
+                from: JSONEncoder().encode(UnvalidatedRequestEnvelope(requirements: duplicateRequests))
+            )
+        ) {
+            XCTAssertEqual($0 as? ForgeCapabilityModelError, .duplicatePermission(.metadata))
+        }
+        let observedEnvelope = try ForgePermissionEnvelope(grants: [
+            ForgePermissionGrant(permission: .pullRequests, authority: .known(.write)),
+            ForgePermissionGrant(permission: .metadata, authority: .known(.read)),
+        ])
+        XCTAssertEqual(observedEnvelope.grants.map(\.permission), [.metadata, .pullRequests])
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                ForgePermissionEnvelope.self,
+                from: JSONEncoder().encode(observedEnvelope)
+            ),
+            observedEnvelope
+        )
         XCTAssertThrowsError(
             try ForgePermissionEvidence(
                 credential: context.credential,
@@ -429,7 +462,7 @@ final class ForgeCapabilityTests: XCTestCase {
             credential: context.credential,
             repository: otherRepository,
             freshness: .current,
-            grants: ForgePermissionEnvelope.milestone3.grants
+            grants: observedMilestone3Grants()
         )
         XCTAssertEqual(
             ForgeCapabilityEvaluator.capability(
@@ -513,6 +546,17 @@ final class ForgeCapabilityTests: XCTestCase {
         )
     }
 
+    private func observedMilestone3Grants() -> [ForgePermissionGrant] {
+        [
+            ForgePermissionGrant(permission: .metadata, authority: .known(.read)),
+            ForgePermissionGrant(permission: .contents, authority: .known(.write)),
+            ForgePermissionGrant(permission: .pullRequests, authority: .known(.write)),
+            ForgePermissionGrant(permission: .issues, authority: .known(.write)),
+            ForgePermissionGrant(permission: .checks, authority: .known(.read)),
+            ForgePermissionGrant(permission: .commitStatuses, authority: .known(.read)),
+        ]
+    }
+
     private func fullEvidence(
         _ context: Context,
         freshness: ForgeAuthorizationEvidenceFreshness = .current
@@ -521,7 +565,7 @@ final class ForgeCapabilityTests: XCTestCase {
             credential: context.credential,
             repository: context.repository,
             freshness: freshness,
-            grants: ForgePermissionEnvelope.milestone3.grants
+            grants: observedMilestone3Grants()
         )
     }
 
