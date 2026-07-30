@@ -1,6 +1,6 @@
 import ForgeKit
 import Foundation
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 /// Adapts the paginated GitHub.com read surface to ForgeKit's account-owned
 /// Attention polling boundary. One instance is bound to one current Credential

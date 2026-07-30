@@ -1,6 +1,6 @@
 import ForgeKit
 import Foundation
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 import Security
 
 nonisolated enum ForgeKeychainOperation: String, Equatable, Sendable {
@@ -507,6 +507,8 @@ actor ForgeAccountStore {
     }
 
     @discardableResult
+    // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
+    // swiftlint:disable:next unused_declaration
     func replaceCredential(
         expectedReference: ForgeCredentialReference,
         credentialID: ForgeCredentialID,

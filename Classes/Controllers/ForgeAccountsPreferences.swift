@@ -2,7 +2,7 @@ import AppKit
 import ForgeKit
 import Foundation
 import GitHubForgeAdapter
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 nonisolated enum ForgeAccountsError: Error, Equatable, LocalizedError, Sendable {
     case githubApplicationNotConfigured

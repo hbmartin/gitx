@@ -1,7 +1,7 @@
 import AppKit
 import ForgeKit
 import ImageIO
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 import UniformTypeIdentifiers
 
 nonisolated struct ForgeAvatarPayload: Equatable, Sendable {
@@ -426,6 +426,8 @@ final nonisolated class ForgeAvatarLoadingPreferenceCoordinator: Sendable {
         continuation.yield(.update(enabled))
     }
 
+    // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
+    // swiftlint:disable:next unused_declaration
     func flush() async {
         await withCheckedContinuation { barrier in
             continuation.yield(.barrier(barrier))
@@ -868,6 +870,8 @@ final class ForgeAvatarView: NSView {
 
     /// Lets app-hosted verification wait on the same observable work the view
     /// owns instead of relying on a polling interval or a fixed delay.
+    // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
+    // swiftlint:disable:next unused_declaration
     func waitForPendingLoad() async {
         await requestTask?.value
     }

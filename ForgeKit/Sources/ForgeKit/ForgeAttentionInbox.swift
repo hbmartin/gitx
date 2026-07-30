@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 public enum ForgeAttentionInboxError: Error, Equatable, LocalizedError, Sendable {
     case mismatchedWatch

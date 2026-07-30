@@ -66,6 +66,8 @@ final nonisolated class ForgeTrustedExternalOriginStore: @unchecked Sendable {
     }
 
     @discardableResult
+    // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
+    // swiftlint:disable:next unused_declaration
     func removeAll() -> Bool {
         let changed = lock.withLock {
             guard !readLocked().isEmpty || defaults.object(forKey: Self.storageKey) != nil else {

@@ -1,8 +1,8 @@
 import ForgeKit
 import Foundation
-import GitHubForgeAdapter
+import GitHubForgeAdapter // swiftlint:disable:this unused_import
 import Network
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 // swift6-safety-justification: NWPathMonitor owns its thread-safe state; immutable fields are installed before start.
 @MainActor

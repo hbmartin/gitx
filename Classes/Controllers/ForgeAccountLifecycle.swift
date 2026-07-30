@@ -1,6 +1,6 @@
 import ForgeKit
 import Foundation
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 nonisolated struct ForgeCLISecretEnvironment: Equatable, Sendable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable

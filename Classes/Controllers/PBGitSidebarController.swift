@@ -1,5 +1,5 @@
 import AppKit
-import ForgeKit
+import ForgeKit // swiftlint:disable:this unused_import
 import GitXCore
 import OSLog // swiftlint:disable:this unused_import
 
@@ -246,6 +246,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc(showForgeAttention:)
+    // AppKit dispatches this target/action selector through the responder chain.
+    // swiftlint:disable:next unused_declaration
     dynamic func showForgeAttention(_ sender: Any?) {
         showForgeSurface(.attention)
     }

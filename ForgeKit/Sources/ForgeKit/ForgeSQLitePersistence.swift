@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 import SQLite3
 
 public enum ForgeSQLiteDurableKind: Int, Codable, CaseIterable, Hashable, Sendable {

@@ -1,5 +1,3 @@
-import Foundation
-
 public struct ForgeMarkdownDocument: Codable, Equatable, Sendable {
     public let blocks: [ForgeMarkdownBlock]
 

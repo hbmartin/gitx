@@ -129,6 +129,8 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         reload(query: listController.query)
     }
 
+    // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
+    // swiftlint:disable:next unused_declaration
     func setVisibleColumns(_ columns: Set<ForgeReadSurfaceColumn>) {
         listController.setVisibleColumns(columns)
     }

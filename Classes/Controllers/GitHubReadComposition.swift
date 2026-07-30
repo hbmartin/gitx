@@ -1,7 +1,7 @@
 import ForgeKit
 import Foundation
 import GitHubForgeAdapter
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 nonisolated enum ForgeGitHubReadCompositionError: Error, Equatable, LocalizedError, Sendable {
     case githubDotComCredentialRequired
@@ -132,6 +132,8 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
         )
     }
 
+    // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
+    // swiftlint:disable:next unused_declaration
     func credentialChange(
         for expectedCredential: ForgeCredentialReference
     ) async throws -> ForgeAccountCredentialChange {

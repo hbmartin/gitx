@@ -15,10 +15,14 @@ extension Notification.Name {
 }
 
 @MainActor
+// Production wiring consumes this protocol through existential storage.
+// swiftlint:disable:next unused_declaration
 protocol RepositoryForgeStatusCoordinating: AnyObject {
     var currentInput: ForgeRepositoryStatusInput { get }
     var inputDidChange: ((ForgeRepositoryStatusInput) -> Void)? { get set }
 
+    // Production wiring invokes this through the protocol existential.
+    // swiftlint:disable:next unused_declaration
     func updateStatus(_ input: ForgeRepositoryStatusInput)
     func requestManualRefresh()
     func showDetails(for action: ForgeStatusDetailsAction)
@@ -27,6 +31,8 @@ protocol RepositoryForgeStatusCoordinating: AnyObject {
 /// Deterministic test seam for status-bar wiring. Production repository windows
 /// bind the live `RepositoryForgeOverlaySession` through the same protocol.
 @MainActor
+// Production wiring and the app-hosted test target instantiate this coordinator.
+// swiftlint:disable:next unused_declaration
 final class RepositoryForgeStatusCoordinator: RepositoryForgeStatusCoordinating {
     private(set) var currentInput: ForgeRepositoryStatusInput
     var inputDidChange: ((ForgeRepositoryStatusInput) -> Void)?
@@ -57,6 +63,8 @@ final class RepositoryForgeStatusCoordinator: RepositoryForgeStatusCoordinating 
         detailsHandler(action)
     }
 
+    // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
+    // swiftlint:disable:next unused_declaration
     static func postManualRefresh(
         from source: AnyObject,
         notificationCenter: NotificationCenter = .default

@@ -1,7 +1,7 @@
 import ForgeKit
 import Foundation
 import GitHubForgeAdapter
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 nonisolated enum ForgeApplicationDataAvailability: Sendable {
     case available(ForgeSQLiteStore)
@@ -71,6 +71,8 @@ actor ForgeDeferredAccountCleanupStore {
     /// state. Preserve each tombstone while a named copy exists and filter that
     /// account from every salvage so removing one account cannot reseed it or
     /// discard another account's recoverable records.
+    // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
+    // swiftlint:disable:next unused_declaration
     func filtering(_ salvage: ForgeSQLiteSalvage) throws -> ForgeSQLiteSalvage {
         let payload = try load()
         let excludedAccounts = Set(payload.entries.map(\.accountID))

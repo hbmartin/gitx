@@ -6,6 +6,8 @@
     /// execute the app module's internal pure-Swift Markdown and avatar boundaries.
     @MainActor
     @objc(PBForgeMarkdownAvatarProductHarness)
+    // Objective-C XCTest reaches this harness through its explicit runtime name.
+    // swiftlint:disable:next unused_declaration
     final class ForgeMarkdownAvatarProductHarness: NSObject {
         private final class Router: ForgeMarkdownNavigationRouting {
             var activations = 0
@@ -181,6 +183,8 @@
         }
 
         @objc(validateAvatarData:declaredMediaType:maximumPixels:expectedWidth:expectedHeight:)
+        // Objective-C XCTest invokes this explicit runtime selector.
+        // swiftlint:disable:next unused_declaration
         static func validateAvatarData(
             _ data: Data,
             declaredMediaType: String,
@@ -218,6 +222,8 @@
         }
 
         @objc(loaderProofWithCompletion:)
+        // Objective-C XCTest invokes this explicit runtime selector.
+        // swiftlint:disable:next unused_declaration
         static func loaderProof(completion: @escaping (UInt64) -> Void) {
             Task {
                 completion(await makeLoaderProof())
@@ -225,6 +231,8 @@
         }
 
         @objc(sidebarAttentionProofWithCompletion:)
+        // Objective-C XCTest invokes this explicit runtime selector.
+        // swiftlint:disable:next unused_declaration
         static func sidebarAttentionProof(completion: @escaping (UInt64) -> Void) {
             Task {
                 completion(await makeSidebarAttentionProof())
@@ -232,6 +240,8 @@
         }
 
         @objc(applicationStartupFailureProofWithCompletion:)
+        // Objective-C XCTest invokes this explicit runtime selector.
+        // swiftlint:disable:next unused_declaration
         static func applicationStartupFailureProof(completion: @escaping (UInt64) -> Void) {
             Task {
                 completion(await makeApplicationStartupFailureProof())

@@ -1584,7 +1584,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([controller validateMenuItem:historyItem]);
 	XCTAssertEqual(historyItem.state, NSControlStateValueOn);
 	XCTAssertTrue([controller validateMenuItem:[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Other", nil) action:@selector(copy:) keyEquivalent:@""]]);
-	NSMenuItem *statusBarItem = [[NSMenuItem alloc] initWithTitle:@"Repository Status Bar"
+	NSMenuItem *statusBarItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Repository Status Bar", nil)
 														   action:@selector(toggleRepositoryStatusBar:)
 													keyEquivalent:@""];
 	BOOL originalStatusBarVisibility = PBApplicationSettings.repositoryStatusBarVisible;
@@ -2138,7 +2138,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowAlertResponse = NSAlertFirstButtonReturn;
 	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
 		if ([alert.messageText isEqualToString:@"Choose Primary Repository"])
-			[(NSPopUpButton *)alert.accessoryView selectItemWithTitle:@"GitHub — gitx/gitx (upstream)"];
+			[(NSPopUpButton *)alert.accessoryView selectItemWithTitle:NSLocalizedString(@"GitHub — gitx/gitx (upstream)", nil)];
 	};
 	[sidebar outlineViewSelectionDidChange:
 				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification

@@ -1,6 +1,6 @@
 import AppKit
 import ForgeKit
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 @MainActor
 protocol ForgeMarkdownNavigationRouting: AnyObject {

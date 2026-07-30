@@ -1,5 +1,8 @@
 import ForgeKit
 
+// This normalization boundary is exercised by its package test target; SwiftLint
+// analyzes production and test targets separately and cannot observe those uses.
+// swiftlint:disable unused_declaration
 enum GitHubGraphQLValueMapper {
     static func repositoryVisibility(
         _ value: GitHubAPI.RepositoryVisibility?
@@ -73,3 +76,5 @@ enum GitHubGraphQLValueMapper {
         }
     }
 }
+
+// swiftlint:enable unused_declaration

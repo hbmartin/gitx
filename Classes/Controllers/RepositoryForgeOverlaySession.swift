@@ -2,7 +2,7 @@ import ForgeKit
 import Foundation
 import GitHubForgeAdapter
 import Network
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 nonisolated struct RepositoryForgeOverlaySnapshot<Value: Hashable & Sendable>: Hashable, Sendable {
     let value: Value

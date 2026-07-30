@@ -1,6 +1,6 @@
 import AppKit
 import ForgeKit
-import OSLog
+import OSLog // swiftlint:disable:this unused_import
 
 nonisolated struct HistoryForgeBadgePresentation: Equatable, Sendable {
     let checkText: String
@@ -453,6 +453,8 @@ final class HistoryForgeOverlayCoordinator: NSObject {
         requestVisibleOverlays()
     }
 
+    // Invoked by the owning window controller and app-hosted verification.
+    // swiftlint:disable:next unused_declaration
     func invalidate() {
         if let factsToken {
             session.removeObserver(factsToken)

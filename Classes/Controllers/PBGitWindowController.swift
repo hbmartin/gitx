@@ -809,6 +809,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     #if DEBUG
         @objc(presentForgeRecoveryStatusDetailsWithCopyURL:)
+        // Objective-C app-hosted tests invoke this explicit runtime selector.
+        // swiftlint:disable:next unused_declaration
         dynamic func presentForgeRecoveryStatusDetails(copyURL: URL) {
             presentForgeStatusDetails(
                 .recoverForgeData,
@@ -817,6 +819,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
 
         @objc(presentForgeRecoveryStatusDetailsWithCopyURL:revealHandler:)
+        // Objective-C app-hosted tests invoke this explicit runtime selector.
+        // swiftlint:disable:next unused_declaration
         dynamic func presentForgeRecoveryStatusDetails(
             copyURL: URL,
             revealHandler: @escaping (URL) -> Void
@@ -830,6 +834,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     #endif
 
     @objc(showForgeStatusDetails:)
+    // AppKit dispatches this target/action selector through the responder chain.
+    // swiftlint:disable:next unused_declaration
     dynamic func showForgeStatusDetails(_ sender: Any?) {
         repositoryStatusBarController?.requestCurrentDetails()
     }
