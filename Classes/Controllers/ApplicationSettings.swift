@@ -67,6 +67,8 @@ final nonisolated class ApplicationSettings: NSObject {
         "PBDiffTextTypographyDidChangeNotification"
     @objc static let nativeContentAppearanceDidChangeNotificationName =
         "PBNativeContentAppearanceDidChangeNotification"
+    @objc static let forgeAvatarLoadingDidChangeNotificationName =
+        "PBForgeAvatarLoadingDidChangeNotification"
 
     private enum Key {
         static let openDisposition = "PBOpenDisposition"
@@ -94,6 +96,7 @@ final nonisolated class ApplicationSettings: NSObject {
         static let applicationIconStyle = ApplicationPreferenceKey.applicationIconStyle.rawValue
         static let stagingListLayout = "PBStagingFileListLayout"
         static let stagingFileSort = "PBStagingFileSortOrder"
+        static let loadAvatars = "PBLoadForgeAvatars"
     }
 
     private static var defaults: UserDefaults {
@@ -260,6 +263,18 @@ final nonisolated class ApplicationSettings: NSObject {
     @objc static var stagingFileSortOrder: StagingFileSortOrder {
         get { enumValue(Key.stagingFileSort, fallback: .path) }
         set { defaults.set(newValue.rawValue, forKey: Key.stagingFileSort) }
+    }
+
+    @objc static var loadAvatars: Bool {
+        get {
+            guard defaults.object(forKey: Key.loadAvatars) != nil else { return true }
+            return defaults.bool(forKey: Key.loadAvatars)
+        }
+        set {
+            guard newValue != loadAvatars else { return }
+            defaults.set(newValue, forKey: Key.loadAvatars)
+            ForgeAvatarLoadingPreferenceCoordinator.shared.submit(newValue)
+        }
     }
 
     private static func enumValue<Value: RawRepresentable>(

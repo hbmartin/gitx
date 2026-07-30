@@ -154,6 +154,7 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @property (class) PBApplicationIconStyle applicationIconStyle;
 @property (class) PBStagingListLayout stagingListLayout;
 @property (class) PBStagingFileSortOrder stagingFileSortOrder;
+@property (class) BOOL loadAvatars;
 @end
 
 typedef NS_ENUM(NSInteger, PBStagingListSection) {
@@ -325,6 +326,19 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 + (NSView *)windowsView;
 + (NSView *)diffAndTextView;
 + (NSView *)terminalView;
+@end
+
+@interface PBForgeMarkdownAvatarProductHarness : NSObject
++ (uint64_t)markdownProof;
++ (uint64_t)requestProof;
++ (BOOL)validateAvatarData:(NSData *)data
+         declaredMediaType:(NSString *)declaredMediaType
+             maximumPixels:(NSInteger)maximumPixels
+             expectedWidth:(NSInteger)expectedWidth
+            expectedHeight:(NSInteger)expectedHeight;
++ (uint64_t)avatarFallbackProof;
++ (void)loaderProofWithCompletion:(void (^)(uint64_t proof))completion
+	NS_SWIFT_NAME(loaderProof(completion:));
 @end
 
 @interface PBTerminalLauncher : NSObject

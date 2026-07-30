@@ -221,6 +221,13 @@
 		C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAF000000000000000012 /* NativeContentModelsTests.swift */; };
 		C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAE000000000000000011 /* NativeContentRenderer.swift */; };
 		C0DEAE000000000000000002 /* NativeContentRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAE000000000000000012 /* NativeContentRendererTests.swift */; };
+		C0DAA1000000000000000001 /* ForgeMarkdownNativeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA1000000000000000011 /* ForgeMarkdownNativeRenderer.swift */; };
+		C0DAA1000000000000000002 /* ForgeMarkdownNativeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA1000000000000000011 /* ForgeMarkdownNativeRenderer.swift */; };
+		C0DAA2000000000000000001 /* ForgeAvatarLoading.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA2000000000000000011 /* ForgeAvatarLoading.swift */; };
+		C0DAA2000000000000000002 /* ForgeAvatarLoading.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA2000000000000000011 /* ForgeAvatarLoading.swift */; };
+		C0DAA3000000000000000001 /* ForgeMarkdownAvatarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA3000000000000000011 /* ForgeMarkdownAvatarTests.swift */; };
+		C0DAA4000000000000000001 /* ForgeMarkdownAvatarTestShims.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA4000000000000000011 /* ForgeMarkdownAvatarTestShims.swift */; };
+		C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */; };
 		C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE45200000000000000011 /* NativeContentTypography.swift */; };
 		C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000011 /* CommitControllerPolicies.swift */; };
 		C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */; };
@@ -852,6 +859,11 @@
 		C0DEAF000000000000000012 /* NativeContentModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentModelsTests.swift; sourceTree = "<group>"; };
 		C0DEAE000000000000000011 /* NativeContentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentRenderer.swift; sourceTree = "<group>"; };
 		C0DEAE000000000000000012 /* NativeContentRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentRendererTests.swift; sourceTree = "<group>"; };
+		C0DAA1000000000000000011 /* ForgeMarkdownNativeRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMarkdownNativeRenderer.swift; sourceTree = "<group>"; };
+		C0DAA2000000000000000011 /* ForgeAvatarLoading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAvatarLoading.swift; sourceTree = "<group>"; };
+		C0DAA3000000000000000011 /* ForgeMarkdownAvatarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMarkdownAvatarTests.swift; sourceTree = "<group>"; };
+		C0DAA4000000000000000011 /* ForgeMarkdownAvatarTestShims.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMarkdownAvatarTestShims.swift; sourceTree = "<group>"; };
+		C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMarkdownAvatarProductHarness.swift; sourceTree = "<group>"; };
 		C0DE45200000000000000011 /* NativeContentTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentTypography.swift; sourceTree = "<group>"; };
 		C0DECF000000000000000011 /* CommitControllerPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitControllerPolicies.swift; sourceTree = "<group>"; };
 		C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitControllerPoliciesTests.swift; sourceTree = "<group>"; };
@@ -1399,6 +1411,8 @@
 				C0DE10000000000000000004 /* PBNativeContentView.m */,
 				C0DEAF000000000000000011 /* NativeContentModels.swift */,
 				C0DEAE000000000000000011 /* NativeContentRenderer.swift */,
+				C0DAA1000000000000000011 /* ForgeMarkdownNativeRenderer.swift */,
+				C0DAA2000000000000000011 /* ForgeAvatarLoading.swift */,
 				C0DE57A600000000000000B6 /* StagingFileCellView.swift */,
 				C0DE45200000000000000011 /* NativeContentTypography.swift */,
 				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
@@ -1515,6 +1529,9 @@
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
 				C0DEAF000000000000000012 /* NativeContentModelsTests.swift */,
 				C0DEAE000000000000000012 /* NativeContentRendererTests.swift */,
+				C0DAA3000000000000000011 /* ForgeMarkdownAvatarTests.swift */,
+				C0DAA4000000000000000011 /* ForgeMarkdownAvatarTestShims.swift */,
+				C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */,
 				C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */,
 				C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
@@ -1980,6 +1997,9 @@
 				C0DEE0000000000000000008 /* IndexRefreshCoordinator.swift in Sources */,
 				C0DEAF000000000000000001 /* NativeContentModels.swift in Sources */,
 				C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */,
+				C0DAA1000000000000000001 /* ForgeMarkdownNativeRenderer.swift in Sources */,
+				C0DAA2000000000000000001 /* ForgeAvatarLoading.swift in Sources */,
+				C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */,
 				C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */,
 				C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */,
 				C0DECE000000000000000001 /* CommitMenuPresenter.swift in Sources */,
@@ -2150,6 +2170,10 @@
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
 				C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */,
 				C0DEAE000000000000000002 /* NativeContentRendererTests.swift in Sources */,
+				C0DAA3000000000000000001 /* ForgeMarkdownAvatarTests.swift in Sources */,
+				C0DAA1000000000000000002 /* ForgeMarkdownNativeRenderer.swift in Sources */,
+				C0DAA2000000000000000002 /* ForgeAvatarLoading.swift in Sources */,
+				C0DAA4000000000000000001 /* ForgeMarkdownAvatarTestShims.swift in Sources */,
 				C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */,
 				C0DECE000000000000000002 /* CommitMenuPresenterTests.swift in Sources */,
 				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
@@ -2335,6 +2359,7 @@
 				PRODUCT_NAME = GitX;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_OBJC_BRIDGING_HEADER = "Classes/GitX-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;

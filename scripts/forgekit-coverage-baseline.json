@@ -1,10 +1,11 @@
 {
   "version": 1,
   "target": "ForgeKit handwritten sources",
-  "minimumLineCoverage": 0.995,
+  "minimumLineCoverage": 0.9951,
   "files": {
     "ForgeKit/Sources/ForgeKit/ForgeAccount.swift": 1.0,
-    "ForgeKit/Sources/ForgeKit/ForgeAttention.swift": 0.9968,
+    "ForgeKit/Sources/ForgeKit/ForgeAttention.swift": 1.0,
+    "ForgeKit/Sources/ForgeKit/ForgeAvatarPolicy.swift": 0.993,
     "ForgeKit/Sources/ForgeKit/ForgeBinding.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeCachePolicy.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeCapability.swift": 1.0,

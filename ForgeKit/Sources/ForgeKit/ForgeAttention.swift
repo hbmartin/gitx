@@ -361,7 +361,7 @@ public struct ForgeAttentionItem: Codable, Hashable, Sendable {
         state: ForgeAttentionItemState? = nil,
         seenState: ForgeAttentionSeenState? = nil,
         lastTransitionAt: Date? = nil,
-        lastUpdatedAt: Date? = nil
+        lastUpdatedAt: Date
     ) -> ForgeAttentionItem {
         ForgeAttentionItem(
             id: id,
@@ -371,7 +371,7 @@ public struct ForgeAttentionItem: Codable, Hashable, Sendable {
             authoredPullRequestFailedCheck: authoredPullRequestFailedCheck,
             firstBecameActionableAt: firstBecameActionableAt,
             lastTransitionAt: lastTransitionAt ?? self.lastTransitionAt,
-            lastUpdatedAt: lastUpdatedAt ?? self.lastUpdatedAt
+            lastUpdatedAt: lastUpdatedAt
         )
     }
 

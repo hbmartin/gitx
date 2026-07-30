@@ -157,6 +157,11 @@ private final class SettingsPaneView: NSView {
         NotificationCenter.default.post(name: .branchSidebarSettingsDidChange, object: nil)
     }
 
+    @objc func loadAvatarsChanged(_ sender: NSButton) {
+        ApplicationSettings.loadAvatars = sender.state == .on
+        logger.info("Structured avatar loading preference changed")
+    }
+
     @objc func applicationIconChanged(_ sender: NSButton) {
         guard let style = ApplicationIconStyle(rawValue: sender.tag) else { return }
         for case let button as NSButton in sender.superview?.subviews ?? [] {
@@ -279,6 +284,14 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         branchSort.target = view
         branchSort.action = #selector(SettingsPaneView.branchSortChanged(_:))
         view.addRow("Branch order:", control: branchSort)
+        let loadAvatars = view.addCheckbox(
+            "Load Avatars",
+            state: ApplicationSettings.loadAvatars,
+            action: #selector(SettingsPaneView.loadAvatarsChanged(_:))
+        )
+        loadAvatars.setAccessibilityIdentifier("LoadForgeAvatars")
+        loadAvatars.setAccessibilityLabel("Load structured GitHub avatars")
+        loadAvatars.toolTip = "Uses a credential-free connection only to GitHub's approved avatar host."
         view.addSeparator()
         let legacySize = legacyView.frame.size
         legacyView.translatesAutoresizingMaskIntoConstraints = false
@@ -528,4 +541,7 @@ extension Notification.Name {
     )
     nonisolated static let historyTraversalSettingsDidChange = Notification.Name("PBHistoryTraversalSettingsDidChangeNotification")
     nonisolated static let historyTreeSettingsDidChange = Notification.Name("PBHistoryTreeSettingsDidChangeNotification")
+    nonisolated static let forgeAvatarLoadingDidChange = Notification.Name(
+        ApplicationSettings.forgeAvatarLoadingDidChangeNotificationName
+    )
 }

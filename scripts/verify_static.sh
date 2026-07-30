@@ -59,6 +59,7 @@ python3 scripts/check_gitxcore_boundary.py
 python3 scripts/check_forgekit_boundary.py
 python3 scripts/check_forgekit_exports.py
 python3 scripts/check_forge_codegen_drift.py
+python3 scripts/check_avatar_boundary.py
 python3 scripts/check_header_interop.py "$merge_base"
 python3 scripts/check_swift_concurrency_escapes.py
 

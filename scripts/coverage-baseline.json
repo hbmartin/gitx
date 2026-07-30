@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8501,
+  "minimumLineCoverage": 0.8569,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4716,
@@ -85,6 +85,8 @@
     "Classes/Util/RJModalRepoSheet.m": 0.0,
     "Classes/Views/CommitMessageDropPathPolicy.swift": 1.0,
     "Classes/Views/CommitProgressSheetController.swift": 0.983,
+    "Classes/Views/ForgeAvatarLoading.swift": 0.958,
+    "Classes/Views/ForgeMarkdownNativeRenderer.swift": 0.9649,
     "Classes/Views/GLFileView.m": 0.916,
     "Classes/Views/GitXTextView.m": 0.44,
     "Classes/Views/NativeContentModels.swift": 1.0,
@@ -159,7 +161,7 @@
   },
   "groups": {
     "Application Preferences surfaces": {
-      "minimumLineCoverage": 0.8883,
+      "minimumLineCoverage": 0.8906,
       "files": [
         "Classes/Controllers/ApplicationSettings.swift",
         "Classes/Controllers/ApplicationPreferencesUI.swift",

@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 import XCTest
 
 /// Scheduled microbenchmarks for deterministic parsing and presentation policy.
@@ -16,6 +17,12 @@ final class GitXPerformanceTests: XCTestCase {
     private func elapsed(_ work: () -> Void) -> TimeInterval {
         let start = ProcessInfo.processInfo.systemUptime
         work()
+        return ProcessInfo.processInfo.systemUptime - start
+    }
+
+    private func elapsedAsync(_ work: () async throws -> Void) async rethrows -> TimeInterval {
+        let start = ProcessInfo.processInfo.systemUptime
+        try await work()
         return ProcessInfo.processInfo.systemUptime - start
     }
 
@@ -39,6 +46,31 @@ final class GitXPerformanceTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func representativeAvatarPayload() throws -> ForgeAvatarPayload {
+        let side = 512
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: side,
+            pixelsHigh: side,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        NSGradient(starting: .systemBlue, ending: .systemPurple)?.draw(
+            in: NSRect(x: 0, y: 0, width: side, height: side),
+            angle: 35
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        return ForgeAvatarPayload(data: data, mediaType: .png)
     }
 
     private func diffFixture(fileCount: Int, minimumByteCount: Int) -> DiffFixture {
@@ -539,5 +571,136 @@ final class GitXPerformanceTests: XCTestCase {
         XCTAssertEqual(fixture.fileCount, PBPerformanceBudgets.stressChangedFileCount)
         XCTAssertGreaterThanOrEqual(fixture.byteCount, PBPerformanceBudgets.stressDiffByteCount)
         XCTAssertTrue(result?.attributedString.string.contains(fixture.marker) == true)
+    }
+
+    func testRepresentativeForgeMarkdownRenderingMeetsMainThreadBudget() {
+        var blocks: [ForgeMarkdownBlock] = [
+            .heading(
+                level: 1,
+                identifier: ForgeMarkdownHeadingID(rawValue: "review-summary"),
+                content: [.text("Review summary")]
+            ),
+        ]
+        for index in 0 ..< 60 {
+            blocks.append(.paragraph([
+                .text("Comment \(index) keeps "),
+                .strong([.text("structured Markdown")]),
+                .text(" readable, with "),
+                .imagePlaceholder(altText: "inert diagram \(index)"),
+            ]))
+            blocks.append(.unorderedList([
+                ForgeMarkdownListItem(
+                    taskState: index.isMultiple(of: 2) ? .checked : .unchecked,
+                    blocks: [.paragraph([.text("Review item \(index)")])]
+                ),
+            ]))
+        }
+        let document = ForgeMarkdownDocument(blocks: blocks)
+        let renderer = ForgeMarkdownNativeRenderer()
+        let view = ForgeMarkdownNativeView(document: document, renderer: renderer)
+        view.frame = NSRect(x: 0, y: 0, width: 720, height: 540)
+        view.layoutSubtreeIfNeeded()
+        let applyAndLayout = {
+            view.display(document, renderer: renderer)
+            view.layoutSubtreeIfNeeded()
+            if let textContainer = view.textView.textContainer {
+                view.textView.layoutManager?.ensureLayout(for: textContainer)
+            }
+        }
+        let cold = elapsed {
+            applyAndLayout()
+        }
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 20 {
+            samples.append(elapsed {
+                applyAndLayout()
+            })
+        }
+
+        attachMeasurements(
+            "Representative native Forge Markdown render, text storage, and layout application",
+            cold: cold,
+            samples: samples
+        )
+        XCTAssertTrue(view.textView.string.contains("inert diagram 59"))
+        XCTAssertLessThanOrEqual(percentile95(samples), 0.016)
+    }
+
+    func testRepresentativeAvatarMemoryCacheHitsMeetAffectedViewBudget() async throws {
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/9001")
+        let payload = ForgeAvatarPayload(
+            data: Data(repeating: 0xA5, count: 4 * 1024),
+            mediaType: .png
+        )
+        let transport = PerformanceAvatarTransport(payload: payload)
+        let loader = ForgeAvatarLoader(
+            transport: transport,
+            cacheByteLimit: Int(ForgePolicyConstants.avatarCacheByteLimit)
+        )
+        _ = try await loader.load(avatarURL)
+
+        var latest: ForgeAvatarPayload?
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 200 {
+            try samples.append(await elapsedAsync {
+                latest = try await loader.load(avatarURL)
+            })
+        }
+
+        attachMeasurements("Representative structured-avatar memory-cache hits", samples: samples)
+        let fetchCount = await transport.fetchCount
+        XCTAssertEqual(latest, payload)
+        XCTAssertEqual(fetchCount, 1)
+        XCTAssertLessThanOrEqual(percentile95(samples), 0.016)
+    }
+
+    func testRepresentativeAvatarDecodeRunsOffMainAndMeetsAffectedViewBudgets() async throws {
+        let payload = try representativeAvatarPayload()
+        let decoder = ForgeAvatarImageDecoder()
+        var latest: ForgeAvatarDecodedImage?
+        let cold = try await elapsedAsync {
+            latest = try await decoder.decodeOffMain(payload)
+        }
+        var decodeSamples: [TimeInterval] = []
+        for _ in 0 ..< 20 {
+            try decodeSamples.append(await elapsedAsync {
+                latest = try await decoder.decodeOffMain(payload)
+            })
+        }
+        attachMeasurements(
+            "Representative 512-pixel structured-avatar background decode",
+            cold: cold,
+            samples: decodeSamples
+        )
+        let decoded = try XCTUnwrap(latest)
+        XCTAssertFalse(decoded.wasDecodedOnMainThread)
+        XCTAssertEqual(decoded.size, NSSize(width: 512, height: 512))
+        XCTAssertLessThanOrEqual(percentile95(decodeSamples), 0.050)
+
+        var assignmentSamples: [TimeInterval] = []
+        for _ in 0 ..< 200 {
+            assignmentSamples.append(elapsed {
+                _ = decoded.makeImage()
+            })
+        }
+        attachMeasurements(
+            "Representative structured-avatar main-actor image assignment",
+            samples: assignmentSamples
+        )
+        XCTAssertLessThanOrEqual(percentile95(assignmentSamples), 0.016)
+    }
+}
+
+private actor PerformanceAvatarTransport: ForgeAvatarTransport {
+    let payload: ForgeAvatarPayload
+    private(set) var fetchCount = 0
+
+    init(payload: ForgeAvatarPayload) {
+        self.payload = payload
+    }
+
+    func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
+        fetchCount += 1
+        return payload
     }
 }
