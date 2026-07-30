@@ -97,9 +97,14 @@ final class ForgeBindingTests: XCTestCase {
             repository: repository,
             confidence: .high
         )
+        let lowConfidenceOrigin = try ForgeRepositoryCandidate(
+            remoteName: "origin",
+            repository: repository,
+            confidence: .low
+        )
         guard case let .requiresChoice(choices) = PrimaryForgeRepositorySelector.select(
             existingBinding: nil,
-            candidates: [upstream, origin, origin]
+            candidates: [lowConfidenceOrigin, upstream, origin, origin]
         ) else {
             return XCTFail("Expected a remote choice")
         }
