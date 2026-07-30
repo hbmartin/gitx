@@ -2023,6 +2023,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSourceViewItem *fallbackForgeGroup = [presentationOnlySidebar valueForKey:@"forgeGroup"];
 	XCTAssertEqual(fallbackForgeGroup.sortedChildren.count, (NSUInteger)1);
 	XCTAssertTrue([fallbackForgeGroup.sortedChildren.firstObject.title containsString:@"hbmartin/gitx"]);
+	[presentationOnlySidebar showForgeAttention:self];
 
 	self.controller.interceptContentChange = YES;
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
@@ -2094,6 +2095,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 				 [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
 											   object:self.repository
 											 userInfo:@{@"count" : @7}]];
+	[sidebar attentionUnseenDidChange:
+				 [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
+											   object:self.repository]];
 	[sidebar closeView];
 }
 
@@ -2246,6 +2250,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self git:@[ @"checkout", @"--quiet", @"feature" ] directory:self.repositoryURL];
 	[self.repository reloadRefs];
 	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/feature");
+	[sidebar setValue:nil forKey:@"lastKnownHeadRef"];
 	[sidebar reloadSidebarAfterReferencesChange];
 	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/feature");
 	XCTAssertEqualObjects([[sidebar selectedItem] revSpecifier].simpleRef, @"refs/heads/feature");
