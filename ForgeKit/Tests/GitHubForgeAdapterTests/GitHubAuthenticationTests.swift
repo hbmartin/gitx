@@ -187,6 +187,21 @@ final class GitHubAuthenticationTests: XCTestCase {
         assertRedacted(credential, forbidden: ["access-secret", "rotated-refresh-secret"])
     }
 
+    func testRotatingCredentialPublicReconstructionRejectsInvalidExpiryOrder() throws {
+        let access = try GitHubSecret("access-token")
+        let refresh = try GitHubSecret("refresh-token")
+        let expiry = Date(timeIntervalSince1970: 1000)
+
+        XCTAssertThrowsError(try GitHubRotatingUserCredential(
+            accessToken: access,
+            accessTokenExpiresAt: expiry,
+            refreshToken: refresh,
+            refreshTokenExpiresAt: expiry
+        )) {
+            XCTAssertEqual($0 as? GitHubAuthenticationError, .invalidTokenResponse)
+        }
+    }
+
     func testRefreshResponseReplacesBothSecretsWithoutRetainingPriorMaterial() throws {
         let original = try GitHubOAuthTokenResponseParser.parse(
             successTokenJSON(access: "old-access", refresh: "old-refresh"),

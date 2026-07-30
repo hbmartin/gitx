@@ -33,6 +33,9 @@
 	[self addView:[PBSettingsViewFactory generalViewWithLegacyView:generalPrefsView]
 			label:NSLocalizedString(@"General", @"General preferences toolbar item")
 			image:[NSImage imageNamed:NSImageNameApplicationIcon]];
+	[self addView:[PBSettingsViewFactory accountsView]
+			label:NSLocalizedString(@"Accounts", @"Forge Accounts preferences toolbar item")
+			image:[NSImage imageNamed:NSImageNameUserAccounts]];
 	[self addView:[PBSettingsViewFactory dockIconView]
 			label:NSLocalizedString(@"Dock Icon", @"Dock icon preferences toolbar item")
 			image:NSApp.applicationIconImage];

@@ -314,6 +314,24 @@ public struct GitHubRotatingUserCredential: Equatable, Sendable, CustomStringCon
     public let refreshToken: GitHubSecret
     public let refreshTokenExpiresAt: Date
 
+    public init(
+        accessToken: GitHubSecret,
+        accessTokenExpiresAt: Date,
+        refreshToken: GitHubSecret,
+        refreshTokenExpiresAt: Date
+    ) throws {
+        guard GitHubCheckedTime.isFinite(accessTokenExpiresAt),
+              GitHubCheckedTime.isFinite(refreshTokenExpiresAt),
+              accessTokenExpiresAt < refreshTokenExpiresAt
+        else {
+            throw GitHubAuthenticationError.invalidTokenResponse
+        }
+        self.accessToken = accessToken
+        self.accessTokenExpiresAt = accessTokenExpiresAt
+        self.refreshToken = refreshToken
+        self.refreshTokenExpiresAt = refreshTokenExpiresAt
+    }
+
     public var description: String {
         "GitHub rotating user Credential (tokens redacted)"
     }
@@ -385,7 +403,7 @@ public enum GitHubOAuthTokenResponseParser {
         else {
             throw GitHubAuthenticationError.invalidTokenResponse
         }
-        return GitHubRotatingUserCredential(
+        return try GitHubRotatingUserCredential(
             accessToken: accessToken,
             accessTokenExpiresAt: accessTokenExpiresAt,
             refreshToken: refreshToken,

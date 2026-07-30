@@ -1,8 +1,115 @@
+import AppKit
 import Darwin
 import ForgeKit
+import GitHubForgeAdapter
 import XCTest
 
 final class ForgeAccountLifecycleTests: XCTestCase {
+    @MainActor
+    func testAccountsPreferencesViewExposesStableAccessibilityContract() {
+        let view = ForgeAccountsPreferencesView {
+            throw ForgeAccountsError.deviceFlowFailed
+        }
+        let identifiers = accessibilityIdentifiers(in: view)
+
+        XCTAssertTrue(identifiers.isSuperset(of: [
+            "ForgeAccountsHeading",
+            "ForgeAccountsTable",
+            "AddForgeAccountWithGitHubApp",
+            "ForgeAccountAlternativeMethods",
+            "RemoveForgeAccount",
+            "ConfigureForgeRepositoryAccess",
+            "ForgeAccountPermissionEnvelope",
+            "ForgeAccountsStatus",
+        ]))
+    }
+
+    func testAccountsPreferencesPresentationCoversEveryCredentialSourceAndExpiryState() throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let fixtures: [(String, ForgeCredentialSource, Date?)] = [
+            ("app", .forgeApplicationDeviceFlow, now.addingTimeInterval(8 * 24 * 60 * 60)),
+            ("cli", .commandLineBroker, nil),
+            ("fine", .fineGrainedPersonalAccessToken, now.addingTimeInterval(24 * 60 * 60)),
+            ("classic", .classicPersonalAccessToken, now.addingTimeInterval(-1)),
+        ]
+        let accounts = try fixtures.enumerated().map { index, fixture in
+            let accountID = try makeAccountID("preferences-\(index)")
+            return try ForgeAccount(
+                id: accountID,
+                login: fixture.0,
+                currentCredential: ForgeCredentialMetadata(
+                    reference: ForgeCredentialReference(
+                        accountID: accountID,
+                        credentialID: ForgeCredentialID("credential-\(index)"),
+                        generation: ForgeCredentialGeneration(1)
+                    ),
+                    source: fixture.1,
+                    expiresAt: fixture.2
+                )
+            )
+        }
+
+        let rows = ForgeAccountPreferencesPresenter.rows(accounts: accounts, now: now)
+
+        XCTAssertEqual(rows.map(\.credentialTitle), [
+            "GitHub App",
+            "GitHub CLI",
+            "Fine-grained token",
+            "Classic token",
+        ])
+        XCTAssertEqual(rows.map(\.canConfigureRepositoryAccess), [true, false, false, false])
+        XCTAssertEqual(rows[0].expiry, .current(now.addingTimeInterval(8 * 24 * 60 * 60)))
+        XCTAssertEqual(rows[1].expiry, .doesNotExpire)
+        XCTAssertEqual(rows[2].expiry, .expiresSoon(now.addingTimeInterval(24 * 60 * 60)))
+        XCTAssertEqual(rows[3].expiry, .expired(now.addingTimeInterval(-1)))
+        XCTAssertEqual(
+            ForgeAccountPreferencesPresenter.removalMessage(for: rows[0]),
+            "Remove the GitHub.com Forge Account app? Its Credential and account-scoped Forge data will be deleted."
+        )
+    }
+
+    func testAccountsConfigurationRejectsMissingPlaceholderAndMalformedBuildValues() throws {
+        XCTAssertNil(ForgeGitHubAppConfiguration.configuration(infoDictionary: [:]))
+        XCTAssertNil(ForgeGitHubAppConfiguration.configuration(infoDictionary: [
+            ForgeGitHubAppConfiguration.clientIDInfoKey: "$(GITX_GITHUB_APP_CLIENT_ID)",
+            ForgeGitHubAppConfiguration.applicationSlugInfoKey: "$(GITX_GITHUB_APP_SLUG)",
+        ]))
+        XCTAssertNil(ForgeGitHubAppConfiguration.configuration(infoDictionary: [
+            ForgeGitHubAppConfiguration.clientIDInfoKey: "bad client",
+            ForgeGitHubAppConfiguration.applicationSlugInfoKey: "gitx-forge",
+        ]))
+        let configuration = try XCTUnwrap(ForgeGitHubAppConfiguration.configuration(infoDictionary: [
+            ForgeGitHubAppConfiguration.clientIDInfoKey: "  Iv1ABC123  ",
+            ForgeGitHubAppConfiguration.applicationSlugInfoKey: " gitx-forge ",
+        ]))
+        XCTAssertEqual(configuration.clientID, "Iv1ABC123")
+        XCTAssertEqual(configuration.applicationSlug, "gitx-forge")
+        XCTAssertEqual(
+            configuration.newInstallationURL.absoluteString,
+            "https://github.com/apps/gitx-forge/installations/new"
+        )
+    }
+
+    func testPersonalAccessAcquisitionRedactsTokenAndNormalizesOptionalLabel() throws {
+        let acquisition = try ForgePersonalAccessTokenAcquisition(
+            kind: .fineGrained,
+            token: Data("secret-token".utf8),
+            label: "  laptop  "
+        )
+
+        XCTAssertEqual(acquisition.label, "laptop")
+        XCTAssertFalse(String(describing: acquisition).contains("secret-token"))
+        XCTAssertFalse(String(reflecting: acquisition).contains("secret-token"))
+        XCTAssertTrue(acquisition.customMirror.children.isEmpty)
+        XCTAssertThrowsError(try ForgePersonalAccessTokenAcquisition(
+            kind: .classic,
+            token: Data(),
+            label: nil
+        )) {
+            XCTAssertEqual($0 as? ForgeAccountsError, .invalidPersonalAccessToken)
+        }
+    }
+
     func testGitHubCLIIsConsultedOnlyByExplicitAddAccountAndStoresBrokeredToken() async throws {
         let runner = StubForgeCLICommandRunner(results: [
             ForgeCLICommandResult(
@@ -396,6 +503,14 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         try ForgeAccountID(
             forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")),
             value: value
+        )
+    }
+
+    @MainActor
+    private func accessibilityIdentifiers(in root: NSView) -> Set<String> {
+        Set(
+            [root.accessibilityIdentifier()].compactMap(\.self)
+                + root.subviews.flatMap { Array(accessibilityIdentifiers(in: $0)) }
         )
     }
 

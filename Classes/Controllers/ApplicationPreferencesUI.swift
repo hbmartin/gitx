@@ -397,6 +397,16 @@ private final class ForgeTrustedOriginsPreferencesView: NSView {
 /// Objective-C callers are not visible to SwiftLint's analyzer.
 @objc(PBSettingsViewFactory)
 final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_declaration
+    @objc static func accountsView() -> NSView {
+        ForgeAccountsPreferencesView {
+            let services = try await ApplicationComposition.shared.forgeServices.services()
+            return ForgeAccountsService(
+                services: services,
+                configuration: ForgeGitHubAppConfiguration.bundled()
+            )
+        }
+    }
+
     @objc(generalViewWithLegacyView:)
     // swiftlint:disable:next unused_declaration
     static func generalView(legacyView: NSView) -> NSView {
