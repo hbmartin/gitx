@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8395,
+  "minimumLineCoverage": 0.8417,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4716,
@@ -24,7 +24,7 @@
     "Classes/Controllers/PBGitHistoryController+UI.m": 0.8304,
     "Classes/Controllers/PBGitHistoryController.m": 1.0,
     "Classes/Controllers/PBGitRepositoryDocument.m": 0.2532,
-    "Classes/Controllers/PBGitSidebarController.m": 0.9266,
+    "Classes/Controllers/PBGitSidebarController.m": 0.9958,
     "Classes/Controllers/PBGitWindowController+Dialogs.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
@@ -60,7 +60,7 @@
     "Classes/NSSplitView+GitX.m": 0.85,
     "Classes/PBCLIProxy.m": 0.0,
     "Classes/PBChangedFile.m": 0.8636,
-    "Classes/PBCommitList.swift": 0.1267,
+    "Classes/PBCommitList.swift": 0.1285,
     "Classes/PBGraphCellInfo.m": 1.0,
     "Classes/PBMacros.m": 1.0,
     "Classes/PBNSURLPathUserDefaultsTransfomer.m": 0.3888,
@@ -139,8 +139,8 @@
     "Classes/git/PBSourceViewGitRemoteBranchItem.m": 0.5,
     "Classes/git/PBSourceViewGitRemoteItem.m": 0.625,
     "Classes/git/PBSourceViewGitStashItem.m": 0.7857,
-    "Classes/git/PBSourceViewGitSubmoduleItem.m": 0.8235,
-    "Classes/git/PBSourceViewGitTagItem.m": 0.5,
+    "Classes/git/PBSourceViewGitSubmoduleItem.m": 1.0,
+    "Classes/git/PBSourceViewGitTagItem.m": 1.0,
     "Classes/git/PBSourceViewOtherRevItem.m": 1.0,
     "Classes/git/PBUncommittedChanges.m": 1.0,
     "Classes/git/PBWorkingTree.m": 0.9411,
@@ -163,7 +163,7 @@
       ]
     },
     "Repository Configuration surfaces": {
-      "minimumLineCoverage": 0.8158,
+      "minimumLineCoverage": 0.8335,
       "files": [
         "Classes/Controllers/RepositorySettingsStore.swift",
         "Classes/Controllers/RepositorySettingsController.swift",

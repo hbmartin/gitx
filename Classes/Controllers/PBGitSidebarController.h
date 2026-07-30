@@ -15,19 +15,19 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface PBGitSidebarController : PBViewController <NSMenuDelegate>
+@interface PBGitSidebarController : PBViewController <NSMenuDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate>
 
 - (void)selectCurrentBranch;
 
 - (NSMenu *)menuForRow:(NSInteger)row;
 - (void)menuNeedsUpdate:(NSMenu *)menu;
 
-- (IBAction)fetchPullPushAction:(id)sender;
+- (IBAction)fetchPullPushAction:(nullable id)sender;
 
-@property (readonly) NSMutableArray *items;
-@property (readonly) PBSourceViewItem *remotes;
-@property (readonly) NSOutlineView *sourceView;
-@property (readonly) NSView *sourceListControlsView;
+@property (readonly) NSMutableArray<PBSourceViewItem *> *items;
+@property (nullable, readonly) PBSourceViewItem *remotes;
+@property (nullable, readonly) NSOutlineView *sourceView;
+@property (nullable, readonly) NSView *sourceListControlsView;
 
 @end
 

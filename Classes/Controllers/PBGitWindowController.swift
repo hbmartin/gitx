@@ -231,7 +231,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 sidebar.view.frame = sourceSplitView.bounds
             }
             sourceSplitView?.addSubview(sidebar.view)
-            sourceListControlsView?.addSubview(sidebar.sourceListControlsView)
+            if let sidebarControls = sidebar.sourceListControlsView {
+                sourceListControlsView?.addSubview(sidebarControls)
+            }
         }
         statusField?.cell?.backgroundStyle = .raised
         progressIndicator?.usesThreadedAnimation = true
@@ -406,12 +408,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         var sidebarRemoteName: String?
         var historyRefs: [PBGitRef]?
         if let sidebarViewController,
-           window?.firstResponder === sidebarViewController.sourceView,
-           let item = sidebarViewController.sourceView.item(
-               atRow: sidebarViewController.sourceView.selectedRow
-           ) as? PBSourceViewItem
+           let sidebarSourceView = sidebarViewController.sourceView,
+           window?.firstResponder === sidebarSourceView,
+           let item = sidebarSourceView.item(atRow: sidebarSourceView.selectedRow) as? PBSourceViewItem
         {
-            if item.parent === sidebarViewController.remotes {
+            if let remotes = sidebarViewController.remotes, item.parent === remotes {
                 sidebarRemoteName = item.title
             } else {
                 sidebarRef = item.ref()

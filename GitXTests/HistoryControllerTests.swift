@@ -1994,16 +1994,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.selectedCommits = [featureCommit]
         let singlePaths = historyController.menuItems(forPaths: [" nested/tracked.txt "])
         XCTAssertEqual(singlePaths.count, 5)
-        XCTAssertTrue(singlePaths.allSatisfy { ($0 as! NSMenuItem).representedObject != nil })
-        let featurePathItems = try XCTUnwrap(singlePaths as? [NSMenuItem])
-        let featureDiff = try XCTUnwrap(featurePathItems.first { $0.action == NSSelectorFromString("diffFilesAction:") })
-        let featureCheckout = try XCTUnwrap(featurePathItems.first { $0.action == NSSelectorFromString("checkoutFiles:") })
+        XCTAssertTrue(singlePaths.allSatisfy { $0.representedObject != nil })
+        let featureDiff = try XCTUnwrap(singlePaths.first { $0.action == NSSelectorFromString("diffFilesAction:") })
+        let featureCheckout = try XCTUnwrap(singlePaths.first { $0.action == NSSelectorFromString("checkoutFiles:") })
         XCTAssertTrue(featureDiff.isEnabled)
         XCTAssertTrue(featureCheckout.isEnabled)
         XCTAssertEqual(featureDiff.representedObject as? [String], ["nested/tracked.txt"])
 
         historyController.selectedCommits = [headCommit]
-        let headPathItems = try XCTUnwrap(historyController.menuItems(forPaths: ["nested/tracked.txt"]) as? [NSMenuItem])
+        let headPathItems = historyController.menuItems(forPaths: ["nested/tracked.txt"])
         let headDiff = try XCTUnwrap(headPathItems.first { $0.title.hasPrefix("Diff file") })
         let headCheckout = try XCTUnwrap(headPathItems.first { $0.action == NSSelectorFromString("checkoutFiles:") })
         XCTAssertFalse(headDiff.isEnabled)
@@ -2011,7 +2010,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(headCheckout.isEnabled)
 
         let multiplePaths = historyController.menuItems(forPaths: ["one", "two"])
-        XCTAssertTrue(try XCTUnwrap((multiplePaths[0] as? NSMenuItem)?.title.contains("files")))
+        XCTAssertTrue(multiplePaths[0].title.contains("files"))
         let sender = NSMenuItem()
         sender.representedObject = ["nested/tracked.txt"]
         historyController.perform(NSSelectorFromString("showCommitsFromTree:"), with: sender)
@@ -2297,7 +2296,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     func testPathMenuDisablesCommitActionsWithoutSelection() throws {
         historyController.selectedCommits = []
 
-        let items = try XCTUnwrap(historyController.menuItems(forPaths: ["nested/tracked.txt"]) as? [NSMenuItem])
+        let items = historyController.menuItems(forPaths: ["nested/tracked.txt"])
         let diff = try XCTUnwrap(items.first { $0.title.hasPrefix("Diff file") })
         let checkout = try XCTUnwrap(items.first { $0.title == "Checkout file" })
         let history = try XCTUnwrap(items.first { $0.title == "Show history of file" })

@@ -198,11 +198,11 @@
         let items: [NSMenuItem]
 
         if let clickedRef = clickedRef {
-            items = controller.menuItems(for: clickedRef) as? [NSMenuItem] ?? []
+            items = controller.menuItems(for: clickedRef) ?? []
         } else if selectedCommits.contains(commit) {
-            items = controller.menuItems(for: controller.selectedCommits) as? [NSMenuItem] ?? []
+            items = controller.menuItems(for: controller.selectedCommits)
         } else {
-            items = controller.menuItems(for: [commit]) as? [NSMenuItem] ?? []
+            items = controller.menuItems(for: [commit])
         }
 
         let menu = NSMenu()

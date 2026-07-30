@@ -8,8 +8,11 @@
 
 #import <Cocoa/Cocoa.h>
 
+NS_ASSUME_NONNULL_BEGIN
 
 @interface NSOutlineView (PBExpandParents)
 
-- (void)PBExpandItem:(id)item expandParents:(BOOL)expand;
+- (void)PBExpandItem:(nullable id)item expandParents:(BOOL)expand;
 @end
+
+NS_ASSUME_NONNULL_END

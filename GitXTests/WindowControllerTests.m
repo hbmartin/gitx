@@ -37,6 +37,8 @@
 #import "PBSourceViewBadge.h"
 #import "PBSourceViewItem.h"
 #import "PBSourceViewItems.h"
+#import "PBSidebarList.h"
+#import "PBSidebarTableViewCell.h"
 #import "PBTask.h"
 #import "PBTerminalUtil.h"
 #import "PBPrefsWindowController.h"
@@ -84,13 +86,38 @@
 
 @interface PBGitSidebarController (WindowControllerTests)
 - (void)reloadSidebarAfterReferencesChange;
+- (void)reloadSidebarPresentation;
+- (void)repositorySettingsDidChange:(NSNotification *)notification;
+- (nullable PBSourceViewItem *)selectedItem;
 - (nullable PBSourceViewItem *)itemForRev:(PBGitRevSpecifier *)rev;
+- (nullable PBSourceViewItem *)addRevSpec:(PBGitRevSpecifier *)rev;
 - (void)removeRevSpec:(PBGitRevSpecifier *)rev;
+- (void)openSubmoduleFromMenuItem:(NSMenuItem *)menuItem;
+- (void)openSubmoduleAtURL:(NSURL *)submoduleURL;
 - (void)doubleClicked:(id)sender;
 - (void)toggleBranchSort:(id)sender;
+- (void)outlineViewSelectionDidChange:(NSNotification *)notification;
+- (nullable NSView *)outlineView:(NSOutlineView *)outlineView
+			  viewForTableColumn:(nullable NSTableColumn *)tableColumn
+							item:(PBSourceViewItem *)item;
+- (nullable NSTableRowView *)outlineView:(NSOutlineView *)outlineView rowViewForItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView isGroupItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldSelectItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldShowOutlineCellForItem:(id)item;
 - (BOOL)outlineView:(NSOutlineView *)outlineView
 	shouldEditTableColumn:(nullable NSTableColumn *)tableColumn
 					 item:(id)item;
+- (nullable id)outlineView:(NSOutlineView *)outlineView child:(NSInteger)index ofItem:(nullable id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView isItemExpandable:(id)item;
+- (NSInteger)outlineView:(NSOutlineView *)outlineView numberOfChildrenOfItem:(nullable id)item;
+- (nullable id)outlineView:(NSOutlineView *)outlineView
+	objectValueForTableColumn:(nullable NSTableColumn *)tableColumn
+					   byItem:(id)item;
+- (void)expandCollapseItem:(NSNotification *)notification;
+- (void)updateActionMenu;
+- (void)updateRemoteControls;
+- (void)addMenuItemsForRef:(nullable PBGitRef *)ref toMenu:(NSMenu *)menu;
+- (void)addMenuItemsForSubmodule:(nullable PBSourceViewGitSubmoduleItem *)submodule toMenu:(NSMenu *)menu;
 @end
 
 @interface PBCommitMessageTransformer : NSObject
@@ -168,6 +195,8 @@
 @interface PBRepositoryUISettings : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 @property (nonatomic) BOOL pushAfterCommit;
+@property (nonatomic) BOOL hideContainedBranches;
+@property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *sidebarVisibility;
 @end
 
 @interface PBSourceViewBadge (WindowControllerTests)
@@ -936,11 +965,45 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 @interface PBWindowOutlineView : NSOutlineView
 @property (nonatomic, strong, nullable) id testItem;
+@property (nonatomic, strong, nullable) NSTableRowView *testRowView;
+@property (nonatomic) NSInteger testItemRow;
 @end
 @implementation PBWindowOutlineView
 - (id)itemAtRow:(NSInteger)row
 {
 	return self.testItem;
+}
+- (NSInteger)rowForItem:(id)item
+{
+	return self.testItemRow;
+}
+- (NSTableRowView *)rowViewAtRow:(NSInteger)row makeIfNecessary:(BOOL)makeIfNecessary
+{
+	return self.testRowView;
+}
+@end
+
+@interface PBWindowHistoryMenuSpy : PBGitHistoryController
+@property (nonatomic, copy) NSArray<NSMenuItem *> *testMenuItems;
+@end
+
+@implementation PBWindowHistoryMenuSpy
+- (NSArray<NSMenuItem *> *)menuItemsForRef:(PBGitRef *)ref
+{
+	NSMutableArray<NSMenuItem *> *items = [NSMutableArray arrayWithCapacity:self.testMenuItems.count];
+	for (NSMenuItem *item in self.testMenuItems) [items addObject:item.copy];
+	return items;
+}
+@end
+
+@interface PBWindowAddRemoteResponder : NSResponder
+@property (nonatomic) NSUInteger addRemoteCount;
+@end
+
+@implementation PBWindowAddRemoteResponder
+- (void)addRemote:(id)sender
+{
+	self.addRemoteCount++;
 }
 @end
 
@@ -1031,6 +1094,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic, copy, nullable) NSArray<NSURL *> *revealedURLs;
 @property (nonatomic) NSUInteger refreshCount;
 @property (nonatomic) NSUInteger synchronizeCount;
+@property (nonatomic) BOOL interceptContentChange;
+@property (nonatomic) NSUInteger contentChangeCount;
+@property (nonatomic, strong, nullable) PBViewController *lastContentController;
 @end
 
 @implementation PBWindowControllerSpy
@@ -1117,6 +1183,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (void)synchronizeWindowTitleWithDocumentName
 {
 	self.synchronizeCount++;
+}
+- (void)changeContentController:(nullable PBViewController *)newContentController
+{
+	if (!self.interceptContentChange) return [super changeContentController:newContentController];
+	self.contentChangeCount++;
+	self.lastContentController = newContentController;
 }
 
 @end
@@ -1736,6 +1808,330 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[sidebar doubleClicked:self];
 	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)1);
 	self.repository.failingOperation = nil;
+}
+
+- (void)testSidebarRealNibLifecycleOutlineDataCellsExpansionAndLifetime
+{
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	NSView *sidebarView = sidebar.view;
+	NSOutlineView *outline = sidebar.sourceView;
+	NSView *controlsView = sidebar.sourceListControlsView;
+	NSPopUpButton *actionButton = [sidebar valueForKey:@"actionButton"];
+	NSSegmentedControl *remoteControls = [sidebar valueForKey:@"remoteControls"];
+
+	XCTAssertNotNil(sidebarView);
+	XCTAssertTrue([outline isKindOfClass:PBSidebarList.class]);
+	XCTAssertEqual(outline.delegate, sidebar);
+	XCTAssertEqual(outline.dataSource, sidebar);
+	XCTAssertEqual(outline.target, sidebar);
+	XCTAssertEqual(outline.doubleAction, @selector(doubleClicked:));
+	XCTAssertEqualObjects(outline.accessibilityIdentifier, @"RepositorySidebar");
+	XCTAssertNotNil(outline.menu);
+	XCTAssertNotNil(controlsView);
+	XCTAssertNotNil(actionButton);
+	XCTAssertEqual(actionButton.menu.delegate, sidebar);
+	XCTAssertNotNil(remoteControls);
+	XCTAssertEqual(remoteControls.segmentCount, (NSInteger)4);
+	XCTAssertEqual(remoteControls.target, sidebar);
+	XCTAssertEqual(remoteControls.action, @selector(fetchPullPushAction:));
+
+	XCTAssertEqual([sidebar outlineView:outline numberOfChildrenOfItem:nil], (NSInteger)sidebar.items.count);
+	PBSourceViewItem *project = [sidebar outlineView:outline child:0 ofItem:nil];
+	PBSourceViewItem *branches = [sidebar outlineView:outline child:1 ofItem:nil];
+	XCTAssertEqualObjects(project.title, self.repository.projectName.uppercaseString);
+	XCTAssertEqualObjects(branches.title, @"BRANCHES");
+	XCTAssertTrue([sidebar outlineView:outline isGroupItem:project]);
+	XCTAssertTrue([sidebar outlineView:outline isGroupItem:branches]);
+	XCTAssertFalse([sidebar outlineView:outline shouldSelectItem:project]);
+	XCTAssertFalse([sidebar outlineView:outline shouldShowOutlineCellForItem:project]);
+	XCTAssertTrue([sidebar outlineView:outline shouldShowOutlineCellForItem:branches]);
+	XCTAssertTrue([sidebar outlineView:outline isItemExpandable:branches]);
+	XCTAssertGreaterThanOrEqual([sidebar outlineView:outline numberOfChildrenOfItem:branches], (NSInteger)2);
+	PBSourceViewItem *firstBranch = [sidebar outlineView:outline child:0 ofItem:branches];
+	XCTAssertEqualObjects([sidebar outlineView:outline objectValueForTableColumn:outline.tableColumns.firstObject byItem:firstBranch], firstBranch.title);
+	XCTAssertTrue([sidebar outlineView:outline shouldSelectItem:firstBranch]);
+
+	NSTableCellView *branchHeader = (NSTableCellView *)[sidebar outlineView:outline
+														 viewForTableColumn:outline.tableColumns.firstObject
+																	   item:branches];
+	XCTAssertEqualObjects(branchHeader.identifier, @"PBBranchesHeaderCellIdentifier");
+	XCTAssertEqualObjects(branchHeader.textField.stringValue, @"BRANCHES");
+	NSButton *sortButton = nil;
+	for (NSView *subview in branchHeader.subviews) {
+		if ([subview.identifier isEqualToString:@"BranchSortToggle"]) sortButton = (NSButton *)subview;
+	}
+	XCTAssertNotNil(sortButton);
+	XCTAssertEqual(sortButton.target, sidebar);
+	XCTAssertEqual(sortButton.action, @selector(toggleBranchSort:));
+	XCTAssertNotNil(sortButton.image);
+	XCTAssertGreaterThan(sortButton.toolTip.length, (NSUInteger)0);
+
+	PBGitRevSpecifier *mainRevision = [[PBGitRevSpecifier alloc] initWithRef:self.branchRef];
+	PBSourceViewItem *mainItem = [sidebar itemForRev:mainRevision];
+	XCTAssertNotNil(mainItem);
+	PBSidebarTableViewCell *mainCell = (PBSidebarTableViewCell *)[sidebar outlineView:outline
+																   viewForTableColumn:outline.tableColumns.firstObject
+																				 item:mainItem];
+	XCTAssertTrue([mainCell isKindOfClass:PBSidebarTableViewCell.class]);
+	XCTAssertEqualObjects(mainCell.textField.stringValue, mainItem.title);
+	XCTAssertEqualObjects(mainCell.imageView.image, mainItem.icon);
+	XCTAssertTrue(mainCell.isCheckedOut);
+	PBGitRevSpecifier *tagRevision = [[PBGitRevSpecifier alloc] initWithRef:self.tagRef];
+	PBSourceViewItem *tagItem = [sidebar itemForRev:tagRevision];
+	PBSidebarTableViewCell *tagCell = (PBSidebarTableViewCell *)[sidebar outlineView:outline
+																  viewForTableColumn:outline.tableColumns.firstObject
+																				item:tagItem];
+	XCTAssertFalse(tagCell.isCheckedOut);
+
+	[sidebar expandCollapseItem:[NSNotification notificationWithName:NSOutlineViewItemWillCollapseNotification
+															  object:outline
+															userInfo:@{@"NSObject" : branches}]];
+	XCTAssertFalse(branches.expanded);
+	[sidebar expandCollapseItem:[NSNotification notificationWithName:NSOutlineViewItemWillExpandNotification
+															  object:outline
+															userInfo:@{@"NSObject" : branches}]];
+	XCTAssertTrue(branches.expanded);
+	[sidebar expandCollapseItem:[NSNotification notificationWithName:NSOutlineViewItemWillCollapseNotification
+															  object:outline
+															userInfo:@{@"NSObject" : @"not an item"}]];
+	XCTAssertTrue(branches.expanded);
+
+	PBWindowOutlineView *rowOutline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	rowOutline.testItem = mainItem;
+	rowOutline.testItemRow = 0;
+	rowOutline.testRowView = [NSTableRowView new];
+	PBGitSidebarController *rowSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:self.controller];
+	[rowSidebar setValue:rowOutline forKey:@"sourceView"];
+	XCTAssertEqual([rowSidebar outlineView:rowOutline rowViewForItem:mainItem], rowOutline.testRowView);
+	rowOutline.testRowView = nil;
+	XCTAssertNotNil([rowSidebar outlineView:rowOutline rowViewForItem:mainItem]);
+
+	[sidebar closeView];
+	__weak PBGitSidebarController *weakSidebar = nil;
+	@autoreleasepool {
+		PBGitSidebarController *temporarySidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																					  superController:self.controller];
+		(void)temporarySidebar.view;
+		[temporarySidebar closeView];
+		weakSidebar = temporarySidebar;
+		temporarySidebar = nil;
+	}
+	XCTAssertNil(weakSidebar);
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBBranchSidebarSettingsDidChangeNotification" object:nil];
+}
+
+- (void)testSidebarRefreshFollowsHeadPreservesExplicitSelectionAndHonorsVisibility
+{
+	NSUInteger reloadCount = self.repository.reloadRefsCount;
+	self.repository.currentBranch = nil;
+	PBGitSidebarController *unloadedSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																				 superController:self.controller];
+	[unloadedSidebar selectCurrentBranch];
+	XCTAssertGreaterThan(self.repository.reloadRefsCount, reloadCount);
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
+
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:self.repository];
+	PBGitRevSpecifier *mainRevision = [[PBGitRevSpecifier alloc] initWithRef:self.branchRef];
+	PBGitRevSpecifier *featureRevision = [[PBGitRevSpecifier alloc] initWithRef:[self.repository refForName:@"feature"]];
+	PBGitRevSpecifier *tagRevision = [[PBGitRevSpecifier alloc] initWithRef:self.tagRef];
+
+	NSArray<NSString *> *initialRemoteNames = [sidebar.remotes.sortedChildren valueForKey:@"title"];
+	XCTAssertTrue([initialRemoteNames containsObject:@"origin"]);
+	XCTAssertTrue([initialRemoteNames containsObject:@"backup"]);
+	self.repository.testRemotes = @[ @"origin" ];
+	[sidebar reloadSidebarPresentation];
+	NSArray<NSString *> *updatedRemoteNames = [sidebar.remotes.sortedChildren valueForKey:@"title"];
+	XCTAssertTrue([updatedRemoteNames containsObject:@"origin"]);
+	XCTAssertFalse([updatedRemoteNames containsObject:@"backup"]);
+
+	settings.hideContainedBranches = YES;
+	[sidebar reloadSidebarPresentation];
+	XCTAssertNotNil([sidebar itemForRev:mainRevision]);
+	XCTAssertNil([sidebar itemForRev:featureRevision]);
+	settings.hideContainedBranches = NO;
+
+	settings.sidebarVisibility = @{
+		@"Remotes" : @NO,
+		@"Tags" : @NO,
+		@"Stashes" : @NO,
+		@"Submodules" : @NO,
+		@"Other" : @NO,
+	};
+	[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
+																	   object:self.repository]];
+	XCTAssertEqual(sidebar.items.count, (NSUInteger)2);
+	XCTAssertEqualObjects([sidebar.items valueForKey:@"title"], (@[ self.repository.projectName.uppercaseString, @"BRANCHES" ]));
+	XCTAssertFalse([sidebar.items containsObject:sidebar.remotes]);
+	settings.sidebarVisibility = @{
+		@"Remotes" : @YES,
+		@"Tags" : @YES,
+		@"Stashes" : @YES,
+		@"Submodules" : @YES,
+		@"Other" : @YES,
+	};
+	[sidebar reloadSidebarPresentation];
+	XCTAssertTrue([sidebar.items containsObject:sidebar.remotes]);
+
+	self.repository.currentBranch = mainRevision;
+	[self git:@[ @"checkout", @"--quiet", @"feature" ] directory:self.repositoryURL];
+	[self.repository reloadRefs];
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/feature");
+	[sidebar reloadSidebarAfterReferencesChange];
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/feature");
+	XCTAssertEqualObjects([[sidebar selectedItem] revSpecifier].simpleRef, @"refs/heads/feature");
+
+	self.repository.currentBranch = tagRevision;
+	[self git:@[ @"checkout", @"--quiet", @"main" ] directory:self.repositoryURL];
+	[self.repository reloadRefs];
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/main");
+	[sidebar reloadSidebarAfterReferencesChange];
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, tagRevision.simpleRef);
+	[sidebar reloadSidebarPresentation];
+	XCTAssertEqualObjects([[sidebar selectedItem] revSpecifier], tagRevision);
+	[sidebar closeView];
+}
+
+- (void)testSidebarSelectionMenusAndRemoteControlBoundaries
+{
+	PBWindowOutlineView *outline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200)];
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	PBSourceViewItem *remotes = [PBSourceViewItem groupItemWithTitle:@"Remotes"];
+	NSPopUpButton *actionButton = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 40, 24) pullsDown:YES];
+	NSSegmentedControl *remoteControls = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(0, 0, 160, 24)];
+	remoteControls.segmentCount = 4;
+	[sidebar setValue:outline forKey:@"sourceView"];
+	[sidebar setValue:remotes forKey:@"remotes"];
+	[sidebar setValue:actionButton forKey:@"actionButton"];
+	[sidebar setValue:remoteControls forKey:@"remoteControls"];
+
+	PBWindowHistoryMenuSpy *history = [[PBWindowHistoryMenuSpy alloc] initWithRepository:self.repository superController:self.controller];
+	NSMenuItem *characterizedItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Characterized Reference Action", nil)
+															   action:nil
+														keyEquivalent:@""];
+	history.testMenuItems = @[ characterizedItem ];
+	[self.controller setValue:history forKey:@"_historyViewController"];
+	self.controller.interceptContentChange = YES;
+	self.controller.interceptRemoteRouting = YES;
+
+	PBGitRef *featureRef = [self.repository refForName:@"feature"];
+	PBSourceViewItem *branchItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:featureRef]];
+	outline.testItem = branchItem;
+	[sidebar outlineViewSelectionDidChange:[NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification object:outline]];
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/feature");
+	XCTAssertEqual(self.controller.contentChangeCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.lastContentController, history);
+	XCTAssertTrue(actionButton.enabled);
+	XCTAssertTrue([remoteControls isEnabledForSegment:1]);
+	XCTAssertTrue([remoteControls isEnabledForSegment:2]);
+	XCTAssertTrue([remoteControls isEnabledForSegment:3]);
+
+	[sidebar menuNeedsUpdate:actionButton.menu];
+	XCTAssertEqual(actionButton.menu.numberOfItems, (NSInteger)2);
+	XCTAssertNotNil(actionButton.menu.itemArray.firstObject.image);
+	XCTAssertEqualObjects(actionButton.menu.itemArray.lastObject.title, characterizedItem.title);
+	NSMenu *externalMenu = [NSMenu new];
+	[sidebar menuNeedsUpdate:externalMenu];
+	XCTAssertEqual(externalMenu.numberOfItems, (NSInteger)1);
+	XCTAssertEqualObjects(externalMenu.itemArray.firstObject.title, characterizedItem.title);
+	NSMenu *rowMenu = [sidebar menuForRow:0];
+	XCTAssertFalse(rowMenu.autoenablesItems);
+	XCTAssertEqual(rowMenu.numberOfItems, (NSInteger)1);
+
+	outline.testItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.tagRef]];
+	[sidebar outlineViewSelectionDidChange:[NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification object:outline]];
+	XCTAssertTrue(actionButton.enabled);
+	XCTAssertFalse([remoteControls isEnabledForSegment:1]);
+	XCTAssertFalse([remoteControls isEnabledForSegment:2]);
+	XCTAssertFalse([remoteControls isEnabledForSegment:3]);
+	XCTAssertEqual(self.controller.contentChangeCount, (NSUInteger)2);
+
+	outline.testItem = remotes;
+	[sidebar outlineViewSelectionDidChange:[NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification object:outline]];
+	XCTAssertFalse(actionButton.enabled);
+	XCTAssertFalse([remoteControls isEnabledForSegment:1]);
+	XCTAssertEqual(self.controller.contentChangeCount, (NSUInteger)2);
+	NSMenu *emptyMenu = [sidebar menuForRow:-1];
+	XCTAssertEqual(emptyMenu.numberOfItems, (NSInteger)0);
+
+	NSMenu *nilBoundaryMenu = [NSMenu new];
+	[sidebar addMenuItemsForRef:nil toMenu:nilBoundaryMenu];
+	[sidebar addMenuItemsForSubmodule:nil toMenu:nilBoundaryMenu];
+	XCTAssertEqual(nilBoundaryMenu.numberOfItems, (NSInteger)0);
+
+	PBWindowAddRemoteResponder *responder = [PBWindowAddRemoteResponder new];
+	sidebar.nextResponder = responder;
+	remoteControls.selectedSegment = 0;
+	[sidebar fetchPullPushAction:remoteControls];
+	XCTAssertEqual(responder.addRemoteCount, (NSUInteger)1);
+	remoteControls.selectedSegment = 1;
+	[sidebar fetchPullPushAction:remoteControls];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)0);
+}
+
+- (void)testSidebarSubmoduleMenusOpeningErrorsAndDoubleClickBoundaries
+{
+	NSURL *submoduleURL = [self.repositoryURL URLByAppendingPathComponent:@"CharacterizedSubmodule" isDirectory:YES];
+	[NSFileManager.defaultManager createDirectoryAtURL:submoduleURL withIntermediateDirectories:YES attributes:nil error:NULL];
+	[self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] directory:submoduleURL];
+	PBWindowSubmodule *submodule = [PBWindowSubmodule new];
+	submodule.name = @"CharacterizedSubmodule";
+	submodule.path = @"CharacterizedSubmodule";
+	submodule.parentRepository = self.repository.gtRepo;
+	self.repository.submodules = [NSMutableArray arrayWithObject:(GTSubmodule *)submodule];
+
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	PBSourceViewItem *submodules = [sidebar valueForKey:@"submodules"];
+	XCTAssertTrue([sidebar.items containsObject:submodules]);
+	XCTAssertEqual(submodules.sortedChildren.count, (NSUInteger)1);
+	PBSourceViewGitSubmoduleItem *submoduleItem = (PBSourceViewGitSubmoduleItem *)submodules.sortedChildren.firstObject;
+	XCTAssertEqualObjects(submoduleItem.title, @"CharacterizedSubmodule");
+	XCTAssertEqualObjects(submoduleItem.path.URLByResolvingSymlinksInPath, submoduleURL.URLByResolvingSymlinksInPath);
+	NSInteger row = [sidebar.sourceView rowForItem:submoduleItem];
+	XCTAssertGreaterThanOrEqual(row, (NSInteger)0);
+	NSMenu *menu = [sidebar menuForRow:row];
+	XCTAssertEqual(menu.numberOfItems, (NSInteger)1);
+	NSMenuItem *openItem = menu.itemArray.firstObject;
+	XCTAssertEqual(openItem.target, sidebar);
+	XCTAssertEqual(openItem.action, @selector(openSubmoduleFromMenuItem:));
+	XCTAssertEqualObjects(openItem.representedObject, submoduleItem.path);
+
+	[sidebar openSubmoduleFromMenuItem:openItem];
+	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)1);
+	XCTAssertEqualObjects(PBWindowDocumentOpenedURLs.lastObject.URLByResolvingSymlinksInPath, submoduleURL.URLByResolvingSymlinksInPath);
+	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)0);
+	PBWindowDocumentOpenErrorsByPath[PBWindowResolvedPath(submoduleURL)] = self.repository.testError;
+	[sidebar openSubmoduleFromMenuItem:openItem];
+	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)2);
+	XCTAssertEqualObjects(self.controller.shownErrors.lastObject, self.repository.testError);
+
+	PBWindowOutlineView *outline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	outline.testItem = submoduleItem;
+	[sidebar setValue:outline forKey:@"sourceView"];
+	PBWindowDocumentOpenErrorsByPath[PBWindowResolvedPath(submoduleURL)] = nil;
+	[sidebar doubleClicked:self];
+	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)3);
+
+	NSPopUpButton *actionButton = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 40, 24) pullsDown:YES];
+	[sidebar setValue:actionButton forKey:@"actionButton"];
+	[sidebar menuNeedsUpdate:actionButton.menu];
+	XCTAssertEqual(actionButton.menu.numberOfItems, (NSInteger)2);
+	XCTAssertEqualObjects(actionButton.menu.itemArray.lastObject.title, @"Open Submodule");
+
+	NSUInteger operationCount = self.repository.operations.count;
+	outline.testItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.tagRef]];
+	[sidebar doubleClicked:self];
+	XCTAssertEqual(self.repository.operations.count, operationCount);
+	NSURL *invalidURL = [self.repositoryURL URLByAppendingPathComponent:@"MissingSubmodule" isDirectory:YES];
+	[sidebar openSubmoduleAtURL:invalidURL];
+	XCTAssertGreaterThanOrEqual(self.controller.shownErrors.count, (NSUInteger)2);
+	[sidebar closeView];
 }
 
 - (void)testRemoteProgressWorkflowsSuccessFailureAndRouting

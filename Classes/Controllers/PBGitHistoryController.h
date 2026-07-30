@@ -20,6 +20,7 @@
 @class GLFileView;
 @class GTOID;
 @class PBHistorySearchController;
+@class PBGitRef;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -48,14 +49,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (BOOL)hasNonlinearPath;
 - (NSMenu *)tableColumnMenu;
-- (void)selectCommit:(GTOID *)commit;
+- (void)selectCommit:(nullable GTOID *)commit;
 - (void)updateQuicklookForce:(BOOL)force;
 
 - (void)setHistorySearch:(NSString *)searchString mode:(PBHistorySearchMode)mode;
 
 // Context menu methods
 - (NSMenu *)contextMenuForTreeView;
-- (NSArray *)menuItemsForPaths:(NSArray *)paths;
+- (NSArray<NSMenuItem *> *)menuItemsForPaths:(NSArray<NSString *> *)paths;
 - (void)showCommitsFromTree:(id)sender;
 
 - (IBAction)setDetailedView:(id)sender;
@@ -81,8 +82,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface PBGitHistoryController (PBContextMenu)
 
-- (NSArray *)menuItemsForRef:(PBGitRef *)refs;
-- (NSArray *)menuItemsForCommits:(NSArray<PBGitCommit *> *)commits;
+- (nullable NSArray<NSMenuItem *> *)menuItemsForRef:(nullable PBGitRef *)ref;
+- (NSArray<NSMenuItem *> *)menuItemsForCommits:(NSArray<PBGitCommit *> *)commits;
 
 @end
 

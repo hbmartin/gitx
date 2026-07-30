@@ -22,12 +22,12 @@
 #define PBSidebarCellIdentifier @"PBSidebarCellIdentifier"
 #define PBBranchesHeaderCellIdentifier @"PBBranchesHeaderCellIdentifier"
 
-@interface PBGitSidebarController () <NSOutlineViewDelegate> {
-	__weak IBOutlet NSWindow *window;
-	__weak IBOutlet NSOutlineView *sourceView;
-	__weak IBOutlet NSView *sourceListControlsView;
-	__weak IBOutlet NSPopUpButton *actionButton;
-	__weak IBOutlet NSSegmentedControl *remoteControls;
+@interface PBGitSidebarController () {
+	__weak IBOutlet NSWindow *_Nullable window;
+	__weak IBOutlet NSOutlineView *_Nullable sourceView;
+	__weak IBOutlet NSView *_Nullable sourceListControlsView;
+	__weak IBOutlet NSPopUpButton *_Nullable actionButton;
+	__weak IBOutlet NSSegmentedControl *_Nullable remoteControls;
 
 	NSMutableArray *items;
 
