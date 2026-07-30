@@ -34,6 +34,7 @@ final nonisolated class DiffCommandOptions: NSObject { // swiftlint:disable:this
 private final class SettingsPaneView: NSView {
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "Settings")
     private let stack = NSStackView()
+    private var fittedHeightConstraint: NSLayoutConstraint?
 
     init(title: String, detail: String? = nil) {
         super.init(frame: NSRect(x: 0, y: 0, width: 760, height: 430))
@@ -43,9 +44,11 @@ private final class SettingsPaneView: NSView {
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        let fittedHeightConstraint = heightAnchor.constraint(equalToConstant: 430)
+        self.fittedHeightConstraint = fittedHeightConstraint
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: 760),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 430),
+            fittedHeightConstraint,
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -28),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 24),
@@ -121,9 +124,11 @@ private final class SettingsPaneView: NSView {
 
     private func resizeToFit() {
         layoutSubtreeIfNeeded()
+        stack.layoutSubtreeIfNeeded()
         var size = frame.size
         size.width = max(760, stack.fittingSize.width + 56)
         size.height = max(430, stack.fittingSize.height + 48)
+        fittedHeightConstraint?.constant = size.height
         setFrameSize(size)
     }
 

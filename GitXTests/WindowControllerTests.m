@@ -2978,8 +2978,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 		[preferences showWindow:nil];
 		NSArray<NSToolbarItemIdentifier> *identifiers = [preferences toolbarAllowedItemIdentifiers:preferences.window.toolbar];
 
-		XCTAssertEqual(identifiers.count, (NSUInteger)8);
-		XCTAssertEqualObjects(identifiers, (@[ @"General", @"Dock Icon", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
+		XCTAssertEqual(identifiers.count, (NSUInteger)9);
+		XCTAssertEqualObjects(identifiers, (@[ @"General", @"Accounts", @"Dock Icon", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
 		XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
 		XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
 		XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
@@ -2991,6 +2991,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 		NSMutableArray<NSView *> *pendingViews = [NSMutableArray arrayWithObject:preferences.window.contentView];
 		BOOL foundCommitGuideControl = NO;
 		NSButton *repositoryWatcherControl = nil;
+		NSButton *repositoryStatusBarControl = nil;
 		while (pendingViews.count > 0) {
 			NSView *view = pendingViews.firstObject;
 			[pendingViews removeObjectAtIndex:0];
@@ -3002,6 +3003,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 				[((NSButton *)view).title isEqualToString:@"Watch for changes in repositories"]) {
 				repositoryWatcherControl = (NSButton *)view;
 			}
+			if ([view isKindOfClass:NSButton.class] &&
+				[((NSButton *)view).title isEqualToString:@"Show repository status bar"]) {
+				repositoryStatusBarControl = (NSButton *)view;
+			}
 			[pendingViews addObjectsFromArray:view.subviews];
 		}
 		XCTAssertFalse(foundCommitGuideControl);
@@ -3010,6 +3015,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 		NSRect watcherFrame = [repositoryWatcherControl convertRect:repositoryWatcherControl.bounds
 															 toView:preferences.window.contentView];
 		XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, watcherFrame));
+		XCTAssertNotNil(repositoryStatusBarControl);
+		NSRect statusBarFrame = [repositoryStatusBarControl convertRect:repositoryStatusBarControl.bounds
+																 toView:preferences.window.contentView];
+		XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, statusBarFrame));
 		XCTAssertEqual(generalPrefsView.frame.size.height, 258.0);
 	} @finally {
 		[preferences close];
@@ -3698,29 +3707,29 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[NSUserDefaults.standardUserDefaults setObject:@YES forKey:@"PBRefreshOnApplicationFocus"];
 	[self.controller refreshPreferenceDidChange:nil];
 	[self pumpRunLoopFor:0.1];
-	NSUInteger baseline = self.controller.refreshCount;
+	NSUInteger baseline = self.controller.synchronizeCount;
 	[self.controller applicationDidBecomeActive:[NSNotification notificationWithName:NSApplicationDidBecomeActiveNotification object:NSApp]];
 	[self pumpRunLoopFor:0.1];
-	XCTAssertEqual(self.controller.refreshCount, baseline);
+	XCTAssertEqual(self.controller.synchronizeCount, baseline);
 
 	PBWindowSnapshotData = [@"snapshot-b" dataUsingEncoding:NSUTF8StringEncoding];
 	[self.controller refreshIfRepositoryChangedSinceLastActivation];
 	[self pumpRunLoopFor:0.1];
-	XCTAssertGreaterThan(self.controller.refreshCount, baseline);
+	XCTAssertGreaterThan(self.controller.synchronizeCount, baseline);
 
-	NSUInteger changedCount = self.controller.refreshCount;
+	NSUInteger changedCount = self.controller.synchronizeCount;
 	PBWindowSnapshotData = [@"snapshot-c" dataUsingEncoding:NSUTF8StringEncoding];
 	[self.controller refreshIfRepositoryChangedSinceLastActivation];
 	[NSUserDefaults.standardUserDefaults setObject:@NO forKey:@"PBRefreshOnApplicationFocus"];
 	[self.controller refreshPreferenceDidChange:nil];
 	[self pumpRunLoopFor:0.1];
-	XCTAssertEqual(self.controller.refreshCount, changedCount);
+	XCTAssertEqual(self.controller.synchronizeCount, changedCount);
 
 	PBWindowSnapshotError = self.repository.testError;
 	[NSUserDefaults.standardUserDefaults setObject:@YES forKey:@"PBRefreshOnApplicationFocus"];
 	[self.controller refreshPreferenceDidChange:nil];
 	[self pumpRunLoopFor:0.1];
-	XCTAssertGreaterThan(self.controller.refreshCount, changedCount);
+	XCTAssertGreaterThan(self.controller.synchronizeCount, changedCount);
 }
 
 @end
