@@ -431,6 +431,8 @@
                 }
                 madeSidebar.closeView()
                 await madeServices.refreshCoordinator?.invalidate()
+                ApplicationComposition.shared.repositoryViewState(for: repository)
+                    .forgeRepositoryBinding = nil
                 return proof
             } catch {
                 sidebar?.closeView()

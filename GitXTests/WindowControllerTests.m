@@ -88,6 +88,7 @@
 @interface PBGitSidebarController (WindowControllerTests)
 - (void)reloadSidebarAfterReferencesChange;
 - (void)reloadSidebarPresentation;
+- (void)synchronizeConfiguredRemotes;
 - (void)repositorySettingsDidChange:(NSNotification *)notification;
 - (nullable PBSourceViewItem *)selectedItem;
 - (nullable PBSourceViewItem *)itemForRev:(PBGitRevSpecifier *)rev;
@@ -2019,6 +2020,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
 	PBGitSidebarController *presentationOnlySidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
 															 superController:self.controller];
+	[presentationOnlySidebar synchronizeConfiguredRemotes];
 	[presentationOnlySidebar reloadSidebarPresentation];
 	PBSourceViewItem *fallbackForgeGroup = [presentationOnlySidebar valueForKey:@"forgeGroup"];
 	XCTAssertEqual(fallbackForgeGroup.sortedChildren.count, (NSUInteger)1);
