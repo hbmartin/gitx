@@ -54,6 +54,7 @@
 - (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar;
 - (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar;
 - (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier willBeInsertedIntoToolbar:(BOOL)flag;
+- (void)attentionUnseenDidChange:(NSNotification *)notification;
 @end
 
 @interface PBRepositorySettingsStore : NSObject
@@ -118,6 +119,9 @@
 - (void)updateRemoteControls;
 - (void)addMenuItemsForRef:(nullable PBGitRef *)ref toMenu:(NSMenu *)menu;
 - (void)addMenuItemsForSubmodule:(nullable PBSourceViewGitSubmoduleItem *)submodule toMenu:(NSMenu *)menu;
+- (void)showForgeAttention:(nullable id)sender;
+- (void)attentionUnseenDidChange:(NSNotification *)notification;
+- (void)forgeAccessDidChange:(NSNotification *)notification;
 @end
 
 @interface PBCommitMessageTransformer : NSObject
@@ -161,6 +165,7 @@
 @end
 
 @interface PBApplicationSettings : NSObject
+@property (class) BOOL repositoryStatusBarVisible;
 + (BOOL)changedFilesOnly;
 + (void)setChangedFilesOnly:(BOOL)value;
 + (NSInteger)changedFilesSort;
@@ -383,6 +388,10 @@
 - (IBAction)viewForgeSelectedCommit:(id)sender;
 - (IBAction)viewForgeSelectedComparison:(id)sender;
 - (IBAction)showForgePullRequestOrIssue:(id)sender;
+- (IBAction)toggleRepositoryStatusBar:(nullable id)sender;
+- (void)showForgeStatusDetails:(nullable id)sender;
+- (void)presentForgeRecoveryStatusDetailsWithCopyURL:(NSURL *)copyURL
+									   revealHandler:(void (^)(NSURL *copyURL))revealHandler;
 @end
 
 static NSModalResponse PBWindowAlertResponse;
@@ -1545,6 +1554,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testRealNibLifecycleContentSwitchingStatusAndValidation
 {
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
 	PBGitRepositoryDocument *document = [[PBGitRepositoryDocument alloc] init];
 	[document setValue:self.repository forKey:@"_repository"];
 	PBGitWindowController *controller = [[PBGitWindowController alloc] init];
@@ -1567,6 +1577,37 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([controller validateMenuItem:historyItem]);
 	XCTAssertEqual(historyItem.state, NSControlStateValueOn);
 	XCTAssertTrue([controller validateMenuItem:[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Other", nil) action:@selector(copy:) keyEquivalent:@""]]);
+	NSMenuItem *statusBarItem = [[NSMenuItem alloc] initWithTitle:@"Repository Status Bar"
+														   action:@selector(toggleRepositoryStatusBar:)
+													keyEquivalent:@""];
+	BOOL originalStatusBarVisibility = PBApplicationSettings.repositoryStatusBarVisible;
+	XCTAssertTrue([controller validateMenuItem:statusBarItem]);
+	XCTAssertEqual(statusBarItem.state,
+				   originalStatusBarVisibility ? NSControlStateValueOn : NSControlStateValueOff);
+	[controller toggleRepositoryStatusBar:self];
+	XCTAssertNotEqual(PBApplicationSettings.repositoryStatusBarVisible, originalStatusBarVisibility);
+	[controller toggleRepositoryStatusBar:self];
+	XCTAssertEqual(PBApplicationSettings.repositoryStatusBarVisible, originalStatusBarVisibility);
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBRepositoryRemoteOperationDidSucceedNotification"
+														object:self.repository
+													  userInfo:@{@"operation" : @"fetch"}];
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBRepositoryRemoteOperationDidSucceedNotification"
+														object:self.repository
+													  userInfo:@{@"operation" : @"push"}];
+	[controller showForgeStatusDetails:self];
+	XCTAssertEqualObjects(PBWindowPresentedAlerts.lastObject.messageText, @"Sign In Required");
+	NSURL *recoveryCopyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+														stringByAppendingPathComponent:[NSString stringWithFormat:@"Forge-recovery-%@.sqlite3", NSUUID.UUID.UUIDString]]];
+	__block NSURL *revealedRecoveryCopyURL = nil;
+	[controller presentForgeRecoveryStatusDetailsWithCopyURL:recoveryCopyURL
+											   revealHandler:^(NSURL *copyURL) {
+												   revealedRecoveryCopyURL = copyURL;
+											   }];
+	NSAlert *recoveryAlert = PBWindowPresentedAlerts.lastObject;
+	XCTAssertEqualObjects(recoveryAlert.messageText, @"Forge Data Unavailable");
+	XCTAssertTrue([recoveryAlert.informativeText containsString:recoveryCopyURL.lastPathComponent]);
+	XCTAssertEqualObjects([recoveryAlert.buttons valueForKey:@"title"], (@[ @"Reveal in Finder", @"OK" ]));
+	XCTAssertEqualObjects(revealedRecoveryCopyURL, recoveryCopyURL);
 
 	[controller changeContentController:history];
 	history.status = @"History ready";
@@ -1967,6 +2008,134 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	}
 	XCTAssertNil(weakSidebar);
 	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBBranchSidebarSettingsDidChangeNotification" object:nil];
+}
+
+- (void)testSidebarPresentsGitHubCollaborationAndRoutesNativeSurfaces
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+	self.controller.interceptContentChange = YES;
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	NSOutlineView *outline = sidebar.sourceView;
+	[self pumpRunLoopFor:0.2];
+
+	PBSourceViewItem *forgeGroup = [sidebar valueForKey:@"forgeGroup"];
+	XCTAssertNotNil(forgeGroup);
+	XCTAssertEqualObjects(forgeGroup.title, @"GITHUB");
+	XCTAssertTrue([sidebar.items containsObject:forgeGroup]);
+	XCTAssertEqual(forgeGroup.sortedChildren.count, (NSUInteger)1);
+	PBSourceViewItem *repositoryItem = forgeGroup.sortedChildren.firstObject;
+	XCTAssertTrue([repositoryItem.title containsString:@"hbmartin/gitx"]);
+	XCTAssertTrue([repositoryItem.title containsString:@"Primary"]);
+	XCTAssertNotNil(repositoryItem.icon);
+	XCTAssertEqualObjects([repositoryItem.sortedChildren valueForKey:@"title"], (@[ @"Issues", @"Pull Requests" ]));
+	XCTAssertEqualObjects([sidebar visibleChildrenForItem:forgeGroup], (@[ repositoryItem ]));
+	NSArray<PBSourceViewItem *> *visibleSurfaces = [sidebar visibleChildrenForItem:repositoryItem];
+	XCTAssertEqualObjects([visibleSurfaces valueForKey:@"title"], (@[ @"Pull Requests", @"Issues" ]));
+	XCTAssertFalse([sidebar outlineView:outline shouldSelectItem:repositoryItem]);
+	XCTAssertTrue([sidebar outlineView:outline shouldSelectItem:visibleSurfaces.firstObject]);
+
+	for (PBSourceViewItem *surfaceItem in repositoryItem.sortedChildren) {
+		XCTAssertNotNil(surfaceItem.icon);
+		NSTableCellView *cell = (NSTableCellView *)[sidebar outlineView:outline
+													 viewForTableColumn:outline.tableColumns.firstObject
+																   item:surfaceItem];
+		XCTAssertEqualObjects(cell.accessibilityIdentifier, @"RepositoryForgeSidebarItem");
+		XCTAssertEqualObjects(cell.accessibilityLabel, surfaceItem.title);
+	}
+
+	PBSourceViewItem *pullRequests = [repositoryItem.sortedChildren filteredArrayUsingPredicate:
+																		[NSPredicate predicateWithFormat:@"title == %@", @"Pull Requests"]]
+										 .firstObject;
+	NSInteger pullRequestsRow = [outline rowForItem:pullRequests];
+	XCTAssertGreaterThanOrEqual(pullRequestsRow, (NSInteger)0);
+	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)pullRequestsRow]
+		 byExtendingSelection:NO];
+	[sidebar outlineViewSelectionDidChange:
+				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification
+											   object:outline]];
+	XCTAssertGreaterThanOrEqual(self.controller.contentChangeCount, (NSUInteger)1);
+	XCTAssertNotNil(self.controller.lastContentController);
+	XCTAssertEqualObjects(self.controller.lastContentController.view.accessibilityIdentifier,
+						  @"RepositoryForgeCollaboration");
+
+	PBSourceViewItem *issues = [repositoryItem.sortedChildren filteredArrayUsingPredicate:
+																  [NSPredicate predicateWithFormat:@"title == %@", @"Issues"]]
+								   .firstObject;
+	NSInteger issuesRow = [outline rowForItem:issues];
+	XCTAssertGreaterThanOrEqual(issuesRow, (NSInteger)0);
+	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)issuesRow]
+		 byExtendingSelection:NO];
+	[sidebar outlineViewSelectionDidChange:
+				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification
+											   object:outline]];
+	[sidebar reloadSidebarPresentation];
+	XCTAssertEqualObjects([sidebar selectedItem].title, @"Issues");
+	[sidebar forgeAccessDidChange:
+				 [NSNotification notificationWithName:@"PBRepositoryForgeAccountDidChangeNotification"
+											   object:self.repository]];
+	XCTAssertEqualObjects([sidebar selectedItem].title, @"Issues");
+	NSUInteger routedSurfaceCount = self.controller.contentChangeCount;
+	[sidebar showForgeAttention:self];
+	XCTAssertGreaterThan(self.controller.contentChangeCount, routedSurfaceCount);
+	[sidebar attentionUnseenDidChange:
+				 [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
+											   object:self.repository
+											 userInfo:@{@"count" : @7}]];
+	[sidebar closeView];
+}
+
+- (void)testSidebarRequiresAndPersistsAnExplicitPrimaryGitHubRepository
+{
+	[self configureForgeRemotes:@{
+		@"origin" : @"https://github.com/hbmartin/gitx.git",
+		@"upstream" : @"git@github.com:gitx/gitx.git",
+	}];
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	NSOutlineView *outline = sidebar.sourceView;
+	PBSourceViewItem *forgeGroup = [sidebar valueForKey:@"forgeGroup"];
+	PBSourceViewItem *choice = forgeGroup.sortedChildren.firstObject;
+	XCTAssertEqualObjects(choice.title, @"Choose Primary Repository…");
+	XCTAssertNotNil(choice.icon);
+	XCTAssertTrue([sidebar outlineView:outline shouldSelectItem:choice]);
+	NSInteger row = [outline rowForItem:choice];
+	XCTAssertGreaterThanOrEqual(row, (NSInteger)0);
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
+		 byExtendingSelection:NO];
+
+	[sidebar outlineViewSelectionDidChange:
+				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification
+											   object:outline]];
+	XCTAssertEqualObjects([[sidebar valueForKey:@"forgeGroup"] sortedChildren].firstObject.title,
+						  @"Choose Primary Repository…");
+
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Choose Primary Repository"])
+			[(NSPopUpButton *)alert.accessoryView selectItemWithTitle:@"GitHub — gitx/gitx (upstream)"];
+	};
+	[sidebar outlineViewSelectionDidChange:
+				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification
+											   object:outline]];
+
+	PBSourceViewItem *selectedForgeGroup = [sidebar valueForKey:@"forgeGroup"];
+	XCTAssertEqual(selectedForgeGroup.sortedChildren.count, (NSUInteger)2);
+	XCTAssertTrue([selectedForgeGroup.sortedChildren.firstObject.title containsString:@"gitx/gitx"]);
+	XCTAssertFalse([selectedForgeGroup.sortedChildren.firstObject.title containsString:@"Choose Primary"]);
+	[sidebar closeView];
+
+	PBGitSidebarController *reloadedSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																				 superController:self.controller];
+	(void)reloadedSidebar.view;
+	PBSourceViewItem *reloadedForgeGroup = [reloadedSidebar valueForKey:@"forgeGroup"];
+	XCTAssertEqual(reloadedForgeGroup.sortedChildren.count, (NSUInteger)2);
+	XCTAssertTrue([reloadedForgeGroup.sortedChildren.firstObject.title containsString:@"gitx/gitx"]);
+	XCTAssertFalse([reloadedForgeGroup.sortedChildren.firstObject.title containsString:@"Choose Primary"]);
+	[reloadedSidebar closeView];
 }
 
 - (void)testSidebarRefreshFollowsHeadPreservesExplicitSelectionAndHonorsVisibility
@@ -3059,6 +3228,34 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(commitItem.label, @"Uncommitted Changes");
 	XCTAssertEqual(commitItem.action, @selector(showUncommittedChanges:));
 	XCTAssertEqual(commitItem.target, self.controller);
+	NSToolbarItem *attentionItem = [toolbarController toolbar:historyToolbar
+										itemForItemIdentifier:@"GitX.Toolbar.Attention"
+									willBeInsertedIntoToolbar:YES];
+	XCTAssertEqualObjects(attentionItem.label, @"Attention");
+	NSTextField *attentionBadge = nil;
+	NSButton *attentionButton = nil;
+	for (NSView *view in attentionItem.view.subviews) {
+		if ([view.accessibilityIdentifier isEqualToString:@"GitX.Toolbar.Attention.Badge"])
+			attentionBadge = (NSTextField *)view;
+		if ([view.accessibilityIdentifier isEqualToString:@"GitX.Toolbar.Attention"])
+			attentionButton = (NSButton *)view;
+	}
+	XCTAssertNotNil(attentionBadge);
+	XCTAssertNotNil(attentionButton);
+	XCTAssertTrue(attentionBadge.hidden);
+	[toolbarController attentionUnseenDidChange:
+						   [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
+														 object:NSObject.new
+													   userInfo:@{@"count" : @99}]];
+	XCTAssertTrue(attentionBadge.hidden);
+	[toolbarController attentionUnseenDidChange:
+						   [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
+														 object:self.repository
+													   userInfo:@{@"count" : @7}]];
+	XCTAssertEqualObjects(attentionItem.label, @"Attention (7)");
+	XCTAssertEqualObjects(attentionBadge.stringValue, @"7");
+	XCTAssertFalse(attentionBadge.hidden);
+	XCTAssertTrue([attentionButton.accessibilityLabel containsString:@"7 unseen"]);
 
 	[toolbarController updateWithStatus:@"Loading commits" busy:YES baseWindowTitle:@"Repository"];
 	XCTAssertEqualObjects(self.controller.window.title, @"Repository — Loading commits");

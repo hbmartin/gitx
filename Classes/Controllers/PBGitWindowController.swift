@@ -774,15 +774,22 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         )
     }
 
-    private func presentForgeStatusDetails(_ action: ForgeStatusDetailsAction) {
+    func presentForgeStatusDetails(
+        _ action: ForgeStatusDetailsAction,
+        recoveryCopyOverride: ForgeSQLiteRecoveryCopy? = nil,
+        revealRecoveryCopy: @escaping (URL) -> Void = {
+            NSWorkspace.shared.activateFileViewerSelecting([$0])
+        }
+    ) {
         let details = RepositoryForgeDiagnosticDetailsPresenter.present(action)
         let alert = NSAlert()
         alert.messageText = details.title
         var message = details.message
+        let recoveryCopy = recoveryCopyOverride ?? repositoryForgeOverlaySession?.recoveryCopy
         if action == .recoverForgeData,
-           let copy = repositoryForgeOverlaySession?.recoveryCopy
+           let recoveryCopy
         {
-            message += "\n\nRecovery copy: \(copy.url.lastPathComponent)"
+            message += "\n\nRecovery copy: \(recoveryCopy.url.lastPathComponent)"
             alert.addButton(withTitle: "Reveal in Finder")
             alert.addButton(withTitle: "OK")
         } else {
@@ -793,11 +800,26 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn,
                   action == .recoverForgeData,
-                  let copy = self?.repositoryForgeOverlaySession?.recoveryCopy
+                  self != nil,
+                  let recoveryCopy
             else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([copy.url])
+            revealRecoveryCopy(recoveryCopy.url)
         }
     }
+
+    #if DEBUG
+        @objc(presentForgeRecoveryStatusDetailsWithCopyURL:revealHandler:)
+        dynamic func presentForgeRecoveryStatusDetails(
+            copyURL: URL,
+            revealHandler: @escaping (URL) -> Void
+        ) {
+            presentForgeStatusDetails(
+                .recoverForgeData,
+                recoveryCopyOverride: ForgeSQLiteRecoveryCopy(url: copyURL, createdAt: Date()),
+                revealRecoveryCopy: revealHandler
+            )
+        }
+    #endif
 
     @objc(showForgeStatusDetails:)
     dynamic func showForgeStatusDetails(_ sender: Any?) {
