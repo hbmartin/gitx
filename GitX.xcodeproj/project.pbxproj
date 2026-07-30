@@ -280,6 +280,10 @@
 		F0B100000000000000000007 /* ForgeCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000012 /* ForgeCredentialStore.swift */; };
 		F0B100000000000000000008 /* ForgeAccountLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000013 /* ForgeAccountLifecycle.swift */; };
 		F0B100000000000000000009 /* ForgeApplicationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000014 /* ForgeApplicationServices.swift */; };
+		F0B200000000000000000001 /* GitHubForgeAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = F0B200000000000000000018 /* GitHubForgeAdapter */; };
+		F0B200000000000000000003 /* GitHubReadComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000011 /* GitHubReadComposition.swift */; };
+		F0B200000000000000000004 /* GitHubReadComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000011 /* GitHubReadComposition.swift */; };
+		F0B200000000000000000005 /* GitHubReadCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000012 /* GitHubReadCompositionTests.swift */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE81000000000000000002 /* GitBinaryTests.swift */; };
@@ -892,6 +896,8 @@
 		F0B100000000000000000014 /* ForgeApplicationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationServices.swift; sourceTree = "<group>"; };
 		F0B100000000000000000015 /* ForgeAccountLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountLifecycleTests.swift; sourceTree = "<group>"; };
 		F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationCompositionTests.swift; sourceTree = "<group>"; };
+		F0B200000000000000000011 /* GitHubReadComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadComposition.swift; sourceTree = "<group>"; };
+		F0B200000000000000000012 /* GitHubReadCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadCompositionTests.swift; sourceTree = "<group>"; };
 		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
@@ -921,6 +927,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F0A000000000000000000001 /* ForgeKit in Frameworks */,
+				F0B200000000000000000001 /* GitHubForgeAdapter in Frameworks */,
 				C0D0C0A00000000000000001 /* GitXCore in Frameworks */,
 				C0DE1000000000000000001A /* UserNotifications.framework in Frameworks */,
 				C0DE10000000000000000016 /* HighlightKit in Frameworks */,
@@ -1193,6 +1200,7 @@
 				F0B100000000000000000012 /* ForgeCredentialStore.swift */,
 				F0B100000000000000000013 /* ForgeAccountLifecycle.swift */,
 				F0B100000000000000000014 /* ForgeApplicationServices.swift */,
+				F0B200000000000000000011 /* GitHubReadComposition.swift */,
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
 				C0DEC1000000000000000011 /* ApplicationSettings.swift */,
 				C0D1C0A00000000000000011 /* ApplicationIcon.swift */,
@@ -1522,6 +1530,7 @@
 				F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */,
 				F0B100000000000000000015 /* ForgeAccountLifecycleTests.swift */,
 				F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */,
+				F0B200000000000000000012 /* GitHubReadCompositionTests.swift */,
 			);
 			path = GitXTests;
 			sourceTree = "<group>";
@@ -1575,6 +1584,7 @@
 			name = GitX;
 			packageProductDependencies = (
 				F0A000000000000000000018 /* ForgeKit */,
+				F0B200000000000000000018 /* GitHubForgeAdapter */,
 				C0D0C0A00000000000000018 /* GitXCore */,
 				C0DE10000000000000000018 /* HighlightKit */,
 			);
@@ -2006,6 +2016,7 @@
 				F0B100000000000000000002 /* ForgeCredentialStore.swift in Sources */,
 				F0B100000000000000000003 /* ForgeAccountLifecycle.swift in Sources */,
 				F0B100000000000000000004 /* ForgeApplicationServices.swift in Sources */,
+				F0B200000000000000000003 /* GitHubReadComposition.swift in Sources */,
 				C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */,
 				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
@@ -2155,9 +2166,11 @@
 				F0B100000000000000000001 /* ForgeCredentialStoreTests.swift in Sources */,
 				F0B100000000000000000005 /* ForgeAccountLifecycleTests.swift in Sources */,
 				F0B100000000000000000006 /* ForgeApplicationCompositionTests.swift in Sources */,
+				F0B200000000000000000005 /* GitHubReadCompositionTests.swift in Sources */,
 				F0B100000000000000000007 /* ForgeCredentialStore.swift in Sources */,
 				F0B100000000000000000008 /* ForgeAccountLifecycle.swift in Sources */,
 				F0B100000000000000000009 /* ForgeApplicationServices.swift in Sources */,
+				F0B200000000000000000004 /* GitHubReadComposition.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2717,6 +2730,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */;
 			productName = ForgeKit;
+		};
+		F0B200000000000000000018 /* GitHubForgeAdapter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */;
+			productName = GitHubForgeAdapter;
 		};
 		C0D0C0A00000000000000018 /* GitXCore */ = {
 			isa = XCSwiftPackageProductDependency;

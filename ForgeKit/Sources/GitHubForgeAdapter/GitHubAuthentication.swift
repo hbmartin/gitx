@@ -77,6 +77,16 @@ public struct GitHubSecret: Equatable, Sendable, CustomStringConvertible,
         self.bytes = bytes
     }
 
+    /// Creates a secret directly from validated UTF-8 bytes without requiring
+    /// the caller to materialize credential data as an ordinary `String`.
+    public init(utf8Bytes value: Data) throws {
+        let bytes = Array(value)
+        guard !bytes.isEmpty, bytes.allSatisfy({ $0 >= 0x21 && $0 <= 0x7E }) else {
+            throw GitHubAuthenticationError.invalidSecret
+        }
+        self.bytes = bytes
+    }
+
     public var description: String {
         "<redacted>"
     }

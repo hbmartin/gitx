@@ -38,6 +38,19 @@ final class GitHubAuthenticationTests: XCTestCase {
         assertRedacted(secret, forbidden: ["ghu_super-secret", "super-secret"])
     }
 
+    func testSecretAcceptsValidatedDataWithoutStringBridgeAndRejectsMalformedBytes() throws {
+        let bytes = Data("github_pat_byte-secret".utf8)
+        let secret = try GitHubSecret(utf8Bytes: bytes)
+        XCTAssertEqual(secret.withUnsafeUTF8Bytes { Data($0) }, bytes)
+        assertRedacted(secret, forbidden: ["github_pat_byte-secret", "byte-secret"])
+
+        for invalid in [Data(), Data("space separated".utf8), Data([0x7F]), Data([0xFF])] {
+            XCTAssertThrowsError(try GitHubSecret(utf8Bytes: invalid)) {
+                XCTAssertEqual($0 as? GitHubAuthenticationError, .invalidSecret)
+            }
+        }
+    }
+
     func testDeviceConfigurationAcceptsOnlyOpaqueClientIDAndGitHubAppSlug() throws {
         let configuration = try configuration()
         XCTAssertEqual(configuration.clientID, "Iv1ABC123")

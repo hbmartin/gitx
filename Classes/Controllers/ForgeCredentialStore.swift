@@ -375,8 +375,18 @@ nonisolated enum ForgePersonalAccessTokenKind: Sendable {
     }
 }
 
+/// A narrow invalidation value for consumers bound to one Forge Account.
+/// The reference changes on Credential replacement; the revision also changes
+/// when refresh rotation retains the same Credential generation.
+nonisolated struct ForgeAccountCredentialChange: Equatable, Sendable {
+    let accountID: ForgeAccountID
+    let currentReference: ForgeCredentialReference?
+    let revision: UInt64
+}
+
 actor ForgeAccountStore {
     private let keychain: any ForgeCredentialKeychain
+    private var credentialRevisions: [ForgeAccountID: UInt64] = [:]
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeAccountStore")
 
     init(keychain: any ForgeCredentialKeychain) {
@@ -409,6 +419,14 @@ actor ForgeAccountStore {
             throw ForgeCredentialStoreError.storedAccountMismatch
         }
         return envelope
+    }
+
+    func credentialChange(for accountID: ForgeAccountID) throws -> ForgeAccountCredentialChange {
+        try ForgeAccountCredentialChange(
+            accountID: accountID,
+            currentReference: credential(for: accountID)?.account.currentCredential.reference,
+            revision: credentialRevisions[accountID, default: 0]
+        )
     }
 
     @discardableResult
@@ -458,6 +476,7 @@ actor ForgeAccountStore {
             )
         )
         try persist(ForgeStoredCredentialEnvelope(account: account, secrets: secrets), key: key)
+        advanceCredentialRevision(for: accountID)
         logger.notice("Forge Account Credential added source=\(source.rawValue, privacy: .public)")
         return account
     }
@@ -482,6 +501,7 @@ actor ForgeAccountStore {
         )
         let key = try Self.keychainAccountKey(for: account.id)
         try persist(ForgeStoredCredentialEnvelope(account: account, secrets: secrets), key: key)
+        advanceCredentialRevision(for: account.id)
         logger.notice("Forge Account Credential rotated generation retained")
         return account
     }
@@ -519,6 +539,7 @@ actor ForgeAccountStore {
         )
         let key = try Self.keychainAccountKey(for: accountID)
         try persist(ForgeStoredCredentialEnvelope(account: account, secrets: secrets), key: key)
+        advanceCredentialRevision(for: accountID)
         logger.notice("Forge Account Credential replaced generation advanced")
         return account
     }
@@ -526,6 +547,7 @@ actor ForgeAccountStore {
     func removeAccount(_ accountID: ForgeAccountID) throws {
         let key = try Self.keychainAccountKey(for: accountID)
         try mapKeychainError { try keychain.remove(accountKey: key) }
+        advanceCredentialRevision(for: accountID)
         logger.notice("Forge Account Credential removed")
     }
 
@@ -570,6 +592,10 @@ actor ForgeAccountStore {
         } catch let error as ForgeKeychainError {
             throw ForgeCredentialStoreError.keychain(error)
         }
+    }
+
+    private func advanceCredentialRevision(for accountID: ForgeAccountID) {
+        credentialRevisions[accountID, default: 0] &+= 1
     }
 
     private static func sortKey(for account: ForgeAccount) -> [String] {

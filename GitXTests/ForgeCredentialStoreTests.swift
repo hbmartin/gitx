@@ -3,6 +3,22 @@ import Security
 import XCTest
 
 final class ForgeCredentialStoreTests: XCTestCase {
+    func testSystemSecurityClientForwardsReadOnlyGenericPasswordQuery() {
+        let uniqueValue = "com.gitx.tests.missing.\(UUID().uuidString)"
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: uniqueValue,
+            kSecAttrAccount as String: uniqueValue,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+
+        let response = SystemForgeSecurityItemClient().copyMatching(query)
+
+        XCTAssertEqual(response.status, errSecItemNotFound)
+        XCTAssertNil(response.result)
+    }
+
     func testPATStorageListsOnlySafeMetadataAndRedactsSecretSurfaces() async throws {
         let keychain = InMemoryForgeCredentialKeychain()
         let store = ForgeAccountStore(keychain: keychain)
@@ -52,6 +68,15 @@ final class ForgeCredentialStoreTests: XCTestCase {
             expiresAt: Date(timeIntervalSince1970: 100),
             secrets: rotatingSecrets(access: "access-1", refresh: "refresh-1", refreshExpiry: 200)
         )
+        let addedChange = try await store.credentialChange(for: accountID)
+        XCTAssertEqual(
+            addedChange,
+            ForgeAccountCredentialChange(
+                accountID: accountID,
+                currentReference: original.currentCredential.reference,
+                revision: 1
+            )
+        )
 
         let rotated = try await store.rotateCredential(
             expectedReference: original.currentCredential.reference,
@@ -60,6 +85,8 @@ final class ForgeCredentialStoreTests: XCTestCase {
         )
         XCTAssertEqual(rotated.currentCredential.reference, original.currentCredential.reference)
         XCTAssertEqual(rotated.currentCredential.expiresAt, Date(timeIntervalSince1970: 150))
+        let rotatedChange = try await store.credentialChange(for: accountID)
+        XCTAssertEqual(rotatedChange.revision, 2)
         let storedRotatedCredential = try await store.credential(for: accountID)
         let rotatedEnvelope = try XCTUnwrap(storedRotatedCredential)
         XCTAssertEqual(
@@ -76,6 +103,15 @@ final class ForgeCredentialStoreTests: XCTestCase {
         )
         XCTAssertEqual(replacement.currentCredential.reference.generation, try ForgeCredentialGeneration(2))
         XCTAssertEqual(replacement.currentCredential.source, .classicPersonalAccessToken)
+        let replacementChange = try await store.credentialChange(for: accountID)
+        XCTAssertEqual(
+            replacementChange,
+            ForgeAccountCredentialChange(
+                accountID: accountID,
+                currentReference: replacement.currentCredential.reference,
+                revision: 3
+            )
+        )
 
         do {
             _ = try await store.replaceCredential(
@@ -100,6 +136,15 @@ final class ForgeCredentialStoreTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? ForgeCredentialStoreError, .credentialReferenceMismatch)
         }
+        let retainedChange = try await store.credentialChange(for: accountID)
+        XCTAssertEqual(retainedChange.revision, 3)
+
+        try await store.removeAccount(accountID)
+        let removedChange = try await store.credentialChange(for: accountID)
+        XCTAssertEqual(
+            removedChange,
+            ForgeAccountCredentialChange(accountID: accountID, currentReference: nil, revision: 4)
+        )
     }
 
     func testAccountStoreRejectsDuplicateCrossAccountMalformedAndInvalidSecretShapes() async throws {
