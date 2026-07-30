@@ -2017,9 +2017,16 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (void)testSidebarPresentsGitHubCollaborationAndRoutesNativeSurfaces
 {
 	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+	PBGitSidebarController *presentationOnlySidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+															 superController:self.controller];
+	[presentationOnlySidebar reloadSidebarPresentation];
+	PBSourceViewItem *fallbackForgeGroup = [presentationOnlySidebar valueForKey:@"forgeGroup"];
+	XCTAssertEqual(fallbackForgeGroup.sortedChildren.count, (NSUInteger)1);
+	XCTAssertTrue([fallbackForgeGroup.sortedChildren.firstObject.title containsString:@"hbmartin/gitx"]);
+
 	self.controller.interceptContentChange = YES;
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
-																		 superController:self.controller];
+														 superController:self.controller];
 	(void)sidebar.view;
 	NSOutlineView *outline = sidebar.sourceView;
 	[self pumpRunLoopFor:0.2];
@@ -2435,7 +2442,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self.controller performPullForBranch:self.branchRef remote:self.remoteRef rebase:NO];
 	XCTAssertTrue([PBWindowLastProgressDescription containsString:@"origin"]);
 	PBWindowPerformPull(self.controller, nil, self.branchRef, NO);
-	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF BEGINSWITH 'pull'"]].count, (NSUInteger)4);
+	[self.controller performPullForBranch:self.branchRef remote:self.branchRef rebase:NO];
+	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF BEGINSWITH 'pull'"]].count, (NSUInteger)5);
 	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'pullRebase'"]].count, (NSUInteger)1);
 
 	[self.controller performPushForBranch:self.branchRef toRemote:self.remoteRef requiresConfirmation:NO];
