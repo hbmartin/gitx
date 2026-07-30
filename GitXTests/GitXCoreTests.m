@@ -68,12 +68,15 @@
 @end
 
 @interface PBWebHistoryController (GitXCoreTests)
+- (BOOL)isGenerationCurrent:(NSUInteger)generation;
 - (NSUInteger)beginContentGeneration;
 - (nullable NSString *)runGitArguments:(NSArray<NSString *> *)arguments
 							generation:(NSUInteger)generation
 								 error:(NSError **)error;
+- (NSArray<PBGitCommit *> *)oldestFirst:(NSArray<PBGitCommit *> *)commits;
 - (NSArray *)renderInputsForCommits:(NSArray<PBGitCommit *> *)commits;
 - (NSDictionary<NSString *, id> *)imageSourceForRevisions:(NSArray<NSString *> *)revisions workingTree:(BOOL)workingTree;
+- (NSArray<NSString *> *)diffArgumentsWithTail:(NSArray<NSString *> *)tail;
 - (BOOL)inputsShareAncestryPath:(NSArray *)inputs generation:(NSUInteger)generation;
 - (nullable NSArray<NSDictionary *> *)sequentialSectionsForInputs:(NSArray *)inputs
 													 imageSources:(NSArray<NSDictionary<NSString *, id> *> *)imageSources
@@ -81,7 +84,120 @@
 - (nullable NSArray<NSDictionary *> *)combinedSectionsForInputs:(NSArray *)inputs
 													imageSource:(NSDictionary<NSString *, id> *)imageSource
 													 generation:(NSUInteger)generation;
+- (void)changeContentTo:(NSArray<PBGitCommit *> *)commits;
+- (NSArray<NSDictionary *> *)sections:(NSArray<NSDictionary *> *)sections applyingDiffLayout:(NSInteger)layout;
 - (nullable NSData *)dataForGitObject:(NSString *)object imageSource:(NSDictionary<NSString *, id> *)imageSource;
+- (nullable NSData *)nativeContentView:(PBNativeContentView *)view
+					  imageDataForPath:(NSString *)path
+							   section:(NSUInteger)sectionIndex
+						   imageSource:(NSDictionary<NSString *, id> *)imageSource;
+- (void)nativeContentView:(PBNativeContentView *)view selectCommit:(NSString *)sha;
+- (void)presentationChanged:(NSSegmentedControl *)sender;
+- (void)layoutChanged:(NSSegmentedControl *)sender;
+@end
+
+@interface PBWebHistoryTaskSpy : PBTask
+@property (nonatomic) NSUInteger terminationCount;
+@end
+
+@implementation PBWebHistoryTaskSpy
+
+- (void)terminate
+{
+	self.terminationCount++;
+}
+
+@end
+
+@interface PBWebHistoryContentViewSpy : PBNativeContentView
+@property (nonatomic) XCTestExpectation *installationExpectation;
+@property (nonatomic) BOOL installedOnMainThread;
+@property (nonatomic) NSUInteger installationCount;
+@property (nonatomic) NSUInteger pageUpCount;
+@property (nonatomic) NSUInteger pageDownCount;
+@property (nonatomic, copy) NSArray<NSDictionary<NSString *, id> *> *installedSections;
+@property (nonatomic, copy) NSString *lastMessage;
+@end
+
+@implementation PBWebHistoryContentViewSpy
+
+- (void)showMessage:(NSString *)message
+{
+	self.lastMessage = message;
+}
+
+- (void)showDiffSections:(NSArray<NSDictionary<NSString *, id> *> *)sections
+{
+	self.installedOnMainThread = NSThread.isMainThread;
+	self.installationCount++;
+	self.installedSections = sections;
+	[self.installationExpectation fulfill];
+}
+
+- (void)scrollPageUp
+{
+	self.pageUpCount++;
+}
+
+- (void)scrollPageDown
+{
+	self.pageDownCount++;
+}
+
+@end
+
+@interface PBWebHistorySelectionControllerSpy : PBGitHistoryController
+@property (nonatomic, copy) NSString *selectedSHA;
+@end
+
+@implementation PBWebHistorySelectionControllerSpy
+
+- (void)selectCommit:(GTOID *)commit
+{
+	self.selectedSHA = commit.SHA;
+}
+
+@end
+
+@interface PBWebHistoryControllerOrderingSpy : PBWebHistoryController
+@property (nonatomic) XCTestExpectation *firstRenderStartedExpectation;
+@property (nonatomic) dispatch_semaphore_t allowFirstRender;
+@property (nonatomic) NSUInteger renderCount;
+@property (nonatomic) NSMutableArray<NSNumber *> *renderedGenerations;
+@end
+
+@implementation PBWebHistoryControllerOrderingSpy
+
+- (instancetype)init
+{
+	self = [super init];
+	if (!self) return nil;
+	_allowFirstRender = dispatch_semaphore_create(0);
+	_renderedGenerations = [NSMutableArray array];
+	return self;
+}
+
+- (nullable NSArray<NSDictionary *> *)sequentialSectionsForInputs:(NSArray *)inputs
+													 imageSources:(NSArray<NSDictionary<NSString *, id> *> *)imageSources
+													   generation:(NSUInteger)generation
+{
+	NSUInteger renderIndex = 0;
+	@synchronized(self) {
+		renderIndex = self.renderCount++;
+		[self.renderedGenerations addObject:@(generation)];
+	}
+	if (renderIndex == 0) {
+		[self.firstRenderStartedExpectation fulfill];
+		dispatch_semaphore_wait(self.allowFirstRender, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+	}
+	return @[ @{
+		PBNativeSectionTitleKey : @"Characterized render",
+		PBNativeSectionTextKey : [NSString stringWithFormat:@"generation-%lu", (unsigned long)generation],
+		PBNativeSectionContextKey : @"readOnly",
+		PBNativeSectionImageSourceKey : imageSources.firstObject ?: @{},
+	} ];
+}
+
 @end
 
 @interface PBGitRepository (GitXCoreHookTests)
@@ -1045,6 +1161,260 @@
 	XCTAssertTrue([combined.firstObject[@"title"] containsString:@"Combined Diff"]);
 	NSData *trackedData = [webHistoryController dataForGitObject:@"HEAD:tracked.txt" imageSource:secondImageSource];
 	XCTAssertEqualObjects([[NSString alloc] initWithData:trackedData encoding:NSUTF8StringEncoding], @"second line\n");
+}
+
+- (void)testWebHistoryGenerationCancellationFailureAndUnsignedBoundaryBehavior
+{
+	PBGitHistoryController *historyController = [[PBGitHistoryController alloc]
+		initWithRepository:self.repository
+		   superController:nil];
+	PBWebHistoryController *webHistoryController = [PBWebHistoryController new];
+	webHistoryController.repository = self.repository;
+	[webHistoryController setValue:historyController forKey:@"historyController"];
+	PBWebHistoryTaskSpy *activeTask = [PBWebHistoryTaskSpy new];
+	[webHistoryController setValue:activeTask forKey:@"activeTask"];
+
+	NSUInteger firstGeneration = [webHistoryController beginContentGeneration];
+	XCTAssertEqual(activeTask.terminationCount, (NSUInteger)1);
+	XCTAssertNil([webHistoryController valueForKey:@"activeTask"]);
+	XCTAssertTrue([webHistoryController isGenerationCurrent:firstGeneration]);
+	NSUInteger currentGeneration = [webHistoryController beginContentGeneration];
+	XCTAssertFalse([webHistoryController isGenerationCurrent:firstGeneration]);
+	XCTAssertTrue([webHistoryController isGenerationCurrent:currentGeneration]);
+
+	NSError *staleError = nil;
+	NSString *staleOutput = [webHistoryController runGitArguments:@[ @"rev-parse", @"HEAD" ]
+													   generation:firstGeneration
+															error:&staleError];
+	XCTAssertNil(staleOutput);
+	XCTAssertNil(staleError, @"A stale generation is discarded before launching Git");
+	XCTAssertNil([webHistoryController sequentialSectionsForInputs:@[]
+													  imageSources:@[]
+														generation:firstGeneration]);
+
+	NSError *launchError = nil;
+	XCTAssertNil([webHistoryController runGitArguments:@[ @"gitx-characterized-invalid-subcommand" ]
+											generation:currentGeneration
+												 error:&launchError]);
+	XCTAssertNotNil(launchError);
+	XCTAssertNil([webHistoryController valueForKey:@"activeTask"], @"Failed Git work releases the active task");
+
+	[webHistoryController setValue:@(NSUIntegerMax) forKey:@"contentGeneration"];
+	XCTAssertEqual([webHistoryController beginContentGeneration], (NSUInteger)0,
+				   @"NSUInteger generation rollover is intentionally preserved");
+	XCTAssertTrue([webHistoryController isGenerationCurrent:0]);
+}
+
+- (void)testWebHistoryBoundaryOrderingDisconnectedAncestryAndImageFallbacks
+{
+	NSError *error = nil;
+	NSString *firstSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(firstSHA, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"second line\n" toPath:@"tracked.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"second commit" error:&error], @"%@", error);
+	NSString *secondSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(secondSHA, @"%@", error);
+	GTCommit *firstObject = [self.repository.gtRepo lookUpObjectBySHA:firstSHA objectType:GTObjectTypeCommit error:&error];
+	GTCommit *secondObject = [self.repository.gtRepo lookUpObjectBySHA:secondSHA objectType:GTObjectTypeCommit error:&error];
+	PBGitCommit *firstCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:firstObject];
+	PBGitCommit *secondCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:secondObject];
+	PBGitHistoryController *historyController = [[PBGitHistoryController alloc]
+		initWithRepository:self.repository
+		   superController:nil];
+	PBWebHistoryController *webHistoryController = [PBWebHistoryController new];
+	webHistoryController.repository = self.repository;
+	[webHistoryController setValue:historyController forKey:@"historyController"];
+	NSUInteger generation = [webHistoryController beginContentGeneration];
+
+	NSArray<PBGitCommit *> *oldestFirst = [webHistoryController oldestFirst:@[ secondCommit, firstCommit ]];
+	XCTAssertEqualObjects(oldestFirst, (@[ firstCommit, secondCommit ]));
+	XCTAssertTrue([webHistoryController inputsShareAncestryPath:@[] generation:generation]);
+	XCTAssertEqual([webHistoryController sequentialSectionsForInputs:@[] imageSources:@[] generation:generation].count,
+				   (NSUInteger)0);
+	NSArray *reverseInputs = [webHistoryController renderInputsForCommits:@[ secondCommit, firstCommit ]];
+	XCTAssertFalse([webHistoryController inputsShareAncestryPath:reverseInputs generation:generation],
+				   @"Newest-to-oldest input is not one forward ancestry path");
+
+	NSArray<NSString *> *arguments = [webHistoryController diffArgumentsWithTail:@[ @"base", @"head" ]];
+	XCTAssertEqualObjects(arguments.firstObject, @"diff");
+	XCTAssertEqualObjects([arguments subarrayWithRange:NSMakeRange(arguments.count - 2, 2)], (@[ @"base", @"head" ]));
+	XCTAssertTrue([[arguments componentsJoinedByString:@" "] containsString:@"--unified="],
+				  @"The characterized diff command includes the configured context-line option");
+
+	NSString *unicodePath = @"folder/spaced ünicode.txt";
+	NSData *workingData = [@"working image bytes" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertTrue([self.fixture writeText:@"working image bytes" toPath:unicodePath error:&error], @"%@", error);
+	NSDictionary<NSString *, id> *workingSource = [webHistoryController imageSourceForRevisions:@[] workingTree:YES];
+	XCTAssertEqualObjects([webHistoryController nativeContentView:[PBNativeContentView new]
+												 imageDataForPath:unicodePath
+														  section:0
+													  imageSource:workingSource],
+						  workingData);
+	NSData *invalidLaunchData = [webHistoryController dataForGitObject:@"HEAD:tracked.txt"
+														   imageSource:@{
+															   PBNativeImageSourceGitLaunchPathKey : @"/not/a/git/binary",
+															   PBNativeImageSourceGitDirectoryKey : self.repository.gitURL.path,
+														   }];
+	XCTAssertNil(invalidLaunchData);
+
+	NSString *configOutput = [self.fixture git:@[ @"config", @"gitx.diffSuppressionPatterns", @" ^generated/ \n# note\n\n.*\\.lock$ " ]
+										 error:&error];
+	XCTAssertNotNil(configOutput, @"%@", error);
+	NSDictionary *original = @{PBNativeSectionTextKey : @"diff"};
+	NSArray<NSDictionary *> *configured = [webHistoryController sections:@[ original ] applyingDiffLayout:1];
+	XCTAssertEqualObjects(configured.firstObject[PBNativeSectionDiffLayoutKey], @1);
+	XCTAssertEqualObjects(configured.firstObject[PBNativeSectionSuppressionPatternsKey], (@[ @"^generated/", @".*\\.lock$" ]));
+	XCTAssertNil(original[PBNativeSectionDiffLayoutKey], @"Section decoration preserves the caller's dictionary");
+}
+
+- (void)testWebHistorySerialRenderingRejectsStaleInstallKeepsOwnerAliveAndInstallsOnMain
+{
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+	PBGitCommit *commit = self.repository.headCommit;
+	XCTAssertNotNil(commit);
+	PBGitHistoryController *historyController = [[PBGitHistoryController alloc]
+		initWithRepository:self.repository
+		   superController:nil];
+	PBWebHistoryContentViewSpy *contentView = [[PBWebHistoryContentViewSpy alloc] initWithFrame:NSZeroRect];
+	contentView.installationExpectation = [self expectationWithDescription:@"current generation installed"];
+	NSMutableArray<NSNumber *> *renderedGenerations = nil;
+	__weak PBWebHistoryControllerOrderingSpy *weakController = nil;
+
+	@autoreleasepool {
+		PBWebHistoryControllerOrderingSpy *webHistoryController = [PBWebHistoryControllerOrderingSpy new];
+		weakController = webHistoryController;
+		webHistoryController.repository = self.repository;
+		[webHistoryController setValue:historyController forKey:@"historyController"];
+		[webHistoryController setValue:contentView forKey:@"nativeView"];
+		[webHistoryController setValue:dispatch_queue_create("com.gitx.tests.history-render", DISPATCH_QUEUE_SERIAL)
+								forKey:@"renderQueue"];
+		NSSegmentedControl *presentation = [NSSegmentedControl segmentedControlWithLabels:@[ @"Sequential", @"Combined" ]
+																			 trackingMode:NSSegmentSwitchTrackingSelectOne
+																				   target:nil
+																				   action:nil];
+		presentation.selectedSegment = 0;
+		[webHistoryController setValue:presentation forKey:@"presentationControl"];
+		NSSegmentedControl *layout = [NSSegmentedControl segmentedControlWithLabels:@[ @"Unified", @"Side by Side" ]
+																	   trackingMode:NSSegmentSwitchTrackingSelectOne
+																			 target:nil
+																			 action:nil];
+		layout.selectedSegment = 0;
+		[webHistoryController setValue:layout forKey:@"layoutControl"];
+		webHistoryController.firstRenderStartedExpectation = [self expectationWithDescription:@"first serial render started"];
+		renderedGenerations = webHistoryController.renderedGenerations;
+
+		[webHistoryController changeContentTo:@[ commit ]];
+		[self waitForExpectations:@[ webHistoryController.firstRenderStartedExpectation ] timeout:2.0];
+		[webHistoryController changeContentTo:@[ commit ]];
+		XCTAssertEqualObjects(contentView.lastMessage, @"Loading diff…");
+		dispatch_semaphore_signal(webHistoryController.allowFirstRender);
+		webHistoryController = nil;
+		XCTAssertNotNil(weakController, @"Queued rendering keeps its owner alive through delivery");
+	}
+
+	[self waitForExpectations:@[ contentView.installationExpectation ] timeout:5.0];
+	XCTAssertTrue(contentView.installedOnMainThread);
+	XCTAssertEqual(contentView.installationCount, (NSUInteger)1, @"The stale first generation never installs");
+	XCTAssertEqualObjects([contentView.installedSections valueForKey:PBNativeSectionTextKey], (@[ @"generation-2" ]));
+	XCTAssertEqualObjects(renderedGenerations, (@[ @1, @2 ]), @"The serial queue preserves callback order");
+
+	XCTestExpectation *ownerReleased = [self expectationWithDescription:@"render owner released"];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		XCTAssertNil(weakController);
+		[ownerReleased fulfill];
+	});
+	[self waitForExpectations:@[ ownerReleased ] timeout:2.0];
+}
+
+- (void)testWebHistoryNibLifecycleObservationActionsNavigationAndRevisionImageFallbacks
+{
+	PBWebHistorySelectionControllerSpy *historyController = [[PBWebHistorySelectionControllerSpy alloc]
+		initWithRepository:self.repository
+		   superController:nil];
+	historyController.webCommits = @[];
+	PBWebHistoryController *webHistoryController = [PBWebHistoryController new];
+	NSView *hostView = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 720, 480)];
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id previousPresentation = [defaults objectForKey:@"PBMultiCommitDiffPresentation"];
+	[self addTeardownBlock:^{
+		if (previousPresentation)
+			[defaults setObject:previousPresentation forKey:@"PBMultiCommitDiffPresentation"];
+		else
+			[defaults removeObjectForKey:@"PBMultiCommitDiffPresentation"];
+	}];
+	webHistoryController.view = hostView;
+	[webHistoryController setValue:historyController forKey:@"historyController"];
+
+	[webHistoryController awakeFromNib];
+	XCTAssertEqual(webHistoryController.repository, self.repository);
+	XCTAssertEqual(webHistoryController.nativeView.superview, hostView);
+	XCTAssertEqual(webHistoryController.nativeView.delegate, webHistoryController);
+	NSSegmentedControl *presentation = [webHistoryController valueForKey:@"presentationControl"];
+	NSSegmentedControl *layout = [webHistoryController valueForKey:@"layoutControl"];
+	XCTAssertEqualObjects(presentation.accessibilityIdentifier, @"MultiCommitDiffPresentation");
+	XCTAssertEqualObjects(layout.accessibilityIdentifier, @"DiffLayout");
+	XCTAssertTrue(presentation.hidden);
+
+	XCTestExpectation *initialLoadFinished = [self expectationWithDescription:@"deferred initial history load finished"];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[initialLoadFinished fulfill];
+	});
+	[self waitForExpectations:@[ initialLoadFinished ] timeout:2.0];
+	XCTAssertEqualObjects(webHistoryController.diff, @"");
+
+	[webHistoryController.nativeView removeFromSuperview];
+	PBWebHistoryContentViewSpy *contentView = [[PBWebHistoryContentViewSpy alloc] initWithFrame:hostView.bounds];
+	contentView.delegate = (id<PBNativeContentViewDelegate>)webHistoryController;
+	[hostView addSubview:contentView];
+	[webHistoryController setValue:contentView forKey:@"nativeView"];
+	historyController.webCommits = @[];
+	XCTAssertEqualObjects(contentView.lastMessage, @"No commit selected");
+
+	presentation.selectedSegment = 1;
+	[webHistoryController presentationChanged:presentation];
+	XCTAssertEqual([[NSUserDefaults standardUserDefaults] integerForKey:@"PBMultiCommitDiffPresentation"], (NSInteger)1);
+	layout.selectedSegment = 1;
+	[webHistoryController layoutChanged:layout];
+	[webHistoryController refreshDisplayedContent];
+	[webHistoryController preferencesChanged];
+	XCTAssertEqualObjects(contentView.lastMessage, @"No commit selected");
+
+	[webHistoryController sendKey:@"j"];
+	[webHistoryController sendKey:@"k"];
+	[webHistoryController sendKey:@"ignored"];
+	[webHistoryController scrollPageUp];
+	[webHistoryController scrollPageDown];
+	XCTAssertEqual(contentView.pageUpCount, (NSUInteger)1);
+	XCTAssertEqual(contentView.pageDownCount, (NSUInteger)1);
+
+	NSError *error = nil;
+	NSString *headSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(headSHA, @"%@", error);
+	[webHistoryController nativeContentView:contentView selectCommit:headSHA];
+	XCTAssertEqualObjects(historyController.selectedSHA, headSHA);
+
+	NSDictionary<NSString *, id> *indexSource = [webHistoryController imageSourceForRevisions:@[ @":" ] workingTree:NO];
+	NSData *indexData = [webHistoryController nativeContentView:contentView
+											   imageDataForPath:@"tracked.txt"
+														section:0
+													imageSource:indexSource];
+	XCTAssertEqualObjects([[NSString alloc] initWithData:indexData encoding:NSUTF8StringEncoding], @"first line\n");
+	NSDictionary<NSString *, id> *revisionSource = [webHistoryController imageSourceForRevisions:@[ @"missing-revision", @"HEAD" ]
+																					 workingTree:NO];
+	NSData *revisionData = [webHistoryController nativeContentView:contentView
+												  imageDataForPath:@"tracked.txt"
+														   section:0
+													   imageSource:revisionSource];
+	XCTAssertEqualObjects([[NSString alloc] initWithData:revisionData encoding:NSUTF8StringEncoding], @"first line\n");
+
+	NSUInteger generationBeforeClose = [[webHistoryController valueForKey:@"contentGeneration"] unsignedIntegerValue];
+	[webHistoryController closeView];
+	XCTAssertNil(webHistoryController.nativeView);
+	XCTAssertEqual([[webHistoryController valueForKey:@"contentGeneration"] unsignedIntegerValue], generationBeforeClose + 1);
 }
 
 - (void)testRevisionListGroupsIncomingBranchCommitsWhenConfigured
