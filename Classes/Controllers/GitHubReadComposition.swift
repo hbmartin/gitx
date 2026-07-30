@@ -150,3 +150,295 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
         Mirror(self, children: [:])
     }
 }
+
+nonisolated enum ForgeGitHubReadSurfaceServiceError: Error, Equatable, LocalizedError, Sendable {
+    case repositoryMismatch
+
+    var errorDescription: String? {
+        switch self {
+        case .repositoryMismatch:
+            "The selected GitHub item belongs to a different repository."
+        }
+    }
+}
+
+nonisolated struct ForgeGitHubSurfaceRead<Value: Sendable>: Sendable {
+    let value: Value
+    let isPartial: Bool
+
+    init(value: Value, isPartial: Bool = false) {
+        self.value = value
+        self.isPartial = isPartial
+    }
+
+    init(_ result: GitHubReadResult<Value>) {
+        value = result.value
+        isPartial = result.completeness == .partial
+    }
+}
+
+nonisolated protocol ForgeGitHubReadSurfaceAdapter: Sendable {
+    func pullRequests(
+        repository: ForgeRepositoryIdentity,
+        after: ForgePageCursor?,
+        states: Set<ForgePullRequestState>?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgePage<ForgePullRequestSummary>>
+
+    func issues(
+        repository: ForgeRepositoryIdentity,
+        after: ForgePageCursor?,
+        states: Set<ForgeIssueState>?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgePage<ForgeIssueSummary>>
+
+    func searchRepositoryItems(
+        repository: ForgeRepositoryIdentity,
+        text: String,
+        after: ForgePageCursor?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgePage<ForgeRepositoryItem>>
+
+    func pullRequestDetails(
+        repository: ForgeRepositoryIdentity,
+        number: ForgeItemNumber,
+        timelineAfter: ForgePageCursor?,
+        checkAfter: ForgePageCursor?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgePullRequestDetailsPage>
+
+    func issueDetails(
+        repository: ForgeRepositoryIdentity,
+        number: ForgeItemNumber,
+        timelineAfter: ForgePageCursor?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgeIssueDetails>
+}
+
+actor ForgeGitHubReadSurfaceAdapterBox: ForgeGitHubReadSurfaceAdapter {
+    private let adapter: GitHubReadAdapter
+
+    init(adapter: GitHubReadAdapter) {
+        self.adapter = adapter
+    }
+
+    func pullRequests(
+        repository: ForgeRepositoryIdentity,
+        after: ForgePageCursor?,
+        states: Set<ForgePullRequestState>?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgePage<ForgePullRequestSummary>> {
+        try await ForgeGitHubSurfaceRead(adapter.pullRequests(
+            repository: repository,
+            after: after,
+            states: states
+        ))
+    }
+
+    func issues(
+        repository: ForgeRepositoryIdentity,
+        after: ForgePageCursor?,
+        states: Set<ForgeIssueState>?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgePage<ForgeIssueSummary>> {
+        try await ForgeGitHubSurfaceRead(adapter.issues(
+            repository: repository,
+            after: after,
+            states: states
+        ))
+    }
+
+    func searchRepositoryItems(
+        repository: ForgeRepositoryIdentity,
+        text: String,
+        after: ForgePageCursor?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgePage<ForgeRepositoryItem>> {
+        try await ForgeGitHubSurfaceRead(adapter.searchRepositoryItems(
+            repository: repository,
+            text: text,
+            after: after
+        ))
+    }
+
+    func pullRequestDetails(
+        repository: ForgeRepositoryIdentity,
+        number: ForgeItemNumber,
+        timelineAfter: ForgePageCursor?,
+        checkAfter: ForgePageCursor?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgePullRequestDetailsPage> {
+        try await ForgeGitHubSurfaceRead(adapter.pullRequestDetails(
+            repository: repository,
+            number: number,
+            timelineAfter: timelineAfter,
+            checkAfter: checkAfter
+        ))
+    }
+
+    func issueDetails(
+        repository: ForgeRepositoryIdentity,
+        number: ForgeItemNumber,
+        timelineAfter: ForgePageCursor?
+    ) async throws -> ForgeGitHubSurfaceRead<ForgeIssueDetails> {
+        try await ForgeGitHubSurfaceRead(adapter.issueDetails(
+            repository: repository,
+            number: number,
+            timelineAfter: timelineAfter
+        ))
+    }
+}
+
+/// Maps the exact-Credential GitHub adapter onto the list/inspector UI seam.
+/// Search remains a server-side repository search, followed by a defensive
+/// kind/state filter because the checked-in adapter deliberately treats user
+/// text as a literal phrase rather than executable GitHub qualifiers.
+@MainActor
+final class ForgeGitHubReadSurfaceService: ForgeReadSurfaceServing {
+    typealias NowProvider = @Sendable () -> Date
+
+    private let repository: ForgeRepositoryIdentity
+    private let adapter: any ForgeGitHubReadSurfaceAdapter
+    private let now: NowProvider
+
+    convenience init(
+        repository: ForgeRepositoryIdentity,
+        adapter: GitHubReadAdapter,
+        now: @escaping NowProvider = Date.init
+    ) {
+        self.init(
+            repository: repository,
+            adapter: ForgeGitHubReadSurfaceAdapterBox(adapter: adapter),
+            now: now
+        )
+    }
+
+    init(
+        repository: ForgeRepositoryIdentity,
+        adapter: any ForgeGitHubReadSurfaceAdapter,
+        now: @escaping NowProvider = Date.init
+    ) {
+        self.repository = repository
+        self.adapter = adapter
+        self.now = now
+    }
+
+    func loadItems(
+        kind: ForgeReadSurfaceKind,
+        query: ForgeReadSurfaceQuery,
+        after cursor: ForgePageCursor?
+    ) async throws -> ForgeReadSurfacePage {
+        if !query.searchText.isEmpty {
+            let result = try await adapter.searchRepositoryItems(
+                repository: repository,
+                text: query.searchText,
+                after: cursor
+            )
+            let items = result.value.items.filter {
+                Self.matches($0, kind: kind, state: query.stateFilter)
+            }
+            return ForgeReadSurfacePage(
+                items: items,
+                nextCursor: result.value.nextCursor,
+                fetchedAt: now(),
+                isPartial: result.isPartial
+            )
+        }
+
+        switch kind {
+        case .pullRequests:
+            let result = try await adapter.pullRequests(
+                repository: repository,
+                after: cursor,
+                states: Self.pullRequestStates(query.stateFilter)
+            )
+            return ForgeReadSurfacePage(
+                items: result.value.items.map(ForgeRepositoryItem.pullRequest),
+                nextCursor: result.value.nextCursor,
+                totalCount: result.value.totalCount,
+                fetchedAt: now(),
+                isPartial: result.isPartial
+            )
+        case .issues:
+            let result = try await adapter.issues(
+                repository: repository,
+                after: cursor,
+                states: Self.issueStates(query.stateFilter)
+            )
+            return ForgeReadSurfacePage(
+                items: result.value.items.map(ForgeRepositoryItem.issue),
+                nextCursor: result.value.nextCursor,
+                totalCount: result.value.totalCount,
+                fetchedAt: now(),
+                isPartial: result.isPartial
+            )
+        }
+    }
+
+    func loadDetails(
+        for item: ForgeRepositoryItem,
+        timelineAfter: ForgePageCursor?,
+        checkAfter: ForgePageCursor?
+    ) async throws -> ForgeReadSurfaceDetailsSnapshot {
+        guard item.repository == repository else {
+            throw ForgeGitHubReadSurfaceServiceError.repositoryMismatch
+        }
+        switch item {
+        case let .pullRequest(summary):
+            let result = try await adapter.pullRequestDetails(
+                repository: repository,
+                number: summary.number,
+                timelineAfter: timelineAfter,
+                checkAfter: checkAfter
+            )
+            return ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(result.value),
+                fetchedAt: now(),
+                isPartial: result.isPartial
+            )
+        case let .issue(summary):
+            let result = try await adapter.issueDetails(
+                repository: repository,
+                number: summary.number,
+                timelineAfter: timelineAfter
+            )
+            return ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(result.value),
+                fetchedAt: now(),
+                isPartial: result.isPartial
+            )
+        }
+    }
+
+    private static func pullRequestStates(
+        _ filter: ForgeReadStateFilter
+    ) -> Set<ForgePullRequestState>? {
+        switch filter {
+        case .open: [.open]
+        case .closed: [.closed, .merged]
+        case .all: nil
+        }
+    }
+
+    private static func issueStates(_ filter: ForgeReadStateFilter) -> Set<ForgeIssueState>? {
+        switch filter {
+        case .open: [.open]
+        case .closed: [.closed]
+        case .all: nil
+        }
+    }
+
+    private static func matches(
+        _ item: ForgeRepositoryItem,
+        kind: ForgeReadSurfaceKind,
+        state: ForgeReadStateFilter
+    ) -> Bool {
+        switch (item, kind, state) {
+        case (.pullRequest, .issues, _), (.issue, .pullRequests, _):
+            false
+        case let (.pullRequest(summary), .pullRequests, .open):
+            summary.state == .open
+        case let (.pullRequest(summary), .pullRequests, .closed):
+            summary.state == .closed || summary.state == .merged
+        case (.pullRequest, .pullRequests, .all):
+            true
+        case let (.issue(summary), .issues, .open):
+            summary.state == .open
+        case let (.issue(summary), .issues, .closed):
+            summary.state == .closed
+        case (.issue, .issues, .all):
+            true
+        }
+    }
+}

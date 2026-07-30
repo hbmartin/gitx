@@ -287,6 +287,12 @@
 		F0B100000000000000000007 /* ForgeCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000012 /* ForgeCredentialStore.swift */; };
 		F0B100000000000000000008 /* ForgeAccountLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000013 /* ForgeAccountLifecycle.swift */; };
 		F0B100000000000000000009 /* ForgeApplicationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000014 /* ForgeApplicationServices.swift */; };
+		F0C100000000000000000001 /* ForgeReadSurfaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */; };
+		F0C100000000000000000002 /* ForgeReadSurfaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */; };
+		F0C100000000000000000003 /* ForgeReadSurfaceModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */; };
+		F0C100000000000000000004 /* ForgeReadSurfaceViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */; };
+		F0C100000000000000000005 /* ForgeReadSurfaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */; };
+		F0C100000000000000000006 /* ForgeReadSurfaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */; };
 		F0B200000000000000000001 /* GitHubForgeAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = F0B200000000000000000018 /* GitHubForgeAdapter */; };
 		F0B200000000000000000003 /* GitHubReadComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000011 /* GitHubReadComposition.swift */; };
 		F0B200000000000000000004 /* GitHubReadComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000011 /* GitHubReadComposition.swift */; };
@@ -908,6 +914,10 @@
 		F0B100000000000000000014 /* ForgeApplicationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationServices.swift; sourceTree = "<group>"; };
 		F0B100000000000000000015 /* ForgeAccountLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountLifecycleTests.swift; sourceTree = "<group>"; };
 		F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationCompositionTests.swift; sourceTree = "<group>"; };
+		F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceModels.swift; sourceTree = "<group>"; };
+		F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceViewController.swift; sourceTree = "<group>"; };
+		F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceModelsTests.swift; sourceTree = "<group>"; };
+		F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceViewControllerTests.swift; sourceTree = "<group>"; };
 		F0B200000000000000000011 /* GitHubReadComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadComposition.swift; sourceTree = "<group>"; };
 		F0B200000000000000000012 /* GitHubReadCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadCompositionTests.swift; sourceTree = "<group>"; };
 		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
@@ -1416,6 +1426,8 @@
 				C0DE57A600000000000000B6 /* StagingFileCellView.swift */,
 				C0DE45200000000000000011 /* NativeContentTypography.swift */,
 				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
+				F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */,
+				F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */,
 				C01400000000000000000013 /* CommitProgressSheetController.swift */,
 				BF42F1431E025411004769FF /* GitXTextView.h */,
 				BF42F1321E025403004769FF /* GitXTextView.m */,
@@ -1547,6 +1559,8 @@
 				F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */,
 				F0B100000000000000000015 /* ForgeAccountLifecycleTests.swift */,
 				F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */,
+				F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */,
+				F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */,
 				F0B200000000000000000012 /* GitHubReadCompositionTests.swift */,
 			);
 			path = GitXTests;
@@ -1999,6 +2013,8 @@
 				C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */,
 				C0DAA1000000000000000001 /* ForgeMarkdownNativeRenderer.swift in Sources */,
 				C0DAA2000000000000000001 /* ForgeAvatarLoading.swift in Sources */,
+				F0C100000000000000000001 /* ForgeReadSurfaceModels.swift in Sources */,
+				F0C100000000000000000002 /* ForgeReadSurfaceViewController.swift in Sources */,
 				C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */,
 				C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */,
 				C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */,
@@ -2190,6 +2206,10 @@
 				F0B100000000000000000001 /* ForgeCredentialStoreTests.swift in Sources */,
 				F0B100000000000000000005 /* ForgeAccountLifecycleTests.swift in Sources */,
 				F0B100000000000000000006 /* ForgeApplicationCompositionTests.swift in Sources */,
+				F0C100000000000000000003 /* ForgeReadSurfaceModelsTests.swift in Sources */,
+				F0C100000000000000000004 /* ForgeReadSurfaceViewControllerTests.swift in Sources */,
+				F0C100000000000000000005 /* ForgeReadSurfaceModels.swift in Sources */,
+				F0C100000000000000000006 /* ForgeReadSurfaceViewController.swift in Sources */,
 				F0B200000000000000000005 /* GitHubReadCompositionTests.swift in Sources */,
 				F0B100000000000000000007 /* ForgeCredentialStore.swift in Sources */,
 				F0B100000000000000000008 /* ForgeAccountLifecycle.swift in Sources */,
