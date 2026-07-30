@@ -491,6 +491,72 @@ private enum Fixture {
 
 @MainActor
 final class ForgeGitHubReadSurfaceServiceTests: XCTestCase {
+    func testServiceCoversEveryListAndDefensiveSearchStateFilter() async throws {
+        let repository = try Fixture.repository()
+        let openPullRequest = try Fixture.pullRequest(number: 1, state: .open)
+        let closedPullRequest = try Fixture.pullRequest(number: 2, state: .closed)
+        let openIssue = try Fixture.issue(number: 3, state: .open)
+        let closedIssue = try Fixture.issue(number: 4, state: .closed)
+        let adapter = try ForgeReadSurfaceAdapterStub(
+            pullRequests: ForgeGitHubSurfaceRead(value: ForgePage(items: [openPullRequest, closedPullRequest])),
+            issues: ForgeGitHubSurfaceRead(value: ForgePage(items: [openIssue, closedIssue])),
+            search: ForgeGitHubSurfaceRead(value: ForgePage(items: [
+                .pullRequest(openPullRequest),
+                .pullRequest(closedPullRequest),
+                .issue(openIssue),
+                .issue(closedIssue),
+            ])),
+            pullRequestDetails: ForgeGitHubSurfaceRead(value: Fixture.pullRequestDetails()),
+            issueDetails: ForgeGitHubSurfaceRead(value: Fixture.issueDetails())
+        )
+        let service = ForgeGitHubReadSurfaceService(repository: repository, adapter: adapter)
+
+        for filter in ForgeReadStateFilter.allCases {
+            let pullRequests = try await service.loadItems(
+                kind: .pullRequests,
+                query: ForgeReadSurfaceQuery(stateFilter: filter),
+                after: nil
+            )
+            let issues = try await service.loadItems(
+                kind: .issues,
+                query: ForgeReadSurfaceQuery(stateFilter: filter),
+                after: nil
+            )
+            XCTAssertEqual(pullRequests.items.count, 2, "list filtering is delegated for \(filter)")
+            XCTAssertEqual(issues.items.count, 2, "list filtering is delegated for \(filter)")
+
+            let searchedPullRequests = try await service.loadItems(
+                kind: .pullRequests,
+                query: ForgeReadSurfaceQuery(searchText: "literal", stateFilter: filter),
+                after: nil
+            )
+            let searchedIssues = try await service.loadItems(
+                kind: .issues,
+                query: ForgeReadSurfaceQuery(searchText: "literal", stateFilter: filter),
+                after: nil
+            )
+            let expectedCount = filter == .all ? 2 : 1
+            XCTAssertEqual(searchedPullRequests.items.count, expectedCount)
+            XCTAssertEqual(searchedIssues.items.count, expectedCount)
+            XCTAssertTrue(searchedPullRequests.items.allSatisfy { item in
+                if case .pullRequest = item {
+                    return true
+                }
+                return false
+            })
+            XCTAssertTrue(searchedIssues.items.allSatisfy { item in
+                if case .issue = item {
+                    return true
+                }
+                return false
+            })
+        }
+
+        let calls = await adapter.snapshot()
+        XCTAssertEqual(calls.pullRequests.map(\.states), [[.open], [.closed, .merged], nil])
+        XCTAssertEqual(calls.issues.map(\.states), [[.open], [.closed], nil])
+    }
+
     func testServiceRoutesListFiltersAndPreservesPartialPaginationMetadata() async throws {
         let repository = try Fixture.repository()
         let next = try ForgePageCursor("next")

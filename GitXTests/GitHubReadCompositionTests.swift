@@ -258,6 +258,140 @@ final class GitHubReadCompositionTests: XCTestCase {
         XCTAssertEqual(capture.authorizationHeaders, [])
     }
 
+    @MainActor
+    func testReadSurfaceAdapterBoxAndConvenienceServiceFailClosedWithoutAuthentication() async throws {
+        let repository = try makeRepository()
+        let cursor = try ForgePageCursor("next")
+        let adapter = GitHubReadAdapter(sessionConfiguration: stubConfiguration())
+        let box = ForgeGitHubReadSurfaceAdapterBox(adapter: adapter)
+
+        await assertAuthenticationRequired {
+            try await box.pullRequests(repository: repository, after: cursor, states: [.closed, .merged])
+        }
+        await assertAuthenticationRequired {
+            try await box.issues(repository: repository, after: cursor, states: [.open])
+        }
+        await assertAuthenticationRequired {
+            try await box.searchRepositoryItems(repository: repository, text: "literal search", after: cursor)
+        }
+        await assertAuthenticationRequired {
+            try await box.pullRequestDetails(
+                repository: repository,
+                number: ForgeItemNumber(7),
+                timelineAfter: cursor,
+                checkAfter: cursor
+            )
+        }
+        await assertAuthenticationRequired {
+            try await box.issueDetails(
+                repository: repository,
+                number: ForgeItemNumber(8),
+                timelineAfter: cursor
+            )
+        }
+
+        let service = ForgeGitHubReadSurfaceService(
+            repository: repository,
+            adapter: adapter,
+            now: { Date(timeIntervalSince1970: 500) }
+        )
+        await assertAuthenticationRequired {
+            try await service.loadItems(
+                kind: .pullRequests,
+                query: ForgeReadSurfaceQuery(stateFilter: .all),
+                after: nil
+            )
+        }
+    }
+
+    func testReadSurfaceAdapterBoxPreservesSuccessfulAdapterReads() async throws {
+        let keychain = ReadCompositionKeychain()
+        let accountStore = ForgeAccountStore(keychain: keychain)
+        let accountID = try makeAccountID("surface-success")
+        let account = try await accountStore.addPersonalAccessToken(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("surface-pat"),
+            kind: .fineGrained,
+            token: Data("surface-access".utf8),
+            expiresAt: nil
+        )
+        CompositionGitHubURLProtocol.setHandler { request in
+            CompositionStubResponse(
+                status: 200,
+                body: Self.readSurfaceResponse(for: Self.operationName(from: request))
+            )
+        }
+        let adapter = try ForgeGitHubReadAdapterFactory(
+            credentialAuthority: ForgeGitHubReadCredentialAuthority(accountStore: accountStore)
+        ).makeAdapter(
+            for: account.currentCredential.reference,
+            sessionConfiguration: stubConfiguration()
+        )
+        let box = ForgeGitHubReadSurfaceAdapterBox(adapter: adapter)
+        let repository = try makeRepository()
+        let number = try ForgeItemNumber(7)
+
+        let pullRequests = try await box.pullRequests(repository: repository, after: nil, states: [.open])
+        let issues = try await box.issues(repository: repository, after: nil, states: [.closed])
+        let search = try await box.searchRepositoryItems(repository: repository, text: "surface", after: nil)
+        let pullRequest = try await box.pullRequestDetails(
+            repository: repository,
+            number: number,
+            timelineAfter: nil,
+            checkAfter: nil
+        )
+        let issue = try await box.issueDetails(
+            repository: repository,
+            number: number,
+            timelineAfter: nil
+        )
+
+        XCTAssertEqual(pullRequests.value.items, [])
+        XCTAssertEqual(issues.value.items, [])
+        XCTAssertEqual(search.value.items, [])
+        XCTAssertEqual(pullRequest.value.details.summary.number, number)
+        XCTAssertEqual(issue.value.summary.number, number)
+    }
+
+    func testReadSurfaceResultWrapperPreservesCompleteAndPartialEvidence() throws {
+        let repository = try makeRepository()
+        let credential = try makeCredentialReference(
+            kind: .github,
+            host: "github.com",
+            account: "surface-result"
+        )
+        let response = GitHubResponseMetadata(
+            statusCode: 200,
+            requestID: "request-id",
+            rateLimit: GitHubRateLimitParser.parse(
+                statusCode: 200,
+                headers: [:],
+                receivedAt: Date(timeIntervalSince1970: 400)
+            )
+        )
+        let ownership = try GitHubReadOwnership(credential: credential, repository: repository)
+        let partial = ForgeGitHubSurfaceRead(GitHubReadResult(
+            value: "partial",
+            completeness: .partial,
+            problems: [],
+            response: response,
+            ownership: ownership
+        ))
+        let complete = ForgeGitHubSurfaceRead(GitHubReadResult(
+            value: "complete",
+            completeness: .complete,
+            problems: [],
+            response: response,
+            ownership: ownership
+        ))
+
+        XCTAssertEqual(partial.value, "partial")
+        XCTAssertTrue(partial.isPartial)
+        XCTAssertEqual(complete.value, "complete")
+        XCTAssertFalse(complete.isPartial)
+    }
+
     private func assertAuthenticationFailure(
         _ adapter: GitHubReadAdapter,
         file: StaticString = #filePath,
@@ -266,6 +400,19 @@ final class GitHubReadCompositionTests: XCTestCase {
         do {
             _ = try await adapter.repositoryFacts(repository: makeRepository())
             XCTFail("request must be rejected", file: file, line: line)
+        } catch {
+            XCTAssertEqual(error as? GitHubReadError, .authenticationRequired, file: file, line: line)
+        }
+    }
+
+    private func assertAuthenticationRequired<Value>(
+        _ operation: () async throws -> Value,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            _ = try await operation()
+            XCTFail("request must require authentication", file: file, line: line)
         } catch {
             XCTAssertEqual(error as? GitHubReadError, .authenticationRequired, file: file, line: line)
         }
@@ -283,6 +430,157 @@ final class GitHubReadCompositionTests: XCTestCase {
             owner: "hbmartin",
             name: "gitx"
         )
+    }
+
+    private static func operationName(from request: URLRequest) -> String {
+        guard let body = request.httpBody ?? readBodyStream(request.httpBodyStream),
+              let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let operationName = object["operationName"] as? String
+        else {
+            return ""
+        }
+        return operationName
+    }
+
+    private static func readBodyStream(_ stream: InputStream?) -> Data? {
+        guard let stream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count > 0 else { break }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
+
+    private static func readSurfaceResponse(for operation: String) -> Data {
+        let data: [String: Any]
+        switch operation {
+        case "GitHubPullRequestList":
+            data = ["repository": [
+                "__typename": "Repository",
+                "id": "repository",
+                "pullRequests": emptyConnection("PullRequestConnection"),
+            ]]
+        case "GitHubIssueList":
+            data = ["repository": [
+                "__typename": "Repository",
+                "id": "repository",
+                "issues": emptyConnection("IssueConnection"),
+            ]]
+        case "GitHubRepositoryItemSearch":
+            data = ["search": emptyConnection("SearchResultItemConnection")]
+        case "GitHubPullRequestDetails":
+            data = ["repository": [
+                "__typename": "Repository",
+                "id": "repository",
+                "pullRequest": pullRequestDetails,
+            ]]
+        case "GitHubIssueDetails":
+            data = ["repository": [
+                "__typename": "Repository",
+                "id": "repository",
+                "issue": issueDetails,
+            ]]
+        default:
+            data = [:]
+        }
+        return try! JSONSerialization.data(withJSONObject: ["data": data])
+    }
+
+    private static var pageInfo: [String: Any] {
+        [
+            "__typename": "PageInfo",
+            "hasPreviousPage": false,
+            "startCursor": NSNull(),
+            "hasNextPage": false,
+            "endCursor": NSNull(),
+        ]
+    }
+
+    private static func emptyConnection(_ type: String) -> [String: Any] {
+        ["__typename": type, "totalCount": 0, "pageInfo": pageInfo, "nodes": []]
+    }
+
+    private static var actor: [String: Any] {
+        [
+            "__typename": "User",
+            "id": "actor",
+            "login": "octocat",
+            "name": "Octo",
+            "avatarUrl": "https://avatars.githubusercontent.com/u/1",
+        ]
+    }
+
+    private static var repositoryIdentity: [String: Any] {
+        [
+            "__typename": "Repository",
+            "id": "repository",
+            "name": "gitx",
+            "nameWithOwner": "hbmartin/gitx",
+            "owner": ["__typename": "User", "login": "hbmartin"],
+        ]
+    }
+
+    private static var pullRequestDetails: [String: Any] {
+        [
+            "__typename": "PullRequest",
+            "id": "pr",
+            "number": 7,
+            "pullRequestState": "OPEN",
+            "isDraft": false,
+            "title": "Adapter",
+            "body": "body",
+            "createdAt": "2026-07-29T12:34:56Z",
+            "updatedAt": "2026-07-29T12:34:56Z",
+            "closedAt": NSNull(),
+            "mergedAt": NSNull(),
+            "author": actor,
+            "headRefName": "feature",
+            "headRefOid": "abcdef12",
+            "headRepository": repositoryIdentity,
+            "baseRefName": "main",
+            "baseRefOid": "1234abcd",
+            "baseRepository": repositoryIdentity,
+            "labels": emptyConnection("LabelConnection"),
+            "statusCheckRollup": [
+                "__typename": "StatusCheckRollup",
+                "state": "SUCCESS",
+                "contexts": emptyConnection("StatusCheckRollupContextConnection"),
+            ],
+            "reviewDecision": NSNull(),
+            "mergeable": "MERGEABLE",
+            "assignedActors": emptyConnection("AssigneeConnection"),
+            "milestone": NSNull(),
+            "participants": emptyConnection("UserConnection"),
+            "reviewRequests": emptyConnection("ReviewRequestConnection"),
+            "latestReviews": emptyConnection("PullRequestReviewConnection"),
+            "closingIssuesReferences": emptyConnection("IssueConnection"),
+            "timelineItems": emptyConnection("PullRequestTimelineItemsConnection"),
+        ]
+    }
+
+    private static var issueDetails: [String: Any] {
+        [
+            "__typename": "Issue",
+            "id": "issue",
+            "number": 7,
+            "issueState": "OPEN",
+            "title": "Issue",
+            "body": "body",
+            "createdAt": "2026-07-29T12:34:56Z",
+            "updatedAt": "2026-07-29T12:34:56Z",
+            "closedAt": NSNull(),
+            "author": actor,
+            "labels": emptyConnection("LabelConnection"),
+            "assignedActors": emptyConnection("AssigneeConnection"),
+            "milestone": NSNull(),
+            "participants": emptyConnection("UserConnection"),
+            "timelineItems": emptyConnection("IssueTimelineItemsConnection"),
+        ]
     }
 
     private func makeAccountID(_ value: String) throws -> ForgeAccountID {
