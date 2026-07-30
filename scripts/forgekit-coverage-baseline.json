@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "ForgeKit handwritten sources",
-  "minimumLineCoverage": 0.9954,
+  "minimumLineCoverage": 0.9955,
   "files": {
     "ForgeKit/Sources/ForgeKit/ForgeAccount.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeAttention.swift": 1.0,
