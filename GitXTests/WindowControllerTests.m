@@ -185,6 +185,7 @@
 
 @interface PBWindowRepositoryWithoutGitURLs : PBGitRepository
 @property (nonatomic, copy, nullable) NSString *testCommonGitDirectoryOutput;
+@property (nonatomic) BOOL testCommonGitDirectoryLookupFails;
 @property (nonatomic, strong, nullable) NSURL *testGitURL;
 @property (nonatomic, strong, nullable) NSURL *testWorkingDirectoryURL;
 @end
@@ -278,6 +279,11 @@
 - (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray<NSString *> *)arguments
 										   error:(NSError *_Nullable *_Nullable)error
 {
+	if (self.testCommonGitDirectoryLookupFails) {
+		if (error)
+			*error = [NSError errorWithDomain:@"PBWindowRepositoryWithoutGitURLs" code:1 userInfo:nil];
+		return nil;
+	}
 	return self.testCommonGitDirectoryOutput ?: @"";
 }
 
@@ -359,6 +365,24 @@
 
 	settings.pushAfterCommit = YES;
 	NSString *repositoryKey = [NSURL fileURLWithPath:@"/.git/common" isDirectory:YES].standardizedURL.URLByResolvingSymlinksInPath.path;
+	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
+	XCTAssertEqualObjects(allSettings[repositoryKey][@"pushAfterCommit"], @YES);
+	if (originalSettings)
+		[NSUserDefaults.standardUserDefaults setObject:originalSettings forKey:@"PBRepositoryUISettings"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRepositoryUISettings"];
+}
+
+- (void)testRepositoryUISettingsFallsBackToWorkingDirectoryWhenCommonDirectoryLookupFails
+{
+	id originalSettings = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRepositoryUISettings"];
+	PBWindowRepositoryWithoutGitURLs *repository = [PBWindowRepositoryWithoutGitURLs new];
+	repository.testCommonGitDirectoryLookupFails = YES;
+	repository.testWorkingDirectoryURL = [NSURL fileURLWithPath:@"/tmp/GitXFailedCommonDirectory" isDirectory:YES];
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:repository];
+
+	settings.pushAfterCommit = YES;
+	NSString *repositoryKey = repository.testWorkingDirectoryURL.standardizedURL.URLByResolvingSymlinksInPath.path;
 	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
 	XCTAssertEqualObjects(allSettings[repositoryKey][@"pushAfterCommit"], @YES);
 	if (originalSettings)
@@ -1573,6 +1597,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBGitHistoryController *history = [controller valueForKey:@"_historyViewController"];
 	XCTAssertNotNil(sidebar);
 	XCTAssertNotNil(history);
+	NSClipView *historyClipView = history.commitList.enclosingScrollView.contentView;
+	XCTAssertNotNil(historyClipView);
+	XCTAssertTrue(historyClipView.postsBoundsChangedNotifications);
+	[[NSNotificationCenter defaultCenter] postNotificationName:NSViewBoundsDidChangeNotification
+														object:historyClipView];
+	[self pumpRunLoopFor:0.02];
 	[sidebar reloadSidebarAfterReferencesChange];
 	XCTAssertEqualObjects(window.representedURL, self.repository.workingDirectoryURL);
 	XCTAssertEqualObjects([controller valueForKeyPath:@"jumpToCheckedOutBranchButton.accessibilityIdentifier"], @"JumpToCheckedOutBranchButton");

@@ -269,8 +269,11 @@
             )
 
             ApplicationComposition.setSharedComposition(composition)
-            for _ in 0 ..< 1000 where probe.invocationCount == 0 {
+            for _ in 0 ..< 1000 {
                 await Task.yield()
+                if probe.invocationCount != 0 {
+                    break
+                }
             }
             guard probe.invocationCount == 1 else { return 0 }
             await Task.yield()
