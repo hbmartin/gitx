@@ -344,6 +344,23 @@
 		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRepositoryUISettings"];
 }
 
+- (void)testRepositoryUISettingsFallsBackToRootForRelativeCommonDirectoryWithoutRepositoryURLs
+{
+	id originalSettings = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRepositoryUISettings"];
+	PBWindowRepositoryWithoutGitURLs *repository = [PBWindowRepositoryWithoutGitURLs new];
+	repository.testCommonGitDirectoryOutput = @".git/common";
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:repository];
+
+	settings.pushAfterCommit = YES;
+	NSString *repositoryKey = [NSURL fileURLWithPath:@"/.git/common" isDirectory:YES].standardizedURL.URLByResolvingSymlinksInPath.path;
+	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
+	XCTAssertEqualObjects(allSettings[repositoryKey][@"pushAfterCommit"], @YES);
+	if (originalSettings)
+		[NSUserDefaults.standardUserDefaults setObject:originalSettings forKey:@"PBRepositoryUISettings"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRepositoryUISettings"];
+}
+
 @end
 
 @interface PBGitWindowController (WindowControllerTests)
