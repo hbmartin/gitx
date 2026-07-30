@@ -625,6 +625,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         try fixture.git(["clean", "-fd"])
         refreshIndex()
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            repository.index.indexChanges.isEmpty
+        })
         historyController.updateUncommittedChanges()
         XCTAssertNil(historyController.commitController.value(forKey: "pinnedObject"))
         XCTAssertFalse(historyController.commitController.selectedObjects.isEmpty)

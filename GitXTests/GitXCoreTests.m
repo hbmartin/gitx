@@ -19,7 +19,7 @@
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitRevList.h"
 #import "PBGitRevSpecifier.h"
-#import "PBGitSidebarController.h"
+#import "PBGitSidebarControllerCompatibility.h"
 #import "PBGitStash.h"
 #import "PBNativeContentView.h"
 #import "PBSourceViewItem.h"

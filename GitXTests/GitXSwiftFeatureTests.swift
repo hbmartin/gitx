@@ -28,6 +28,14 @@ final class GitXSwiftFeatureTests: XCTestCase {
         }
     }
 
+    func testBasicHistorySearchPolicyCompatibilityPlan() {
+        let plan = PBHistorySearchPolicy.plan(query: " subject ", mode: PBHistorySearchMode.basic.rawValue)
+
+        XCTAssertEqual(plan.kind, .basic)
+        XCTAssertEqual(plan.query, " subject ")
+        XCTAssertTrue(plan.arguments.isEmpty)
+    }
+
     func testWindowControllerObjectiveCCompatibilitySurfaceBeforeConversion() {
         let controller = PBGitWindowController()
 

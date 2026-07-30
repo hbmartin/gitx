@@ -58,7 +58,7 @@
 		4A5D76E314A9A9CC00DF6C68 /* OpenRecentController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D762B14A9A9CC00DF6C68 /* OpenRecentController.m */; };
 		4A5D76E414A9A9CC00DF6C68 /* PBDiffWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D762D14A9A9CC00DF6C68 /* PBDiffWindowController.m */; };
 		4A5D76E614A9A9CC00DF6C68 /* PBGitHistoryController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */; };
-		4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */; };
+		4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.swift */; };
 		4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */; };
 		4A5D76EA14A9A9CC00DF6C68 /* PBHistorySearchController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763914A9A9CC00DF6C68 /* PBHistorySearchController.m */; };
 		4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763B14A9A9CC00DF6C68 /* PBPrefsWindowController.m */; };
@@ -566,7 +566,7 @@
 		C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMessageEditCoordinator.swift; sourceTree = "<group>"; };
 		C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiffSectionSettings.swift; sourceTree = "<group>"; };
 		4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarController.h; sourceTree = "<group>"; };
-		4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitSidebarController.m; sourceTree = "<group>"; };
+		4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PBGitSidebarController.swift; sourceTree = "<group>"; };
 		4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitWindowController.h; sourceTree = "<group>"; };
 		4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; lineEnding = 0; path = PBGitWindowController.swift; sourceTree = "<group>"; };
 		4A5D763814A9A9CC00DF6C68 /* PBHistorySearchController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBHistorySearchController.h; sourceTree = "<group>"; };
@@ -855,6 +855,7 @@
 		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
 		C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitWindowControllerCompatibility.h; sourceTree = "<group>"; };
+		C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarControllerCompatibility.h; sourceTree = "<group>"; };
 		C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryActionContextResolver.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryFocusRefreshCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRemoteActionCoordinator.swift; sourceTree = "<group>"; };
@@ -1211,7 +1212,7 @@
 				C0DEB0000000000000000013 /* HistoryTableInteractionCoordinator.swift */,
 				C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */,
 				4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */,
-				4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */,
+				4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.swift */,
 				4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */,
 				4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */,
 				C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.swift */,
@@ -1473,6 +1474,7 @@
 			children = (
 				C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */,
 				C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */,
+				C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */,
 				C0DE30000000000000000002 /* GitXCoreTests.m */,
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
@@ -1997,7 +1999,7 @@
 				4A5D76E314A9A9CC00DF6C68 /* OpenRecentController.m in Sources */,
 				4A5D76E414A9A9CC00DF6C68 /* PBDiffWindowController.m in Sources */,
 				4A5D76E614A9A9CC00DF6C68 /* PBGitHistoryController.m in Sources */,
-				4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.m in Sources */,
+				4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.swift in Sources */,
 				508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m in Sources */,
 				4DECFBB21E662962004C3A6F /* ObjectiveGit+PBCategories.m in Sources */,
 				4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */,

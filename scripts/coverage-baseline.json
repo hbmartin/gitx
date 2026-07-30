@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8417,
+  "minimumLineCoverage": 0.8429,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4716,
@@ -13,7 +13,7 @@
     "Classes/Controllers/CommitTableInteractionCoordinator.swift": 0.9818,
     "Classes/Controllers/DBPrefsWindowController.m": 0.6043,
     "Classes/Controllers/ForgeDestinationScriptCommand.swift": 0.9585,
-    "Classes/Controllers/GitXCoreAdapters.swift": 0.975,
+    "Classes/Controllers/GitXCoreAdapters.swift": 1.0,
     "Classes/Controllers/HistoryMenuBuilder.swift": 0.9666,
     "Classes/Controllers/HistoryStateCoordinator.swift": 1.0,
     "Classes/Controllers/HistoryTableInteractionCoordinator.swift": 0.9456,
@@ -24,7 +24,7 @@
     "Classes/Controllers/PBGitHistoryController+UI.m": 0.8304,
     "Classes/Controllers/PBGitHistoryController.m": 1.0,
     "Classes/Controllers/PBGitRepositoryDocument.m": 0.2532,
-    "Classes/Controllers/PBGitSidebarController.m": 0.9958,
+    "Classes/Controllers/PBGitSidebarController.swift": 0.9969,
     "Classes/Controllers/PBGitWindowController+Dialogs.swift": 1.0,
     "Classes/Controllers/PBGitWindowController+ToolbarActions.swift": 1.0,
     "Classes/Controllers/PBGitWindowController.swift": 1.0,
@@ -163,7 +163,7 @@
       ]
     },
     "Repository Configuration surfaces": {
-      "minimumLineCoverage": 0.8335,
+      "minimumLineCoverage": 0.839,
       "files": [
         "Classes/Controllers/RepositorySettingsStore.swift",
         "Classes/Controllers/RepositorySettingsController.swift",

@@ -24,7 +24,7 @@
 #import "PBGitRepositoryDocument.h"
 #import "PBGitRepositoryWatcher.h"
 #import "PBGitRevSpecifier.h"
-#import "PBGitSidebarController.h"
+#import "PBGitSidebarControllerCompatibility.h"
 #import "PBGitStash.h"
 #import "PBGitTree.h"
 #import "PBGitWindowControllerCompatibility.h"
@@ -165,6 +165,8 @@
 + (void)setChangedFilesOnly:(BOOL)value;
 + (NSInteger)changedFilesSort;
 + (void)setChangedFilesSort:(NSInteger)value;
++ (NSInteger)branchSort;
++ (void)setBranchSort:(NSInteger)value;
 + (NSInteger)diffLayout;
 @end
 
@@ -799,7 +801,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic, strong) NSMutableArray<NSString *> *operations;
 @property (nonatomic, copy, nullable) NSString *failingOperation;
 @property (nonatomic, strong) NSError *testError;
-@property (nonatomic, copy) NSArray<NSString *> *testRemotes;
+@property (nonatomic, copy, nullable) NSArray<NSString *> *testRemotes;
+@property (nonatomic) BOOL hidesProjectName;
 @property (nonatomic, strong, nullable) PBGitRef *trackingRef;
 @property (nonatomic, strong, nullable) PBWindowSubmodule *testSubmodule;
 @property (nonatomic, copy, nullable) NSURL *testWorkingDirectoryURL;
@@ -837,6 +840,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (NSArray<NSString *> *)remotes
 {
 	return self.testRemotes;
+}
+- (NSString *)projectName
+{
+	return self.hidesProjectName ? nil : super.projectName;
 }
 - (PBGitRef *)remoteRefForBranch:(PBGitRef *)branch error:(NSError **)error
 {
@@ -967,6 +974,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic, strong, nullable) id testItem;
 @property (nonatomic, strong, nullable) NSTableRowView *testRowView;
 @property (nonatomic) NSInteger testItemRow;
+@property (nonatomic) NSUInteger deselectAllCount;
+@property (nonatomic) NSUInteger selectRowsCount;
 @end
 @implementation PBWindowOutlineView
 - (id)itemAtRow:(NSInteger)row
@@ -980,6 +989,16 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (NSTableRowView *)rowViewAtRow:(NSInteger)row makeIfNecessary:(BOOL)makeIfNecessary
 {
 	return self.testRowView;
+}
+- (void)deselectAll:(nullable id)sender
+{
+	self.deselectAllCount++;
+	[super deselectAll:sender];
+}
+- (void)selectRowIndexes:(NSIndexSet *)indexes byExtendingSelection:(BOOL)extend
+{
+	self.selectRowsCount++;
+	[super selectRowIndexes:indexes byExtendingSelection:extend];
 }
 @end
 
@@ -1778,8 +1797,15 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(self.controller.lastBranch.ref, self.branchRef.ref);
 	XCTAssertEqualObjects(self.controller.lastRemote.ref, self.remoteBranchRef.ref);
 
+	sender.selectedSegment = -1;
+	[sidebar fetchPullPushAction:sender];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.pullRouteCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
+
 	PBSourceViewItem *remoteBranchItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.remoteBranchRef]];
 	outline.testItem = remoteBranchItem;
+	sender.selectedSegment = 3;
 	[sidebar fetchPullPushAction:sender];
 	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)2);
 	XCTAssertNil(self.controller.lastBranch);
@@ -1843,9 +1869,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(branches.title, @"BRANCHES");
 	XCTAssertTrue([sidebar outlineView:outline isGroupItem:project]);
 	XCTAssertTrue([sidebar outlineView:outline isGroupItem:branches]);
+	XCTAssertFalse([sidebar outlineView:outline isGroupItem:NSObject.new]);
 	XCTAssertFalse([sidebar outlineView:outline shouldSelectItem:project]);
+	XCTAssertTrue([sidebar outlineView:outline shouldSelectItem:NSObject.new]);
 	XCTAssertFalse([sidebar outlineView:outline shouldShowOutlineCellForItem:project]);
 	XCTAssertTrue([sidebar outlineView:outline shouldShowOutlineCellForItem:branches]);
+	XCTAssertTrue([sidebar outlineView:outline shouldShowOutlineCellForItem:NSObject.new]);
 	XCTAssertTrue([sidebar outlineView:outline isItemExpandable:branches]);
 	XCTAssertGreaterThanOrEqual([sidebar outlineView:outline numberOfChildrenOfItem:branches], (NSInteger)2);
 	PBSourceViewItem *firstBranch = [sidebar outlineView:outline child:0 ofItem:branches];
@@ -1906,6 +1935,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqual([rowSidebar outlineView:rowOutline rowViewForItem:mainItem], rowOutline.testRowView);
 	rowOutline.testRowView = nil;
 	XCTAssertNotNil([rowSidebar outlineView:rowOutline rowViewForItem:mainItem]);
+	[rowSidebar setValue:nil forKey:@"sourceView"];
+	XCTAssertNotNil([rowSidebar outlineView:rowOutline rowViewForItem:mainItem]);
 
 	[sidebar closeView];
 	__weak PBGitSidebarController *weakSidebar = nil;
@@ -1935,18 +1966,44 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 																		 superController:self.controller];
 	(void)sidebar.view;
 	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:self.repository];
+	[sidebar setValue:nil forKey:@"branchPresentation"];
+	[sidebar reloadSidebarPresentation];
+	XCTAssertNotNil([sidebar valueForKey:@"branchPresentation"]);
 	PBGitRevSpecifier *mainRevision = [[PBGitRevSpecifier alloc] initWithRef:self.branchRef];
 	PBGitRevSpecifier *featureRevision = [[PBGitRevSpecifier alloc] initWithRef:[self.repository refForName:@"feature"]];
 	PBGitRevSpecifier *tagRevision = [[PBGitRevSpecifier alloc] initWithRef:self.tagRef];
+	[sidebar setValue:nil forKey:@"branchPresentation"];
+	PBGitRevSpecifier *fallbackRevision = [[PBGitRevSpecifier alloc]
+		initWithRef:[PBGitRef refFromString:@"refs/heads/coverage-fallback"]];
+	XCTAssertNotNil([sidebar addRevSpec:fallbackRevision]);
+	PBSourceViewItem *branches = [sidebar valueForKey:@"branches"];
+	XCTAssertGreaterThan([sidebar visibleChildrenForItem:branches].count, (NSUInteger)0);
+	[sidebar reloadSidebarPresentation];
+	branches = [sidebar valueForKey:@"branches"];
+	NSInteger previousBranchSort = PBApplicationSettings.branchSort;
+	@try {
+		PBApplicationSettings.branchSort = 1;
+		PBSourceViewItem *zuluWithoutReference = [PBSourceViewItem itemWithTitle:@"Zulu without reference"];
+		PBSourceViewItem *alphaWithoutReference = [PBSourceViewItem itemWithTitle:@"Alpha without reference"];
+		[branches addChild:zuluWithoutReference];
+		[branches addChild:alphaWithoutReference];
+		NSArray<PBSourceViewItem *> *recentItems = [sidebar visibleChildrenForItem:branches];
+		XCTAssertLessThan([recentItems indexOfObject:alphaWithoutReference], [recentItems indexOfObject:zuluWithoutReference]);
+	} @finally {
+		PBApplicationSettings.branchSort = previousBranchSort;
+	}
 
 	NSArray<NSString *> *initialRemoteNames = [sidebar.remotes.sortedChildren valueForKey:@"title"];
 	XCTAssertTrue([initialRemoteNames containsObject:@"origin"]);
 	XCTAssertTrue([initialRemoteNames containsObject:@"backup"]);
 	self.repository.testRemotes = @[ @"origin" ];
-	[sidebar reloadSidebarPresentation];
+	[sidebar reloadSidebarAfterReferencesChange];
 	NSArray<NSString *> *updatedRemoteNames = [sidebar.remotes.sortedChildren valueForKey:@"title"];
 	XCTAssertTrue([updatedRemoteNames containsObject:@"origin"]);
 	XCTAssertFalse([updatedRemoteNames containsObject:@"backup"]);
+	[sidebar.remotes addChild:[PBSourceViewGitRemoteItem remoteItemWithTitle:@"stale"]];
+	[sidebar synchronizeConfiguredRemotes];
+	XCTAssertFalse([[sidebar.remotes.sortedChildren valueForKey:@"title"] containsObject:@"stale"]);
 
 	settings.hideContainedBranches = YES;
 	[sidebar reloadSidebarPresentation];
@@ -1976,6 +2033,18 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[sidebar reloadSidebarPresentation];
 	XCTAssertTrue([sidebar.items containsObject:sidebar.remotes]);
 
+	self.repository.hidesProjectName = YES;
+	self.repository.testRemotes = nil;
+	PBGitSidebarController *nullableMetadataSidebar = [[PBGitSidebarController alloc]
+		initWithRepository:self.repository
+		   superController:self.controller];
+	(void)nullableMetadataSidebar.view;
+	XCTAssertEqualObjects([nullableMetadataSidebar.items.firstObject title], @"");
+	XCTAssertEqualObjects([nullableMetadataSidebar.remotes.sortedChildren valueForKey:@"title"], (@[ @"origin" ]));
+	[nullableMetadataSidebar closeView];
+	self.repository.hidesProjectName = NO;
+	self.repository.testRemotes = @[ @"origin", @"backup" ];
+
 	self.repository.currentBranch = mainRevision;
 	[self git:@[ @"checkout", @"--quiet", @"feature" ] directory:self.repositoryURL];
 	[self.repository reloadRefs];
@@ -1992,6 +2061,31 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, tagRevision.simpleRef);
 	[sidebar reloadSidebarPresentation];
 	XCTAssertEqualObjects([[sidebar selectedItem] revSpecifier], tagRevision);
+
+	PBGitSidebarController *hiddenRowSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																				  superController:self.controller];
+	PBWindowOutlineView *hiddenRowOutline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	hiddenRowOutline.testItemRow = -1;
+	[hiddenRowSidebar setValue:hiddenRowOutline forKey:@"sourceView"];
+	[hiddenRowSidebar.items addObject:[PBSourceViewItem itemWithRevSpec:tagRevision]];
+	[hiddenRowSidebar selectCurrentBranch];
+	XCTAssertEqual(hiddenRowOutline.deselectAllCount, (NSUInteger)0,
+				   @"A temporarily hidden current item must preserve the prior outline selection");
+	XCTAssertEqual(hiddenRowOutline.selectRowsCount, (NSUInteger)0);
+
+	self.repository.currentBranch = mainRevision;
+	XCTestExpectation *backgroundObservation = [self expectationWithDescription:@"Background repository observation reaches the main actor"];
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		self.repository.currentBranch = tagRevision;
+		[backgroundObservation fulfill];
+	});
+	[self waitForExpectations:@[ backgroundObservation ] timeout:1.0];
+	NSDate *selectionDeadline = [NSDate dateWithTimeIntervalSinceNow:1.0];
+	while (![[[sidebar selectedItem] revSpecifier] isEqual:tagRevision] && selectionDeadline.timeIntervalSinceNow > 0)
+		[self pumpRunLoopFor:0.01];
+	XCTAssertEqualObjects([[sidebar selectedItem] revSpecifier], tagRevision);
+
+	[hiddenRowSidebar closeView];
 	[sidebar closeView];
 }
 
@@ -2068,6 +2162,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	remoteControls.selectedSegment = 0;
 	[sidebar fetchPullPushAction:remoteControls];
 	XCTAssertEqual(responder.addRemoteCount, (NSUInteger)1);
+	[sidebar fetchPullPushAction:nil];
+	XCTAssertEqual(responder.addRemoteCount, (NSUInteger)2);
 	remoteControls.selectedSegment = 1;
 	[sidebar fetchPullPushAction:remoteControls];
 	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)0);

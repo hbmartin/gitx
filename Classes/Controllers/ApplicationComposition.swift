@@ -90,17 +90,12 @@ final nonisolated class ApplicationPreferences: NSObject {
 final nonisolated class ApplicationComposition: NSObject {
     private static let configuredSharedLock = NSLock()
     // swift6-safety-justification: `configuredSharedLock` protects every read and mutation of the shared composition.
-    private nonisolated(unsafe) static var configuredShared: ApplicationComposition?
+    private nonisolated(unsafe) static var configuredShared = ApplicationComposition(userDefaults: .standard)
 
     static var shared: ApplicationComposition {
         configuredSharedLock.lock()
         defer { configuredSharedLock.unlock() }
-        if let configuredShared {
-            return configuredShared
-        }
-        let composition = ApplicationComposition(userDefaults: .standard)
-        configuredShared = composition
-        return composition
+        return configuredShared
     }
 
     @objc let applicationPreferences: ApplicationPreferences

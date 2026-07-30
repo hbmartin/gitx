@@ -62,6 +62,23 @@ typedef NS_ENUM(NSInteger, PBBranchSortMode) {
 	PBBranchSortModeRecentCommit,
 };
 
+typedef NS_ENUM(NSInteger, PBHistorySearchExecutionKind) {
+	PBHistorySearchExecutionKindClear,
+	PBHistorySearchExecutionKindBasic,
+	PBHistorySearchExecutionKindBackground,
+};
+
+@interface PBHistorySearchPlan : NSObject
+@property (nonatomic, readonly) PBHistorySearchExecutionKind kind;
+@property (nonatomic, copy, readonly) NSString *query;
+@property (nonatomic, copy, readonly) NSArray<NSString *> *arguments;
+@end
+
+@interface PBHistorySearchPolicy : NSObject
++ (PBHistorySearchPlan *)planForQuery:(NSString *)query
+							 mode:(NSInteger)mode NS_SWIFT_NAME(plan(query:mode:));
+@end
+
 typedef NS_ENUM(NSInteger, PBChangedFilesSortMode) {
 	PBChangedFilesSortModeAlphabetical,
 	PBChangedFilesSortModeGitOrder,
