@@ -840,6 +840,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic) BOOL interceptHook;
 @property (nonatomic) BOOL testHookExists;
 @property (nonatomic) NSUInteger reloadRefsCount;
+@property (nonatomic) BOOL returnsNilHeadRef;
 @end
 
 @implementation PBWindowRepositorySpy
@@ -864,6 +865,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 {
 	self.reloadRefsCount++;
 	[super reloadRefs];
+}
+- (PBGitRevSpecifier *)headRef
+{
+	return self.returnsNilHeadRef ? nil : [super headRef];
 }
 - (NSArray<NSString *> *)remotes
 {
@@ -2166,8 +2171,14 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
 
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
-																		 superController:self.controller];
+														 superController:self.controller];
 	(void)sidebar.view;
+	PBGitRevSpecifier *viewedBeforeUnavailableHead = self.repository.currentBranch;
+	[sidebar setValue:nil forKey:@"lastKnownHeadRef"];
+	self.repository.returnsNilHeadRef = YES;
+	[sidebar reloadSidebarAfterReferencesChange];
+	self.repository.returnsNilHeadRef = NO;
+	XCTAssertEqualObjects(self.repository.currentBranch, viewedBeforeUnavailableHead);
 	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:self.repository];
 	[sidebar setValue:nil forKey:@"branchPresentation"];
 	[sidebar reloadSidebarPresentation];
