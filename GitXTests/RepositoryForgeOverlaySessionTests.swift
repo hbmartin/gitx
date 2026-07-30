@@ -477,6 +477,548 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         XCTAssertTrue(secondOverlay.isPartial)
     }
 
+    func testAnonymousReaderLoadsFactsStartsANewCycleAndRejectsWrongPartitions() async throws {
+        let otherCommit = try ForgeCommitID("fedcba9876543210fedcba9876543210fedcba98")
+        let adapter = try AnonymousRepositoryReaderDouble(
+            facts: anonymousResult(facts(description: "Public facts")),
+            pullRequests: anonymousResult(ForgePage(items: [pullRequest(number: 43, commit: commit)]))
+        )
+        let reader = GitHubAnonymousRepositoryForgeOverlayReader(repository: repository, adapter: adapter)
+        let firstRequest = RepositoryForgeOverlayRemoteRequest(reason: .repositoryOpened, cycle: 1)
+        let factsSnapshot = try await reader.repositoryFacts(request: firstRequest)
+        XCTAssertEqual(factsSnapshot.value.description, .available("Public facts"))
+        XCTAssertTrue(factsSnapshot.isPartial)
+        _ = try await reader.historyOverlay(commit: commit, request: firstRequest)
+        _ = try await reader.historyOverlay(
+            commit: otherCommit,
+            request: RepositoryForgeOverlayRemoteRequest(reason: .manual, cycle: 2)
+        )
+        let requestCount = await adapter.pullRequestCount()
+        XCTAssertEqual(requestCount, 2)
+
+        let wrongRepository = try ForgeRepositoryIdentity(
+            forge: repository.forge,
+            owner: "other",
+            name: "repository"
+        )
+        let wrongPartitionAdapter = try AnonymousRepositoryReaderDouble(
+            facts: anonymousResult(facts(description: "Wrong partition"), partitionRepository: wrongRepository),
+            pullRequests: anonymousResult(
+                ForgePage(items: []),
+                partitionRepository: wrongRepository
+            )
+        )
+        let wrongPartitionReader = GitHubAnonymousRepositoryForgeOverlayReader(
+            repository: repository,
+            adapter: wrongPartitionAdapter
+        )
+        await XCTAssertThrowsErrorAsync(try await wrongPartitionReader.repositoryFacts(request: firstRequest)) {
+            guard let error = $0 as? ForgeSQLiteError,
+                  case .mismatchedAccountForge = error
+            else {
+                return XCTFail("expected an account/forge partition mismatch, got \($0)")
+            }
+        }
+        await XCTAssertThrowsErrorAsync(
+            try await wrongPartitionReader.historyOverlay(commit: commit, request: firstRequest)
+        ) {
+            guard let error = $0 as? ForgeSQLiteError,
+                  case .mismatchedAccountForge = error
+            else {
+                return XCTFail("expected an account/forge partition mismatch, got \($0)")
+            }
+        }
+    }
+
+    func testLoaderPreparesUnboundUnsupportedPublicMissingAndAuthenticatedContexts() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RepositoryForgeOverlayLoaderTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaultsName = "RepositoryForgeOverlayLoaderTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defaults.removePersistentDomain(forName: defaultsName)
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let services = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: root,
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+            keychain: OverlayKeychain(),
+            cliRunner: OverlayCLIRunner()
+        )
+        defer { Task { await services.refreshCoordinator?.invalidate() } }
+        let serviceLoader = ForgeApplicationServiceLoader { services }
+        let fixedNow = now
+
+        let unbound = await RepositoryForgeOverlayLoader(
+            binding: nil,
+            services: serviceLoader,
+            now: { fixedNow }
+        ).prepare()
+        guard case .unbound = unbound else { return XCTFail("nil binding must remain unbound") }
+
+        let gitLabRepository = try ForgeRepositoryIdentity(
+            forge: ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.com")),
+            owner: "example",
+            name: "project"
+        )
+        let unsupported = try await RepositoryForgeOverlayLoader(
+            binding: ForgeRepositoryBinding(
+                localRemoteName: "origin",
+                primaryRepository: gitLabRepository
+            ),
+            services: serviceLoader,
+            now: { fixedNow }
+        ).prepare()
+        guard case let .unsupported(value) = unsupported else {
+            return XCTFail("non-GitHub repositories must remain browser-only")
+        }
+        XCTAssertEqual(value, gitLabRepository)
+
+        let publicBinding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository
+        )
+        let publicLoader = RepositoryForgeOverlayLoader(
+            binding: publicBinding,
+            services: serviceLoader,
+            now: { fixedNow }
+        )
+        let publicBootstrap = await publicLoader.prepare()
+        guard case let .ready(value, publicContext) = publicBootstrap else {
+            return XCTFail("binding without an account must use public access")
+        }
+        XCTAssertEqual(value, repository)
+        XCTAssertEqual(publicContext.access, .publicAccess)
+        XCTAssertNil(publicContext.credential)
+        guard case .ready = await publicLoader.prepare() else {
+            return XCTFail("prepared bootstrap must be reusable")
+        }
+
+        let missingAccount = try ForgeAccountID(forge: repository.forge, value: "missing")
+        let missingBinding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: missingAccount
+        )
+        let missing = await RepositoryForgeOverlayLoader(
+            binding: missingBinding,
+            services: serviceLoader,
+            now: { fixedNow }
+        ).prepare()
+        guard case let .authenticationRequired(value) = missing else {
+            return XCTFail("an unavailable exact account must require authentication")
+        }
+        XCTAssertEqual(value, repository)
+
+        let accountID = try ForgeAccountID(forge: repository.forge, value: "authenticated")
+        _ = try await services.addAccountCoordinator.addPersonalAccessToken(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("overlay-loader-pat"),
+            kind: .fineGrained,
+            token: Data("overlay-loader-token".utf8),
+            expiresAt: nil
+        )
+        let authenticatedBinding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: accountID
+        )
+        let authenticated = await RepositoryForgeOverlayLoader(
+            binding: authenticatedBinding,
+            services: serviceLoader,
+            now: { fixedNow }
+        ).prepare()
+        guard case let .ready(value, context) = authenticated else {
+            return XCTFail("stored exact account must prepare authenticated reads")
+        }
+        XCTAssertEqual(value, repository)
+        XCTAssertEqual(context.access, .account(login: "octocat"))
+        XCTAssertEqual(context.credential?.accountID, accountID)
+
+        let unavailable = await RepositoryForgeOverlayLoader(
+            binding: publicBinding,
+            services: ForgeApplicationServiceLoader {
+                throw NSError(domain: "OverlayLoaderTests", code: 1)
+            },
+            now: { fixedNow }
+        ).prepare()
+        guard case let .unavailable(value) = unavailable else {
+            return XCTFail("service startup failure must remain explicit")
+        }
+        XCTAssertEqual(value, repository)
+    }
+
+    func testSQLiteOverlayCacheRoundTripsFactsAndHistoryWithinTheExactPartition() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RepositoryForgeOverlayCacheTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: directory.appendingPathComponent("forge.sqlite3"),
+            recoveryDirectoryURL: directory.appendingPathComponent("recovery", isDirectory: true)
+        ))
+        let partition = try ForgeRepositoryPartitionKey(
+            cachePartition: .publicAccess,
+            repository: repository
+        )
+        let cache = SQLiteRepositoryForgeOverlayCache(database: database, partition: partition)
+        let missingFacts = try await cache.cachedRepositoryFacts(accessedAt: now)
+        let missingHistory = try await cache.cachedHistoryOverlay(commit: commit, accessedAt: now)
+        XCTAssertNil(missingFacts)
+        XCTAssertNil(missingHistory)
+
+        let repositoryFacts = try facts(description: "Persisted facts")
+        try await cache.putRepositoryFacts(RepositoryForgeRemoteSnapshot(
+            value: repositoryFacts,
+            fetchedAt: now,
+            completeness: .partial(unavailableSections: [.repositoryFacts]),
+            cooldownDeadline: nil
+        ))
+        let cachedFacts = try await cache.cachedRepositoryFacts(accessedAt: now.addingTimeInterval(1))
+        let loadedFacts = try XCTUnwrap(cachedFacts)
+        XCTAssertEqual(loadedFacts.value, repositoryFacts)
+        XCTAssertEqual(loadedFacts.fetchedAt, now)
+        XCTAssertTrue(loadedFacts.isPartial)
+        XCTAssertFalse(loadedFacts.isStale)
+
+        let overlay = try historyOverlay(checkRollup: .succeeded)
+        try await cache.putHistoryOverlay(RepositoryForgeRemoteSnapshot(
+            value: overlay,
+            fetchedAt: now.addingTimeInterval(2),
+            completeness: .complete,
+            cooldownDeadline: nil
+        ))
+        let cachedHistory = try await cache.cachedHistoryOverlay(
+            commit: commit,
+            accessedAt: now.addingTimeInterval(3)
+        )
+        let loadedHistory = try XCTUnwrap(cachedHistory)
+        XCTAssertEqual(loadedHistory.value, overlay)
+        XCTAssertFalse(loadedHistory.isPartial)
+        XCTAssertFalse(loadedHistory.isStale)
+    }
+
+    func testUnavailableBootstrapStatesPublishFactsHistoryStatusAndDetailsActions() async throws {
+        let recovery = ForgeSQLiteRecoveryCopy(
+            url: URL(fileURLWithPath: "/tmp/gitx-overlay-recovery.sqlite3"),
+            createdAt: now
+        )
+        let unsupportedRepository = try ForgeRepositoryIdentity(
+            forge: ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.com")),
+            owner: "example",
+            name: "project"
+        )
+        let cases: [(
+            RepositoryForgeOverlayBootstrap,
+            RepositoryForgeOverlaySession.FactsState,
+            ForgeReadUnavailableReason,
+            ForgeStatusDiagnostic
+        )] = [
+            (.unbound, .unavailable(.unsupported), .unsupported, .none),
+            (.unsupported(unsupportedRepository), .unavailable(.unsupported), .unsupported, .unavailable(.other)),
+            (
+                .authenticationRequired(repository),
+                .unavailable(.authenticationRequired),
+                .authenticationRequired,
+                .authenticationRequired
+            ),
+            (
+                .recoveryRequired(repository, recovery),
+                .unavailable(.partialResponse),
+                .partialResponse,
+                .unavailable(.persistentStorageFailure)
+            ),
+            (.unavailable(repository), .unavailable(.partialResponse), .partialResponse, .unavailable(.other)),
+        ]
+
+        let fixedNow = now
+        for (index, fixture) in cases.enumerated() {
+            let loader = RepositoryForgeOverlayLoader(bootstrap: fixture.0, now: { fixedNow })
+            var detailsActions: [ForgeStatusDetailsAction] = []
+            let scheduler = OverlaySchedulerDouble()
+            let network = OverlayNetworkMonitorDouble()
+            let session = RepositoryForgeOverlaySession(
+                repository: index == 0 ? nil : repository,
+                loader: loader,
+                scheduler: scheduler,
+                networkMonitor: network,
+                detailsHandler: { detailsActions.append($0) }
+            )
+            var factsObservations: [RepositoryForgeOverlaySession.FactsState] = []
+            let factsToken = session.observeFacts { factsObservations.append($0) }
+            session.requestHistoryOverlay(commit)
+            var historyObservations: [RepositoryForgeOverlaySession.HistoryState] = []
+            let historyToken = session.observeHistory { requestedCommit, state in
+                if requestedCommit == self.commit {
+                    historyObservations.append(state)
+                }
+            }
+            session.setActivity(.affectedViewActive)
+            session.start()
+            session.start()
+            for _ in 0 ..< 20 where session.factsState != fixture.1 {
+                await Task.yield()
+            }
+
+            XCTAssertEqual(session.factsState, fixture.1, "bootstrap case \(index)")
+            XCTAssertEqual(session.historyStates[commit], .unavailable(fixture.2), "bootstrap case \(index)")
+            XCTAssertEqual(session.currentInput.diagnostic, fixture.3, "bootstrap case \(index)")
+            XCTAssertEqual(factsObservations.first, .unavailable(.notRequested))
+            XCTAssertEqual(historyObservations.first, .loading(previous: nil))
+            XCTAssertEqual(historyObservations.last, .unavailable(fixture.2))
+            XCTAssertEqual(session.recoveryCopy, index == 3 ? recovery : nil)
+            session.showDetails(for: .authenticate)
+            XCTAssertEqual(detailsActions, [.authenticate])
+            let override = ForgeRepositoryStatusInput(
+                repository: repository,
+                access: .publicAccess,
+                freshness: .notLoaded,
+                diagnostic: .none
+            )
+            session.updateStatus(override)
+            XCTAssertEqual(session.currentInput, override)
+            session.removeObserver(factsToken)
+            session.removeObserver(historyToken)
+            session.invalidate()
+            XCTAssertEqual(scheduler.activeIntervals, [])
+            XCTAssertEqual(network.startCount, 0)
+        }
+    }
+
+    func testTaskSchedulerRunsImmediateActionAndCancellationSuppressesDeferredAction() async {
+        let scheduler = RepositoryForgeOverlayTaskScheduler()
+        let immediate = expectation(description: "immediate scheduled overlay action")
+        let immediateAction = scheduler.schedule(after: 0) {
+            immediate.fulfill()
+        }
+        await fulfillment(of: [immediate], timeout: 1)
+        immediateAction.cancel()
+
+        var deferredDidRun = false
+        let deferred = scheduler.schedule(after: 60) {
+            deferredDidRun = true
+        }
+        deferred.cancel()
+        for _ in 0 ..< 5 {
+            await Task.yield()
+        }
+        XCTAssertFalse(deferredDidRun)
+    }
+
+    func testLoaderEnforcesBudgetsStoresCooldownsAndClassifiesRateLimits() async throws {
+        let fixedNow = now
+        let request = RepositoryForgeOverlayRemoteRequest(reason: .manual, cycle: 1)
+        let unprepared = RepositoryForgeOverlayLoader(bootstrap: .unbound, now: { fixedNow })
+        await XCTAssertThrowsErrorAsync(try await unprepared.refreshRepositoryFacts(request: request)) {
+            XCTAssertTrue($0 is CancellationError)
+        }
+        await XCTAssertThrowsErrorAsync(
+            try await unprepared.refreshHistoryOverlay(commit: commit, request: request)
+        ) {
+            XCTAssertTrue($0 is CancellationError)
+        }
+
+        let publicContext = try RepositoryForgeOverlayContext(
+            access: .publicAccess,
+            authentication: .publicAccess,
+            reader: OverlayReaderDouble(
+                factsMode: .success(remote(facts(description: "Public"))),
+                history: [commit: .success(remote(historyOverlay(checkRollup: .succeeded)))]
+            ),
+            cache: OverlayCacheDouble(facts: nil),
+            cooldowns: ForgeCredentialCooldownRegistry()
+        )
+        let publicLoader = RepositoryForgeOverlayLoader(
+            bootstrap: .ready(repository, publicContext),
+            now: { fixedNow }
+        )
+        await XCTAssertThrowsErrorAsync(try await publicLoader.refreshRepositoryFacts(
+            request: RepositoryForgeOverlayRemoteRequest(reason: .scheduledOverlay, cycle: 2)
+        )) {
+            XCTAssertEqual($0 as? GitHubAnonymousRESTError, .explicitRequestRequired)
+        }
+        _ = try await publicLoader.refreshRepositoryFacts(request: request)
+        _ = try await publicLoader.refreshHistoryOverlay(commit: commit, request: request)
+
+        let credential = try credentialReference()
+        let registry = ForgeCredentialCooldownRegistry()
+        let activeDeadline = now.addingTimeInterval(120)
+        await registry.register(ForgeCredentialCooldown(credential: credential, deadline: activeDeadline))
+        let authenticatedContext = try RepositoryForgeOverlayContext(
+            access: .account(login: "octocat"),
+            authentication: .credential(credential),
+            reader: OverlayReaderDouble(
+                factsMode: .success(remote(facts(description: "Authenticated"))),
+                history: [:]
+            ),
+            cache: OverlayCacheDouble(facts: nil),
+            cooldowns: registry
+        )
+        let limitedLoader = RepositoryForgeOverlayLoader(
+            bootstrap: .ready(repository, authenticatedContext),
+            now: { fixedNow }
+        )
+        await XCTAssertThrowsErrorAsync(try await limitedLoader.refreshRepositoryFacts(request: request)) {
+            XCTAssertEqual($0 as? RepositoryForgeOverlayLoadError, .rateLimited(until: activeDeadline))
+        }
+
+        let storedDeadline = now.addingTimeInterval(240)
+        let storingRegistry = ForgeCredentialCooldownRegistry()
+        let storingReader = try OverlayReaderDouble(
+            factsMode: .success(RepositoryForgeRemoteSnapshot(
+                value: facts(description: "Cooldown response"),
+                fetchedAt: now,
+                completeness: .complete,
+                cooldownDeadline: storedDeadline
+            )),
+            history: [:]
+        )
+        let storingContext = RepositoryForgeOverlayContext(
+            access: .account(login: "octocat"),
+            authentication: .credential(credential),
+            reader: storingReader,
+            cache: OverlayCacheDouble(facts: nil),
+            cooldowns: storingRegistry
+        )
+        _ = try await RepositoryForgeOverlayLoader(
+            bootstrap: .ready(repository, storingContext),
+            now: { fixedNow }
+        ).refreshRepositoryFacts(request: request)
+        let registeredDeadline = await storingRegistry.activeDeadline(for: credential, at: now)
+        XCTAssertEqual(registeredDeadline, storedDeadline)
+
+        let rateMetadata = GitHubResponseMetadata(
+            statusCode: 429,
+            rateLimit: GitHubRateLimitParser.parse(
+                statusCode: 429,
+                headers: ["retry-after": "60"],
+                receivedAt: now
+            )
+        )
+        for fixture in [
+            OverlayInjectedFailure.githubRateLimited(rateMetadata),
+            .anonymousCooldown(now.addingTimeInterval(180)),
+            .anonymousRateLimited(nil),
+        ] {
+            let context = RepositoryForgeOverlayContext(
+                access: fixture.isAnonymous ? .publicAccess : .account(login: "octocat"),
+                authentication: fixture.isAnonymous ? .publicAccess : .credential(credential),
+                reader: FailingOverlayReader(failure: fixture),
+                cache: OverlayCacheDouble(facts: nil),
+                cooldowns: ForgeCredentialCooldownRegistry()
+            )
+            let loader = RepositoryForgeOverlayLoader(
+                bootstrap: .ready(repository, context),
+                now: { fixedNow }
+            )
+            await XCTAssertThrowsErrorAsync(try await loader.refreshRepositoryFacts(request: request)) {
+                guard case RepositoryForgeOverlayLoadError.rateLimited = $0 else {
+                    return XCTFail("expected normalized rate-limit error, got \($0)")
+                }
+            }
+        }
+    }
+
+    func testSessionMapsEveryRemainingRefreshFailureToAnActionableDiagnostic() async throws {
+        let metadata = GitHubResponseMetadata(
+            statusCode: 403,
+            rateLimit: GitHubRateLimitParser.parse(statusCode: 403, headers: [:], receivedAt: now)
+        )
+        let cases: [(OverlayInjectedFailure, ForgeStatusDiagnostic)] = [
+            (.authenticationRequired, .authenticationRequired),
+            (.permissionDenied(metadata), .unavailable(.missingRepositoryAccess)),
+            (.transportFailure, .offline),
+            (.urlFailure, .offline),
+            (.anonymousReserve, .unavailable(.other)),
+            (.anonymousExplicit, .unavailable(.other)),
+            (.anonymousNotFound, .unavailable(.missingRepositoryAccess)),
+            (.sqlite, .unavailable(.persistentStorageFailure)),
+            (.other, .unavailable(.other)),
+        ]
+
+        for (index, fixture) in cases.enumerated() {
+            let session = try makeSession(
+                reader: FailingOverlayReader(failure: fixture.0),
+                cache: OverlayCacheDouble(facts: nil),
+                access: fixture.0.isAnonymous ? .publicAccess : .account(login: "octocat"),
+                authentication: fixture.0.isAnonymous ? .publicAccess : .credential(credentialReference())
+            )
+            session.start()
+            for _ in 0 ..< 100 where session.currentInput.diagnostic != fixture.1 {
+                await Task.yield()
+            }
+            XCTAssertEqual(session.currentInput.diagnostic, fixture.1, "failure case \(index)")
+            session.invalidate()
+        }
+    }
+
+    func testSessionRegistersWithApplicationCoordinatorAndFinishesFactsAndHistoryRefreshes() async throws {
+        let credential = try credentialReference()
+        let binding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: credential.accountID
+        )
+        let target = try ForgeRefreshTarget(
+            authentication: .credential(credential),
+            repository: repository
+        )
+        let coordinator = ForgeApplicationRefreshCoordinator(
+            bindingProvider: nil,
+            resolveTarget: { _ in nil },
+            backgroundRefresh: { _, _, _ in },
+            sleep: { _ in throw CancellationError() }
+        )
+        await coordinator.start()
+        let reader = try OverlayReaderDouble(
+            factsMode: .success(remote(facts(description: "Coordinated"))),
+            history: [commit: .success(remote(historyOverlay(checkRollup: .running)))]
+        )
+        let context = RepositoryForgeOverlayContext(
+            access: .account(login: "octocat"),
+            authentication: .credential(credential),
+            reader: reader,
+            cache: OverlayCacheDouble(facts: nil),
+            cooldowns: ForgeCredentialCooldownRegistry(),
+            binding: binding,
+            refreshCoordinator: coordinator
+        )
+        let fixedNow = now
+        let session = RepositoryForgeOverlaySession(
+            repository: repository,
+            loader: RepositoryForgeOverlayLoader(
+                bootstrap: .ready(repository, context),
+                now: { fixedNow }
+            ),
+            scheduler: OverlaySchedulerDouble(),
+            networkMonitor: OverlayNetworkMonitorDouble()
+        )
+        session.requestHistoryOverlay(commit)
+        session.start()
+        try await waitForFactsRequests(1, reader: reader)
+        for _ in 0 ..< 100 where await coordinator.interval(for: target) == nil {
+            await Task.yield()
+        }
+        let openInterval = await coordinator.interval(for: target)
+        XCTAssertEqual(openInterval, ForgeRefreshPolicy.openRepositoryInterval)
+
+        session.setActivity(.affectedViewActive)
+        for _ in 0 ..< 100 where await coordinator.interval(for: target) != ForgeRefreshPolicy.activeOverlayInterval {
+            await Task.yield()
+        }
+        session.requestManualRefresh()
+        try await waitForFactsRequests(2, reader: reader)
+        for _ in 0 ..< 100 where await reader.historyRequestCount(for: commit) < 2 {
+            await Task.yield()
+        }
+        let historyRequestCount = await reader.historyRequestCount(for: commit)
+        XCTAssertEqual(historyRequestCount, 2)
+
+        session.invalidate()
+        await coordinator.invalidate()
+    }
+
     private func makeSession(
         reader: any RepositoryForgeOverlayReading,
         cache: any RepositoryForgeOverlayCaching,
@@ -657,7 +1199,8 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
     }
 
     private func anonymousResult<Value: Sendable>(
-        _ value: Value
+        _ value: Value,
+        partitionRepository: ForgeRepositoryIdentity? = nil
     ) throws -> GitHubAnonymousReadResult<Value> {
         try GitHubAnonymousReadResult(
             value: value,
@@ -672,7 +1215,7 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
             ),
             partition: ForgeRepositoryPartitionKey(
                 cachePartition: .publicAccess,
-                repository: repository
+                repository: partitionRepository ?? repository
             ),
             fetchedAt: now
         )
@@ -759,6 +1302,81 @@ private actor OverlayReaderDouble: RepositoryForgeOverlayReading {
 
     func historyRequestCount(for commit: ForgeCommitID) -> Int {
         historyRequests[commit, default: 0]
+    }
+}
+
+private enum OverlayInjectedFailure: Sendable {
+    case githubRateLimited(GitHubResponseMetadata)
+    case authenticationRequired
+    case permissionDenied(GitHubResponseMetadata)
+    case transportFailure
+    case urlFailure
+    case anonymousReserve
+    case anonymousExplicit
+    case anonymousNotFound
+    case anonymousCooldown(Date)
+    case anonymousRateLimited(Date?)
+    case sqlite
+    case other
+
+    var isAnonymous: Bool {
+        switch self {
+        case .anonymousReserve, .anonymousExplicit, .anonymousNotFound,
+             .anonymousCooldown, .anonymousRateLimited:
+            true
+        default:
+            false
+        }
+    }
+}
+
+private actor FailingOverlayReader: RepositoryForgeOverlayReading {
+    private let failure: OverlayInjectedFailure
+
+    init(failure: OverlayInjectedFailure) {
+        self.failure = failure
+    }
+
+    func repositoryFacts(
+        request _: RepositoryForgeOverlayRemoteRequest
+    ) async throws -> RepositoryForgeRemoteSnapshot<ForgeRepositoryFacts> {
+        try throwFailure()
+    }
+
+    func historyOverlay(
+        commit _: ForgeCommitID,
+        request _: RepositoryForgeOverlayRemoteRequest
+    ) async throws -> RepositoryForgeRemoteSnapshot<ForgeHistoryOverlay> {
+        try throwFailure()
+    }
+
+    private func throwFailure() throws -> Never {
+        switch failure {
+        case let .githubRateLimited(metadata):
+            throw GitHubReadError.rateLimited(metadata)
+        case .authenticationRequired:
+            throw GitHubReadError.authenticationRequired
+        case let .permissionDenied(metadata):
+            throw GitHubReadError.permissionDenied(metadata)
+        case .transportFailure:
+            throw GitHubReadError.transportFailure
+        case .urlFailure:
+            throw URLError(.notConnectedToInternet)
+        case .anonymousReserve:
+            throw GitHubAnonymousRESTError.reserveProtected
+        case .anonymousExplicit:
+            throw GitHubAnonymousRESTError.explicitRequestRequired
+        case .anonymousNotFound:
+            throw GitHubAnonymousRESTError.notFound
+        case let .anonymousCooldown(until):
+            throw GitHubAnonymousRESTError.cooldown(until: until)
+        case let .anonymousRateLimited(until):
+            throw GitHubAnonymousRESTError.rateLimited(until: until)
+        case .sqlite:
+            throw ForgeSQLiteError.closed
+        case .other:
+            throw CocoaError(.fileReadUnknown)
+        }
     }
 }
 
@@ -886,6 +1504,42 @@ extension RepositoryForgeRemoteSnapshot: Equatable where Value: Equatable {
             lhs.fetchedAt == rhs.fetchedAt &&
             lhs.completeness == rhs.completeness &&
             lhs.cooldownDeadline == rhs.cooldownDeadline
+    }
+}
+
+// swift6-safety-justification: The lock serializes the loader fixture's in-memory Credential state.
+private final nonisolated class OverlayKeychain: ForgeCredentialKeychain, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: Data] = [:]
+
+    func data(for accountKey: String) throws -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[accountKey]
+    }
+
+    func allItems() throws -> [ForgeKeychainItem] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage.map(ForgeKeychainItem.init(accountKey:data:))
+    }
+
+    func replace(_ data: Data, for accountKey: String) throws {
+        lock.lock()
+        storage[accountKey] = data
+        lock.unlock()
+    }
+
+    func remove(accountKey: String) throws {
+        lock.lock()
+        storage.removeValue(forKey: accountKey)
+        lock.unlock()
+    }
+}
+
+private actor OverlayCLIRunner: ForgeCLICommandRunning {
+    func run(_: ForgeCLICommand) async throws -> ForgeCLICommandResult {
+        throw ForgeCLIBrokerError.commandLaunchFailed
     }
 }
 

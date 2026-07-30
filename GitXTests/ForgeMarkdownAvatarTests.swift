@@ -870,6 +870,9 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
 
         let loaderProof = await PBForgeMarkdownAvatarProductHarness.loaderProof()
         XCTAssertEqual(loaderProof, 0b1111_1111_1111_1111)
+
+        let sidebarAttentionProof = await PBForgeMarkdownAvatarProductHarness.sidebarAttentionProof()
+        XCTAssertEqual(sidebarAttentionProof, 0b1_1111_1111_1111)
     }
 
     private func cell(_ text: String) -> ForgeMarkdownTableCell {

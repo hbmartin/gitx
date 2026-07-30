@@ -1,5 +1,6 @@
 import AppKit
 import ForgeKit
+import UserNotifications
 import XCTest
 
 @MainActor
@@ -338,6 +339,156 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("author"))).isHidden)
     }
 
+    func testReadListRendersEveryColumnRefreshesAndRoutesTheSelectedRow() async throws {
+        let issue = try ReadFixture.issue(number: 17)
+        let page = ForgeReadSurfacePage(
+            items: [.issue(issue)],
+            totalCount: 1,
+            fetchedAt: ReadFixture.date(1)
+        )
+        let service = try FakeReadService(
+            pages: [page, page],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails()),
+                fetchedAt: ReadFixture.date(2)
+            )
+        )
+        let router = RecordingDestinationRouter()
+        let controller = try makeController(kind: .issues, service: service, router: router)
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView)
+        XCTAssertEqual(table.numberOfRows, 1)
+        for column in table.tableColumns {
+            let cell = table.view(atColumn: table.column(withIdentifier: column.identifier), row: 0, makeIfNecessary: true)
+            XCTAssertNotNil(cell, "Every visible list column must provide an AppKit cell")
+            XCTAssertFalse(cell?.accessibilityLabel()?.isEmpty ?? true)
+        }
+        XCTAssertFalse(table.delegate?.tableView?(table, shouldSelectRow: 1) ?? true)
+
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        try NSApp.sendAction(XCTUnwrap(table.doubleAction), to: table.target, from: table)
+        XCTAssertEqual(router.nativeDestinations, try [.issue(ReadFixture.repository(), issue.number)])
+
+        let refresh = try XCTUnwrap(descendant(identifier: "ForgeReadRefresh", in: controller.view) as? NSButton)
+        refresh.performClick(nil)
+        await service.waitForListCall(count: 2)
+        await settleMainActor()
+        XCTAssertEqual(service.listCalls.count, 2)
+        controller.refresh()
+        await service.waitForListCall(count: 3)
+        await settleMainActor()
+        XCTAssertEqual(table.numberOfRows, 0)
+    }
+
+    func testInspectorRendersRichPresentationAndRoutesEveryContinuationAction() throws {
+        let markdown = RecordingMarkdownRenderer()
+        let avatars = RecordingAvatarRenderer()
+        let router = RecordingDestinationRouter()
+        let controller = try ForgeReadInspectorViewController(
+            markdownRenderer: markdown,
+            avatarRenderer: avatars,
+            destinationRouter: router,
+            defaultRevision: .branch(ForgeRefName("main"))
+        )
+        let item = try ForgeRepositoryItem.pullRequest(ReadFixture.pullRequest())
+        let referenced = try ForgeDestination.issue(ReadFixture.repository(), ForgeItemNumber(17))
+        let presentation = try ForgeReadInspectorPresentation(
+            item: item,
+            title: "Rich native inspector",
+            subtitle: "Pull Request #42 • Open",
+            author: ReadFixture.actor(),
+            metadata: [
+                ForgeReadInspectorMetadata(title: "Author", value: "Ari Engineer", isUnavailable: false),
+                ForgeReadInspectorMetadata(title: "Checks", value: "Unavailable", isUnavailable: true),
+            ],
+            bodyMarkdown: "## Body",
+            bodyUnavailableMessage: nil,
+            timeline: [
+                ForgeReadTimelinePresentation(
+                    id: ForgeObjectID(forge: item.repository.forge, value: "timeline-rich"),
+                    actor: "Ari Engineer",
+                    occurredAt: ReadFixture.date(3),
+                    summary: "referenced an issue",
+                    markdown: "Timeline body",
+                    destination: referenced
+                ),
+                ForgeReadTimelinePresentation(
+                    id: ForgeObjectID(forge: item.repository.forge, value: "timeline-plain"),
+                    actor: "Deleted user",
+                    occurredAt: ReadFixture.date(4),
+                    summary: "changed the title",
+                    markdown: nil,
+                    destination: nil
+                ),
+            ],
+            timelineUnavailableMessage: nil,
+            nextTimelineCursor: ForgePageCursor("timeline-next"),
+            nextCheckCursor: ForgePageCursor("checks-next"),
+            freshnessMessage: "Showing partial cached data"
+        )
+        var loadedTimeline = 0
+        var loadedChecks = 0
+        controller.onLoadMoreTimeline = { loadedTimeline += 1 }
+        controller.onLoadMoreChecks = { loadedChecks += 1 }
+
+        controller.apply(presentation)
+        XCTAssertEqual(avatars.displayedLogins, ["ari"])
+        XCTAssertEqual(markdown.renderedMarkdown, ["## Body", "Timeline body"])
+        let browser = try XCTUnwrap(descendant(identifier: "ForgeInspectorOpenInBrowser", in: controller.view) as? NSButton)
+        browser.performClick(nil)
+        XCTAssertEqual(router.browserDestinations, [item.destination])
+
+        let timelineButton = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorLoadMoreTimeline", in: controller.view) as? NSButton
+        )
+        let checksButton = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorLoadMoreChecks", in: controller.view) as? NSButton
+        )
+        timelineButton.performClick(nil)
+        checksButton.performClick(nil)
+        XCTAssertEqual(loadedTimeline, 1)
+        XCTAssertEqual(loadedChecks, 1)
+
+        let referencedButton = try XCTUnwrap(
+            descendants(in: controller.view)
+                .compactMap { $0 as? NSButton }
+                .first { $0.title == "View Referenced Item" }
+        )
+        referencedButton.performClick(nil)
+        XCTAssertEqual(router.nativeDestinations, [referenced])
+
+        controller.showContinuationLoading(.checks)
+        XCTAssertFalse(timelineButton.isEnabled)
+        XCTAssertFalse(checksButton.isEnabled)
+        XCTAssertNotNil(descendant(identifier: "ForgeInspectorContinuationProgress", in: controller.view))
+        controller.showContinuationError("The next page was unavailable")
+        XCTAssertTrue(timelineButton.isEnabled)
+        XCTAssertTrue(checksButton.isEnabled)
+        XCTAssertNotNil(descendant(identifier: "ForgeInspectorContinuationError", in: controller.view))
+
+        try controller.apply(ForgeReadInspectorPresentation(
+            item: .issue(ReadFixture.issue(number: 18)),
+            title: "No optional details",
+            subtitle: "Issue #18 • Open",
+            author: nil,
+            metadata: [],
+            bodyMarkdown: nil,
+            bodyUnavailableMessage: "Body unavailable",
+            timeline: [],
+            timelineUnavailableMessage: "Timeline unavailable",
+            nextTimelineCursor: nil,
+            nextCheckCursor: nil,
+            freshnessMessage: nil
+        ))
+        XCTAssertNotNil(descendant(identifier: "ForgeInspectorBodyUnavailable", in: controller.view))
+        XCTAssertNotNil(descendant(identifier: "ForgeInspectorTimelineUnavailable", in: controller.view))
+    }
+
     func testAttentionSurfaceLoadsCurrentUnseenNewestAndExercisesSeenControls() async throws {
         let originalState = ApplicationSettings.attentionViewState
         defer { ApplicationSettings.attentionViewState = originalState }
@@ -358,7 +509,9 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         let window = makeWindow(controller)
 
         controller.viewDidAppear()
-        await session.waitForEntriesCall()
+        await waitUntil("initial Attention entries") {
+            !session.entryStates.isEmpty
+        }
         await settleMainActor()
 
         let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
@@ -368,26 +521,49 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertEqual(session.entryStates.first?.sortOrder, .newestFirst)
 
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        await session.waitForMarkOpenCall()
-        await session.readService.waitForDetailsCall()
-        await session.waitForEntriesCall(count: 2)
+        await waitUntil("selected Attention item to be marked open") {
+            session.markedOpen == [session.entry.record.item.id]
+        }
+        await waitUntil("selected Attention item details") {
+            !session.readService.detailsCalls.isEmpty
+        }
         await settleMainActor()
         XCTAssertEqual(session.markedOpen, [session.entry.record.item.id])
+
+        let timelineContinuation = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorLoadMoreTimeline", in: controller.view) as? NSButton
+        )
+        timelineContinuation.performClick(nil)
+        await session.readService.waitForDetailsCall(count: 2)
+        await settleMainActor()
+        XCTAssertEqual(session.readService.detailsCalls.last?.timelineCursor?.value, "attention-timeline")
+
+        session.readService.detailsError = ReadFixture.failure("Check continuation unavailable")
+        let checkContinuation = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorLoadMoreChecks", in: controller.view) as? NSButton
+        )
+        checkContinuation.performClick(nil)
+        await session.readService.waitForDetailsCall(count: 3)
+        await waitUntil("Attention check continuation error") {
+            self.descendant(identifier: "ForgeInspectorContinuationError", in: controller.view) != nil
+        }
 
         let markUnseen = try XCTUnwrap(
             descendant(identifier: "ForgeAttentionMarkUnseen", in: controller.view) as? NSButton
         )
         markUnseen.performClick(nil)
-        await session.waitForMarkUnseenCall()
-        await session.waitForEntriesCall(count: 3)
+        await waitUntil("selected Attention item to be marked unseen") {
+            session.markedUnseen == [session.entry.record.item.id]
+        }
         XCTAssertEqual(session.markedUnseen, [session.entry.record.item.id])
 
         let markAll = try XCTUnwrap(
             descendant(identifier: "ForgeAttentionMarkAllSeen", in: controller.view) as? NSButton
         )
         markAll.performClick(nil)
-        await session.waitForMarkAllCall()
-        await session.waitForEntriesCall(count: 4)
+        await waitUntil("visible Attention items to be marked seen") {
+            session.markAllStates.last?.scope == .currentRepository
+        }
         XCTAssertEqual(session.markAllStates.last?.scope, .currentRepository)
 
         let scope = try XCTUnwrap(
@@ -395,16 +571,177 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         scope.selectItem(at: 1)
         try NSApp.sendAction(XCTUnwrap(scope.action), to: scope.target, from: scope)
-        await session.waitForEntriesCall(count: 5)
+        await waitUntil("all-repositories Attention scope") {
+            session.entryStates.last?.scope == .all
+        }
         XCTAssertEqual(session.entryStates.last?.scope, .all)
 
         controller.open(session.entry.record.item.id)
-        await session.waitForEntriesCall(count: 6)
+        await waitUntil("Attention native route to reveal active items") {
+            session.entryStates.contains {
+                $0.scope == .all && $0.visibility == .active
+            }
+        }
         XCTAssertTrue(session.entryStates.contains {
             $0.scope == .all && $0.visibility == .active
         })
 
+        for column in table.tableColumns {
+            let cell = table.view(atColumn: table.column(withIdentifier: column.identifier), row: 0, makeIfNecessary: true)
+            XCTAssertNotNil(cell, "Every Attention column must provide an AppKit cell")
+        }
+        try NSApp.sendAction(XCTUnwrap(table.doubleAction), to: table.target, from: table)
+        XCTAssertEqual(router.nativeDestinations, [session.entry.record.item.destination])
+
+        let visibility = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionVisibility", in: controller.view) as? NSPopUpButton
+        )
+        visibility.selectItem(at: 0)
+        try NSApp.sendAction(XCTUnwrap(visibility.action), to: visibility.target, from: visibility)
+        await waitUntil("unseen Attention visibility") {
+            session.entryStates.last?.visibility == .unseenOnly
+        }
+
+        let sort = try XCTUnwrap(descendant(identifier: "ForgeAttentionSort", in: controller.view) as? NSPopUpButton)
+        sort.selectItem(at: 1)
+        try NSApp.sendAction(XCTUnwrap(sort.action), to: sort.target, from: sort)
+        await waitUntil("oldest-first Attention sort") {
+            session.entryStates.last?.sortOrder == .oldestFirst
+        }
+        XCTAssertEqual(session.entryStates.last?.sortOrder, .oldestFirst)
+
+        let kinds = try XCTUnwrap(descendant(identifier: "ForgeAttentionKinds", in: controller.view) as? NSPopUpButton)
+        let reviewRequests = try XCTUnwrap(kinds.menu?.items.first { $0.representedObject as? String == ForgeAttentionKind.reviewRequest.rawValue })
+        try NSApp.sendAction(XCTUnwrap(reviewRequests.action), to: reviewRequests.target, from: reviewRequests)
+        await waitUntil("review-request Attention filter toggle") {
+            session.entryStates.last?.kinds.contains(.reviewRequest) == false
+        }
+        XCTAssertFalse(session.entryStates.last?.kinds.contains(.reviewRequest) ?? true)
+
+        let columns = try XCTUnwrap(descendant(identifier: "ForgeAttentionColumns", in: controller.view) as? NSPopUpButton)
+        let author = try XCTUnwrap(columns.menu?.items.first { $0.representedObject as? String == ForgeAttentionColumn.author.rawValue })
+        try NSApp.sendAction(XCTUnwrap(author.action), to: author.target, from: author)
+        await waitUntil("Attention author column toggle") {
+            session.entryStates.last?.columns.contains(.author) == false
+        }
+        XCTAssertFalse(session.entryStates.last?.columns.contains(.author) ?? true)
+
+        let refresh = try XCTUnwrap(descendant(identifier: "ForgeAttentionRefresh", in: controller.view) as? NSButton)
+        let entriesBeforeRefresh = session.entryStates.count
+        refresh.performClick(nil)
+        await waitUntil("explicit Attention refresh") {
+            session.refreshCount >= 1 && session.entryStates.count > entriesBeforeRefresh
+        }
+        let entriesBeforeNotification = session.entryStates.count
+        NotificationCenter.default.post(name: .forgeAttentionInboxDidChange, object: nil)
+        await waitUntil("Attention inbox-change reload") {
+            session.entryStates.count > entriesBeforeNotification
+        }
+
         try attachScreenshot(of: window, named: "GitHub Attention native inbox and inspector")
+    }
+
+    func testAttentionNotificationActionsAndUnavailableDatabaseErrorRemainExplicit() {
+        XCTAssertEqual(
+            ForgeAttentionNotificationDelivery.action(for: "PBForgeAttention.Open"),
+            .open
+        )
+        XCTAssertEqual(
+            ForgeAttentionNotificationDelivery.action(for: UNNotificationDefaultActionIdentifier),
+            .open
+        )
+        XCTAssertEqual(
+            ForgeAttentionNotificationDelivery.action(for: "PBForgeAttention.MarkSeen"),
+            .markSeen
+        )
+        XCTAssertNil(ForgeAttentionNotificationDelivery.action(for: "PBForgeAttention.Unknown"))
+        XCTAssertEqual(
+            RepositoryAttentionSessionError.databaseUnavailable.localizedDescription,
+            "Forge data is unavailable for this session. Local Git remains available."
+        )
+    }
+
+    func testAttentionSurfaceMakesCachedAndFailureStatesActionable() async throws {
+        let originalState = ApplicationSettings.attentionViewState
+        defer { ApplicationSettings.attentionViewState = originalState }
+        ApplicationSettings.attentionViewState = ForgeAttentionViewState(
+            scope: .all,
+            visibility: .active,
+            sortOrder: .oldestFirst,
+            columns: [.title]
+        )
+        let session = try FakeAttentionSession()
+        session.lastRefreshErrorDescription = "Network unavailable"
+        session.mutationError = ReadFixture.failure("Mutation unavailable")
+        let controller = try ForgeAttentionViewController(
+            session: session,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            defaultRevision: .branch(ForgeRefName("main"))
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await waitUntil("cached Attention rows") { !session.entryStates.isEmpty }
+        await settleMainActor()
+
+        let status = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionStatus", in: controller.view) as? NSTextField
+        )
+        XCTAssertEqual(status.stringValue, "Showing cached Attention. Network unavailable")
+        controller.open(session.entry.record.item.id)
+        await waitUntil("already-active Attention route reload") { session.entryStates.count >= 2 }
+
+        let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await waitUntil("Attention inspector mutation failure") {
+            self.descendant(identifier: "ForgeInspectorError", in: controller.view) != nil
+        }
+        let markUnseen = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionMarkUnseen", in: controller.view) as? NSButton
+        )
+        markUnseen.performClick(nil)
+        await waitUntil("mark-unseen failure") { status.stringValue == "Mutation unavailable" }
+        let markAll = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionMarkAllSeen", in: controller.view) as? NSButton
+        )
+        markAll.performClick(nil)
+        await waitUntil("mark-all-seen failure") { status.stringValue == "Mutation unavailable" }
+
+        let kinds = try XCTUnwrap(descendant(identifier: "ForgeAttentionKinds", in: controller.view) as? NSPopUpButton)
+        let mention = try XCTUnwrap(kinds.menu?.items.first {
+            $0.representedObject as? String == ForgeAttentionKind.mention.rawValue
+        })
+        try NSApp.sendAction(XCTUnwrap(mention.action), to: mention.target, from: mention)
+        await waitUntil("Attention kind removal") { session.entryStates.count >= 3 }
+        try NSApp.sendAction(XCTUnwrap(mention.action), to: mention.target, from: mention)
+        await waitUntil("Attention kind restoration") { session.entryStates.last?.kinds.contains(.mention) == true }
+
+        let columns = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionColumns", in: controller.view) as? NSPopUpButton
+        )
+        let title = try XCTUnwrap(columns.menu?.items.first {
+            $0.representedObject as? String == ForgeAttentionColumn.title.rawValue
+        })
+        try NSApp.sendAction(XCTUnwrap(title.action), to: title.target, from: title)
+        await waitUntil("last Attention column remains visible") {
+            ApplicationSettings.attentionViewState.columns == [.title]
+        }
+
+        let invalidKind = NSMenuItem(title: "Invalid", action: nil, keyEquivalent: "")
+        invalidKind.representedObject = "invalid-kind"
+        _ = controller.perform(NSSelectorFromString("toggleKind:"), with: invalidKind)
+        let invalidColumn = NSMenuItem(title: "Invalid", action: nil, keyEquivalent: "")
+        invalidColumn.representedObject = "invalid-column"
+        _ = controller.perform(NSSelectorFromString("toggleColumn:"), with: invalidColumn)
+        XCTAssertNil(controller.tableView(table, viewFor: nil, row: 0))
+
+        session.entriesError = ReadFixture.failure("Inbox unavailable")
+        NotificationCenter.default.post(name: .forgeAttentionInboxDidChange, object: nil)
+        await waitUntil("Attention reload failure") {
+            status.stringValue == "Couldn’t load Attention. Inbox unavailable"
+        }
+        XCTAssertEqual(table.numberOfRows, 0)
     }
 
     private func makeController(
@@ -451,10 +788,29 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         return nil
     }
 
+    private func descendants(in root: NSView?) -> [NSView] {
+        guard let root else { return [] }
+        return [root] + root.subviews.flatMap { descendants(in: $0) }
+    }
+
     private func settleMainActor() async {
         for _ in 0 ..< 5 {
             await Task.yield()
         }
+    }
+
+    private func waitUntil(
+        _ description: String,
+        condition: @escaping @MainActor () -> Bool
+    ) async {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < deadline {
+            if condition() {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for \(description)")
     }
 
     private func attachScreenshot(of window: NSWindow, named name: String) throws {
@@ -488,7 +844,7 @@ private final class FakeReadService: ForgeReadSurfaceServing {
     private var pages: [ForgeReadSurfacePage]
     private var detailsResponses: [ForgeReadSurfaceDetailsSnapshot]
     private let listError: Error?
-    private let detailsError: Error?
+    var detailsError: Error?
     private var listWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var detailsWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private(set) var listCalls: [ListCall] = []
@@ -533,6 +889,9 @@ private final class FakeReadService: ForgeReadSurfaceServing {
         if let detailsError {
             throw detailsError
         }
+        guard detailsResponses.count > 1 else {
+            return detailsResponses[0]
+        }
         return detailsResponses.removeFirst()
     }
 
@@ -564,14 +923,13 @@ private final class FakeAttentionSession: RepositoryAttentionServing {
     let entry: ForgeAttentionInboxEntry
     let readService: FakeReadService
     var lastRefreshErrorDescription: String?
+    var entriesError: Error?
+    var mutationError: Error?
     private(set) var entryStates: [ForgeAttentionViewState] = []
     private(set) var markedOpen: [ForgeAttentionItemID] = []
     private(set) var markedUnseen: [ForgeAttentionItemID] = []
     private(set) var markAllStates: [ForgeAttentionViewState] = []
-    private var entryWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
-    private var markOpenWaiters: [CheckedContinuation<Void, Never>] = []
-    private var markUnseenWaiters: [CheckedContinuation<Void, Never>] = []
-    private var markAllWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var refreshCount = 0
 
     init() throws {
         repositoryIdentity = try ReadFixture.repository()
@@ -595,68 +953,68 @@ private final class FakeAttentionSession: RepositoryAttentionServing {
             ),
             subject: .pullRequest(summary)
         )
+        let details = try ForgeReadSurfaceDetailsSnapshot(
+            details: .pullRequest(ReadFixture.pullRequestDetails(
+                timelineID: "attention-initial",
+                timelineCursor: ForgePageCursor("attention-timeline"),
+                checkCursor: ForgePageCursor("attention-checks")
+            )),
+            fetchedAt: ReadFixture.date(5)
+        )
+        let timelineContinuation = try ForgeReadSurfaceDetailsSnapshot(
+            details: .pullRequest(ReadFixture.pullRequestDetails(
+                timelineID: "attention-next"
+            )),
+            fetchedAt: ReadFixture.date(6)
+        )
+        let checkContinuation = try ForgeReadSurfaceDetailsSnapshot(
+            details: .pullRequest(ReadFixture.pullRequestDetails(
+                timelineID: "attention-check-page"
+            )),
+            fetchedAt: ReadFixture.date(7)
+        )
         readService = try FakeReadService(
             pages: [],
-            details: ForgeReadSurfaceDetailsSnapshot(
-                details: .pullRequest(ReadFixture.pullRequestDetails()),
-                fetchedAt: ReadFixture.date(5)
-            )
+            details: details,
+            continuationDetails: [timelineContinuation, checkContinuation]
         )
     }
 
     func entries(state: ForgeAttentionViewState) async throws -> [ForgeAttentionInboxEntry] {
         entryStates.append(state)
-        let ready = entryWaiters.filter { entryStates.count >= $0.0 }
-        entryWaiters.removeAll { entryStates.count >= $0.0 }
-        ready.forEach { $0.1.resume() }
+        if let entriesError {
+            throw entriesError
+        }
         return [entry]
     }
 
     func markOpen(_ itemID: ForgeAttentionItemID) async throws {
         markedOpen.append(itemID)
-        let waiters = markOpenWaiters
-        markOpenWaiters.removeAll()
-        waiters.forEach { $0.resume() }
+        if let mutationError {
+            throw mutationError
+        }
     }
 
     func markUnseen(_ itemID: ForgeAttentionItemID) async throws {
         markedUnseen.append(itemID)
-        let waiters = markUnseenWaiters
-        markUnseenWaiters.removeAll()
-        waiters.forEach { $0.resume() }
+        if let mutationError {
+            throw mutationError
+        }
     }
 
     func markAllSeen(state: ForgeAttentionViewState) async throws {
         markAllStates.append(state)
-        let waiters = markAllWaiters
-        markAllWaiters.removeAll()
-        waiters.forEach { $0.resume() }
+        if let mutationError {
+            throw mutationError
+        }
     }
 
-    func refreshNow() async {}
+    func refreshNow() async {
+        refreshCount += 1
+    }
 
     func makeReadService(for _: ForgeRepositoryIdentity) throws -> ForgeReadSurfaceServing {
         readService
-    }
-
-    func waitForEntriesCall(count: Int = 1) async {
-        guard entryStates.count < count else { return }
-        await withCheckedContinuation { entryWaiters.append((count, $0)) }
-    }
-
-    func waitForMarkOpenCall() async {
-        guard markedOpen.isEmpty else { return }
-        await withCheckedContinuation { markOpenWaiters.append($0) }
-    }
-
-    func waitForMarkUnseenCall() async {
-        guard markedUnseen.isEmpty else { return }
-        await withCheckedContinuation { markUnseenWaiters.append($0) }
-    }
-
-    func waitForMarkAllCall() async {
-        guard markAllStates.isEmpty else { return }
-        await withCheckedContinuation { markAllWaiters.append($0) }
     }
 }
 
@@ -793,7 +1151,8 @@ private enum ReadFixture {
     static func pullRequestDetails(
         timelineText: String = "A timeline comment",
         timelineID: String = "timeline-comment",
-        timelineCursor: ForgePageCursor? = nil
+        timelineCursor: ForgePageCursor? = nil,
+        checkCursor: ForgePageCursor? = nil
     ) throws -> ForgePullRequestDetailsPage {
         let repository = try repository()
         let timelineItem = try ForgeTimelineItem(
@@ -814,7 +1173,7 @@ private enum ReadFixture {
             checks: .available([]),
             timeline: .available(ForgePage(items: [timelineItem], nextCursor: timelineCursor))
         )
-        return ForgePullRequestDetailsPage(details: details, nextCheckCursor: nil)
+        return ForgePullRequestDetailsPage(details: details, nextCheckCursor: checkCursor)
     }
 
     static func issueDetails() throws -> ForgeIssueDetails {
