@@ -9,8 +9,8 @@ extension GitHubAPI {
     static let operationName: String = "GitHubPullRequestReviewThreadComments"
     static let operationDocument: ApolloAPI.OperationDocument = .init(
       definition: .init(
-        #"query GitHubPullRequestReviewThreadComments($id: ID!, $first: Int!, $after: String) { node(id: $id) { __typename ... on PullRequestReviewThread { id comments(first: $first, after: $after) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubReviewComment } } } } }"#,
-        fragments: [GitHubActor.self, GitHubPageInfo.self, GitHubReviewComment.self]
+        #"query GitHubPullRequestReviewThreadComments($id: ID!, $first: Int!, $after: String) { node(id: $id) { __typename ... on PullRequestReviewThread { id pullRequest { __typename repository { __typename ...GitHubRepositoryIdentity } } comments(first: $first, after: $after) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubReviewComment } } } } }"#,
+        fragments: [GitHubActor.self, GitHubPageInfo.self, GitHubRepositoryIdentity.self, GitHubReviewComment.self]
       ))
 
     public var id: ID
@@ -72,6 +72,7 @@ extension GitHubAPI {
           static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.PullRequestReviewThread }
           static var __selections: [ApolloAPI.Selection] { [
             .field("id", GitHubAPI.ID.self),
+            .field("pullRequest", PullRequest.self),
             .field("comments", Comments.self, arguments: [
               "first": .variable("first"),
               "after": .variable("after")
@@ -83,7 +84,55 @@ extension GitHubAPI {
           ] }
 
           var id: GitHubAPI.ID { __data["id"] }
+          var pullRequest: PullRequest { __data["pullRequest"] }
           var comments: Comments { __data["comments"] }
+
+          /// Node.AsPullRequestReviewThread.PullRequest
+          nonisolated struct PullRequest: GitHubAPI.SelectionSet {
+            let __data: DataDict
+            init(_dataDict: DataDict) { __data = _dataDict }
+
+            static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.PullRequest }
+            static var __selections: [ApolloAPI.Selection] { [
+              .field("__typename", String.self),
+              .field("repository", Repository.self),
+            ] }
+            static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
+              GitHubPullRequestReviewThreadCommentsQuery.Data.Node.AsPullRequestReviewThread.PullRequest.self
+            ] }
+
+            var repository: Repository { __data["repository"] }
+
+            /// Node.AsPullRequestReviewThread.PullRequest.Repository
+            nonisolated struct Repository: GitHubAPI.SelectionSet {
+              let __data: DataDict
+              init(_dataDict: DataDict) { __data = _dataDict }
+
+              static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.Repository }
+              static var __selections: [ApolloAPI.Selection] { [
+                .field("__typename", String.self),
+                .fragment(GitHubRepositoryIdentity.self),
+              ] }
+              static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
+                GitHubPullRequestReviewThreadCommentsQuery.Data.Node.AsPullRequestReviewThread.PullRequest.Repository.self,
+                GitHubRepositoryIdentity.self
+              ] }
+
+              var id: GitHubAPI.ID { __data["id"] }
+              var name: String { __data["name"] }
+              var nameWithOwner: String { __data["nameWithOwner"] }
+              var owner: Owner { __data["owner"] }
+
+              struct Fragments: FragmentContainer {
+                let __data: DataDict
+                init(_dataDict: DataDict) { __data = _dataDict }
+
+                var gitHubRepositoryIdentity: GitHubRepositoryIdentity { _toFragment() }
+              }
+
+              typealias Owner = GitHubRepositoryIdentity.Owner
+            }
+          }
 
           /// Node.AsPullRequestReviewThread.Comments
           nonisolated struct Comments: GitHubAPI.SelectionSet {

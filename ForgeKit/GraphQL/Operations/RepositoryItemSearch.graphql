@@ -6,9 +6,15 @@ query GitHubRepositoryItemSearch($query: String!, $first: Int!, $after: String) 
     }
     nodes {
       ... on PullRequest {
+        repository {
+          ...GitHubRepositoryIdentity
+        }
         ...GitHubPullRequestSummary
       }
       ... on Issue {
+        repository {
+          ...GitHubRepositoryIdentity
+        }
         ...GitHubIssueSummary
       }
     }

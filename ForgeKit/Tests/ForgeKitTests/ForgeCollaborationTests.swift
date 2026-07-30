@@ -158,6 +158,15 @@ final class ForgeCollaborationTests: XCTestCase {
             forkRelationship: .available(.fork(parent: parent))
         )
         XCTAssertEqual(try roundTrip(facts), facts)
+        var legacyPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(facts)) as? [String: Any]
+        )
+        legacyPayload.removeValue(forKey: "viewerCapabilities")
+        let legacyFacts = try JSONDecoder().decode(
+            ForgeRepositoryFacts.self,
+            from: JSONSerialization.data(withJSONObject: legacyPayload)
+        )
+        XCTAssertEqual(legacyFacts.viewerCapabilities, .unavailable(.notRequested))
 
         let partial = try ForgeRepositoryFacts(
             repository: repository,
@@ -268,6 +277,8 @@ final class ForgeCollaborationTests: XCTestCase {
             .unlabeled(label),
             .milestoneChanged(milestone),
             .milestoneChanged(nil),
+            .milestoneTitleChanged("v2"),
+            .milestoneTitleChanged(nil),
             .renamed(previousTitle: "Old", currentTitle: "New"),
             .crossReferenced(destination: .issue(repository, issueNumber), title: "Issue 9"),
         ]

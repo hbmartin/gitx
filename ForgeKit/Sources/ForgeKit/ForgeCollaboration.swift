@@ -390,6 +390,25 @@ public enum ForgeForkRelationship: Codable, Hashable, Sendable {
     case fork(parent: ForgeRepositoryIdentity)
 }
 
+public struct ForgeRepositoryViewerCapabilities: Codable, Hashable, Sendable {
+    public let role: ForgeRepositoryRoleEvidence
+    public let canAdminister: Bool
+    public let canCreateIssues: Bool
+    public let canUpdateTopics: Bool
+
+    public init(
+        role: ForgeRepositoryRoleEvidence,
+        canAdminister: Bool,
+        canCreateIssues: Bool,
+        canUpdateTopics: Bool
+    ) {
+        self.role = role
+        self.canAdminister = canAdminister
+        self.canCreateIssues = canCreateIssues
+        self.canUpdateTopics = canUpdateTopics
+    }
+}
+
 public struct ForgeRepositoryFacts: Hashable, Sendable {
     public let repository: ForgeRepositoryIdentity
     public let defaultBranch: ForgeReadSection<ForgeRefName>
@@ -398,6 +417,7 @@ public struct ForgeRepositoryFacts: Hashable, Sendable {
     public let visibility: ForgeReadSection<ForgeRepositoryVisibility>
     public let isArchived: ForgeReadSection<Bool>
     public let forkRelationship: ForgeReadSection<ForgeForkRelationship>
+    public let viewerCapabilities: ForgeReadSection<ForgeRepositoryViewerCapabilities>
 
     public init(
         repository: ForgeRepositoryIdentity,
@@ -406,7 +426,8 @@ public struct ForgeRepositoryFacts: Hashable, Sendable {
         topics: ForgeReadSection<[String]>,
         visibility: ForgeReadSection<ForgeRepositoryVisibility>,
         isArchived: ForgeReadSection<Bool>,
-        forkRelationship: ForgeReadSection<ForgeForkRelationship>
+        forkRelationship: ForgeReadSection<ForgeForkRelationship>,
+        viewerCapabilities: ForgeReadSection<ForgeRepositoryViewerCapabilities> = .unavailable(.notRequested)
     ) throws {
         if case let .available(.fork(parent)) = forkRelationship,
            parent.forge != repository.forge
@@ -420,6 +441,7 @@ public struct ForgeRepositoryFacts: Hashable, Sendable {
         self.visibility = visibility
         self.isArchived = isArchived
         self.forkRelationship = forkRelationship
+        self.viewerCapabilities = viewerCapabilities
     }
 }
 
@@ -432,6 +454,7 @@ extension ForgeRepositoryFacts: Codable {
         case visibility
         case isArchived
         case forkRelationship
+        case viewerCapabilities
     }
 
     public init(from decoder: Decoder) throws {
@@ -446,7 +469,11 @@ extension ForgeRepositoryFacts: Codable {
             forkRelationship: container.decode(
                 ForgeReadSection<ForgeForkRelationship>.self,
                 forKey: .forkRelationship
-            )
+            ),
+            viewerCapabilities: container.decodeIfPresent(
+                ForgeReadSection<ForgeRepositoryViewerCapabilities>.self,
+                forKey: .viewerCapabilities
+            ) ?? .unavailable(.notRequested)
         )
     }
 }
@@ -631,6 +658,7 @@ public enum ForgeTimelineEvent: Codable, Hashable, Sendable {
     case labeled(ForgeLabel)
     case unlabeled(ForgeLabel)
     case milestoneChanged(ForgeMilestone?)
+    case milestoneTitleChanged(String?)
     case renamed(previousTitle: String, currentTitle: String)
     case crossReferenced(destination: ForgeDestination, title: String)
 }
@@ -681,6 +709,8 @@ public struct ForgeTimelineItem: Hashable, Sendable {
             guard value?.repository == nil || value?.repository == repository else {
                 throw ForgeCollaborationModelError.mismatchedRepository
             }
+        case .milestoneTitleChanged:
+            break
         case let .crossReferenced(destination, _):
             guard destination.repository.forge == repository.forge else {
                 throw ForgeCollaborationModelError.mismatchedForge

@@ -15,6 +15,9 @@ query GitHubAttentionCandidates(
     }
     nodes {
       ... on PullRequest {
+        repository {
+          ...GitHubRepositoryIdentity
+        }
         ...GitHubPullRequestSummary
         body
         assignedActors(first: 100) {
@@ -93,6 +96,9 @@ query GitHubAttentionCandidates(
         }
       }
       ... on Issue {
+        repository {
+          ...GitHubRepositoryIdentity
+        }
         ...GitHubIssueSummary
         body
         assignedActors(first: 100) {

@@ -9,7 +9,7 @@ extension GitHubAPI {
     static let operationName: String = "GitHubAttentionCandidates"
     static let operationDocument: ApolloAPI.OperationDocument = .init(
       definition: .init(
-        #"query GitHubAttentionCandidates($query: String!, $first: Int!, $after: String, $activityLast: Int!, $reviewThreadFirst: Int!) { viewer { __typename ...GitHubActor } search(query: $query, type: ISSUE, first: $first, after: $after) { __typename totalCount: issueCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ... on PullRequest { ...GitHubPullRequestSummary body assignedActors(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubAssignee } } participants(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubActor } } reviewRequests(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename id requestedReviewer { __typename ...GitHubRequestedReviewer } } } comments(last: $activityLast) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubIssueComment } } latestReviews(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename id body state submittedAt author { __typename ...GitHubActor } } } reviewThreads(first: $reviewThreadFirst) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename id isResolved isOutdated comments(last: $activityLast) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubReviewComment } } } } } ... on Issue { ...GitHubIssueSummary body assignedActors(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubAssignee } } participants(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubActor } } comments(last: $activityLast) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubIssueComment } } } } } }"#,
+        #"query GitHubAttentionCandidates($query: String!, $first: Int!, $after: String, $activityLast: Int!, $reviewThreadFirst: Int!) { viewer { __typename ...GitHubActor } search(query: $query, type: ISSUE, first: $first, after: $after) { __typename totalCount: issueCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ... on PullRequest { repository { __typename ...GitHubRepositoryIdentity } ...GitHubPullRequestSummary body assignedActors(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubAssignee } } participants(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubActor } } reviewRequests(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename id requestedReviewer { __typename ...GitHubRequestedReviewer } } } comments(last: $activityLast) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubIssueComment } } latestReviews(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename id body state submittedAt author { __typename ...GitHubActor } } } reviewThreads(first: $reviewThreadFirst) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename id isResolved isOutdated comments(last: $activityLast) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubReviewComment } } } } } ... on Issue { repository { __typename ...GitHubRepositoryIdentity } ...GitHubIssueSummary body assignedActors(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubAssignee } } participants(first: 100) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubActor } } comments(last: $activityLast) { __typename totalCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ...GitHubIssueComment } } } } } }"#,
         fragments: [GitHubActor.self, GitHubAssignee.self, GitHubIssueComment.self, GitHubIssueSummary.self, GitHubLabel.self, GitHubPageInfo.self, GitHubPullRequestSummary.self, GitHubRepositoryIdentity.self, GitHubRequestedReviewer.self, GitHubReviewComment.self]
       ))
 
@@ -204,6 +204,7 @@ extension GitHubAPI {
             typealias RootEntityType = GitHubAttentionCandidatesQuery.Data.Search.Node
             static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.PullRequest }
             static var __selections: [ApolloAPI.Selection] { [
+              .field("repository", Repository.self),
               .field("body", String.self),
               .field("assignedActors", AssignedActors.self, arguments: ["first": 100]),
               .field("participants", Participants.self, arguments: ["first": 100]),
@@ -219,6 +220,7 @@ extension GitHubAPI {
               GitHubPullRequestSummary.self
             ] }
 
+            var repository: Repository { __data["repository"] }
             var body: String { __data["body"] }
             var assignedActors: AssignedActors { __data["assignedActors"] }
             var participants: Participants { __data["participants"] }
@@ -251,6 +253,36 @@ extension GitHubAPI {
               init(_dataDict: DataDict) { __data = _dataDict }
 
               var gitHubPullRequestSummary: GitHubPullRequestSummary { _toFragment() }
+            }
+
+            /// Search.Node.AsPullRequest.Repository
+            nonisolated struct Repository: GitHubAPI.SelectionSet {
+              let __data: DataDict
+              init(_dataDict: DataDict) { __data = _dataDict }
+
+              static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.Repository }
+              static var __selections: [ApolloAPI.Selection] { [
+                .field("__typename", String.self),
+                .fragment(GitHubRepositoryIdentity.self),
+              ] }
+              static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
+                GitHubAttentionCandidatesQuery.Data.Search.Node.AsPullRequest.Repository.self,
+                GitHubRepositoryIdentity.self
+              ] }
+
+              var id: GitHubAPI.ID { __data["id"] }
+              var name: String { __data["name"] }
+              var nameWithOwner: String { __data["nameWithOwner"] }
+              var owner: Owner { __data["owner"] }
+
+              struct Fragments: FragmentContainer {
+                let __data: DataDict
+                init(_dataDict: DataDict) { __data = _dataDict }
+
+                var gitHubRepositoryIdentity: GitHubRepositoryIdentity { _toFragment() }
+              }
+
+              typealias Owner = GitHubRepositoryIdentity.Owner
             }
 
             /// Search.Node.AsPullRequest.AssignedActors
@@ -1170,6 +1202,7 @@ extension GitHubAPI {
             typealias RootEntityType = GitHubAttentionCandidatesQuery.Data.Search.Node
             static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.Issue }
             static var __selections: [ApolloAPI.Selection] { [
+              .field("repository", Repository.self),
               .field("body", String.self),
               .field("assignedActors", AssignedActors.self, arguments: ["first": 100]),
               .field("participants", Participants.self, arguments: ["first": 100]),
@@ -1182,6 +1215,7 @@ extension GitHubAPI {
               GitHubIssueSummary.self
             ] }
 
+            var repository: Repository { __data["repository"] }
             var body: String { __data["body"] }
             var assignedActors: AssignedActors { __data["assignedActors"] }
             var participants: Participants { __data["participants"] }
@@ -1201,6 +1235,36 @@ extension GitHubAPI {
               init(_dataDict: DataDict) { __data = _dataDict }
 
               var gitHubIssueSummary: GitHubIssueSummary { _toFragment() }
+            }
+
+            /// Search.Node.AsIssue.Repository
+            nonisolated struct Repository: GitHubAPI.SelectionSet {
+              let __data: DataDict
+              init(_dataDict: DataDict) { __data = _dataDict }
+
+              static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.Repository }
+              static var __selections: [ApolloAPI.Selection] { [
+                .field("__typename", String.self),
+                .fragment(GitHubRepositoryIdentity.self),
+              ] }
+              static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
+                GitHubAttentionCandidatesQuery.Data.Search.Node.AsIssue.Repository.self,
+                GitHubRepositoryIdentity.self
+              ] }
+
+              var id: GitHubAPI.ID { __data["id"] }
+              var name: String { __data["name"] }
+              var nameWithOwner: String { __data["nameWithOwner"] }
+              var owner: Owner { __data["owner"] }
+
+              struct Fragments: FragmentContainer {
+                let __data: DataDict
+                init(_dataDict: DataDict) { __data = _dataDict }
+
+                var gitHubRepositoryIdentity: GitHubRepositoryIdentity { _toFragment() }
+              }
+
+              typealias Owner = GitHubRepositoryIdentity.Owner
             }
 
             /// Search.Node.AsIssue.AssignedActors

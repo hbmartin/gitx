@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "ForgeKit handwritten sources",
-  "minimumLineCoverage": 0.9948,
+  "minimumLineCoverage": 0.995,
   "files": {
     "ForgeKit/Sources/ForgeKit/ForgeAccount.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeAttention.swift": 0.9968,
@@ -17,6 +17,7 @@
     "ForgeKit/Sources/ForgeKit/ForgeMarkdown.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeMarkdownLinkPolicy.swift": 0.9883,
     "ForgeKit/Sources/ForgeKit/ForgeMarkdownSanitizer.swift": 1.0,
+    "ForgeKit/Sources/ForgeKit/ForgeReadModels.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeRefreshPolicy.swift": 0.9927,
     "ForgeKit/Sources/ForgeKit/ForgeRemoteParser.swift": 0.982,
     "ForgeKit/Sources/ForgeKit/ForgeRouting.swift": 0.9849,
@@ -25,6 +26,10 @@
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthentication.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthorization.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubForgeAdapter.swift": 1.0,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLValueMapper.swift": 1.0
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLDocumentMapper.swift": 0.9974,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLTransport.swift": 1.0,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLValueMapper.swift": 1.0,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadAdapter.swift": 0.9869,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadResult.swift": 0.9913
   }
 }

@@ -9,7 +9,7 @@ extension GitHubAPI {
     static let operationName: String = "GitHubRepositoryItemSearch"
     static let operationDocument: ApolloAPI.OperationDocument = .init(
       definition: .init(
-        #"query GitHubRepositoryItemSearch($query: String!, $first: Int!, $after: String) { search(query: $query, type: ISSUE, first: $first, after: $after) { __typename totalCount: issueCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ... on PullRequest { ...GitHubPullRequestSummary } ... on Issue { ...GitHubIssueSummary } } } }"#,
+        #"query GitHubRepositoryItemSearch($query: String!, $first: Int!, $after: String) { search(query: $query, type: ISSUE, first: $first, after: $after) { __typename totalCount: issueCount pageInfo { __typename ...GitHubPageInfo } nodes { __typename ... on PullRequest { repository { __typename ...GitHubRepositoryIdentity } ...GitHubPullRequestSummary } ... on Issue { repository { __typename ...GitHubRepositoryIdentity } ...GitHubIssueSummary } } } }"#,
         fragments: [GitHubActor.self, GitHubIssueSummary.self, GitHubLabel.self, GitHubPageInfo.self, GitHubPullRequestSummary.self, GitHubRepositoryIdentity.self]
       ))
 
@@ -126,6 +126,7 @@ extension GitHubAPI {
             typealias RootEntityType = GitHubRepositoryItemSearchQuery.Data.Search.Node
             static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.PullRequest }
             static var __selections: [ApolloAPI.Selection] { [
+              .field("repository", Repository.self),
               .fragment(GitHubPullRequestSummary.self),
             ] }
             static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
@@ -134,6 +135,7 @@ extension GitHubAPI {
               GitHubPullRequestSummary.self
             ] }
 
+            var repository: Repository { __data["repository"] }
             var id: GitHubAPI.ID { __data["id"] }
             var number: Int { __data["number"] }
             var pullRequestState: GraphQLEnum<GitHubAPI.PullRequestState> { __data["pullRequestState"] }
@@ -161,6 +163,36 @@ extension GitHubAPI {
               var gitHubPullRequestSummary: GitHubPullRequestSummary { _toFragment() }
             }
 
+            /// Search.Node.AsPullRequest.Repository
+            nonisolated struct Repository: GitHubAPI.SelectionSet {
+              let __data: DataDict
+              init(_dataDict: DataDict) { __data = _dataDict }
+
+              static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.Repository }
+              static var __selections: [ApolloAPI.Selection] { [
+                .field("__typename", String.self),
+                .fragment(GitHubRepositoryIdentity.self),
+              ] }
+              static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
+                GitHubRepositoryItemSearchQuery.Data.Search.Node.AsPullRequest.Repository.self,
+                GitHubRepositoryIdentity.self
+              ] }
+
+              var id: GitHubAPI.ID { __data["id"] }
+              var name: String { __data["name"] }
+              var nameWithOwner: String { __data["nameWithOwner"] }
+              var owner: Owner { __data["owner"] }
+
+              struct Fragments: FragmentContainer {
+                let __data: DataDict
+                init(_dataDict: DataDict) { __data = _dataDict }
+
+                var gitHubRepositoryIdentity: GitHubRepositoryIdentity { _toFragment() }
+              }
+
+              typealias Owner = GitHubRepositoryIdentity.Owner
+            }
+
             typealias Author = GitHubPullRequestSummary.Author
 
             typealias HeadRepository = GitHubPullRequestSummary.HeadRepository
@@ -180,6 +212,7 @@ extension GitHubAPI {
             typealias RootEntityType = GitHubRepositoryItemSearchQuery.Data.Search.Node
             static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.Issue }
             static var __selections: [ApolloAPI.Selection] { [
+              .field("repository", Repository.self),
               .fragment(GitHubIssueSummary.self),
             ] }
             static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
@@ -188,6 +221,7 @@ extension GitHubAPI {
               GitHubIssueSummary.self
             ] }
 
+            var repository: Repository { __data["repository"] }
             var id: GitHubAPI.ID { __data["id"] }
             var number: Int { __data["number"] }
             var issueState: GraphQLEnum<GitHubAPI.IssueState> { __data["issueState"] }
@@ -203,6 +237,36 @@ extension GitHubAPI {
               init(_dataDict: DataDict) { __data = _dataDict }
 
               var gitHubIssueSummary: GitHubIssueSummary { _toFragment() }
+            }
+
+            /// Search.Node.AsIssue.Repository
+            nonisolated struct Repository: GitHubAPI.SelectionSet {
+              let __data: DataDict
+              init(_dataDict: DataDict) { __data = _dataDict }
+
+              static var __parentType: any ApolloAPI.ParentType { GitHubAPI.Objects.Repository }
+              static var __selections: [ApolloAPI.Selection] { [
+                .field("__typename", String.self),
+                .fragment(GitHubRepositoryIdentity.self),
+              ] }
+              static var __fulfilledFragments: [any ApolloAPI.SelectionSet.Type] { [
+                GitHubRepositoryItemSearchQuery.Data.Search.Node.AsIssue.Repository.self,
+                GitHubRepositoryIdentity.self
+              ] }
+
+              var id: GitHubAPI.ID { __data["id"] }
+              var name: String { __data["name"] }
+              var nameWithOwner: String { __data["nameWithOwner"] }
+              var owner: Owner { __data["owner"] }
+
+              struct Fragments: FragmentContainer {
+                let __data: DataDict
+                init(_dataDict: DataDict) { __data = _dataDict }
+
+                var gitHubRepositoryIdentity: GitHubRepositoryIdentity { _toFragment() }
+              }
+
+              typealias Owner = GitHubRepositoryIdentity.Owner
             }
 
             typealias Author = GitHubIssueSummary.Author

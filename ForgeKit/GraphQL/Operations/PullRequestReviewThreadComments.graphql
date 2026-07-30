@@ -2,6 +2,11 @@ query GitHubPullRequestReviewThreadComments($id: ID!, $first: Int!, $after: Stri
   node(id: $id) {
     ... on PullRequestReviewThread {
       id
+      pullRequest {
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
       comments(first: $first, after: $after) {
         totalCount
         pageInfo {
