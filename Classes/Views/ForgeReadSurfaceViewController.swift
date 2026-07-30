@@ -1,6 +1,8 @@
 import AppKit
 import ForgeKit
+import GitHubForgeAdapter
 import OSLog // swiftlint:disable:this unused_import
+import UserNotifications
 
 @MainActor
 protocol ForgeReadMarkdownRendering: AnyObject {
@@ -36,6 +38,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     private var listTask: Task<Void, Never>?
     private var detailsTask: Task<Void, Never>?
     private var currentDetailsSnapshot: ForgeReadSurfaceDetailsSnapshot?
+    private var pendingDestination: ForgeDestination?
     private var detailsGeneration: UInt64 = 0
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeReadSurface")
 
@@ -130,6 +133,22 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         listController.setVisibleColumns(columns)
     }
 
+    @discardableResult
+    func open(destination: ForgeDestination) -> Bool {
+        let matchesKind = switch (accumulator.kind, destination) {
+        case (.pullRequests, .pullRequest), (.issues, .issue): true
+        default: false
+        }
+        guard matchesKind else { return false }
+        guard let row = rows.firstIndex(where: { $0.destination == destination }) else {
+            pendingDestination = destination
+            return true
+        }
+        pendingDestination = nil
+        listController.select(row: row)
+        return true
+    }
+
     private func reload(kind: ForgeReadSurfaceKind? = nil, query: ForgeReadSurfaceQuery) {
         listTask?.cancel()
         let request = accumulator.beginReload(kind: kind, query: query)
@@ -195,6 +214,12 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         let presentation = accumulator.presentation(formatDate: Self.dateDescription)
         rows = presentation.rows
         listController.apply(presentation)
+        if let pendingDestination,
+           let row = rows.firstIndex(where: { $0.destination == pendingDestination })
+        {
+            self.pendingDestination = nil
+            listController.select(row: row)
+        }
     }
 
     private func selectRow(_ index: Int) {
@@ -387,6 +412,12 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
             column.isHidden = !effectiveColumns.contains(value)
         }
         tableView.sizeLastColumnToFit()
+    }
+
+    func select(row: Int) {
+        guard presentation.rows.indices.contains(row) else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
     }
 
     func numberOfRows(in _: NSTableView) -> Int {
@@ -621,7 +652,7 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
 }
 
 @MainActor
-private final class ForgeReadInspectorViewController: NSViewController {
+final class ForgeReadInspectorViewController: NSViewController {
     var onLoadMoreTimeline: (() -> Void)?
     var onLoadMoreChecks: (() -> Void)?
 
@@ -1029,3 +1060,1981 @@ private final class ForgeReadSnowLeopardBarView: NSView {
         NSRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: 1).fill()
     }
 }
+
+extension Notification.Name {
+    nonisolated static let forgeAccountsDidChange = Notification.Name("PBForgeAccountsDidChangeNotification")
+    nonisolated static let forgeAttentionInboxDidChange = Notification.Name("PBForgeAttentionInboxDidChangeNotification")
+    nonisolated static let forgeAttentionPreferencesDidChange = Notification.Name(
+        "PBForgeAttentionPreferencesDidChangeNotification"
+    )
+    nonisolated static let repositoryForgeAccountDidChange = Notification.Name(
+        "PBRepositoryForgeAccountDidChangeNotification"
+    )
+    nonisolated static let repositoryAttentionUnseenDidChange = Notification.Name(
+        "PBRepositoryAttentionUnseenDidChangeNotification"
+    )
+    nonisolated static let forgeAttentionAlertAction = Notification.Name(
+        "PBForgeAttentionAlertActionNotification"
+    )
+}
+
+enum RepositoryAttentionNotificationKey {
+    static let count = "count"
+    static let itemID = "itemID"
+    static let action = "action"
+}
+
+@MainActor
+final class ForgeReadNativeMarkdownRenderer: ForgeReadMarkdownRendering {
+    private weak var router: (any ForgeMarkdownNavigationRouting)?
+
+    init(router: any ForgeMarkdownNavigationRouting) {
+        self.router = router
+    }
+
+    func makeView(markdown: String, context: ForgeMarkdownContext) -> NSView {
+        let document = ForgeMarkdownSanitizer().sanitize(markdown, context: context)
+        return ForgeMarkdownNativeView(document: document, navigationRouter: router)
+    }
+}
+
+@MainActor
+final class ForgeReadNativeAvatarRenderer: ForgeReadAvatarRendering {
+    private let owner: ForgeAvatarCacheOwner
+
+    init(owner: ForgeAvatarCacheOwner) {
+        self.owner = owner
+    }
+
+    func makeAvatarView(for actor: ForgeActor, size: NSSize) -> NSView {
+        let view = ForgeAvatarView(
+            frame: NSRect(origin: .zero, size: size),
+            owner: owner
+        )
+        view.configure(displayName: actor.displayName ?? actor.login, avatarURL: actor.avatarURL)
+        return view
+    }
+}
+
+nonisolated enum ForgeAnonymousReadAdapterPool {
+    static let budget = GitHubAnonymousRESTBudget()
+    static let shared = GitHubAnonymousRESTAdapter(budget: budget)
+}
+
+/// Explicit-only anonymous adapter for a single public GitHub.com repository.
+/// The first request is caused by opening the surface; every later request is
+/// an explicit search, filter, pagination, detail selection, or refresh action.
+@MainActor
+final class ForgeGitHubAnonymousReadSurfaceService: ForgeReadSurfaceServing {
+    private let repository: ForgeRepositoryIdentity
+    private let adapter: GitHubAnonymousRESTAdapter
+    private var hasIssuedRequest = false
+
+    init(
+        repository: ForgeRepositoryIdentity,
+        adapter: GitHubAnonymousRESTAdapter = ForgeAnonymousReadAdapterPool.shared
+    ) {
+        self.repository = repository
+        self.adapter = adapter
+    }
+
+    func loadItems(
+        kind: ForgeReadSurfaceKind,
+        query: ForgeReadSurfaceQuery,
+        after cursor: ForgePageCursor?
+    ) async throws -> ForgeReadSurfacePage {
+        let reason = nextExplicitReason()
+        let result: ForgeReadSurfacePage
+        switch kind {
+        case .pullRequests:
+            let response = try await adapter.pullRequests(
+                repository: repository,
+                page: cursor,
+                states: pullRequestStates(query.stateFilter),
+                reason: reason
+            )
+            result = ForgeReadSurfacePage(
+                items: response.value.items.map(ForgeRepositoryItem.pullRequest),
+                nextCursor: response.value.nextCursor,
+                totalCount: response.value.totalCount,
+                fetchedAt: response.fetchedAt,
+                isPartial: true
+            )
+        case .issues:
+            let response = try await adapter.issues(
+                repository: repository,
+                page: cursor,
+                states: issueStates(query.stateFilter),
+                reason: reason
+            )
+            result = ForgeReadSurfacePage(
+                items: response.value.items.map(ForgeRepositoryItem.issue),
+                nextCursor: response.value.nextCursor,
+                totalCount: response.value.totalCount,
+                fetchedAt: response.fetchedAt,
+                isPartial: true
+            )
+        }
+        guard !query.searchText.isEmpty else { return result }
+        let needle = query.searchText.localizedLowercase
+        return ForgeReadSurfacePage(
+            items: result.items.filter { item in
+                let row = ForgeReadSurfaceRow(item: item)
+                return row.title.localizedLowercase.contains(needle) ||
+                    row.number.localizedLowercase.contains(needle) ||
+                    row.author.localizedLowercase.contains(needle)
+            },
+            nextCursor: result.nextCursor,
+            fetchedAt: result.fetchedAt,
+            isPartial: true
+        )
+    }
+
+    func loadDetails(
+        for item: ForgeRepositoryItem,
+        timelineAfter: ForgePageCursor?,
+        checkAfter: ForgePageCursor?
+    ) async throws -> ForgeReadSurfaceDetailsSnapshot {
+        guard item.repository == repository else {
+            throw ForgeGitHubReadSurfaceServiceError.repositoryMismatch
+        }
+        let reason = nextExplicitReason()
+        switch item {
+        case let .pullRequest(summary):
+            let response = try await adapter.pullRequestDetails(
+                repository: repository,
+                number: summary.number,
+                reason: reason
+            )
+            return ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(response.value),
+                fetchedAt: response.fetchedAt,
+                isPartial: true
+            )
+        case let .issue(summary):
+            let response = try await adapter.issueDetails(
+                repository: repository,
+                number: summary.number,
+                reason: reason
+            )
+            return ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(response.value),
+                fetchedAt: response.fetchedAt,
+                isPartial: true
+            )
+        }
+    }
+
+    private func nextExplicitReason() -> ForgeRefreshReason {
+        defer { hasIssuedRequest = true }
+        return hasIssuedRequest ? .manual : .repositoryOpened
+    }
+
+    private func pullRequestStates(_ filter: ForgeReadStateFilter) -> Set<ForgePullRequestState>? {
+        switch filter {
+        case .open: [.open]
+        case .closed: [.closed, .merged]
+        case .all: nil
+        }
+    }
+
+    private func issueStates(_ filter: ForgeReadStateFilter) -> Set<ForgeIssueState>? {
+        switch filter {
+        case .open: [.open]
+        case .closed: [.closed]
+        case .all: nil
+        }
+    }
+}
+
+private nonisolated struct ForgeAttentionNotificationPayload: Codable, Sendable {
+    let itemID: ForgeAttentionItemID
+}
+
+/// The one notification boundary used by every Attention coordinator. It
+/// preserves the app's existing notification delegate through a small
+/// forwarding bridge and registers only the two accepted actions.
+actor ForgeAttentionNotificationDelivery: ForgeAttentionAlertDelivering {
+    static let shared = ForgeAttentionNotificationDelivery()
+
+    fileprivate static let categoryIdentifier = "PBForgeAttention"
+    fileprivate static let openActionIdentifier = "PBForgeAttention.Open"
+    fileprivate static let markSeenActionIdentifier = "PBForgeAttention.MarkSeen"
+    private var isInstalled = false
+
+    func authorizationStatus() async -> ForgeAttentionSystemAuthorization {
+        await installIfNeeded()
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return .authorized
+        case .denied:
+            return .denied
+        case .notDetermined:
+            return .notDetermined
+        @unknown default:
+            return .denied
+        }
+    }
+
+    func requestAuthorization() async -> Bool {
+        await installIfNeeded()
+        do {
+            return try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        } catch {
+            return false
+        }
+    }
+
+    func deliver(_ alert: ForgeAttentionAlert) async {
+        await installIfNeeded()
+        guard let payload = try? JSONEncoder().encode(ForgeAttentionNotificationPayload(itemID: alert.itemID)) else {
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = Self.title(alert.category)
+        content.body = "GitX found a current item that needs your attention."
+        content.sound = .default
+        content.categoryIdentifier = Self.categoryIdentifier
+        content.userInfo = ["payload": payload.base64EncodedString()]
+        let identifier = "forge-attention-\(payload.base64EncodedString())"
+        do {
+            try await UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+            )
+        } catch {
+            // The current-state row remains available even when macOS cannot
+            // accept a notification request.
+        }
+    }
+
+    private func installIfNeeded() async {
+        guard !isInstalled else { return }
+        isInstalled = true
+        let center = UNUserNotificationCenter.current()
+        let actions = [
+            UNNotificationAction(
+                identifier: Self.openActionIdentifier,
+                title: "Open",
+                options: [.foreground]
+            ),
+            UNNotificationAction(
+                identifier: Self.markSeenActionIdentifier,
+                title: "Mark Seen",
+                options: []
+            ),
+        ]
+        let category = UNNotificationCategory(
+            identifier: Self.categoryIdentifier,
+            actions: actions,
+            intentIdentifiers: [],
+            options: []
+        )
+        var categories = await center.notificationCategories()
+        categories.insert(category)
+        center.setNotificationCategories(categories)
+        await MainActor.run {
+            ForgeAttentionNotificationDelegateBridge.shared.install(on: center)
+        }
+    }
+
+    private static func title(_ category: ForgeAttentionAlertCategory) -> String {
+        switch category {
+        case .reviewRequests: "Review Requested"
+        case .mentionsAndReplies: "Mention or Reply"
+        case .assignments: "Assignment"
+        case .failedChecksOnAuthoredPullRequests: "Pull Request Check Failed"
+        }
+    }
+
+    nonisolated static func action(
+        for identifier: String
+    ) -> ForgeAttentionAlertAction? {
+        switch identifier {
+        case openActionIdentifier, UNNotificationDefaultActionIdentifier: .open
+        case markSeenActionIdentifier: .markSeen
+        default: nil
+        }
+    }
+
+    fileprivate nonisolated static func payload(
+        from response: UNNotificationResponse
+    ) -> ForgeAttentionNotificationPayload? {
+        guard response.notification.request.content.categoryIdentifier == categoryIdentifier,
+              let value = response.notification.request.content.userInfo["payload"] as? String,
+              let data = Data(base64Encoded: value)
+        else { return nil }
+        return try? JSONDecoder().decode(ForgeAttentionNotificationPayload.self, from: data)
+    }
+}
+
+@MainActor
+private final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = ForgeAttentionNotificationDelegateBridge()
+
+    // UserNotifications calls these delegate methods outside MainActor. The delegate is
+    // installed once on MainActor before callbacks begin, then is only read afterward.
+    // swift6-safety-justification: The weak reference only preserves that callback chain.
+    private nonisolated(unsafe) weak var previousDelegate: (any UNUserNotificationCenterDelegate)?
+    private var isInstalled = false
+
+    func install(on center: UNUserNotificationCenter) {
+        guard !isInstalled else { return }
+        previousDelegate = center.delegate
+        center.delegate = self
+        isInstalled = true
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+    ) {
+        guard notification.request.content.categoryIdentifier != ForgeAttentionNotificationDelivery.categoryIdentifier else {
+            completionHandler([.banner, .sound])
+            return
+        }
+        guard let previousDelegate else {
+            completionHandler([])
+            return
+        }
+        previousDelegate.userNotificationCenter?(
+            center,
+            willPresent: notification,
+            withCompletionHandler: completionHandler
+        )
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+    ) {
+        if let payload = ForgeAttentionNotificationDelivery.payload(from: response),
+           let action = ForgeAttentionNotificationDelivery.action(for: response.actionIdentifier)
+        {
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: .forgeAttentionAlertAction,
+                    object: nil,
+                    userInfo: [
+                        RepositoryAttentionNotificationKey.itemID: payload.itemID,
+                        RepositoryAttentionNotificationKey.action: action,
+                    ]
+                )
+                completionHandler()
+            }
+            return
+        }
+        guard let previousDelegate else {
+            completionHandler()
+            return
+        }
+        previousDelegate.userNotificationCenter?(
+            center,
+            didReceive: response,
+            withCompletionHandler: completionHandler
+        )
+    }
+}
+
+enum RepositoryAttentionSessionError: Error, LocalizedError {
+    case databaseUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .databaseUnavailable:
+            "Forge data is unavailable for this session. Local Git remains available."
+        }
+    }
+}
+
+@MainActor
+protocol RepositoryAttentionServing: AnyObject {
+    var account: ForgeAccount { get }
+    var repositoryIdentity: ForgeRepositoryIdentity { get }
+    var lastRefreshErrorDescription: String? { get }
+
+    func entries(state: ForgeAttentionViewState) async throws -> [ForgeAttentionInboxEntry]
+    func markOpen(_ itemID: ForgeAttentionItemID) async throws
+    func markUnseen(_ itemID: ForgeAttentionItemID) async throws
+    func markAllSeen(state: ForgeAttentionViewState) async throws
+    func refreshNow() async
+    func makeReadService(for repository: ForgeRepositoryIdentity) throws -> ForgeReadSurfaceServing
+}
+
+/// One repository-window session participates in the account-wide durable
+/// inbox. The scheduler still considers every watched repository for that
+/// account, while this window identifies its repository as active/open.
+@MainActor
+final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
+    private static let logger = Logger(subsystem: "com.gitx.gitx", category: "AttentionSession")
+    private static var sessionsByAccount: [ForgeAccountID: [WeakRepositoryAttentionSession]] = [:]
+
+    let account: ForgeAccount
+    let repositoryIdentity: ForgeRepositoryIdentity
+    private weak var repositoryObject: PBGitRepository?
+    private let services: ForgeApplicationServices
+    private let persistence: ForgeSQLiteAttentionPersistence
+    private let watchedKey: ForgeWatchedRepositoryKey
+    private var coordinator: ForgeAttentionInboxCoordinator
+    private var pollingTask: Task<Void, Never>?
+    private var didStart = false
+    private var didEnrollOpenedRepository = false
+    private(set) var lastRefreshErrorDescription: String?
+    var onOpenAttentionItem: ((ForgeAttentionItemID) -> Void)?
+
+    init(
+        account: ForgeAccount,
+        repositoryIdentity: ForgeRepositoryIdentity,
+        repositoryObject: PBGitRepository,
+        services: ForgeApplicationServices
+    ) throws {
+        guard let database = services.database else {
+            throw RepositoryAttentionSessionError.databaseUnavailable
+        }
+        self.account = account
+        self.repositoryIdentity = repositoryIdentity
+        self.repositoryObject = repositoryObject
+        self.services = services
+        persistence = ForgeSQLiteAttentionPersistence(store: database)
+        watchedKey = try ForgeWatchedRepositoryKey(
+            accountID: account.id,
+            repository: repositoryIdentity
+        )
+        coordinator = try Self.makeCoordinator(
+            account: account,
+            services: services,
+            persistence: persistence
+        )
+        super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(preferencesChanged(_:)),
+            name: .forgeAttentionPreferencesDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(alertAction(_:)),
+            name: .forgeAttentionAlertAction,
+            object: nil
+        )
+    }
+
+    deinit {
+        pollingTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func start() {
+        guard !didStart else { return }
+        didStart = true
+        Self.register(self)
+        beginPollingCycle(shouldEnrollOpenedRepository: !didEnrollOpenedRepository)
+    }
+
+    func stop() {
+        pollingTask?.cancel()
+        pollingTask = nil
+        didStart = false
+        Self.unregister(self)
+    }
+
+    func entries(state: ForgeAttentionViewState) async throws -> [ForgeAttentionInboxEntry] {
+        try await persistence.cachedEntries(
+            query: ForgeAttentionInboxQuery(
+                accountID: account.id,
+                currentRepository: repositoryIdentity,
+                state: state
+            ),
+            at: Date()
+        )
+    }
+
+    func markOpen(_ itemID: ForgeAttentionItemID) async throws {
+        _ = try await persistence.open(itemID, at: Date())
+        try await publishChange()
+    }
+
+    func markUnseen(_ itemID: ForgeAttentionItemID) async throws {
+        _ = try await persistence.markUnseen(itemID, at: Date())
+        try await publishChange()
+    }
+
+    func markAllSeen(state: ForgeAttentionViewState) async throws {
+        let scope: ForgeAttentionScope = state.scope == .all
+            ? .all(accountID: account.id)
+            : .currentRepository(watchedKey)
+        _ = try await persistence.markAllSeen(
+            query: ForgeAttentionQuery(scope: scope, visibility: state.visibility),
+            at: Date()
+        )
+        try await publishChange()
+    }
+
+    func refreshNow() async {
+        do {
+            _ = try await coordinator.refresh(watchedKey)
+            lastRefreshErrorDescription = nil
+            try await publishChange()
+        } catch is CancellationError {
+            return
+        } catch {
+            lastRefreshErrorDescription = error.localizedDescription
+            Self.logger.error("Manual Attention refresh failed type=\(String(describing: type(of: error)), privacy: .public)")
+            NotificationCenter.default.post(name: .forgeAttentionInboxDidChange, object: repositoryObject)
+        }
+    }
+
+    func makeReadService(for repository: ForgeRepositoryIdentity) throws -> ForgeReadSurfaceServing {
+        let adapter = try services.githubReadAdapterFactory.makeAdapter(
+            for: account.currentCredential.reference
+        )
+        return ForgeGitHubReadSurfaceService(repository: repository, adapter: adapter)
+    }
+
+    private static func makeCoordinator(
+        account: ForgeAccount,
+        services: ForgeApplicationServices,
+        persistence: ForgeSQLiteAttentionPersistence
+    ) throws -> ForgeAttentionInboxCoordinator {
+        let adapter = try services.githubReadAdapterFactory.makeAdapter(
+            for: account.currentCredential.reference
+        )
+        return ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: GitHubAttentionSnapshotFetcher(adapter: adapter),
+            alertDelivery: ForgeAttentionNotificationDelivery.shared,
+            attentionPolicy: ApplicationSettings.attentionPolicy,
+            enabledAlertCategories: ApplicationSettings.attentionAlertCategories,
+            pollingPreset: ApplicationSettings.attentionPollingPreset
+        )
+    }
+
+    private func beginPollingCycle(shouldEnrollOpenedRepository: Bool) {
+        pollingTask?.cancel()
+        pollingTask = Task { [weak self] in
+            guard let self else { return }
+            if shouldEnrollOpenedRepository {
+                do {
+                    try await self.enrollWatchIfNeeded()
+                    self.didEnrollOpenedRepository = true
+                    try await self.publishChange()
+                } catch {
+                    self.lastRefreshErrorDescription = error.localizedDescription
+                }
+            }
+            guard ApplicationSettings.attentionPollingPreset != .manual else { return }
+            while !Task.isCancelled {
+                do {
+                    let reconciliation = try await self.coordinator.refreshNextDue(
+                        accountID: self.account.id,
+                        activeOrOpenRepositories: [self.watchedKey],
+                        at: Date()
+                    )
+                    if reconciliation != nil {
+                        self.lastRefreshErrorDescription = nil
+                        try await self.publishChange()
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self.lastRefreshErrorDescription = error.localizedDescription
+                    Self.logger.error(
+                        "Scheduled Attention refresh failed type=\(String(describing: type(of: error)), privacy: .public)"
+                    )
+                    NotificationCenter.default.post(
+                        name: .forgeAttentionInboxDidChange,
+                        object: self.repositoryObject
+                    )
+                }
+                let interval = ApplicationSettings.attentionPollingPreset.activeInterval ?? 60
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(max(interval, 1) * 1_000_000_000))
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    private func enrollWatchIfNeeded() async throws {
+        let watches = try await persistence.watchedRepositories(accountID: account.id)
+        guard !watches.contains(where: { $0.key == watchedKey }) else { return }
+        try await persistence.save(ForgeWatchedRepository(
+            key: watchedKey,
+            addedAt: Date(),
+            source: .repositoryOpened
+        ))
+        Self.logger.notice("Added opened repository to the Attention watch set")
+    }
+
+    private func publishChange() async throws {
+        let state = ForgeAttentionViewState(
+            scope: .all,
+            visibility: .unseenOnly,
+            sortOrder: .newestFirst
+        )
+        let unseen = try await persistence.cachedEntries(
+            query: ForgeAttentionInboxQuery(
+                accountID: account.id,
+                currentRepository: repositoryIdentity,
+                state: state
+            ),
+            at: Date()
+        ).count
+        NotificationCenter.default.post(
+            name: .forgeAttentionInboxDidChange,
+            object: repositoryObject
+        )
+        NotificationCenter.default.post(
+            name: .repositoryAttentionUnseenDidChange,
+            object: repositoryObject,
+            userInfo: [RepositoryAttentionNotificationKey.count: unseen]
+        )
+    }
+
+    @objc private func preferencesChanged(_: Notification) {
+        do {
+            coordinator = try Self.makeCoordinator(
+                account: account,
+                services: services,
+                persistence: persistence
+            )
+            if didStart {
+                beginPollingCycle(shouldEnrollOpenedRepository: !didEnrollOpenedRepository)
+            }
+        } catch {
+            lastRefreshErrorDescription = error.localizedDescription
+        }
+    }
+
+    @objc private func alertAction(_ notification: Notification) {
+        guard let itemID = notification.userInfo?[RepositoryAttentionNotificationKey.itemID]
+            as? ForgeAttentionItemID,
+            itemID.accountID == account.id,
+            Self.alertHandler(for: account.id) === self,
+            let action = notification.userInfo?[RepositoryAttentionNotificationKey.action]
+            as? ForgeAttentionAlertAction
+        else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let destination = try await self.coordinator.handle(
+                    action: action,
+                    itemID: itemID,
+                    at: Date()
+                )
+                try await self.publishChange()
+                if destination != nil {
+                    self.onOpenAttentionItem?(itemID)
+                }
+            } catch {
+                Self.logger.error("Attention alert action failed")
+            }
+        }
+    }
+
+    private static func register(_ session: RepositoryAttentionSession) {
+        var sessions = sessionsByAccount[session.account.id] ?? []
+        sessions.removeAll { $0.value == nil || $0.value === session }
+        sessions.append(WeakRepositoryAttentionSession(session))
+        sessionsByAccount[session.account.id] = sessions
+    }
+
+    private static func unregister(_ session: RepositoryAttentionSession) {
+        var sessions = sessionsByAccount[session.account.id] ?? []
+        sessions.removeAll { $0.value == nil || $0.value === session }
+        sessionsByAccount[session.account.id] = sessions.isEmpty ? nil : sessions
+    }
+
+    private static func alertHandler(for accountID: ForgeAccountID) -> RepositoryAttentionSession? {
+        var sessions = sessionsByAccount[accountID] ?? []
+        sessions.removeAll { $0.value == nil }
+        sessionsByAccount[accountID] = sessions.isEmpty ? nil : sessions
+        return sessions.last?.value
+    }
+}
+
+@MainActor
+private final class WeakRepositoryAttentionSession {
+    weak var value: RepositoryAttentionSession?
+
+    init(_ value: RepositoryAttentionSession) {
+        self.value = value
+    }
+}
+
+@MainActor
+final class ForgeAttentionViewController: NSSplitViewController, NSTableViewDataSource, NSTableViewDelegate {
+    private static let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeAttentionSurface")
+
+    private let session: any RepositoryAttentionServing
+    private let destinationRouter: any ForgeReadDestinationRouting
+    private let tableView = NSTableView()
+    private let statusLabel = NSTextField(wrappingLabelWithString: "Loading Attention…")
+    private let progress = NSProgressIndicator()
+    private let scopePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let visibilityPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let sortPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let kindPopup = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let columnsPopup = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let markUnseenButton = NSButton(title: "Mark Unseen", target: nil, action: nil)
+    private let markAllSeenButton = NSButton(title: "Mark All Seen", target: nil, action: nil)
+    private let inspectorController: ForgeReadInspectorViewController
+    private var state: ForgeAttentionViewState
+    private var entries: [ForgeAttentionInboxEntry] = []
+    private var rows: [ForgeAttentionReadSurfaceRow] = []
+    private var loadTask: Task<Void, Never>?
+    private var detailsTask: Task<Void, Never>?
+    private var currentRoute: ForgeAttentionInspectorRoute?
+    private var currentDetails: ForgeReadSurfaceDetailsSnapshot?
+    private var pendingItemID: ForgeAttentionItemID?
+    private var isRestoringSelection = false
+
+    init(
+        session: any RepositoryAttentionServing,
+        markdownRenderer: any ForgeReadMarkdownRendering,
+        avatarRenderer: any ForgeReadAvatarRendering,
+        destinationRouter: any ForgeReadDestinationRouting,
+        defaultRevision: ForgeRevision
+    ) {
+        self.session = session
+        self.destinationRouter = destinationRouter
+        state = ApplicationSettings.attentionViewState
+        inspectorController = ForgeReadInspectorViewController(
+            markdownRenderer: markdownRenderer,
+            avatarRenderer: avatarRenderer,
+            destinationRouter: destinationRouter,
+            defaultRevision: defaultRevision
+        )
+        super.init(nibName: nil, bundle: nil)
+        configureList()
+        inspectorController.onLoadMoreTimeline = { [weak self] in
+            self?.loadMore(.timeline)
+        }
+        inspectorController.onLoadMoreChecks = { [weak self] in
+            self?.loadMore(.checks)
+        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(inboxChanged(_:)),
+            name: .forgeAttentionInboxDidChange,
+            object: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        loadTask?.cancel()
+        detailsTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        reload()
+    }
+
+    func refresh() {
+        setLoading(true)
+        loadTask?.cancel()
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            await self.session.refreshNow()
+            self.reload()
+        }
+    }
+
+    func open(_ itemID: ForgeAttentionItemID) {
+        pendingItemID = itemID
+        if state.scope != .all || state.visibility != .active {
+            replaceState(scope: .all, visibility: .active)
+        } else {
+            reload()
+        }
+    }
+
+    func numberOfRows(in _: NSTableView) -> Int {
+        rows.count
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        viewFor tableColumn: NSTableColumn?,
+        row: Int
+    ) -> NSView? {
+        guard rows.indices.contains(row), let identifier = tableColumn?.identifier.rawValue else {
+            return nil
+        }
+        let rowValue = rows[row]
+        let value: String = switch identifier {
+        case ForgeAttentionColumn.kind.rawValue:
+            rowValue.isUnseen ? "●  \(rowValue.kindName)" : rowValue.kindName
+        case ForgeAttentionColumn.repository.rawValue: rowValue.repositoryName
+        case ForgeAttentionColumn.number.rawValue: rowValue.readRow.number
+        case ForgeAttentionColumn.title.rawValue: rowValue.readRow.title
+        case ForgeAttentionColumn.author.rawValue: rowValue.readRow.author
+        case ForgeAttentionColumn.updated.rawValue: Self.shortDate(rowValue.readRow.updatedAt)
+        default: ""
+        }
+        let field = NSTextField(labelWithString: value)
+        field.lineBreakMode = identifier == ForgeAttentionColumn.title.rawValue
+            ? .byTruncatingTail
+            : .byTruncatingMiddle
+        field.font = rowValue.isUnseen
+            ? NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+            : NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        field.textColor = identifier == ForgeAttentionColumn.kind.rawValue && rowValue.isUnseen
+            ? .controlAccentColor
+            : .labelColor
+        field.setAccessibilityLabel(rowValue.accessibilityLabel)
+        field.setAccessibilityIdentifier("ForgeAttention.\(identifier).Cell")
+        return field
+    }
+
+    func tableViewSelectionDidChange(_: Notification) {
+        updateActionState()
+        guard !isRestoringSelection else { return }
+        guard rows.indices.contains(tableView.selectedRow) else { return }
+        Self.logger.info("Opening selected Attention item")
+        openAndInspect(rows[tableView.selectedRow])
+    }
+
+    private func configureList() {
+        let listController = NSViewController()
+        let root = NSView()
+        root.setAccessibilityIdentifier("ForgeAttentionSurface")
+
+        let header = ForgeReadSnowLeopardBarView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        let title = NSTextField(labelWithString: "Attention")
+        title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.setAccessibilityIdentifier("ForgeAttentionTitle")
+
+        scopePopup.addItems(withTitles: ["Current Repository", "All Watched Repositories"])
+        scopePopup.selectItem(at: state.scope == .currentRepository ? 0 : 1)
+        scopePopup.target = self
+        scopePopup.action = #selector(scopeChanged(_:))
+        scopePopup.setAccessibilityIdentifier("ForgeAttentionScope")
+        visibilityPopup.addItems(withTitles: ["Unseen", "All Current"])
+        visibilityPopup.selectItem(at: state.visibility == .unseenOnly ? 0 : 1)
+        visibilityPopup.target = self
+        visibilityPopup.action = #selector(visibilityChanged(_:))
+        visibilityPopup.setAccessibilityIdentifier("ForgeAttentionVisibility")
+        sortPopup.addItems(withTitles: ["Newest First", "Oldest First"])
+        sortPopup.selectItem(at: state.sortOrder == .newestFirst ? 0 : 1)
+        sortPopup.target = self
+        sortPopup.action = #selector(sortChanged(_:))
+        sortPopup.setAccessibilityIdentifier("ForgeAttentionSort")
+        configureFilterMenus()
+
+        let filters = NSStackView(views: [scopePopup, visibilityPopup, sortPopup, kindPopup, columnsPopup])
+        filters.orientation = .horizontal
+        filters.alignment = .centerY
+        filters.spacing = 6
+        filters.translatesAutoresizingMaskIntoConstraints = false
+
+        for (column, title, width) in [
+            (ForgeAttentionColumn.kind, "Kind", 130.0),
+            (.repository, "Repository", 155.0),
+            (.number, "#", 55.0),
+            (.title, "Title", 275.0),
+            (.author, "Author", 120.0),
+            (.updated, "Updated", 105.0),
+        ] {
+            let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
+            tableColumn.title = title
+            tableColumn.width = width
+            tableColumn.isHidden = !state.columns.contains(column)
+            tableView.addTableColumn(tableColumn)
+        }
+        tableView.headerView = NSTableHeaderView()
+        tableView.delegate = self
+        tableView.dataSource = self
+        tableView.allowsMultipleSelection = false
+        tableView.usesAlternatingRowBackgroundColors = true
+        tableView.doubleAction = #selector(openSelectedDestination(_:))
+        tableView.target = self
+        tableView.setAccessibilityIdentifier("ForgeAttentionTable")
+        tableView.setAccessibilityLabel("Attention Inbox")
+        let scroll = NSScrollView()
+        scroll.documentView = tableView
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.borderType = .noBorder
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel.alignment = .center
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.setAccessibilityIdentifier("ForgeAttentionStatus")
+
+        progress.style = .spinning
+        progress.controlSize = .small
+        progress.isDisplayedWhenStopped = false
+        progress.translatesAutoresizingMaskIntoConstraints = false
+        progress.setAccessibilityIdentifier("ForgeAttentionProgress")
+        let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refreshClicked(_:)))
+        refreshButton.bezelStyle = .rounded
+        refreshButton.setAccessibilityIdentifier("ForgeAttentionRefresh")
+        markUnseenButton.target = self
+        markUnseenButton.action = #selector(markUnseen(_:))
+        markUnseenButton.bezelStyle = .rounded
+        markUnseenButton.setAccessibilityIdentifier("ForgeAttentionMarkUnseen")
+        markAllSeenButton.target = self
+        markAllSeenButton.action = #selector(markAllSeen(_:))
+        markAllSeenButton.bezelStyle = .rounded
+        markAllSeenButton.setAccessibilityIdentifier("ForgeAttentionMarkAllSeen")
+        let footer = NSStackView(views: [progress, statusLabel, NSView(), refreshButton, markUnseenButton, markAllSeenButton])
+        footer.orientation = .horizontal
+        footer.alignment = .centerY
+        footer.spacing = 8
+        footer.edgeInsets = NSEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
+        footer.translatesAutoresizingMaskIntoConstraints = false
+
+        for child in [header, scroll, footer] {
+            root.addSubview(child)
+        }
+        header.addSubview(title)
+        header.addSubview(filters)
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            header.topAnchor.constraint(equalTo: root.topAnchor),
+            header.heightAnchor.constraint(equalToConstant: 48),
+            title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
+            title.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            filters.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 10),
+            filters.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+            filters.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
+            scroll.bottomAnchor.constraint(equalTo: footer.topAnchor),
+            footer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            footer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            footer.heightAnchor.constraint(greaterThanOrEqualToConstant: 34),
+            progress.widthAnchor.constraint(equalToConstant: 16),
+            progress.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        listController.view = root
+        let listItem = NSSplitViewItem(viewController: listController)
+        listItem.minimumThickness = 450
+        listItem.canCollapse = false
+        addSplitViewItem(listItem)
+        let inspectorItem = NSSplitViewItem(viewController: inspectorController)
+        inspectorItem.minimumThickness = 320
+        inspectorItem.preferredThicknessFraction = 0.38
+        inspectorItem.canCollapse = true
+        addSplitViewItem(inspectorItem)
+        splitView.isVertical = true
+        splitView.dividerStyle = .thin
+        updateActionState()
+    }
+
+    private func configureFilterMenus() {
+        kindPopup.removeAllItems()
+        kindPopup.addItem(withTitle: "Kinds")
+        kindPopup.item(at: 0)?.isEnabled = false
+        for kind in ForgeAttentionKind.allCases {
+            let item = NSMenuItem(
+                title: Self.kindTitle(kind),
+                action: #selector(toggleKind(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = kind.rawValue
+            item.state = state.kinds.contains(kind) ? .on : .off
+            kindPopup.menu?.addItem(item)
+        }
+        kindPopup.setAccessibilityIdentifier("ForgeAttentionKinds")
+
+        columnsPopup.removeAllItems()
+        columnsPopup.addItem(withTitle: "Columns")
+        columnsPopup.item(at: 0)?.isEnabled = false
+        for column in ForgeAttentionColumn.allCases {
+            let item = NSMenuItem(
+                title: Self.columnTitle(column),
+                action: #selector(toggleColumn(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = column.rawValue
+            item.state = state.columns.contains(column) ? .on : .off
+            columnsPopup.menu?.addItem(item)
+        }
+        columnsPopup.setAccessibilityIdentifier("ForgeAttentionColumns")
+    }
+
+    private func reload() {
+        Self.logger.info("Reloading Attention rows")
+        setLoading(true)
+        loadTask?.cancel()
+        let requestedState = state
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let loaded = try await self.session.entries(state: requestedState)
+                guard requestedState == self.state else { return }
+                self.entries = loaded
+                Self.logger.info("Loaded \(loaded.count) Attention entries")
+                let presentation = ForgeAttentionReadSurfacePresenter.present(
+                    entries: loaded,
+                    query: ForgeAttentionInboxQuery(
+                        accountID: self.session.account.id,
+                        currentRepository: self.session.repositoryIdentity,
+                        state: requestedState
+                    )
+                )
+                self.rows = presentation.rows
+                self.applyColumns(presentation.visibleColumns)
+                self.tableView.reloadData()
+                if let pendingItemID = self.pendingItemID,
+                   let row = self.rows.firstIndex(where: { $0.itemID == pendingItemID })
+                {
+                    self.pendingItemID = nil
+                    self.tableView.selectRowIndexes(
+                        IndexSet(integer: row),
+                        byExtendingSelection: false
+                    )
+                } else if let selectedItemID = self.currentRoute?.itemID,
+                          let row = self.rows.firstIndex(where: { $0.itemID == selectedItemID })
+                {
+                    self.isRestoringSelection = true
+                    self.tableView.selectRowIndexes(
+                        IndexSet(integer: row),
+                        byExtendingSelection: false
+                    )
+                    self.isRestoringSelection = false
+                }
+                if let error = self.session.lastRefreshErrorDescription {
+                    self.statusLabel.stringValue = self.rows.isEmpty
+                        ? "Offline or unavailable. \(error)"
+                        : "Showing cached Attention. \(error)"
+                    self.statusLabel.isHidden = false
+                } else {
+                    self.statusLabel.stringValue = presentation.statusMessage ?? ""
+                    self.statusLabel.isHidden = presentation.statusMessage == nil
+                }
+            } catch {
+                Self.logger.error("Attention rows failed to load: \(error.localizedDescription, privacy: .public)")
+                self.rows = []
+                self.entries = []
+                self.tableView.reloadData()
+                self.statusLabel.stringValue = "Couldn’t load Attention. \(error.localizedDescription)"
+                self.statusLabel.isHidden = false
+            }
+            self.setLoading(false)
+            self.updateActionState()
+        }
+    }
+
+    private func openAndInspect(_ row: ForgeAttentionReadSurfaceRow) {
+        guard let route = ForgeAttentionReadSurfacePresenter.inspectorRoute(
+            for: row.itemID,
+            in: entries
+        ) else { return }
+        currentRoute = route
+        currentDetails = nil
+        inspectorController.showLoading(for: row.readRow)
+        detailsTask?.cancel()
+        detailsTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                Self.logger.info("Marking selected Attention item open")
+                try await self.session.markOpen(route.itemID)
+                Self.logger.info("Loading selected Attention inspector")
+                let service = try self.session.makeReadService(for: route.repository)
+                let snapshot = try await service.loadDetails(
+                    for: route.item,
+                    timelineAfter: nil,
+                    checkAfter: nil
+                )
+                guard self.currentRoute == route else { return }
+                self.currentDetails = snapshot
+                Self.logger.info("Installed selected Attention inspector")
+                self.inspectorController.apply(ForgeReadInspectorPresenter.present(
+                    snapshot,
+                    formatDate: Self.dateDescription
+                ))
+                self.reload()
+            } catch is CancellationError {
+                return
+            } catch {
+                guard self.currentRoute == route else { return }
+                self.inspectorController.showError(error.localizedDescription, item: route.item)
+            }
+        }
+    }
+
+    private func loadMore(_ continuation: ForgeReadDetailsContinuation) {
+        guard let route = currentRoute, let currentDetails else { return }
+        let presentation = ForgeReadInspectorPresenter.present(
+            currentDetails,
+            formatDate: Self.dateDescription
+        )
+        let timeline = continuation == .timeline ? presentation.nextTimelineCursor : nil
+        let checks = continuation == .checks ? presentation.nextCheckCursor : nil
+        guard timeline != nil || checks != nil else { return }
+        inspectorController.showContinuationLoading(continuation)
+        detailsTask?.cancel()
+        detailsTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let service = try self.session.makeReadService(for: route.repository)
+                let next = try await service.loadDetails(
+                    for: route.item,
+                    timelineAfter: timeline,
+                    checkAfter: checks
+                )
+                let merged = try ForgeReadDetailsMerger.merge(
+                    next,
+                    into: currentDetails,
+                    continuation: continuation
+                )
+                guard self.currentRoute == route else { return }
+                self.currentDetails = merged
+                self.inspectorController.apply(ForgeReadInspectorPresenter.present(
+                    merged,
+                    formatDate: Self.dateDescription
+                ))
+            } catch is CancellationError {
+                return
+            } catch {
+                self.inspectorController.showContinuationError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func replaceState(
+        scope: ForgeAttentionViewScope? = nil,
+        visibility: ForgeAttentionVisibility? = nil,
+        sortOrder: ForgeAttentionSortOrder? = nil,
+        kinds: Set<ForgeAttentionKind>? = nil,
+        columns: Set<ForgeAttentionColumn>? = nil
+    ) {
+        state = ForgeAttentionViewState(
+            scope: scope ?? state.scope,
+            visibility: visibility ?? state.visibility,
+            sortOrder: sortOrder ?? state.sortOrder,
+            kinds: kinds ?? state.kinds,
+            columns: columns ?? state.columns
+        )
+        ApplicationSettings.attentionViewState = state
+        configureFilterMenus()
+        reload()
+    }
+
+    private static func dateDescription(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func applyColumns(_ columns: Set<ForgeAttentionColumn>) {
+        for tableColumn in tableView.tableColumns {
+            guard let column = ForgeAttentionColumn(rawValue: tableColumn.identifier.rawValue) else { continue }
+            tableColumn.isHidden = !columns.contains(column)
+        }
+    }
+
+    private func setLoading(_ loading: Bool) {
+        if loading {
+            progress.startAnimation(nil)
+        } else {
+            progress.stopAnimation(nil)
+        }
+    }
+
+    private func updateActionState() {
+        let selected = rows.indices.contains(tableView.selectedRow)
+        markUnseenButton.isEnabled = selected
+        markAllSeenButton.isEnabled = !rows.isEmpty
+    }
+
+    @objc private func inboxChanged(_: Notification) {
+        reload()
+    }
+
+    @objc private func refreshClicked(_: Any?) {
+        refresh()
+    }
+
+    @objc private func scopeChanged(_ sender: NSPopUpButton) {
+        replaceState(scope: sender.indexOfSelectedItem == 0 ? .currentRepository : .all)
+    }
+
+    @objc private func visibilityChanged(_ sender: NSPopUpButton) {
+        replaceState(visibility: sender.indexOfSelectedItem == 0 ? .unseenOnly : .active)
+    }
+
+    @objc private func sortChanged(_ sender: NSPopUpButton) {
+        replaceState(sortOrder: sender.indexOfSelectedItem == 0 ? .newestFirst : .oldestFirst)
+    }
+
+    @objc private func toggleKind(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let kind = ForgeAttentionKind(rawValue: rawValue)
+        else { return }
+        var updated = state.kinds
+        if updated.remove(kind) == nil {
+            updated.insert(kind)
+        }
+        replaceState(kinds: updated)
+    }
+
+    @objc private func toggleColumn(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let column = ForgeAttentionColumn(rawValue: rawValue)
+        else { return }
+        var updated = state.columns
+        if updated.remove(column) == nil {
+            updated.insert(column)
+        }
+        if updated.isEmpty {
+            updated.insert(.title)
+        }
+        replaceState(columns: updated)
+    }
+
+    @objc private func markUnseen(_: Any?) {
+        guard rows.indices.contains(tableView.selectedRow) else { return }
+        let itemID = rows[tableView.selectedRow].itemID
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.session.markUnseen(itemID)
+                self.reload()
+            } catch {
+                self.statusLabel.stringValue = error.localizedDescription
+                self.statusLabel.isHidden = false
+            }
+        }
+    }
+
+    @objc private func markAllSeen(_: Any?) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.session.markAllSeen(state: self.state)
+                self.reload()
+            } catch {
+                self.statusLabel.stringValue = error.localizedDescription
+                self.statusLabel.isHidden = false
+            }
+        }
+    }
+
+    @objc private func openSelectedDestination(_: Any?) {
+        guard rows.indices.contains(tableView.selectedRow) else { return }
+        destinationRouter.openNative(destination: rows[tableView.selectedRow].readRow.destination)
+    }
+
+    private static func shortDate(_ date: Date) -> String {
+        DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .none)
+    }
+
+    private static func kindTitle(_ kind: ForgeAttentionKind) -> String {
+        switch kind {
+        case .reviewRequest: "Review Requests"
+        case .mention: "Mentions"
+        case .reply: "Replies"
+        case .assignment: "Assignments"
+        case .failedCheck: "Failed Checks"
+        }
+    }
+
+    private static func columnTitle(_ column: ForgeAttentionColumn) -> String {
+        switch column {
+        case .kind: "Kind"
+        case .repository: "Repository"
+        case .number: "Number"
+        case .title: "Title"
+        case .author: "Author"
+        case .updated: "Updated"
+        }
+    }
+}
+
+// swiftformat:disable indent
+#if GITX_APP_TARGET
+@MainActor
+private final class RepositoryForgeNativeDestinationOpener: ForgeNativeDestinationOpening {
+    weak var owner: RepositoryForgeCollaborationController?
+
+    func open(_ destination: ForgeDestination) -> ForgeNativeDestinationOpenResult {
+        owner?.openNative(destination) == true ? .opened : .unavailable
+    }
+}
+
+/// The PBViewController bridge that makes the provider-neutral Forge read
+/// surfaces a first-class repository-window destination. The controller owns
+/// account choice for this window only; exact-account persistence remains in
+/// the stable Repository Forge Binding.
+@MainActor
+@objc(PBRepositoryForgeCollaborationController)
+final class RepositoryForgeCollaborationController: PBViewController {
+    private static let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeCollaboration")
+
+    private var forgeCoordinator: RepositoryForgeCoordinator!
+    private var settings: RepositoryUISettings!
+    private var composition: ApplicationComposition {
+        ApplicationComposition.shared
+    }
+
+    private let providerTitleLabel = NSTextField(labelWithString: "Forge")
+    private let accountPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let accountsButton = NSButton(title: "Accounts…", target: nil, action: nil)
+    private let publicButton = NSButton(title: "Continue Publicly", target: nil, action: nil)
+    private let statusLabel = NSTextField(labelWithString: "Resolving GitHub repository…")
+    private let contentContainer = NSView()
+    private var preparationTask: Task<Void, Never>?
+    private var services: ForgeApplicationServices?
+    private var accounts: [ForgeAccount] = []
+    private var binding: ForgeRepositoryBinding?
+    private var explicitAccountID: ForgeAccountID?
+    private var explicitlyContinuesPublicly = false
+    private var accessResolution: ForgeCollaborationAccessResolution?
+    private var activeSurface: ForgeCollaborationSurface = .pullRequests
+    private var readController: ForgeReadSurfaceViewController?
+    private var attentionController: ForgeAttentionViewController?
+    private var attentionSession: RepositoryAttentionSession?
+    private var nativeOpener: RepositoryForgeNativeDestinationOpener?
+    private var destinationRouter: ForgeCentralDestinationRouter?
+    private var repositoryFacts: ForgeRepositoryFacts?
+    private weak var mountedController: NSViewController?
+    private var isPrepared = false
+
+    @objc(initWithRepository:superController:)
+    override init?(repository: PBGitRepository, superController controller: PBGitWindowController?) {
+        super.init(repository: repository, superController: controller)
+        forgeCoordinator = RepositoryForgeCoordinator(repository: repository)
+        settings = composition.repositoryViewState(for: repository)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(accountsDidChange(_:)),
+            name: .forgeAccountsDidChange,
+            object: nil
+        )
+    }
+
+    override init(nibName nibNameOrNil: NSNib.Name?, bundle nibBundleOrNil: Bundle?) {
+        super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("RepositoryForgeCollaborationController must be initialized with a repository")
+    }
+
+    isolated deinit {
+        preparationTask?.cancel()
+        attentionSession?.stop()
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func loadView() {
+        let root = NSView()
+        root.setAccessibilityIdentifier("RepositoryForgeCollaboration")
+        let accountBar = ForgeReadSnowLeopardBarView()
+        accountBar.translatesAutoresizingMaskIntoConstraints = false
+        providerTitleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        providerTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel.lineBreakMode = .byTruncatingMiddle
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.setAccessibilityIdentifier("ForgeCollaborationAccountStatus")
+
+        accountPopup.target = self
+        accountPopup.action = #selector(accountChanged(_:))
+        accountPopup.translatesAutoresizingMaskIntoConstraints = false
+        accountPopup.setAccessibilityIdentifier("ForgeCollaborationAccount")
+        accountPopup.setAccessibilityLabel("GitHub account for this repository")
+
+        publicButton.target = self
+        publicButton.action = #selector(continuePublicly(_:))
+        publicButton.bezelStyle = .rounded
+        publicButton.translatesAutoresizingMaskIntoConstraints = false
+        publicButton.setAccessibilityIdentifier("ForgeCollaborationContinuePublicly")
+
+        accountsButton.target = self
+        accountsButton.action = #selector(openAccountsPreferences(_:))
+        accountsButton.bezelStyle = .rounded
+        accountsButton.translatesAutoresizingMaskIntoConstraints = false
+        accountsButton.setAccessibilityIdentifier("ForgeCollaborationAccountsPreferences")
+
+        contentContainer.translatesAutoresizingMaskIntoConstraints = false
+        contentContainer.setAccessibilityIdentifier("ForgeCollaborationContent")
+        for child in [accountBar, contentContainer] {
+            root.addSubview(child)
+        }
+        let controls = NSStackView(views: [accountPopup, accountsButton, publicButton])
+        controls.orientation = .horizontal
+        controls.alignment = .centerY
+        controls.spacing = 8
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        for child in [providerTitleLabel, statusLabel, controls] {
+            accountBar.addSubview(child)
+        }
+        NSLayoutConstraint.activate([
+            accountBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            accountBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            accountBar.topAnchor.constraint(equalTo: root.topAnchor),
+            accountBar.heightAnchor.constraint(equalToConstant: 38),
+            providerTitleLabel.leadingAnchor.constraint(equalTo: accountBar.leadingAnchor, constant: 10),
+            providerTitleLabel.centerYAnchor.constraint(equalTo: accountBar.centerYAnchor),
+            statusLabel.leadingAnchor.constraint(equalTo: providerTitleLabel.trailingAnchor, constant: 10),
+            statusLabel.centerYAnchor.constraint(equalTo: accountBar.centerYAnchor),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: controls.leadingAnchor, constant: -8),
+            accountPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            controls.trailingAnchor.constraint(equalTo: accountBar.trailingAnchor, constant: -8),
+            controls.centerYAnchor.constraint(equalTo: accountBar.centerYAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            contentContainer.topAnchor.constraint(equalTo: accountBar.bottomAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+        ])
+        view = root
+        renderGateway(
+            title: "Loading GitHub Collaboration…",
+            message: "GitX is resolving this repository’s exact GitHub account and local cache."
+        )
+        updateAccountBar()
+    }
+
+    override func updateView() {
+        prepare()
+        show(activeSurface)
+    }
+
+    override func firstResponder() -> NSResponder? {
+        accountPopup.isHidden ? view : accountPopup
+    }
+
+    override func refresh(_ sender: Any?) {
+        switch activeSurface {
+        case .pullRequests, .issues:
+            readController?.refresh()
+        case .attention:
+            attentionController?.refresh()
+        }
+    }
+
+    override func closeView() {
+        preparationTask?.cancel()
+        attentionSession?.stop()
+        super.closeView()
+    }
+
+    var currentAccountLogin: String? {
+        if case let .authenticated(account) = accessResolution {
+            return account.login
+        }
+        return nil
+    }
+
+    var includesAttention: Bool {
+        if case .authenticated = accessResolution {
+            return attentionSession != nil
+        }
+        return false
+    }
+
+    var sidebarRepositories: [RepositoryForgeSidebarRepositoryPresentation] {
+        guard let binding else { return [] }
+        let fork: Bool?
+        let parent: ForgeRepositoryIdentity?
+        if case let .available(relationship) = repositoryFacts?.forkRelationship {
+            switch relationship {
+            case .standalone:
+                fork = false
+                parent = nil
+            case let .fork(repository):
+                fork = true
+                parent = repository
+            }
+        } else {
+            fork = nil
+            parent = nil
+        }
+        return RepositoryForgeSidebarPresenter.repositories(
+            binding: binding,
+            candidates: forgeCoordinator.sidebarCandidates(),
+            accountLogin: currentAccountLogin,
+            primaryIsFork: fork,
+            parentRepository: parent
+        )
+    }
+
+    func prepare() {
+        guard !isPrepared else { return }
+        isPrepared = true
+        reloadAccess(resetPublicChoice: false)
+    }
+
+    func repositoryBindingDidChange() {
+        isPrepared = true
+        explicitAccountID = nil
+        explicitlyContinuesPublicly = false
+        reloadAccess(resetPublicChoice: true)
+    }
+
+    func show(_ surface: ForgeCollaborationSurface) {
+        activeSurface = surface
+        guard isViewLoaded else { return }
+        renderActiveSurface()
+    }
+
+    @discardableResult
+    func openNative(_ destination: ForgeDestination) -> Bool {
+        guard destination.repository == binding?.primaryRepository else { return false }
+        switch destination {
+        case .pullRequest:
+            show(.pullRequests)
+            windowController?.changeContentController(self)
+            _ = readController?.open(destination: destination)
+            return true
+        case .issue:
+            show(.issues)
+            windowController?.changeContentController(self)
+            _ = readController?.open(destination: destination)
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func reloadAccess(resetPublicChoice: Bool) {
+        preparationTask?.cancel()
+        attentionSession?.stop()
+        attentionSession = nil
+        attentionController = nil
+        readController = nil
+        destinationRouter = nil
+        nativeOpener = nil
+        repositoryFacts = nil
+        if resetPublicChoice {
+            explicitlyContinuesPublicly = false
+        }
+        let resolution = forgeCoordinator.resolveBinding()
+        binding = resolution.binding
+        guard let binding else {
+            services = nil
+            accounts = []
+            accessResolution = nil
+            updateAccountBar()
+            if isViewLoaded {
+                let message = resolution.kind == .requiresChoice
+                    ? "Choose a Primary Repository in the GitHub sidebar group to continue."
+                    : "Add a GitHub remote to use native Pull Requests and Issues."
+                renderGateway(title: "GitHub Repository Required", message: message)
+            }
+            publishAccessChange()
+            return
+        }
+        accessResolution = nil
+        updateAccountBar()
+        if isViewLoaded {
+            renderGateway(
+                title: "Loading GitHub Collaboration…",
+                message: "GitX is loading exact-account Credentials without exposing secret material."
+            )
+        }
+        preparationTask = Task { [weak self, composition] in
+            do {
+                let services = try await composition.forgeServices.services()
+                let accounts = try await services.accountStore.accounts()
+                guard let self, !Task.isCancelled else { return }
+                self.services = services
+                self.accounts = accounts
+                self.applyAccess(binding: binding)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self else { return }
+                self.services = nil
+                self.accounts = []
+                self.accessResolution = ForgeCollaborationAccessPolicy.resolve(
+                    binding: binding,
+                    availableAccounts: [],
+                    explicitAccountID: self.explicitAccountID,
+                    explicitlyContinuesPublicly: self.explicitlyContinuesPublicly
+                )
+                self.updateAccountBar(error: error.localizedDescription)
+                self.renderActiveSurface()
+                self.publishAccessChange()
+            }
+        }
+    }
+
+    private func applyAccess(binding: ForgeRepositoryBinding) {
+        let resolution = ForgeCollaborationAccessPolicy.resolve(
+            binding: binding,
+            availableAccounts: accounts,
+            explicitAccountID: explicitAccountID,
+            explicitlyContinuesPublicly: explicitlyContinuesPublicly
+        )
+        accessResolution = resolution
+        do {
+            switch resolution {
+            case let .authenticated(account):
+                try installAuthenticated(account: account, binding: binding)
+            case .publicAccess:
+                installPublic(binding: binding)
+            case .requiresExplicitChoice, .browserOnly:
+                break
+            }
+        } catch {
+            Self.logger.error("Could not install GitHub collaboration session")
+            accessResolution = .requiresExplicitChoice(
+                accounts: accounts.filter { $0.id.forge == binding.primaryRepository.forge },
+                preferredAccountUnavailable: binding.preferredAccount != nil
+            )
+            updateAccountBar(error: error.localizedDescription)
+            renderActiveSurface()
+            publishAccessChange()
+            return
+        }
+        updateAccountBar()
+        renderActiveSurface()
+        publishAccessChange()
+        loadRepositoryFacts(binding: binding, resolution: resolution)
+    }
+
+    private func installAuthenticated(account: ForgeAccount, binding: ForgeRepositoryBinding) throws {
+        guard let services, let repository else { return }
+        let adapter = try services.githubReadAdapterFactory.makeAdapter(
+            for: account.currentCredential.reference
+        )
+        installReadSurface(
+            binding: binding,
+            service: ForgeGitHubReadSurfaceService(
+                repository: binding.primaryRepository,
+                adapter: adapter
+            ),
+            avatarOwner: .account(account.id)
+        )
+        let session = try RepositoryAttentionSession(
+            account: account,
+            repositoryIdentity: binding.primaryRepository,
+            repositoryObject: repository,
+            services: services
+        )
+        session.onOpenAttentionItem = { [weak self] itemID in
+            self?.openAttention(itemID)
+        }
+        attentionSession = session
+        guard let destinationRouter else { return }
+        attentionController = ForgeAttentionViewController(
+            session: session,
+            markdownRenderer: ForgeReadNativeMarkdownRenderer(router: destinationRouter),
+            avatarRenderer: ForgeReadNativeAvatarRenderer(owner: .account(account.id)),
+            destinationRouter: destinationRouter,
+            defaultRevision: defaultRevision()
+        )
+        session.start()
+        Self.logger.notice("Started exact-account GitHub collaboration session")
+    }
+
+    private func installPublic(binding: ForgeRepositoryBinding) {
+        installReadSurface(
+            binding: binding,
+            service: ForgeGitHubAnonymousReadSurfaceService(repository: binding.primaryRepository),
+            avatarOwner: .anonymous
+        )
+        attentionSession = nil
+        attentionController = nil
+        Self.logger.notice("Started explicit anonymous GitHub read session")
+    }
+
+    private func openAttention(_ itemID: ForgeAttentionItemID) {
+        guard itemID.accountID == attentionSession?.account.id else { return }
+        show(.attention)
+        windowController?.changeContentController(self)
+        attentionController?.open(itemID)
+    }
+
+    private func installReadSurface(
+        binding: ForgeRepositoryBinding,
+        service: any ForgeReadSurfaceServing,
+        avatarOwner: ForgeAvatarCacheOwner
+    ) {
+        let opener = RepositoryForgeNativeDestinationOpener()
+        let router = ForgeCentralDestinationRouter(
+            repository: binding.primaryRepository,
+            trustedOrigins: composition.forgeExternalLinkPreferences,
+            nativeOpener: opener,
+            externalOpener: WorkspaceForgeExternalURLOpener(),
+            confirmations: AppKitForgeLinkConfirmationPresenter(
+                windowProvider: { [weak self] in self?.windowController?.window }
+            )
+        )
+        opener.owner = self
+        nativeOpener = opener
+        destinationRouter = router
+        let kind: ForgeReadSurfaceKind = activeSurface == .issues ? .issues : .pullRequests
+        readController = ForgeReadSurfaceViewController(
+            kind: kind,
+            defaultRevision: defaultRevision(),
+            service: service,
+            markdownRenderer: ForgeReadNativeMarkdownRenderer(router: router),
+            avatarRenderer: ForgeReadNativeAvatarRenderer(owner: avatarOwner),
+            destinationRouter: router
+        )
+    }
+
+    private func loadRepositoryFacts(
+        binding: ForgeRepositoryBinding,
+        resolution: ForgeCollaborationAccessResolution
+    ) {
+        Task { [weak self, services] in
+            do {
+                let facts: ForgeRepositoryFacts
+                switch resolution {
+                case let .authenticated(account):
+                    guard let services else { return }
+                    let adapter = try services.githubReadAdapterFactory.makeAdapter(
+                        for: account.currentCredential.reference
+                    )
+                    facts = try await adapter.repositoryFacts(repository: binding.primaryRepository).value
+                case .publicAccess:
+                    facts = try await ForgeAnonymousReadAdapterPool.shared.repositoryFacts(
+                        repository: binding.primaryRepository,
+                        reason: .repositoryOpened
+                    ).value
+                case .requiresExplicitChoice, .browserOnly:
+                    return
+                }
+                guard let self, self.binding == binding else { return }
+                self.repositoryFacts = facts
+                self.publishAccessChange()
+            } catch {
+                Self.logger.info("Repository relationship metadata remains unavailable")
+            }
+        }
+    }
+
+    private func renderActiveSurface() {
+        guard isViewLoaded else { return }
+        switch accessResolution {
+        case .authenticated:
+            if activeSurface == .attention, let attentionController {
+                mount(attentionController)
+            } else if let readController {
+                readController.show(kind: activeSurface == .issues ? .issues : .pullRequests)
+                mount(readController)
+            }
+        case .publicAccess:
+            if activeSurface == .attention {
+                renderGateway(
+                    title: "Attention Requires a GitHub Account",
+                    message: "Choose an exact GitHub account above. Anonymous mode has no background polling, alerts, or mutations."
+                )
+            } else if let readController {
+                readController.show(kind: activeSurface == .issues ? .issues : .pullRequests)
+                mount(readController)
+            }
+        case let .requiresExplicitChoice(_, preferredUnavailable):
+            renderGateway(
+                title: preferredUnavailable ? "Preferred GitHub Account Unavailable" : "Choose a GitHub Account",
+                message: "Choose the exact account for this repository, or explicitly Continue Publicly for public read-only access."
+            )
+        case .browserOnly:
+            let stack = renderGateway(
+                title: "Open on the Git Host",
+                message: "Native collaboration reads are limited to GitHub.com. This repository remains available through validated browser links."
+            )
+            let button = NSButton(
+                title: "Open Repository in Browser",
+                target: self,
+                action: #selector(openBoundRepositoryInBrowser(_:))
+            )
+            button.bezelStyle = .rounded
+            button.setAccessibilityIdentifier("ForgeCollaborationOpenRepositoryInBrowser")
+            stack.addArrangedSubview(button)
+        case nil:
+            renderGateway(
+                title: "Loading GitHub Collaboration…",
+                message: "GitX is resolving the stable repository binding and exact account."
+            )
+        }
+    }
+
+    private func mount(_ controller: NSViewController) {
+        for subview in contentContainer.subviews {
+            subview.removeFromSuperview()
+        }
+        if mountedController !== controller {
+            mountedController?.removeFromParent()
+            addChild(controller)
+            mountedController = controller
+        }
+        controller.view.frame = contentContainer.bounds
+        controller.view.autoresizingMask = [.width, .height]
+        contentContainer.addSubview(controller.view)
+    }
+
+    @discardableResult
+    private func renderGateway(title: String, message: String) -> NSStackView {
+        guard isViewLoaded else { return NSStackView() }
+        for subview in contentContainer.subviews {
+            subview.removeFromSuperview()
+        }
+        let heading = NSTextField(labelWithString: title)
+        heading.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
+        heading.alignment = .center
+        let detail = NSTextField(wrappingLabelWithString: message)
+        detail.alignment = .center
+        detail.textColor = .secondaryLabelColor
+        detail.maximumNumberOfLines = 4
+        let stack = NSStackView(views: [heading, detail])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setAccessibilityIdentifier("ForgeCollaborationGateway")
+        contentContainer.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: contentContainer.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: contentContainer.centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: contentContainer.widthAnchor, constant: -80),
+        ])
+        return stack
+    }
+
+    private func updateAccountBar(error: String? = nil) {
+        guard isViewLoaded else { return }
+        let matching = matchingAccounts()
+        accountPopup.removeAllItems()
+        accountPopup.addItems(withTitles: matching.map(\.login))
+        for (index, account) in matching.enumerated() {
+            accountPopup.item(at: index)?.representedObject = account.id.value
+        }
+        if case let .authenticated(account) = accessResolution,
+           let index = matching.firstIndex(where: { $0.id == account.id })
+        {
+            accountPopup.selectItem(at: index)
+        }
+        let github = binding.map { ForgeCollaborationAccessPolicy.isGitHubDotCom($0.primaryRepository.forge) } == true
+        providerTitleLabel.stringValue = binding.map {
+            Self.providerName($0.primaryRepository.forge.kind)
+        } ?? "Forge"
+        accountPopup.isHidden = !github || matching.isEmpty
+        accountPopup.isEnabled = github && !matching.isEmpty
+        accountsButton.isHidden = !github
+        accountsButton.isEnabled = github
+        publicButton.isHidden = !github || accessResolution == .publicAccess
+        publicButton.isEnabled = github
+        if let error {
+            statusLabel.stringValue = "Forge data unavailable — \(error)"
+        } else {
+            statusLabel.stringValue = switch accessResolution {
+            case let .authenticated(account): "Using @\(account.login)"
+            case .publicAccess: "Public read-only — no polling or mutations"
+            case let .requiresExplicitChoice(_, preferredUnavailable):
+                preferredUnavailable ? "Preferred account is unavailable" : "Account choice required"
+            case .browserOnly: "Browser links only"
+            case nil: "Resolving repository access…"
+            }
+        }
+    }
+
+    private func defaultRevision() -> ForgeRevision {
+        if let branch = repository?.headRef()?.ref(), branch.isBranch,
+           let name = try? ForgeRefName(branch.shortName())
+        {
+            return .branch(name)
+        }
+        if let name = try? ForgeRefName("main") {
+            return .branch(name)
+        }
+        preconditionFailure("The static default branch name must remain valid")
+    }
+
+    private func matchingAccounts() -> [ForgeAccount] {
+        guard let binding else { return [] }
+        return accounts
+            .filter { $0.id.forge == binding.primaryRepository.forge }
+            .sorted { lhs, rhs in
+                if lhs.login != rhs.login {
+                    return lhs.login.localizedStandardCompare(rhs.login) == .orderedAscending
+                }
+                return lhs.id.value < rhs.id.value
+            }
+    }
+
+    private static func providerName(_ kind: ForgeKind) -> String {
+        switch kind {
+        case .github: "GitHub"
+        case .gitLab: "GitLab"
+        case .bitbucket: "Bitbucket"
+        }
+    }
+
+    private func publishAccessChange() {
+        NotificationCenter.default.post(
+            name: .repositoryForgeAccountDidChange,
+            object: repository
+        )
+    }
+
+    @objc private func accountChanged(_ sender: NSPopUpButton) {
+        guard let binding,
+              accounts.indices.contains(sender.indexOfSelectedItem)
+        else { return }
+        let matching = matchingAccounts()
+        guard matching.indices.contains(sender.indexOfSelectedItem) else { return }
+        let account = matching[sender.indexOfSelectedItem]
+        do {
+            let updated = try ForgeRepositoryBinding(
+                localRemoteName: binding.localRemoteName,
+                primaryRepository: binding.primaryRepository,
+                preferredAccount: account.id
+            )
+            settings.forgeRepositoryBinding = updated
+            explicitAccountID = account.id
+            explicitlyContinuesPublicly = false
+            self.binding = updated
+            applyAccess(binding: updated)
+        } catch {
+            windowController?.showErrorSheet(error)
+        }
+    }
+
+    @objc private func continuePublicly(_: Any?) {
+        explicitAccountID = nil
+        explicitlyContinuesPublicly = true
+        guard let binding else { return }
+        applyAccess(binding: binding)
+    }
+
+    @objc private func openAccountsPreferences(_: Any?) {
+        if !NSApp.sendAction(NSSelectorFromString("openPreferencesWindow:"), to: nil, from: self) {
+            NSSound.beep()
+        }
+    }
+
+    @objc private func openBoundRepositoryInBrowser(_: Any?) {
+        guard case let .route(route) = forgeCoordinator.resolve(.repository) else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.open(route.browserURL)
+    }
+
+    @objc private func accountsDidChange(_: Notification) {
+        reloadAccess(resetPublicChoice: true)
+    }
+}
+#endif
+// swiftformat:enable indent

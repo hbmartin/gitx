@@ -1,9 +1,44 @@
 import AppKit
+import ForgeKit
 import GitXCore
 import OSLog // swiftlint:disable:this unused_import
 
 private let sidebarCellIdentifier = NSUserInterfaceItemIdentifier("PBSidebarCellIdentifier")
 private let branchesHeaderCellIdentifier = NSUserInterfaceItemIdentifier("PBBranchesHeaderCellIdentifier")
+private let forgeAttentionBadgeIdentifier = NSUserInterfaceItemIdentifier("PBForgeAttentionBadgeIdentifier")
+
+private enum RepositoryForgeSidebarDestination: Equatable {
+    case surface(ForgeCollaborationSurface)
+    case chooseBinding
+}
+
+private final nonisolated class RepositoryForgeSourceViewItem: PBSourceViewItem {
+    let destination: RepositoryForgeSidebarDestination?
+    private let itemIcon: NSImage?
+    var accessibilityLabel: String
+
+    nonisolated init(
+        title: String,
+        destination: RepositoryForgeSidebarDestination? = nil,
+        symbolName: String,
+        accessibilityLabel: String
+    ) {
+        self.destination = destination
+        itemIcon = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel)
+        self.accessibilityLabel = accessibilityLabel
+        super.init(title: title, revSpecifier: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("RepositoryForgeSourceViewItem does not support coding")
+    }
+
+    override nonisolated var icon: NSImage? {
+        itemIcon
+    }
+}
+
 /// Owns the repository source-list wiring while delegating sorting and filtering decisions to value types.
 @objc(PBGitSidebarController)
 open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate { // swiftlint:disable:this type_body_length
@@ -29,6 +64,11 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     @objc private dynamic var others: PBSourceViewItem?
     @objc private dynamic var submodules: PBSourceViewItem?
     @objc private dynamic var stashes: PBSourceViewItem?
+    @objc private dynamic var forgeGroup: PBSourceViewItem?
+    private var forgeRepositoryItems: [RepositoryForgeSourceViewItem] = []
+    private var forgeSurfaceItems: [ForgeCollaborationSurface: RepositoryForgeSourceViewItem] = [:]
+    private var collaborationController: RepositoryForgeCollaborationController?
+    private var unseenAttentionCount = 0
     @objc private dynamic var branchPresentation: BranchSidebarPresentation?
     @objc private dynamic var lastKnownHeadRef: PBGitRevSpecifier?
 
@@ -67,6 +107,13 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     private func finishAwakingFromNib() {
         window?.contentView = view
         sourceView?.setAccessibilityIdentifier("RepositorySidebar")
+        if let repository, let windowController {
+            collaborationController = RepositoryForgeCollaborationController(
+                repository: repository,
+                superController: windowController
+            )
+            collaborationController?.prepare()
+        }
         populateList()
 
         guard let repository else { return }
@@ -105,9 +152,22 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
             name: .branchSidebarSettingsDidChange,
             object: nil
         )
+        center.addObserver(
+            self,
+            selector: #selector(forgeAccessDidChange(_:)),
+            name: .repositoryForgeAccountDidChange,
+            object: repository
+        )
+        center.addObserver(
+            self,
+            selector: #selector(attentionUnseenDidChange(_:)),
+            name: .repositoryAttentionUnseenDidChange,
+            object: repository
+        )
     }
 
-    deinit {
+    isolated deinit {
+        collaborationController?.closeView()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -171,14 +231,23 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @objc dynamic func reloadSidebarPresentation() {
+        let selectedForgeSurface = selectedForgeSurface()
         let viewedRevision = repository?.currentBranch
         populateList()
+        if restoreForgeSelection(selectedForgeSurface) {
+            return
+        }
         if let viewedRevision, let item = item(for: viewedRevision) {
             expandItemAndParents(item)
             select(item)
         } else {
             selectCurrentBranch()
         }
+    }
+
+    @objc(showForgeAttention:)
+    dynamic func showForgeAttention(_ sender: Any?) {
+        showForgeSurface(.attention)
     }
 
     @objc dynamic func selectedItem() -> PBSourceViewItem? {
@@ -262,6 +331,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
     @objc dynamic func reloadSidebarAfterReferencesChange() {
         guard let repository else { return }
+        let selectedForgeSurface = selectedForgeSurface()
         var viewedRevision = repository.currentBranch
         let newHead = repository.headRef()
         let followHead = HistoryRefreshSelectionPolicy.shouldFollowCheckedOutBranch(
@@ -275,7 +345,10 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
 
         populateList()
-        if let viewedRevision, let item = item(for: viewedRevision) {
+        if !restoreForgeSelection(selectedForgeSurface),
+           let viewedRevision,
+           let item = item(for: viewedRevision)
+        {
             expandItemAndParents(item)
             select(item)
         }
@@ -356,6 +429,142 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
     }
 
+    private func selectedForgeSurface() -> ForgeCollaborationSurface? {
+        guard let item = selectedItem() as? RepositoryForgeSourceViewItem,
+              case let .surface(surface) = item.destination
+        else { return nil }
+        return surface
+    }
+
+    @discardableResult
+    private func restoreForgeSelection(_ surface: ForgeCollaborationSurface?) -> Bool {
+        guard let surface, let item = forgeSurfaceItems[surface] else { return false }
+        expandItemAndParents(item)
+        select(item)
+        return true
+    }
+
+    private func forgeGroupTitle() -> String {
+        guard let repository else { return "Forge" }
+        return RepositoryForgeCoordinator(repository: repository).resolveBinding().providerName ?? "Forge"
+    }
+
+    private func populateForgeGroup(_ group: PBSourceViewItem) {
+        guard let repository else { return }
+        let coordinator = RepositoryForgeCoordinator(repository: repository)
+        let resolution = coordinator.resolveBinding()
+        guard let binding = resolution.binding else {
+            if resolution.kind == .requiresChoice {
+                let choice = RepositoryForgeSourceViewItem(
+                    title: "Choose Primary Repository…",
+                    destination: .chooseBinding,
+                    symbolName: "point.3.connected.trianglepath.dotted",
+                    accessibilityLabel: "Choose Primary Forge Repository"
+                )
+                group.addChild(choice)
+                forgeRepositoryItems = [choice]
+            }
+            return
+        }
+
+        var presentations = collaborationController?.sidebarRepositories ?? []
+        if presentations.isEmpty {
+            presentations = RepositoryForgeSidebarPresenter.repositories(
+                binding: binding,
+                candidates: coordinator.sidebarCandidates(),
+                accountLogin: collaborationController?.currentAccountLogin
+            )
+        }
+        for presentation in presentations {
+            let repositoryItem = RepositoryForgeSourceViewItem(
+                title: presentation.detailText,
+                symbolName: presentation.isPrimary ? "externaldrive.connected.to.line.below" : "network",
+                accessibilityLabel: "\(presentation.repositoryName), \(presentation.relationships.map(\.rawValue).joined(separator: ", "))"
+            )
+            group.addChild(repositoryItem)
+            forgeRepositoryItems.append(repositoryItem)
+            guard presentation.isPrimary else { continue }
+            let surfaces: [ForgeCollaborationSurface] = collaborationController?.includesAttention == true
+                ? [.pullRequests, .issues, .attention]
+                : [.pullRequests, .issues]
+            for surface in surfaces {
+                let presentation = surface == .attention
+                    ? RepositoryAttentionUnseenPresenter.present(count: unseenAttentionCount)
+                    : nil
+                let item = RepositoryForgeSourceViewItem(
+                    title: surface.displayName,
+                    destination: .surface(surface),
+                    symbolName: Self.forgeSymbol(surface),
+                    accessibilityLabel: presentation?.sidebarAccessibilityLabel ?? surface.displayName
+                )
+                repositoryItem.addChild(item)
+                forgeSurfaceItems[surface] = item
+            }
+        }
+    }
+
+    private static func forgeSymbol(_ surface: ForgeCollaborationSurface) -> String {
+        switch surface {
+        case .pullRequests: "arrow.triangle.pull"
+        case .issues: "exclamationmark.circle"
+        case .attention: "bell"
+        }
+    }
+
+    private func showForgeSurface(_ surface: ForgeCollaborationSurface) {
+        guard let collaborationController else { return }
+        collaborationController.show(surface)
+        windowController?.changeContentController(collaborationController)
+        if let item = forgeSurfaceItems[surface] {
+            expandItemAndParents(item)
+            select(item)
+        }
+    }
+
+    private func chooseForgeBinding() {
+        guard let repository else { return }
+        let coordinator = RepositoryForgeCoordinator(repository: repository)
+        let resolution = coordinator.resolveBinding()
+        guard resolution.kind == .requiresChoice else { return }
+        let presenter = AppKitRepositoryForgeLinkAlertPresenter(
+            windowProvider: { [weak self] in self?.windowController?.window },
+            errorPresentation: { [weak self] error in self?.windowController?.showErrorSheet(error) }
+        )
+        presenter.chooseBinding(from: resolution.candidates) { [weak self] candidate in
+            guard let self, let candidate else { return }
+            do {
+                _ = try coordinator.select(candidate: candidate)
+                self.collaborationController?.repositoryBindingDidChange()
+                self.populateList()
+            } catch {
+                self.windowController?.showErrorSheet(error)
+            }
+        }
+    }
+
+    @objc private func forgeAccessDidChange(_: Notification) {
+        let selectedDestination = (selectedItem() as? RepositoryForgeSourceViewItem)?.destination
+        populateList()
+        if case let .surface(surface) = selectedDestination,
+           let item = forgeSurfaceItems[surface]
+        {
+            expandItemAndParents(item)
+            select(item)
+        }
+    }
+
+    @objc private func attentionUnseenDidChange(_ notification: Notification) {
+        unseenAttentionCount = max(
+            0,
+            notification.userInfo?[RepositoryAttentionNotificationKey.count] as? Int ?? 0
+        )
+        guard let item = forgeSurfaceItems[.attention] else { return }
+        item.accessibilityLabel = RepositoryAttentionUnseenPresenter.present(
+            count: unseenAttentionCount
+        ).sidebarAccessibilityLabel
+        sourceView?.reloadItem(item)
+    }
+
     @objc private dynamic func populateList() {
         guard let repository else { return }
         if branchPresentation == nil {
@@ -372,12 +581,17 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         let stashes = PBSourceViewItem.groupItem(withTitle: "Stashes")
         let submodules = PBSourceViewItem.groupItem(withTitle: "Submodules")
         let others = PBSourceViewItem.groupItem(withTitle: "Other")
+        let forgeGroup = PBSourceViewItem.groupItem(withTitle: forgeGroupTitle())
         self.branches = branches
         self.remotes = remotes
         self.tags = tags
         self.stashes = stashes
         self.submodules = submodules
         self.others = others
+        self.forgeGroup = forgeGroup
+        forgeRepositoryItems = []
+        forgeSurfaceItems = [:]
+        populateForgeGroup(forgeGroup)
 
         for stash in repository.stashes {
             stashes.addChild(PBSourceViewGitStashItem(stash: stash))
@@ -395,6 +609,9 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
         let settings = RepositoryUISettings(repository: repository)
         mutableItems.add(project)
+        if !forgeRepositoryItems.isEmpty {
+            mutableItems.add(forgeGroup)
+        }
         mutableItems.add(branches)
         if settings.isSidebarGroupVisible("Remotes") {
             mutableItems.add(remotes)
@@ -414,6 +631,7 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
         sourceView?.reloadData()
         sourceView?.expandItem(project)
+        sourceView?.expandItem(forgeGroup, expandChildren: true)
         sourceView?.expandItem(branches, expandChildren: true)
         sourceView?.expandItem(remotes)
         sourceView?.expandItem(stashes)
@@ -424,7 +642,16 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
 
 public extension PBGitSidebarController {
     @objc dynamic func outlineViewSelectionDidChange(_ notification: Notification) {
-        if let item = selectedItem(), let revision = item.revSpecifier {
+        if let forgeItem = selectedItem() as? RepositoryForgeSourceViewItem,
+           let destination = forgeItem.destination
+        {
+            switch destination {
+            case let .surface(surface):
+                showForgeSurface(surface)
+            case .chooseBinding:
+                chooseForgeBinding()
+            }
+        } else if let item = selectedItem(), let revision = item.revSpecifier {
             if repository?.currentBranch?.isEqual(revision) != true {
                 repository?.currentBranch = revision
             }
@@ -481,7 +708,46 @@ public extension PBGitSidebarController {
         cell.textField?.stringValue = item.title
         cell.imageView?.image = item.icon
         cell.isCheckedOut = item.revSpecifier?.isEqual(repository?.headRef()) == true
+        configureForgeCell(cell, item: item)
         return cell
+    }
+
+    private func configureForgeCell(_ cell: PBSidebarTableViewCell, item: PBSourceViewItem) {
+        let forgeItem = item as? RepositoryForgeSourceViewItem
+        cell.setAccessibilityIdentifier(forgeItem == nil ? nil : "RepositoryForgeSidebarItem")
+        cell.setAccessibilityLabel(forgeItem?.accessibilityLabel)
+        var badge = cell.subviews.first {
+            $0.identifier == forgeAttentionBadgeIdentifier
+        } as? NSTextField
+        if badge == nil {
+            let field = NSTextField(labelWithString: "")
+            field.identifier = forgeAttentionBadgeIdentifier
+            field.alignment = .center
+            field.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+            field.textColor = .white
+            field.backgroundColor = .systemRed
+            field.drawsBackground = true
+            field.isBezeled = false
+            field.wantsLayer = true
+            field.layer?.cornerRadius = 7
+            field.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(field)
+            NSLayoutConstraint.activate([
+                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -5),
+                field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                field.heightAnchor.constraint(equalToConstant: 15),
+                field.widthAnchor.constraint(greaterThanOrEqualToConstant: 18),
+            ])
+            badge = field
+        }
+        guard forgeItem?.destination == .surface(.attention) else {
+            badge?.isHidden = true
+            return
+        }
+        let presentation = RepositoryAttentionUnseenPresenter.present(count: unseenAttentionCount)
+        badge?.stringValue = presentation.sidebarBadgeText ?? ""
+        badge?.isHidden = presentation.sidebarBadgeText == nil
+        badge?.setAccessibilityLabel(presentation.sidebarAccessibilityLabel)
     }
 
     private func makeBranchesHeader(for outlineView: NSOutlineView) -> NSTableCellView {
@@ -540,7 +806,10 @@ public extension PBGitSidebarController {
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        !((item as? PBSourceViewItem)?.isGroupItem ?? false)
+        if let forgeItem = item as? RepositoryForgeSourceViewItem {
+            return forgeItem.destination != nil
+        }
+        return !((item as? PBSourceViewItem)?.isGroupItem ?? false)
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
@@ -583,7 +852,17 @@ public extension PBGitSidebarController {
     @objc(visibleChildrenForItem:)
     dynamic func visibleChildren(for item: PBSourceViewItem) -> [PBSourceViewItem] {
         let children = item.sortedChildren
-        return item === branches ? branchPresentation?.sortedBranchItems(children) ?? children : children
+        if item === branches {
+            return branchPresentation?.sortedBranchItems(children) ?? children
+        }
+        if item === forgeGroup {
+            return forgeRepositoryItems
+        }
+        if forgeRepositoryItems.contains(where: { $0 === item }) {
+            let order: [ForgeCollaborationSurface] = [.pullRequests, .issues, .attention]
+            return order.compactMap { forgeSurfaceItems[$0] }.filter { $0.parent === item }
+        }
+        return children
     }
 }
 

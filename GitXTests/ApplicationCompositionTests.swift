@@ -140,10 +140,14 @@ final class ApplicationCompositionTests: XCTestCase {
     func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {
         XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .balanced)
         XCTAssertTrue(PBApplicationSettings.attentionAlertCategories.isEmpty)
+        XCTAssertTrue(PBApplicationSettings.attentionIncludesFailedChecksOnAuthoredPullRequests)
+        XCTAssertFalse(PBApplicationSettings.attentionIncludesFailedChecksAwaitingReview)
         XCTAssertEqual(PBApplicationSettings.attentionViewState, .defaultValue)
 
         PBApplicationSettings.attentionPollingPreset = .conservative
         PBApplicationSettings.attentionAlertCategories = [.assignments, .mentionsAndReplies]
+        PBApplicationSettings.attentionIncludesFailedChecksOnAuthoredPullRequests = false
+        PBApplicationSettings.attentionIncludesFailedChecksAwaitingReview = true
         let state = ForgeAttentionViewState(
             scope: .all,
             visibility: .active,
@@ -160,6 +164,8 @@ final class ApplicationCompositionTests: XCTestCase {
         )
         XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .conservative)
         XCTAssertEqual(PBApplicationSettings.attentionAlertCategories, [.assignments, .mentionsAndReplies])
+        XCTAssertFalse(PBApplicationSettings.attentionPolicy.includesFailedChecksOnAuthoredPullRequests)
+        XCTAssertTrue(PBApplicationSettings.attentionPolicy.includesFailedChecksAwaitingReview)
         XCTAssertEqual(PBApplicationSettings.attentionViewState, state)
 
         defaults.set("future-preset", forKey: "PBForgeAttentionPollingPreset")

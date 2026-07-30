@@ -1,6 +1,43 @@
 import ForgeKit
 import Foundation
 
+struct RepositoryAttentionUnseenPresentation: Equatable, Sendable {
+    let count: Int
+    let badgeText: String?
+    let toolbarLabel: String
+    let toolbarToolTip: String
+    let toolbarAccessibilityLabel: String
+    let sidebarBadgeText: String?
+    let sidebarAccessibilityLabel: String
+}
+
+/// One decision seam feeds both the repository toolbar and sidebar badges so
+/// their unseen counts and accessibility descriptions cannot drift apart.
+enum RepositoryAttentionUnseenPresenter {
+    static func present(count: Int) -> RepositoryAttentionUnseenPresentation {
+        let normalizedCount = max(0, count)
+        let badge: String? = switch normalizedCount {
+        case 0: nil
+        case 1 ... 99: String(normalizedCount)
+        default: "99+"
+        }
+        let countDescription = switch normalizedCount {
+        case 0: "No unseen Attention items"
+        case 1: "1 unseen Attention item"
+        default: "\(normalizedCount) unseen Attention items"
+        }
+        return RepositoryAttentionUnseenPresentation(
+            count: normalizedCount,
+            badgeText: badge,
+            toolbarLabel: normalizedCount == 0 ? "Attention" : "Attention (\(badge ?? ""))",
+            toolbarToolTip: "Show Attention Inbox — \(countDescription)",
+            toolbarAccessibilityLabel: "Attention Inbox, \(countDescription)",
+            sidebarBadgeText: badge,
+            sidebarAccessibilityLabel: "Attention, \(countDescription)"
+        )
+    }
+}
+
 enum ForgeReadSurfaceKind: String, CaseIterable, Sendable {
     case pullRequests
     case issues
@@ -17,6 +54,188 @@ enum ForgeReadSurfaceKind: String, CaseIterable, Sendable {
         case .pullRequests: "No pull requests match this view."
         case .issues: "No issues match this view."
         }
+    }
+}
+
+enum ForgeCollaborationSurface: String, CaseIterable, Sendable {
+    case pullRequests
+    case issues
+    case attention
+
+    var displayName: String {
+        switch self {
+        case .pullRequests: "Pull Requests"
+        case .issues: "Issues"
+        case .attention: "Attention"
+        }
+    }
+}
+
+enum ForgeCollaborationAccessResolution: Equatable, Sendable {
+    case authenticated(ForgeAccount)
+    case requiresExplicitChoice(accounts: [ForgeAccount], preferredAccountUnavailable: Bool)
+    case publicAccess
+    case browserOnly
+}
+
+/// Resolves one exact persisted Account or an explicit user choice. It never
+/// silently falls back to another Credential or from authenticated state to
+/// the public partition.
+enum ForgeCollaborationAccessPolicy {
+    static func resolve(
+        binding: ForgeRepositoryBinding,
+        availableAccounts: [ForgeAccount],
+        explicitAccountID: ForgeAccountID? = nil,
+        explicitlyContinuesPublicly: Bool = false
+    ) -> ForgeCollaborationAccessResolution {
+        guard isGitHubDotCom(binding.primaryRepository.forge) else {
+            return .browserOnly
+        }
+        let matchingAccounts = availableAccounts
+            .filter { $0.id.forge == binding.primaryRepository.forge }
+            .sorted { lhs, rhs in
+                if lhs.login != rhs.login {
+                    return lhs.login.localizedStandardCompare(rhs.login) == .orderedAscending
+                }
+                return lhs.id.value < rhs.id.value
+            }
+        if let explicitAccountID,
+           let account = matchingAccounts.first(where: { $0.id == explicitAccountID })
+        {
+            return .authenticated(account)
+        }
+        if explicitlyContinuesPublicly {
+            return .publicAccess
+        }
+        if let preferredAccount = binding.preferredAccount {
+            if let account = matchingAccounts.first(where: { $0.id == preferredAccount }) {
+                return .authenticated(account)
+            }
+            return .requiresExplicitChoice(
+                accounts: matchingAccounts,
+                preferredAccountUnavailable: true
+            )
+        }
+        return .requiresExplicitChoice(
+            accounts: matchingAccounts,
+            preferredAccountUnavailable: false
+        )
+    }
+
+    static func isGitHubDotCom(_ forge: ForgeIdentity) -> Bool {
+        guard forge.kind == .github else { return false }
+        let url = forge.origin.url
+        return url.scheme?.lowercased() == "https" &&
+            url.host?.lowercased() == "github.com" &&
+            url.user == nil &&
+            url.password == nil &&
+            url.port == nil &&
+            (url.path.isEmpty || url.path == "/") &&
+            url.query == nil &&
+            url.fragment == nil
+    }
+}
+
+enum RepositoryForgeSidebarRelationship: String, Equatable, Sendable {
+    case personal = "Personal"
+    case organization = "Organization"
+    case fork = "Fork"
+    case parent = "Parent"
+    case upstream = "Upstream"
+    case primary = "Primary"
+    case other = "Related"
+}
+
+struct RepositoryForgeSidebarRepositoryPresentation: Equatable, Sendable {
+    let providerName: String
+    let repositoryName: String
+    let remoteName: String
+    let relationships: [RepositoryForgeSidebarRelationship]
+    let isPrimary: Bool
+
+    var detailText: String {
+        let relationship = relationships.map(\.rawValue).joined(separator: ", ")
+        return "\(repositoryName) — \(relationship) (\(remoteName))"
+    }
+}
+
+enum RepositoryForgeSidebarPresenter {
+    static func repositories(
+        binding: ForgeRepositoryBinding,
+        candidates: [ForgeRepositoryCandidate],
+        accountLogin: String?,
+        primaryIsFork: Bool? = nil,
+        parentRepository: ForgeRepositoryIdentity? = nil
+    ) -> [RepositoryForgeSidebarRepositoryPresentation] {
+        let candidatesByIdentity = Dictionary(grouping: candidates, by: \.repository)
+        var identities = Set(candidates.map(\.repository))
+        identities.insert(binding.primaryRepository)
+        if let parentRepository {
+            identities.insert(parentRepository)
+        }
+        return identities.map { repository in
+            let matches = candidatesByIdentity[repository] ?? []
+            let preferredCandidate = matches.first(where: {
+                $0.remoteName == binding.localRemoteName
+            }) ?? matches.first
+            let remoteName = preferredCandidate?.remoteName ?? binding.localRemoteName
+            let isPrimary = repository == binding.primaryRepository
+            var relationships: [RepositoryForgeSidebarRelationship] = []
+            if isPrimary {
+                relationships.append(.primary)
+                if primaryIsFork == true {
+                    relationships.append(.fork)
+                }
+            }
+            if repository == parentRepository {
+                relationships.append(.parent)
+            }
+            if matches.contains(where: {
+                $0.relationship == .upstream || $0.remoteName.caseInsensitiveCompare("upstream") == .orderedSame
+            }) {
+                relationships.append(.upstream)
+            }
+            if isPrimary, let accountLogin {
+                relationships.append(
+                    repository.owner.caseInsensitiveCompare(accountLogin) == .orderedSame
+                        ? .personal
+                        : .organization
+                )
+            }
+            if relationships.isEmpty {
+                relationships.append(.other)
+            }
+            return RepositoryForgeSidebarRepositoryPresentation(
+                providerName: providerName(repository.forge.kind),
+                repositoryName: "\(repository.owner)/\(repository.name)",
+                remoteName: remoteName,
+                relationships: unique(relationships),
+                isPrimary: isPrimary
+            )
+        }.sorted { lhs, rhs in
+            if lhs.isPrimary != rhs.isPrimary {
+                return lhs.isPrimary
+            }
+            if lhs.providerName != rhs.providerName {
+                return lhs.providerName < rhs.providerName
+            }
+            return lhs.repositoryName.localizedStandardCompare(rhs.repositoryName) == .orderedAscending
+        }
+    }
+
+    private static func providerName(_ kind: ForgeKind) -> String {
+        switch kind {
+        case .github: "GitHub"
+        case .gitLab: "GitLab"
+        case .bitbucket: "Bitbucket"
+        }
+    }
+
+    private static func unique(
+        _ values: [RepositoryForgeSidebarRelationship]
+    ) -> [RepositoryForgeSidebarRelationship] {
+        var seen: Set<RepositoryForgeSidebarRelationship> = []
+        return values.filter { seen.insert($0).inserted }
     }
 }
 

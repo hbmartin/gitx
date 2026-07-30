@@ -4,43 +4,6 @@ import AppKit
 // swiftlint:disable:next unused_import
 import OSLog
 
-struct RepositoryAttentionUnseenPresentation: Equatable, Sendable {
-    let count: Int
-    let badgeText: String?
-    let toolbarLabel: String
-    let toolbarToolTip: String
-    let toolbarAccessibilityLabel: String
-    let sidebarBadgeText: String?
-    let sidebarAccessibilityLabel: String
-}
-
-/// One decision seam feeds both the repository toolbar and sidebar badges so
-/// their unseen counts and accessibility descriptions cannot drift apart.
-enum RepositoryAttentionUnseenPresenter {
-    static func present(count: Int) -> RepositoryAttentionUnseenPresentation {
-        let normalizedCount = max(0, count)
-        let badge = switch normalizedCount {
-        case 0: nil
-        case 1 ... 99: String(normalizedCount)
-        default: "99+"
-        }
-        let countDescription = switch normalizedCount {
-        case 0: "No unseen Attention items"
-        case 1: "1 unseen Attention item"
-        default: "\(normalizedCount) unseen Attention items"
-        }
-        return RepositoryAttentionUnseenPresentation(
-            count: normalizedCount,
-            badgeText: badge,
-            toolbarLabel: normalizedCount == 0 ? "Attention" : "Attention (\(badge ?? ""))",
-            toolbarToolTip: "Show Attention Inbox — \(countDescription)",
-            toolbarAccessibilityLabel: "Attention Inbox, \(countDescription)",
-            sidebarBadgeText: badge,
-            sidebarAccessibilityLabel: "Attention, \(countDescription)"
-        )
-    }
-}
-
 enum RepositoryForgeLinkRevision: Equatable {
     case branch(String)
     case commit(String)
@@ -228,6 +191,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         static let createTag = NSToolbarItem.Identifier("GitX.Toolbar.CreateTag")
         static let jump = NSToolbarItem.Identifier("GitX.Toolbar.Jump")
         static let actions = NSToolbarItem.Identifier("GitX.Toolbar.Actions")
+        static let attention = NSToolbarItem.Identifier("GitX.Toolbar.Attention")
     }
 
     private struct StatusViews {
@@ -238,6 +202,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private weak var windowController: PBGitWindowController?
     private var toolbar: NSToolbar?
     private var statusViews: StatusViews?
+    private var attentionItem: NSToolbarItem?
+    private var attentionBadge: NSTextField?
+    private var unseenAttentionCount = 0
     private var currentStatus = ""
     private var currentBusy = false
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryToolbar")
@@ -246,6 +213,16 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     init(windowController: PBGitWindowController) {
         self.windowController = windowController
         super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(attentionUnseenDidChange(_:)),
+            name: .repositoryAttentionUnseenDidChange,
+            object: windowController.repository
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     @objc func install() {
@@ -305,6 +282,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             Item.commit,
             .flexibleSpace,
             Item.actions,
+            Item.attention,
             Item.addRemote,
             Item.fetch,
             Item.pull,
@@ -335,6 +313,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             Item.createTag,
             Item.jump,
             Item.actions,
+            Item.attention,
             .space,
             .flexibleSpace,
         ]
@@ -353,6 +332,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         }
         if itemIdentifier == Item.viewRemote {
             return viewRemoteItem(identifier: itemIdentifier)
+        }
+        if itemIdentifier == Item.attention {
+            return makeAttentionItem(identifier: itemIdentifier, isActualInsertion: flag)
         }
         let descriptor = descriptor(for: itemIdentifier)
         guard let descriptor else { return nil }
@@ -425,6 +407,82 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         menu.delegate = windowController?.sidebarViewController
         item.menu = menu
         return item
+    }
+
+    private func makeAttentionItem(
+        identifier: NSToolbarItem.Identifier,
+        isActualInsertion: Bool
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        let presentation = RepositoryAttentionUnseenPresenter.present(count: unseenAttentionCount)
+        item.label = presentation.toolbarLabel
+        item.paletteLabel = "Attention Inbox"
+        item.toolTip = presentation.toolbarToolTip
+
+        let button = NSButton(
+            image: ToolbarIconFactory.image(
+                symbol: "bell",
+                topColor: NSColor(calibratedRed: 0.98, green: 0.72, blue: 0.26, alpha: 1),
+                bottomColor: NSColor(calibratedRed: 0.72, green: 0.32, blue: 0.06, alpha: 1)
+            ),
+            target: windowController?.sidebarViewController,
+            action: NSSelectorFromString("showForgeAttention:")
+        )
+        button.isBordered = false
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setAccessibilityIdentifier("GitX.Toolbar.Attention")
+        button.setAccessibilityLabel(presentation.toolbarAccessibilityLabel)
+
+        let badge = NSTextField(labelWithString: presentation.badgeText ?? "")
+        badge.alignment = .center
+        badge.font = NSFont.systemFont(ofSize: 9, weight: .bold)
+        badge.textColor = .white
+        badge.backgroundColor = .systemRed
+        badge.drawsBackground = true
+        badge.isBezeled = false
+        badge.wantsLayer = true
+        badge.layer?.cornerRadius = 7
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.isHidden = presentation.badgeText == nil
+        badge.setAccessibilityIdentifier("GitX.Toolbar.Attention.Badge")
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 38, height: 30))
+        container.addSubview(button)
+        container.addSubview(badge)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            button.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            button.widthAnchor.constraint(equalToConstant: 30),
+            button.heightAnchor.constraint(equalToConstant: 30),
+            badge.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            badge.topAnchor.constraint(equalTo: container.topAnchor),
+            badge.heightAnchor.constraint(equalToConstant: 14),
+            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 16),
+        ])
+        item.view = container
+        if isActualInsertion {
+            attentionItem = item
+            attentionBadge = badge
+        }
+        return item
+    }
+
+    @objc private func attentionUnseenDidChange(_ notification: Notification) {
+        guard let repository = windowController?.repository,
+              let sourceRepository = notification.object as? PBGitRepository,
+              sourceRepository === repository
+        else { return }
+        unseenAttentionCount = max(
+            0,
+            notification.userInfo?[RepositoryAttentionNotificationKey.count] as? Int ?? 0
+        )
+        let presentation = RepositoryAttentionUnseenPresenter.present(count: unseenAttentionCount)
+        attentionItem?.label = presentation.toolbarLabel
+        attentionItem?.toolTip = presentation.toolbarToolTip
+        attentionBadge?.stringValue = presentation.badgeText ?? ""
+        attentionBadge?.isHidden = presentation.badgeText == nil
+        (attentionItem?.view?.subviews.compactMap { $0 as? NSButton }.first)?
+            .setAccessibilityLabel(presentation.toolbarAccessibilityLabel)
     }
 
     private func statusItem(

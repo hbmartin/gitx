@@ -364,6 +364,144 @@ final class ForgeReadSurfaceModelsTests: XCTestCase {
         XCTAssertEqual(route.item.destination, item.destination)
         XCTAssertEqual(route.destination, item.destination)
     }
+
+    func testCollaborationAccessRequiresExplicitChoiceAndUsesOnlyExactPreferredAccount() throws {
+        let repository = try Fixture.repository()
+        let first = try Fixture.account(login: "zoe", value: "account-z")
+        let second = try Fixture.account(login: "ari", value: "account-a")
+        let unbound = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository
+        )
+
+        XCTAssertEqual(
+            ForgeCollaborationAccessPolicy.resolve(
+                binding: unbound,
+                availableAccounts: [first, second]
+            ),
+            .requiresExplicitChoice(
+                accounts: [second, first],
+                preferredAccountUnavailable: false
+            )
+        )
+        XCTAssertEqual(
+            ForgeCollaborationAccessPolicy.resolve(
+                binding: unbound,
+                availableAccounts: [first, second],
+                explicitAccountID: first.id
+            ),
+            .authenticated(first)
+        )
+
+        let preferred = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: second.id
+        )
+        XCTAssertEqual(
+            ForgeCollaborationAccessPolicy.resolve(
+                binding: preferred,
+                availableAccounts: [first, second]
+            ),
+            .authenticated(second)
+        )
+        XCTAssertEqual(
+            ForgeCollaborationAccessPolicy.resolve(
+                binding: preferred,
+                availableAccounts: [first]
+            ),
+            .requiresExplicitChoice(
+                accounts: [first],
+                preferredAccountUnavailable: true
+            )
+        )
+    }
+
+    func testCollaborationAccessRequiresExplicitPublicChoiceAndRejectsNonGitHubDotCom() throws {
+        let repository = try Fixture.repository()
+        let account = try Fixture.account(login: "ari", value: "account-a")
+        let binding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: account.id
+        )
+        XCTAssertEqual(
+            ForgeCollaborationAccessPolicy.resolve(
+                binding: binding,
+                availableAccounts: [account],
+                explicitlyContinuesPublicly: true
+            ),
+            .publicAccess
+        )
+
+        let enterpriseForge = try ForgeIdentity(
+            kind: .github,
+            origin: ForgeOrigin(host: "github.example.com")
+        )
+        let enterprise = try ForgeRepositoryBinding(
+            localRemoteName: "enterprise",
+            primaryRepository: ForgeRepositoryIdentity(
+                forge: enterpriseForge,
+                owner: "team",
+                name: "project"
+            )
+        )
+        XCTAssertEqual(
+            ForgeCollaborationAccessPolicy.resolve(
+                binding: enterprise,
+                availableAccounts: [],
+                explicitlyContinuesPublicly: true
+            ),
+            .browserOnly
+        )
+    }
+
+    func testForgeSidebarPresentationDistinguishesPrimaryPersonalForkParentAndUpstream() throws {
+        let primary = try Fixture.repository()
+        let parent = try ForgeRepositoryIdentity(
+            forge: primary.forge,
+            owner: "gitx",
+            name: "gitx"
+        )
+        let binding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: primary
+        )
+        let candidates = try [
+            ForgeRepositoryCandidate(
+                remoteName: "origin",
+                repository: primary,
+                confidence: .high,
+                relationship: .fork
+            ),
+            ForgeRepositoryCandidate(
+                remoteName: "upstream",
+                repository: parent,
+                confidence: .high,
+                relationship: .upstream
+            ),
+        ]
+
+        let rows = RepositoryForgeSidebarPresenter.repositories(
+            binding: binding,
+            candidates: candidates,
+            accountLogin: "hbmartin",
+            primaryIsFork: true,
+            parentRepository: parent
+        )
+
+        XCTAssertEqual(rows.map(\.repositoryName), ["hbmartin/gitx", "gitx/gitx"])
+        XCTAssertEqual(rows[0].relationships, [.primary, .fork, .personal])
+        XCTAssertEqual(rows[1].relationships, [.parent, .upstream])
+        XCTAssertEqual(rows[0].detailText, "hbmartin/gitx — Primary, Fork, Personal (origin)")
+
+        let organizationRows = RepositoryForgeSidebarPresenter.repositories(
+            binding: binding,
+            candidates: candidates,
+            accountLogin: "organization-member"
+        )
+        XCTAssertEqual(organizationRows[0].relationships, [.primary, .organization])
+    }
 }
 
 private enum Fixture {
@@ -374,6 +512,23 @@ private enum Fixture {
     static func repository() throws -> ForgeRepositoryIdentity {
         let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
         return try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+    }
+
+    static func account(login: String, value: String) throws -> ForgeAccount {
+        let repository = try repository()
+        let accountID = try ForgeAccountID(forge: repository.forge, value: value)
+        return try ForgeAccount(
+            id: accountID,
+            login: login,
+            currentCredential: ForgeCredentialMetadata(
+                reference: ForgeCredentialReference(
+                    accountID: accountID,
+                    credentialID: ForgeCredentialID("credential-\(value)"),
+                    generation: ForgeCredentialGeneration(1)
+                ),
+                source: .fineGrainedPersonalAccessToken
+            )
+        )
     }
 
     static func actor(login: String = "ari", name: String? = "Ari Engineer") throws -> ForgeActor {

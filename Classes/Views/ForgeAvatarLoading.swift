@@ -810,6 +810,7 @@ final class ForgeAvatarView: NSView {
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeAvatar")
     private let loader: ForgeAvatarLoader
     private let decoder: ForgeAvatarImageDecoder
+    private let owner: ForgeAvatarCacheOwner
     private var requestTask: Task<Void, Never>?
     private var image: NSImage?
     private var avatarURL: ForgeAvatarURL?
@@ -821,10 +822,12 @@ final class ForgeAvatarView: NSView {
         frame frameRect: NSRect = NSRect(x: 0, y: 0, width: 28, height: 28),
         loader: ForgeAvatarLoader = .shared,
         decoder: ForgeAvatarImageDecoder = ForgeAvatarImageDecoder(),
+        owner: ForgeAvatarCacheOwner = .anonymous,
         loadingEnabled: Bool = ApplicationSettings.loadAvatars
     ) {
         self.loader = loader
         self.decoder = decoder
+        self.owner = owner
         isLoadingEnabled = loadingEnabled
         super.init(frame: frameRect)
         wantsLayer = true
@@ -921,9 +924,10 @@ final class ForgeAvatarView: NSView {
         updateAccessibility()
         needsDisplay = true
         guard isLoadingEnabled, let avatarURL else { return }
-        requestTask = Task { [weak self, loader, decoder] in
+        let requestOwner = owner
+        requestTask = Task { [weak self, loader, decoder, requestOwner] in
             do {
-                let payload = try await loader.load(avatarURL)
+                let payload = try await loader.load(avatarURL, owner: requestOwner)
                 try Task.checkCancellation()
                 let decoded = try await decoder.decodeOffMain(payload)
                 guard let self, self.avatarURL == avatarURL else { return }

@@ -101,6 +101,10 @@ final nonisolated class ApplicationSettings: NSObject {
         static let attentionPollingPreset = "PBForgeAttentionPollingPreset"
         static let attentionAlertCategories = "PBForgeAttentionAlertCategories"
         static let attentionViewState = "PBForgeAttentionViewState"
+        static let attentionIncludesFailedChecksOnAuthoredPullRequests =
+            "PBForgeAttentionIncludesFailedChecksOnAuthoredPullRequests"
+        static let attentionIncludesFailedChecksAwaitingReview =
+            "PBForgeAttentionIncludesFailedChecksAwaitingReview"
     }
 
     private static var defaults: UserDefaults {
@@ -287,35 +291,91 @@ final nonisolated class ApplicationSettings: NSObject {
 
     static var attentionPollingPreset: ForgeAttentionPollingPreset {
         get {
-            guard let rawValue = defaults.string(forKey: Key.attentionPollingPreset),
-                  let preset = ForgeAttentionPollingPreset(rawValue: rawValue)
-            else { return .defaultValue }
-            return preset
+            ForgeAttentionPollingPreset(rawValue: attentionPollingPresetRawValue) ?? .defaultValue
         }
-        set { defaults.set(newValue.rawValue, forKey: Key.attentionPollingPreset) }
+        set {
+            attentionPollingPresetRawValue = newValue.rawValue
+        }
+    }
+
+    @objc static var attentionPollingPresetRawValue: String {
+        get { defaults.string(forKey: Key.attentionPollingPreset) ?? ForgeAttentionPollingPreset.defaultValue.rawValue }
+        set {
+            guard newValue != attentionPollingPresetRawValue else { return }
+            defaults.set(newValue, forKey: Key.attentionPollingPreset)
+            NotificationCenter.default.post(name: .forgeAttentionPreferencesDidChange, object: nil)
+        }
     }
 
     static var attentionAlertCategories: Set<ForgeAttentionAlertCategory> {
         get {
-            let rawValues = defaults.stringArray(forKey: Key.attentionAlertCategories) ?? []
-            return Set(rawValues.compactMap(ForgeAttentionAlertCategory.init(rawValue:)))
+            Set(attentionAlertCategoryRawValues.compactMap(ForgeAttentionAlertCategory.init(rawValue:)))
         }
         set {
-            defaults.set(newValue.map(\.rawValue).sorted(), forKey: Key.attentionAlertCategories)
+            attentionAlertCategoryRawValues = newValue.map(\.rawValue).sorted()
         }
+    }
+
+    @objc static var attentionAlertCategoryRawValues: [String] {
+        get { defaults.stringArray(forKey: Key.attentionAlertCategories) ?? [] }
+        set {
+            guard newValue != attentionAlertCategoryRawValues else { return }
+            defaults.set(newValue, forKey: Key.attentionAlertCategories)
+            NotificationCenter.default.post(name: .forgeAttentionPreferencesDidChange, object: nil)
+        }
+    }
+
+    @objc static var attentionIncludesFailedChecksOnAuthoredPullRequests: Bool {
+        get {
+            guard defaults.object(forKey: Key.attentionIncludesFailedChecksOnAuthoredPullRequests) != nil else {
+                return true
+            }
+            return defaults.bool(forKey: Key.attentionIncludesFailedChecksOnAuthoredPullRequests)
+        }
+        set {
+            guard newValue != attentionIncludesFailedChecksOnAuthoredPullRequests else { return }
+            defaults.set(newValue, forKey: Key.attentionIncludesFailedChecksOnAuthoredPullRequests)
+            NotificationCenter.default.post(name: .forgeAttentionPreferencesDidChange, object: nil)
+        }
+    }
+
+    @objc static var attentionIncludesFailedChecksAwaitingReview: Bool {
+        get {
+            guard defaults.object(forKey: Key.attentionIncludesFailedChecksAwaitingReview) != nil else {
+                return false
+            }
+            return defaults.bool(forKey: Key.attentionIncludesFailedChecksAwaitingReview)
+        }
+        set {
+            guard newValue != attentionIncludesFailedChecksAwaitingReview else { return }
+            defaults.set(newValue, forKey: Key.attentionIncludesFailedChecksAwaitingReview)
+            NotificationCenter.default.post(name: .forgeAttentionPreferencesDidChange, object: nil)
+        }
+    }
+
+    static var attentionPolicy: ForgeAttentionPolicy {
+        ForgeAttentionPolicy(
+            includesFailedChecksOnAuthoredPullRequests: attentionIncludesFailedChecksOnAuthoredPullRequests,
+            includesFailedChecksAwaitingReview: attentionIncludesFailedChecksAwaitingReview
+        )
     }
 
     static var attentionViewState: ForgeAttentionViewState {
         get {
-            guard let data = defaults.data(forKey: Key.attentionViewState),
+            guard let data = attentionViewStateData,
                   let state = try? JSONDecoder().decode(ForgeAttentionViewState.self, from: data)
             else { return .defaultValue }
             return state
         }
         set {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
-            defaults.set(data, forKey: Key.attentionViewState)
+            attentionViewStateData = data
         }
+    }
+
+    @objc static var attentionViewStateData: Data? {
+        get { defaults.data(forKey: Key.attentionViewState) }
+        set { defaults.set(newValue, forKey: Key.attentionViewState) }
     }
 
     private static func enumValue<Value: RawRepresentable>(

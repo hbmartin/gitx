@@ -167,6 +167,13 @@ final class RepositoryForgeCoordinator: NSObject {
         resolveBinding(persistAutomaticBinding: true)
     }
 
+    /// Provider-neutral remote identities used by the repository source list.
+    /// Remote names are presentation hints only; they never replace the stable
+    /// Primary Forge Repository Binding.
+    func sidebarCandidates() -> [ForgeRepositoryCandidate] {
+        remoteCandidates().map(\.candidate)
+    }
+
     private func resolveBinding(persistAutomaticBinding: Bool) -> RepositoryForgeBindingResolution {
         if let binding = settings.forgeRepositoryBinding {
             logger.debug(
@@ -379,7 +386,9 @@ final class RepositoryForgeCoordinator: NSObject {
                       remoteName: name,
                       repository: parsed.repository,
                       confidence: .high,
-                      relationship: .unknown
+                      relationship: name.caseInsensitiveCompare("upstream") == .orderedSame
+                          ? .upstream
+                          : .unknown
                   )
             else {
                 rejectedCount += 1

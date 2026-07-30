@@ -115,6 +115,13 @@ nonisolated struct ForgeAccountPreferencesRow: Equatable, Sendable {
     let canConfigureRepositoryAccess: Bool
 }
 
+nonisolated struct ForgeAttentionWatchPreferencesRow: Equatable, Sendable {
+    let key: ForgeWatchedRepositoryKey
+    let accountLogin: String
+    let repositoryName: String
+    let includesBotReplies: Bool
+}
+
 nonisolated enum ForgeAccountPreferencesPresenter {
     static func rows(accounts: [ForgeAccount], now: Date) -> [ForgeAccountPreferencesRow] {
         accounts.map { account in
@@ -170,6 +177,9 @@ nonisolated protocol ForgeAccountsClient: Sendable {
     ) async throws -> ForgeAccount
     func removeAccount(_ accountID: ForgeAccountID) async throws
     func githubApplicationInstallationURL() async throws -> URL
+    func attentionWatches() async throws -> [ForgeAttentionWatchPreferencesRow]
+    func setAttentionBotReplies(_ enabled: Bool, for key: ForgeWatchedRepositoryKey) async throws
+    func removeAttentionWatch(_ key: ForgeWatchedRepositoryKey) async throws
 }
 
 actor ForgeAccountsService: ForgeAccountsClient {
@@ -255,6 +265,7 @@ actor ForgeAccountsService: ForgeAccountsClient {
         logger.notice(
             "GitHub App Forge Account added account=\(account.id.value, privacy: .private(mask: .hash))"
         )
+        await Self.notifyAccountsChanged()
         return account
     }
 
@@ -263,6 +274,7 @@ actor ForgeAccountsService: ForgeAccountsClient {
         logger.notice(
             "Explicit GitHub CLI Forge Account addition completed account=\(account.id.value, privacy: .private(mask: .hash))"
         )
+        await Self.notifyAccountsChanged()
         return account
     }
 
@@ -295,6 +307,7 @@ actor ForgeAccountsService: ForgeAccountsClient {
         logger.notice(
             "GitHub personal access Credential added kind=\(acquisition.kind.rawValue, privacy: .public) account=\(account.id.value, privacy: .private(mask: .hash))"
         )
+        await Self.notifyAccountsChanged()
         return account
     }
 
@@ -304,6 +317,7 @@ actor ForgeAccountsService: ForgeAccountsClient {
         logger.notice(
             "Forge Account removal completed account=\(accountID.value, privacy: .private(mask: .hash))"
         )
+        await Self.notifyAccountsChanged()
     }
 
     func githubApplicationInstallationURL() throws -> URL {
@@ -311,6 +325,69 @@ actor ForgeAccountsService: ForgeAccountsClient {
             throw ForgeAccountsError.githubApplicationNotConfigured
         }
         return configuration.newInstallationURL
+    }
+
+    func attentionWatches() async throws -> [ForgeAttentionWatchPreferencesRow] {
+        guard let database = services.database else { return [] }
+        let accounts = try await services.accountStore.accounts()
+        let persistence = ForgeSQLiteAttentionPersistence(store: database)
+        var rows: [ForgeAttentionWatchPreferencesRow] = []
+        for account in accounts {
+            let watches = try await persistence.watchedRepositories(accountID: account.id)
+            rows.append(contentsOf: watches.map { watch in
+                ForgeAttentionWatchPreferencesRow(
+                    key: watch.key,
+                    accountLogin: account.login,
+                    repositoryName: "\(watch.key.repository.owner)/\(watch.key.repository.name)",
+                    includesBotReplies: watch.includesBotReplies
+                )
+            })
+        }
+        return rows.sorted { lhs, rhs in
+            if lhs.accountLogin != rhs.accountLogin {
+                return lhs.accountLogin.localizedStandardCompare(rhs.accountLogin) == .orderedAscending
+            }
+            return lhs.repositoryName.localizedStandardCompare(rhs.repositoryName) == .orderedAscending
+        }
+    }
+
+    func setAttentionBotReplies(
+        _ enabled: Bool,
+        for key: ForgeWatchedRepositoryKey
+    ) async throws {
+        guard let database = services.database else { return }
+        let persistence = ForgeSQLiteAttentionPersistence(store: database)
+        let watches = try await persistence.watchedRepositories(accountID: key.accountID)
+        guard let current = watches.first(where: { $0.key == key }) else {
+            throw ForgeAttentionInboxError.missingWatchedRepository
+        }
+        try await persistence.save(ForgeWatchedRepository(
+            key: current.key,
+            addedAt: current.addedAt,
+            source: current.source,
+            includesBotReplies: enabled,
+            baselineEstablishedAt: current.baselineEstablishedAt,
+            lastSuccessfulPollAt: current.lastSuccessfulPollAt
+        ))
+        await Self.notifyAttentionChanged()
+        logger.notice("Updated per-repository Attention bot-reply policy")
+    }
+
+    func removeAttentionWatch(_ key: ForgeWatchedRepositoryKey) async throws {
+        guard let database = services.database else { return }
+        try await ForgeSQLiteAttentionPersistence(store: database).removeWatchedRepository(key)
+        await Self.notifyAttentionChanged()
+        logger.notice("Removed one watched Forge Repository from Attention")
+    }
+
+    @MainActor
+    private static func notifyAccountsChanged() {
+        NotificationCenter.default.post(name: .forgeAccountsDidChange, object: nil)
+    }
+
+    @MainActor
+    private static func notifyAttentionChanged() {
+        NotificationCenter.default.post(name: .forgeAttentionInboxDidChange, object: nil)
     }
 
     private func refreshCredentialIfNeeded(_ account: ForgeAccount, at date: Date) async throws {
@@ -369,20 +446,35 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
     private let clientFactory: ClientFactory
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeAccountsPreferences")
     private let tableView = NSTableView()
+    private let watchTableView = NSTableView()
     private let statusLabel = NSTextField(wrappingLabelWithString: "Loading Forge Accounts…")
     private let signInButton = NSButton(title: "Sign In with GitHub App…", target: nil, action: nil)
     private let alternatives = NSPopUpButton()
     private let removeButton = NSButton(title: "Remove Account…", target: nil, action: nil)
     private let configureButton = NSButton(title: "Configure Repository Access…", target: nil, action: nil)
+    private let removeWatchButton = NSButton(title: "Remove Watch", target: nil, action: nil)
+    private let pollingPreset = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let authoredFailedChecks = NSButton(
+        checkboxWithTitle: "Failed checks on my Pull Requests",
+        target: nil,
+        action: nil
+    )
+    private let awaitingReviewFailedChecks = NSButton(
+        checkboxWithTitle: "Failed checks awaiting my review",
+        target: nil,
+        action: nil
+    )
+    private var alertButtons: [ForgeAttentionAlertCategory: NSButton] = [:]
     private var client: (any ForgeAccountsClient)?
     private var rows: [ForgeAccountPreferencesRow] = []
+    private var watchRows: [ForgeAttentionWatchPreferencesRow] = []
     private var installationURL: URL?
     private var didLoad = false
     private var operationTask: Task<Void, Never>?
 
     init(clientFactory: @escaping ClientFactory) {
         self.clientFactory = clientFactory
-        super.init(frame: NSRect(x: 0, y: 0, width: 760, height: 510))
+        super.init(frame: NSRect(x: 0, y: 0, width: 760, height: 825))
         configureView()
     }
 
@@ -402,11 +494,14 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         loadClientAndAccounts()
     }
 
-    func numberOfRows(in _: NSTableView) -> Int {
-        rows.count
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        tableView === watchTableView ? watchRows.count : rows.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === watchTableView {
+            return watchCell(tableColumn: tableColumn, row: row)
+        }
         guard rows.indices.contains(row), let identifier = tableColumn?.identifier.rawValue else { return nil }
         let value: String
         switch identifier {
@@ -428,7 +523,7 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
     private func configureView() {
         translatesAutoresizingMaskIntoConstraints = false
         widthAnchor.constraint(greaterThanOrEqualToConstant: 760).isActive = true
-        heightAnchor.constraint(greaterThanOrEqualToConstant: 510).isActive = true
+        heightAnchor.constraint(greaterThanOrEqualToConstant: 825).isActive = true
 
         let heading = NSTextField(labelWithString: "Accounts")
         heading.font = .preferredFont(forTextStyle: .headline, options: [:])
@@ -455,7 +550,7 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .bezelBorder
         scrollView.widthAnchor.constraint(equalToConstant: 704).isActive = true
-        scrollView.heightAnchor.constraint(equalToConstant: 245).isActive = true
+        scrollView.heightAnchor.constraint(equalToConstant: 190).isActive = true
 
         signInButton.bezelStyle = .rounded
         signInButton.target = self
@@ -502,7 +597,21 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         statusLabel.maximumNumberOfLines = 2
         statusLabel.setAccessibilityIdentifier("ForgeAccountsStatus")
 
-        let stack = NSStackView(views: [heading, detail, scrollView, actions, permissions, statusLabel])
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.widthAnchor.constraint(equalToConstant: 704).isActive = true
+        let attentionPreferences = makeAttentionPreferencesView()
+
+        let stack = NSStackView(views: [
+            heading,
+            detail,
+            scrollView,
+            actions,
+            permissions,
+            statusLabel,
+            separator,
+            attentionPreferences,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -514,6 +623,114 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 24),
         ])
         updateButtonState()
+    }
+
+    private func makeAttentionPreferencesView() -> NSView {
+        let heading = NSTextField(labelWithString: "Attention")
+        heading.font = .preferredFont(forTextStyle: .headline, options: [:])
+        heading.setAccessibilityIdentifier("ForgeAttentionPreferencesHeading")
+        let detail = NSTextField(wrappingLabelWithString:
+            "Only explicitly watched repositories are polled. Opening or binding a repository adds it here; removing a watch also removes its local seen state.")
+        detail.textColor = .secondaryLabelColor
+        detail.maximumNumberOfLines = 2
+        detail.widthAnchor.constraint(equalToConstant: 704).isActive = true
+
+        for (title, width) in [("Repository", 330.0), ("Account", 185.0), ("Bot Replies", 155.0)] {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(title))
+            column.title = title
+            column.width = width
+            watchTableView.addTableColumn(column)
+        }
+        watchTableView.headerView = NSTableHeaderView()
+        watchTableView.delegate = self
+        watchTableView.dataSource = self
+        watchTableView.allowsMultipleSelection = false
+        watchTableView.setAccessibilityIdentifier("ForgeAttentionWatchesTable")
+        watchTableView.setAccessibilityLabel("Watched Forge Repositories")
+        let watchScroll = NSScrollView()
+        watchScroll.documentView = watchTableView
+        watchScroll.hasVerticalScroller = true
+        watchScroll.borderType = .bezelBorder
+        watchScroll.widthAnchor.constraint(equalToConstant: 704).isActive = true
+        watchScroll.heightAnchor.constraint(equalToConstant: 105).isActive = true
+
+        removeWatchButton.target = self
+        removeWatchButton.action = #selector(removeSelectedWatch(_:))
+        removeWatchButton.controlSize = .small
+        removeWatchButton.setAccessibilityIdentifier("RemoveForgeAttentionWatch")
+        let watchActions = NSStackView(views: [NSView(), removeWatchButton])
+        watchActions.orientation = .horizontal
+        watchActions.widthAnchor.constraint(equalToConstant: 704).isActive = true
+
+        pollingPreset.addItems(withTitles: ["Frequent", "Balanced", "Conservative", "Manual"])
+        pollingPreset.selectItem(at: Self.pollingIndex(ApplicationSettings.attentionPollingPreset))
+        pollingPreset.target = self
+        pollingPreset.action = #selector(attentionPollingChanged(_:))
+        pollingPreset.setAccessibilityIdentifier("ForgeAttentionPollingPreset")
+
+        authoredFailedChecks.state = ApplicationSettings.attentionIncludesFailedChecksOnAuthoredPullRequests
+            ? .on
+            : .off
+        authoredFailedChecks.target = self
+        authoredFailedChecks.action = #selector(attentionCheckPolicyChanged(_:))
+        authoredFailedChecks.setAccessibilityIdentifier("ForgeAttentionAuthoredFailedChecks")
+        awaitingReviewFailedChecks.state = ApplicationSettings.attentionIncludesFailedChecksAwaitingReview
+            ? .on
+            : .off
+        awaitingReviewFailedChecks.target = self
+        awaitingReviewFailedChecks.action = #selector(attentionCheckPolicyChanged(_:))
+        awaitingReviewFailedChecks.setAccessibilityIdentifier("ForgeAttentionAwaitingReviewFailedChecks")
+
+        let checkStack = NSStackView(views: [authoredFailedChecks, awaitingReviewFailedChecks])
+        checkStack.orientation = .vertical
+        checkStack.alignment = .leading
+        checkStack.spacing = 4
+
+        let alertStack = NSStackView()
+        alertStack.orientation = .vertical
+        alertStack.alignment = .leading
+        alertStack.spacing = 3
+        for category in ForgeAttentionAlertCategory.allCases {
+            let button = NSButton(
+                checkboxWithTitle: Self.alertTitle(category),
+                target: self,
+                action: #selector(attentionAlertCategoryChanged(_:))
+            )
+            button.identifier = NSUserInterfaceItemIdentifier("ForgeAttentionAlert.\(category.rawValue)")
+            button.state = ApplicationSettings.attentionAlertCategories.contains(category) ? .on : .off
+            button.setAccessibilityIdentifier("ForgeAttentionAlert.\(category.rawValue)")
+            alertButtons[category] = button
+            alertStack.addArrangedSubview(button)
+        }
+
+        let pollingRow = labeledRow("Polling:", control: pollingPreset)
+        let checksRow = labeledRow("Failed checks:", control: checkStack)
+        let alertsRow = labeledRow("macOS alerts:", control: alertStack)
+        let stack = NSStackView(views: [
+            heading,
+            detail,
+            watchScroll,
+            watchActions,
+            pollingRow,
+            checksRow,
+            alertsRow,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 7
+        stack.setAccessibilityIdentifier("ForgeAttentionPreferences")
+        return stack
+    }
+
+    private func labeledRow(_ title: String, control: NSView) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.alignment = .right
+        label.widthAnchor.constraint(equalToConstant: 110).isActive = true
+        let row = NSStackView(views: [label, control])
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.spacing = 10
+        return row
     }
 
     private func loadClientAndAccounts() {
@@ -536,7 +753,9 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         guard let client else { return }
         let accounts = try await client.accounts(refreshingExpiringCredentialsAt: Date())
         rows = ForgeAccountPreferencesPresenter.rows(accounts: accounts, now: Date())
+        watchRows = try await client.attentionWatches()
         tableView.reloadData()
+        watchTableView.reloadData()
         if !rows.isEmpty, tableView.selectedRow < 0 {
             tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         }
@@ -544,6 +763,83 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
             ? "No GitHub.com Forge Accounts are configured."
             : "\(rows.count) GitHub.com Forge Account\(rows.count == 1 ? "" : "s") configured.")
         updateButtonState()
+    }
+
+    private func watchCell(tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard watchRows.indices.contains(row), let identifier = tableColumn?.identifier.rawValue else {
+            return nil
+        }
+        let watch = watchRows[row]
+        switch identifier {
+        case "Repository":
+            let field = NSTextField(labelWithString: watch.repositoryName)
+            field.lineBreakMode = .byTruncatingMiddle
+            field.setAccessibilityIdentifier("ForgeAttentionWatchRepositoryCell")
+            return field
+        case "Account":
+            let field = NSTextField(labelWithString: watch.accountLogin)
+            field.lineBreakMode = .byTruncatingTail
+            field.setAccessibilityIdentifier("ForgeAttentionWatchAccountCell")
+            return field
+        case "Bot Replies":
+            let button = ForgeAttentionWatchBotButton(key: watch.key)
+            button.title = "Include"
+            button.setButtonType(.switch)
+            button.state = watch.includesBotReplies ? .on : .off
+            button.target = self
+            button.action = #selector(attentionBotRepliesChanged(_:))
+            button.setAccessibilityIdentifier("ForgeAttentionWatchBotReplies")
+            button.setAccessibilityLabel("Include bot replies for \(watch.repositoryName)")
+            return button
+        default:
+            return nil
+        }
+    }
+
+    @objc private func attentionPollingChanged(_ sender: NSPopUpButton) {
+        let values: [ForgeAttentionPollingPreset] = [.frequent, .balanced, .conservative, .manual]
+        guard values.indices.contains(sender.indexOfSelectedItem) else { return }
+        ApplicationSettings.attentionPollingPreset = values[sender.indexOfSelectedItem]
+        logger.info("Attention polling preset changed")
+    }
+
+    @objc private func attentionCheckPolicyChanged(_: Any?) {
+        ApplicationSettings.attentionIncludesFailedChecksOnAuthoredPullRequests = authoredFailedChecks.state == .on
+        ApplicationSettings.attentionIncludesFailedChecksAwaitingReview = awaitingReviewFailedChecks.state == .on
+        logger.info("Attention failed-check policy changed")
+    }
+
+    @objc private func attentionAlertCategoryChanged(_: Any?) {
+        let previous = ApplicationSettings.attentionAlertCategories
+        let updated = Set(alertButtons.compactMap { category, button in
+            button.state == .on ? category : nil
+        })
+        ApplicationSettings.attentionAlertCategories = updated
+        if ForgeAttentionAlertPolicy.shouldRequestSystemPermission(previous: previous, updated: updated) {
+            Task {
+                _ = await ForgeAttentionNotificationDelivery.shared.requestAuthorization()
+            }
+        }
+        logger.info("Attention alert categories changed")
+    }
+
+    @objc private func attentionBotRepliesChanged(_ sender: ForgeAttentionWatchBotButton) {
+        guard let client else { return }
+        runOperation(status: "Updating Attention policy…") { [weak self] in
+            guard let self else { return }
+            try await client.setAttentionBotReplies(sender.state == .on, for: sender.key)
+            try await self.reloadAccounts(status: "Attention policy updated.")
+        }
+    }
+
+    @objc private func removeSelectedWatch(_: Any?) {
+        guard let client, watchRows.indices.contains(watchTableView.selectedRow) else { return }
+        let watch = watchRows[watchTableView.selectedRow]
+        runOperation(status: "Removing Attention watch…") { [weak self] in
+            guard let self else { return }
+            try await client.removeAttentionWatch(watch.key)
+            try await self.reloadAccounts(status: "Attention watch removed.")
+        }
     }
 
     @objc private func signInWithGitHubApp(_: Any?) {
@@ -661,6 +957,7 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         configureButton.isEnabled = hasClient &&
             (selectedRow?.canConfigureRepositoryAccess == true) &&
             installationURL != nil
+        removeWatchButton.isEnabled = hasClient && watchRows.indices.contains(watchTableView.selectedRow)
         signInButton.toolTip = installationURL == nil
             ? ForgeAccountsError.githubApplicationNotConfigured.localizedDescription
             : "Use GitHub's device flow to add a GitHub App Forge Account."
@@ -840,6 +1137,39 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         guard seconds > 0 else { return }
         let nanoseconds = UInt64(min(seconds, 60) * 1_000_000_000)
         try await Task.sleep(nanoseconds: nanoseconds)
+    }
+
+    private static func pollingIndex(_ preset: ForgeAttentionPollingPreset) -> Int {
+        switch preset {
+        case .frequent: 0
+        case .balanced: 1
+        case .conservative: 2
+        case .manual: 3
+        }
+    }
+
+    private static func alertTitle(_ category: ForgeAttentionAlertCategory) -> String {
+        switch category {
+        case .reviewRequests: "Review requests"
+        case .mentionsAndReplies: "Mentions and replies"
+        case .assignments: "Assignments"
+        case .failedChecksOnAuthoredPullRequests: "Failed checks on my Pull Requests"
+        }
+    }
+}
+
+@MainActor
+private final class ForgeAttentionWatchBotButton: NSButton {
+    let key: ForgeWatchedRepositoryKey
+
+    init(key: ForgeWatchedRepositoryKey) {
+        self.key = key
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
 

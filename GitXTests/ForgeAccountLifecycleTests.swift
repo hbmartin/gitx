@@ -21,6 +21,12 @@ final class ForgeAccountLifecycleTests: XCTestCase {
             "ConfigureForgeRepositoryAccess",
             "ForgeAccountPermissionEnvelope",
             "ForgeAccountsStatus",
+            "ForgeAttentionPreferencesHeading",
+            "ForgeAttentionWatchesTable",
+            "RemoveForgeAttentionWatch",
+            "ForgeAttentionPollingPreset",
+            "ForgeAttentionAuthoredFailedChecks",
+            "ForgeAttentionAwaitingReviewFailedChecks",
         ]))
     }
 

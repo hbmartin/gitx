@@ -157,6 +157,11 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @property (class) PBStagingListLayout stagingListLayout;
 @property (class) PBStagingFileSortOrder stagingFileSortOrder;
 @property (class) BOOL loadAvatars;
+@property (class, copy) NSString *attentionPollingPresetRawValue;
+@property (class, copy) NSArray<NSString *> *attentionAlertCategoryRawValues;
+@property (class) BOOL attentionIncludesFailedChecksOnAuthoredPullRequests;
+@property (class) BOOL attentionIncludesFailedChecksAwaitingReview;
+@property (class, copy, nullable) NSData *attentionViewStateData;
 @end
 
 typedef NS_ENUM(NSInteger, PBStagingListSection) {

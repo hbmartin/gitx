@@ -112,6 +112,35 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertEqual(service.listCalls.map { $0.cursor?.value }, [nil, "next"])
     }
 
+    func testPendingNativeDestinationOpensAfterItsFirstListPageArrives() async throws {
+        let pullRequest = try ReadFixture.pullRequest()
+        let service = try FakeReadService(
+            pages: [ForgeReadSurfacePage(
+                items: [.pullRequest(pullRequest)],
+                fetchedAt: ReadFixture.date(1)
+            )],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(ReadFixture.pullRequestDetails()),
+                fetchedAt: ReadFixture.date(2)
+            )
+        )
+        let controller = try makeController(kind: .pullRequests, service: service)
+        _ = makeWindow(controller)
+        XCTAssertTrue(try controller.open(destination: .pullRequest(
+            ReadFixture.repository(),
+            pullRequest.number
+        )))
+
+        controller.viewDidAppear()
+        await service.waitForDetailsCall()
+        await settleMainActor()
+
+        let title = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorTitle", in: controller.view) as? NSTextField
+        )
+        XCTAssertEqual(title.stringValue, "Native read surface")
+    }
+
     func testSearchAndStateFilterReloadWithTrimmedInjectedQuery() async throws {
         let service = try FakeReadService(
             pages: [
@@ -309,6 +338,75 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("author"))).isHidden)
     }
 
+    func testAttentionSurfaceLoadsCurrentUnseenNewestAndExercisesSeenControls() async throws {
+        let originalState = ApplicationSettings.attentionViewState
+        defer { ApplicationSettings.attentionViewState = originalState }
+        ApplicationSettings.attentionViewState = ForgeAttentionViewState(
+            scope: .currentRepository,
+            visibility: .unseenOnly,
+            sortOrder: .newestFirst
+        )
+        let session = try FakeAttentionSession()
+        let router = RecordingDestinationRouter()
+        let controller = try ForgeAttentionViewController(
+            session: session,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: router,
+            defaultRevision: .branch(ForgeRefName("main"))
+        )
+        let window = makeWindow(controller)
+
+        controller.viewDidAppear()
+        await session.waitForEntriesCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        XCTAssertEqual(table.numberOfRows, 1)
+        XCTAssertEqual(session.entryStates.first?.scope, .currentRepository)
+        XCTAssertEqual(session.entryStates.first?.visibility, .unseenOnly)
+        XCTAssertEqual(session.entryStates.first?.sortOrder, .newestFirst)
+
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await session.waitForMarkOpenCall()
+        await session.readService.waitForDetailsCall()
+        await session.waitForEntriesCall(count: 2)
+        await settleMainActor()
+        XCTAssertEqual(session.markedOpen, [session.entry.record.item.id])
+
+        let markUnseen = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionMarkUnseen", in: controller.view) as? NSButton
+        )
+        markUnseen.performClick(nil)
+        await session.waitForMarkUnseenCall()
+        await session.waitForEntriesCall(count: 3)
+        XCTAssertEqual(session.markedUnseen, [session.entry.record.item.id])
+
+        let markAll = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionMarkAllSeen", in: controller.view) as? NSButton
+        )
+        markAll.performClick(nil)
+        await session.waitForMarkAllCall()
+        await session.waitForEntriesCall(count: 4)
+        XCTAssertEqual(session.markAllStates.last?.scope, .currentRepository)
+
+        let scope = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionScope", in: controller.view) as? NSPopUpButton
+        )
+        scope.selectItem(at: 1)
+        try NSApp.sendAction(XCTUnwrap(scope.action), to: scope.target, from: scope)
+        await session.waitForEntriesCall(count: 5)
+        XCTAssertEqual(session.entryStates.last?.scope, .all)
+
+        controller.open(session.entry.record.item.id)
+        await session.waitForEntriesCall(count: 6)
+        XCTAssertTrue(session.entryStates.contains {
+            $0.scope == .all && $0.visibility == .active
+        })
+
+        try attachScreenshot(of: window, named: "GitHub Attention native inbox and inspector")
+    }
+
     private func makeController(
         kind: ForgeReadSurfaceKind,
         service: FakeReadService,
@@ -460,6 +558,109 @@ private final class FakeReadService: ForgeReadSurfaceServing {
 }
 
 @MainActor
+private final class FakeAttentionSession: RepositoryAttentionServing {
+    let account: ForgeAccount
+    let repositoryIdentity: ForgeRepositoryIdentity
+    let entry: ForgeAttentionInboxEntry
+    let readService: FakeReadService
+    var lastRefreshErrorDescription: String?
+    private(set) var entryStates: [ForgeAttentionViewState] = []
+    private(set) var markedOpen: [ForgeAttentionItemID] = []
+    private(set) var markedUnseen: [ForgeAttentionItemID] = []
+    private(set) var markAllStates: [ForgeAttentionViewState] = []
+    private var entryWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var markOpenWaiters: [CheckedContinuation<Void, Never>] = []
+    private var markUnseenWaiters: [CheckedContinuation<Void, Never>] = []
+    private var markAllWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init() throws {
+        repositoryIdentity = try ReadFixture.repository()
+        account = try ReadFixture.account()
+        let summary = try ReadFixture.pullRequest()
+        let itemID = try ForgeAttentionItemID(
+            accountID: account.id,
+            repository: repositoryIdentity,
+            kind: .reviewRequest,
+            subjectID: ForgeAttentionSubjectID("review-42")
+        )
+        entry = try ForgeAttentionInboxEntry(
+            record: ForgeAttentionRecord(
+                item: ForgeAttentionItem(
+                    id: itemID,
+                    destination: .pullRequest(repositoryIdentity, summary.number),
+                    becameActionableAt: ReadFixture.date(4)
+                ),
+                sourceIdentifier: ForgeAttentionSubjectID("review-source-42"),
+                sourceOccurredAt: ReadFixture.date(3)
+            ),
+            subject: .pullRequest(summary)
+        )
+        readService = try FakeReadService(
+            pages: [],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(ReadFixture.pullRequestDetails()),
+                fetchedAt: ReadFixture.date(5)
+            )
+        )
+    }
+
+    func entries(state: ForgeAttentionViewState) async throws -> [ForgeAttentionInboxEntry] {
+        entryStates.append(state)
+        let ready = entryWaiters.filter { entryStates.count >= $0.0 }
+        entryWaiters.removeAll { entryStates.count >= $0.0 }
+        ready.forEach { $0.1.resume() }
+        return [entry]
+    }
+
+    func markOpen(_ itemID: ForgeAttentionItemID) async throws {
+        markedOpen.append(itemID)
+        let waiters = markOpenWaiters
+        markOpenWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func markUnseen(_ itemID: ForgeAttentionItemID) async throws {
+        markedUnseen.append(itemID)
+        let waiters = markUnseenWaiters
+        markUnseenWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func markAllSeen(state: ForgeAttentionViewState) async throws {
+        markAllStates.append(state)
+        let waiters = markAllWaiters
+        markAllWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func refreshNow() async {}
+
+    func makeReadService(for _: ForgeRepositoryIdentity) throws -> ForgeReadSurfaceServing {
+        readService
+    }
+
+    func waitForEntriesCall(count: Int = 1) async {
+        guard entryStates.count < count else { return }
+        await withCheckedContinuation { entryWaiters.append((count, $0)) }
+    }
+
+    func waitForMarkOpenCall() async {
+        guard markedOpen.isEmpty else { return }
+        await withCheckedContinuation { markOpenWaiters.append($0) }
+    }
+
+    func waitForMarkUnseenCall() async {
+        guard markedUnseen.isEmpty else { return }
+        await withCheckedContinuation { markUnseenWaiters.append($0) }
+    }
+
+    func waitForMarkAllCall() async {
+        guard markAllStates.isEmpty else { return }
+        await withCheckedContinuation { markAllWaiters.append($0) }
+    }
+}
+
+@MainActor
 private final class RecordingMarkdownRenderer: ForgeReadMarkdownRendering {
     private(set) var renderedMarkdown: [String] = []
 
@@ -509,6 +710,23 @@ private enum ReadFixture {
     static func repository() throws -> ForgeRepositoryIdentity {
         let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
         return try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+    }
+
+    static func account() throws -> ForgeAccount {
+        let repository = try repository()
+        let accountID = try ForgeAccountID(forge: repository.forge, value: "account-ui")
+        return try ForgeAccount(
+            id: accountID,
+            login: "hbmartin",
+            currentCredential: ForgeCredentialMetadata(
+                reference: ForgeCredentialReference(
+                    accountID: accountID,
+                    credentialID: ForgeCredentialID("credential-ui"),
+                    generation: ForgeCredentialGeneration(1)
+                ),
+                source: .fineGrainedPersonalAccessToken
+            )
+        )
     }
 
     static func actor() throws -> ForgeActor {
