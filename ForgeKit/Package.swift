@@ -20,6 +20,9 @@ let package = Package(
             name: "ForgeKit",
             dependencies: [
                 .product(name: "Markdown", package: "swift-markdown"),
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
             ]
         ),
         .target(
