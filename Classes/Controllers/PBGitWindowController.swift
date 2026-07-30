@@ -808,6 +808,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     #if DEBUG
+        @objc(presentForgeRecoveryStatusDetailsWithCopyURL:)
+        dynamic func presentForgeRecoveryStatusDetails(copyURL: URL) {
+            presentForgeStatusDetails(
+                .recoverForgeData,
+                recoveryCopyOverride: ForgeSQLiteRecoveryCopy(url: copyURL, createdAt: Date())
+            )
+        }
+
         @objc(presentForgeRecoveryStatusDetailsWithCopyURL:revealHandler:)
         dynamic func presentForgeRecoveryStatusDetails(
             copyURL: URL,

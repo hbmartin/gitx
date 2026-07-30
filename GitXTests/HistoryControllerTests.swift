@@ -367,6 +367,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         waitForHistory()
         historyController.updateView()
         XCTAssertEqual(historyController.status?.isEmpty, false)
+        XCTAssertEqual(
+            tableCoordinator.numberOfRows(in: historyController.commitList),
+            (historyController.commitController.arrangedObjects as? [Any])?.count
+        )
         XCTAssertNotNil(tableCoordinator.tableView(historyController.commitList, rowViewForRow: 0))
     }
 
@@ -400,6 +404,22 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         ))
         XCTAssertEqual(tagItem.label, "New Tag")
         XCTAssertEqual(tagItem.action, #selector(PBGitWindowController.createTag(_:)))
+
+        let attentionItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.Attention"),
+            willBeInsertedIntoToolbar: true
+        ))
+        NotificationCenter.default.post(
+            name: .repositoryAttentionUnseenDidChange,
+            object: repository,
+            userInfo: nil
+        )
+        let attentionContainer = try XCTUnwrap(attentionItem.view)
+        let attentionButton = try XCTUnwrap(attentionContainer.subviews.compactMap { $0 as? NSButton }.first)
+        let attentionBadge = try XCTUnwrap(attentionContainer.subviews.compactMap { $0 as? NSTextField }.first)
+        XCTAssertEqual(attentionButton.accessibilityLabel(), "Attention Inbox, No unseen Attention items")
+        XCTAssertTrue(attentionBadge.isHidden)
 
         XCTAssertNil(toolbarController.toolbar(
             toolbar,

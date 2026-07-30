@@ -231,6 +231,42 @@
             }
         }
 
+        @objc(applicationStartupFailureProofWithCompletion:)
+        static func applicationStartupFailureProof(completion: @escaping (UInt64) -> Void) {
+            Task {
+                completion(await makeApplicationStartupFailureProof())
+            }
+        }
+
+        private static func makeApplicationStartupFailureProof() async -> UInt64 {
+            let originalComposition = ApplicationComposition.shared
+            let defaultsName = "GitXApplicationStartupFailureHarness-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: defaultsName) else { return 0 }
+            defaults.removePersistentDomain(forName: defaultsName)
+            defer {
+                ApplicationComposition.setSharedComposition(originalComposition)
+                defaults.removePersistentDomain(forName: defaultsName)
+            }
+            let probe = HarnessStartupFailureProbe()
+            let loader = ForgeApplicationServiceLoader {
+                probe.recordInvocation()
+                throw HarnessStartupFailure.expected
+            }
+            let composition = ApplicationComposition(
+                userDefaults: defaults,
+                forgeServices: loader,
+                automaticallyStartsForgeServices: true
+            )
+
+            ApplicationComposition.setSharedComposition(composition)
+            for _ in 0 ..< 1000 where probe.invocationCount == 0 {
+                await Task.yield()
+            }
+            guard probe.invocationCount == 1 else { return 0 }
+            await Task.yield()
+            return 1
+        }
+
         private static func makeSidebarAttentionProof() async -> UInt64 {
             let originalComposition = ApplicationComposition.shared
             let originalPollingPreset = ApplicationSettings.attentionPollingPreset
@@ -1195,6 +1231,28 @@
         private actor HarnessForgeCLIRunner: ForgeCLICommandRunning {
             func run(_: ForgeCLICommand) async throws -> ForgeCLICommandResult {
                 throw ForgeCLIBrokerError.commandLaunchFailed
+            }
+        }
+
+        private enum HarnessStartupFailure: Error {
+            case expected
+        }
+
+        // swift6-safety-justification: The lock serializes the startup-failure invocation count.
+        private final nonisolated class HarnessStartupFailureProbe: @unchecked Sendable {
+            private let lock = NSLock()
+            private var count = 0
+
+            var invocationCount: Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return count
+            }
+
+            func recordInvocation() {
+                lock.lock()
+                count += 1
+                lock.unlock()
             }
         }
 

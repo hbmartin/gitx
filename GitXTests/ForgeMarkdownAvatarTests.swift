@@ -415,6 +415,10 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         await failingLoader.setLoadingEnabled(false)
         let enabledAfterBackingPurgeFailure = await failingLoader.statistics().enabled
         XCTAssertFalse(enabledAfterBackingPurgeFailure)
+        let failuresBeforeExplicitPurge = await failingLoader.statistics().backingStoreFailures
+        await failingLoader.purge()
+        let failuresAfterExplicitPurge = await failingLoader.statistics().backingStoreFailures
+        XCTAssertEqual(failuresAfterExplicitPurge, failuresBeforeExplicitPurge + 1)
 
         let oversized = ForgeAvatarPayload(
             data: Data(repeating: 0, count: ForgeAvatarSecurityConstants.maximumResponseBytes + 1),
@@ -484,6 +488,26 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
             let loaded = try await backing.payload(for: avatarURL, owner: .anonymous)
             XCTAssertEqual(loaded, payload)
         }
+        let forge = repository.forge
+        let firstAccount = try ForgeAccountID(forge: forge, value: "sqlite-avatar-first-owner")
+        let secondAccount = try ForgeAccountID(forge: forge, value: "sqlite-avatar-second-owner")
+        let associatedURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/611")
+        let associatedPayload = ForgeAvatarPayload(data: Data([6, 11]), mediaType: .png)
+        try await backing.store(
+            associatedPayload,
+            for: associatedURL,
+            owners: [.account(firstAccount)]
+        )
+        try await backing.associate(.account(secondAccount), with: associatedURL)
+        let firstRemovalCount = try await sqlite.removeAvatarAssociations(for: firstAccount)
+        let secondOwnerPayload = try await backing.payload(
+            for: associatedURL,
+            owner: .account(secondAccount)
+        )
+        let secondRemovalCount = try await sqlite.removeAvatarAssociations(for: secondAccount)
+        XCTAssertEqual(firstRemovalCount, 0)
+        XCTAssertEqual(secondOwnerPayload, associatedPayload)
+        XCTAssertEqual(secondRemovalCount, 1)
         let zeroByteURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/610")
         let zeroByteKey = ForgeAvatarCacheKey(canonicalURL: zeroByteURL.url)
         let zeroByteRecord = try ForgeDisposableCacheRecord(
@@ -873,6 +897,9 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
 
         let sidebarAttentionProof = await PBForgeMarkdownAvatarProductHarness.sidebarAttentionProof()
         XCTAssertEqual(sidebarAttentionProof, 0b1_1111_1111_1111)
+
+        let startupFailureProof = await PBForgeMarkdownAvatarProductHarness.applicationStartupFailureProof()
+        XCTAssertEqual(startupFailureProof, 1)
     }
 
     private func cell(_ text: String) -> ForgeMarkdownTableCell {

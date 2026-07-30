@@ -390,6 +390,7 @@
 - (IBAction)showForgePullRequestOrIssue:(id)sender;
 - (IBAction)toggleRepositoryStatusBar:(nullable id)sender;
 - (void)showForgeStatusDetails:(nullable id)sender;
+- (void)presentForgeRecoveryStatusDetailsWithCopyURL:(NSURL *)copyURL;
 - (void)presentForgeRecoveryStatusDetailsWithCopyURL:(NSURL *)copyURL
 									   revealHandler:(void (^)(NSURL *copyURL))revealHandler;
 @end
@@ -1608,6 +1609,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([recoveryAlert.informativeText containsString:recoveryCopyURL.lastPathComponent]);
 	XCTAssertEqualObjects([recoveryAlert.buttons valueForKey:@"title"], (@[ @"Reveal in Finder", @"OK" ]));
 	XCTAssertEqualObjects(revealedRecoveryCopyURL, recoveryCopyURL);
+	XCTAssertEqual(PBWindowWorkspaceRevealCount, (NSUInteger)0);
+	[controller presentForgeRecoveryStatusDetailsWithCopyURL:recoveryCopyURL];
+	XCTAssertEqual(PBWindowWorkspaceRevealCount, (NSUInteger)1);
 
 	[controller changeContentController:history];
 	history.status = @"History ready";

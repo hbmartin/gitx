@@ -273,14 +273,26 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         let defaults = try makeDefaults()
         let keychain = CompositionKeychain()
         let runner = CompositionRunner()
+        let avatarPayload = ForgeAvatarPayload(data: Data([8, 1]), mediaType: .png)
+        let avatarLoader = ForgeAvatarLoader(
+            transport: CompositionAvatarTransport(payload: avatarPayload),
+            loadingEnabled: false,
+            requiresBackingStoreInstallation: true
+        )
         let services = try await ForgeApplicationServiceFactory.make(
             forgeDirectory: root,
             bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
             keychain: keychain,
-            cliRunner: runner
+            cliRunner: runner,
+            avatarLoader: avatarLoader
         )
 
         XCTAssertNil(services.database)
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/801")
+        let loadedAvatar = try await avatarLoader.load(avatarURL)
+        XCTAssertEqual(loadedAvatar, avatarPayload)
+        let avatarState = await avatarLoader.statistics()
+        XCTAssertTrue(avatarState.enabled)
         let recoveryCopy = try XCTUnwrap(services.dataAvailability.recoveryCopy)
         XCTAssertTrue(FileManager.default.fileExists(atPath: recoveryCopy.url.path))
         let initialCommandCount = await runner.commandCount
