@@ -196,12 +196,16 @@ actor ForgeApplicationServiceLoader {
     init(
         bindingCleaner: any ForgeRepositoryBindingCleaning,
         applicationSupportDirectory: @escaping ForgeApplicationServiceFactory.ApplicationSupportDirectoryProvider =
-            ForgeApplicationServiceFactory.systemApplicationSupportDirectory
+            ForgeApplicationServiceFactory.systemApplicationSupportDirectory,
+        avatarLoader: ForgeAvatarLoader?,
+        avatarLoadingEnabled: @escaping @Sendable () -> Bool
     ) {
         factory = {
             try await ForgeApplicationServiceFactory.makeDefault(
                 bindingCleaner: bindingCleaner,
-                applicationSupportDirectory: applicationSupportDirectory
+                applicationSupportDirectory: applicationSupportDirectory,
+                avatarLoader: avatarLoader,
+                avatarLoadingEnabled: avatarLoadingEnabled
             )
         }
     }
@@ -236,7 +240,9 @@ nonisolated enum ForgeApplicationServiceFactory {
 
     static func makeDefault(
         bindingCleaner: any ForgeRepositoryBindingCleaning,
-        applicationSupportDirectory: ApplicationSupportDirectoryProvider = systemApplicationSupportDirectory
+        applicationSupportDirectory: ApplicationSupportDirectoryProvider = systemApplicationSupportDirectory,
+        avatarLoader: ForgeAvatarLoader?,
+        avatarLoadingEnabled: @escaping @Sendable () -> Bool
     ) async throws -> ForgeApplicationServices {
         let applicationSupportURL = try applicationSupportDirectory()
         let forgeDirectory = applicationSupportURL
@@ -246,7 +252,9 @@ nonisolated enum ForgeApplicationServiceFactory {
             forgeDirectory: forgeDirectory,
             bindingCleaner: bindingCleaner,
             keychain: SecurityForgeCredentialKeychain(),
-            cliRunner: SystemForgeCLICommandRunner()
+            cliRunner: SystemForgeCLICommandRunner(),
+            avatarLoader: avatarLoader,
+            avatarLoadingEnabled: avatarLoadingEnabled
         )
     }
 
@@ -263,7 +271,9 @@ nonisolated enum ForgeApplicationServiceFactory {
         forgeDirectory: URL,
         bindingCleaner: any ForgeRepositoryBindingCleaning,
         keychain: any ForgeCredentialKeychain,
-        cliRunner: any ForgeCLICommandRunning
+        cliRunner: any ForgeCLICommandRunning,
+        avatarLoader: ForgeAvatarLoader? = nil,
+        avatarLoadingEnabled: @escaping @Sendable () -> Bool = { true }
     ) async throws -> ForgeApplicationServices {
         let accountStore = ForgeAccountStore(keychain: keychain)
         let tombstoneStore = ForgeDeferredAccountCleanupStore(forgeDirectory: forgeDirectory)
@@ -273,28 +283,47 @@ nonisolated enum ForgeApplicationServiceFactory {
         )
         let dataAvailability: ForgeApplicationDataAvailability
         let persistenceCleaner: any ForgeAccountPersistenceCleaning
+        let avatarCleaner: any ForgeAccountAvatarCleaning
         do {
             let database = try ForgeSQLiteStore(configuration: databaseConfiguration)
             try await tombstoneStore.replay(into: database)
+            if let avatarLoader {
+                try await avatarLoader.installBackingStore(
+                    ForgeSQLiteAvatarBackingStore(store: database),
+                    loadingEnabled: avatarLoadingEnabled()
+                )
+            }
             dataAvailability = .available(database)
             persistenceCleaner = database
+            avatarCleaner = ForgeSQLiteAvatarAccountCleaner(
+                store: database,
+                loader: avatarLoader
+            )
         } catch let ForgeSQLiteError.recoveryRequired(copy, _) {
             dataAvailability = .recoveryRequired(copy)
             persistenceCleaner = ForgeRecoveryDeferredAccountPersistenceCleaner(
                 tombstoneStore: tombstoneStore,
                 recoveryCopy: copy
             )
+            avatarCleaner = PreservingSharedForgeAvatarCleaner(loader: avatarLoader)
+            if let avatarLoader {
+                try await avatarLoader.installBackingStore(
+                    ForgeAvatarMemoryOnlyBackingStore(),
+                    loadingEnabled: avatarLoadingEnabled()
+                )
+            }
         }
         let broker = GitHubCLIAccountBroker(runner: cliRunner)
         let addAccountCoordinator = ForgeAddAccountCoordinator(
             accountStore: accountStore,
-            cliBroker: broker
+            cliBroker: broker,
+            avatarLoader: avatarLoader
         )
         let removalCoordinator = ForgeAccountRemovalCoordinator(
             accountStore: accountStore,
             persistenceCleaner: persistenceCleaner,
             bindingCleaner: bindingCleaner,
-            avatarCleaner: PreservingSharedForgeAvatarCleaner()
+            avatarCleaner: avatarCleaner
         )
         let credentialAuthority = ForgeGitHubReadCredentialAuthority(accountStore: accountStore)
         return ForgeApplicationServices(

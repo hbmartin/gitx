@@ -267,14 +267,18 @@ final nonisolated class ApplicationSettings: NSObject {
 
     @objc static var loadAvatars: Bool {
         get {
-            guard defaults.object(forKey: Key.loadAvatars) != nil else { return true }
-            return defaults.bool(forKey: Key.loadAvatars)
+            loadAvatars(in: defaults)
         }
         set {
             guard newValue != loadAvatars else { return }
             defaults.set(newValue, forKey: Key.loadAvatars)
             ForgeAvatarLoadingPreferenceCoordinator.shared.submit(newValue)
         }
+    }
+
+    static func loadAvatars(in defaults: UserDefaults) -> Bool {
+        guard defaults.object(forKey: Key.loadAvatars) != nil else { return true }
+        return defaults.bool(forKey: Key.loadAvatars)
     }
 
     private static func enumValue<Value: RawRepresentable>(

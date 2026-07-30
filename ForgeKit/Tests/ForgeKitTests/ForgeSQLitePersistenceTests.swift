@@ -158,6 +158,220 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         await store.close()
     }
 
+    func testAvatarAttributionDeletesOnlyAccountExclusiveEntries() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let exclusive = try ForgeAvatarCacheKey(
+            canonicalURL: XCTUnwrap(URL(string: "https://avatars.example/exclusive"))
+        )
+        let shared = try ForgeAvatarCacheKey(
+            canonicalURL: XCTUnwrap(URL(string: "https://avatars.example/shared"))
+        )
+        let anonymous = try ForgeAvatarCacheKey(
+            canonicalURL: XCTUnwrap(URL(string: "https://avatars.example/anonymous"))
+        )
+
+        try await store.putAvatarCacheEntry(
+            fixture.entry(.avatar(exclusive), payload: "exclusive", fetched: 1, accessed: 1),
+            owners: [.account(fixture.firstAccount)]
+        )
+        try await store.putAvatarCacheEntry(
+            fixture.entry(.avatar(shared), payload: "shared", fetched: 2, accessed: 2),
+            owners: [.account(fixture.firstAccount)]
+        )
+        let loadedShared = try await store.avatarCacheEntry(
+            for: shared,
+            owner: .account(fixture.secondAccount),
+            accessedAt: fixture.date(3)
+        )
+        XCTAssertEqual(loadedShared?.payload, Data("shared".utf8))
+        try await store.putCacheEntry(
+            fixture.entry(.avatar(anonymous), payload: "anonymous", fetched: 3, accessed: 3)
+        )
+        try await store.associateAvatarCacheEntry(
+            anonymous,
+            owner: .account(fixture.firstAccount)
+        )
+
+        try await store.removeAccount(fixture.firstAccount)
+
+        let removedExclusive = try await store.cacheEntry(for: .avatar(exclusive), accessedAt: fixture.date(4))
+        let retainedShared = try await store.cacheEntry(for: .avatar(shared), accessedAt: fixture.date(4))
+        let retainedAnonymous = try await store.cacheEntry(for: .avatar(anonymous), accessedAt: fixture.date(4))
+        XCTAssertNil(removedExclusive)
+        XCTAssertNotNil(retainedShared)
+        XCTAssertNotNil(retainedAnonymous)
+        let repeatedRemoval = try await store.removeAvatarAssociations(for: fixture.firstAccount)
+        let finalOwnerRemoval = try await store.removeAvatarAssociations(for: fixture.secondAccount)
+        XCTAssertEqual(repeatedRemoval, 0)
+        XCTAssertEqual(finalOwnerRemoval, 1)
+        let removedShared = try await store.cacheEntry(for: .avatar(shared), accessedAt: fixture.date(5))
+        XCTAssertNil(removedShared)
+        let firstAnonymousRemoval = try await store.removeAvatarCacheEntry(anonymous)
+        let secondAnonymousRemoval = try await store.removeAvatarCacheEntry(anonymous)
+        XCTAssertTrue(firstAnonymousRemoval)
+        XCTAssertFalse(secondAnonymousRemoval)
+        await store.close()
+    }
+
+    func testAvatarAttributionValidationAndForeignKeysFailClosed() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let avatar = try ForgeAvatarCacheKey(
+            canonicalURL: XCTUnwrap(URL(string: "https://avatars.example/validation"))
+        )
+        let avatarEntry = try fixture.entry(.avatar(avatar), payload: "avatar", fetched: 1, accessed: 1)
+        let snapshotEntry = try fixture.entry(
+            fixture.snapshotKey(.publicAccess, identity: "not-avatar"),
+            payload: "snapshot",
+            fetched: 1,
+            accessed: 1
+        )
+
+        await XCTAssertThrowsErrorAsync {
+            try await store.putAvatarCacheEntry(snapshotEntry, owners: [.anonymous])
+        } verify: {
+            XCTAssertEqual($0.localizedDescription, ForgeSQLiteError.notAvatarCacheEntry.localizedDescription)
+        }
+        await XCTAssertThrowsErrorAsync {
+            try await store.putAvatarCacheEntry(avatarEntry, owners: [])
+        } verify: {
+            XCTAssertEqual($0.localizedDescription, ForgeSQLiteError.missingAvatarOwner.localizedDescription)
+        }
+        let gitLab = try ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.com"))
+        let gitLabAccount = try ForgeAccountID(forge: gitLab, value: "foreign")
+        await XCTAssertThrowsErrorAsync {
+            try await store.putAvatarCacheEntry(avatarEntry, owners: [.account(gitLabAccount)])
+        } verify: {
+            XCTAssertEqual($0.localizedDescription, ForgeSQLiteError.unsupportedAvatarOwner.localizedDescription)
+        }
+        let enterprise = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.example"))
+        let enterpriseAccount = try ForgeAccountID(forge: enterprise, value: "enterprise")
+        await XCTAssertThrowsErrorAsync {
+            try await store.putAvatarCacheEntry(avatarEntry, owners: [.account(enterpriseAccount)])
+        } verify: {
+            XCTAssertEqual($0.localizedDescription, ForgeSQLiteError.unsupportedAvatarOwner.localizedDescription)
+        }
+        await XCTAssertThrowsErrorAsync {
+            try await store.associateAvatarCacheEntry(avatar, owner: .anonymous)
+        }
+        let missing = try await store.avatarCacheEntry(
+            for: avatar,
+            owner: .anonymous,
+            accessedAt: fixture.date(2)
+        )
+        XCTAssertNil(missing)
+        await store.close()
+    }
+
+    func testExactAvatarPurgeRemovesZeroByteRowsAndPreservesSnapshots() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let avatar = try ForgeAvatarCacheKey(
+            canonicalURL: XCTUnwrap(URL(string: "https://avatars.example/zero-byte"))
+        )
+        let snapshot = try fixture.snapshotKey(.publicAccess, identity: "purge-boundary")
+        try await store.putCacheEntry(
+            fixture.entry(.avatar(avatar), payload: "", fetched: 1, accessed: 1)
+        )
+        try await store.putCacheEntry(
+            fixture.entry(snapshot, payload: "snapshot", fetched: 1, accessed: 1)
+        )
+
+        let removed = try await store.removeAllAvatarCacheEntries()
+
+        let removedAvatar = try await store.cacheEntry(for: .avatar(avatar), accessedAt: fixture.date(2))
+        let retainedSnapshot = try await store.cacheEntry(for: snapshot, accessedAt: fixture.date(2))
+        XCTAssertEqual(removed, 1)
+        XCTAssertNil(removedAvatar)
+        XCTAssertEqual(retainedSnapshot?.payload, Data("snapshot".utf8))
+        XCTAssertEqual(try RawSQLite.scalar(
+            "SELECT COUNT(*) FROM forge_avatar_cache_owners",
+            at: fixture.databaseURL
+        ), 0)
+        await store.close()
+    }
+
+    func testNonGitHubAccountRemovalStillDeletesOrdinaryPartitions() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let forge = try ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.com"))
+        let account = try ForgeAccountID(forge: forge, value: "gitlab-account")
+        let repository = try ForgeRepositoryIdentity(
+            forge: forge,
+            owner: "example",
+            name: "project"
+        )
+        let snapshot = try ForgeDisposableCacheKey.snapshot(ForgeCacheRecordKey(
+            repositoryPartition: ForgeRepositoryPartitionKey(
+                cachePartition: .account(account),
+                repository: repository
+            ),
+            kind: .repositoryFacts,
+            identity: "gitlab-removal"
+        ))
+        let durable = try ForgeSQLiteDurableRecord(
+            kind: .attention,
+            accountID: account,
+            repository: repository,
+            key: Data("gitlab-attention".utf8),
+            payload: Data("state".utf8),
+            lastActivityAt: fixture.date(1)
+        )
+        try await store.putCacheEntry(
+            fixture.entry(snapshot, payload: "cached", fetched: 1, accessed: 1)
+        )
+        try await store.saveDurableRecord(durable)
+
+        try await store.removeAccount(account)
+
+        let removedSnapshot = try await store.cacheEntry(for: snapshot, accessedAt: fixture.date(2))
+        let removedDurable = try await store.durableRecord(
+            kind: durable.kind,
+            accountID: account,
+            repository: repository,
+            key: durable.key
+        )
+        let unsupportedAvatarAssociations = try await store.removeAvatarAssociations(for: account)
+        XCTAssertNil(removedSnapshot)
+        XCTAssertNil(removedDurable)
+        XCTAssertEqual(unsupportedAvatarAssociations, 0)
+        await store.close()
+    }
+
+    func testVersionOneAvatarRowsMigrateAsAnonymousSharedEntries() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let avatar = try ForgeAvatarCacheKey(
+            canonicalURL: XCTUnwrap(URL(string: "https://avatars.example/migrated"))
+        )
+        var store: ForgeSQLiteStore? = try ForgeSQLiteStore(configuration: fixture.configuration)
+        try await store?.putCacheEntry(
+            fixture.entry(.avatar(avatar), payload: "legacy", fetched: 1, accessed: 1)
+        )
+        await store?.close()
+        store = nil
+        try RawSQLite.execute(
+            "DROP TABLE forge_avatar_cache_owners; PRAGMA user_version = 1;",
+            at: fixture.databaseURL
+        )
+
+        store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: fixture.databaseURL), 2)
+        try await store?.removeAccount(fixture.firstAccount)
+        let migratedAvatar = try await store?.cacheEntry(for: .avatar(avatar), accessedAt: fixture.date(2))
+        XCTAssertNotNil(migratedAvatar)
+        XCTAssertEqual(try RawSQLite.scalar(
+            "SELECT COUNT(*) FROM forge_avatar_cache_owners WHERE length(account_key) = 0",
+            at: fixture.databaseURL
+        ), 1)
+        await store?.close()
+    }
+
     func testDurableKindsPersistExpireAndDeleteIndependently() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -482,11 +696,11 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         let store = try ForgeSQLiteStore(configuration: fixture.configuration)
         await store.close()
 
-        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: fixture.databaseURL), 1)
+        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: fixture.databaseURL), 2)
         XCTAssertEqual(try RawSQLite.scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'forge_%'",
             at: fixture.databaseURL
-        ), 2)
+        ), 3)
         let attributes = try FileManager.default.attributesOfItem(atPath: fixture.databaseURL.path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
         let directoryAttributes = try FileManager.default.attributesOfItem(atPath: fixture.root.path)
@@ -504,7 +718,7 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         let connection = try ForgeSQLiteConnection(url: databaseURL)
         try connection.configure()
         try connection.migrate(to: ForgeSQLiteStore.schemaVersion)
-        XCTAssertThrowsError(try connection.verifySchema(version: 2))
+        XCTAssertThrowsError(try connection.verifySchema(version: 3))
         try connection.execute("CREATE TABLE unique_values(value INTEGER PRIMARY KEY)")
         try connection.execute("INSERT INTO unique_values VALUES (1)")
         XCTAssertThrowsError(try connection.execute("INSERT INTO unique_values VALUES (1)"))
@@ -550,12 +764,12 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
     func testCurrentVersionWithMissingSchemaIsPreservedForRecovery() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
-        try RawSQLite.execute("CREATE TABLE unrelated(value INTEGER); PRAGMA user_version = 1;", at: fixture.databaseURL)
+        try RawSQLite.execute("CREATE TABLE unrelated(value INTEGER); PRAGMA user_version = 2;", at: fixture.databaseURL)
 
         let copy = try recoveryCopy(from: fixture) {
             _ = try ForgeSQLiteStore(configuration: fixture.configuration)
         }
-        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: copy.url), 1)
+        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: copy.url), 2)
         XCTAssertEqual(try RawSQLite.scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='unrelated'",
             at: copy.url
@@ -745,6 +959,9 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
             "The Forge cache payload size differs from its validated byte count."
         )
         XCTAssertEqual(ForgeSQLiteError.invalidTimestamp.localizedDescription, "Forge SQLite timestamps must be finite.")
+        XCTAssertTrue(ForgeSQLiteError.notAvatarCacheEntry.localizedDescription.contains("avatar"))
+        XCTAssertTrue(ForgeSQLiteError.missingAvatarOwner.localizedDescription.contains("owner"))
+        XCTAssertTrue(ForgeSQLiteError.unsupportedAvatarOwner.localizedDescription.contains("GitHub.com"))
     }
 
     private func recoveryCopy(from fixture: Fixture, operation: () throws -> Void) throws -> ForgeSQLiteRecoveryCopy {
@@ -759,6 +976,20 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
             throw error
         }
+    }
+}
+
+private func XCTAssertThrowsErrorAsync<Result>(
+    _ expression: () async throws -> Result,
+    file: StaticString = #filePath,
+    line: UInt = #line,
+    verify: (Error) -> Void = { _ in }
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected expression to throw", file: file, line: line)
+    } catch {
+        verify(error)
     }
 }
 

@@ -15,12 +15,14 @@ nonisolated protocol ForgeAvatarTransport: Sendable {
 
 nonisolated enum ForgeAvatarLoadingError: Error, Equatable, LocalizedError {
     case disabled
+    case accountRemoved
     case invalidResponse
     case decodingFailed
 
     var errorDescription: String? {
         switch self {
         case .disabled: "Avatar loading is disabled."
+        case .accountRemoved: "The Forge Account for this avatar was removed."
         case .invalidResponse: "The avatar server returned an invalid response."
         case .decodingFailed: "The avatar image could not be decoded safely."
         }
@@ -229,8 +231,16 @@ nonisolated struct ForgeAvatarImageDecoder: Sendable {
 }
 
 nonisolated protocol ForgeAvatarBackingStore: Sendable {
-    func payload(for avatarURL: ForgeAvatarURL) async throws -> ForgeAvatarPayload?
-    func store(_ payload: ForgeAvatarPayload, for avatarURL: ForgeAvatarURL) async throws
+    func payload(
+        for avatarURL: ForgeAvatarURL,
+        owner: ForgeAvatarCacheOwner
+    ) async throws -> ForgeAvatarPayload?
+    func store(
+        _ payload: ForgeAvatarPayload,
+        for avatarURL: ForgeAvatarURL,
+        owners: Set<ForgeAvatarCacheOwner>
+    ) async throws
+    func associate(_ owner: ForgeAvatarCacheOwner, with avatarURL: ForgeAvatarURL) async throws
     func purge() async throws
 }
 
@@ -238,11 +248,20 @@ nonisolated protocol ForgeAvatarBackingStore: Sendable {
 /// Milestone 1 application composition must replace this with
 /// `ForgeSQLiteAvatarBackingStore` and cover read-through, write-through, and purge.
 nonisolated struct ForgeAvatarMemoryOnlyBackingStore: ForgeAvatarBackingStore {
-    func payload(for _: ForgeAvatarURL) async throws -> ForgeAvatarPayload? {
+    func payload(
+        for _: ForgeAvatarURL,
+        owner _: ForgeAvatarCacheOwner
+    ) async throws -> ForgeAvatarPayload? {
         nil
     }
 
-    func store(_: ForgeAvatarPayload, for _: ForgeAvatarURL) async throws {}
+    func store(
+        _: ForgeAvatarPayload,
+        for _: ForgeAvatarURL,
+        owners _: Set<ForgeAvatarCacheOwner>
+    ) async throws {}
+
+    func associate(_: ForgeAvatarCacheOwner, with _: ForgeAvatarURL) async throws {}
     func purge() async throws {}
 }
 
@@ -258,15 +277,31 @@ nonisolated struct ForgeSQLiteAvatarBackingStore: ForgeAvatarBackingStore {
         self.clock = clock
     }
 
-    func payload(for avatarURL: ForgeAvatarURL) async throws -> ForgeAvatarPayload? {
-        let key = ForgeDisposableCacheKey.avatar(ForgeAvatarCacheKey(canonicalURL: avatarURL.url))
-        guard let entry = try await store.cacheEntry(for: key, accessedAt: clock()) else {
+    func payload(
+        for avatarURL: ForgeAvatarURL,
+        owner: ForgeAvatarCacheOwner
+    ) async throws -> ForgeAvatarPayload? {
+        let key = ForgeAvatarCacheKey(canonicalURL: avatarURL.url)
+        guard let entry = try await store.avatarCacheEntry(
+            for: key,
+            owner: owner,
+            accessedAt: clock()
+        ) else {
             return nil
         }
-        return try Self.decode(entry.payload)
+        do {
+            return try Self.decode(entry.payload)
+        } catch {
+            _ = try? await store.removeAvatarCacheEntry(key)
+            throw error
+        }
     }
 
-    func store(_ payload: ForgeAvatarPayload, for avatarURL: ForgeAvatarURL) async throws {
+    func store(
+        _ payload: ForgeAvatarPayload,
+        for avatarURL: ForgeAvatarURL,
+        owners: Set<ForgeAvatarCacheOwner>
+    ) async throws {
         let encoded = Self.encode(payload)
         let now = clock()
         let record = try ForgeDisposableCacheRecord(
@@ -275,12 +310,22 @@ nonisolated struct ForgeSQLiteAvatarBackingStore: ForgeAvatarBackingStore {
             fetchedAt: now,
             lastAccessedAt: now
         )
-        try await store.putCacheEntry(ForgeSQLiteCacheEntry(record: record, payload: encoded))
+        try await store.putAvatarCacheEntry(
+            ForgeSQLiteCacheEntry(record: record, payload: encoded),
+            owners: owners
+        )
         try await store.enforceCacheLimits()
     }
 
+    func associate(_ owner: ForgeAvatarCacheOwner, with avatarURL: ForgeAvatarURL) async throws {
+        try await store.associateAvatarCacheEntry(
+            ForgeAvatarCacheKey(canonicalURL: avatarURL.url),
+            owner: owner
+        )
+    }
+
     func purge() async throws {
-        try await store.enforceCacheLimits(avatarByteLimit: 0)
+        _ = try await store.removeAllAvatarCacheEntries()
     }
 
     private static func encode(_ payload: ForgeAvatarPayload) -> Data {
@@ -389,12 +434,14 @@ final nonisolated class ForgeAvatarLoadingPreferenceCoordinator: Sendable {
 }
 
 actor ForgeAvatarLoader {
-    /// This temporary default is deliberately memory-only. The downstream
-    /// Milestone 1 composition slice must inject `ForgeSQLiteAvatarBackingStore`.
+    /// Application composition installs the shared Forge SQLite adapter before
+    /// product surfaces request avatars. Recovery mode retains the explicit
+    /// memory-only tier.
     static let shared = ForgeAvatarLoader(
         transport: ForgeAvatarNetworkTransport(),
         backingStore: ForgeAvatarMemoryOnlyBackingStore(),
-        loadingEnabled: ApplicationSettings.loadAvatars
+        loadingEnabled: false,
+        requiresBackingStoreInstallation: true
     )
 
     private struct CacheEntry {
@@ -405,44 +452,69 @@ actor ForgeAvatarLoader {
     private struct ActiveRequest {
         let id: UUID
         var task: Task<Void, Never>?
-        var waiters: [UUID: CheckedContinuation<ForgeAvatarPayload, Error>]
+        var waiters: [UUID: Waiter]
+    }
+
+    private struct Waiter {
+        let owner: ForgeAvatarCacheOwner
+        let continuation: CheckedContinuation<ForgeAvatarPayload, Error>
     }
 
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeAvatarCache")
     private let transport: any ForgeAvatarTransport
-    private let backingStore: any ForgeAvatarBackingStore
+    private var backingStore: any ForgeAvatarBackingStore
     private let cacheByteLimit: Int
     private var loadingEnabled = true
+    private var backingStoreInstalled: Bool
+    private var loadingAuthorityWasUpdated = false
     private var cache: [ForgeAvatarURL: CacheEntry] = [:]
     private var accessSequence: UInt64 = 0
     private var active: [ForgeAvatarURL: ActiveRequest] = [:]
     private var discardedRequestCompletions = 0
+    private var backingStoreFailures = 0
+    private var removedAccounts: Set<ForgeAccountID> = []
 
     init(
         transport: any ForgeAvatarTransport,
         backingStore: any ForgeAvatarBackingStore = ForgeAvatarMemoryOnlyBackingStore(),
         cacheByteLimit: Int = Int(ForgePolicyConstants.avatarCacheByteLimit),
-        loadingEnabled: Bool = true
+        loadingEnabled: Bool = true,
+        requiresBackingStoreInstallation: Bool = false
     ) {
         self.transport = transport
         self.backingStore = backingStore
         self.cacheByteLimit = max(cacheByteLimit, 0)
         self.loadingEnabled = loadingEnabled
+        backingStoreInstalled = !requiresBackingStoreInstallation
     }
 
-    func load(_ avatarURL: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
+    func load(
+        _ avatarURL: ForgeAvatarURL,
+        owner: ForgeAvatarCacheOwner = .anonymous
+    ) async throws -> ForgeAvatarPayload {
         try Task.checkCancellation()
-        guard loadingEnabled else { throw ForgeAvatarLoadingError.disabled }
-        if var entry = cache[avatarURL] {
+        guard loadingEnabled, backingStoreInstalled else { throw ForgeAvatarLoadingError.disabled }
+        try validate(owner)
+        if let payload = cache[avatarURL]?.payload {
+            do {
+                try await backingStore.associate(owner, with: avatarURL)
+            } catch {
+                backingStoreFailures += 1
+                Self.logger.error("Failed to persist structured avatar owner attribution")
+            }
+            try Task.checkCancellation()
+            guard loadingEnabled, backingStoreInstalled else { throw ForgeAvatarLoadingError.disabled }
+            try validate(owner)
+            guard var entry = cache[avatarURL] else { return payload }
             accessSequence &+= 1
             entry.lastAccess = accessSequence
             cache[avatarURL] = entry
-            return entry.payload
+            return payload
         }
         let waiterID = UUID()
         let payload = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                registerWaiter(continuation, id: waiterID, for: avatarURL)
+                registerWaiter(continuation, id: waiterID, owner: owner, for: avatarURL)
             }
         } onCancel: {
             Task { await self.cancelWaiter(id: waiterID, for: avatarURL) }
@@ -451,7 +523,31 @@ actor ForgeAvatarLoader {
         return payload
     }
 
+    func installBackingStore(
+        _ backingStore: any ForgeAvatarBackingStore,
+        loadingEnabled: Bool
+    ) async throws {
+        cancelActiveRequests(with: CancellationError())
+        cache.removeAll()
+        self.backingStore = backingStore
+        backingStoreInstalled = true
+        if !loadingAuthorityWasUpdated {
+            self.loadingEnabled = loadingEnabled
+        }
+        if !self.loadingEnabled {
+            do {
+                try await backingStore.purge()
+            } catch {
+                backingStoreFailures += 1
+                Self.logger.error("Failed to purge disabled structured avatar persistence during composition")
+                throw error
+            }
+        }
+        Self.logger.notice("Installed structured avatar persistence backing store")
+    }
+
     func setLoadingEnabled(_ enabled: Bool) async {
+        loadingAuthorityWasUpdated = true
         loadingEnabled = enabled
         guard !enabled else { return }
         cancelActiveRequests(with: ForgeAvatarLoadingError.disabled)
@@ -460,6 +556,7 @@ actor ForgeAvatarLoader {
             try await backingStore.purge()
             Self.logger.info("Purged structured avatar memory and disposable backing caches")
         } catch {
+            backingStoreFailures += 1
             Self.logger.error("Failed to purge the structured avatar disposable backing cache")
         }
     }
@@ -470,8 +567,21 @@ actor ForgeAvatarLoader {
         do {
             try await backingStore.purge()
         } catch {
+            backingStoreFailures += 1
             Self.logger.error("Failed to purge the structured avatar disposable backing cache")
         }
+    }
+
+    func invalidateForAccountRemoval(_ accountID: ForgeAccountID) {
+        removedAccounts.insert(accountID)
+        cancelActiveRequests(with: CancellationError())
+        cache.removeAll()
+        Self.logger.notice("Invalidated structured avatar memory for Forge Account removal")
+    }
+
+    func restoreAfterAccountAddition(_ accountID: ForgeAccountID) {
+        removedAccounts.remove(accountID)
+        Self.logger.notice("Restored structured avatar authority for an added Forge Account")
     }
 
     func statistics() -> (
@@ -480,6 +590,7 @@ actor ForgeAvatarLoader {
         activeRequests: Int,
         activeWaiters: Int,
         discardedRequestCompletions: Int,
+        backingStoreFailures: Int,
         enabled: Bool
     ) {
         (
@@ -488,44 +599,59 @@ actor ForgeAvatarLoader {
             active.count,
             active.values.reduce(0) { $0 + $1.waiters.count },
             discardedRequestCompletions,
-            loadingEnabled
+            backingStoreFailures,
+            loadingEnabled && backingStoreInstalled
         )
     }
 
     private func registerWaiter(
         _ continuation: CheckedContinuation<ForgeAvatarPayload, Error>,
         id: UUID,
+        owner: ForgeAvatarCacheOwner,
         for avatarURL: ForgeAvatarURL
     ) {
-        guard loadingEnabled else {
+        guard loadingEnabled, backingStoreInstalled else {
             continuation.resume(throwing: ForgeAvatarLoadingError.disabled)
             return
         }
+        do {
+            try validate(owner)
+        } catch {
+            continuation.resume(throwing: error)
+            return
+        }
         if var request = active[avatarURL] {
-            request.waiters[id] = continuation
+            request.waiters[id] = Waiter(owner: owner, continuation: continuation)
             active[avatarURL] = request
             return
         }
 
         let requestID = UUID()
-        active[avatarURL] = ActiveRequest(id: requestID, task: nil, waiters: [id: continuation])
+        active[avatarURL] = ActiveRequest(
+            id: requestID,
+            task: nil,
+            waiters: [id: Waiter(owner: owner, continuation: continuation)]
+        )
         let task = Task { [backingStore, transport] in
             do {
                 let storedPayload: ForgeAvatarPayload?
                 do {
-                    storedPayload = try await backingStore.payload(for: avatarURL)
+                    storedPayload = try await backingStore.payload(for: avatarURL, owner: owner)
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
+                    self.recordBackingStoreFailure()
                     Self.logger.error("Structured avatar backing lookup failed; retrying from the approved host")
                     storedPayload = nil
                 }
 
                 let payload: ForgeAvatarPayload
+                var persistedOwners: Set<ForgeAvatarCacheOwner>?
                 if let storedPayload,
                    storedPayload.data.count <= ForgeAvatarSecurityConstants.maximumResponseBytes
                 {
                     payload = storedPayload
+                    persistedOwners = [owner]
                     Self.logger.debug("Loaded a structured avatar from the disposable backing cache")
                 } else {
                     payload = try await transport.fetch(avatarURL)
@@ -534,12 +660,44 @@ actor ForgeAvatarLoader {
                         throw ForgeAvatarPolicyError.responseTooLarge
                     }
                     do {
-                        try await backingStore.store(payload, for: avatarURL)
+                        let owners = self.requestOwners(id: requestID, for: avatarURL)
+                        try Task.checkCancellation()
+                        guard !owners.isEmpty else { throw CancellationError() }
+                        try await backingStore.store(payload, for: avatarURL, owners: owners)
+                        persistedOwners = owners
+                    } catch is CancellationError {
+                        throw CancellationError()
                     } catch {
+                        self.recordBackingStoreFailure()
                         Self.logger.error("Failed to store a structured avatar in the disposable backing cache")
                     }
                 }
                 try Task.checkCancellation()
+                if var persistedOwners {
+                    while !self.completeRequestIfOwnersPersisted(
+                        id: requestID,
+                        for: avatarURL,
+                        owners: persistedOwners,
+                        payload: payload
+                    ) {
+                        let missingOwners = self.requestOwners(
+                            id: requestID,
+                            for: avatarURL
+                        ).subtracting(persistedOwners)
+                        for additionalOwner in missingOwners {
+                            do {
+                                try await backingStore.associate(additionalOwner, with: avatarURL)
+                            } catch is CancellationError {
+                                throw CancellationError()
+                            } catch {
+                                self.recordBackingStoreFailure()
+                                Self.logger.error("Failed to persist late structured avatar attribution")
+                            }
+                        }
+                        persistedOwners.formUnion(missingOwners)
+                    }
+                    return
+                }
                 self.completeRequest(
                     id: requestID,
                     for: avatarURL,
@@ -558,9 +716,9 @@ actor ForgeAvatarLoader {
 
     private func cancelWaiter(id: UUID, for avatarURL: ForgeAvatarURL) {
         guard var request = active[avatarURL],
-              let continuation = request.waiters.removeValue(forKey: id)
+              let waiter = request.waiters.removeValue(forKey: id)
         else { return }
-        continuation.resume(throwing: CancellationError())
+        waiter.continuation.resume(throwing: CancellationError())
         if request.waiters.isEmpty {
             active[avatarURL] = nil
             request.task?.cancel()
@@ -582,7 +740,7 @@ actor ForgeAvatarLoader {
         guard let request = active.removeValue(forKey: avatarURL) else { return }
         let resolved: Result<ForgeAvatarPayload, Error>
         switch result {
-        case let .success(payload) where loadingEnabled:
+        case let .success(payload) where loadingEnabled && backingStoreInstalled:
             insert(payload, for: avatarURL)
             resolved = .success(payload)
         case .success:
@@ -590,9 +748,22 @@ actor ForgeAvatarLoader {
         case let .failure(error):
             resolved = .failure(error)
         }
-        for continuation in request.waiters.values {
-            continuation.resume(with: resolved)
+        for waiter in request.waiters.values {
+            waiter.continuation.resume(with: resolved)
         }
+    }
+
+    private func completeRequestIfOwnersPersisted(
+        id: UUID,
+        for avatarURL: ForgeAvatarURL,
+        owners: Set<ForgeAvatarCacheOwner>,
+        payload: ForgeAvatarPayload
+    ) -> Bool {
+        guard let request = active[avatarURL], request.id == id else { return true }
+        let currentOwners = Set(request.waiters.values.map(\.owner))
+        guard currentOwners.isSubset(of: owners) else { return false }
+        completeRequest(id: id, for: avatarURL, result: .success(payload))
+        return true
     }
 
     private func cancelActiveRequests(with error: Error) {
@@ -600,10 +771,26 @@ actor ForgeAvatarLoader {
         active.removeAll()
         for request in requests {
             request.task?.cancel()
-            for continuation in request.waiters.values {
-                continuation.resume(throwing: error)
+            for waiter in request.waiters.values {
+                waiter.continuation.resume(throwing: error)
             }
         }
+    }
+
+    private func requestOwners(id: UUID, for avatarURL: ForgeAvatarURL) -> Set<ForgeAvatarCacheOwner> {
+        guard let request = active[avatarURL], request.id == id else { return [] }
+        return Set(request.waiters.values.map(\.owner))
+    }
+
+    private func validate(_ owner: ForgeAvatarCacheOwner) throws {
+        guard case let .account(accountID) = owner,
+              removedAccounts.contains(accountID)
+        else { return }
+        throw ForgeAvatarLoadingError.accountRemoved
+    }
+
+    private func recordBackingStoreFailure() {
+        backingStoreFailures += 1
     }
 
     private func insert(_ payload: ForgeAvatarPayload, for avatarURL: ForgeAvatarURL) {

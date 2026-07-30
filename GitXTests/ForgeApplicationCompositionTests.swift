@@ -51,7 +51,9 @@ final class ForgeApplicationCompositionTests: XCTestCase {
 
         let loader = ForgeApplicationServiceLoader(
             bindingCleaner: bindingCleaner,
-            applicationSupportDirectory: { applicationSupport }
+            applicationSupportDirectory: { applicationSupport },
+            avatarLoader: nil,
+            avatarLoadingEnabled: { true }
         )
         let services = try await loader.services()
 
@@ -69,7 +71,47 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         let defaults = try makeDefaults()
         let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
 
-        _ = ForgeApplicationServiceLoader(bindingCleaner: bindingCleaner)
+        _ = ForgeApplicationServiceLoader(
+            bindingCleaner: bindingCleaner,
+            avatarLoader: nil,
+            avatarLoadingEnabled: { true }
+        )
+    }
+
+    func testDefaultLoaderEvaluatesLatestAvatarPreferenceWhenServicesStart() async throws {
+        let applicationSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeApplicationPreferenceTiming-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: applicationSupport) }
+        let defaults = try makeDefaults()
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let preference = CompositionAvatarLoadingAuthority(true)
+        let transport = CompositionAvatarTransport(payload: ForgeAvatarPayload(
+            data: Data([7, 7]),
+            mediaType: .png
+        ))
+        let avatarLoader = ForgeAvatarLoader(
+            transport: transport,
+            loadingEnabled: false,
+            requiresBackingStoreInstallation: true
+        )
+        let loader = ForgeApplicationServiceLoader(
+            bindingCleaner: bindingCleaner,
+            applicationSupportDirectory: { applicationSupport },
+            avatarLoader: avatarLoader,
+            avatarLoadingEnabled: { preference.value }
+        )
+        preference.set(false)
+
+        _ = try await loader.services()
+
+        let state = await avatarLoader.statistics()
+        XCTAssertFalse(state.enabled)
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/71")
+        await XCTAssertThrowsErrorAsync(try await avatarLoader.load(avatarURL)) { error in
+            XCTAssertEqual(error as? ForgeAvatarLoadingError, .disabled)
+        }
+        let fetchCount = await transport.fetchCount
+        XCTAssertEqual(fetchCount, 0)
     }
 
     func testFailedLazyInitializationCanRetryWithoutPublishingPartialServices() async throws {
@@ -188,6 +230,23 @@ final class ForgeApplicationCompositionTests: XCTestCase {
             lastActivityAt: Date(timeIntervalSince1970: 1000)
         )
         try await firstDatabase.saveDurableRecord(record)
+        let avatarKey = try ForgeAvatarCacheKey(
+            canonicalURL: XCTUnwrap(URL(string: "https://avatars.githubusercontent.com/u/902"))
+        )
+        let avatarBytes = Data([1, 9, 2])
+        let avatarDate = Date(timeIntervalSince1970: 1000)
+        try await firstDatabase.putAvatarCacheEntry(
+            ForgeSQLiteCacheEntry(
+                record: ForgeDisposableCacheRecord(
+                    key: .avatar(avatarKey),
+                    byteCount: UInt64(avatarBytes.count),
+                    fetchedAt: avatarDate,
+                    lastAccessedAt: avatarDate
+                ),
+                payload: avatarBytes
+            ),
+            owners: [.account(accountID)]
+        )
         let storedBeforeReplay = try await firstDatabase.durableRecord(
             kind: record.kind,
             accountID: accountID,
@@ -221,6 +280,11 @@ final class ForgeApplicationCompositionTests: XCTestCase {
             key: record.key
         )
         XCTAssertNil(storedAfterReplay)
+        let avatarAfterReplay = try await recoveredDatabase.cacheEntry(
+            for: .avatar(avatarKey),
+            accessedAt: avatarDate
+        )
+        XCTAssertNil(avatarAfterReplay)
         let tombstoneURL = ForgeDeferredAccountCleanupStore.tombstoneURL(in: root)
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: tombstoneURL.path
@@ -323,6 +387,83 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         }
     }
 
+    func testFactoryInstallsSQLiteAvatarPersistenceAndRemovalDeletesExclusiveOwnerData() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeApplicationAvatarComposition-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let keychain = CompositionKeychain()
+        let payload = ForgeAvatarPayload(data: Data([9, 1]), mediaType: .png)
+        let transport = CompositionAvatarTransport(payload: payload)
+        let avatarLoader = ForgeAvatarLoader(transport: transport)
+        let services = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: root,
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+            keychain: keychain,
+            cliRunner: CompositionRunner(),
+            avatarLoader: avatarLoader,
+            avatarLoadingEnabled: { true }
+        )
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "avatar-composition-account")
+        _ = try await services.addAccountCoordinator.addPersonalAccessToken(
+            accountID: accountID,
+            login: "avatar-user",
+            credentialID: ForgeCredentialID("avatar-pat"),
+            kind: .fineGrained,
+            token: Data("avatar-token".utf8),
+            expiresAt: nil
+        )
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/901")
+
+        let loaded = try await avatarLoader.load(avatarURL, owner: .account(accountID))
+        let database = try XCTUnwrap(services.database)
+        let persisted = try await database.cacheEntry(
+            for: .avatar(ForgeAvatarCacheKey(canonicalURL: avatarURL.url)),
+            accessedAt: Date()
+        )
+        XCTAssertEqual(loaded, payload)
+        XCTAssertNotNil(persisted)
+        XCTAssertNil(persisted?.payload.range(of: Data(accountID.value.utf8)))
+
+        try await services.removalCoordinator.removeAccount(accountID)
+
+        let removed = try await database.cacheEntry(
+            for: .avatar(ForgeAvatarCacheKey(canonicalURL: avatarURL.url)),
+            accessedAt: Date()
+        )
+        let loaderState = await avatarLoader.statistics()
+        let fetchCount = await transport.fetchCount
+        XCTAssertNil(removed)
+        XCTAssertEqual(loaderState.cachedItems, 0)
+        XCTAssertEqual(loaderState.activeRequests, 0)
+        XCTAssertEqual(fetchCount, 1)
+
+        await XCTAssertThrowsErrorAsync(
+            try await avatarLoader.load(avatarURL, owner: .account(accountID))
+        ) { error in
+            XCTAssertEqual(error as? ForgeAvatarLoadingError, .accountRemoved)
+            XCTAssertEqual(
+                error.localizedDescription,
+                "The Forge Account for this avatar was removed."
+            )
+        }
+        let blockedFetchCount = await transport.fetchCount
+        XCTAssertEqual(blockedFetchCount, 1)
+        _ = try await services.addAccountCoordinator.addPersonalAccessToken(
+            accountID: accountID,
+            login: "avatar-user",
+            credentialID: ForgeCredentialID("avatar-pat-restored"),
+            kind: .fineGrained,
+            token: Data("avatar-token-restored".utf8),
+            expiresAt: nil
+        )
+        let restored = try await avatarLoader.load(avatarURL, owner: .account(accountID))
+        let restoredFetchCount = await transport.fetchCount
+        XCTAssertEqual(restored, payload)
+        XCTAssertEqual(restoredFetchCount, 2)
+    }
+
     private func makeDefaults() throws -> UserDefaults {
         let name = "ForgeApplicationCompositionTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: name) else {
@@ -358,6 +499,24 @@ private final nonisolated class CompositionFactoryProbe: @unchecked Sendable {
             threads.append(Thread.isMainThread)
             return count
         }
+    }
+}
+
+// swift6-safety-justification: The lock serializes the mutable preference used by a detached factory task.
+private final nonisolated class CompositionAvatarLoadingAuthority: @unchecked Sendable {
+    private let lock = NSLock()
+    private var enabled: Bool
+
+    init(_ enabled: Bool) {
+        self.enabled = enabled
+    }
+
+    var value: Bool {
+        lock.withLock { enabled }
+    }
+
+    func set(_ enabled: Bool) {
+        lock.withLock { self.enabled = enabled }
     }
 }
 
@@ -406,6 +565,20 @@ private actor CompositionRunner: ForgeCLICommandRunning {
     func run(_ command: ForgeCLICommand) async throws -> ForgeCLICommandResult {
         commandCount += 1
         throw ForgeCLIBrokerError.commandLaunchFailed
+    }
+}
+
+private actor CompositionAvatarTransport: ForgeAvatarTransport {
+    let payload: ForgeAvatarPayload
+    private(set) var fetchCount = 0
+
+    init(payload: ForgeAvatarPayload) {
+        self.payload = payload
+    }
+
+    func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
+        fetchCount += 1
+        return payload
     }
 }
 

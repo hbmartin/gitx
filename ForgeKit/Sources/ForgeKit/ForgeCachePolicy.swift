@@ -110,6 +110,16 @@ public struct ForgeAvatarCacheKey: Codable, Hashable, Sendable {
     }
 }
 
+/// Attribution for a shared, credential-free avatar cache entry.
+///
+/// The same public avatar bytes may be reused across accounts, while this owner
+/// set lets account removal delete an entry only when no anonymous or other
+/// account use remains.
+public enum ForgeAvatarCacheOwner: Hashable, Sendable {
+    case anonymous
+    case account(ForgeAccountID)
+}
+
 public enum ForgeDisposableCacheKey: Codable, Hashable, Sendable {
     case snapshot(ForgeCacheRecordKey)
     case avatar(ForgeAvatarCacheKey)

@@ -203,7 +203,10 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         defaultsSuiteName = "GitXTests.RepositoryForgeCoordinator.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: defaultsSuiteName)
         defaults.removePersistentDomain(forName: defaultsSuiteName)
-        PBApplicationComposition.setShared(PBApplicationComposition(userDefaults: defaults))
+        PBApplicationComposition.setShared(PBApplicationComposition(
+            userDefaults: defaults,
+            automaticallyStartsForgeServices: false
+        ))
 
         repositoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("GitXRepositoryForge-\(UUID().uuidString)", isDirectory: true)

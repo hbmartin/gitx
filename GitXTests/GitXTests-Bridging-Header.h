@@ -124,6 +124,8 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 @interface PBApplicationComposition : NSObject
 @property (nonatomic, readonly, strong) PBApplicationPreferences *applicationPreferences;
 - (instancetype)initWithUserDefaults:(NSUserDefaults *)userDefaults;
+- (instancetype)initWithUserDefaults:(NSUserDefaults *)userDefaults
+	automaticallyStartsForgeServices:(BOOL)automaticallyStartsForgeServices;
 + (PBApplicationComposition *)sharedComposition;
 + (void)setSharedComposition:(PBApplicationComposition *)composition;
 @end

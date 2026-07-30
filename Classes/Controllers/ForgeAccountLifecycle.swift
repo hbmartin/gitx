@@ -376,15 +376,21 @@ final nonisolated class GitHubCLIAccountBroker: Sendable {
 actor ForgeAddAccountCoordinator {
     private let accountStore: ForgeAccountStore
     private let cliBroker: GitHubCLIAccountBroker
+    private let avatarLoader: ForgeAvatarLoader?
 
-    init(accountStore: ForgeAccountStore, cliBroker: GitHubCLIAccountBroker) {
+    init(
+        accountStore: ForgeAccountStore,
+        cliBroker: GitHubCLIAccountBroker,
+        avatarLoader: ForgeAvatarLoader? = nil
+    ) {
         self.accountStore = accountStore
         self.cliBroker = cliBroker
+        self.avatarLoader = avatarLoader
     }
 
     func addUsingExplicitGitHubCLIBrokerage() async throws -> ForgeAccount {
         let credential = try await cliBroker.brokerForExplicitAddAccount()
-        return try await accountStore.addAccount(
+        let account = try await accountStore.addAccount(
             accountID: credential.accountID,
             login: credential.login,
             credentialID: credential.credentialID,
@@ -392,6 +398,8 @@ actor ForgeAddAccountCoordinator {
             expiresAt: nil,
             secrets: ForgeCredentialSecretMaterial(accessToken: credential.accessToken)
         )
+        await avatarLoader?.restoreAfterAccountAddition(account.id)
+        return account
     }
 
     func addPersonalAccessToken(
@@ -402,7 +410,7 @@ actor ForgeAddAccountCoordinator {
         token: Data,
         expiresAt: Date?
     ) async throws -> ForgeAccount {
-        try await accountStore.addPersonalAccessToken(
+        let account = try await accountStore.addPersonalAccessToken(
             accountID: accountID,
             login: login,
             credentialID: credentialID,
@@ -410,6 +418,8 @@ actor ForgeAddAccountCoordinator {
             token: token,
             expiresAt: expiresAt
         )
+        await avatarLoader?.restoreAfterAccountAddition(account.id)
+        return account
     }
 }
 
@@ -424,9 +434,31 @@ nonisolated protocol ForgeAccountAvatarCleaning: Sendable {
 }
 
 nonisolated struct PreservingSharedForgeAvatarCleaner: ForgeAccountAvatarCleaning {
+    private let loader: ForgeAvatarLoader?
+
+    init(loader: ForgeAvatarLoader? = nil) {
+        self.loader = loader
+    }
+
     func removeAccountAssociations(for accountID: ForgeAccountID) async throws {
-        // The current avatar cache is shared and credential-free, so no entries are
-        // attributable only to an account. Keep it intact until attribution exists.
+        await loader?.invalidateForAccountRemoval(accountID)
+        // Recovery mode has no live database or disk avatar tier. The deferred
+        // persistence tombstone removes account attribution when recovery succeeds.
+    }
+}
+
+nonisolated struct ForgeSQLiteAvatarAccountCleaner: ForgeAccountAvatarCleaning {
+    private let store: ForgeSQLiteStore
+    private let loader: ForgeAvatarLoader?
+
+    init(store: ForgeSQLiteStore, loader: ForgeAvatarLoader?) {
+        self.store = store
+        self.loader = loader
+    }
+
+    func removeAccountAssociations(for accountID: ForgeAccountID) async throws {
+        await loader?.invalidateForAccountRemoval(accountID)
+        _ = try await store.removeAvatarAssociations(for: accountID)
     }
 }
 

@@ -397,12 +397,12 @@
                         data: Data([8, UInt8(mediaType.rawValue.count)]),
                         mediaType: mediaType
                     )
-                    try await backing.store(payload, for: avatarURL)
-                    let roundTripPayload = try await backing.payload(for: avatarURL)
+                    try await backing.store(payload, for: avatarURL, owners: [.anonymous])
+                    let roundTripPayload = try await backing.payload(for: avatarURL, owner: .anonymous)
                     roundTrips = roundTrips && roundTripPayload == payload
                 }
                 try await backing.purge()
-                let wasPurged = try await backing.payload(for: avatarURL) == nil
+                let wasPurged = try await backing.payload(for: avatarURL, owner: .anonymous) == nil
                 await store.close()
                 try? FileManager.default.removeItem(at: directory)
                 return roundTrips && wasPurged
@@ -506,13 +506,22 @@
                 self.entries = entries
             }
 
-            func payload(for avatarURL: ForgeAvatarURL) async throws -> ForgeAvatarPayload? {
+            func payload(
+                for avatarURL: ForgeAvatarURL,
+                owner _: ForgeAvatarCacheOwner
+            ) async throws -> ForgeAvatarPayload? {
                 entries[avatarURL]
             }
 
-            func store(_ payload: ForgeAvatarPayload, for avatarURL: ForgeAvatarURL) async throws {
+            func store(
+                _ payload: ForgeAvatarPayload,
+                for avatarURL: ForgeAvatarURL,
+                owners _: Set<ForgeAvatarCacheOwner>
+            ) async throws {
                 entries[avatarURL] = payload
             }
+
+            func associate(_: ForgeAvatarCacheOwner, with _: ForgeAvatarURL) async throws {}
 
             func purge() async throws {
                 purgeCount += 1

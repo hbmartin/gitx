@@ -86,6 +86,19 @@ final nonisolated class ApplicationPreferences: NSObject {
     }
 }
 
+// swift6-safety-justification: UserDefaults supports concurrent reads, and this immutable wrapper only exposes one read operation to the Sendable startup closure.
+private final nonisolated class ForgeAvatarLoadingPreferenceSource: @unchecked Sendable {
+    private let userDefaults: UserDefaults
+
+    init(userDefaults: UserDefaults) {
+        self.userDefaults = userDefaults
+    }
+
+    func isEnabled() -> Bool {
+        ApplicationSettings.loadAvatars(in: userDefaults)
+    }
+}
+
 @objc(PBApplicationComposition)
 final nonisolated class ApplicationComposition: NSObject {
     private static let configuredSharedLock = NSLock()
@@ -100,13 +113,60 @@ final nonisolated class ApplicationComposition: NSObject {
 
     @objc let applicationPreferences: ApplicationPreferences
     let forgeServices: ForgeApplicationServiceLoader
+    private let automaticallyStartsForgeServices: Bool
+    private let forgeServiceStartupLock = NSLock()
+    private var didStartForgeServices = false
 
     @objc(initWithUserDefaults:)
-    init(userDefaults: UserDefaults) {
-        applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
+    convenience init(userDefaults: UserDefaults) {
+        self.init(userDefaults: userDefaults, automaticallyStartsForgeServices: true)
+    }
+
+    @objc(initWithUserDefaults:automaticallyStartsForgeServices:)
+    convenience init(
+        userDefaults: UserDefaults,
+        automaticallyStartsForgeServices: Bool
+    ) {
         let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: userDefaults)
-        forgeServices = ForgeApplicationServiceLoader(bindingCleaner: bindingCleaner)
+        let avatarLoadingPreferenceSource = ForgeAvatarLoadingPreferenceSource(userDefaults: userDefaults)
+        self.init(
+            userDefaults: userDefaults,
+            forgeServices: ForgeApplicationServiceLoader(
+                bindingCleaner: bindingCleaner,
+                avatarLoader: .shared,
+                avatarLoadingEnabled: { avatarLoadingPreferenceSource.isEnabled() }
+            ),
+            automaticallyStartsForgeServices: automaticallyStartsForgeServices
+        )
+    }
+
+    init(
+        userDefaults: UserDefaults,
+        forgeServices: ForgeApplicationServiceLoader,
+        automaticallyStartsForgeServices: Bool = true
+    ) {
+        applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
+        self.forgeServices = forgeServices
+        self.automaticallyStartsForgeServices = automaticallyStartsForgeServices
         super.init()
+    }
+
+    private func startForgeServicesIfNeeded() {
+        guard automaticallyStartsForgeServices else { return }
+        forgeServiceStartupLock.lock()
+        let shouldStart = !didStartForgeServices
+        didStartForgeServices = true
+        forgeServiceStartupLock.unlock()
+        guard shouldStart else { return }
+        let forgeServices = forgeServices
+        Task {
+            do {
+                _ = try await forgeServices.services()
+                NSLog("[GitX] Forge application services initialized from the composition root")
+            } catch {
+                NSLog("[GitX] Forge application services initialization failed from the composition root")
+            }
+        }
     }
 
     @objc(sharedComposition)
@@ -119,6 +179,7 @@ final nonisolated class ApplicationComposition: NSObject {
         configuredSharedLock.lock()
         configuredShared = composition
         configuredSharedLock.unlock()
+        composition.startForgeServicesIfNeeded()
         NSLog("[GitX] Configured application composition root")
     }
 

@@ -12,7 +12,10 @@ final class ApplicationCompositionTests: XCTestCase {
         defaults = UserDefaults(suiteName: suiteName)
         defaults.removePersistentDomain(forName: suiteName)
         PBApplicationComposition.setShared(
-            PBApplicationComposition(userDefaults: defaults)
+            PBApplicationComposition(
+                userDefaults: defaults,
+                automaticallyStartsForgeServices: false
+            )
         )
     }
 
@@ -37,6 +40,20 @@ final class ApplicationCompositionTests: XCTestCase {
 
         defaults.set(2, forKey: "PBHistorySearchMode")
         XCTAssertEqual(PBGitDefaults.historySearchMode(), 2)
+    }
+
+    func testAvatarDefaultsDoNotReenterSharedCompositionInitialization() {
+        defaults.set(false, forKey: "PBLoadForgeAvatars")
+
+        let composition = PBApplicationComposition(
+            userDefaults: defaults,
+            automaticallyStartsForgeServices: false
+        )
+        let firstShared = PBApplicationComposition.shared()
+        let secondShared = PBApplicationComposition.shared()
+
+        XCTAssertTrue(firstShared === secondShared)
+        XCTAssertFalse(composition.applicationPreferences.bool(forKey: "PBLoadForgeAvatars"))
     }
 
     func testLegacyGeneralDefaultsExcludeCommitGuidesAndForwardRemainingToggles() {

@@ -480,17 +480,210 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
 
         for mediaType in ForgeAvatarMediaType.allCases {
             let payload = ForgeAvatarPayload(data: Data([6, UInt8(mediaType.rawValue.count)]), mediaType: mediaType)
-            try await backing.store(payload, for: avatarURL)
-            let loaded = try await backing.payload(for: avatarURL)
+            try await backing.store(payload, for: avatarURL, owners: [.anonymous])
+            let loaded = try await backing.payload(for: avatarURL, owner: .anonymous)
             XCTAssertEqual(loaded, payload)
         }
+        let zeroByteURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/610")
+        let zeroByteKey = ForgeAvatarCacheKey(canonicalURL: zeroByteURL.url)
+        let zeroByteRecord = try ForgeDisposableCacheRecord(
+            key: .avatar(zeroByteKey),
+            byteCount: 0,
+            fetchedAt: now,
+            lastAccessedAt: now
+        )
+        try await sqlite.putCacheEntry(ForgeSQLiteCacheEntry(
+            record: zeroByteRecord,
+            payload: Data()
+        ))
 
         try await backing.purge()
-        let purged = try await backing.payload(for: avatarURL)
+        let purged = try await backing.payload(for: avatarURL, owner: .anonymous)
+        let purgedZeroByte = try await sqlite.cacheEntry(for: .avatar(zeroByteKey), accessedAt: now)
         let retainedSnapshot = try await sqlite.cacheEntry(for: snapshotKey, accessedAt: now)
         XCTAssertNil(purged)
+        XCTAssertNil(purgedZeroByte)
         XCTAssertEqual(retainedSnapshot?.payload, snapshotPayload)
         await sqlite.close()
+    }
+
+    func testSQLiteAvatarBackingStoreDeletesMalformedPayloadAndSurvivesPersistenceFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitXAvatarCorruption-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sqlite = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: directory.appendingPathComponent("forge.sqlite3"),
+            recoveryDirectoryURL: directory.appendingPathComponent("recovery", isDirectory: true)
+        ))
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let backing = ForgeSQLiteAvatarBackingStore(store: sqlite, clock: { now })
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/62")
+        let cacheKey = ForgeAvatarCacheKey(canonicalURL: avatarURL.url)
+        let malformed = Data([0, 6, 2])
+        try await sqlite.putAvatarCacheEntry(
+            ForgeSQLiteCacheEntry(
+                record: ForgeDisposableCacheRecord(
+                    key: .avatar(cacheKey),
+                    byteCount: UInt64(malformed.count),
+                    fetchedAt: now,
+                    lastAccessedAt: now
+                ),
+                payload: malformed
+            ),
+            owners: [.anonymous]
+        )
+
+        await XCTAssertThrowsErrorAsync(
+            try await backing.payload(for: avatarURL, owner: .anonymous)
+        ) {
+            XCTAssertEqual($0 as? ForgeAvatarLoadingError, .decodingFailed)
+        }
+        let deletedMalformedEntry = try await sqlite.cacheEntry(
+            for: .avatar(cacheKey),
+            accessedAt: now
+        )
+        XCTAssertNil(deletedMalformedEntry)
+
+        await sqlite.close()
+        let networkPayload = ForgeAvatarPayload(data: Data([6, 2]), mediaType: .png)
+        let transport = RecordingAvatarTransport(payload: networkPayload)
+        let loader = ForgeAvatarLoader(transport: transport, backingStore: backing)
+        let loadedAfterFailure = try await loader.load(avatarURL)
+        let fetchesAfterFailure = await transport.fetchCount
+        let persistenceFailures = await loader.statistics().backingStoreFailures
+        XCTAssertEqual(loadedAfterFailure, networkPayload)
+        XCTAssertEqual(fetchesAfterFailure, 1)
+        XCTAssertGreaterThanOrEqual(persistenceFailures, 2)
+    }
+
+    func testPersistedDisabledInstallPurgesSQLiteBeforeGrantingNoNetworkAuthority() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitXAvatarDisabledPersistence-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sqlite = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: directory.appendingPathComponent("forge.sqlite3"),
+            recoveryDirectoryURL: directory.appendingPathComponent("recovery", isDirectory: true)
+        ))
+        let backing = ForgeSQLiteAvatarBackingStore(store: sqlite)
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/63")
+        let payload = ForgeAvatarPayload(data: Data([6, 3]), mediaType: .jpeg)
+        try await backing.store(payload, for: avatarURL, owners: [.anonymous])
+        let transport = RecordingAvatarTransport(payload: payload)
+        let loader = ForgeAvatarLoader(transport: transport)
+
+        try await loader.installBackingStore(backing, loadingEnabled: false)
+
+        let persisted = try await sqlite.cacheEntry(
+            for: .avatar(ForgeAvatarCacheKey(canonicalURL: avatarURL.url)),
+            accessedAt: Date()
+        )
+        XCTAssertNil(persisted)
+        await XCTAssertThrowsErrorAsync(try await loader.load(avatarURL)) {
+            XCTAssertEqual($0 as? ForgeAvatarLoadingError, .disabled)
+        }
+        let disabledFetchCount = await transport.fetchCount
+        let disabledState = await loader.statistics().enabled
+        XCTAssertEqual(disabledFetchCount, 0)
+        XCTAssertFalse(disabledState)
+
+        await sqlite.close()
+        let failingLoader = ForgeAvatarLoader(transport: transport)
+        await XCTAssertThrowsErrorAsync(
+            try await failingLoader.installBackingStore(backing, loadingEnabled: false)
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, ForgeSQLiteError.closed.localizedDescription)
+        }
+        let failedInstall = await failingLoader.statistics()
+        XCTAssertFalse(failedInstall.enabled)
+        XCTAssertEqual(failedInstall.backingStoreFailures, 1)
+    }
+
+    func testRequiredBackingInstallationFailsClosedAndPreservesNewerPreferenceAuthority() async throws {
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/631")
+        let payload = ForgeAvatarPayload(data: Data([6, 31]), mediaType: .png)
+        let transport = RecordingAvatarTransport(payload: payload)
+        let loader = ForgeAvatarLoader(
+            transport: transport,
+            loadingEnabled: false,
+            requiresBackingStoreInstallation: true
+        )
+
+        await loader.setLoadingEnabled(true)
+        await XCTAssertThrowsErrorAsync(try await loader.load(avatarURL)) { error in
+            XCTAssertEqual(error as? ForgeAvatarLoadingError, .disabled)
+        }
+        let preinstallFetches = await transport.fetchCount
+        let preinstallEnabled = await loader.statistics().enabled
+        XCTAssertEqual(preinstallFetches, 0)
+        XCTAssertFalse(preinstallEnabled)
+
+        try await loader.installBackingStore(
+            ForgeAvatarMemoryOnlyBackingStore(),
+            loadingEnabled: false
+        )
+        let loaded = try await loader.load(avatarURL)
+        let installedEnabled = await loader.statistics().enabled
+        XCTAssertEqual(loaded, payload)
+        XCTAssertTrue(installedEnabled)
+    }
+
+    func testLoaderPersistsEveryCoalescedOwnerWithoutPuttingAccountIdentityInAvatarBytes() async throws {
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/64")
+        let payload = ForgeAvatarPayload(data: Data([6, 4]), mediaType: .webP)
+        let transport = ControlledAvatarTransport(payload: payload)
+        let backing = RecordingAvatarBackingStore()
+        let loader = ForgeAvatarLoader(transport: transport, backingStore: backing)
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let firstAccount = try ForgeAccountID(forge: forge, value: "avatar-owner-one")
+        let secondAccount = try ForgeAccountID(forge: forge, value: "avatar-owner-two")
+
+        let first = Task { try await loader.load(avatarURL, owner: .account(firstAccount)) }
+        await transport.waitUntilStarted()
+        let second = Task { try await loader.load(avatarURL, owner: .account(secondAccount)) }
+        let coalesced = await waitForWaiterCount(2, in: loader)
+        XCTAssertTrue(coalesced)
+        await transport.complete()
+        let firstPayload = try await first.value
+        let secondPayload = try await second.value
+        XCTAssertEqual(firstPayload, payload)
+        XCTAssertEqual(secondPayload, payload)
+        _ = try await loader.load(avatarURL, owner: .anonymous)
+
+        let owners = await backing.ownerSet(for: avatarURL)
+        let fetchCount = await transport.fetchCount
+        XCTAssertEqual(owners, [.account(firstAccount), .account(secondAccount), .anonymous])
+        XCTAssertEqual(fetchCount, 1)
+        XCTAssertNil(payload.data.range(of: Data(firstAccount.value.utf8)))
+        XCTAssertNil(payload.data.range(of: Data(secondAccount.value.utf8)))
+    }
+
+    func testLoaderReconcilesAnOwnerJoiningWhileSQLiteStoreIsSuspended() async throws {
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/65")
+        let payload = ForgeAvatarPayload(data: Data([6, 5]), mediaType: .png)
+        let backing = LateJoinAvatarBackingStore()
+        let loader = ForgeAvatarLoader(
+            transport: RecordingAvatarTransport(payload: payload),
+            backingStore: backing
+        )
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let firstAccount = try ForgeAccountID(forge: forge, value: "store-owner-one")
+        let lateAccount = try ForgeAccountID(forge: forge, value: "store-owner-late")
+
+        let first = Task { try await loader.load(avatarURL, owner: .account(firstAccount)) }
+        await backing.waitUntilStoreStarted()
+        let late = Task { try await loader.load(avatarURL, owner: .account(lateAccount)) }
+        let joinedDuringStore = await waitForWaiterCount(2, in: loader)
+        XCTAssertTrue(joinedDuringStore)
+        await backing.releaseStore()
+
+        let firstPayload = try await first.value
+        let latePayload = try await late.value
+        let owners = await backing.ownerSet(for: avatarURL)
+        XCTAssertEqual(firstPayload, payload)
+        XCTAssertEqual(latePayload, payload)
+        XCTAssertEqual(owners, [.account(firstAccount), .account(lateAccount)])
     }
 
     func testAvatarPreferenceCoordinatorAppliesRapidUpdatesInSubmissionOrder() async {
@@ -567,7 +760,10 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         let suite = "GitXTests.ForgeAvatarPreference.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.removePersistentDomain(forName: suite)
-        PBApplicationComposition.setShared(PBApplicationComposition(userDefaults: defaults))
+        PBApplicationComposition.setShared(PBApplicationComposition(
+            userDefaults: defaults,
+            automaticallyStartsForgeServices: false
+        ))
         defer {
             PBApplicationComposition.setShared(original)
             defaults.removePersistentDomain(forName: suite)
@@ -588,8 +784,6 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         button.performClick(nil)
         await ForgeAvatarLoadingPreferenceCoordinator.shared.flush()
         XCTAssertTrue(PBApplicationSettings.loadAvatars)
-        let enabledAfterClick = await ForgeAvatarLoader.shared.statistics().enabled
-        XCTAssertTrue(enabledAfterClick)
 
         let rapidNotifications = expectation(
             description: "Every causally ordered rapid avatar preference update is observed"
@@ -615,8 +809,6 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         PBApplicationSettings.loadAvatars = true
         await fulfillment(of: [rapidNotifications], timeout: 1)
         await ForgeAvatarLoadingPreferenceCoordinator.shared.flush()
-        let enabledAfterRapidUpdates = await ForgeAvatarLoader.shared.statistics().enabled
-        XCTAssertTrue(enabledAfterRapidUpdates)
         XCTAssertEqual(notificationValues.values, [false, true, false, true])
     }
 
@@ -912,6 +1104,7 @@ private actor SequencedAvatarTransport: ForgeAvatarTransport {
 
 private actor RecordingAvatarBackingStore: ForgeAvatarBackingStore {
     private var entries: [ForgeAvatarURL: ForgeAvatarPayload]
+    private var owners: [ForgeAvatarURL: Set<ForgeAvatarCacheOwner>] = [:]
     private(set) var loadCount = 0
     private(set) var purgeCount = 0
 
@@ -919,13 +1112,26 @@ private actor RecordingAvatarBackingStore: ForgeAvatarBackingStore {
         self.entries = entries
     }
 
-    func payload(for avatarURL: ForgeAvatarURL) async throws -> ForgeAvatarPayload? {
+    func payload(
+        for avatarURL: ForgeAvatarURL,
+        owner: ForgeAvatarCacheOwner
+    ) async throws -> ForgeAvatarPayload? {
         loadCount += 1
+        owners[avatarURL, default: []].insert(owner)
         return entries[avatarURL]
     }
 
-    func store(_ payload: ForgeAvatarPayload, for avatarURL: ForgeAvatarURL) async throws {
+    func store(
+        _ payload: ForgeAvatarPayload,
+        for avatarURL: ForgeAvatarURL,
+        owners: Set<ForgeAvatarCacheOwner>
+    ) async throws {
         entries[avatarURL] = payload
+        self.owners[avatarURL, default: []].formUnion(owners)
+    }
+
+    func associate(_ owner: ForgeAvatarCacheOwner, with avatarURL: ForgeAvatarURL) async throws {
+        owners[avatarURL, default: []].insert(owner)
     }
 
     func purge() async throws {
@@ -936,6 +1142,66 @@ private actor RecordingAvatarBackingStore: ForgeAvatarBackingStore {
     func storedPayload(for avatarURL: ForgeAvatarURL) -> ForgeAvatarPayload? {
         entries[avatarURL]
     }
+
+    func ownerSet(for avatarURL: ForgeAvatarURL) -> Set<ForgeAvatarCacheOwner> {
+        owners[avatarURL] ?? []
+    }
+}
+
+private actor LateJoinAvatarBackingStore: ForgeAvatarBackingStore {
+    private var owners: [ForgeAvatarURL: Set<ForgeAvatarCacheOwner>] = [:]
+    private var storeStarted = false
+    private var storeReleased = false
+    private var storeStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var storeReleaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func payload(
+        for _: ForgeAvatarURL,
+        owner _: ForgeAvatarCacheOwner
+    ) async throws -> ForgeAvatarPayload? {
+        nil
+    }
+
+    func store(
+        _: ForgeAvatarPayload,
+        for avatarURL: ForgeAvatarURL,
+        owners: Set<ForgeAvatarCacheOwner>
+    ) async throws {
+        self.owners[avatarURL, default: []].formUnion(owners)
+        storeStarted = true
+        let startWaiters = storeStartWaiters
+        storeStartWaiters.removeAll()
+        startWaiters.forEach { $0.resume() }
+        if !storeReleased {
+            await withCheckedContinuation { storeReleaseWaiters.append($0) }
+        }
+    }
+
+    func associate(_ owner: ForgeAvatarCacheOwner, with avatarURL: ForgeAvatarURL) async throws {
+        owners[avatarURL, default: []].insert(owner)
+    }
+
+    func purge() async throws {
+        owners.removeAll()
+    }
+
+    func waitUntilStoreStarted() async {
+        if storeStarted {
+            return
+        }
+        await withCheckedContinuation { storeStartWaiters.append($0) }
+    }
+
+    func releaseStore() {
+        storeReleased = true
+        let waiters = storeReleaseWaiters
+        storeReleaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func ownerSet(for avatarURL: ForgeAvatarURL) -> Set<ForgeAvatarCacheOwner> {
+        owners[avatarURL] ?? []
+    }
 }
 
 private actor BlockingPurgeAvatarBackingStore: ForgeAvatarBackingStore {
@@ -945,11 +1211,20 @@ private actor BlockingPurgeAvatarBackingStore: ForgeAvatarBackingStore {
     private var purgeContinuation: CheckedContinuation<Void, Never>?
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
 
-    func payload(for _: ForgeAvatarURL) async throws -> ForgeAvatarPayload? {
+    func payload(
+        for _: ForgeAvatarURL,
+        owner _: ForgeAvatarCacheOwner
+    ) async throws -> ForgeAvatarPayload? {
         nil
     }
 
-    func store(_: ForgeAvatarPayload, for _: ForgeAvatarURL) async throws {}
+    func store(
+        _: ForgeAvatarPayload,
+        for _: ForgeAvatarURL,
+        owners _: Set<ForgeAvatarCacheOwner>
+    ) async throws {}
+
+    func associate(_: ForgeAvatarCacheOwner, with _: ForgeAvatarURL) async throws {}
 
     func purge() async throws {
         purgeStarted = true
@@ -996,11 +1271,22 @@ private actor RecordingAvatarLoadingController {
 }
 
 private struct FailingAvatarBackingStore: ForgeAvatarBackingStore {
-    func payload(for _: ForgeAvatarURL) async throws -> ForgeAvatarPayload? {
+    func payload(
+        for _: ForgeAvatarURL,
+        owner _: ForgeAvatarCacheOwner
+    ) async throws -> ForgeAvatarPayload? {
         throw TestAvatarBackingError.failed
     }
 
-    func store(_: ForgeAvatarPayload, for _: ForgeAvatarURL) async throws {
+    func store(
+        _: ForgeAvatarPayload,
+        for _: ForgeAvatarURL,
+        owners _: Set<ForgeAvatarCacheOwner>
+    ) async throws {
+        throw TestAvatarBackingError.failed
+    }
+
+    func associate(_: ForgeAvatarCacheOwner, with _: ForgeAvatarURL) async throws {
         throw TestAvatarBackingError.failed
     }
 
@@ -1033,7 +1319,7 @@ private func waitForDiscardedCompletion(in loader: ForgeAvatarLoader) async -> B
     return false
 }
 
-private func XCTAssertThrowsErrorAsync<T>(
+func XCTAssertThrowsErrorAsync<T>(
     _ expression: @autoclosure () async throws -> T,
     _ errorHandler: (Error) -> Void = { _ in },
     file: StaticString = #filePath,

@@ -99,6 +99,9 @@ public enum ForgeSQLiteError: Error, LocalizedError, Sendable {
     case emptyKey
     case mismatchedByteCount
     case invalidTimestamp
+    case notAvatarCacheEntry
+    case missingAvatarOwner
+    case unsupportedAvatarOwner
     case closed
     case sqlite(operation: String, code: Int32, message: String)
     case recoveryRequired(copy: ForgeSQLiteRecoveryCopy, reason: String)
@@ -113,6 +116,12 @@ public enum ForgeSQLiteError: Error, LocalizedError, Sendable {
             "The Forge cache payload size differs from its validated byte count."
         case .invalidTimestamp:
             "Forge SQLite timestamps must be finite."
+        case .notAvatarCacheEntry:
+            "The Forge SQLite avatar operation requires an avatar cache entry."
+        case .missingAvatarOwner:
+            "A persisted Forge avatar must have at least one owner attribution."
+        case .unsupportedAvatarOwner:
+            "Structured avatar ownership is limited to anonymous or GitHub.com accounts."
         case .closed:
             "The Forge SQLite store is closed."
         case let .sqlite(operation, code, message):
@@ -132,7 +141,7 @@ public enum ForgeSQLiteError: Error, LocalizedError, Sendable {
 /// `ForgeDraftIdentity`, `ForgeWatchedRepositoryKey`, and `ForgeAttentionItemID` remain the
 /// canonical owners of those semantics and can be encoded with `encodedKey(_:)`.
 public actor ForgeSQLiteStore {
-    public static let schemaVersion = 1
+    public static let schemaVersion = 2
 
     private static let logger = Logger(subsystem: "com.gitx.ForgeKit", category: "SQLiteStore")
     private static let recoveryPrefix = "ForgeKit-recovery-"
@@ -210,6 +219,109 @@ public actor ForgeSQLiteStore {
 
     public func putCacheEntry(_ entry: ForgeSQLiteCacheEntry) throws {
         let connection = try activeConnection()
+        if case .avatar = entry.record.key {
+            try connection.transaction {
+                try upsertCacheEntry(entry, using: connection)
+                try Self.associateAvatarOwner(
+                    .anonymous,
+                    recordKey: Self.cacheFields(entry.record.key).recordKey,
+                    using: connection
+                )
+            }
+        } else {
+            try upsertCacheEntry(entry, using: connection)
+        }
+        Self.logger.debug("Stored Forge cache record")
+    }
+
+    /// Stores credential-free avatar bytes and all accounts whose views caused
+    /// the entry to be used. The cache payload remains shared; only attribution
+    /// is account-specific.
+    public func putAvatarCacheEntry(
+        _ entry: ForgeSQLiteCacheEntry,
+        owners: Set<ForgeAvatarCacheOwner>
+    ) throws {
+        guard case .avatar = entry.record.key else {
+            throw ForgeSQLiteError.notAvatarCacheEntry
+        }
+        guard !owners.isEmpty else {
+            throw ForgeSQLiteError.missingAvatarOwner
+        }
+        let connection = try activeConnection()
+        let recordKey = try Self.cacheFields(entry.record.key).recordKey
+        try connection.transaction {
+            try upsertCacheEntry(entry, using: connection)
+            for owner in owners {
+                try Self.associateAvatarOwner(owner, recordKey: recordKey, using: connection)
+            }
+        }
+        Self.logger.debug("Stored attributed Forge avatar cache record")
+    }
+
+    public func avatarCacheEntry(
+        for key: ForgeAvatarCacheKey,
+        owner: ForgeAvatarCacheOwner,
+        accessedAt: Date
+    ) throws -> ForgeSQLiteCacheEntry? {
+        let disposableKey = ForgeDisposableCacheKey.avatar(key)
+        guard let entry = try cacheEntry(for: disposableKey, accessedAt: accessedAt) else {
+            return nil
+        }
+        try Self.associateAvatarOwner(
+            owner,
+            recordKey: Self.cacheFields(disposableKey).recordKey,
+            using: activeConnection()
+        )
+        return entry
+    }
+
+    public func associateAvatarCacheEntry(
+        _ key: ForgeAvatarCacheKey,
+        owner: ForgeAvatarCacheOwner
+    ) throws {
+        let disposableKey = ForgeDisposableCacheKey.avatar(key)
+        try Self.associateAvatarOwner(
+            owner,
+            recordKey: Self.cacheFields(disposableKey).recordKey,
+            using: activeConnection()
+        )
+    }
+
+    @discardableResult
+    public func removeAvatarCacheEntry(_ key: ForgeAvatarCacheKey) throws -> Bool {
+        let recordKey = try Self.cacheFields(.avatar(key)).recordKey
+        let connection = try activeConnection()
+        return try connection.changeCount {
+            try connection.execute(
+                "DELETE FROM forge_cache_entries WHERE cache_kind = 1 AND record_key = ?",
+                bindings: [.blob(recordKey)]
+            )
+        } > 0
+    }
+
+    @discardableResult
+    public func removeAvatarAssociations(for accountID: ForgeAccountID) throws -> Int {
+        let connection = try activeConnection()
+        guard Self.isSupportedAvatarAccount(accountID) else { return 0 }
+        return try connection.transaction {
+            try Self.removeAvatarAssociations(for: accountID, using: connection)
+        }
+    }
+
+    @discardableResult
+    public func removeAllAvatarCacheEntries() throws -> Int {
+        let connection = try activeConnection()
+        let removed = try connection.changeCount {
+            try connection.execute("DELETE FROM forge_cache_entries WHERE cache_kind = 1")
+        }
+        Self.logger.info("Removed \(removed) structured avatar cache records")
+        return removed
+    }
+
+    private func upsertCacheEntry(
+        _ entry: ForgeSQLiteCacheEntry,
+        using connection: ForgeSQLiteConnection
+    ) throws {
         let fields = try Self.cacheFields(entry.record.key)
         let completeness = try Self.encodedKey(entry.record.completeness)
         try connection.execute(
@@ -237,7 +349,6 @@ public actor ForgeSQLiteStore {
                 .double(entry.record.lastAccessedAt.timeIntervalSince1970), .blob(completeness),
             ]
         )
-        Self.logger.debug("Stored Forge cache record")
     }
 
     public func cacheEntry(
@@ -469,6 +580,9 @@ public actor ForgeSQLiteStore {
                 "DELETE FROM forge_durable_records WHERE account_key = ?",
                 bindings: [.blob(account)]
             )
+            if Self.isSupportedAvatarAccount(accountID) {
+                _ = try Self.removeAvatarAssociations(for: accountID, using: connection)
+            }
         }
         Self.logger.info("Removed one Forge Account persistence partition")
     }
@@ -623,6 +737,66 @@ public actor ForgeSQLiteStore {
                 encodedKey(key)
             )
         }
+    }
+
+    private static func avatarOwnerKey(_ owner: ForgeAvatarCacheOwner) throws -> Data {
+        switch owner {
+        case .anonymous:
+            return Data()
+        case let .account(accountID):
+            guard isSupportedAvatarAccount(accountID) else {
+                throw ForgeSQLiteError.unsupportedAvatarOwner
+            }
+            return try encodedKey(accountID)
+        }
+    }
+
+    private static func isSupportedAvatarAccount(_ accountID: ForgeAccountID) -> Bool {
+        accountID.forge.kind == .github &&
+            accountID.forge.origin.host == "github.com" &&
+            accountID.forge.origin.effectivePort == 443
+    }
+
+    private static func associateAvatarOwner(
+        _ owner: ForgeAvatarCacheOwner,
+        recordKey: Data,
+        using connection: ForgeSQLiteConnection
+    ) throws {
+        try connection.execute(
+            "INSERT OR IGNORE INTO forge_avatar_cache_owners (record_key, account_key) VALUES (?, ?)",
+            bindings: [.blob(recordKey), .blob(avatarOwnerKey(owner))]
+        )
+    }
+
+    private static func removeAvatarAssociations(
+        for accountID: ForgeAccountID,
+        using connection: ForgeSQLiteConnection
+    ) throws -> Int {
+        let accountKey = try avatarOwnerKey(.account(accountID))
+        let rows = try connection.query(
+            "SELECT record_key FROM forge_avatar_cache_owners WHERE account_key = ?",
+            bindings: [.blob(accountKey)]
+        )
+        let recordKeys = try rows.map { try $0.blob(0) }
+        try connection.execute(
+            "DELETE FROM forge_avatar_cache_owners WHERE account_key = ?",
+            bindings: [.blob(accountKey)]
+        )
+        var removed = 0
+        for recordKey in recordKeys {
+            let remainingOwners = try connection.scalarInt(
+                "SELECT COUNT(*) FROM forge_avatar_cache_owners WHERE record_key = ?",
+                bindings: [.blob(recordKey)]
+            )
+            guard remainingOwners == 0 else { continue }
+            removed += try connection.changeCount {
+                try connection.execute(
+                    "DELETE FROM forge_cache_entries WHERE cache_kind = 1 AND record_key = ?",
+                    bindings: [.blob(recordKey)]
+                )
+            }
+        }
+        return removed
     }
 
     private static func prepareDirectory(_ url: URL) throws {
@@ -881,7 +1055,29 @@ final class ForgeSQLiteConnection {
                 try execute(
                     "CREATE INDEX forge_durable_expiration ON forge_durable_records(expires_at) WHERE expires_at IS NOT NULL"
                 )
-                try execute("PRAGMA user_version = \(supportedVersion)")
+                try execute("PRAGMA user_version = 1")
+            }
+            if version <= 1, supportedVersion >= 2 {
+                try execute(
+                    """
+                    CREATE TABLE forge_avatar_cache_owners (
+                        record_key BLOB NOT NULL CHECK(length(record_key) > 0),
+                        account_key BLOB NOT NULL,
+                        PRIMARY KEY(record_key, account_key),
+                        FOREIGN KEY(record_key) REFERENCES forge_cache_entries(record_key) ON DELETE CASCADE
+                    )
+                    """
+                )
+                try execute(
+                    "CREATE INDEX forge_avatar_owner_accounts ON forge_avatar_cache_owners(account_key)"
+                )
+                try execute(
+                    """
+                    INSERT INTO forge_avatar_cache_owners (record_key, account_key)
+                    SELECT record_key, X'' FROM forge_cache_entries WHERE cache_kind = 1
+                    """
+                )
+                try execute("PRAGMA user_version = 2")
             }
         }
     }
@@ -907,6 +1103,11 @@ final class ForgeSQLiteConnection {
             FROM forge_durable_records LIMIT 0
             """
         )
+        if version >= 2 {
+            _ = try query(
+                "SELECT record_key, account_key FROM forge_avatar_cache_owners LIMIT 0"
+            )
+        }
     }
 
     func hasTable(_ name: String) throws -> Bool {
@@ -1001,9 +1202,8 @@ final class ForgeSQLiteConnection {
     }
 
     func changeCount(_ body: () throws -> Void) throws -> Int {
-        let before = try sqlite3_total_changes(handle())
         try body()
-        return try Int(sqlite3_total_changes(handle()) - before)
+        return try Int(sqlite3_changes(handle()))
     }
 
     private func prepare(_ sql: String) throws -> OpaquePointer {
