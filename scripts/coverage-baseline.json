@@ -163,7 +163,7 @@
       ]
     },
     "Repository Configuration surfaces": {
-      "minimumLineCoverage": 0.839,
+      "minimumLineCoverage": 0.8403,
       "files": [
         "Classes/Controllers/RepositorySettingsStore.swift",
         "Classes/Controllers/RepositorySettingsController.swift",
