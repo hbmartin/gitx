@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "ForgeKit handwritten sources",
-  "minimumLineCoverage": 0.9923,
+  "minimumLineCoverage": 0.9926,
   "files": {
     "ForgeKit/Sources/ForgeKit/ForgeAccount.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeBinding.swift": 1.0,
@@ -9,7 +9,11 @@
     "ForgeKit/Sources/ForgeKit/ForgeCollaboration.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeDestination.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeDestinationURLCodec.swift": 0.9739,
+    "ForgeKit/Sources/ForgeKit/ForgeGitHubSlugUnicode13.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeIdentity.swift": 1.0,
+    "ForgeKit/Sources/ForgeKit/ForgeMarkdown.swift": 1.0,
+    "ForgeKit/Sources/ForgeKit/ForgeMarkdownLinkPolicy.swift": 0.9883,
+    "ForgeKit/Sources/ForgeKit/ForgeMarkdownSanitizer.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeRemoteParser.swift": 0.982,
     "ForgeKit/Sources/ForgeKit/ForgeRouting.swift": 0.9849,
     "ForgeKit/Sources/ForgeKit/ForgeWebURLPolicy.swift": 0.9777,

@@ -30,7 +30,13 @@ let package = Package(
                 .product(name: "ApolloAPI", package: "apollo-ios"),
             ]
         ),
-        .testTarget(name: "ForgeKitTests", dependencies: ["ForgeKit"]),
+        .testTarget(
+            name: "ForgeKitTests",
+            dependencies: [
+                "ForgeKit",
+                .product(name: "Markdown", package: "swift-markdown"),
+            ]
+        ),
         .testTarget(name: "GitHubForgeAdapterTests", dependencies: ["GitHubForgeAdapter"]),
     ]
 )
