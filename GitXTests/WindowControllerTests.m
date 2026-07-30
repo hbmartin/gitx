@@ -3113,6 +3113,14 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSUInteger openCount = PBWindowWorkspaceOpenedURLs.count;
 
 	[PBRepositoryRemoteURLCoordinator.shared
+		handleSuccessfulPushOutput:@"remote: Open https://gitlab.example/acme/widgets/merge_requests/42 to review."
+						repository:self.repository
+							remote:self.remoteBranchRef
+				  presentingWindow:nil];
+	[self pumpRunLoopFor:0.05];
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+
+	[PBRepositoryRemoteURLCoordinator.shared
 		handleSuccessfulPushOutput:@"remote: Open https://github.com/acme/widgets/pull/42 to review."
 						repository:self.repository
 							remote:self.remoteBranchRef
