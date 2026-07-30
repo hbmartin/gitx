@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8716,
+  "minimumLineCoverage": 0.8736,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4716,
@@ -45,7 +45,7 @@
     "Classes/Controllers/PBViewController.m": 0.7272,
     "Classes/Controllers/PBWebController.m": 1.0,
     "Classes/Controllers/PBWebDiffController.m": 0.0,
-    "Classes/Controllers/PBWebHistoryController.swift": 0.9949,
+    "Classes/Controllers/PBWebHistoryController.swift": 0.9983,
     "Classes/Controllers/RepositoryActionContextResolver.swift": 1.0,
     "Classes/Controllers/RepositoryFocusRefreshCoordinator.swift": 0.9934,
     "Classes/Controllers/RepositoryForgeCoordinator.swift": 0.9584,
@@ -95,7 +95,7 @@
     "Classes/Views/ForgeAvatarLoading.swift": 0.9596,
     "Classes/Views/ForgeMarkdownNativeRenderer.swift": 0.9649,
     "Classes/Views/ForgeReadSurfaceModels.swift": 0.951,
-    "Classes/Views/ForgeReadSurfaceViewController.swift": 0.8731,
+    "Classes/Views/ForgeReadSurfaceViewController.swift": 0.8734,
     "Classes/Views/GLFileView.m": 0.916,
     "Classes/Views/GitXTextView.m": 0.44,
     "Classes/Views/NativeContentModels.swift": 1.0,
