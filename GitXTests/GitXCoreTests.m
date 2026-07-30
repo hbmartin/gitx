@@ -26,7 +26,7 @@
 #import "PBUncommittedChanges.h"
 #import "PBWorkingTree.h"
 #import "PBTask.h"
-#import "PBWebHistoryController.h"
+#import "PBWebHistoryControllerCompatibility.h"
 
 @interface PBNativeContentView (GitXCoreTests)
 - (nullable NSString *)patchWithFileHeader:(NSArray<NSString *> *)fileHeader
@@ -111,7 +111,9 @@
 
 @interface PBWebHistoryContentViewSpy : PBNativeContentView
 @property (nonatomic) XCTestExpectation *installationExpectation;
+@property (nonatomic) XCTestExpectation *messageExpectation;
 @property (nonatomic) BOOL installedOnMainThread;
+@property (nonatomic) BOOL messageShownOnMainThread;
 @property (nonatomic) NSUInteger installationCount;
 @property (nonatomic) NSUInteger pageUpCount;
 @property (nonatomic) NSUInteger pageDownCount;
@@ -124,6 +126,9 @@
 - (void)showMessage:(NSString *)message
 {
 	self.lastMessage = message;
+	self.messageShownOnMainThread = NSThread.isMainThread;
+	[self.messageExpectation fulfill];
+	self.messageExpectation = nil;
 }
 
 - (void)showDiffSections:(NSArray<NSDictionary<NSString *, id> *> *)sections
@@ -196,6 +201,19 @@
 		PBNativeSectionContextKey : @"readOnly",
 		PBNativeSectionImageSourceKey : imageSources.firstObject ?: @{},
 	} ];
+}
+
+@end
+
+@interface PBWebHistoryControllerAncestrySpy : PBWebHistoryController
+@property (nonatomic) BOOL sharesAncestryPath;
+@end
+
+@implementation PBWebHistoryControllerAncestrySpy
+
+- (BOOL)inputsShareAncestryPath:(NSArray *)inputs generation:(NSUInteger)generation
+{
+	return self.sharesAncestryPath;
 }
 
 @end
@@ -1161,6 +1179,49 @@
 	XCTAssertTrue([combined.firstObject[@"title"] containsString:@"Combined Diff"]);
 	NSData *trackedData = [webHistoryController dataForGitObject:@"HEAD:tracked.txt" imageSource:secondImageSource];
 	XCTAssertEqualObjects([[NSString alloc] initWithData:trackedData encoding:NSUTF8StringEncoding], @"second line\n");
+
+	PBWebHistoryContentViewSpy *combinedView = [[PBWebHistoryContentViewSpy alloc] initWithFrame:NSZeroRect];
+	combinedView.installationExpectation = [self expectationWithDescription:@"combined render installed"];
+	[webHistoryController setValue:combinedView forKey:@"nativeView"];
+	[webHistoryController setValue:dispatch_queue_create("com.gitx.tests.history-combined", DISPATCH_QUEUE_SERIAL)
+							forKey:@"renderQueue"];
+	NSSegmentedControl *presentation = [NSSegmentedControl segmentedControlWithLabels:@[ @"Sequential", @"Combined" ]
+																		 trackingMode:NSSegmentSwitchTrackingSelectOne
+																			   target:nil
+																			   action:nil];
+	presentation.selectedSegment = 1;
+	[webHistoryController setValue:presentation forKey:@"presentationControl"];
+	NSSegmentedControl *layout = [NSSegmentedControl segmentedControlWithLabels:@[ @"Unified", @"Side by Side" ]
+																   trackingMode:NSSegmentSwitchTrackingSelectOne
+																		 target:nil
+																		 action:nil];
+	[webHistoryController setValue:layout forKey:@"layoutControl"];
+	[webHistoryController changeContentTo:@[ secondCommit, firstCommit ]];
+	[self waitForExpectations:@[ combinedView.installationExpectation ] timeout:5.0];
+	XCTAssertEqual(combinedView.installedSections.count, (NSUInteger)1);
+	XCTAssertEqual(presentation.selectedSegment, (NSInteger)1);
+	XCTAssertNil(presentation.toolTip);
+
+	PBWebHistoryControllerAncestrySpy *disconnectedController = [PBWebHistoryControllerAncestrySpy new];
+	disconnectedController.repository = self.repository;
+	[disconnectedController setValue:historyController forKey:@"historyController"];
+	PBWebHistoryContentViewSpy *disconnectedView = [[PBWebHistoryContentViewSpy alloc] initWithFrame:NSZeroRect];
+	disconnectedView.installationExpectation = [self expectationWithDescription:@"disconnected render installed"];
+	[disconnectedController setValue:disconnectedView forKey:@"nativeView"];
+	[disconnectedController setValue:dispatch_queue_create("com.gitx.tests.history-disconnected", DISPATCH_QUEUE_SERIAL)
+							  forKey:@"renderQueue"];
+	NSSegmentedControl *disconnectedPresentation = [NSSegmentedControl segmentedControlWithLabels:@[ @"Sequential", @"Combined" ]
+																					 trackingMode:NSSegmentSwitchTrackingSelectOne
+																						   target:nil
+																						   action:nil];
+	disconnectedPresentation.selectedSegment = 1;
+	[disconnectedController setValue:disconnectedPresentation forKey:@"presentationControl"];
+	[disconnectedController setValue:layout forKey:@"layoutControl"];
+	[disconnectedController changeContentTo:@[ secondCommit, firstCommit ]];
+	[self waitForExpectations:@[ disconnectedView.installationExpectation ] timeout:5.0];
+	XCTAssertEqual(disconnectedView.installedSections.count, (NSUInteger)2);
+	XCTAssertEqual(disconnectedPresentation.selectedSegment, (NSInteger)0);
+	XCTAssertNotNil(disconnectedPresentation.toolTip);
 }
 
 - (void)testWebHistoryGenerationCancellationFailureAndUnsignedBoundaryBehavior
@@ -1203,6 +1264,19 @@
 	XCTAssertEqual([webHistoryController beginContentGeneration], (NSUInteger)0,
 				   @"NSUInteger generation rollover is intentionally preserved");
 	XCTAssertTrue([webHistoryController isGenerationCurrent:0]);
+
+	PBWebHistoryController *unwiredController = [PBWebHistoryController new];
+	NSUInteger unwiredGeneration = [unwiredController beginContentGeneration];
+	NSString *unwiredOutput = [unwiredController runGitArguments:@[ @"rev-parse", @"HEAD" ]
+													  generation:unwiredGeneration
+														   error:nil];
+	XCTAssertNil(unwiredOutput);
+	XCTAssertEqual([unwiredController sections:@[] applyingDiffLayout:0].count, (NSUInteger)0);
+	PBWebHistoryContentViewSpy *unwiredView = [[PBWebHistoryContentViewSpy alloc] initWithFrame:NSZeroRect];
+	[unwiredController setValue:unwiredView forKey:@"nativeView"];
+	[unwiredController didLoad];
+	XCTAssertEqualObjects(unwiredController.diff, @"");
+	XCTAssertEqualObjects(unwiredView.lastMessage, @"No commit selected");
 }
 
 - (void)testWebHistoryBoundaryOrderingDisconnectedAncestryAndImageFallbacks
@@ -1258,6 +1332,10 @@
 															   PBNativeImageSourceGitDirectoryKey : self.repository.gitURL.path,
 														   }];
 	XCTAssertNil(invalidLaunchData);
+	XCTAssertNil([webHistoryController nativeContentView:[PBNativeContentView new]
+										imageDataForPath:@"missing.png"
+												 section:0
+											 imageSource:@{}]);
 
 	NSString *configOutput = [self.fixture git:@[ @"config", @"gitx.diffSuppressionPatterns", @" ^generated/ \n# note\n\n.*\\.lock$ " ]
 										 error:&error];
@@ -1372,6 +1450,12 @@
 	[webHistoryController setValue:contentView forKey:@"nativeView"];
 	historyController.webCommits = @[];
 	XCTAssertEqualObjects(contentView.lastMessage, @"No commit selected");
+	contentView.messageExpectation = [self expectationWithDescription:@"background observation delivered"];
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
+		historyController.webCommits = @[];
+	});
+	[self waitForExpectations:@[ contentView.messageExpectation ] timeout:2.0];
+	XCTAssertTrue(contentView.messageShownOnMainThread);
 
 	presentation.selectedSegment = 1;
 	[webHistoryController presentationChanged:presentation];

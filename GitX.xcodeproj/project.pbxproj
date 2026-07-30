@@ -67,7 +67,7 @@
 		4A5D76EF14A9A9CC00DF6C68 /* PBViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764314A9A9CC00DF6C68 /* PBViewController.m */; };
 		4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764714A9A9CC00DF6C68 /* PBWebController.m */; };
 		4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764914A9A9CC00DF6C68 /* PBWebDiffController.m */; };
-		4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.m */; };
+		4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.swift */; };
 		4A5D76F414A9A9CC00DF6C68 /* PBGitBinary.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764F14A9A9CC00DF6C68 /* PBGitBinary.m */; };
 		4A5D76F514A9A9CC00DF6C68 /* PBGitCommit.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D765114A9A9CC00DF6C68 /* PBGitCommit.m */; };
 		4A5D76F714A9A9CC00DF6C68 /* PBGitDefaults.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D765514A9A9CC00DF6C68 /* PBGitDefaults.m */; };
@@ -628,7 +628,7 @@
 		4A5D764814A9A9CC00DF6C68 /* PBWebDiffController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBWebDiffController.h; sourceTree = "<group>"; };
 		4A5D764914A9A9CC00DF6C68 /* PBWebDiffController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBWebDiffController.m; sourceTree = "<group>"; };
 		4A5D764A14A9A9CC00DF6C68 /* PBWebHistoryController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; lineEnding = 0; path = PBWebHistoryController.h; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objcpp; };
-		4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = PBWebHistoryController.m; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
+		4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; lineEnding = 0; path = PBWebHistoryController.swift; sourceTree = "<group>"; };
 		4A5D764E14A9A9CC00DF6C68 /* PBGitBinary.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitBinary.h; sourceTree = "<group>"; };
 		4A5D764F14A9A9CC00DF6C68 /* PBGitBinary.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitBinary.m; sourceTree = "<group>"; };
 		4A5D765014A9A9CC00DF6C68 /* PBGitCommit.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; lineEnding = 0; path = PBGitCommit.h; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objcpp; };
@@ -905,6 +905,7 @@
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
 		C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitWindowControllerCompatibility.h; sourceTree = "<group>"; };
 		C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarControllerCompatibility.h; sourceTree = "<group>"; };
+		C0DEC0000000000000000005 /* PBWebHistoryControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBWebHistoryControllerCompatibility.h; sourceTree = "<group>"; };
 		C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryActionContextResolver.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryFocusRefreshCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRemoteActionCoordinator.swift; sourceTree = "<group>"; };
@@ -1324,7 +1325,7 @@
 				4A5D764814A9A9CC00DF6C68 /* PBWebDiffController.h */,
 				4A5D764914A9A9CC00DF6C68 /* PBWebDiffController.m */,
 				4A5D764A14A9A9CC00DF6C68 /* PBWebHistoryController.h */,
-				4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.m */,
+				4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.swift */,
 				4D3FB3E5198AEAAF000B4A58 /* PBGitRepositoryDocument.h */,
 				4D3FB3E6198AEAAF000B4A58 /* PBGitRepositoryDocument.m */,
 				6C4855D81D57E4FA0027A7B4 /* PBOpenShallowRepositoryErrorRecoveryAttempter.h */,
@@ -1563,6 +1564,7 @@
 				C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */,
 				C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */,
 				C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */,
+				C0DEC0000000000000000005 /* PBWebHistoryControllerCompatibility.h */,
 				C0DE30000000000000000002 /* GitXCoreTests.m */,
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
@@ -2129,7 +2131,7 @@
 				4A5D76EF14A9A9CC00DF6C68 /* PBViewController.m in Sources */,
 				4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */,
 				4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */,
-				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.m in Sources */,
+				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.swift in Sources */,
 				4A5D76F414A9A9CC00DF6C68 /* PBGitBinary.m in Sources */,
 				6C25810B1C2720E60080A89A /* GitXCommitCopier.m in Sources */,
 				4A5D76F514A9A9CC00DF6C68 /* PBGitCommit.m in Sources */,

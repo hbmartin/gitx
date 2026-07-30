@@ -45,7 +45,7 @@
     "Classes/Controllers/PBViewController.m": 0.7272,
     "Classes/Controllers/PBWebController.m": 1.0,
     "Classes/Controllers/PBWebDiffController.m": 0.0,
-    "Classes/Controllers/PBWebHistoryController.m": 0.9933,
+    "Classes/Controllers/PBWebHistoryController.swift": 0.9949,
     "Classes/Controllers/RepositoryActionContextResolver.swift": 1.0,
     "Classes/Controllers/RepositoryFocusRefreshCoordinator.swift": 0.9934,
     "Classes/Controllers/RepositoryForgeCoordinator.swift": 0.9584,
