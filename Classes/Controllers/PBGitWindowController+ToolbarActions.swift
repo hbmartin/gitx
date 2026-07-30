@@ -15,6 +15,10 @@ extension PBGitWindowController {
         performPush(forBranch: head, toRemote: nil)
     }
 
+    @IBAction dynamic func newPullRequest(_ sender: Any?) {
+        presentNewPullRequest()
+    }
+
     @IBAction dynamic func viewRemote(_ sender: Any?) {
         guard let repository else { return }
         RepositoryRemoteURLCoordinator.shared.viewRemote(repository: repository, presenting: window)

@@ -309,8 +309,13 @@ nonisolated struct ForgeStoredCredentialEnvelope: Codable, Sendable,
 {
     let account: ForgeAccount
     let secrets: ForgeCredentialSecretMaterial
+    let authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence?
 
-    init(account: ForgeAccount, secrets: ForgeCredentialSecretMaterial) throws {
+    init(
+        account: ForgeAccount,
+        secrets: ForgeCredentialSecretMaterial,
+        authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence? = nil
+    ) throws {
         if let expiresAt = account.currentCredential.expiresAt,
            !expiresAt.timeIntervalSinceReferenceDate.isFinite
         {
@@ -319,17 +324,23 @@ nonisolated struct ForgeStoredCredentialEnvelope: Codable, Sendable,
         try Self.validate(
             source: account.currentCredential.source,
             expiresAt: account.currentCredential.expiresAt,
-            secrets: secrets
+            secrets: secrets,
+            authorizationEvidence: authorizationEvidence
         )
         self.account = account
         self.secrets = secrets
+        self.authorizationEvidence = authorizationEvidence
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         try self.init(
             account: container.decode(ForgeAccount.self, forKey: .account),
-            secrets: container.decode(ForgeCredentialSecretMaterial.self, forKey: .secrets)
+            secrets: container.decode(ForgeCredentialSecretMaterial.self, forKey: .secrets),
+            authorizationEvidence: container.decodeIfPresent(
+                ForgeStoredCredentialAuthorizationEvidence.self,
+                forKey: .authorizationEvidence
+            )
         )
     }
 
@@ -348,7 +359,8 @@ nonisolated struct ForgeStoredCredentialEnvelope: Codable, Sendable,
     private static func validate(
         source: ForgeCredentialSource,
         expiresAt: Date?,
-        secrets: ForgeCredentialSecretMaterial
+        secrets: ForgeCredentialSecretMaterial,
+        authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence?
     ) throws {
         switch source {
         case .forgeApplicationDeviceFlow:
@@ -359,6 +371,61 @@ nonisolated struct ForgeStoredCredentialEnvelope: Codable, Sendable,
             guard !secrets.hasRefreshToken else {
                 throw ForgeCredentialStoreError.invalidCredentialSecretShape
             }
+        }
+        switch (source, authorizationEvidence) {
+        case (_, nil),
+             (.forgeApplicationDeviceFlow, .githubApplicationMilestone3),
+             (.commandLineBroker, .githubClassicScopes(_)),
+             (.classicPersonalAccessToken, .githubClassicScopes(_)),
+             (.fineGrainedPersonalAccessToken, .githubFineGrainedNotIntrospectable):
+            break
+        default:
+            throw ForgeCredentialStoreError.invalidCredentialSecretShape
+        }
+    }
+}
+
+/// Safe, non-secret provider authorization evidence stored beside one exact
+/// Credential generation. It is replaced atomically with the Credential and
+/// never inferred from token text.
+nonisolated enum ForgeStoredCredentialAuthorizationEvidence: Codable, Equatable, Sendable {
+    case githubApplicationMilestone3
+    case githubClassicScopes(Set<String>)
+    case githubFineGrainedNotIntrospectable
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case scopes
+    }
+
+    private enum Kind: String, Codable {
+        case githubApplicationMilestone3
+        case githubClassicScopes
+        case githubFineGrainedNotIntrospectable
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .githubApplicationMilestone3:
+            self = .githubApplicationMilestone3
+        case .githubClassicScopes:
+            self = try .githubClassicScopes(Set(container.decode([String].self, forKey: .scopes)))
+        case .githubFineGrainedNotIntrospectable:
+            self = .githubFineGrainedNotIntrospectable
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .githubApplicationMilestone3:
+            try container.encode(Kind.githubApplicationMilestone3, forKey: .kind)
+        case let .githubClassicScopes(scopes):
+            try container.encode(Kind.githubClassicScopes, forKey: .kind)
+            try container.encode(scopes.sorted(), forKey: .scopes)
+        case .githubFineGrainedNotIntrospectable:
+            try container.encode(Kind.githubFineGrainedNotIntrospectable, forKey: .kind)
         }
     }
 }
@@ -436,7 +503,8 @@ actor ForgeAccountStore {
         credentialID: ForgeCredentialID,
         kind: ForgePersonalAccessTokenKind,
         token: Data,
-        expiresAt: Date?
+        expiresAt: Date?,
+        authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence? = nil
     ) throws -> ForgeAccount {
         try addAccount(
             accountID: accountID,
@@ -444,7 +512,8 @@ actor ForgeAccountStore {
             credentialID: credentialID,
             source: kind.source,
             expiresAt: expiresAt,
-            secrets: ForgeCredentialSecretMaterial(accessToken: token)
+            secrets: ForgeCredentialSecretMaterial(accessToken: token),
+            authorizationEvidence: authorizationEvidence
         )
     }
 
@@ -455,7 +524,8 @@ actor ForgeAccountStore {
         credentialID: ForgeCredentialID,
         source: ForgeCredentialSource,
         expiresAt: Date?,
-        secrets: ForgeCredentialSecretMaterial
+        secrets: ForgeCredentialSecretMaterial,
+        authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence? = nil
     ) throws -> ForgeAccount {
         let key = try Self.keychainAccountKey(for: accountID)
         guard try mapKeychainError({ try keychain.data(for: key) }) == nil else {
@@ -475,7 +545,11 @@ actor ForgeAccountStore {
                 expiresAt: expiresAt
             )
         )
-        try persist(ForgeStoredCredentialEnvelope(account: account, secrets: secrets), key: key)
+        try persist(ForgeStoredCredentialEnvelope(
+            account: account,
+            secrets: secrets,
+            authorizationEvidence: authorizationEvidence
+        ), key: key)
         advanceCredentialRevision(for: accountID)
         logger.notice("Forge Account Credential added source=\(source.rawValue, privacy: .public)")
         return account
@@ -500,7 +574,11 @@ actor ForgeAccountStore {
             currentCredential: envelope.account.currentCredential.refreshed(expiresAt: expiresAt)
         )
         let key = try Self.keychainAccountKey(for: account.id)
-        try persist(ForgeStoredCredentialEnvelope(account: account, secrets: secrets), key: key)
+        try persist(ForgeStoredCredentialEnvelope(
+            account: account,
+            secrets: secrets,
+            authorizationEvidence: envelope.authorizationEvidence
+        ), key: key)
         advanceCredentialRevision(for: account.id)
         logger.notice("Forge Account Credential rotated generation retained")
         return account
@@ -514,7 +592,8 @@ actor ForgeAccountStore {
         credentialID: ForgeCredentialID,
         source: ForgeCredentialSource,
         expiresAt: Date?,
-        secrets: ForgeCredentialSecretMaterial
+        secrets: ForgeCredentialSecretMaterial,
+        authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence? = nil
     ) throws -> ForgeAccount {
         let accountID = expectedReference.accountID
         let envelope = try requiredCredential(for: accountID)
@@ -540,10 +619,48 @@ actor ForgeAccountStore {
             )
         )
         let key = try Self.keychainAccountKey(for: accountID)
-        try persist(ForgeStoredCredentialEnvelope(account: account, secrets: secrets), key: key)
+        try persist(ForgeStoredCredentialEnvelope(
+            account: account,
+            secrets: secrets,
+            authorizationEvidence: authorizationEvidence
+        ), key: key)
         advanceCredentialRevision(for: accountID)
         logger.notice("Forge Account Credential replaced generation advanced")
         return account
+    }
+
+    func updateAuthorizationEvidence(
+        _ evidence: ForgeStoredCredentialAuthorizationEvidence,
+        for expectedReference: ForgeCredentialReference
+    ) throws {
+        let envelope = try requiredCredential(for: expectedReference.accountID)
+        guard envelope.account.currentCredential.reference == expectedReference else {
+            throw ForgeCredentialStoreError.credentialReferenceMismatch
+        }
+        let key = try Self.keychainAccountKey(for: expectedReference.accountID)
+        try persist(ForgeStoredCredentialEnvelope(
+            account: envelope.account,
+            secrets: envelope.secrets,
+            authorizationEvidence: evidence
+        ), key: key)
+        advanceCredentialRevision(for: expectedReference.accountID)
+        logger.notice("Updated safe authorization evidence for the current Credential")
+    }
+
+    func clearAuthorizationEvidence(for expectedReference: ForgeCredentialReference) throws {
+        let envelope = try requiredCredential(for: expectedReference.accountID)
+        guard envelope.account.currentCredential.reference == expectedReference else {
+            throw ForgeCredentialStoreError.credentialReferenceMismatch
+        }
+        guard envelope.authorizationEvidence != nil else { return }
+        let key = try Self.keychainAccountKey(for: expectedReference.accountID)
+        try persist(ForgeStoredCredentialEnvelope(
+            account: envelope.account,
+            secrets: envelope.secrets,
+            authorizationEvidence: nil
+        ), key: key)
+        advanceCredentialRevision(for: expectedReference.accountID)
+        logger.notice("Invalidated safe authorization evidence after an authoritative denial")
     }
 
     func removeAccount(_ accountID: ForgeAccountID) throws {

@@ -13,6 +13,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var focusRefreshCoordinator: RepositoryFocusRefreshCoordinator?
     private var actionContextResolver: RepositoryActionContextResolver?
     private var remoteActionCoordinator: RepositoryRemoteActionCoordinator?
+    private var pullRequestUIController: RepositoryPullRequestUIController?
     private var referenceActionCoordinator: RepositoryReferenceActionCoordinator?
     private var stashActionCoordinator: RepositoryStashActionCoordinator?
     private var workspaceActionCoordinator: WorkspaceActionCoordinator?
@@ -63,6 +64,16 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 windowController: self
             )
         }
+        if pullRequestUIController == nil, let remoteActionCoordinator {
+            let session = ApplicationComposition.shared.forgePullRequestServices.session(for: repository)
+            pullRequestUIController = RepositoryPullRequestUIController(
+                repository: repository,
+                windowController: self,
+                remoteActions: remoteActionCoordinator,
+                service: session.service,
+                drafts: session.drafts
+            )
+        }
         if referenceActionCoordinator == nil {
             referenceActionCoordinator = RepositoryReferenceActionCoordinator(
                 repository: repository,
@@ -107,6 +118,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         _historyViewController = nil
         repositoryForgeCoordinator = nil
         repositoryForgeLinkUseCase = nil
+        pullRequestUIController = nil
         repositoryStatusBarController?.invalidate()
         repositoryForgeOverlaySession?.invalidate()
         repositoryLocalStatusLoader?.cancel()
@@ -229,6 +241,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     override open func windowDidLoad() {
         super.windowDidLoad()
+        ForgeDeepLinkApplicationRouter.shared.installIfNeeded()
         ensureActionCoordinators()
         ensureFocusRefreshCoordinator()
         window?.setFrameUsingName("GitX")
@@ -357,6 +370,35 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         NSLog("Switching repository window to History view")
         _sidebarController?.selectCurrentBranch()
         changeContentController(_historyViewController)
+    }
+
+    /// Opens a validated local revision from an `x-gitx` deep link. Resolution
+    /// remains local-only: the application router separately offers an explicit
+    /// Fetch action when a required object is absent.
+    @discardableResult
+    final func openForgeRevision(_ revision: String) -> Bool {
+        guard let repository else { return false }
+        guard let resolved = try? repository.outputOfTask(withArguments: [
+            "rev-parse", "--verify", "\(revision)^{commit}",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines),
+            let oid = GTOID(SHA: resolved)
+        else { return false }
+        showHistoryView(self)
+        _historyViewController?.selectCommit(oid)
+        return true
+    }
+
+    @discardableResult
+    final func openForgeComparison(base: String, head: String) -> Bool {
+        guard let repository,
+              (try? repository.outputOfTask(withArguments: ["rev-parse", "--verify", "\(base)^{commit}"])) != nil,
+              (try? repository.outputOfTask(withArguments: ["rev-parse", "--verify", "\(head)^{commit}"])) != nil,
+              let diff = try? repository.outputOfTask(withArguments: ["diff"] + PBDiffCommandOptions.arguments + [
+                  "--find-renames", "--no-ext-diff", base, head,
+              ])
+        else { return false }
+        PBDiffWindowController.showDiff(diff)
+        return true
     }
 
     @objc dynamic var isUncommittedChangesSelected: Bool {
@@ -495,11 +537,55 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         requiresConfirmation: Bool
     ) {
         ensureActionCoordinators()
-        remoteActionCoordinator?.performPush(
+        pullRequestUIController?.performPush(
             branch: branch,
             remote: remote,
-            requiresConfirmation: requiresConfirmation
+            requiresConfirmation: requiresConfirmation,
+            initiallyCreatePullRequest: false
         )
+    }
+
+    func performPush(
+        forBranch branch: PBGitRef?,
+        toRemote remote: PBGitRef?,
+        requiresConfirmation: Bool,
+        initiallyCreatePullRequest: Bool
+    ) {
+        ensureActionCoordinators()
+        pullRequestUIController?.performPush(
+            branch: branch,
+            remote: remote,
+            requiresConfirmation: requiresConfirmation,
+            initiallyCreatePullRequest: initiallyCreatePullRequest
+        )
+    }
+
+    func presentNewPullRequest() {
+        ensureActionCoordinators()
+        pullRequestUIController?.newPullRequest()
+    }
+
+    func editPullRequest(
+        accountID: ForgeAccountID,
+        snapshot: ForgePullRequestEditableSnapshot,
+        destination: ForgeDestination
+    ) {
+        ensureActionCoordinators()
+        pullRequestUIController?.editPullRequest(
+            accountID: accountID,
+            snapshot: snapshot,
+            destination: destination
+        )
+    }
+
+    func checkoutPullRequest(_ pullRequest: ForgePullRequestSummary) {
+        ensureActionCoordinators()
+        pullRequestUIController?.checkout(pullRequest)
+    }
+
+    func syncFork(accountID: ForgeAccountID, plan: ForgeSyncForkPlan) {
+        ensureActionCoordinators()
+        pullRequestUIController?.syncFork(accountID: accountID, plan: plan)
     }
 
     @available(*, deprecated, message: "Use addRemote(_:)")

@@ -59,6 +59,7 @@
 #import "PBError.h"
 #import "PBTask.h"
 #import "PBGitBinary.h"
+#import "ApplicationController.h"
 #import "PBAddRemoteSheet.h"
 #import "PBAutoFetchManager.h"
 #import "PBCreateBranchSheet.h"

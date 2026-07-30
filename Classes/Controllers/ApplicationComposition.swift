@@ -114,6 +114,8 @@ final nonisolated class ApplicationComposition: NSObject {
     @objc let applicationPreferences: ApplicationPreferences
     let forgeServices: ForgeApplicationServiceLoader
     let forgeExternalLinkPreferences: ForgeTrustedExternalOriginStore
+    let forgePullRequestServices: RepositoryPullRequestServiceResolver
+    let forgeCloneServices: RepositoryForgeCloneServiceResolver
     private let automaticallyStartsForgeServices: Bool
     private let forgeServiceStartupLock = NSLock()
     private var didStartForgeServices = false
@@ -130,13 +132,37 @@ final nonisolated class ApplicationComposition: NSObject {
     ) {
         let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: userDefaults)
         let avatarLoadingPreferenceSource = ForgeAvatarLoadingPreferenceSource(userDefaults: userDefaults)
+        let forgeServices = ForgeApplicationServiceLoader(
+            bindingCleaner: bindingCleaner,
+            avatarLoader: .shared,
+            avatarLoadingEnabled: { avatarLoadingPreferenceSource.isEnabled() }
+        )
+        let pullRequestDependencies = ForgeGitHubPullRequestDependencyProvider(loader: forgeServices)
         self.init(
             userDefaults: userDefaults,
-            forgeServices: ForgeApplicationServiceLoader(
-                bindingCleaner: bindingCleaner,
-                avatarLoader: .shared,
-                avatarLoadingEnabled: { avatarLoadingPreferenceSource.isEnabled() }
-            ),
+            forgeServices: forgeServices,
+            forgePullRequestServices: RepositoryPullRequestServiceResolver { repository in
+                let settings = RepositoryUISettings(repository: repository)
+                guard let binding = settings.forgeRepositoryBinding,
+                      ForgeGitHubReadCredentialAuthority.isGitHubDotCom(binding.primaryRepository.forge)
+                else {
+                    return RepositoryPullRequestApplicationSession(
+                        service: UnavailableRepositoryPullRequestMutationService(),
+                        drafts: ForgeLazySQLitePullRequestDraftStore(loader: forgeServices)
+                    )
+                }
+                return RepositoryPullRequestApplicationSession(
+                    service: RepositoryPullRequestProductionService(
+                        binding: binding,
+                        dependencies: pullRequestDependencies,
+                        localPreparation: RepositoryPullRequestLocalPreparationSource(repository: repository)
+                    ),
+                    drafts: ForgeLazySQLitePullRequestDraftStore(loader: forgeServices)
+                )
+            },
+            forgeCloneServices: RepositoryForgeCloneServiceResolver {
+                RepositoryForgeCloneProductionService(loader: forgeServices)
+            },
             automaticallyStartsForgeServices: automaticallyStartsForgeServices
         )
     }
@@ -144,10 +170,14 @@ final nonisolated class ApplicationComposition: NSObject {
     init(
         userDefaults: UserDefaults,
         forgeServices: ForgeApplicationServiceLoader,
+        forgePullRequestServices: RepositoryPullRequestServiceResolver = RepositoryPullRequestServiceResolver(),
+        forgeCloneServices: RepositoryForgeCloneServiceResolver = RepositoryForgeCloneServiceResolver(),
         automaticallyStartsForgeServices: Bool = true
     ) {
         applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
         self.forgeServices = forgeServices
+        self.forgePullRequestServices = forgePullRequestServices
+        self.forgeCloneServices = forgeCloneServices
         forgeExternalLinkPreferences = ForgeTrustedExternalOriginStore(defaults: userDefaults)
         self.automaticallyStartsForgeServices = automaticallyStartsForgeServices
         super.init()

@@ -58,6 +58,19 @@
 	<string>${PRODUCT_NAME}</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>GitX Read-Only Forge Links</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>x-gitx</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>0.13</string>
 	<key>CFBundleVersion</key>

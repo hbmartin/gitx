@@ -523,6 +523,17 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
     }
 
+    @discardableResult
+    func openForgeDestination(_ destination: ForgeDestination) -> Bool {
+        guard collaborationController?.openNative(destination) == true else { return false }
+        if case .pullRequest = destination {
+            restoreForgeSelection(.pullRequests)
+        } else if case .issue = destination {
+            restoreForgeSelection(.issues)
+        }
+        return true
+    }
+
     private func chooseForgeBinding() {
         guard let repository else { return }
         let coordinator = RepositoryForgeCoordinator(repository: repository)

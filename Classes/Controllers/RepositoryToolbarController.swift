@@ -181,6 +181,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         static let fetch = NSToolbarItem.Identifier("GitX.Toolbar.Fetch")
         static let pull = NSToolbarItem.Identifier("GitX.Toolbar.Pull")
         static let push = NSToolbarItem.Identifier("GitX.Toolbar.Push")
+        static let newPullRequest = NSToolbarItem.Identifier("GitX.Toolbar.NewPullRequest")
         static let refreshStatus = NSToolbarItem.Identifier("GitX.Toolbar.RefreshStatus")
         static let viewRemote = NSToolbarItem.Identifier("GitX.Toolbar.ViewRemote")
         static let reveal = NSToolbarItem.Identifier("GitX.Toolbar.Reveal")
@@ -304,6 +305,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             Item.fetch,
             Item.pull,
             Item.push,
+            Item.newPullRequest,
             .flexibleSpace,
             Item.jump,
             Item.viewRemote,
@@ -320,6 +322,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             Item.fetch,
             Item.pull,
             Item.push,
+            Item.newPullRequest,
             Item.refreshStatus,
             Item.viewRemote,
             Item.reveal,
@@ -609,6 +612,15 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             return Descriptor(label: "Pull", toolTip: "Pull the checked-out branch", symbol: "arrow.down.to.line", action: NSSelectorFromString("toolbarPull:"), topColor: greenTop, bottomColor: greenBottom)
         case Item.push:
             return Descriptor(label: "Push", toolTip: "Push the checked-out branch", symbol: "arrow.up.to.line", action: NSSelectorFromString("toolbarPush:"), topColor: orangeTop, bottomColor: orangeBottom)
+        case Item.newPullRequest:
+            return Descriptor(
+                label: "New Pull Request",
+                toolTip: "Create a Pull Request for the checked-out branch",
+                symbol: "arrow.triangle.pull",
+                action: NSSelectorFromString("newPullRequest:"),
+                topColor: blueTop,
+                bottomColor: blueBottom
+            )
         case Item.reveal:
             return Descriptor(label: "Show in Finder", toolTip: "Reveal the repository in Finder", symbol: "folder", action: #selector(PBGitWindowController.revealInFinder(_:)), topColor: blueTop, bottomColor: blueBottom)
         case Item.terminal:

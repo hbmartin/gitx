@@ -56,6 +56,48 @@ final class ForgeCredentialStoreTests: XCTestCase {
         XCTAssertTrue(rawItem.customMirror.children.isEmpty)
     }
 
+    func testSafeAuthorizationEvidencePersistsRotatesInvalidatesAndNeverLeaksTokenMaterial() async throws {
+        let keychain = InMemoryForgeCredentialKeychain()
+        let store = ForgeAccountStore(keychain: keychain)
+        let accountID = try makeAccountID("node-evidence")
+        let account = try await store.addPersonalAccessToken(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("pat-evidence"),
+            kind: .classic,
+            token: Data("classic-secret".utf8),
+            expiresAt: nil,
+            authorizationEvidence: .githubClassicScopes(["repo", "read:org"])
+        )
+        var stored = try await store.credential(for: accountID)
+        var envelope = try XCTUnwrap(stored)
+        XCTAssertEqual(envelope.authorizationEvidence, .githubClassicScopes(["repo", "read:org"]))
+        XCTAssertFalse(try String(decoding: JSONEncoder().encode(envelope), as: UTF8.self).contains("classic-secret"))
+
+        try await store.clearAuthorizationEvidence(for: account.currentCredential.reference)
+        stored = try await store.credential(for: accountID)
+        envelope = try XCTUnwrap(stored)
+        XCTAssertNil(envelope.authorizationEvidence)
+        let clearedChange = try await store.credentialChange(for: accountID)
+        XCTAssertEqual(clearedChange.revision, 2)
+
+        try await store.updateAuthorizationEvidence(
+            .githubClassicScopes(["public_repo"]),
+            for: account.currentCredential.reference
+        )
+        let replacement = try await store.replaceCredential(
+            expectedReference: account.currentCredential.reference,
+            credentialID: ForgeCredentialID("fine-replacement"),
+            source: .fineGrainedPersonalAccessToken,
+            expiresAt: nil,
+            secrets: ForgeCredentialSecretMaterial(accessToken: Data("fine-secret".utf8))
+        )
+        stored = try await store.credential(for: accountID)
+        envelope = try XCTUnwrap(stored)
+        XCTAssertNil(envelope.authorizationEvidence, "replacement must invalidate evidence from the prior generation")
+        XCTAssertEqual(replacement.currentCredential.reference.generation, try ForgeCredentialGeneration(2))
+    }
+
     func testRefreshRotationRetainsGenerationAndReplacementAdvancesItExactly() async throws {
         let keychain = InMemoryForgeCredentialKeychain()
         let store = ForgeAccountStore(keychain: keychain)

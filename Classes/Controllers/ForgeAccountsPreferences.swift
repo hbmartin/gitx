@@ -258,7 +258,8 @@ actor ForgeAccountsService: ForgeAccountsClient {
                 accessToken: accessToken,
                 refreshToken: refreshToken,
                 refreshTokenExpiresAt: authorization.credential.refreshTokenExpiresAt
-            )
+            ),
+            authorizationEvidence: .githubApplicationMilestone3
         )
         await ForgeAvatarLoader.shared.restoreAfterAccountAddition(account.id)
         self.deviceFlowCoordinator = nil
@@ -296,13 +297,18 @@ actor ForgeAccountsService: ForgeAccountsClient {
         case .fineGrained: .fineGrained
         case .classic: .classic
         }
+        let authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence = switch introspection.scopeEvidence {
+        case let .classic(scopes): .githubClassicScopes(scopes)
+        case .fineGrainedNotIntrospectable: .githubFineGrainedNotIntrospectable
+        }
         let account = try await services.addAccountCoordinator.addPersonalAccessToken(
             accountID: introspection.accountID,
             login: introspection.login,
             credentialID: credentialIDProvider(acquisition.kind, acquisition.label),
             kind: kind,
             token: acquisition.token,
-            expiresAt: acquisition.expiresAt
+            expiresAt: acquisition.expiresAt,
+            authorizationEvidence: authorizationEvidence
         )
         logger.notice(
             "GitHub personal access Credential added kind=\(acquisition.kind.rawValue, privacy: .public) account=\(account.id.value, privacy: .private(mask: .hash))"

@@ -159,6 +159,22 @@ final class RepositoryRemoteActionCoordinator: NSObject {
 
     @objc(performPushForBranch:remote:requiresConfirmation:)
     func performPush(branch: PBGitRef?, remote: PBGitRef?, requiresConfirmation: Bool) {
+        performPush(
+            branch: branch,
+            remote: remote,
+            requiresConfirmation: requiresConfirmation,
+            pullRequestOption: nil,
+            completion: nil
+        )
+    }
+
+    func performPush(
+        branch: PBGitRef?,
+        remote: PBGitRef?,
+        requiresConfirmation: Bool,
+        pullRequestOption: RepositoryPullRequestPushOption?,
+        completion: ((Bool) -> Void)?
+    ) {
         guard branch != nil || remote != nil,
               branch == nil || branch?.isBranch == true || branch?.isRemoteBranch == true || branch?.isTag == true,
               remote == nil || remote?.isRemote == true
@@ -168,8 +184,22 @@ final class RepositoryRemoteActionCoordinator: NSObject {
         }
 
         let description = pushDescription(branch: branch, remote: remote, capitalized: true)
+        let createPullRequestButton: NSButton? = pullRequestOption.map { option in
+            let button = NSButton(
+                checkboxWithTitle: "Create Pull Request after pushing",
+                target: nil,
+                action: nil
+            )
+            button.state = option.initiallySelected ? .on : .off
+            button.setAccessibilityIdentifier("GitX.Push.CreatePullRequest")
+            button.setAccessibilityLabel("Create Pull Request after pushing")
+            return button
+        }
         let beginPush = { [weak self] in
             guard let self else { return }
+            let createPullRequestSelected = pullRequestOption != nil &&
+                (createPullRequestButton?.state == .on ||
+                    (!requiresConfirmation && pullRequestOption?.initiallySelected == true))
             self.logger.debug("Starting push workflow")
             let operationTarget = RemoteOperationTarget(repository: self.repository, branch: branch, remote: remote)
             self.runProgress(
@@ -185,12 +215,22 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                         self?.logger.debug("Push workflow completed")
                         if let self {
                             self.reportSuccess(.push)
-                            RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
-                                output: operationTarget.pushOutput,
-                                repository: self.repository,
-                                remote: remote,
-                                presenting: self.windowController?.window
-                            )
+                            if pullRequestOption == nil {
+                                RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
+                                    output: operationTarget.pushOutput,
+                                    repository: self.repository,
+                                    remote: remote,
+                                    presenting: self.windowController?.window
+                                )
+                                self.logger.debug(
+                                    "Retained validated post-push browser fallback because native creation was unavailable"
+                                )
+                            } else {
+                                self.logger.debug(
+                                    "Suppressed post-push browser suggestion for API-capable repository; create selected=\(createPullRequestSelected, privacy: .public)"
+                                )
+                            }
+                            completion?(createPullRequestSelected)
                         }
                     }
                 }
@@ -207,6 +247,7 @@ final class RepositoryRemoteActionCoordinator: NSObject {
         alert.informativeText = "Are you sure you want to \(lowerDescription)?"
         alert.addButton(withTitle: NSLocalizedString("Push", comment: "Push alert - default button"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Push alert - cancel button"))
+        alert.accessoryView = createPullRequestButton
         alert.showsSuppressionButton = true
         windowController.confirmDialog(alert, suppressionIdentifier: "Confirm Push", forAction: beginPush)
     }

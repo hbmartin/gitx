@@ -24,6 +24,22 @@ protocol ForgeReadDestinationRouting: AnyObject {
     func openInBrowser(destination: ForgeDestination)
 }
 
+/// M3-neutral bridge between the local-diff authority and review UI. A review
+/// implementation owns its overlay views and reports only an explicitly chosen
+/// local anchor; the M2 renderer never infers or rewrites server anchors.
+@MainActor
+protocol RepositoryPullRequestReviewOverlayHosting: AnyObject {
+    /// Reports the exact selected local anchor plus the displayed context and
+    /// truncation state needed for fail-closed head-change re-anchoring.
+    var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)? { get set }
+
+    func install(
+        in nativeDiffView: PBNativeContentView,
+        pullRequest: ForgePullRequestSummary,
+        diff: RepositoryLocalPullRequestDiff
+    )
+}
+
 @MainActor
 final class ForgeReadSurfaceViewController: NSSplitViewController {
     private let service: any ForgeReadSurfaceServing
@@ -48,7 +64,11 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         service: any ForgeReadSurfaceServing,
         markdownRenderer: any ForgeReadMarkdownRendering,
         avatarRenderer: any ForgeReadAvatarRendering,
-        destinationRouter: any ForgeReadDestinationRouting
+        destinationRouter: any ForgeReadDestinationRouting,
+        pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)? = nil,
+        reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil,
+        onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)? = nil,
+        onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)? = nil
     ) {
         self.service = service
         self.markdownRenderer = markdownRenderer
@@ -61,7 +81,9 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
             markdownRenderer: markdownRenderer,
             avatarRenderer: avatarRenderer,
             destinationRouter: destinationRouter,
-            defaultRevision: defaultRevision
+            defaultRevision: defaultRevision,
+            pullRequestChangesProvider: pullRequestChangesProvider,
+            reviewOverlayHost: reviewOverlayHost
         )
         super.init(nibName: nil, bundle: nil)
 
@@ -83,6 +105,8 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         inspectorController.onLoadMoreChecks = { [weak self] in
             self?.loadMoreDetails(.checks)
         }
+        inspectorController.onEditPullRequest = onEditPullRequest
+        inspectorController.onCheckoutPullRequest = onCheckoutPullRequest
 
         let listItem = NSSplitViewItem(viewController: listController)
         listItem.minimumThickness = 420
@@ -657,26 +681,40 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
 final class ForgeReadInspectorViewController: NSViewController {
     var onLoadMoreTimeline: (() -> Void)?
     var onLoadMoreChecks: (() -> Void)?
+    var onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?
+    var onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)?
 
     private let markdownRenderer: any ForgeReadMarkdownRendering
     private let avatarRenderer: any ForgeReadAvatarRendering
     private let destinationRouter: any ForgeReadDestinationRouting
     private let defaultRevision: ForgeRevision
+    private let pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)?
+    private let reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)?
     private let contentStack = NSStackView()
     private var routedDestination: ForgeDestination?
     private var continuationButtons: [NSButton] = []
     private var continuationStatusView: NSView?
+    private var pullRequestModeControl: NSSegmentedControl?
+    private var currentPresentation: ForgeReadInspectorPresentation?
+    private var changesTask: Task<Void, Never>?
+    private var pullRequestMode = 0
+    private var editablePullRequestSnapshot: ForgePullRequestEditableSnapshot?
+    private var currentPullRequestSummary: ForgePullRequestSummary?
 
     init(
         markdownRenderer: any ForgeReadMarkdownRendering,
         avatarRenderer: any ForgeReadAvatarRendering,
         destinationRouter: any ForgeReadDestinationRouting,
-        defaultRevision: ForgeRevision
+        defaultRevision: ForgeRevision,
+        pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)? = nil,
+        reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil
     ) {
         self.markdownRenderer = markdownRenderer
         self.avatarRenderer = avatarRenderer
         self.destinationRouter = destinationRouter
         self.defaultRevision = defaultRevision
+        self.pullRequestChangesProvider = pullRequestChangesProvider
+        self.reviewOverlayHost = reviewOverlayHost
         super.init(nibName: nil, bundle: nil)
         configureView()
         showPlaceholder("Select an item to inspect it.")
@@ -731,8 +769,22 @@ final class ForgeReadInspectorViewController: NSViewController {
     }
 
     func apply(_ presentation: ForgeReadInspectorPresentation) {
+        changesTask?.cancel()
+        currentPresentation = presentation
         routedDestination = presentation.item.destination
         resetContent()
+
+        if case .pullRequest = presentation.item, pullRequestChangesProvider != nil {
+            let control = makePullRequestModeControl()
+            contentStack.addArrangedSubview(control)
+            pullRequestModeControl = control
+            if control.selectedSegment == 1 {
+                showLocalChanges(for: presentation)
+                return
+            }
+        } else {
+            pullRequestModeControl = nil
+        }
 
         let title = NSTextField(wrappingLabelWithString: presentation.title)
         title.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
@@ -768,7 +820,38 @@ final class ForgeReadInspectorViewController: NSViewController {
         headingText.orientation = .vertical
         headingText.alignment = .leading
         headingText.spacing = 2
-        let heading = NSStackView(views: [avatar, headingText, NSView(), browserButton])
+        var headingViews: [NSView] = [avatar, headingText, NSView()]
+        editablePullRequestSnapshot = nil
+        currentPullRequestSummary = nil
+        if case let .pullRequest(summary) = presentation.item,
+           onCheckoutPullRequest != nil
+        {
+            currentPullRequestSummary = summary
+            let checkoutButton = NSButton(title: "Check Out…", target: self, action: #selector(checkoutPullRequest(_:)))
+            checkoutButton.bezelStyle = .rounded
+            checkoutButton.setAccessibilityIdentifier("GitX.PullRequest.Checkout")
+            checkoutButton.setAccessibilityLabel("Check out Pull Request")
+            headingViews.append(checkoutButton)
+        }
+        if case let .pullRequest(summary) = presentation.item,
+           let body = presentation.bodyMarkdown,
+           let snapshot = try? ForgePullRequestEditableSnapshot(
+               repository: summary.repository,
+               number: summary.number,
+               title: summary.title,
+               bodyMarkdown: body,
+               updatedAt: summary.updatedAt
+           ), onEditPullRequest != nil
+        {
+            editablePullRequestSnapshot = snapshot
+            let editButton = NSButton(title: "Edit…", target: self, action: #selector(editPullRequest(_:)))
+            editButton.bezelStyle = .rounded
+            editButton.setAccessibilityIdentifier("GitX.PullRequest.Edit")
+            editButton.setAccessibilityLabel("Edit Pull Request title and body")
+            headingViews.append(editButton)
+        }
+        headingViews.append(browserButton)
+        let heading = NSStackView(views: headingViews)
         heading.orientation = .horizontal
         heading.alignment = .centerY
         heading.spacing = 10
@@ -873,6 +956,114 @@ final class ForgeReadInspectorViewController: NSViewController {
         contentStack.addArrangedSubview(status)
     }
 
+    private func makePullRequestModeControl() -> NSSegmentedControl {
+        let control = NSSegmentedControl(
+            labels: ["Overview", "Changes"],
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(pullRequestModeChanged(_:))
+        )
+        control.selectedSegment = pullRequestMode
+        control.setAccessibilityIdentifier("GitX.PullRequest.InspectorMode")
+        control.setAccessibilityLabel("Pull Request inspector mode")
+        return control
+    }
+
+    @objc private func pullRequestModeChanged(_ sender: NSSegmentedControl) {
+        pullRequestMode = sender.selectedSegment
+        guard let currentPresentation else { return }
+        apply(currentPresentation)
+    }
+
+    private func showLocalChanges(for presentation: ForgeReadInspectorPresentation) {
+        guard case let .pullRequest(summary) = presentation.item,
+              case let .available(base) = summary.base,
+              case let .available(head) = summary.head,
+              let pullRequestChangesProvider
+        else {
+            let unavailable = NSTextField(wrappingLabelWithString: "Local base or head objects are unavailable. Fetch them or open the Pull Request in a matching checkout.")
+            unavailable.textColor = .secondaryLabelColor
+            unavailable.setAccessibilityIdentifier("GitX.PullRequest.ChangesUnavailable")
+            contentStack.addArrangedSubview(unavailable)
+            return
+        }
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.startAnimation(nil)
+        let label = NSTextField(labelWithString: "Computing changes from local Git objects…")
+        label.textColor = .secondaryLabelColor
+        let loading = NSStackView(views: [spinner, label])
+        loading.orientation = .horizontal
+        loading.alignment = .centerY
+        loading.spacing = 8
+        loading.setAccessibilityIdentifier("GitX.PullRequest.ChangesProgress")
+        contentStack.addArrangedSubview(loading)
+
+        let destination = presentation.item.destination
+        changesTask = Task { [weak self] in
+            do {
+                let diff = try await pullRequestChangesProvider.changes(
+                    repository: summary.repository,
+                    base: base,
+                    head: head
+                )
+                guard let self,
+                      !Task.isCancelled,
+                      self.routedDestination == destination,
+                      self.pullRequestMode == 1
+                else { return }
+                self.renderLocalChanges(diff, pullRequest: summary)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self,
+                      self.routedDestination == destination,
+                      self.pullRequestMode == 1
+                else { return }
+                self.renderLocalChangesError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func renderLocalChanges(
+        _ diff: RepositoryLocalPullRequestDiff,
+        pullRequest: ForgePullRequestSummary
+    ) {
+        resetContent()
+        let control = makePullRequestModeControl()
+        contentStack.addArrangedSubview(control)
+        pullRequestModeControl = control
+        let nativeView = PBNativeContentView(frame: .zero)
+        nativeView.translatesAutoresizingMaskIntoConstraints = false
+        nativeView.setAccessibilityIdentifier("GitX.PullRequest.LocalChanges")
+        nativeView.showDiffSections(
+            [[
+                PBNativeSectionTitleKey: diff.title,
+                PBNativeSectionTextKey: diff.patch,
+                PBNativeSectionContextKey: "readOnly",
+            ]],
+            cacheIdentifier: diff.cacheIdentifier,
+            preserveScrollPosition: true
+        )
+        reviewOverlayHost?.install(in: nativeView, pullRequest: pullRequest, diff: diff)
+        contentStack.addArrangedSubview(nativeView)
+        NSLayoutConstraint.activate([
+            nativeView.widthAnchor.constraint(equalTo: contentStack.widthAnchor, constant: -28),
+            nativeView.heightAnchor.constraint(greaterThanOrEqualToConstant: 420),
+        ])
+    }
+
+    private func renderLocalChangesError(_ message: String) {
+        resetContent()
+        let control = makePullRequestModeControl()
+        contentStack.addArrangedSubview(control)
+        pullRequestModeControl = control
+        let error = banner("Couldn’t compute local Pull Request changes. \(message)", color: .systemRed)
+        error.setAccessibilityIdentifier("GitX.PullRequest.ChangesError")
+        contentStack.addArrangedSubview(error)
+    }
+
     private func configureView() {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -905,6 +1096,8 @@ final class ForgeReadInspectorViewController: NSViewController {
     }
 
     private func resetContent() {
+        editablePullRequestSnapshot = nil
+        currentPullRequestSummary = nil
         for view in contentStack.arrangedSubviews {
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -1008,6 +1201,16 @@ final class ForgeReadInspectorViewController: NSViewController {
     @objc private func openInBrowser(_: Any?) {
         guard let routedDestination else { return }
         destinationRouter.openInBrowser(destination: routedDestination)
+    }
+
+    @objc private func editPullRequest(_: Any?) {
+        guard let editablePullRequestSnapshot, let routedDestination else { return }
+        onEditPullRequest?(editablePullRequestSnapshot, routedDestination)
+    }
+
+    @objc private func checkoutPullRequest(_: NSButton) {
+        guard let pullRequest = currentPullRequestSummary else { return }
+        onCheckoutPullRequest?(pullRequest)
     }
 
     @objc private func openTimelineDestination(_ sender: ForgeReadDestinationButton) {
@@ -2397,6 +2600,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private let accountPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let accountsButton = NSButton(title: "Accounts…", target: nil, action: nil)
     private let publicButton = NSButton(title: "Continue Publicly", target: nil, action: nil)
+    private let syncForkButton = NSButton(title: "Sync Fork…", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "Resolving GitHub repository…")
     private let contentContainer = NSView()
     private var preparationTask: Task<Void, Never>?
@@ -2469,6 +2673,13 @@ final class RepositoryForgeCollaborationController: PBViewController {
         publicButton.translatesAutoresizingMaskIntoConstraints = false
         publicButton.setAccessibilityIdentifier("ForgeCollaborationContinuePublicly")
 
+        syncForkButton.target = self
+        syncForkButton.action = #selector(syncFork(_:))
+        syncForkButton.bezelStyle = .rounded
+        syncForkButton.translatesAutoresizingMaskIntoConstraints = false
+        syncForkButton.setAccessibilityIdentifier("GitX.SyncFork")
+        syncForkButton.setAccessibilityLabel("Synchronize this fork from its parent")
+
         accountsButton.target = self
         accountsButton.action = #selector(openAccountsPreferences(_:))
         accountsButton.bezelStyle = .rounded
@@ -2480,7 +2691,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
         for child in [accountBar, contentContainer] {
             root.addSubview(child)
         }
-        let controls = NSStackView(views: [accountPopup, accountsButton, publicButton])
+        let controls = NSStackView(views: [accountPopup, syncForkButton, accountsButton, publicButton])
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.spacing = 8
@@ -2791,7 +3002,21 @@ final class RepositoryForgeCollaborationController: PBViewController {
             service: service,
             markdownRenderer: ForgeReadNativeMarkdownRenderer(router: router),
             avatarRenderer: ForgeReadNativeAvatarRenderer(owner: avatarOwner),
-            destinationRouter: router
+            destinationRouter: router,
+            pullRequestChangesProvider: RepositoryLocalPullRequestChangesProvider(repository: repository),
+            onEditPullRequest: { [weak self] snapshot, destination in
+                guard let self,
+                      case let .authenticated(account) = self.accessResolution
+                else { return }
+                self.windowController?.editPullRequest(
+                    accountID: account.id,
+                    snapshot: snapshot,
+                    destination: destination
+                )
+            },
+            onCheckoutPullRequest: { [weak self] pullRequest in
+                self?.windowController?.checkoutPullRequest(pullRequest)
+            }
         )
     }
 
@@ -2819,6 +3044,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 }
                 guard let self, self.binding == binding else { return }
                 self.repositoryFacts = facts
+                self.updateSyncForkButton()
                 self.publishAccessChange()
             } catch {
                 Self.logger.info("Repository relationship metadata remains unavailable")
@@ -2937,6 +3163,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
         accountsButton.isEnabled = github
         publicButton.isHidden = !github || accessResolution == .publicAccess
         publicButton.isEnabled = github
+        updateSyncForkButton()
         if let error {
             statusLabel.stringValue = "Forge data unavailable — \(error)"
         } else {
@@ -2973,6 +3200,20 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 }
                 return lhs.id.value < rhs.id.value
             }
+    }
+
+    private func updateSyncForkButton() {
+        guard case .authenticated = accessResolution,
+              case let .available(relationship) = repositoryFacts?.forkRelationship,
+              case .fork = relationship,
+              case .available = repositoryFacts?.defaultBranch
+        else {
+            syncForkButton.isHidden = true
+            syncForkButton.isEnabled = false
+            return
+        }
+        syncForkButton.isHidden = false
+        syncForkButton.isEnabled = true
     }
 
     private static func providerName(_ kind: ForgeKind) -> String {
@@ -3023,6 +3264,33 @@ final class RepositoryForgeCollaborationController: PBViewController {
     @objc private func openAccountsPreferences(_: Any?) {
         if !NSApp.sendAction(NSSelectorFromString("openPreferencesWindow:"), to: nil, from: self) {
             NSSound.beep()
+        }
+    }
+
+    @objc private func syncFork(_: Any?) {
+        guard let binding,
+              case let .authenticated(account) = accessResolution,
+              case let .available(relationship) = repositoryFacts?.forkRelationship,
+              case let .fork(parent) = relationship,
+              case let .available(branch) = repositoryFacts?.defaultBranch,
+              let plan = try? ForgeSyncForkPlan(
+                  fork: binding.primaryRepository,
+                  parent: parent,
+                  branch: branch,
+                  localFetchRemoteName: binding.localRemoteName
+              )
+        else {
+            NSSound.beep()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Sync Fork from Parent?"
+        alert.informativeText = "GitHub will update \(branch.value) on the fork, then GitX will fetch \(binding.localRemoteName)/\(branch.value). Your checkout will not be changed."
+        alert.addButton(withTitle: "Sync Fork")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.setAccessibilityIdentifier("GitX.SyncFork.Confirm")
+        windowController?.confirmDialog(alert, suppressionIdentifier: nil) { [weak self] in
+            self?.windowController?.syncFork(accountID: account.id, plan: plan)
         }
     }
 

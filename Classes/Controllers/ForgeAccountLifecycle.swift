@@ -408,7 +408,8 @@ actor ForgeAddAccountCoordinator {
         credentialID: ForgeCredentialID,
         kind: ForgePersonalAccessTokenKind,
         token: Data,
-        expiresAt: Date?
+        expiresAt: Date?,
+        authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence? = nil
     ) async throws -> ForgeAccount {
         let account = try await accountStore.addPersonalAccessToken(
             accountID: accountID,
@@ -416,7 +417,8 @@ actor ForgeAddAccountCoordinator {
             credentialID: credentialID,
             kind: kind,
             token: token,
-            expiresAt: expiresAt
+            expiresAt: expiresAt,
+            authorizationEvidence: authorizationEvidence
         )
         await avatarLoader?.restoreAfterAccountAddition(account.id)
         return account

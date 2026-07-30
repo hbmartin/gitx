@@ -161,6 +161,8 @@ final nonisolated class ForgeApplicationServices: Sendable {
     let addAccountCoordinator: ForgeAddAccountCoordinator
     let removalCoordinator: ForgeAccountRemovalCoordinator
     let githubReadAdapterFactory: ForgeGitHubReadAdapterFactory
+    let githubMutationState: ForgeGitHubMutationStateStore
+    let githubMutationNetworkMonitor: ForgeGitHubMutationNetworkMonitor?
     let credentialCooldowns: ForgeCredentialCooldownRegistry
     let githubAnonymousRESTBudget: GitHubAnonymousRESTBudget
     let refreshCoordinator: ForgeApplicationRefreshCoordinator?
@@ -176,6 +178,8 @@ final nonisolated class ForgeApplicationServices: Sendable {
         addAccountCoordinator: ForgeAddAccountCoordinator,
         removalCoordinator: ForgeAccountRemovalCoordinator,
         githubReadAdapterFactory: ForgeGitHubReadAdapterFactory,
+        githubMutationState: ForgeGitHubMutationStateStore = ForgeGitHubMutationStateStore(),
+        githubMutationNetworkMonitor: ForgeGitHubMutationNetworkMonitor? = nil,
         credentialCooldowns: ForgeCredentialCooldownRegistry = ForgeCredentialCooldownRegistry(),
         githubAnonymousRESTBudget: GitHubAnonymousRESTBudget = GitHubAnonymousRESTBudget(),
         refreshCoordinator: ForgeApplicationRefreshCoordinator? = nil,
@@ -186,6 +190,8 @@ final nonisolated class ForgeApplicationServices: Sendable {
         self.addAccountCoordinator = addAccountCoordinator
         self.removalCoordinator = removalCoordinator
         self.githubReadAdapterFactory = githubReadAdapterFactory
+        self.githubMutationState = githubMutationState
+        self.githubMutationNetworkMonitor = githubMutationNetworkMonitor
         self.credentialCooldowns = credentialCooldowns
         self.githubAnonymousRESTBudget = githubAnonymousRESTBudget
         self.refreshCoordinator = refreshCoordinator
@@ -339,6 +345,8 @@ nonisolated enum ForgeApplicationServiceFactory {
         )
         let credentialAuthority = ForgeGitHubReadCredentialAuthority(accountStore: accountStore)
         let adapterFactory = ForgeGitHubReadAdapterFactory(credentialAuthority: credentialAuthority)
+        let mutationSessionGate = GitHubMutationSessionGate()
+        let mutationState = ForgeGitHubMutationStateStore(sessionGate: mutationSessionGate)
         let cooldowns = ForgeCredentialCooldownRegistry()
         let refreshCoordinator = await ForgeApplicationRefreshCoordinator.makeDefault(
             dataAvailability: dataAvailability,
@@ -353,6 +361,10 @@ nonisolated enum ForgeApplicationServiceFactory {
             addAccountCoordinator: addAccountCoordinator,
             removalCoordinator: removalCoordinator,
             githubReadAdapterFactory: adapterFactory,
+            githubMutationState: mutationState,
+            githubMutationNetworkMonitor: ForgeGitHubMutationNetworkMonitor(
+                sessionGate: mutationSessionGate
+            ),
             credentialCooldowns: cooldowns,
             refreshCoordinator: refreshCoordinator,
             deferredAccountCleanup: tombstoneStore

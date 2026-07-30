@@ -88,7 +88,7 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
         return try await accountStore.credentialChange(for: expectedCredential.accountID)
     }
 
-    fileprivate static func isGitHubDotCom(_ forge: ForgeIdentity) -> Bool {
+    static func isGitHubDotCom(_ forge: ForgeIdentity) -> Bool {
         guard forge.kind == .github else { return false }
         let origin = forge.origin.url
         return origin.scheme == "https" &&
@@ -99,6 +99,36 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
             (origin.path.isEmpty || origin.path == "/") &&
             origin.query == nil &&
             origin.fragment == nil
+    }
+
+    /// Installs the current exact Credential directly onto a GitHub API
+    /// request without exposing token material to the catalog service or any
+    /// provider-neutral model.
+    func authorizedRequest(
+        _ original: URLRequest,
+        for expectedCredential: ForgeCredentialReference
+    ) async throws -> URLRequest {
+        guard Self.isGitHubDotCom(expectedCredential.accountID.forge),
+              let url = original.url,
+              url.scheme == "https",
+              url.host?.lowercased() == "api.github.com",
+              url.user == nil,
+              url.password == nil,
+              url.port == nil,
+              original.value(forHTTPHeaderField: "Authorization") == nil,
+              let envelope = try await accountStore.credential(for: expectedCredential.accountID),
+              envelope.account.currentCredential.reference == expectedCredential,
+              envelope.account.currentCredential.expiresAt.map({ $0 > now() }) ?? true
+        else {
+            throw ForgeGitHubReadCompositionError.githubDotComCredentialRequired
+        }
+        var request = original
+        let authorization = try envelope.secrets.withUnsafeAccessTokenBytes { bytes in
+            let secret = try GitHubSecret(utf8Bytes: bytes)
+            return secret.withUnsafeUTF8Bytes { "Bearer \(String(decoding: $0, as: UTF8.self))" }
+        }
+        request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        return request
     }
 }
 
@@ -130,6 +160,31 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
             credentialAuthority: credentialAuthority,
             sessionConfiguration: sessionConfiguration
         )
+    }
+
+    func makeMutationAdapter(
+        for expectedCredential: ForgeCredentialReference,
+        sessionGate: GitHubMutationSessionGate,
+        sessionConfiguration: URLSessionConfiguration = .ephemeral
+    ) throws -> GitHubMutationAdapter {
+        guard ForgeGitHubReadCredentialAuthority.isGitHubDotCom(expectedCredential.accountID.forge) else {
+            logger.error("Rejected mutation adapter creation for non-GitHub.com Credential")
+            throw ForgeGitHubReadCompositionError.githubDotComCredentialRequired
+        }
+        logger.debug("Created exact-reference GitHub mutation adapter")
+        return GitHubMutationAdapter(
+            expectedCredential: expectedCredential,
+            credentialAuthority: credentialAuthority,
+            sessionConfiguration: sessionConfiguration,
+            sessionGate: sessionGate
+        )
+    }
+
+    func authorizedRequest(
+        _ request: URLRequest,
+        for expectedCredential: ForgeCredentialReference
+    ) async throws -> URLRequest {
+        try await credentialAuthority.authorizedRequest(request, for: expectedCredential)
     }
 
     // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
@@ -297,7 +352,7 @@ final class ForgeGitHubReadSurfaceService: ForgeReadSurfaceServing {
     convenience init(
         repository: ForgeRepositoryIdentity,
         adapter: GitHubReadAdapter,
-        now: @escaping NowProvider = Date.init
+        now: @escaping NowProvider = { Date() }
     ) {
         self.init(
             repository: repository,
@@ -309,7 +364,7 @@ final class ForgeGitHubReadSurfaceService: ForgeReadSurfaceServing {
     init(
         repository: ForgeRepositoryIdentity,
         adapter: any ForgeGitHubReadSurfaceAdapter,
-        now: @escaping NowProvider = Date.init
+        now: @escaping NowProvider = { Date() }
     ) {
         self.repository = repository
         self.adapter = adapter

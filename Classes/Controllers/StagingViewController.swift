@@ -22,11 +22,20 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     private var commitProgressSheet: CommitProgressSheetController?
     private var selectionCoalescer: RefreshCoalescer?
     private var pushCapabilityAvailable = false
+    private var pendingCreatePullRequestAfterPush = false
 
     @objc let commitMessageView: PBCommitMessageView
     private let commitButton = NSButton(title: NSLocalizedString("Commit", comment: "Commit button in the staging pane"), target: nil, action: nil)
     private let amendButton = NSButton(checkboxWithTitle: NSLocalizedString("Amend", comment: "Amend checkbox in the staging pane"), target: nil, action: nil)
     private let pushAfterCommitButton = NSButton(checkboxWithTitle: NSLocalizedString("Push to", comment: "Push-after-commit checkbox in the staging pane"), target: nil, action: nil)
+    private let createPullRequestAfterPushButton = NSButton(
+        checkboxWithTitle: NSLocalizedString(
+            "Create Pull Request",
+            comment: "One-shot Create Pull Request after push checkbox"
+        ),
+        target: nil,
+        action: nil
+    )
     private let pushRemotePopUpButton = NSPopUpButton(frame: .zero, pullsDown: false)
     private let sortPopUpButton = NSPopUpButton(frame: .zero, pullsDown: false)
     @objc let searchField = NSSearchField()
@@ -123,6 +132,11 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
         amendButton.bind(NSBindingName.value, to: index, withKeyPath: "amend", options: nil)
         pushAfterCommitButton.setAccessibilityIdentifier("PushAfterCommit")
+        createPullRequestAfterPushButton.setAccessibilityIdentifier("GitX.Staging.CreatePullRequestAfterPush")
+        createPullRequestAfterPushButton.setAccessibilityLabel("Create Pull Request after pushing this commit")
+        createPullRequestAfterPushButton.state = .off
+        createPullRequestAfterPushButton.target = self
+        createPullRequestAfterPushButton.action = #selector(createPullRequestAfterPushChanged(_:))
         pushRemotePopUpButton.setAccessibilityIdentifier("PushRemote")
         pushAfterCommitButton.state = repositoryUISettings.pushAfterCommit ? .on : .off
 
@@ -322,7 +336,14 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         commitMessageView.textContainer?.widthTracksTextView = true
         scrollView.documentView = commitMessageView
 
-        let controls = NSStackView(views: [amendButton, pushAfterCommitButton, pushRemotePopUpButton, NSView(), commitButton])
+        let controls = NSStackView(views: [
+            amendButton,
+            pushAfterCommitButton,
+            pushRemotePopUpButton,
+            createPullRequestAfterPushButton,
+            NSView(),
+            commitButton,
+        ])
         controls.orientation = .horizontal
         controls.spacing = 8
         controls.translatesAutoresizingMaskIntoConstraints = false
@@ -394,6 +415,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
         pushAfterCommitButton.isEnabled = presentation.canPush
         pushRemotePopUpButton.isEnabled = presentation.canPush
+        createPullRequestAfterPushButton.isEnabled = presentation.canPush
         if presentation.canPush {
             var restoredChoice = wasAvailable ? livePushChoice : repositoryUISettings.pushAfterCommit
             if let failedSubmissionPushChoice {
@@ -403,6 +425,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             pushAfterCommitButton.state = restoredChoice ? .on : .off
         } else {
             pushAfterCommitButton.state = .off
+            createPullRequestAfterPushButton.state = .off
         }
         pushCapabilityAvailable = presentation.canPush
         NSLog(
@@ -490,6 +513,8 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         if submissionPlan.shouldArmPendingPush, let headRef, let remoteName {
             commitWorkflowState.arm(branchRef: headRef, remoteName: remoteName)
         }
+        pendingCreatePullRequestAfterPush = submissionPlan.shouldArmPendingPush &&
+            createPullRequestAfterPushButton.state == .on
         commitWorkflowState.beginSubmission(
             pushChoice: pushAfterCommitButton.state == .on,
             canRemember: pushAfterCommitButton.isEnabled
@@ -544,6 +569,12 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     @objc func toggleAmendCommit(_ sender: Any?) {
         index.isAmend = !index.isAmend
+    }
+
+    @objc private func createPullRequestAfterPushChanged(_: Any?) {
+        if createPullRequestAfterPushButton.state == .on {
+            pushAfterCommitButton.state = .on
+        }
     }
 
     @objc func signOff(_ sender: Any?) {
@@ -712,6 +743,9 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
         let rememberedPushChoice = commitWorkflowState.pendingRememberedPushChoice
         let pushPlan = commitWorkflowState.consumePendingPush()
+        let createPullRequestAfterPush = pendingCreatePullRequestAfterPush
+        pendingCreatePullRequestAfterPush = false
+        createPullRequestAfterPushButton.state = .off
         if let rememberedPushChoice {
             repositoryUISettings.pushAfterCommit = rememberedPushChoice.boolValue
             pushAfterCommitButton.state = rememberedPushChoice.boolValue ? .on : .off
@@ -720,11 +754,17 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
         if let pushPlan, pushPlan.branchRef.isBranch, !pushPlan.remoteName.isEmpty {
             let remoteRef = PBGitRef(from: kGitXRemoteRefPrefix + pushPlan.remoteName)
-            windowController?.performPush(forBranch: pushPlan.branchRef, toRemote: remoteRef, requiresConfirmation: false)
+            windowController?.performPush(
+                forBranch: pushPlan.branchRef,
+                toRemote: remoteRef,
+                requiresConfirmation: false,
+                initiallyCreatePullRequest: createPullRequestAfterPush
+            )
         }
     }
 
     @objc private func commitFailed(_ notification: Notification) {
+        pendingCreatePullRequestAfterPush = false
         finishCommitProgressSheet()
         host?.isBusy = false
         commitMessageView.isEditable = true
@@ -747,6 +787,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc private func commitHookFailed(_ notification: Notification) {
+        pendingCreatePullRequestAfterPush = false
         finishCommitProgressSheet()
         host?.isBusy = false
         commitMessageView.isEditable = true

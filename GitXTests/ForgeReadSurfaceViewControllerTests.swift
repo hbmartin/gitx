@@ -744,6 +744,65 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertEqual(table.numberOfRows, 0)
     }
 
+    func testPullRequestInspectorRoutesEditCheckoutAndRendersLocalChangesWithAccessibleControls() async throws {
+        let summary = try ReadFixture.pullRequest()
+        let service = try FakeReadService(
+            pages: [ForgeReadSurfacePage(
+                items: [.pullRequest(summary)],
+                fetchedAt: ReadFixture.date(1)
+            )],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(ReadFixture.pullRequestDetails()),
+                fetchedAt: ReadFixture.date(2)
+            )
+        )
+        let provider = StubPullRequestChangesProvider(diff: RepositoryLocalPullRequestDiff(
+            title: "Changes from main to read-surface",
+            patch: "diff --git a/file b/file\n+native",
+            cacheIdentifier: "local-pr-42"
+        ))
+        var edited: ForgePullRequestEditableSnapshot?
+        var checkedOut: ForgePullRequestSummary?
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            pullRequestChangesProvider: provider,
+            onEditPullRequest: { snapshot, _ in edited = snapshot },
+            onCheckoutPullRequest: { checkedOut = $0 }
+        )
+        let window = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+        let table = try XCTUnwrap(descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await settleMainActor()
+
+        let edit = try XCTUnwrap(descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton)
+        let checkout = try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.Checkout", in: controller.view) as? NSButton
+        )
+        edit.performClick(nil)
+        checkout.performClick(nil)
+        XCTAssertEqual(edited?.number, summary.number)
+        XCTAssertEqual(checkedOut?.number, summary.number)
+
+        let mode = try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.InspectorMode", in: controller.view) as? NSSegmentedControl
+        )
+        mode.selectedSegment = 1
+        try NSApp.sendAction(XCTUnwrap(mode.action), to: mode.target, from: mode)
+        await settleMainActor()
+        let changes = try XCTUnwrap(descendant(identifier: "GitX.PullRequest.LocalChanges", in: controller.view))
+        XCTAssertEqual(changes.accessibilityIdentifier(), "GitX.PullRequest.LocalChanges")
+        try attachScreenshot(of: window, named: "GitHub Pull Request local Changes inspector")
+    }
+
     private func makeController(
         kind: ForgeReadSurfaceKind,
         service: FakeReadService,
@@ -824,6 +883,18 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+}
+
+private struct StubPullRequestChangesProvider: RepositoryPullRequestChangesProviding {
+    let diff: RepositoryLocalPullRequestDiff
+
+    func changes(
+        repository _: ForgeRepositoryIdentity,
+        base _: ForgeBranchReference,
+        head _: ForgeBranchReference
+    ) async throws -> RepositoryLocalPullRequestDiff {
+        diff
     }
 }
 
