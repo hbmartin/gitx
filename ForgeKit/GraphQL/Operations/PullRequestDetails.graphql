@@ -1,0 +1,266 @@
+query GitHubPullRequestDetails(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $timelineFirst: Int!
+  $timelineAfter: String
+  $checkFirst: Int!
+  $checkAfter: String
+) {
+  repository(owner: $owner, name: $name) {
+    id
+    pullRequest(number: $number) {
+      ...GitHubPullRequestSummary
+      body
+      mergeable
+      assignedActors(first: 100) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          ...GitHubAssignee
+        }
+      }
+      milestone {
+        ...GitHubMilestone
+      }
+      participants(first: 100) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          ...GitHubActor
+        }
+      }
+      reviewRequests(first: 100) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          id
+          requestedReviewer {
+            ...GitHubRequestedReviewer
+          }
+        }
+      }
+      latestReviews(first: 100) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          id
+          state
+          submittedAt
+          author {
+            ...GitHubActor
+          }
+        }
+      }
+      closingIssuesReferences(first: 100) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          id
+          number
+          state
+          title
+          repository {
+            ...GitHubRepositoryIdentity
+          }
+        }
+      }
+      statusCheckRollup {
+        state
+        contexts(first: $checkFirst, after: $checkAfter) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ... on CheckRun {
+              id
+              name
+              summary
+              status
+              conclusion
+              detailsUrl
+              startedAt
+              completedAt
+            }
+            ... on StatusContext {
+              id
+              context
+              description
+              state
+              targetUrl
+              createdAt
+              updatedAt
+            }
+          }
+        }
+      }
+      timelineItems(
+        first: $timelineFirst
+        after: $timelineAfter
+        itemTypes: [
+          ISSUE_COMMENT
+          PULL_REQUEST_REVIEW
+          CLOSED_EVENT
+          REOPENED_EVENT
+          MERGED_EVENT
+          ASSIGNED_EVENT
+          UNASSIGNED_EVENT
+          LABELED_EVENT
+          UNLABELED_EVENT
+          MILESTONED_EVENT
+          DEMILESTONED_EVENT
+          RENAMED_TITLE_EVENT
+          CROSS_REFERENCED_EVENT
+        ]
+      ) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          ... on IssueComment {
+            ...GitHubIssueComment
+          }
+          ... on PullRequestReview {
+            id
+            body
+            state
+            createdAt
+            submittedAt
+            author {
+              ...GitHubActor
+            }
+            commit {
+              oid
+            }
+          }
+          ... on ClosedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on ReopenedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on MergedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            commit {
+              oid
+            }
+          }
+          ... on AssignedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            assignee {
+              ...GitHubAssignee
+            }
+          }
+          ... on UnassignedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            assignee {
+              ...GitHubAssignee
+            }
+          }
+          ... on LabeledEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            label {
+              ...GitHubLabel
+            }
+          }
+          ... on UnlabeledEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            label {
+              ...GitHubLabel
+            }
+          }
+          ... on MilestonedEvent {
+            id
+            createdAt
+            milestoneTitle
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on DemilestonedEvent {
+            id
+            createdAt
+            milestoneTitle
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on RenamedTitleEvent {
+            id
+            createdAt
+            previousTitle
+            currentTitle
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on CrossReferencedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            source {
+              ... on PullRequest {
+                number
+                pullRequestState: state
+                title
+                repository {
+                  ...GitHubRepositoryIdentity
+                }
+              }
+              ... on Issue {
+                number
+                issueState: state
+                title
+                repository {
+                  ...GitHubRepositoryIdentity
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

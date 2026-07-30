@@ -38,6 +38,15 @@ TOP_LEVEL_DECLARATION = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)\b",
     re.MULTILINE,
 )
+GENERATED_NAMESPACE_DECLARATION = re.compile(
+    r"^extension\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.MULTILINE
+)
+GENERATED_NAMESPACE_MEMBER = re.compile(
+    r"^  (?:(?:public|package|internal|fileprivate|private|open|final|indirect|"
+    r"nonisolated)\s+)*(?:class|struct|enum|protocol|actor|typealias)\s+"
+    r"([A-Za-z_][A-Za-z0-9_]*)\b",
+    re.MULTILINE,
+)
 DIRECT_GENERATED_PATH_REFERENCE = re.compile(
     r"(?:GitHubForgeAdapter/Generated|Sources/GitHubForgeAdapter/Generated|"
     r"Generated/[A-Za-z_][A-Za-z0-9_.-]*\.swift)"
@@ -69,7 +78,10 @@ def generated_type_names(repository_root: pathlib.Path) -> set[str]:
     if not generated_root.is_dir():
         return names
     for path in sorted(generated_root.rglob("*.swift")):
-        names.update(TOP_LEVEL_DECLARATION.findall(path.read_text(errors="replace")))
+        source = path.read_text(errors="replace")
+        names.update(TOP_LEVEL_DECLARATION.findall(source))
+        names.update(GENERATED_NAMESPACE_DECLARATION.findall(source))
+        names.update(GENERATED_NAMESPACE_MEMBER.findall(source))
     return names
 
 

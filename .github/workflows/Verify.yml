@@ -99,8 +99,25 @@ jobs:
         run: |
           brew install mint shellcheck actionlint
           mint bootstrap
+      - name: Install pinned Apollo iOS codegen CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/apollo-ios-cli-2.3.0"
+          curl \
+            --fail \
+            --location \
+            --silent \
+            --show-error \
+            https://github.com/apollographql/apollo-ios/releases/download/2.3.0/apollo-ios-cli.tar.gz \
+            --output "$RUNNER_TEMP/apollo-ios-cli-2.3.0.tar.gz"
+          echo "99ab549c51f802e76bcae751afd02dca2b2c02934b437dc885251e1c08bc65c2  $RUNNER_TEMP/apollo-ios-cli-2.3.0.tar.gz" \
+            | shasum -a 256 --check
+          tar \
+            -xzf "$RUNNER_TEMP/apollo-ios-cli-2.3.0.tar.gz" \
+            -C "$RUNNER_TEMP/apollo-ios-cli-2.3.0"
+          test "$("$RUNNER_TEMP/apollo-ios-cli-2.3.0/apollo-ios-cli" --version)" = "2.3.0"
       - name: Run static checks
         env:
+          APOLLO_IOS_CLI: ${{ runner.temp }}/apollo-ios-cli-2.3.0/apollo-ios-cli
           BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: scripts/verify_static.sh "$BASE_REF"
 

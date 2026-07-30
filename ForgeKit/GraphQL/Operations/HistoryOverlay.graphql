@@ -1,0 +1,28 @@
+query GitHubHistoryOverlay(
+  $owner: String!
+  $name: String!
+  $oid: GitObjectID!
+  $pullRequestFirst: Int!
+  $pullRequestAfter: String
+) {
+  repository(owner: $owner, name: $name) {
+    id
+    object(oid: $oid) {
+      ... on Commit {
+        oid
+        statusCheckRollup {
+          state
+        }
+        associatedPullRequests(first: $pullRequestFirst, after: $pullRequestAfter) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ...GitHubPullRequestSummary
+          }
+        }
+      }
+    }
+  }
+}

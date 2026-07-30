@@ -1,0 +1,30 @@
+query GitHubRepositoryFacts($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    ...GitHubRepositoryIdentity
+    defaultBranchRef {
+      name
+    }
+    description
+    repositoryTopics(first: 100) {
+      totalCount
+      pageInfo {
+        ...GitHubPageInfo
+      }
+      nodes {
+        topic {
+          name
+        }
+      }
+    }
+    visibility
+    isArchived
+    isFork
+    viewerPermission
+    viewerCanAdminister
+    viewerCanCreateIssues
+    viewerCanUpdateTopics
+    parent {
+      ...GitHubRepositoryIdentity
+    }
+  }
+}

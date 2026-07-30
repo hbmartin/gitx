@@ -110,6 +110,45 @@ class ForgeKitBoundaryTests(unittest.TestCase):
         self.assertEqual(len(failures), 1)
         self.assertIn("must remain internal", failures[0])
 
+    def test_internal_generated_container_may_have_public_protocol_witnesses(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write(
+                root,
+                "ForgeKit/Sources/GitHubForgeAdapter/Generated/RepositoryQuery.swift",
+                """
+                import ApolloAPI
+                extension GitHubAPI {
+                  struct RepositoryQuery {
+                    public var variables: [String: String] { [:] }
+                  }
+                }
+                """,
+            )
+
+            failures = exports.export_failures(root)
+
+        self.assertEqual(failures, [])
+
+    def test_nested_generated_operation_name_cannot_escape_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            write(
+                root,
+                "ForgeKit/Sources/GitHubForgeAdapter/Generated/RepositoryQuery.swift",
+                "extension GitHubAPI {\n  struct RepositoryQuery {}\n}\n",
+            )
+            write(
+                root,
+                "Classes/Leaky.swift",
+                "let query: RepositoryQuery? = nil\n",
+            )
+
+            failures = boundary.boundary_failures(root)
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn("RepositoryQuery", failures[0])
+
     def test_handwritten_export_cannot_expose_apollo_or_generated_types(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

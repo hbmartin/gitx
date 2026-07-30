@@ -23,6 +23,20 @@ TOP_LEVEL_DECLARATION = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)\b",
     re.MULTILINE,
 )
+GENERATED_NAMESPACE_DECLARATION = re.compile(
+    r"^extension\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.MULTILINE
+)
+GENERATED_NAMESPACE_MEMBER = re.compile(
+    r"^  (?:(?:public|package|internal|fileprivate|private|open|final|indirect|"
+    r"nonisolated)\s+)*(?:class|struct|enum|protocol|actor|typealias)\s+"
+    r"([A-Za-z_][A-Za-z0-9_]*)\b",
+    re.MULTILINE,
+)
+GENERATED_EXPORTED_DECLARATION = re.compile(
+    r"^(?:(?:public|package|open)\s+)+(?:class|struct|enum|protocol|actor|"
+    r"extension|typealias)\b",
+    re.MULTILINE,
+)
 DECLARATION_START = re.compile(
     r"^\s*(?P<modifiers>(?:(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?|"
     r"[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?)\s+)*)"
@@ -54,7 +68,10 @@ def generated_type_names(repository_root: pathlib.Path) -> set[str]:
     if not root.is_dir():
         return names
     for path in sorted(root.rglob("*.swift")):
-        names.update(TOP_LEVEL_DECLARATION.findall(path.read_text(errors="replace")))
+        source = path.read_text(errors="replace")
+        names.update(TOP_LEVEL_DECLARATION.findall(source))
+        names.update(GENERATED_NAMESPACE_DECLARATION.findall(source))
+        names.update(GENERATED_NAMESPACE_MEMBER.findall(source))
     return names
 
 
@@ -205,7 +222,8 @@ def export_failures(repository_root: pathlib.Path) -> list[str]:
             relative = pathlib.PurePosixPath(path.relative_to(repository_root).as_posix())
             source = path.read_text(errors="replace")
             if is_relative_to(relative, GENERATED_ROOT):
-                if exported_declarations(source) or exported_apollo_imports(source):
+                sanitized = source_without_comments_and_strings(source)
+                if GENERATED_EXPORTED_DECLARATION.search(sanitized) or exported_apollo_imports(source):
                     failures.append(
                         f"{relative}: generated GraphQL declarations must remain internal"
                     )

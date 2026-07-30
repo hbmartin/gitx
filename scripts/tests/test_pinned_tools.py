@@ -124,6 +124,25 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn('--combined-output "$RUNNER_TEMP/ForgeKitCombinedCoverage.json"', forgekit_job)
         self.assertIn('fetch-depth: 0', forgekit_job)
 
+    def test_static_ci_pins_apollo_cli_for_offline_codegen(self) -> None:
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        static_job = verify_workflow.split(
+            "\n  static:\n", maxsplit=1
+        )[1].split("\n  unit-and-analyze:\n", maxsplit=1)[0]
+
+        self.assertIn(
+            "https://github.com/apollographql/apollo-ios/releases/download/"
+            "2.3.0/apollo-ios-cli.tar.gz",
+            static_job,
+        )
+        self.assertIn(
+            "99ab549c51f802e76bcae751afd02dca2b2c02934b437dc885251e1c08bc65c2",
+            static_job,
+        )
+        self.assertIn('apollo-ios-cli" --version)" = "2.3.0"', static_job)
+        self.assertIn("APOLLO_IOS_CLI:", static_job)
+        self.assertIn("scripts/verify_static.sh", static_job)
+
     def test_performance_suite_rejects_pull_requests_on_self_hosted_runner(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         performance_job = verify_workflow.split("\n  performance:\n", maxsplit=1)[1]
