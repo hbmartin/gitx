@@ -133,10 +133,21 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)reviewReadProofWithCompletionHandler:(void (^)(uint64_t proof))completionHandler;
 + (void)reviewMutationProofWithCompletionHandler:(void (^)(uint64_t proof))completionHandler;
 + (BOOL)reviewApplicationProofWithRepository:(PBGitRepository *)repository;
++ (void)reviewApplicationRemoteBindingProofWithRepository:(PBGitRepository *)repository
+										completionHandler:(void (^)(uint64_t proof))completionHandler
+	NS_SWIFT_NAME(reviewApplicationRemoteBindingProof(repository:completionHandler:));
++ (void)reviewApplicationLocalBindingProofWithRepository:(PBGitRepository *)repository
+									   completionHandler:(void (^)(uint64_t proof))completionHandler
+	NS_SWIFT_NAME(reviewApplicationLocalBindingProof(repository:completionHandler:));
 @end
 
 @interface PBMilestone3ProductCoverageHarness : NSObject
 + (BOOL)collaborationCloseLifecycleProofWithRepository:(PBGitRepository *)repository;
+@end
+
+@interface PBWindowSessionCoordinator : NSObject
+@property (class, nonatomic, readonly, strong) PBWindowSessionCoordinator *shared;
+- (void)applicationDidFinishLaunching;
 @end
 
 NS_ASSUME_NONNULL_END

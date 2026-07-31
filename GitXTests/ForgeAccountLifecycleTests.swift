@@ -168,6 +168,16 @@ final class ForgeAccountLifecycleTests: XCTestCase {
                 makeIfNecessary: true
             ))
         }
+        view.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let screenshot = NSImage(size: view.bounds.size)
+        screenshot.addRepresentation(representation)
+        let attachment = XCTAttachment(image: screenshot)
+        attachment.name = "Milestone 1 - Accounts and Attention Preferences"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
         let botReply = try XCTUnwrap(
             descendant(identifier: "ForgeAttentionWatchBotReplies", in: view) as? NSButton
         )

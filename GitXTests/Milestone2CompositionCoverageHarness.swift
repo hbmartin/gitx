@@ -88,6 +88,97 @@
             }
         }
 
+        /// Proves that the shipped remote review service revalidates the
+        /// repository binding before resolving any network dependencies.
+        @objc
+        static func reviewApplicationRemoteBindingProof(repository: PBGitRepository) async -> UInt64 {
+            do {
+                let fixture = try CompositionCoverageFixture()
+                let suiteName = "GitX-M3-RemoteReviewBinding-\(UUID().uuidString)"
+                guard let defaults = UserDefaults(suiteName: suiteName) else {
+                    throw CompositionCoverageError.expected
+                }
+                defer { defaults.removePersistentDomain(forName: suiteName) }
+                let composition = ApplicationComposition(
+                    userDefaults: defaults,
+                    automaticallyStartsForgeServices: false
+                )
+                let settings = RepositoryUISettings(
+                    repository: repository,
+                    preferences: composition.applicationPreferences
+                )
+                settings.forgeRepositoryBinding = try ForgeRepositoryBinding(
+                    localRemoteName: "origin",
+                    primaryRepository: fixture.repository,
+                    preferredAccount: fixture.accountID
+                )
+                let service: any RepositoryPullRequestReviewMutationServing = composition
+                    .forgePullRequestReviewServices.session(for: repository).service
+                let identity = try RepositoryPullRequestReviewIdentity(
+                    accountID: fixture.accountID,
+                    repository: fixture.repository,
+                    number: ForgeItemNumber(42)
+                )
+
+                settings.forgeRepositoryBinding = nil
+                do {
+                    _ = try await service.loadWorkspace(identity: identity)
+                    return 0
+                } catch {
+                    return error as? RepositoryPullRequestReviewServiceError == .invalidWorkspace ? 1 : 0
+                }
+            } catch {
+                NSLog("[M3CompositionCoverage] remote-binding setup failed: %@", error.localizedDescription)
+                return 0
+            }
+        }
+
+        /// Runs the local review service's binding check in a distinct task
+        /// frame from the remote service proof. This mirrors the shipped
+        /// services' independent asynchronous I/O boundaries.
+        @objc
+        static func reviewApplicationLocalBindingProof(repository: PBGitRepository) async -> UInt64 {
+            do {
+                let fixture = try CompositionCoverageFixture()
+                let suiteName = "GitX-M3-LocalReviewBinding-\(UUID().uuidString)"
+                guard let defaults = UserDefaults(suiteName: suiteName) else {
+                    throw CompositionCoverageError.expected
+                }
+                defer { defaults.removePersistentDomain(forName: suiteName) }
+                let composition = ApplicationComposition(
+                    userDefaults: defaults,
+                    automaticallyStartsForgeServices: false
+                )
+                let settings = RepositoryUISettings(
+                    repository: repository,
+                    preferences: composition.applicationPreferences
+                )
+                settings.forgeRepositoryBinding = try ForgeRepositoryBinding(
+                    localRemoteName: "origin",
+                    primaryRepository: fixture.repository,
+                    preferredAccount: fixture.accountID
+                )
+                let service: any RepositoryPullRequestLocalReviewServing = composition
+                    .forgePullRequestReviewServices.session(for: repository).localService
+                let base = try ForgeBranchReference(
+                    repository: fixture.repository,
+                    name: ForgeRefName("main"),
+                    commit: ForgeCommitID(String(repeating: "b", count: 40))
+                )
+
+                settings.forgeRepositoryBinding = nil
+                do {
+                    try await service.fetchBase(base)
+                    return 0
+                } catch {
+                    return error as? RepositoryPullRequestReviewServiceError == .invalidWorkspace ? 1 : 0
+                }
+            } catch {
+                NSLog("[M3CompositionCoverage] local-binding setup failed: %@", error.localizedDescription)
+                return 0
+            }
+        }
+
         /// Runs the Milestone 3 mutation context and authorization feedback in
         /// a distinct task frame from the read-context proof.
         @objc

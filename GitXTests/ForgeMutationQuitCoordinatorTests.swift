@@ -161,6 +161,29 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(coordinator.activeMutations().isEmpty)
     }
 
+    func testLifecycleProtocolDefaultRegistersRepositoryWideAndErrorsRemainActionable() throws {
+        let coordinator = makeCoordinator()
+        let lifecycle: any ForgeMutationLifecycleCoordinating = coordinator
+        let fixture = try Fixture()
+        let registration = try lifecycle.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .syncFork,
+            startedAt: fixture.date(5)
+        )
+
+        XCTAssertEqual(registration.mutation.scope, .repositoryWide)
+        XCTAssertTrue(lifecycle.finish(registration))
+        XCTAssertTrue([
+            ForgeMutationQuitCoordinatorError.accountRepositoryMismatch,
+            .readOnlyOperation,
+            .invalidTimestamp,
+            .terminationPending,
+            .persistenceUnavailable,
+            .invalidPersistedRecord,
+        ].allSatisfy { !($0.errorDescription ?? "").isEmpty })
+    }
+
     func testSQLiteRecordsCanBeQueriedAndConsumedByExactApplicableRefresh() async throws {
         let fixture = try Fixture()
         let directory = FileManager.default.temporaryDirectory
@@ -252,12 +275,25 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         )
         XCTAssertEqual(untouchedPullRequest, [exact43])
 
-        let remaining = try await store.records(
+        let repositoryRefresh: any ForgeUnknownMutationOutcomePersisting = store
+        let remaining = try await repositoryRefresh.records(
             accountID: fixture.accountID,
             repository: fixture.repository,
             operation: .editPullRequest
         )
         XCTAssertEqual(remaining, [repositoryWide, exact43])
+        let consumedByRepositoryRefresh = try await repositoryRefresh.consume(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest
+        )
+        XCTAssertEqual(consumedByRepositoryRefresh, remaining)
+        let recordsAfterRepositoryRefresh = try await repositoryRefresh.records(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest
+        )
+        XCTAssertTrue(recordsAfterRepositoryRefresh.isEmpty)
         await database.close()
     }
 

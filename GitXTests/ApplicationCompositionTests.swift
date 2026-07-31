@@ -57,6 +57,37 @@ final class ApplicationCompositionTests: XCTestCase {
         XCTAssertFalse(composition.applicationPreferences.bool(forKey: "PBLoadForgeAvatars"))
     }
 
+    @MainActor
+    func testAlwaysRestorePolicyAttemptsSavedSessionAndMarksCurrentRunUnclean() {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let cleanShutdownKey = "PBWindowSessionCleanShutdown"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        let previousCleanShutdown = standard.object(forKey: cleanShutdownKey)
+        let previousRestorePolicy = PBApplicationSettings.restorePolicy
+        let originalWindows = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApplication.shared.windows where !originalWindows.contains(ObjectIdentifier(window)) {
+                window.close()
+            }
+            restore(previousSnapshot, forKey: snapshotKey, in: standard)
+            restore(previousCleanShutdown, forKey: cleanShutdownKey, in: standard)
+            PBApplicationSettings.restorePolicy = previousRestorePolicy
+        }
+
+        XCTAssertNil(ProcessInfo.processInfo.environment["GITX_UITEST_REPO"])
+        let documentsAreEmpty = NSDocumentController.shared.documents.isEmpty
+        XCTAssertTrue(documentsAreEmpty)
+        standard.set([], forKey: snapshotKey)
+        standard.set(true, forKey: cleanShutdownKey)
+        PBApplicationSettings.restorePolicy = .always
+
+        PBWindowSessionCoordinator.shared.applicationDidFinishLaunching()
+
+        XCTAssertFalse(standard.bool(forKey: cleanShutdownKey))
+        XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
+    }
+
     func testLegacyGeneralDefaultsExcludeCommitGuidesAndForwardRemainingToggles() {
         defaults.set(false, forKey: "PBEnableGist")
         defaults.set(false, forKey: "PBEnableGravatar")
@@ -148,6 +179,14 @@ final class ApplicationCompositionTests: XCTestCase {
         PBApplicationSettings.repositoryStatusBarVisible = true
         XCTAssertTrue(defaults.bool(forKey: "PBRepositoryStatusBarVisible"))
         XCTAssertTrue(PBApplicationSettings.repositoryStatusBarVisible)
+    }
+
+    private func restore(_ value: Any?, forKey key: String, in defaults: UserDefaults) {
+        if let value {
+            defaults.set(value, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
     }
 
     func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {

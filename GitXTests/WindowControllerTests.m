@@ -4078,4 +4078,26 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([PBMilestone2CompositionCoverageHarness reviewApplicationProofWithRepository:self.repository]);
 }
 
+- (void)testMilestone3ShippedRemoteReviewServiceRejectsChangedRepositoryBinding
+{
+	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 3 remote binding proof"];
+	[PBMilestone2CompositionCoverageHarness reviewApplicationRemoteBindingProofWithRepository:self.repository
+																			completionHandler:^(uint64_t proof) {
+																				XCTAssertEqual(proof, (uint64_t)1);
+																				[expectation fulfill];
+																			}];
+	[self waitForExpectations:@[ expectation ] timeout:30.0];
+}
+
+- (void)testMilestone3ShippedLocalReviewServiceRejectsChangedRepositoryBinding
+{
+	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 3 local binding proof"];
+	[PBMilestone2CompositionCoverageHarness reviewApplicationLocalBindingProofWithRepository:self.repository
+																		   completionHandler:^(uint64_t proof) {
+																			   XCTAssertEqual(proof, (uint64_t)1);
+																			   [expectation fulfill];
+																		   }];
+	[self waitForExpectations:@[ expectation ] timeout:30.0];
+}
+
 @end
