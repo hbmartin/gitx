@@ -1293,11 +1293,13 @@
                 bindingCleaner: cleaner,
                 avatarCleaner: PreservingSharedForgeAvatarCleaner()
             )
+            let sessionGate = GitHubMutationSessionGate()
             let adapterFactory = ForgeGitHubReadAdapterFactory(
                 credentialAuthority: ForgeGitHubReadCredentialAuthority(
                     accountStore: accountStore,
                     now: { fixture.now }
-                )
+                ),
+                sessionGate: sessionGate
             )
             let services = ForgeApplicationServices(
                 dataAvailability: .available(database),
@@ -1305,7 +1307,7 @@
                 addAccountCoordinator: add,
                 removalCoordinator: removal,
                 githubReadAdapterFactory: adapterFactory,
-                githubMutationState: ForgeGitHubMutationStateStore(),
+                githubMutationState: ForgeGitHubMutationStateStore(sessionGate: sessionGate),
                 githubMutationNetworkMonitor: nil,
                 refreshCoordinator: nil,
                 deferredAccountCleanup: deferred

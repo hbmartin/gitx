@@ -330,19 +330,21 @@ nonisolated struct SQLiteRepositoryForgeOverlayCache: RepositoryForgeOverlayCach
 }
 
 actor ForgeCredentialCooldownRegistry {
-    private var deadlines: [ForgeCredentialReference: Date] = [:]
+    private let sessionGate: GitHubMutationSessionGate
 
-    func activeDeadline(for credential: ForgeCredentialReference, at date: Date) -> Date? {
-        guard let deadline = deadlines[credential] else { return nil }
-        guard deadline > date else {
-            deadlines.removeValue(forKey: credential)
-            return nil
-        }
-        return deadline
+    init(sessionGate: GitHubMutationSessionGate = GitHubMutationSessionGate()) {
+        self.sessionGate = sessionGate
     }
 
-    func register(_ cooldown: ForgeCredentialCooldown) {
-        deadlines[cooldown.credential] = max(deadlines[cooldown.credential] ?? .distantPast, cooldown.deadline)
+    func activeDeadline(for credential: ForgeCredentialReference, at date: Date) async -> Date? {
+        switch await sessionGate.environment(for: credential, at: date) {
+        case let .rateLimited(until): until
+        case .available, .offline: nil
+        }
+    }
+
+    func register(_ cooldown: ForgeCredentialCooldown) async {
+        await sessionGate.recordCooldown(for: cooldown.credential, until: cooldown.deadline)
     }
 }
 

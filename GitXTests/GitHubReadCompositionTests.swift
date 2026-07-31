@@ -566,6 +566,81 @@ final class GitHubReadCompositionTests: XCTestCase {
         XCTAssertEqual(callsDuringCooldown, 0)
     }
 
+    func testProcessCredentialCooldownBlocksEveryAuthenticatedReadAdapterButNotAnotherCredential() async throws {
+        let accountStore = ForgeAccountStore(keychain: ReadCompositionKeychain())
+        let blockedAccountID = try makeAccountID("shared-read-cooldown-blocked")
+        let blockedAccount = try await accountStore.addPersonalAccessToken(
+            accountID: blockedAccountID,
+            login: "blocked-reader",
+            credentialID: ForgeCredentialID("blocked-read-pat"),
+            kind: .fineGrained,
+            token: Data("blocked-read-access".utf8),
+            expiresAt: nil
+        )
+        let availableAccountID = try makeAccountID("shared-read-cooldown-available")
+        let availableAccount = try await accountStore.addPersonalAccessToken(
+            accountID: availableAccountID,
+            login: "available-reader",
+            credentialID: ForgeCredentialID("available-read-pat"),
+            kind: .fineGrained,
+            token: Data("available-read-access".utf8),
+            expiresAt: nil
+        )
+        let sessionGate = GitHubMutationSessionGate()
+        let factory = ForgeGitHubReadAdapterFactory(
+            credentialAuthority: ForgeGitHubReadCredentialAuthority(accountStore: accountStore),
+            sessionGate: sessionGate
+        )
+        let capture = ReadCompositionRequestCapture()
+        CompositionGitHubURLProtocol.setHandler { request in
+            capture.record(request)
+            return CompositionStubResponse(
+                status: 200,
+                body: Self.readSurfaceResponse(for: Self.operationName(from: request))
+            )
+        }
+        let blockedReference = blockedAccount.currentCredential.reference
+        let deadline = Date.distantFuture
+        await sessionGate.recordCooldown(
+            for: blockedReference,
+            until: deadline
+        )
+
+        for adapter in try [
+            factory.makeAdapter(
+                for: blockedReference,
+                sessionConfiguration: stubConfiguration()
+            ),
+            factory.makeAdapter(
+                for: blockedReference,
+                sessionConfiguration: stubConfiguration()
+            ),
+        ] {
+            do {
+                _ = try await adapter.pullRequests(repository: makeRepository())
+                XCTFail("every adapter rebound to the throttled Credential must remain paused")
+            } catch let GitHubReadError.rateLimited(response) {
+                XCTAssertEqual(response.rateLimit.retryAt, deadline)
+            } catch {
+                XCTFail("unexpected cooldown error: \(error)")
+            }
+        }
+        XCTAssertEqual(
+            capture.authorizationHeaders,
+            [],
+            "a shared Credential cooldown must stop reads before Keychain or network access"
+        )
+
+        let availableAdapter = try factory.makeAdapter(
+            for: availableAccount.currentCredential.reference,
+            sessionConfiguration: stubConfiguration()
+        )
+        _ = try await availableAdapter.pullRequests(repository: makeRepository())
+        XCTAssertEqual(capture.authorizationHeaders, ["Bearer available-read-access"])
+
+        await sessionGate.recordCooldown(for: blockedReference, until: nil)
+    }
+
     func testRuntimeRefreshFailsClosedAfterReauthorizationAndDoesNotRefreshOtherCredentialKinds() async throws {
         let now = Date(timeIntervalSince1970: 4_000_000_000)
         let keychain = ReadCompositionKeychain()

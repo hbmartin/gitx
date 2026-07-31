@@ -38,8 +38,13 @@ public actor GitHubAttentionSnapshotFetcher: ForgeAttentionSnapshotFetching {
             ? .complete
             : .partial(unavailableSections: [])
         var pageCount = 1
+        var requestedCursors = Set<ForgePageCursor>()
 
         while let currentCursor = cursor {
+            guard requestedCursors.insert(currentCursor).inserted else {
+                Self.logger.error("Rejected cyclic Attention pagination cursor")
+                throw GitHubReadError.malformedResponse
+            }
             let next = try await adapter.currentAttentionCandidates(
                 repository: watchedRepository.key.repository,
                 after: currentCursor

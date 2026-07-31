@@ -1642,7 +1642,7 @@ final class RepositoryPullRequestReviewSession {
             return .mergedAndDeletedHeadBranch
         } catch {
             let message = error.localizedDescription
-            logger.error("Merge succeeded, but separate head-branch deletion failed: \(message, privacy: .public)")
+            logger.error("Merge succeeded, but separate head-branch deletion failed")
             return .mergedWithHeadBranchDeletionFailure(message)
         }
     }
@@ -1930,7 +1930,7 @@ final class RepositoryPullRequestReviewSession {
     private func fail(_ error: Error) {
         let message = error.localizedDescription
         state = .failed(message)
-        logger.error("Pull Request review workspace failed: \(message, privacy: .public)")
+        logger.error("Pull Request review workspace failed")
     }
 
     private func failLoad(
@@ -1945,13 +1945,13 @@ final class RepositoryPullRequestReviewSession {
         }
         let message = error.localizedDescription
         state = .stale(stale, message: message)
-        logger.error("Pull Request refresh failed; preserved stale workspace: \(message, privacy: .public)")
+        logger.error("Pull Request refresh failed; preserved stale workspace")
         onMutationError?(message)
     }
 
     private func failMutation(_ error: Error) {
         let message = error.localizedDescription
-        logger.error("Pull Request mutation failed: \(message, privacy: .public)")
+        logger.error("Pull Request mutation failed")
         onMutationError?(message)
     }
 

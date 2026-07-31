@@ -80,6 +80,59 @@ final class GitHubMutationAdapterTests: XCTestCase {
         XCTAssertEqual(pageTwoVariables["after"] as? String, "next")
     }
 
+    func testCreateRejectsRepeatedAndMultiCursorPreflightPaginationCycles() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let form = try creationForm(repository: repository)
+        let createAuthorization = try authorization(
+            authentication: authentication,
+            repository: repository,
+            operation: .createPullRequest
+        )
+        let scenarios = [
+            (name: "repeated cursor", nextCursors: ["repeat", "repeat"]),
+            (name: "multi-cursor cycle", nextCursors: ["first", "second", "first"]),
+        ]
+
+        for scenario in scenarios {
+            let responses = try scenario.nextCursors.map { nextCursor in
+                var page = fixtures.creationPreflight()
+                var repository = try XCTUnwrap(page["repository"] as? [String: Any])
+                var connection = try XCTUnwrap(repository["pullRequests"] as? [String: Any])
+                connection["pageInfo"] = MutationFixtures.pageInfo(
+                    hasNextPage: true,
+                    endCursor: nextCursor
+                )
+                repository["pullRequests"] = connection
+                page["repository"] = repository
+                return MutationStubResponse.graphQL(
+                    "GitHubPullRequestCreationPreflight",
+                    page
+                )
+            }
+            let queue = MutationResponseQueue(responses)
+            install(queue)
+
+            await XCTAssertThrowsMutationError(.malformedResponse) {
+                try await self.makeAdapter(authentication: authentication).createPullRequest(
+                    accountID: authentication.account.id,
+                    form: form,
+                    authorization: createAuthorization
+                )
+            }
+            let requestedCursors = try queue.payloads.compactMap { payload in
+                let variables = try XCTUnwrap(payload["variables"] as? [String: Any])
+                return variables["after"] as? String
+            }
+            XCTAssertEqual(
+                requestedCursors,
+                Array(scenario.nextCursors.dropLast()),
+                scenario.name
+            )
+        }
+    }
+
     func testEditAndEveryLifecycleMutationUseFreshPreflightAndExactInputs() async throws {
         let fixtures = try MutationFixtures()
         let authentication = try makeAuthentication()
@@ -658,6 +711,60 @@ final class GitHubMutationAdapterTests: XCTestCase {
             at: Date(timeIntervalSince1970: 101)
         )
         XCTAssertEqual(expiredEnvironment, .available)
+    }
+
+    func testCredentialSessionGateClearsOnlyAfterSuccessfulRetryFromCurrentCooldownGeneration() async throws {
+        let credential = try makeAuthentication().credential.reference
+        let gate = GitHubMutationSessionGate()
+        let firstDeadline = Date(timeIntervalSince1970: 100)
+        await gate.recordCooldown(for: credential, until: firstDeadline)
+
+        guard case let .allowed(firstRetry) = await gate.admitRequest(
+            for: credential,
+            at: firstDeadline
+        ) else {
+            return XCTFail("the supplied reset deadline should admit a retry")
+        }
+        let retainedEnvironment = await gate.environment(for: credential, at: firstDeadline)
+        XCTAssertEqual(
+            retainedEnvironment,
+            .available,
+            "deadline expiry admits traffic without discarding retry state"
+        )
+
+        let extendedDeadline = Date(timeIntervalSince1970: 200)
+        await gate.recordCooldown(for: credential, until: extendedDeadline)
+        await gate.recordCooldown(
+            for: credential,
+            until: Date(timeIntervalSince1970: 175)
+        )
+        await gate.recordSuccessfulRequest(firstRetry)
+        let extendedEnvironment = await gate.environment(
+            for: credential,
+            at: Date(timeIntervalSince1970: 150)
+        )
+        XCTAssertEqual(
+            extendedEnvironment,
+            .rateLimited(until: extendedDeadline),
+            "an older in-flight success must not clear a newer throttle"
+        )
+
+        guard case let .allowed(currentRetry) = await gate.admitRequest(
+            for: credential,
+            at: extendedDeadline
+        ) else {
+            return XCTFail("the extended deadline should admit its own retry")
+        }
+        await gate.recordSuccessfulRequest(currentRetry)
+        let clearedEnvironment = await gate.environment(
+            for: credential,
+            at: Date(timeIntervalSince1970: 150)
+        )
+        XCTAssertEqual(
+            clearedEnvironment,
+            .available,
+            "only a successful retry that observed the current cooldown resets it"
+        )
     }
 
     func testFreshMergeSnapshotCarriesCheckWarningsAndMergeRefetchesConfirmation() async throws {
@@ -2114,12 +2221,13 @@ final class GitHubMutationAdapterTests: XCTestCase {
             [:],
         ]
         for (index, payload) in mutationPayloads.enumerated() {
+            let scenarioAdapter = makeAdapter(authentication: authentication)
             install(MutationResponseQueue([
                 .graphQL("GitHubPullRequestCreationPreflight", fixtures.creationPreflight()),
                 .graphQLPayload("GitHubCreatePullRequest", payload),
             ]))
             do {
-                _ = try await adapter.createPullRequest(
+                _ = try await scenarioAdapter.createPullRequest(
                     accountID: authentication.account.id,
                     form: form,
                     authorization: authorization
@@ -2142,8 +2250,9 @@ final class GitHubMutationAdapterTests: XCTestCase {
                 ]],
             ]),
         ]))
+        let sanitizingAdapter = makeAdapter(authentication: authentication)
         do {
-            _ = try await adapter.createPullRequest(
+            _ = try await sanitizingAdapter.createPullRequest(
                 accountID: authentication.account.id,
                 form: form,
                 authorization: authorization

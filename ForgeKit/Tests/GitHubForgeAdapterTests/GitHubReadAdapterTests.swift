@@ -28,7 +28,7 @@ final class GitHubReadAdapterTests: XCTestCase {
         XCTAssertEqual(facts.response.statusCode, 200)
         XCTAssertEqual(facts.response.requestID, "request-id")
         XCTAssertEqual(facts.response.rateLimit.remaining, 4999)
-        XCTAssertNotNil(facts.response.rateLimit.retryAt)
+        XCTAssertNil(facts.response.rateLimit.retryAt)
         XCTAssertEqual(facts.ownership.credential, try makeAuthentication().credential.reference)
         XCTAssertEqual(facts.ownership.repository, repository)
         XCTAssertEqual(facts.ownership.cachePartition, try .account(makeAuthentication().account.id))
@@ -289,6 +289,75 @@ final class GitHubReadAdapterTests: XCTestCase {
         await XCTAssertThrowsGitHubError(.malformedResponse) {
             try await GitHubAttentionSnapshotFetcher(adapter: self.makeAdapter())
                 .snapshot(for: watch)
+        }
+    }
+
+    func testAttentionSnapshotFetcherRejectsRepeatedAndMultiCursorPaginationCycles() async throws {
+        func response(nextCursor: String?) throws -> Data {
+            var root = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: Self.response(operation: "GitHubAttentionCandidates")
+                ) as? [String: Any]
+            )
+            var data = try XCTUnwrap(root["data"] as? [String: Any])
+            var search = try XCTUnwrap(data["search"] as? [String: Any])
+            search["pageInfo"] = Self.pageInfo(
+                hasNextPage: nextCursor != nil,
+                endCursor: nextCursor
+            )
+            data["search"] = search
+            root["data"] = data
+            return try JSONSerialization.data(withJSONObject: root)
+        }
+
+        let repository = try makeRepository()
+        let authentication = try makeAuthentication()
+        let watch = try ForgeWatchedRepository(
+            key: ForgeWatchedRepositoryKey(
+                accountID: authentication.account.id,
+                repository: repository
+            ),
+            addedAt: Date(timeIntervalSince1970: 1),
+            source: .preferences
+        )
+        let scenarios = [
+            (name: "repeated cursor", nextCursors: ["repeat", "repeat"]),
+            (name: "multi-cursor cycle", nextCursors: ["first", "second", "first"]),
+        ]
+        let successHeadersWithoutCooldown = Dictionary(
+            uniqueKeysWithValues: Self.successHeaders.filter { $0.key != "Retry-After" }
+        )
+
+        for scenario in scenarios {
+            let capture = GitHubRequestCapture()
+            let responses = try scenario.nextCursors.map(response(nextCursor:))
+            GitHubStubURLProtocol.setHandler { request in
+                let index = capture.record(request)
+                guard responses.indices.contains(index) else {
+                    throw GitHubReadError.transportFailure
+                }
+                return StubResponse(
+                    status: 200,
+                    headers: successHeadersWithoutCooldown,
+                    body: responses[index]
+                )
+            }
+
+            await XCTAssertThrowsGitHubError(.malformedResponse) {
+                try await GitHubAttentionSnapshotFetcher(adapter: self.makeAdapter())
+                    .snapshot(for: watch)
+            }
+            let requestedCursors = try capture.requests.compactMap { request in
+                let variables = try XCTUnwrap(
+                    try Self.requestPayload(request)["variables"] as? [String: Any]
+                )
+                return variables["after"] as? String
+            }
+            XCTAssertEqual(
+                requestedCursors,
+                Array(scenario.nextCursors.dropLast()),
+                scenario.name
+            )
         }
     }
 
@@ -690,6 +759,68 @@ final class GitHubReadAdapterTests: XCTestCase {
             XCTAssertEqual(response.statusCode, 200)
             XCTAssertEqual(response.rateLimit.remaining, 0)
         }
+    }
+
+    func testAuthenticatedRateLimitPausesListDetailAttentionAndBackgroundReadsForCredential() async throws {
+        let capture = GitHubRequestCapture()
+        let resetAt = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) + 120)
+        GitHubStubURLProtocol.setHandler { request in
+            _ = capture.record(request)
+            return StubResponse(
+                status: 429,
+                headers: [
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": String(Int(resetAt.timeIntervalSince1970)),
+                ],
+                body: Data()
+            )
+        }
+        let authentication = try makeAuthentication()
+        let gate = GitHubMutationSessionGate()
+        let adapter = GitHubReadAdapter(
+            expectedCredential: authentication.credential.reference,
+            credentialAuthority: TestGitHubReadCredentialAuthority(authentication: authentication),
+            sessionConfiguration: stubConfiguration(),
+            sessionGate: gate
+        )
+        let repository = try makeRepository()
+        let number = try ForgeItemNumber(7)
+
+        await XCTAssertThrowsRateLimit {
+            try await adapter.pullRequests(repository: repository)
+        }
+        let environment = await gate.environment(
+            for: authentication.credential.reference,
+            at: Date()
+        )
+        XCTAssertEqual(environment, .rateLimited(until: resetAt))
+
+        await XCTAssertThrowsRateLimit {
+            try await adapter.issueDetails(
+                repository: repository,
+                number: number
+            )
+        }
+        await XCTAssertThrowsRateLimit {
+            try await adapter.currentAttentionCandidates(repository: repository)
+        }
+        await XCTAssertThrowsRateLimit {
+            try await adapter.historyOverlay(
+                repository: repository,
+                commit: ForgeCommitID("abcdef12")
+            )
+        }
+        await XCTAssertThrowsRateLimit {
+            try await adapter.reviewThreads(
+                repository: repository,
+                pullRequestNumber: number
+            )
+        }
+        XCTAssertEqual(
+            capture.requests.count,
+            1,
+            "all same-Credential surfaces must stop before authentication and transport"
+        )
     }
 
     func testConcurrentRequestsKeepResponseMetadataIsolated() async throws {
@@ -1488,7 +1619,6 @@ private extension GitHubReadAdapterTests {
         "X-RateLimit-Remaining": "4999",
         "X-RateLimit-Used": "1",
         "X-RateLimit-Reset": "1785328496",
-        "Retry-After": "12",
         "X-RateLimit-Resource": "graphql",
     ]
 
@@ -2025,6 +2155,21 @@ private extension GitHubReadAdapterTests {
             XCTFail("Expected \(expected)", file: file, line: line)
         } catch let error as GitHubReadError {
             XCTAssertEqual(error, expected, file: file, line: line)
+        } catch {
+            XCTFail("Unexpected \(error)", file: file, line: line)
+        }
+    }
+
+    func XCTAssertThrowsRateLimit<Value>(
+        operation: () async throws -> Value,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            _ = try await operation()
+            XCTFail("Expected Credential rate limit", file: file, line: line)
+        } catch let GitHubReadError.rateLimited(response) {
+            XCTAssertNotNil(response.rateLimit.retryAt ?? response.rateLimit.resetAt, file: file, line: line)
         } catch {
             XCTFail("Unexpected \(error)", file: file, line: line)
         }

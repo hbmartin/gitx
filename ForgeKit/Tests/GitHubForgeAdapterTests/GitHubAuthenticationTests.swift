@@ -65,12 +65,23 @@ final class GitHubAuthenticationTests: XCTestCase {
             "https://github.com/login/oauth/access_token"
         )
 
-        for invalid in ["", "abc-123", "abc 123", "abc\n"] {
+        for invalid in ["", ".", ".Iv1abc", "Iv1abc.", "abc-123", "abc 123", "abc\n"] {
             XCTAssertThrowsError(try GitHubAppDeviceFlowConfiguration(clientID: invalid, applicationSlug: "gitx"))
         }
         for invalid in ["", "-gitx", "gitx-", "GitX", "git_x", "git x"] {
             XCTAssertThrowsError(try GitHubAppDeviceFlowConfiguration(clientID: "ABC123", applicationSlug: invalid))
         }
+    }
+
+    func testDeviceConfigurationAcceptsDocumentedDottedGitHubAppClientID() throws {
+        let configuration = try GitHubAppDeviceFlowConfiguration(
+            clientID: "Iv1.ab1112223334445c",
+            applicationSlug: "gitx-forge"
+        )
+
+        XCTAssertEqual(configuration.clientID, "Iv1.ab1112223334445c")
+        let request = GitHubOAuthRequestFactory.deviceAuthorization(configuration: configuration)
+        XCTAssertEqual(form(request), "client_id=Iv1.ab1112223334445c")
     }
 
     func testOAuthRequestsUseExactGitHubEndpointsGrantTypesAndJSONAcceptHeader() throws {

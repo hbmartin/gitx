@@ -133,9 +133,16 @@ public struct GitHubAppDeviceFlowConfiguration: Hashable, Sendable {
     }
 
     private static func isIdentifier(_ value: String) -> Bool {
-        !value.isEmpty && value.utf8.allSatisfy {
-            ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 90) || ($0 >= 97 && $0 <= 122)
+        guard let first = value.utf8.first, let last = value.utf8.last,
+              isIdentifierAlphanumeric(first), isIdentifierAlphanumeric(last)
+        else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 90) || ($0 >= 97 && $0 <= 122) || $0 == 46
         }
+    }
+
+    private static func isIdentifierAlphanumeric(_ byte: UInt8) -> Bool {
+        (byte >= 48 && byte <= 57) || (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122)
     }
 
     private static func isSlug(_ value: String) -> Bool {

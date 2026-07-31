@@ -167,10 +167,15 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable
 {
     private let credentialAuthority: ForgeGitHubReadCredentialAuthority
+    let sessionGate: GitHubMutationSessionGate
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "GitHubReadComposition")
 
-    init(credentialAuthority: ForgeGitHubReadCredentialAuthority) {
+    init(
+        credentialAuthority: ForgeGitHubReadCredentialAuthority,
+        sessionGate: GitHubMutationSessionGate = GitHubMutationSessionGate()
+    ) {
         self.credentialAuthority = credentialAuthority
+        self.sessionGate = sessionGate
     }
 
     func makeAdapter(
@@ -185,13 +190,14 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
         return GitHubReadAdapter(
             expectedCredential: expectedCredential,
             credentialAuthority: credentialAuthority,
-            sessionConfiguration: sessionConfiguration
+            sessionConfiguration: sessionConfiguration,
+            sessionGate: sessionGate
         )
     }
 
     func makeMutationAdapter(
         for expectedCredential: ForgeCredentialReference,
-        sessionGate: GitHubMutationSessionGate,
+        sessionGate: GitHubMutationSessionGate? = nil,
         sessionConfiguration: URLSessionConfiguration = .ephemeral
     ) throws -> GitHubMutationAdapter {
         guard ForgeGitHubReadCredentialAuthority.isGitHubDotCom(expectedCredential.accountID.forge) else {
@@ -203,7 +209,7 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
             expectedCredential: expectedCredential,
             credentialAuthority: credentialAuthority,
             sessionConfiguration: sessionConfiguration,
-            sessionGate: sessionGate
+            sessionGate: sessionGate ?? self.sessionGate
         )
     }
 

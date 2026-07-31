@@ -53,6 +53,7 @@ public protocol GitHubReadCredentialAuthority: Sendable {
 public actor GitHubReadAdapter {
     private let expectedCredential: ForgeCredentialReference?
     private let credentialAuthority: (any GitHubReadCredentialAuthority)?
+    private let sessionGate: GitHubMutationSessionGate
     private let sessionConfiguration: URLSessionConfiguration
     private let store = ApolloStore(cache: InMemoryNormalizedCache())
     private let mapper: GitHubGraphQLDocumentMapper
@@ -63,6 +64,7 @@ public actor GitHubReadAdapter {
     ) {
         expectedCredential = nil
         credentialAuthority = nil
+        sessionGate = GitHubMutationSessionGate()
         self.sessionConfiguration = sessionConfiguration
         mapper = GitHubGraphQLDocumentMapper(forge: Self.gitHubForge)
     }
@@ -70,10 +72,12 @@ public actor GitHubReadAdapter {
     public init(
         expectedCredential: ForgeCredentialReference,
         credentialAuthority: any GitHubReadCredentialAuthority,
-        sessionConfiguration: URLSessionConfiguration = .default
+        sessionConfiguration: URLSessionConfiguration = .default,
+        sessionGate: GitHubMutationSessionGate = GitHubMutationSessionGate()
     ) {
         self.expectedCredential = expectedCredential
         self.credentialAuthority = credentialAuthority
+        self.sessionGate = sessionGate
         self.sessionConfiguration = sessionConfiguration
         mapper = GitHubGraphQLDocumentMapper(forge: Self.gitHubForge)
     }
@@ -81,10 +85,15 @@ public actor GitHubReadAdapter {
     public func repositoryFacts(
         repository: ForgeRepositoryIdentity
     ) async throws -> GitHubReadResult<ForgeRepositoryFacts> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let credential = authentication.credential
         let query = GitHubAPI.GitHubRepositoryFactsQuery(owner: repository.owner, name: repository.name)
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.repositoryFacts(data: data, expectedRepository: repository, credential: credential.reference)
         }
     }
@@ -95,7 +104,7 @@ public actor GitHubReadAdapter {
         after: ForgePageCursor? = nil,
         states: Set<ForgePullRequestState>? = nil
     ) async throws -> GitHubReadResult<ForgePage<ForgePullRequestSummary>> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let first = try pageSizeValue(pageSize)
         let stateValues = states.map { values in
             values.map { value -> GraphQLEnum<GitHubAPI.PullRequestState> in
@@ -113,7 +122,12 @@ public actor GitHubReadAdapter {
             after: nullable(after?.value),
             states: nullable(stateValues)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.pullRequestList(data: data, repository: repository)
         }
     }
@@ -124,7 +138,7 @@ public actor GitHubReadAdapter {
         after: ForgePageCursor? = nil,
         states: Set<ForgeIssueState>? = nil
     ) async throws -> GitHubReadResult<ForgePage<ForgeIssueSummary>> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let first = try pageSizeValue(pageSize)
         let stateValues = states.map { values in
             values.map { value -> GraphQLEnum<GitHubAPI.IssueState> in
@@ -141,7 +155,12 @@ public actor GitHubReadAdapter {
             after: nullable(after?.value),
             states: nullable(stateValues)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.issueList(data: data, repository: repository)
         }
     }
@@ -154,7 +173,7 @@ public actor GitHubReadAdapter {
         checkPageSize: Int = 50,
         checkAfter: ForgePageCursor? = nil
     ) async throws -> GitHubReadResult<ForgePullRequestDetailsPage> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let query = try GitHubAPI.GitHubPullRequestDetailsQuery(
             owner: repository.owner,
             name: repository.name,
@@ -164,7 +183,12 @@ public actor GitHubReadAdapter {
             checkFirst: pageSizeValue(checkPageSize),
             checkAfter: nullable(checkAfter?.value)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.pullRequestDetails(data: data, repository: repository)
         }
     }
@@ -175,7 +199,7 @@ public actor GitHubReadAdapter {
         timelinePageSize: Int = 50,
         timelineAfter: ForgePageCursor? = nil
     ) async throws -> GitHubReadResult<ForgeIssueDetails> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let query = try GitHubAPI.GitHubIssueDetailsQuery(
             owner: repository.owner,
             name: repository.name,
@@ -183,7 +207,12 @@ public actor GitHubReadAdapter {
             timelineFirst: pageSizeValue(timelinePageSize),
             timelineAfter: nullable(timelineAfter?.value)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.issueDetails(data: data, repository: repository)
         }
     }
@@ -194,7 +223,7 @@ public actor GitHubReadAdapter {
         pullRequestPageSize: Int = 25,
         pullRequestAfter: ForgePageCursor? = nil
     ) async throws -> GitHubReadResult<ForgeHistoryOverlay> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let query = try GitHubAPI.GitHubHistoryOverlayQuery(
             owner: repository.owner,
             name: repository.name,
@@ -202,7 +231,12 @@ public actor GitHubReadAdapter {
             pullRequestFirst: pageSizeValue(pullRequestPageSize),
             pullRequestAfter: nullable(pullRequestAfter?.value)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.historyOverlay(data: data, repository: repository, commit: commit)
         }
     }
@@ -213,14 +247,19 @@ public actor GitHubReadAdapter {
         pageSize: Int = 50,
         after: ForgePageCursor? = nil
     ) async throws -> GitHubReadResult<ForgePage<ForgeRepositoryItem>> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let search = try searchQuery(repository: repository, text: text)
         let query = try GitHubAPI.GitHubRepositoryItemSearchQuery(
             query: search,
             first: pageSizeValue(pageSize),
             after: nullable(after?.value)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.repositoryItemSearch(data: data, repository: repository)
         }
     }
@@ -233,7 +272,7 @@ public actor GitHubReadAdapter {
         activityCount: Int = 25,
         reviewThreadCount: Int = 25
     ) async throws -> GitHubReadResult<ForgeAttentionCandidatePage> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let query = try GitHubAPI.GitHubAttentionCandidatesQuery(
             query: searchQuery(repository: repository, text: searchText),
             first: pageSizeValue(pageSize),
@@ -241,7 +280,12 @@ public actor GitHubReadAdapter {
             activityLast: pageSizeValue(activityCount),
             reviewThreadFirst: pageSizeValue(reviewThreadCount)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.attentionCandidates(data: data, repository: repository)
         }
     }
@@ -256,7 +300,7 @@ public actor GitHubReadAdapter {
         activityCount: Int = 100,
         reviewThreadCount: Int = 100
     ) async throws -> GitHubReadResult<ForgeAttentionCandidatePage> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let query = try GitHubAPI.GitHubAttentionCandidatesQuery(
             query: "repo:\(repository.owner)/\(repository.name) is:open involves:@me",
             first: pageSizeValue(pageSize),
@@ -264,7 +308,12 @@ public actor GitHubReadAdapter {
             activityLast: pageSizeValue(activityCount),
             reviewThreadFirst: pageSizeValue(reviewThreadCount)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.attentionCandidates(data: data, repository: repository)
         }
     }
@@ -276,7 +325,7 @@ public actor GitHubReadAdapter {
         after: ForgePageCursor? = nil,
         initialCommentCount: Int = 25
     ) async throws -> GitHubReadResult<ForgePage<ForgeReviewThread>> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         let query = try GitHubAPI.GitHubPullRequestReviewThreadsQuery(
             owner: repository.owner,
             name: repository.name,
@@ -285,7 +334,12 @@ public actor GitHubReadAdapter {
             after: nullable(after?.value),
             commentFirst: pageSizeValue(initialCommentCount)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.reviewThreads(data: data, repository: repository)
         }
     }
@@ -296,14 +350,19 @@ public actor GitHubReadAdapter {
         pageSize: Int = 50,
         after: ForgePageCursor? = nil
     ) async throws -> GitHubReadResult<ForgePage<ForgeReviewComment>> {
-        let authentication = try await validate(repository)
+        let (authentication, permit) = try await validate(repository)
         guard threadID.forge == repository.forge else { throw GitHubReadError.githubDotComRequired }
         let query = try GitHubAPI.GitHubPullRequestReviewThreadCommentsQuery(
             id: threadID.value,
             first: pageSizeValue(pageSize),
             after: nullable(after?.value)
         )
-        return try await execute(query, repository: repository, authentication: authentication) { data in
+        return try await execute(
+            query,
+            repository: repository,
+            authentication: authentication,
+            permit: permit
+        ) { data in
             try mapper.reviewThreadComments(data: data, repository: repository)
         }
     }
@@ -318,6 +377,7 @@ private extension GitHubReadAdapter {
         _ query: Query,
         repository: ForgeRepositoryIdentity,
         authentication: GitHubReadAuthentication,
+        permit: GitHubCredentialRequestPermit,
         map: (Query.Data) throws -> GitHubMappedValue<Value>
     ) async throws -> GitHubReadResult<Value> where Query.ResponseFormat == SingleResponseFormat {
         let credential = authentication.credential
@@ -333,6 +393,9 @@ private extension GitHubReadAdapter {
             let graphQLResponse = try await client.fetch(query: query, cachePolicy: .networkOnly)
             guard let response = metadataBox.take() else { throw GitHubReadError.malformedResponse }
             let problems = graphQLResponse.errors?.map(\.gitXProblem) ?? []
+            if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
+                await recordResponseMetadata(from: .rateLimited(response))
+            }
             guard let data = graphQLResponse.data else {
                 if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
                     throw GitHubReadError.rateLimited(response)
@@ -357,7 +420,7 @@ private extension GitHubReadAdapter {
             logger.info(
                 "operation=\(Query.operationName, privacy: .public) status=\(response.statusCode) partial=\(completeness == .partial) duration=\(String(describing: duration), privacy: .public)"
             )
-            return try GitHubReadResult(
+            let result = try GitHubReadResult(
                 value: mapped.value,
                 completeness: completeness,
                 problems: problems,
@@ -365,14 +428,18 @@ private extension GitHubReadAdapter {
                 ownership: GitHubReadOwnership(credential: credential.reference, repository: repository),
                 accessEvidence: mapped.accessEvidence
             )
+            await recordSuccessfulResponse(response, permit: permit)
+            return result
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as GitHubReadError {
+            await recordResponseMetadata(from: error)
             logger.error("operation=\(Query.operationName, privacy: .public) failure=\(error.errorDescription ?? "unknown", privacy: .public)")
             throw error
         } catch {
             let metadata = metadataBox.take()
             let classified = classifyTransportFailure(metadata: metadata)
+            await recordResponseMetadata(from: classified)
             logger.error("operation=\(Query.operationName, privacy: .public) failure=transport status=\(metadata?.statusCode ?? 0)")
             throw classified
         }
@@ -402,24 +469,94 @@ private extension GitHubReadAdapter {
         }
     }
 
-    func validate(_ repository: ForgeRepositoryIdentity) async throws -> GitHubReadAuthentication {
+    func validate(
+        _ repository: ForgeRepositoryIdentity
+    ) async throws -> (GitHubReadAuthentication, GitHubCredentialRequestPermit) {
         guard repository.forge == Self.gitHubForge else {
             throw GitHubReadError.githubDotComRequired
         }
-        guard let expectedCredential,
-              let credentialAuthority,
-              let authentication = try await credentialAuthority.currentAuthentication(
-                  for: expectedCredential
-              ),
-              authentication.account.currentCredential == authentication.credential,
-              authentication.credential.reference == expectedCredential,
-              authentication.account.id == authentication.credential.reference.accountID,
-              authentication.credential.reference.accountID.forge == repository.forge,
-              authentication.credential.expiresAt.map({ $0 > Date() }) ?? true
+        guard let expectedCredential, let credentialAuthority else {
+            throw GitHubReadError.authenticationRequired
+        }
+        let evaluationDate = Date()
+        let permit: GitHubCredentialRequestPermit
+        switch await sessionGate.admitRequest(for: expectedCredential, at: evaluationDate) {
+        case let .allowed(admitted):
+            permit = admitted
+        case .offline:
+            throw GitHubReadError.transportFailure
+        case let .rateLimited(until):
+            throw GitHubReadError.rateLimited(Self.cooldownMetadata(until: until))
+        }
+        guard let authentication = try await credentialAuthority.currentAuthentication(
+            for: expectedCredential
+        ),
+            authentication.account.currentCredential == authentication.credential,
+            authentication.credential.reference == expectedCredential,
+            authentication.account.id == authentication.credential.reference.accountID,
+            authentication.credential.reference.accountID.forge == repository.forge,
+            authentication.credential.expiresAt.map({ $0 > evaluationDate }) ?? true
         else {
             throw GitHubReadError.authenticationRequired
         }
-        return authentication
+        return (authentication, permit)
+    }
+
+    nonisolated static func cooldownMetadata(until deadline: Date) -> GitHubResponseMetadata {
+        GitHubResponseMetadata(
+            statusCode: 429,
+            rateLimit: GitHubRateLimitMetadata(
+                limit: nil,
+                remaining: 0,
+                used: nil,
+                resetAt: deadline,
+                retryAt: deadline,
+                resource: nil
+            )
+        )
+    }
+
+    func recordSuccessfulResponse(
+        _ response: GitHubResponseMetadata,
+        permit: GitHubCredentialRequestPermit
+    ) async {
+        if let deadline = response.rateLimit.cooldownDeadline(
+            statusCode: response.statusCode,
+            now: Date()
+        ), let expectedCredential {
+            await sessionGate.recordCooldown(for: expectedCredential, until: deadline)
+            logger.notice("phase=gate transition=cooldown_recorded source=authenticated_read")
+            return
+        }
+        await sessionGate.recordSuccessfulRequest(permit)
+    }
+
+    func recordResponseMetadata(from error: GitHubReadError) async {
+        let metadata: GitHubResponseMetadata?
+        let assumesThrottle: Bool
+        switch error {
+        case let .rateLimited(response):
+            metadata = response
+            assumesThrottle = true
+        case let .permissionDenied(response),
+             let .samlAuthorizationRequired(response),
+             let .graphQL(_, response),
+             let .mapping(_, _, response):
+            metadata = response
+            assumesThrottle = false
+        default:
+            metadata = nil
+            assumesThrottle = false
+        }
+        guard let metadata, let expectedCredential else { return }
+        let evaluationDate = Date()
+        let deadline = metadata.rateLimit.cooldownDeadline(
+            statusCode: metadata.statusCode,
+            now: evaluationDate
+        ) ?? (assumesThrottle ? evaluationDate.addingTimeInterval(60) : nil)
+        guard let deadline else { return }
+        await sessionGate.recordCooldown(for: expectedCredential, until: deadline)
+        logger.notice("phase=gate transition=cooldown_recorded source=authenticated_read")
     }
 
     func pageSizeValue(_ value: Int) throws -> Int32 {

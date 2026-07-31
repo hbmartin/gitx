@@ -64,9 +64,16 @@ public actor GitHubMutationAdapter {
             authorization: authorization
         )
         var cursor: String?
+        var requestedCursors = Set<String>()
         var repositoryID: String?
         var headRepositoryID: String?
         repeat {
+            if let cursor, !requestedCursors.insert(cursor).inserted {
+                logger.error(
+                    "operation=createPullRequest phase=preflight failure=cyclic_pagination"
+                )
+                throw GitHubMutationError.malformedResponse
+            }
             let query = GitHubAPI.GitHubPullRequestCreationPreflightQuery(
                 owner: form.repository.owner,
                 name: form.repository.name,
@@ -234,6 +241,7 @@ public actor GitHubMutationAdapter {
             "Bearer \(String(decoding: $0, as: UTF8.self))"
         }, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["branch": plan.branch.value])
+        let permit = try await admitRequest()
         let response: GitHubMutationHTTPResponse
         do {
             response = try await restClient.execute(request)
@@ -251,10 +259,11 @@ public actor GitHubMutationAdapter {
             throw classifyNetworkFailure(error, mutationStarted: true, metadata: nil)
         }
         let metadata = responseMetadata(response)
+        let responseIsCoolingDown = await recordCooldown(metadata)
         guard response.statusCode == 200 else {
             let error = classifyRESTFailure(response, metadata: metadata)
             if case .rateLimited = error {
-                await recordCooldown(metadata)
+                await recordCooldown(metadata, assumeThrottled: true)
             }
             throw error
         }
@@ -267,6 +276,9 @@ public actor GitHubMutationAdapter {
         }
         guard let payload = try? JSONDecoder().decode(Payload.self, from: response.data) else {
             throw GitHubMutationError.outcomeUnknown(metadata)
+        }
+        if !responseIsCoolingDown {
+            await sessionGate.recordSuccessfulRequest(permit)
         }
         let mergeType = GitHubForkSyncMergeType(rawValue: payload.mergeType) ?? .unknown
         return result(
@@ -748,6 +760,17 @@ private extension GitHubMutationAdapter {
         return authentication
     }
 
+    func admitRequest() async throws -> GitHubCredentialRequestPermit {
+        switch await sessionGate.admitRequest(for: expectedCredential, at: now()) {
+        case let .allowed(permit):
+            return permit
+        case .offline:
+            throw GitHubMutationError.offline
+        case let .rateLimited(until):
+            throw GitHubMutationError.cooldown(until: until)
+        }
+    }
+
     func pullRequestPreflight(
         repository: ForgeRepositoryIdentity,
         number: ForgeItemNumber,
@@ -812,6 +835,7 @@ private extension GitHubMutationAdapter {
         authentication: GitHubReadAuthentication,
         map: (Query.Data) throws -> Value
     ) async throws -> GitHubExecutedMutation<Value> where Query.ResponseFormat == SingleResponseFormat {
+        let permit = try await admitRequest()
         let metadataBox = GitHubResponseMetadataBox()
         let client = GitHubGraphQLTransportFactory.makeClient(
             accessToken: authentication.accessToken,
@@ -825,9 +849,10 @@ private extension GitHubMutationAdapter {
             guard let response = metadataBox.take() else {
                 throw GitHubMutationError.malformedResponse
             }
+            let responseIsCoolingDown = await recordCooldown(response)
             let problems = mutationProblems(graphQLResponse.errors)
             if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
-                await recordCooldown(response)
+                await recordCooldown(response, assumeThrottled: true)
                 throw GitHubMutationError.rateLimited(response)
             }
             guard problems.isEmpty else {
@@ -837,6 +862,9 @@ private extension GitHubMutationAdapter {
                 throw GitHubMutationError.malformedResponse
             }
             let value = try map(data)
+            if !responseIsCoolingDown {
+                await sessionGate.recordSuccessfulRequest(permit)
+            }
             logger.info(
                 "operation=\(Query.operationName, privacy: .public) phase=preflight status=\(response.statusCode) duration=\(String(describing: ContinuousClock.now - startedAt), privacy: .public)"
             )
@@ -845,15 +873,20 @@ private extension GitHubMutationAdapter {
             throw CancellationError()
         } catch let error as GitHubMutationError {
             if case let .rateLimited(metadata) = error {
-                await recordCooldown(metadata)
+                await recordCooldown(metadata, assumeThrottled: true)
             }
             throw error
         } catch {
-            throw classifyNetworkFailure(
+            let metadata = metadataBox.take()
+            let classified = classifyNetworkFailure(
                 error,
                 mutationStarted: false,
-                metadata: metadataBox.take()
+                metadata: metadata
             )
+            if case .rateLimited = classified, let metadata {
+                await recordCooldown(metadata, assumeThrottled: true)
+            }
+            throw classified
         }
     }
 
@@ -862,6 +895,7 @@ private extension GitHubMutationAdapter {
         authentication: GitHubReadAuthentication,
         map: (Mutation.Data) throws -> Value
     ) async throws -> GitHubExecutedMutation<Value> where Mutation.ResponseFormat == SingleResponseFormat {
+        let permit = try await admitRequest()
         let metadataBox = GitHubResponseMetadataBox()
         let client = GitHubGraphQLTransportFactory.makeClient(
             accessToken: authentication.accessToken,
@@ -875,9 +909,10 @@ private extension GitHubMutationAdapter {
             guard let response = metadataBox.take() else {
                 throw GitHubMutationError.outcomeUnknown(nil)
             }
+            let responseIsCoolingDown = await recordCooldown(response)
             let problems = mutationProblems(graphQLResponse.errors)
             if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
-                await recordCooldown(response)
+                await recordCooldown(response, assumeThrottled: true)
                 throw GitHubMutationError.rateLimited(response)
             }
             if !problems.isEmpty {
@@ -895,21 +930,29 @@ private extension GitHubMutationAdapter {
             } catch {
                 throw GitHubMutationError.outcomeUnknown(response)
             }
+            if !responseIsCoolingDown {
+                await sessionGate.recordSuccessfulRequest(permit)
+            }
             logger.info(
                 "operation=\(Mutation.operationName, privacy: .public) phase=mutation status=\(response.statusCode) duration=\(String(describing: ContinuousClock.now - startedAt), privacy: .public)"
             )
             return GitHubExecutedMutation(value: value, response: response)
         } catch let error as GitHubMutationError {
             if case let .rateLimited(metadata) = error {
-                await recordCooldown(metadata)
+                await recordCooldown(metadata, assumeThrottled: true)
             }
             throw error
         } catch {
-            throw classifyNetworkFailure(
+            let metadata = metadataBox.take()
+            let classified = classifyNetworkFailure(
                 error,
                 mutationStarted: true,
-                metadata: metadataBox.take()
+                metadata: metadata
             )
+            if case .rateLimited = classified, let metadata {
+                await recordCooldown(metadata, assumeThrottled: true)
+            }
+            throw classified
         }
     }
 
@@ -1224,13 +1267,20 @@ private extension GitHubMutationAdapter {
         value.map(GraphQLNullable.some) ?? .none
     }
 
-    func recordCooldown(_ metadata: GitHubResponseMetadata) async {
-        guard let deadline = metadata.rateLimit.cooldownDeadline(
+    @discardableResult
+    func recordCooldown(
+        _ metadata: GitHubResponseMetadata,
+        assumeThrottled: Bool = false
+    ) async -> Bool {
+        let evaluationDate = now()
+        let deadline = metadata.rateLimit.cooldownDeadline(
             statusCode: metadata.statusCode,
-            now: now()
-        ) else { return }
+            now: evaluationDate
+        ) ?? (assumeThrottled ? evaluationDate.addingTimeInterval(60) : nil)
+        guard let deadline else { return false }
         await sessionGate.recordCooldown(for: expectedCredential, until: deadline)
         logger.notice("phase=gate transition=cooldown_recorded")
+        return true
     }
 }
 
@@ -1317,6 +1367,7 @@ public extension GitHubMutationAdapter {
             "Bearer \(String(decoding: $0, as: UTF8.self))"
         }, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        let permit = try await admitRequest()
         let response: GitHubMutationHTTPResponse
         do {
             logger.info("operation=publishInlineReviewComment phase=mutation transition=dispatch")
@@ -1335,10 +1386,11 @@ public extension GitHubMutationAdapter {
             throw classifyNetworkFailure(error, mutationStarted: true, metadata: nil)
         }
         let metadata = responseMetadata(response)
+        let responseIsCoolingDown = await recordCooldown(metadata)
         guard response.statusCode == 201 else {
             let error = classifyRESTFailure(response, metadata: metadata)
             if case .rateLimited = error {
-                await recordCooldown(metadata)
+                await recordCooldown(metadata, assumeThrottled: true)
             }
             throw error
         }
@@ -1366,6 +1418,9 @@ public extension GitHubMutationAdapter {
             displayedHead: publication.displayedHead,
             isResolved: false
         )
+        if !responseIsCoolingDown {
+            await sessionGate.recordSuccessfulRequest(permit)
+        }
         return result(
             value: value,
             response: metadata,

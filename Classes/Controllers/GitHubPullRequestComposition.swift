@@ -121,7 +121,8 @@ actor ForgeGitHubMutationStateStore {
             credential: credential,
             now: now
         )
-        await sessionGate.recordCooldown(for: credential, until: cooldown?.deadline)
+        guard let cooldown else { return }
+        await sessionGate.recordCooldown(for: credential, until: cooldown.deadline)
     }
 }
 
