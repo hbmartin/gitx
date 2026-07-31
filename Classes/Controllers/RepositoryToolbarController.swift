@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 
 // SwiftLint analyze misclassifies this import; Logger requires it at compile time.
 // swiftlint:disable:next unused_import
@@ -193,17 +194,37 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         static let jump = NSToolbarItem.Identifier("GitX.Toolbar.Jump")
         static let actions = NSToolbarItem.Identifier("GitX.Toolbar.Actions")
         static let attention = NSToolbarItem.Identifier("GitX.Toolbar.Attention")
+        static let forgeAccount = NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount")
     }
 
     private struct StatusViews {
         let label: NSTextField
         let spinner: NSProgressIndicator
-        let forgeWarning: NSButton
+    }
+
+    private final class ForgeAccountViews {
+        let item: NSToolbarItem
+        let accountPopup: NSPopUpButton
+        let avatarContainer: NSView
+        let warningButton: NSButton
+
+        init(
+            item: NSToolbarItem,
+            accountPopup: NSPopUpButton,
+            avatarContainer: NSView,
+            warningButton: NSButton
+        ) {
+            self.item = item
+            self.accountPopup = accountPopup
+            self.avatarContainer = avatarContainer
+            self.warningButton = warningButton
+        }
     }
 
     private weak var windowController: PBGitWindowController?
     private var toolbar: NSToolbar?
     private var statusViews: StatusViews?
+    private var forgeAccountViews: ForgeAccountViews?
     private var attentionItem: NSToolbarItem?
     private var attentionBadge: NSTextField?
     private var newPullRequestItem: NSToolbarItem?
@@ -213,17 +234,30 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private var currentBusy = false
     private var forgePersistentFailureText: String?
     private var isRepositoryStatusBarVisible = true
+    private var forgeProviderName: String
+    private var forgeAccountLogin: String?
+    private var forgeAccountID: ForgeAccountID?
+    private var forgeAccountChoices: [RepositoryForgeAccountChoice] = []
+    private var isPublicForgeAccess = false
+    private var insertedForgeAccountForPersistentFailure = false
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryToolbar")
 
     @objc(initWithWindowController:)
     init(windowController: PBGitWindowController) {
         self.windowController = windowController
         createPullRequestControl = windowController.createPullRequestControl
+        forgeProviderName = windowController.forgeLinkContext.providerName ?? "Forge"
         super.init()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(attentionUnseenDidChange(_:)),
             name: .repositoryAttentionUnseenDidChange,
+            object: windowController.repository
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(repositoryForgeAccountDidChange(_:)),
+            name: .repositoryForgeAccountDidChange,
             object: windowController.repository
         )
     }
@@ -251,7 +285,8 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     func updateForgeDiagnostic(persistentFailureText: String?, statusBarVisible: Bool) {
         forgePersistentFailureText = persistentFailureText
         isRepositoryStatusBarVisible = statusBarVisible
-        applyCurrentStatus()
+        applyForgeAccountPresentation()
+        reconcilePersistentFailureAccountItem()
     }
 
     func updateCreatePullRequestControl(_ presentation: ForgeMutationControlPresentation) {
@@ -269,7 +304,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         toolbar = installed
         window.toolbar = installed
         window.toolbarStyle = .expanded
+        reconcilePersistentFailureAccountItem()
         applyCurrentStatus()
+        applyForgeAccountPresentation()
         let elapsed = ProcessInfo.processInfo.systemUptime - start
         logger.info(
             "Installed repository toolbar, cached: \(reused, privacy: .public), elapsed: \(elapsed, format: .fixed(precision: 4))s"
@@ -289,13 +326,6 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private func applyCurrentStatus() {
         guard let views = statusViews else { return }
         views.label.stringValue = currentStatus.isEmpty ? "Ready" : currentStatus
-        let showsForgeWarning = !isRepositoryStatusBarVisible && forgePersistentFailureText != nil
-        views.forgeWarning.isHidden = !showsForgeWarning
-        views.forgeWarning.isEnabled = showsForgeWarning
-        views.forgeWarning.toolTip = forgePersistentFailureText.map { "\($0). Show Details" }
-        views.forgeWarning.setAccessibilityLabel(
-            forgePersistentFailureText.map { "\($0). Show details" } ?? "Forge status details"
-        )
         if currentBusy {
             views.spinner.startAnimation(nil)
             views.spinner.isHidden = false
@@ -310,6 +340,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             Item.commit,
             .flexibleSpace,
             Item.actions,
+            Item.forgeAccount,
             Item.attention,
             Item.addRemote,
             Item.fetch,
@@ -344,9 +375,21 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             Item.jump,
             Item.actions,
             Item.attention,
+            Item.forgeAccount,
             .space,
             .flexibleSpace,
         ]
+    }
+
+    func toolbarDidRemoveItem(_ notification: Notification) {
+        guard let item = notification.userInfo?["item"] as? NSToolbarItem,
+              item.itemIdentifier == Item.forgeAccount
+        else { return }
+        forgeAccountViews = nil
+        guard forgeAccountPresentation.showsPersistentFailure else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.reconcilePersistentFailureAccountItem()
+        }
     }
 
     func toolbar(
@@ -365,6 +408,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         }
         if itemIdentifier == Item.attention {
             return makeAttentionItem(identifier: itemIdentifier, isActualInsertion: flag)
+        }
+        if itemIdentifier == Item.forgeAccount {
+            return makeForgeAccountItem(identifier: itemIdentifier, isActualInsertion: flag)
         }
         let descriptor = descriptor(for: itemIdentifier)
         guard let descriptor else { return nil }
@@ -528,6 +574,221 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             .setAccessibilityLabel(presentation.toolbarAccessibilityLabel)
     }
 
+    @objc private func repositoryForgeAccountDidChange(_ notification: Notification) {
+        guard let repository = windowController?.repository,
+              let sourceRepository = notification.object as? PBGitRepository,
+              sourceRepository === repository
+        else { return }
+        forgeProviderName = notification.userInfo?[RepositoryForgeAccountNotificationKey.providerName] as? String
+            ?? windowController?.forgeLinkContext.providerName
+            ?? "Forge"
+        forgeAccountLogin = notification.userInfo?[RepositoryForgeAccountNotificationKey.login] as? String
+        forgeAccountID = notification.userInfo?[RepositoryForgeAccountNotificationKey.accountID] as? ForgeAccountID
+        forgeAccountChoices = RepositoryForgeAccountChoice.notificationChoices(
+            from: notification.userInfo?[RepositoryForgeAccountNotificationKey.accounts]
+        )
+        isPublicForgeAccess = notification.userInfo?[RepositoryForgeAccountNotificationKey.isPublic] as? Bool
+            ?? false
+        applyForgeAccountPresentation()
+        let providerName = forgeProviderName
+        let isAuthenticated = forgeAccountLogin != nil
+        logger.info(
+            "Updated contextual \(providerName, privacy: .public) toolbar account, authenticated=\(isAuthenticated, privacy: .public)"
+        )
+    }
+
+    private var forgeAccountPresentation: RepositoryForgeAccountControlPresentation {
+        RepositoryForgeAccountControlPresentation(
+            providerName: forgeProviderName,
+            login: forgeAccountLogin,
+            isPublic: isPublicForgeAccess,
+            persistentFailureText: forgePersistentFailureText,
+            isStatusBarVisible: isRepositoryStatusBarVisible
+        )
+    }
+
+    private func makeForgeAccountItem(
+        identifier: NSToolbarItem.Identifier,
+        isActualInsertion: Bool
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = "Forge Account"
+        item.paletteLabel = "Forge Account"
+
+        let avatarContainer = NSView()
+        avatarContainer.translatesAutoresizingMaskIntoConstraints = false
+        avatarContainer.setAccessibilityIdentifier("GitX.Toolbar.ForgeAccountAvatarContainer")
+        avatarContainer.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        avatarContainer.heightAnchor.constraint(equalToConstant: 24).isActive = true
+
+        let accountPopup = NSPopUpButton(frame: .zero, pullsDown: true)
+        accountPopup.bezelStyle = .texturedRounded
+        accountPopup.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        accountPopup.setAccessibilityIdentifier("GitX.Toolbar.ForgeAccount")
+        accountPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 84).isActive = true
+        accountPopup.heightAnchor.constraint(equalToConstant: 26).isActive = true
+
+        let warningButton = NSButton()
+        warningButton.image = NSImage(
+            systemSymbolName: "exclamationmark.triangle.fill",
+            accessibilityDescription: "Forge Unavailable"
+        )
+        warningButton.contentTintColor = .systemOrange
+        warningButton.bezelStyle = .inline
+        warningButton.isBordered = false
+        warningButton.imagePosition = .imageOnly
+        warningButton.target = windowController
+        warningButton.action = NSSelectorFromString("showForgeStatusDetails:")
+        warningButton.setAccessibilityIdentifier("GitX.Toolbar.ForgeWarning")
+        warningButton.widthAnchor.constraint(equalToConstant: 18).isActive = true
+
+        let stack = NSStackView(views: [avatarContainer, accountPopup, warningButton])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 3
+        item.view = stack
+        let views = ForgeAccountViews(
+            item: item,
+            accountPopup: accountPopup,
+            avatarContainer: avatarContainer,
+            warningButton: warningButton
+        )
+        if isActualInsertion {
+            forgeAccountViews = views
+        }
+        applyForgeAccountPresentation(to: views)
+        return item
+    }
+
+    private func applyForgeAccountPresentation() {
+        guard let forgeAccountViews else { return }
+        applyForgeAccountPresentation(to: forgeAccountViews)
+    }
+
+    private func applyForgeAccountPresentation(to views: ForgeAccountViews) {
+        let presentation = forgeAccountPresentation
+        views.item.toolTip = presentation.toolTip
+        configureForgeAccountMenu(views.accountPopup, presentation: presentation)
+        configureForgeAccountAvatar(in: views.avatarContainer, presentation: presentation)
+        views.accountPopup.toolTip = presentation.toolTip
+        views.accountPopup.setAccessibilityLabel(presentation.accessibilityLabel)
+        views.accountPopup.setAccessibilityHelp("Choose the account for this repository or manage accounts")
+        views.warningButton.isHidden = !presentation.showsPersistentFailure
+        views.warningButton.isEnabled = presentation.showsPersistentFailure
+        views.warningButton.toolTip = presentation.persistentFailureText.map { "\($0). Show Details" }
+        views.warningButton.setAccessibilityLabel(
+            presentation.persistentFailureText.map { "\($0). Show details" } ?? "Forge status details"
+        )
+    }
+
+    private func configureForgeAccountMenu(
+        _ popup: NSPopUpButton,
+        presentation: RepositoryForgeAccountControlPresentation
+    ) {
+        popup.removeAllItems()
+        popup.addItem(withTitle: presentation.title)
+        popup.item(at: 0)?.isEnabled = false
+        popup.item(at: 0)?.identifier = NSUserInterfaceItemIdentifier("GitX.Toolbar.ForgeAccount.Current")
+        popup.item(at: 0)?.setAccessibilityIdentifier("GitX.Toolbar.ForgeAccount.Current")
+
+        for choice in forgeAccountChoices {
+            let item = NSMenuItem(
+                title: "@\(choice.login)",
+                action: #selector(selectForgeAccount(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = choice.id
+            item.state = choice.id == forgeAccountID ? .on : .off
+            let identifier = "GitX.Toolbar.ForgeAccount.Choice.\(choice.id.value)"
+            item.identifier = NSUserInterfaceItemIdentifier(identifier)
+            item.setAccessibilityIdentifier(identifier)
+            item.setAccessibilityLabel("Use GitHub account \(choice.login) for this repository")
+            popup.menu?.addItem(item)
+        }
+
+        if !forgeAccountChoices.isEmpty {
+            popup.menu?.addItem(.separator())
+        }
+        let manage = NSMenuItem(
+            title: "Manage Accounts…",
+            action: #selector(openForgeAccountsPreferences(_:)),
+            keyEquivalent: ""
+        )
+        manage.target = self
+        manage.identifier = NSUserInterfaceItemIdentifier("GitX.Toolbar.ForgeAccount.Manage")
+        manage.setAccessibilityIdentifier("GitX.Toolbar.ForgeAccount.Manage")
+        manage.setAccessibilityLabel("Manage Forge accounts")
+        popup.menu?.addItem(manage)
+    }
+
+    private func configureForgeAccountAvatar(
+        in container: NSView,
+        presentation: RepositoryForgeAccountControlPresentation
+    ) {
+        container.subviews.forEach { $0.removeFromSuperview() }
+        let owner = forgeAccountID.map(ForgeAvatarCacheOwner.account) ?? .anonymous
+        let avatar = ForgeAvatarView(owner: owner)
+        avatar.translatesAutoresizingMaskIntoConstraints = false
+        avatar.setAccessibilityIdentifier("GitX.Toolbar.ForgeAccountAvatar")
+        let displayName = forgeAccountLogin ?? (isPublicForgeAccess ? "Public" : presentation.providerName)
+        let avatarURL = forgeAccountChoices.first(where: { $0.id == forgeAccountID })?.avatarURL
+        avatar.configure(displayName: displayName, avatarURL: avatarURL)
+        container.addSubview(avatar)
+        NSLayoutConstraint.activate([
+            avatar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            avatar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            avatar.topAnchor.constraint(equalTo: container.topAnchor),
+            avatar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+    }
+
+    @objc private func selectForgeAccount(_ sender: NSMenuItem) {
+        guard let accountID = sender.representedObject as? ForgeAccountID,
+              let repository = windowController?.repository,
+              let binding = ApplicationComposition.shared.repositoryViewState(for: repository).forgeRepositoryBinding
+        else {
+            NSSound.beep()
+            return
+        }
+        do {
+            let updated = try RepositoryForgeAccountSelection.updating(
+                binding,
+                preferredAccount: accountID
+            )
+            ApplicationComposition.shared.repositoryViewState(for: repository).forgeRepositoryBinding = updated
+            NotificationCenter.default.post(name: .forgeAccountsDidChange, object: repository)
+            logger.notice("Changed the repository's contextual Forge account")
+        } catch {
+            windowController?.showErrorSheet(error)
+        }
+    }
+
+    @objc private func openForgeAccountsPreferences(_: Any?) {
+        RepositoryForgeAccountsPreferencesRouting.prepare()
+        if !NSApp.sendAction(NSSelectorFromString("openPreferencesWindow:"), to: nil, from: self) {
+            NSSound.beep()
+        }
+    }
+
+    private func reconcilePersistentFailureAccountItem() {
+        guard let toolbar else { return }
+        let containsAccountItem = toolbar.items.contains { $0.itemIdentifier == Item.forgeAccount }
+        let requiresAccountItem = forgeAccountPresentation.showsPersistentFailure
+        if requiresAccountItem, !containsAccountItem {
+            let statusIndex = toolbar.items.firstIndex { $0.itemIdentifier == Item.refreshStatus } ?? toolbar.items.count
+            toolbar.insertItem(withItemIdentifier: Item.forgeAccount, at: statusIndex)
+            insertedForgeAccountForPersistentFailure = true
+            logger.notice("Restored the Forge toolbar control to mirror a persistent failure")
+        } else if !requiresAccountItem, insertedForgeAccountForPersistentFailure, containsAccountItem,
+                  let index = toolbar.items.firstIndex(where: { $0.itemIdentifier == Item.forgeAccount })
+        {
+            toolbar.removeItem(at: index)
+            forgeAccountViews = nil
+            insertedForgeAccountForPersistentFailure = false
+        }
+    }
+
     private func statusItem(
         identifier: NSToolbarItem.Identifier,
         isActualInsertion: Bool
@@ -563,22 +824,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         label.widthAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
         label.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true
 
-        let forgeWarning = NSButton()
-        forgeWarning.image = NSImage(
-            systemSymbolName: "exclamationmark.triangle.fill",
-            accessibilityDescription: "Forge Unavailable"
-        )
-        forgeWarning.contentTintColor = .systemOrange
-        forgeWarning.bezelStyle = .inline
-        forgeWarning.isBordered = false
-        forgeWarning.imagePosition = .imageOnly
-        forgeWarning.target = windowController
-        forgeWarning.action = NSSelectorFromString("showForgeStatusDetails:")
-        forgeWarning.setAccessibilityIdentifier("GitX.Toolbar.ForgeWarning")
-        forgeWarning.isHidden = true
-        forgeWarning.widthAnchor.constraint(equalToConstant: 18).isActive = true
-
-        let view = NSStackView(views: [refresh, spinner, label, forgeWarning])
+        let view = NSStackView(views: [refresh, spinner, label])
         view.orientation = .horizontal
         view.alignment = .centerY
         view.spacing = 5
@@ -587,19 +833,12 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         view.widthAnchor.constraint(lessThanOrEqualToConstant: 220).isActive = true
         item.view = view
         if isActualInsertion {
-            statusViews = StatusViews(label: label, spinner: spinner, forgeWarning: forgeWarning)
+            statusViews = StatusViews(label: label, spinner: spinner)
         }
         logger.debug(
             "Created repository status item, actual insertion: \(isActualInsertion, privacy: .public)"
         )
         label.stringValue = currentStatus.isEmpty ? "Ready" : currentStatus
-        let showsForgeWarning = !isRepositoryStatusBarVisible && forgePersistentFailureText != nil
-        forgeWarning.isHidden = !showsForgeWarning
-        forgeWarning.isEnabled = showsForgeWarning
-        forgeWarning.toolTip = forgePersistentFailureText.map { "\($0). Show Details" }
-        forgeWarning.setAccessibilityLabel(
-            forgePersistentFailureText.map { "\($0). Show details" } ?? "Forge status details"
-        )
         if currentBusy {
             spinner.startAnimation(nil)
             spinner.isHidden = false

@@ -53,9 +53,12 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     private let destinationRouter: any ForgeReadDestinationRouting
     private let reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)?
     private let defaultRevision: ForgeRevision
+    private let viewStateStore: (any RepositoryForgeViewStateStoring)?
     private let listController: ForgeReadListViewController
     private let inspectorController: ForgeReadInspectorViewController
     private var accumulator: ForgeReadSurfaceAccumulator
+    private var surfaceViewState: RepositoryForgeReadSurfaceViewState
+    private var surfaceViewStateKind: ForgeReadSurfaceKind
     private var rows: [ForgeReadSurfaceRow] = []
     private var listTask: Task<Void, Never>?
     private var detailsTask: Task<Void, Never>?
@@ -74,6 +77,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         destinationRouter: any ForgeReadDestinationRouting,
         pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)? = nil,
         reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil,
+        viewStateStore: (any RepositoryForgeViewStateStoring)? = nil,
         editPullRequestControl: ForgeMutationControlPresentation? = nil,
         onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)? = nil,
         onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)? = nil
@@ -84,7 +88,12 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         self.destinationRouter = destinationRouter
         self.reviewOverlayHost = reviewOverlayHost
         self.defaultRevision = defaultRevision
-        accumulator = ForgeReadSurfaceAccumulator(kind: kind)
+        self.viewStateStore = viewStateStore
+        let initialViewState = viewStateStore?.forgeReadSurfaceViewState(for: kind).validated(for: kind)
+            ?? .defaultValue
+        surfaceViewState = initialViewState
+        surfaceViewStateKind = kind
+        accumulator = ForgeReadSurfaceAccumulator(kind: kind, query: initialViewState.query)
         listController = ForgeReadListViewController(kind: kind)
         inspectorController = ForgeReadInspectorViewController(
             markdownRenderer: markdownRenderer,
@@ -92,9 +101,11 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
             destinationRouter: destinationRouter,
             defaultRevision: defaultRevision,
             pullRequestChangesProvider: pullRequestChangesProvider,
-            reviewOverlayHost: reviewOverlayHost
+            reviewOverlayHost: reviewOverlayHost,
+            initialMode: initialViewState.inspectorMode
         )
         super.init(nibName: nil, bundle: nil)
+        pendingDestination = initialViewState.selectedDestination
 
         listController.onReload = { [weak self] query in
             self?.reload(query: query)
@@ -108,11 +119,18 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         listController.onOpenRow = { [weak self] row in
             self?.openRow(row)
         }
+        listController.onVisibleColumnsChange = { [weak self] columns in
+            self?.persistVisibleColumns(columns)
+        }
+        listController.apply(viewState: initialViewState)
         inspectorController.onLoadMoreTimeline = { [weak self] in
             self?.loadMoreDetails(.timeline)
         }
         inspectorController.onLoadMoreChecks = { [weak self] in
             self?.loadMoreDetails(.checks)
+        }
+        inspectorController.onPullRequestModeChange = { [weak self] mode in
+            self?.persistInspectorMode(mode)
         }
         inspectorController.editPullRequestControl = editPullRequestControl ?? .hidden
         inspectorController.onEditPullRequest = onEditPullRequest
@@ -125,14 +143,21 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
 
         let inspectorItem = NSSplitViewItem(viewController: inspectorController)
         inspectorItem.minimumThickness = 320
-        inspectorItem.preferredThicknessFraction = 0.38
+        inspectorItem.preferredThicknessFraction = initialViewState.inspectorLayout.preferredFraction
         inspectorItem.canCollapse = true
         inspectorItem.collapseBehavior = .preferResizingSplitViewWithFixedSiblings
+        inspectorItem.isCollapsed = initialViewState.inspectorLayout.isCollapsed
         addSplitViewItem(inspectorItem)
 
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         view.setAccessibilityIdentifier("ForgeReadSurface")
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(splitViewDidResize(_:)),
+            name: NSSplitView.didResizeSubviewsNotification,
+            object: splitView
+        )
     }
 
     @available(*, unavailable)
@@ -143,6 +168,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     deinit {
         listTask?.cancel()
         detailsTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidAppear() {
@@ -153,8 +179,16 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
 
     func show(kind: ForgeReadSurfaceKind) {
         guard kind != accumulator.kind else { return }
+        persistInspectorLayout()
+        surfaceViewState = viewStateStore?.forgeReadSurfaceViewState(for: kind).validated(for: kind)
+            ?? .defaultValue
+        surfaceViewStateKind = kind
         listController.setKind(kind)
-        reload(kind: kind, query: listController.query)
+        listController.apply(viewState: surfaceViewState)
+        pendingDestination = surfaceViewState.selectedDestination
+        applyInspectorLayout(surfaceViewState.inspectorLayout)
+        inspectorController.setPullRequestMode(surfaceViewState.inspectorMode)
+        reload(kind: kind, query: surfaceViewState.query)
         inspectorController.showPlaceholder("Select a \(kind == .pullRequests ? "pull request" : "issue") to inspect it.")
     }
 
@@ -200,6 +234,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         default: false
         }
         guard matchesKind else { return false }
+        persistSelection(destination)
         guard let row = rows.firstIndex(where: { $0.destination == destination }) else {
             pendingDestination = destination
             return true
@@ -211,10 +246,18 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
 
     private func reload(kind: ForgeReadSurfaceKind? = nil, query: ForgeReadSurfaceQuery) {
         listTask?.cancel()
-        let invalidatesSelection = (kind ?? accumulator.kind) != accumulator.kind || query != accumulator.query
+        let changesKind = (kind ?? accumulator.kind) != accumulator.kind
+        let invalidatesSelection = changesKind || query != accumulator.query
         if invalidatesSelection {
+            if !changesKind {
+                persistQuery(query, clearingSelection: true)
+            }
             listController.restoreSelection(row: nil)
-            selectRow(-1)
+            selectedItem = nil
+            detailsTask?.cancel()
+            currentDetailsSnapshot = nil
+            detailsGeneration &+= 1
+            inspectorController.showPlaceholder("Select an item to inspect it.")
         }
         let request = accumulator.beginReload(kind: kind, query: query)
         renderList()
@@ -304,6 +347,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     private func selectRow(_ index: Int) {
         guard rows.indices.contains(index) else {
             selectedItem = nil
+            persistSelection(nil)
             detailsTask?.cancel()
             currentDetailsSnapshot = nil
             detailsGeneration &+= 1
@@ -312,6 +356,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         }
         let item = rows[index].item
         selectedItem = item
+        persistSelection(item.destination)
         loadDetails(for: item, rowNumber: rows[index].number, preservingCurrentSnapshot: false)
     }
 
@@ -538,6 +583,102 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         destinationRouter.openNative(destination: rows[index].destination)
     }
 
+    private func persistQuery(_ query: ForgeReadSurfaceQuery, clearingSelection: Bool) {
+        surfaceViewState = RepositoryForgeReadSurfaceViewState(
+            searchText: query.searchText,
+            stateFilter: query.stateFilter,
+            visibleColumns: surfaceViewState.visibleColumns,
+            selectedDestination: clearingSelection ? nil : surfaceViewState.selectedDestination,
+            inspectorLayout: surfaceViewState.inspectorLayout,
+            inspectorMode: surfaceViewState.inspectorMode
+        )
+        saveSurfaceViewState()
+    }
+
+    private func persistVisibleColumns(_ columns: Set<ForgeReadSurfaceColumn>) {
+        surfaceViewState = RepositoryForgeReadSurfaceViewState(
+            searchText: surfaceViewState.searchText,
+            stateFilter: surfaceViewState.stateFilter,
+            visibleColumns: columns,
+            selectedDestination: surfaceViewState.selectedDestination,
+            inspectorLayout: surfaceViewState.inspectorLayout,
+            inspectorMode: surfaceViewState.inspectorMode
+        )
+        saveSurfaceViewState()
+        let kind = surfaceViewStateKind.rawValue
+        logger.debug("Saved user-configured \(kind, privacy: .public) columns")
+    }
+
+    private func persistSelection(_ destination: ForgeDestination?) {
+        guard surfaceViewState.selectedDestination != destination else { return }
+        surfaceViewState = RepositoryForgeReadSurfaceViewState(
+            searchText: surfaceViewState.searchText,
+            stateFilter: surfaceViewState.stateFilter,
+            visibleColumns: surfaceViewState.visibleColumns,
+            selectedDestination: destination,
+            inspectorLayout: surfaceViewState.inspectorLayout,
+            inspectorMode: surfaceViewState.inspectorMode
+        )
+        saveSurfaceViewState()
+    }
+
+    private func persistInspectorLayout() {
+        guard splitViewItems.indices.contains(1) else { return }
+        let item = splitViewItems[1]
+        var fraction = surfaceViewState.inspectorLayout.preferredFraction
+        if !item.isCollapsed, splitView.bounds.width > 0 {
+            fraction = item.viewController.view.frame.width / splitView.bounds.width
+        }
+        let layout = RepositoryForgeInspectorLayoutState(
+            preferredFraction: fraction,
+            isCollapsed: item.isCollapsed
+        )
+        guard layout != surfaceViewState.inspectorLayout else { return }
+        surfaceViewState = RepositoryForgeReadSurfaceViewState(
+            searchText: surfaceViewState.searchText,
+            stateFilter: surfaceViewState.stateFilter,
+            visibleColumns: surfaceViewState.visibleColumns,
+            selectedDestination: surfaceViewState.selectedDestination,
+            inspectorLayout: layout,
+            inspectorMode: surfaceViewState.inspectorMode
+        )
+        saveSurfaceViewState()
+        let kind = surfaceViewStateKind.rawValue
+        logger.debug(
+            "Saved \(kind, privacy: .public) inspector collapsed=\(layout.isCollapsed, privacy: .public)"
+        )
+    }
+
+    private func applyInspectorLayout(_ layout: RepositoryForgeInspectorLayoutState) {
+        guard splitViewItems.indices.contains(1) else { return }
+        let item = splitViewItems[1]
+        item.preferredThicknessFraction = layout.preferredFraction
+        item.isCollapsed = layout.isCollapsed
+    }
+
+    private func persistInspectorMode(_ mode: RepositoryForgeInspectorMode) {
+        guard mode != surfaceViewState.inspectorMode else { return }
+        surfaceViewState = RepositoryForgeReadSurfaceViewState(
+            searchText: surfaceViewState.searchText,
+            stateFilter: surfaceViewState.stateFilter,
+            visibleColumns: surfaceViewState.visibleColumns,
+            selectedDestination: surfaceViewState.selectedDestination,
+            inspectorLayout: surfaceViewState.inspectorLayout,
+            inspectorMode: mode
+        )
+        saveSurfaceViewState()
+        let kind = surfaceViewStateKind.rawValue
+        logger.debug("Saved \(kind, privacy: .public) inspector mode")
+    }
+
+    private func saveSurfaceViewState() {
+        viewStateStore?.setForgeReadSurfaceViewState(surfaceViewState, for: surfaceViewStateKind)
+    }
+
+    @objc private func splitViewDidResize(_: Notification) {
+        persistInspectorLayout()
+    }
+
     private static func dateDescription(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -561,10 +702,12 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
     var onLoadNextPage: (() -> Void)?
     var onSelectRow: ((Int) -> Void)?
     var onOpenRow: ((Int) -> Void)?
+    var onVisibleColumnsChange: ((Set<ForgeReadSurfaceColumn>) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let searchField = NSSearchField()
     private let stateFilter = NSPopUpButton()
+    private let columnsPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let freshnessLabel = NSTextField(wrappingLabelWithString: "")
@@ -573,6 +716,7 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
     private let loadMoreButton = NSButton(title: "Load More", target: nil, action: nil)
     private let totalLabel = NSTextField(labelWithString: "")
     private var suppressesSelectionChanges = false
+    private var visibleColumns = Set(ForgeReadSurfaceColumn.allCases)
     private var presentation = ForgeReadListPresentation(
         rows: [],
         statusMessage: nil,
@@ -606,6 +750,16 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
         tableView.setAccessibilityLabel(kind.displayName)
     }
 
+    func apply(viewState: RepositoryForgeReadSurfaceViewState) {
+        searchField.stringValue = viewState.searchText
+        if let item = stateFilter.itemArray.first(where: {
+            $0.representedObject as? String == viewState.stateFilter.rawValue
+        }) {
+            stateFilter.select(item)
+        }
+        setVisibleColumns(viewState.visibleColumns, notifyingChange: false)
+    }
+
     func apply(_ presentation: ForgeReadListPresentation) {
         self.presentation = presentation
         suppressesSelectionChanges = true
@@ -628,13 +782,21 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
         loadMoreButton.isEnabled = presentation.canLoadNextPage
     }
 
-    func setVisibleColumns(_ columns: Set<ForgeReadSurfaceColumn>) {
+    func setVisibleColumns(
+        _ columns: Set<ForgeReadSurfaceColumn>,
+        notifyingChange: Bool = true
+    ) {
         let effectiveColumns = columns.union([.title])
+        visibleColumns = effectiveColumns
         for column in tableView.tableColumns {
             guard let value = ForgeReadSurfaceColumn(rawValue: column.identifier.rawValue) else { continue }
             column.isHidden = !effectiveColumns.contains(value)
         }
+        configureColumnsMenu()
         tableView.sizeLastColumnToFit()
+        if notifyingChange {
+            onVisibleColumnsChange?(effectiveColumns)
+        }
     }
 
     func select(row: Int) {
@@ -754,10 +916,16 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
         stateFilter.target = self
         stateFilter.action = #selector(filterChanged(_:))
         stateFilter.setAccessibilityIdentifier("ForgeReadStateFilter")
+        stateFilter.setAccessibilityLabel("Pull request or issue state")
+
+        columnsPopup.bezelStyle = .texturedRounded
+        columnsPopup.setAccessibilityIdentifier("ForgeReadColumns")
+        columnsPopup.setAccessibilityLabel("Visible list columns")
+        configureColumnsMenu()
 
         let header = ForgeReadSnowLeopardBarView()
         header.translatesAutoresizingMaskIntoConstraints = false
-        for subview in [titleLabel, searchField, stateFilter] {
+        for subview in [titleLabel, searchField, stateFilter, columnsPopup] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(subview)
         }
@@ -828,6 +996,10 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
         for child in [header, scrollView, statusLabel, footer] {
             root.addSubview(child)
         }
+        let searchMinimumWidth = searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180)
+        searchMinimumWidth.priority = .defaultHigh
+        let columnsMinimumWidth = columnsPopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 82)
+        columnsMinimumWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -836,11 +1008,14 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
             titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 10),
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             searchField.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 10),
-            searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
+            searchMinimumWidth,
             searchField.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             stateFilter.leadingAnchor.constraint(equalTo: searchField.trailingAnchor, constant: 8),
-            stateFilter.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
+            columnsPopup.leadingAnchor.constraint(equalTo: stateFilter.trailingAnchor, constant: 6),
+            columnsPopup.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
+            columnsMinimumWidth,
             stateFilter.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            columnsPopup.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: header.bottomAnchor),
@@ -855,6 +1030,12 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
             progressIndicator.widthAnchor.constraint(equalToConstant: 16),
             progressIndicator.heightAnchor.constraint(equalToConstant: 16),
         ])
+        searchField.nextKeyView = stateFilter
+        stateFilter.nextKeyView = columnsPopup
+        columnsPopup.nextKeyView = tableView
+        tableView.nextKeyView = refreshButton
+        refreshButton.nextKeyView = loadMoreButton
+        loadMoreButton.nextKeyView = searchField
         apply(presentation)
     }
 
@@ -864,6 +1045,42 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
 
     @objc private func filterChanged(_: Any?) {
         onReload?(query)
+    }
+
+    private func configureColumnsMenu() {
+        columnsPopup.removeAllItems()
+        columnsPopup.addItem(withTitle: "Columns")
+        columnsPopup.item(at: 0)?.isEnabled = false
+        for column in ForgeReadSurfaceColumn.allCases {
+            let item = NSMenuItem(
+                title: Self.columnTitle(column),
+                action: #selector(toggleColumn(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = column.rawValue
+            item.state = visibleColumns.contains(column) ? .on : .off
+            item.isEnabled = column != .title
+            let identifier = "ForgeReadColumns.\(column.rawValue)"
+            item.identifier = NSUserInterfaceItemIdentifier(identifier)
+            item.setAccessibilityIdentifier(identifier)
+            item.setAccessibilityLabel("\(Self.columnTitle(column)) column")
+            columnsPopup.menu?.addItem(item)
+        }
+    }
+
+    @objc private func toggleColumn(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let column = ForgeReadSurfaceColumn(rawValue: rawValue),
+              column != .title
+        else { return }
+        var updated = visibleColumns
+        if updated.contains(column) {
+            updated.remove(column)
+        } else {
+            updated.insert(column)
+        }
+        setVisibleColumns(updated)
     }
 
     @objc private func refresh(_: Any?) {
@@ -888,6 +1105,16 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
         }
     }
 
+    private static func columnTitle(_ column: ForgeReadSurfaceColumn) -> String {
+        switch column {
+        case .state: "State"
+        case .number: "Number"
+        case .title: "Title"
+        case .author: "Author"
+        case .updated: "Updated"
+        }
+    }
+
     private static func shortDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
@@ -900,6 +1127,7 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
 final class ForgeReadInspectorViewController: NSViewController {
     var onLoadMoreTimeline: (() -> Void)?
     var onLoadMoreChecks: (() -> Void)?
+    var onPullRequestModeChange: ((RepositoryForgeInspectorMode) -> Void)?
     var onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?
     var onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)?
     var editPullRequestControl = ForgeMutationControlPresentation.hidden
@@ -920,7 +1148,7 @@ final class ForgeReadInspectorViewController: NSViewController {
     private var pullRequestModeControl: NSSegmentedControl?
     private var currentPresentation: ForgeReadInspectorPresentation?
     private var changesTask: Task<Void, Never>?
-    private var pullRequestMode = 0
+    private var pullRequestMode: RepositoryForgeInspectorMode
     private var editablePullRequestSnapshot: ForgePullRequestEditableSnapshot?
     private weak var editPullRequestButton: NSButton?
     private var currentPullRequestSummary: ForgePullRequestSummary?
@@ -931,7 +1159,8 @@ final class ForgeReadInspectorViewController: NSViewController {
         destinationRouter: any ForgeReadDestinationRouting,
         defaultRevision: ForgeRevision,
         pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)? = nil,
-        reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil
+        reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil,
+        initialMode: RepositoryForgeInspectorMode = .overview
     ) {
         self.markdownRenderer = markdownRenderer
         self.avatarRenderer = avatarRenderer
@@ -939,6 +1168,7 @@ final class ForgeReadInspectorViewController: NSViewController {
         self.defaultRevision = defaultRevision
         self.pullRequestChangesProvider = pullRequestChangesProvider
         self.reviewOverlayHost = reviewOverlayHost
+        pullRequestMode = initialMode
         super.init(nibName: nil, bundle: nil)
         configureView()
         showPlaceholder("Select an item to inspect it.")
@@ -1225,6 +1455,13 @@ final class ForgeReadInspectorViewController: NSViewController {
         contentStack.addArrangedSubview(status)
     }
 
+    func setPullRequestMode(_ mode: RepositoryForgeInspectorMode) {
+        guard pullRequestMode != mode else { return }
+        pullRequestMode = mode
+        guard let currentPresentation else { return }
+        apply(currentPresentation)
+    }
+
     private func makePullRequestModeControl() -> NSSegmentedControl {
         let control = NSSegmentedControl(
             labels: ["Overview", "Changes"],
@@ -1232,14 +1469,15 @@ final class ForgeReadInspectorViewController: NSViewController {
             target: self,
             action: #selector(pullRequestModeChanged(_:))
         )
-        control.selectedSegment = pullRequestMode
+        control.selectedSegment = pullRequestMode.selectedSegment
         control.setAccessibilityIdentifier("GitX.PullRequest.InspectorMode")
         control.setAccessibilityLabel("Pull Request inspector mode")
         return control
     }
 
     @objc private func pullRequestModeChanged(_ sender: NSSegmentedControl) {
-        pullRequestMode = sender.selectedSegment
+        pullRequestMode = RepositoryForgeInspectorMode(selectedSegment: sender.selectedSegment)
+        onPullRequestModeChange?(pullRequestMode)
         guard let currentPresentation else { return }
         let refreshFailureMessage = self.refreshFailureMessage
         apply(currentPresentation)
@@ -1287,7 +1525,7 @@ final class ForgeReadInspectorViewController: NSViewController {
                 guard let self,
                       !Task.isCancelled,
                       self.routedDestination == destination,
-                      self.pullRequestMode == 1
+                      self.pullRequestMode == .changes
                 else { return }
                 self.renderLocalChanges(diff, pullRequest: summary)
             } catch is CancellationError {
@@ -1295,7 +1533,7 @@ final class ForgeReadInspectorViewController: NSViewController {
             } catch {
                 guard let self,
                       self.routedDestination == destination,
-                      self.pullRequestMode == 1
+                      self.pullRequestMode == .changes
                 else { return }
                 self.renderLocalChangesError(error.localizedDescription, pullRequest: summary)
             }
@@ -1371,14 +1609,14 @@ final class ForgeReadInspectorViewController: NSViewController {
             let provider = pullRequestChangesProvider
             pullRequestChangesProvider = nil
             apply(presentation)
-            pullRequestMode = 1
+            pullRequestMode = .changes
             showLocalChanges(for: presentation)
             let unavailable = contentStack.arrangedSubviews.contains(where: {
                 $0.accessibilityIdentifier() == "GitX.PullRequest.ChangesUnavailable"
             })
             pullRequestChangesProvider = provider
             apply(presentation)
-            pullRequestMode = 1
+            pullRequestMode = .changes
             showLocalChanges(for: presentation)
             for _ in 0 ..< 500 {
                 if contentStack.arrangedSubviews.contains(where: {
@@ -1618,6 +1856,14 @@ enum RepositoryAttentionNotificationKey {
     static let count = "count"
     static let itemID = "itemID"
     static let action = "action"
+}
+
+enum RepositoryForgeAccountNotificationKey {
+    static let providerName = "providerName"
+    static let login = "login"
+    static let isPublic = "isPublic"
+    static let accountID = "accountID"
+    static let accounts = "accounts"
 }
 
 @MainActor
@@ -2314,6 +2560,7 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
 
     private let session: any RepositoryAttentionServing
     private let destinationRouter: any ForgeReadDestinationRouting
+    private let viewStateStore: (any RepositoryForgeViewStateStoring)?
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(wrappingLabelWithString: "Loading Attention…")
     private let progress = NSProgressIndicator()
@@ -2326,6 +2573,7 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
     private let markAllSeenButton = NSButton(title: "Mark All Seen", target: nil, action: nil)
     private let inspectorController: ForgeReadInspectorViewController
     private var state: ForgeAttentionViewState
+    private var repositoryViewState: RepositoryForgeAttentionViewState
     private var entries: [ForgeAttentionInboxEntry] = []
     private var rows: [ForgeAttentionReadSurfaceRow] = []
     private var loadTask: Task<Void, Never>?
@@ -2340,16 +2588,25 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         markdownRenderer: any ForgeReadMarkdownRendering,
         avatarRenderer: any ForgeReadAvatarRendering,
         destinationRouter: any ForgeReadDestinationRouting,
-        defaultRevision: ForgeRevision
+        defaultRevision: ForgeRevision,
+        pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)? = nil,
+        viewStateStore: (any RepositoryForgeViewStateStoring)? = nil
     ) {
         self.session = session
         self.destinationRouter = destinationRouter
-        state = ApplicationSettings.attentionViewState
+        self.viewStateStore = viewStateStore
+        let storedState = viewStateStore?.forgeAttentionViewState
+            ?? RepositoryForgeAttentionViewState(query: ApplicationSettings.attentionViewState)
+        repositoryViewState = storedState
+        state = storedState.query
+        pendingItemID = storedState.selectedItemID
         inspectorController = ForgeReadInspectorViewController(
             markdownRenderer: markdownRenderer,
             avatarRenderer: avatarRenderer,
             destinationRouter: destinationRouter,
-            defaultRevision: defaultRevision
+            defaultRevision: defaultRevision,
+            pullRequestChangesProvider: pullRequestChangesProvider,
+            initialMode: storedState.inspectorMode
         )
         super.init(nibName: nil, bundle: nil)
         configureList()
@@ -2358,6 +2615,9 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         }
         inspectorController.onLoadMoreChecks = { [weak self] in
             self?.loadMore(.checks)
+        }
+        inspectorController.onPullRequestModeChange = { [weak self] mode in
+            self?.persistAttentionInspectorMode(mode)
         }
         NotificationCenter.default.addObserver(
             self,
@@ -2395,6 +2655,7 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
 
     func open(_ itemID: ForgeAttentionItemID) {
         pendingItemID = itemID
+        persistAttentionSelection(itemID)
         if state.scope != .all || state.visibility != .active {
             replaceState(scope: .all, visibility: .active)
         } else {
@@ -2465,16 +2726,19 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         scopePopup.target = self
         scopePopup.action = #selector(scopeChanged(_:))
         scopePopup.setAccessibilityIdentifier("ForgeAttentionScope")
+        scopePopup.setAccessibilityLabel("Attention repository scope")
         visibilityPopup.addItems(withTitles: ["Unseen", "All Current"])
         visibilityPopup.selectItem(at: state.visibility == .unseenOnly ? 0 : 1)
         visibilityPopup.target = self
         visibilityPopup.action = #selector(visibilityChanged(_:))
         visibilityPopup.setAccessibilityIdentifier("ForgeAttentionVisibility")
+        visibilityPopup.setAccessibilityLabel("Attention visibility")
         sortPopup.addItems(withTitles: ["Newest First", "Oldest First"])
         sortPopup.selectItem(at: state.sortOrder == .newestFirst ? 0 : 1)
         sortPopup.target = self
         sortPopup.action = #selector(sortChanged(_:))
         sortPopup.setAccessibilityIdentifier("ForgeAttentionSort")
+        sortPopup.setAccessibilityLabel("Attention sort order")
         configureFilterMenus()
 
         let filters = NSStackView(views: [scopePopup, visibilityPopup, sortPopup, kindPopup, columnsPopup])
@@ -2482,6 +2746,9 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         filters.alignment = .centerY
         filters.spacing = 6
         filters.translatesAutoresizingMaskIntoConstraints = false
+        for popup in [scopePopup, visibilityPopup, sortPopup, kindPopup, columnsPopup] {
+            popup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
 
         for (column, title, width) in [
             (ForgeAttentionColumn.kind, "Kind", 130.0),
@@ -2567,6 +2834,15 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
             progress.widthAnchor.constraint(equalToConstant: 16),
             progress.heightAnchor.constraint(equalToConstant: 16),
         ])
+        scopePopup.nextKeyView = visibilityPopup
+        visibilityPopup.nextKeyView = sortPopup
+        sortPopup.nextKeyView = kindPopup
+        kindPopup.nextKeyView = columnsPopup
+        columnsPopup.nextKeyView = tableView
+        tableView.nextKeyView = refreshButton
+        refreshButton.nextKeyView = markUnseenButton
+        markUnseenButton.nextKeyView = markAllSeenButton
+        markAllSeenButton.nextKeyView = scopePopup
         listController.view = root
         let listItem = NSSplitViewItem(viewController: listController)
         listItem.minimumThickness = 450
@@ -2574,11 +2850,18 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         addSplitViewItem(listItem)
         let inspectorItem = NSSplitViewItem(viewController: inspectorController)
         inspectorItem.minimumThickness = 320
-        inspectorItem.preferredThicknessFraction = 0.38
+        inspectorItem.preferredThicknessFraction = repositoryViewState.inspectorLayout.preferredFraction
         inspectorItem.canCollapse = true
+        inspectorItem.isCollapsed = repositoryViewState.inspectorLayout.isCollapsed
         addSplitViewItem(inspectorItem)
         splitView.isVertical = true
         splitView.dividerStyle = .thin
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(splitViewDidResize(_:)),
+            name: NSSplitView.didResizeSubviewsNotification,
+            object: splitView
+        )
         updateActionState()
     }
 
@@ -2595,9 +2878,14 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
             item.target = self
             item.representedObject = kind.rawValue
             item.state = state.kinds.contains(kind) ? .on : .off
+            let identifier = "ForgeAttentionKinds.\(kind.rawValue)"
+            item.identifier = NSUserInterfaceItemIdentifier(identifier)
+            item.setAccessibilityIdentifier(identifier)
+            item.setAccessibilityLabel("Show \(Self.kindTitle(kind)) Attention items")
             kindPopup.menu?.addItem(item)
         }
         kindPopup.setAccessibilityIdentifier("ForgeAttentionKinds")
+        kindPopup.setAccessibilityLabel("Visible Attention kinds")
 
         columnsPopup.removeAllItems()
         columnsPopup.addItem(withTitle: "Columns")
@@ -2611,9 +2899,14 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
             item.target = self
             item.representedObject = column.rawValue
             item.state = state.columns.contains(column) ? .on : .off
+            let identifier = "ForgeAttentionColumns.\(column.rawValue)"
+            item.identifier = NSUserInterfaceItemIdentifier(identifier)
+            item.setAccessibilityIdentifier(identifier)
+            item.setAccessibilityLabel("\(Self.columnTitle(column)) column")
             columnsPopup.menu?.addItem(item)
         }
         columnsPopup.setAccessibilityIdentifier("ForgeAttentionColumns")
+        columnsPopup.setAccessibilityLabel("Visible Attention columns")
     }
 
     private func reload() {
@@ -2685,6 +2978,7 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
             in: entries
         ) else { return }
         currentRoute = route
+        persistAttentionSelection(route.itemID)
         currentDetails = nil
         inspectorController.showLoading(for: row.readRow)
         detailsTask?.cancel()
@@ -2770,7 +3064,13 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
             kinds: kinds ?? state.kinds,
             columns: columns ?? state.columns
         )
-        ApplicationSettings.attentionViewState = state
+        repositoryViewState = RepositoryForgeAttentionViewState(
+            query: state,
+            selectedItemID: repositoryViewState.selectedItemID,
+            inspectorLayout: repositoryViewState.inspectorLayout,
+            inspectorMode: repositoryViewState.inspectorMode
+        )
+        persistAttentionViewState()
         configureFilterMenus()
         reload()
     }
@@ -2801,6 +3101,63 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         let selected = rows.indices.contains(tableView.selectedRow)
         markUnseenButton.isEnabled = selected
         markAllSeenButton.isEnabled = !rows.isEmpty
+    }
+
+    private func persistAttentionSelection(_ itemID: ForgeAttentionItemID?) {
+        guard repositoryViewState.selectedItemID != itemID else { return }
+        repositoryViewState = RepositoryForgeAttentionViewState(
+            query: state,
+            selectedItemID: itemID,
+            inspectorLayout: repositoryViewState.inspectorLayout,
+            inspectorMode: repositoryViewState.inspectorMode
+        )
+        persistAttentionViewState()
+    }
+
+    private func persistAttentionViewState() {
+        if let viewStateStore {
+            viewStateStore.forgeAttentionViewState = repositoryViewState
+        } else {
+            ApplicationSettings.attentionViewState = repositoryViewState.query
+        }
+    }
+
+    private func persistAttentionInspectorLayout() {
+        guard splitViewItems.indices.contains(1) else { return }
+        let item = splitViewItems[1]
+        var fraction = repositoryViewState.inspectorLayout.preferredFraction
+        if !item.isCollapsed, splitView.bounds.width > 0 {
+            fraction = item.viewController.view.frame.width / splitView.bounds.width
+        }
+        let layout = RepositoryForgeInspectorLayoutState(
+            preferredFraction: fraction,
+            isCollapsed: item.isCollapsed
+        )
+        guard layout != repositoryViewState.inspectorLayout else { return }
+        repositoryViewState = RepositoryForgeAttentionViewState(
+            query: state,
+            selectedItemID: repositoryViewState.selectedItemID,
+            inspectorLayout: layout,
+            inspectorMode: repositoryViewState.inspectorMode
+        )
+        persistAttentionViewState()
+        Self.logger.debug("Saved Attention inspector collapsed=\(layout.isCollapsed, privacy: .public)")
+    }
+
+    private func persistAttentionInspectorMode(_ mode: RepositoryForgeInspectorMode) {
+        guard repositoryViewState.inspectorMode != mode else { return }
+        repositoryViewState = RepositoryForgeAttentionViewState(
+            query: state,
+            selectedItemID: repositoryViewState.selectedItemID,
+            inspectorLayout: repositoryViewState.inspectorLayout,
+            inspectorMode: mode
+        )
+        persistAttentionViewState()
+        Self.logger.debug("Saved Attention inspector mode")
+    }
+
+    @objc private func splitViewDidResize(_: Notification) {
+        persistAttentionInspectorLayout()
     }
 
     @objc private func inboxChanged(_: Notification) {
@@ -3333,7 +3690,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
             markdownRenderer: ForgeReadNativeMarkdownRenderer(router: destinationRouter),
             avatarRenderer: ForgeReadNativeAvatarRenderer(owner: .account(account.id)),
             destinationRouter: destinationRouter,
-            defaultRevision: defaultRevision()
+            defaultRevision: defaultRevision(),
+            pullRequestChangesProvider: RepositoryLocalPullRequestChangesProvider(repository: repository),
+            viewStateStore: settings
         )
         session.start()
         Self.logger.notice("Started exact-account GitHub collaboration session")
@@ -3411,6 +3770,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
             destinationRouter: router,
             pullRequestChangesProvider: RepositoryLocalPullRequestChangesProvider(repository: repository),
             reviewOverlayHost: reviewOverlayHost,
+            viewStateStore: settings,
             editPullRequestControl: editPullRequestControl,
             onEditPullRequest: onEditPullRequest,
             onCheckoutPullRequest: { [weak self] pullRequest in
@@ -3806,9 +4166,33 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     private func publishAccessChange() {
+        let login: String? = if case let .authenticated(account) = accessResolution {
+            account.login
+        } else {
+            nil
+        }
+        let isPublic = accessResolution == .publicAccess
+        var userInfo: [AnyHashable: Any] = [
+            RepositoryForgeAccountNotificationKey.isPublic: isPublic,
+            RepositoryForgeAccountNotificationKey.accounts: matchingAccounts().map {
+                RepositoryForgeAccountChoice(id: $0.id, login: $0.login).notificationValue
+            },
+        ]
+        if let binding {
+            userInfo[RepositoryForgeAccountNotificationKey.providerName] = Self.providerName(
+                binding.primaryRepository.forge.kind
+            )
+        }
+        if case let .authenticated(account) = accessResolution {
+            userInfo[RepositoryForgeAccountNotificationKey.accountID] = account.id
+        }
+        if let login {
+            userInfo[RepositoryForgeAccountNotificationKey.login] = login
+        }
         NotificationCenter.default.post(
             name: .repositoryForgeAccountDidChange,
-            object: repository
+            object: repository,
+            userInfo: userInfo
         )
     }
 
@@ -3843,6 +4227,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     @objc private func openAccountsPreferences(_: Any?) {
+        RepositoryForgeAccountsPreferencesRouting.prepare()
         if !NSApp.sendAction(NSSelectorFromString("openPreferencesWindow:"), to: nil, from: self) {
             NSSound.beep()
         }

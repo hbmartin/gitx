@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 import XCTest
 
 @MainActor
@@ -421,6 +422,54 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(attentionButton.accessibilityLabel(), "Attention Inbox, No unseen Attention items")
         XCTAssertTrue(attentionBadge.isHidden)
 
+        let accountItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount"),
+            willBeInsertedIntoToolbar: true
+        ))
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "toolbar-account")
+        let otherAccountID = try ForgeAccountID(forge: forge, value: "toolbar-other-account")
+        let accountChoice = RepositoryForgeAccountChoice(id: accountID, login: "hbmartin")
+        let otherAccountChoice = RepositoryForgeAccountChoice(id: otherAccountID, login: "octocat")
+        NotificationCenter.default.post(
+            name: .repositoryForgeAccountDidChange,
+            object: repository,
+            userInfo: [
+                RepositoryForgeAccountNotificationKey.providerName: "GitHub",
+                RepositoryForgeAccountNotificationKey.login: "octocat",
+                RepositoryForgeAccountNotificationKey.isPublic: false,
+                RepositoryForgeAccountNotificationKey.accountID: otherAccountID,
+                RepositoryForgeAccountNotificationKey.accounts: [
+                    accountChoice.notificationValue,
+                    otherAccountChoice.notificationValue,
+                ],
+            ]
+        )
+        let accountStack = try XCTUnwrap(accountItem.view as? NSStackView)
+        let accountPopup = try XCTUnwrap(accountStack.arrangedSubviews.compactMap { $0 as? NSPopUpButton }.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount"
+        })
+        XCTAssertEqual(accountPopup.item(at: 0)?.title, "@octocat")
+        XCTAssertEqual(accountPopup.accessibilityLabel(), "GitHub account, octocat")
+        let choice = try XCTUnwrap(accountPopup.menu?.items.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount.Choice.toolbar-account"
+        })
+        XCTAssertEqual(choice.state, .off)
+        XCTAssertEqual(choice.representedObject as? ForgeAccountID, accountID)
+        let manage = try XCTUnwrap(accountPopup.menu?.items.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount.Manage"
+        })
+        XCTAssertEqual(manage.action, NSSelectorFromString("openForgeAccountsPreferences:"))
+        let toolbarAvatar = try XCTUnwrap(accountStack.arrangedSubviews.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccountAvatarContainer"
+        }?.subviews.first)
+        XCTAssertEqual(toolbarAvatar.accessibilityIdentifier(), "GitX.Toolbar.ForgeAccountAvatar")
+        XCTAssertEqual(toolbarAvatar.accessibilityLabel(), "octocat, initials O")
+        XCTAssertEqual(accountChoice.avatarURL?.host, "avatars.githubusercontent.com")
+        XCTAssertNoThrow(try ForgeAvatarURL(XCTUnwrap(accountChoice.avatarURL)))
+        XCTAssertNotNil(choice.action)
+
         XCTAssertNil(toolbarController.toolbar(
             toolbar,
             itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.Unknown"),
@@ -830,7 +879,6 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         settings.hideContainedBranches = true
         settings.historyRepositoryFactsInspectorVisible = true
         settings.sidebarVisibility = ["Stage": false]
-
         let reloaded = PBRepositoryUISettings(repository: repository)
         XCTAssertTrue(reloaded.pushAfterCommit)
         XCTAssertTrue(reloaded.hideContainedBranches)

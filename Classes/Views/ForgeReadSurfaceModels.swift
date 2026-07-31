@@ -38,7 +38,7 @@ enum RepositoryAttentionUnseenPresenter {
     }
 }
 
-enum ForgeReadSurfaceKind: String, CaseIterable, Sendable {
+enum ForgeReadSurfaceKind: String, CaseIterable, Codable, Hashable, Sendable {
     case pullRequests
     case issues
 
@@ -239,7 +239,7 @@ enum RepositoryForgeSidebarPresenter {
     }
 }
 
-enum ForgeReadStateFilter: String, CaseIterable, Sendable {
+enum ForgeReadStateFilter: String, CaseIterable, Codable, Sendable {
     case open
     case closed
     case all
@@ -253,7 +253,7 @@ enum ForgeReadStateFilter: String, CaseIterable, Sendable {
     }
 }
 
-enum ForgeReadSurfaceColumn: String, CaseIterable, Hashable, Sendable {
+enum ForgeReadSurfaceColumn: String, CaseIterable, Codable, Hashable, Sendable {
     case state
     case number
     case title
@@ -269,6 +269,174 @@ struct ForgeReadSurfaceQuery: Equatable, Sendable {
         self.searchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         self.stateFilter = stateFilter
     }
+}
+
+struct RepositoryForgeInspectorLayoutState: Codable, Equatable, Sendable {
+    static let defaultPreferredFraction = 0.38
+
+    let preferredFraction: Double
+    let isCollapsed: Bool
+
+    init(
+        preferredFraction: Double = Self.defaultPreferredFraction,
+        isCollapsed: Bool = false
+    ) {
+        self.preferredFraction = min(max(preferredFraction, 0.2), 0.7)
+        self.isCollapsed = isCollapsed
+    }
+
+    var validated: RepositoryForgeInspectorLayoutState {
+        RepositoryForgeInspectorLayoutState(
+            preferredFraction: preferredFraction,
+            isCollapsed: isCollapsed
+        )
+    }
+}
+
+enum RepositoryForgeInspectorMode: String, Codable, Equatable, Sendable {
+    case overview
+    case changes
+
+    var selectedSegment: Int {
+        switch self {
+        case .overview: 0
+        case .changes: 1
+        }
+    }
+
+    init(selectedSegment: Int) {
+        self = selectedSegment == 1 ? .changes : .overview
+    }
+}
+
+struct RepositoryForgeReadSurfaceViewState: Codable, Equatable, Sendable {
+    let searchText: String
+    let stateFilter: ForgeReadStateFilter
+    let visibleColumns: Set<ForgeReadSurfaceColumn>
+    let selectedDestination: ForgeDestination?
+    let inspectorLayout: RepositoryForgeInspectorLayoutState
+    let inspectorMode: RepositoryForgeInspectorMode
+
+    init(
+        searchText: String = "",
+        stateFilter: ForgeReadStateFilter = .open,
+        visibleColumns: Set<ForgeReadSurfaceColumn> = Set(ForgeReadSurfaceColumn.allCases),
+        selectedDestination: ForgeDestination? = nil,
+        inspectorLayout: RepositoryForgeInspectorLayoutState = RepositoryForgeInspectorLayoutState(),
+        inspectorMode: RepositoryForgeInspectorMode = .overview
+    ) {
+        self.searchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.stateFilter = stateFilter
+        self.visibleColumns = visibleColumns.union([.title])
+        self.selectedDestination = selectedDestination
+        self.inspectorLayout = inspectorLayout.validated
+        self.inspectorMode = inspectorMode
+    }
+
+    static let defaultValue = RepositoryForgeReadSurfaceViewState()
+
+    var query: ForgeReadSurfaceQuery {
+        ForgeReadSurfaceQuery(searchText: searchText, stateFilter: stateFilter)
+    }
+
+    func validated(for kind: ForgeReadSurfaceKind) -> RepositoryForgeReadSurfaceViewState {
+        let destination = selectedDestination.flatMap { destination in
+            switch (kind, destination) {
+            case (.pullRequests, .pullRequest), (.issues, .issue): destination
+            default: nil
+            }
+        }
+        return RepositoryForgeReadSurfaceViewState(
+            searchText: searchText,
+            stateFilter: stateFilter,
+            visibleColumns: visibleColumns.intersection(Set(ForgeReadSurfaceColumn.allCases)),
+            selectedDestination: destination,
+            inspectorLayout: inspectorLayout,
+            inspectorMode: inspectorMode
+        )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case searchText
+        case stateFilter
+        case visibleColumns
+        case selectedDestination
+        case inspectorLayout
+        case inspectorMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            searchText: values.decodeIfPresent(String.self, forKey: .searchText) ?? "",
+            stateFilter: values.decodeIfPresent(ForgeReadStateFilter.self, forKey: .stateFilter) ?? .open,
+            visibleColumns: values.decodeIfPresent(
+                Set<ForgeReadSurfaceColumn>.self,
+                forKey: .visibleColumns
+            ) ?? Set(ForgeReadSurfaceColumn.allCases),
+            selectedDestination: values.decodeIfPresent(ForgeDestination.self, forKey: .selectedDestination),
+            inspectorLayout: values.decodeIfPresent(
+                RepositoryForgeInspectorLayoutState.self,
+                forKey: .inspectorLayout
+            ) ?? RepositoryForgeInspectorLayoutState(),
+            inspectorMode: values.decodeIfPresent(
+                RepositoryForgeInspectorMode.self,
+                forKey: .inspectorMode
+            ) ?? .overview
+        )
+    }
+}
+
+struct RepositoryForgeAttentionViewState: Codable, Equatable, Sendable {
+    let query: ForgeAttentionViewState
+    let selectedItemID: ForgeAttentionItemID?
+    let inspectorLayout: RepositoryForgeInspectorLayoutState
+    let inspectorMode: RepositoryForgeInspectorMode
+
+    init(
+        query: ForgeAttentionViewState = .defaultValue,
+        selectedItemID: ForgeAttentionItemID? = nil,
+        inspectorLayout: RepositoryForgeInspectorLayoutState = RepositoryForgeInspectorLayoutState(),
+        inspectorMode: RepositoryForgeInspectorMode = .overview
+    ) {
+        self.query = query
+        self.selectedItemID = selectedItemID
+        self.inspectorLayout = inspectorLayout.validated
+        self.inspectorMode = inspectorMode
+    }
+
+    static let defaultValue = RepositoryForgeAttentionViewState()
+
+    private enum CodingKeys: String, CodingKey {
+        case query
+        case selectedItemID
+        case inspectorLayout
+        case inspectorMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            query: values.decodeIfPresent(ForgeAttentionViewState.self, forKey: .query) ?? .defaultValue,
+            selectedItemID: values.decodeIfPresent(ForgeAttentionItemID.self, forKey: .selectedItemID),
+            inspectorLayout: values.decodeIfPresent(
+                RepositoryForgeInspectorLayoutState.self,
+                forKey: .inspectorLayout
+            ) ?? RepositoryForgeInspectorLayoutState(),
+            inspectorMode: values.decodeIfPresent(
+                RepositoryForgeInspectorMode.self,
+                forKey: .inspectorMode
+            ) ?? .overview
+        )
+    }
+}
+
+@MainActor
+protocol RepositoryForgeViewStateStoring: AnyObject {
+    func forgeReadSurfaceViewState(for kind: ForgeReadSurfaceKind) -> RepositoryForgeReadSurfaceViewState
+    func setForgeReadSurfaceViewState(_ state: RepositoryForgeReadSurfaceViewState, for kind: ForgeReadSurfaceKind)
+
+    var forgeAttentionViewState: RepositoryForgeAttentionViewState { get set }
 }
 
 struct ForgeReadSurfacePage: Sendable {

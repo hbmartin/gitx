@@ -70,6 +70,26 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )])
 
         try attachScreenshot(of: window, named: "GitHub Pull Request native list and inspector")
+        let search = try XCTUnwrap(descendant(identifier: "ForgeReadSearch", in: controller.view) as? NSSearchField)
+        let state = try XCTUnwrap(descendant(identifier: "ForgeReadStateFilter", in: controller.view) as? NSPopUpButton)
+        let columns = try XCTUnwrap(descendant(identifier: "ForgeReadColumns", in: controller.view) as? NSPopUpButton)
+        XCTAssertTrue(search.nextKeyView === state)
+        XCTAssertTrue(state.nextKeyView === columns)
+        XCTAssertTrue(columns.nextKeyView === table)
+        XCTAssertEqual(
+            columns.menu?.items.first { $0.representedObject as? String == "author" }?.accessibilityIdentifier(),
+            "ForgeReadColumns.author"
+        )
+
+        window.setContentSize(NSSize(width: 741, height: 720))
+        window.layoutIfNeeded()
+        let list = try XCTUnwrap(descendant(identifier: "ForgeReadList", in: controller.view))
+        for control in [search, state, columns] {
+            let frame = control.convert(control.bounds, to: list)
+            XCTAssertGreaterThanOrEqual(frame.minX, list.bounds.minX)
+            XCTAssertLessThanOrEqual(frame.maxX, list.bounds.maxX)
+        }
+        try attachScreenshot(of: window, named: "GitHub Pull Request compact minimum-width controls")
     }
 
     func testPaginationAppendsRowsAndHidesLoadMoreAtLastPage() async throws {
@@ -305,10 +325,12 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
     }
 
     func testSwitchingKindCancelsOldSurfaceStateAndLoadsNewKind() async throws {
+        let pullRequest = try ReadFixture.pullRequest()
+        let offPageIssue = try ReadFixture.issue(number: 99)
         let service = try FakeReadService(
             pages: [
                 ForgeReadSurfacePage(
-                    items: [.pullRequest(ReadFixture.pullRequest())],
+                    items: [.pullRequest(pullRequest)],
                     fetchedAt: ReadFixture.date(1)
                 ),
                 ForgeReadSurfacePage(
@@ -321,7 +343,22 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
                 fetchedAt: ReadFixture.date(2)
             )
         )
-        let controller = try makeController(kind: .pullRequests, service: service)
+        let store = InMemoryRepositoryForgeViewStateStore()
+        store.readStates[.pullRequests] = RepositoryForgeReadSurfaceViewState(
+            selectedDestination: ForgeRepositoryItem.pullRequest(pullRequest).destination
+        )
+        store.readStates[.issues] = RepositoryForgeReadSurfaceViewState(
+            selectedDestination: ForgeRepositoryItem.issue(offPageIssue).destination
+        )
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            viewStateStore: store
+        )
         _ = makeWindow(controller)
         controller.viewDidAppear()
         await service.waitForListCall(count: 1)
@@ -338,6 +375,181 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         controller.setVisibleColumns([.number, .title])
         XCTAssertFalse(try XCTUnwrap(table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("title"))).isHidden)
         XCTAssertTrue(try XCTUnwrap(table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("author"))).isHidden)
+        XCTAssertEqual(
+            store.readStates[.pullRequests]?.selectedDestination,
+            ForgeRepositoryItem.pullRequest(pullRequest).destination
+        )
+        XCTAssertEqual(
+            store.readStates[.issues]?.selectedDestination,
+            ForgeRepositoryItem.issue(offPageIssue).destination,
+            "Switching kinds must not erase a durable selection that is not in the first page"
+        )
+    }
+
+    func testRepositoryViewStateRestoresQueryColumnsSelectionAndInspectorLayout() async throws {
+        let pullRequest = try ReadFixture.pullRequest()
+        let service = try FakeReadService(
+            pages: [ForgeReadSurfacePage(
+                items: [.pullRequest(pullRequest)],
+                fetchedAt: ReadFixture.date(1)
+            )],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(ReadFixture.pullRequestDetails()),
+                fetchedAt: ReadFixture.date(2)
+            )
+        )
+        let store = InMemoryRepositoryForgeViewStateStore()
+        store.readStates[.pullRequests] = RepositoryForgeReadSurfaceViewState(
+            searchText: "persisted review",
+            stateFilter: .closed,
+            visibleColumns: [.number, .title],
+            selectedDestination: ForgeRepositoryItem.pullRequest(pullRequest).destination,
+            inspectorLayout: RepositoryForgeInspectorLayoutState(
+                preferredFraction: 0.46,
+                isCollapsed: true
+            ),
+            inspectorMode: .changes
+        )
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            pullRequestChangesProvider: StubPullRequestChangesProvider(diff: RepositoryLocalPullRequestDiff(
+                title: "Persisted changes",
+                patch: "diff --git a/a b/a",
+                cacheIdentifier: "persisted-mode"
+            )),
+            viewStateStore: store
+        )
+        _ = makeWindow(controller)
+
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await service.waitForDetailsCall()
+        await settleMainActor()
+
+        XCTAssertEqual(service.listCalls.first?.query, ForgeReadSurfaceQuery(
+            searchText: "persisted review",
+            stateFilter: .closed
+        ))
+        let search = try XCTUnwrap(descendant(identifier: "ForgeReadSearch", in: controller.view) as? NSSearchField)
+        let filter = try XCTUnwrap(
+            descendant(identifier: "ForgeReadStateFilter", in: controller.view) as? NSPopUpButton
+        )
+        let table = try XCTUnwrap(descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView)
+        XCTAssertEqual(search.stringValue, "persisted review")
+        XCTAssertEqual(filter.titleOfSelectedItem, "Closed")
+        XCTAssertEqual(table.selectedRow, 0)
+        XCTAssertTrue(try XCTUnwrap(
+            table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("author"))
+        ).isHidden)
+        XCTAssertFalse(try XCTUnwrap(
+            table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("title"))
+        ).isHidden)
+        XCTAssertTrue(controller.splitViewItems[1].isCollapsed)
+        XCTAssertEqual(controller.splitViewItems[1].preferredThicknessFraction, 0.46, accuracy: 0.001)
+        controller.splitViewItems[1].isCollapsed = false
+        controller.view.layoutSubtreeIfNeeded()
+        let mode = try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.InspectorMode", in: controller.view) as? NSSegmentedControl
+        )
+        XCTAssertEqual(mode.selectedSegment, 1)
+        mode.selectedSegment = 0
+        try NSApp.sendAction(XCTUnwrap(mode.action), to: mode.target, from: mode)
+        XCTAssertEqual(store.readStates[.pullRequests]?.inspectorMode, .overview)
+    }
+
+    func testRepositoryViewStateDecodesPreInspectorModePreferencesAsOverview() throws {
+        let readState = try RepositoryForgeReadSurfaceViewState(
+            selectedDestination: ForgeRepositoryItem.pullRequest(ReadFixture.pullRequest()).destination,
+            inspectorMode: .changes
+        )
+        var readObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(readState)) as? [String: Any]
+        )
+        readObject.removeValue(forKey: "inspectorMode")
+        let legacyRead = try JSONDecoder().decode(
+            RepositoryForgeReadSurfaceViewState.self,
+            from: JSONSerialization.data(withJSONObject: readObject)
+        )
+        XCTAssertEqual(legacyRead.inspectorMode, .overview)
+
+        var attentionObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(
+                RepositoryForgeAttentionViewState(inspectorMode: .changes)
+            )) as? [String: Any]
+        )
+        attentionObject.removeValue(forKey: "inspectorMode")
+        let legacyAttention = try JSONDecoder().decode(
+            RepositoryForgeAttentionViewState.self,
+            from: JSONSerialization.data(withJSONObject: attentionObject)
+        )
+        XCTAssertEqual(legacyAttention.inspectorMode, .overview)
+    }
+
+    func testUserFacingReadControlsPersistRepositoryColumnsFiltersSelectionAndInspectorLayout() async throws {
+        let issue = try ReadFixture.issue(number: 17)
+        let service = try FakeReadService(
+            pages: [
+                ForgeReadSurfacePage(items: [.issue(issue)], fetchedAt: ReadFixture.date(1)),
+                ForgeReadSurfacePage(items: [.issue(issue)], fetchedAt: ReadFixture.date(2)),
+                ForgeReadSurfacePage(items: [.issue(issue)], fetchedAt: ReadFixture.date(3)),
+            ],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails()),
+                fetchedAt: ReadFixture.date(2)
+            )
+        )
+        let store = InMemoryRepositoryForgeViewStateStore()
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .issues,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            viewStateStore: store
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let search = try XCTUnwrap(descendant(identifier: "ForgeReadSearch", in: controller.view) as? NSSearchField)
+        search.stringValue = "  regression  "
+        try NSApp.sendAction(XCTUnwrap(search.action), to: search.target, from: search)
+        await service.waitForListCall(count: 2)
+        await settleMainActor()
+
+        let filter = try XCTUnwrap(
+            descendant(identifier: "ForgeReadStateFilter", in: controller.view) as? NSPopUpButton
+        )
+        filter.selectItem(withTitle: "All")
+        try NSApp.sendAction(XCTUnwrap(filter.action), to: filter.target, from: filter)
+        await service.waitForListCall(count: 3)
+        await settleMainActor()
+
+        let columns = try XCTUnwrap(
+            descendant(identifier: "ForgeReadColumns", in: controller.view) as? NSPopUpButton
+        )
+        let authorColumn = try XCTUnwrap(columns.menu?.items.first { $0.representedObject as? String == "author" })
+        try NSApp.sendAction(XCTUnwrap(authorColumn.action), to: authorColumn.target, from: authorColumn)
+        let table = try XCTUnwrap(descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        controller.splitViewItems[1].isCollapsed = true
+        NotificationCenter.default.post(name: NSSplitView.didResizeSubviewsNotification, object: controller.splitView)
+
+        let saved = try XCTUnwrap(store.readStates[.issues])
+        XCTAssertEqual(saved.searchText, "regression")
+        XCTAssertEqual(saved.stateFilter, .all)
+        XCTAssertFalse(saved.visibleColumns.contains(.author))
+        XCTAssertTrue(saved.visibleColumns.contains(.title))
+        XCTAssertEqual(saved.selectedDestination, ForgeRepositoryItem.issue(issue).destination)
+        XCTAssertTrue(saved.inspectorLayout.isCollapsed)
     }
 
     func testReadListRendersEveryColumnRefreshesAndRoutesTheSelectedRow() async throws {
@@ -1117,12 +1329,14 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
     }
 
     func testAttentionSurfaceLoadsCurrentUnseenNewestAndExercisesSeenControls() async throws {
-        let originalState = ApplicationSettings.attentionViewState
-        defer { ApplicationSettings.attentionViewState = originalState }
-        ApplicationSettings.attentionViewState = ForgeAttentionViewState(
-            scope: .currentRepository,
-            visibility: .unseenOnly,
-            sortOrder: .newestFirst
+        let store = InMemoryRepositoryForgeViewStateStore()
+        store.forgeAttentionViewState = RepositoryForgeAttentionViewState(
+            query: ForgeAttentionViewState(
+                scope: .currentRepository,
+                visibility: .unseenOnly,
+                sortOrder: .newestFirst
+            ),
+            inspectorMode: .changes
         )
         let session = try FakeAttentionSession()
         let router = RecordingDestinationRouter()
@@ -1131,7 +1345,13 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             markdownRenderer: RecordingMarkdownRenderer(),
             avatarRenderer: RecordingAvatarRenderer(),
             destinationRouter: router,
-            defaultRevision: .branch(ForgeRefName("main"))
+            defaultRevision: .branch(ForgeRefName("main")),
+            pullRequestChangesProvider: StubPullRequestChangesProvider(diff: RepositoryLocalPullRequestDiff(
+                title: "Attention changes",
+                patch: "diff --git a/attention b/attention",
+                cacheIdentifier: "attention-mode"
+            )),
+            viewStateStore: store
         )
         let window = makeWindow(controller)
 
@@ -1156,6 +1376,13 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         }
         await settleMainActor()
         XCTAssertEqual(session.markedOpen, [session.entry.record.item.id])
+        let inspectorMode = try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.InspectorMode", in: controller.view) as? NSSegmentedControl
+        )
+        XCTAssertEqual(inspectorMode.selectedSegment, 1)
+        inspectorMode.selectedSegment = 0
+        try NSApp.sendAction(XCTUnwrap(inspectorMode.action), to: inspectorMode.target, from: inspectorMode)
+        XCTAssertEqual(store.forgeAttentionViewState.inspectorMode, .overview)
 
         let timelineContinuation = try XCTUnwrap(
             descendant(identifier: "ForgeInspectorLoadMoreTimeline", in: controller.view) as? NSButton
@@ -1252,6 +1479,11 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             session.entryStates.last?.columns.contains(.author) == false
         }
         XCTAssertFalse(session.entryStates.last?.columns.contains(.author) ?? true)
+        XCTAssertFalse(store.forgeAttentionViewState.query.columns.contains(.author))
+        XCTAssertEqual(store.forgeAttentionViewState.selectedItemID, session.entry.record.item.id)
+        controller.splitViewItems[1].isCollapsed = true
+        NotificationCenter.default.post(name: NSSplitView.didResizeSubviewsNotification, object: controller.splitView)
+        XCTAssertTrue(store.forgeAttentionViewState.inspectorLayout.isCollapsed)
 
         let refresh = try XCTUnwrap(descendant(identifier: "ForgeAttentionRefresh", in: controller.view) as? NSButton)
         let entriesBeforeRefresh = session.entryStates.count
@@ -1265,7 +1497,29 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             session.entryStates.count > entriesBeforeNotification
         }
 
+        XCTAssertTrue(scope.nextKeyView === visibility)
+        XCTAssertTrue(visibility.nextKeyView === sort)
+        XCTAssertTrue(sort.nextKeyView === kinds)
+        XCTAssertTrue(kinds.nextKeyView === columns)
+        XCTAssertTrue(columns.nextKeyView === table)
+        XCTAssertEqual(
+            reviewRequests.accessibilityIdentifier(),
+            "ForgeAttentionKinds.\(ForgeAttentionKind.reviewRequest.rawValue)"
+        )
+        XCTAssertEqual(
+            author.accessibilityIdentifier(),
+            "ForgeAttentionColumns.\(ForgeAttentionColumn.author.rawValue)"
+        )
         try attachScreenshot(of: window, named: "GitHub Attention native inbox and inspector")
+        window.setContentSize(NSSize(width: 771, height: 720))
+        window.layoutIfNeeded()
+        let attentionSurface = try XCTUnwrap(descendant(identifier: "ForgeAttentionSurface", in: controller.view))
+        for control in [scope, visibility, sort, kinds, columns] {
+            let frame = control.convert(control.bounds, to: attentionSurface)
+            XCTAssertGreaterThanOrEqual(frame.minX, attentionSurface.bounds.minX)
+            XCTAssertLessThanOrEqual(frame.maxX, attentionSurface.bounds.maxX)
+        }
+        try attachScreenshot(of: window, named: "GitHub Attention compact minimum-width controls")
     }
 
     func testAttentionNotificationActionsAndUnavailableDatabaseErrorRemainExplicit() {
@@ -1896,6 +2150,23 @@ private final class RecordingReviewOverlayHost: RepositoryPullRequestReviewOverl
     func detach() {
         detachCount += 1
         actionArea.removeFromSuperview()
+    }
+}
+
+@MainActor
+private final class InMemoryRepositoryForgeViewStateStore: RepositoryForgeViewStateStoring {
+    var readStates: [ForgeReadSurfaceKind: RepositoryForgeReadSurfaceViewState] = [:]
+    var forgeAttentionViewState = RepositoryForgeAttentionViewState.defaultValue
+
+    func forgeReadSurfaceViewState(for kind: ForgeReadSurfaceKind) -> RepositoryForgeReadSurfaceViewState {
+        readStates[kind] ?? .defaultValue
+    }
+
+    func setForgeReadSurfaceViewState(
+        _ state: RepositoryForgeReadSurfaceViewState,
+        for kind: ForgeReadSurfaceKind
+    ) {
+        readStates[kind] = state
     }
 }
 

@@ -679,6 +679,77 @@ import OSLog // swiftlint:disable:this unused_import
         // Referenced through the generated Objective-C interface by WindowControllerTests.
         // swiftlint:disable:next unused_declaration
         final class Milestone3ProductCoverageHarness: NSObject {
+            @objc(repositoryForgeViewStateProofWithRepository:)
+            // Referenced through the generated Objective-C interface by WindowControllerTests.
+            // swiftlint:disable:next unused_declaration function_body_length
+            static func repositoryForgeViewStateProof(repository: PBGitRepository) -> Bool {
+                let preferences = ApplicationComposition.shared.applicationPreferences
+                let settings = RepositoryUISettings(repository: repository, preferences: preferences)
+                let originalPullRequests = settings.forgeReadSurfaceViewState(for: .pullRequests)
+                let originalIssues = settings.forgeReadSurfaceViewState(for: .issues)
+                let originalAttention = settings.forgeAttentionViewState
+                let originalBinding = settings.forgeRepositoryBinding
+                defer {
+                    settings.setForgeReadSurfaceViewState(originalPullRequests, for: .pullRequests)
+                    settings.setForgeReadSurfaceViewState(originalIssues, for: .issues)
+                    settings.forgeAttentionViewState = originalAttention
+                    settings.forgeRepositoryBinding = originalBinding
+                }
+
+                do {
+                    let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+                    let forgeRepository = try ForgeRepositoryIdentity(
+                        forge: forge,
+                        owner: "hbmartin",
+                        name: "gitx"
+                    )
+                    let originalAccount = try ForgeAccountID(forge: forge, value: "m3-view-state-original")
+                    let replacementAccount = try ForgeAccountID(forge: forge, value: "m3-view-state-replacement")
+                    let pullRequestState = try RepositoryForgeReadSurfaceViewState(
+                        searchText: "review me",
+                        stateFilter: .all,
+                        visibleColumns: [.number, .title],
+                        selectedDestination: .pullRequest(forgeRepository, ForgeItemNumber(42)),
+                        inspectorLayout: RepositoryForgeInspectorLayoutState(
+                            preferredFraction: 0.44,
+                            isCollapsed: true
+                        ),
+                        inspectorMode: .changes
+                    )
+                    let attentionState = RepositoryForgeAttentionViewState(
+                        query: ForgeAttentionViewState(
+                            scope: .all,
+                            visibility: .active,
+                            sortOrder: .oldestFirst,
+                            kinds: [.mention],
+                            columns: [.repository, .title]
+                        ),
+                        inspectorLayout: RepositoryForgeInspectorLayoutState(preferredFraction: 0.47),
+                        inspectorMode: .changes
+                    )
+                    let binding = try ForgeRepositoryBinding(
+                        localRemoteName: "origin",
+                        primaryRepository: forgeRepository,
+                        preferredAccount: originalAccount
+                    )
+                    settings.setForgeReadSurfaceViewState(pullRequestState, for: .pullRequests)
+                    settings.forgeAttentionViewState = attentionState
+                    settings.forgeRepositoryBinding = try RepositoryForgeAccountSelection.updating(
+                        binding,
+                        preferredAccount: replacementAccount
+                    )
+
+                    let reopened = RepositoryUISettings(repository: repository, preferences: preferences)
+                    return reopened.forgeReadSurfaceViewState(for: .pullRequests) == pullRequestState
+                        && reopened.forgeReadSurfaceViewState(for: .issues) == originalIssues
+                        && reopened.forgeAttentionViewState == attentionState
+                        && reopened.forgeRepositoryBinding?.preferredAccount == replacementAccount
+                        && reopened.forgeRepositoryBinding?.primaryRepository == forgeRepository
+                } catch {
+                    return false
+                }
+            }
+
             @objc(collaborationCloseLifecycleProofWithRepository:)
             // Referenced through the generated Objective-C interface by WindowControllerTests.
             // swiftlint:disable:next unused_declaration

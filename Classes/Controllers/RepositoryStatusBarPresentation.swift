@@ -222,6 +222,108 @@ struct RepositoryStatusBarLayout: Equatable, Sendable {
     }
 }
 
+struct RepositoryForgeAccountControlPresentation: Equatable {
+    let providerName: String
+    let login: String?
+    let isPublic: Bool
+    let persistentFailureText: String?
+    let isStatusBarVisible: Bool
+
+    var title: String {
+        if let login {
+            return "@\(login)"
+        }
+        return isPublic ? "Public" : providerName
+    }
+
+    var avatarInitials: String {
+        if let login {
+            return String(login.prefix(2)).uppercased()
+        }
+        return isPublic ? "P" : String(providerName.prefix(1)).uppercased()
+    }
+
+    var toolTip: String {
+        if let login {
+            return "\(providerName) account @\(login) — Manage Accounts"
+        }
+        if isPublic {
+            return "Public \(providerName) access — Manage Accounts"
+        }
+        return "Configure a \(providerName) account"
+    }
+
+    var accessibilityLabel: String {
+        if let login {
+            return "\(providerName) account, \(login)"
+        }
+        if isPublic {
+            return "Public \(providerName) access"
+        }
+        return "\(providerName) account"
+    }
+
+    var showsPersistentFailure: Bool {
+        !isStatusBarVisible && persistentFailureText != nil
+    }
+}
+
+struct RepositoryForgeAccountChoice: Equatable, Sendable {
+    private static let accountIDKey = "accountID"
+    private static let loginKey = "login"
+
+    let id: ForgeAccountID
+    let login: String
+
+    var notificationValue: [String: Any] {
+        [
+            Self.accountIDKey: id,
+            Self.loginKey: login,
+        ]
+    }
+
+    static func notificationChoices(from value: Any?) -> [RepositoryForgeAccountChoice] {
+        guard let values = value as? [[String: Any]] else { return [] }
+        return values.compactMap { value in
+            guard let id = value[Self.accountIDKey] as? ForgeAccountID,
+                  let login = value[Self.loginKey] as? String
+            else { return nil }
+            return RepositoryForgeAccountChoice(id: id, login: login)
+        }
+    }
+
+    var avatarURL: URL? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "avatars.githubusercontent.com"
+        components.path = "/\(login)"
+        components.queryItems = [URLQueryItem(name: "size", value: "64")]
+        return components.url
+    }
+}
+
+enum RepositoryForgeAccountSelection {
+    static func updating(
+        _ binding: ForgeRepositoryBinding,
+        preferredAccount: ForgeAccountID
+    ) throws -> ForgeRepositoryBinding {
+        try ForgeRepositoryBinding(
+            localRemoteName: binding.localRemoteName,
+            primaryRepository: binding.primaryRepository,
+            preferredAccount: preferredAccount
+        )
+    }
+}
+
+enum RepositoryForgeAccountsPreferencesRouting {
+    static let selectedPaneDefaultsKey = "PBGitXPreferenceViewIdentifier"
+    static let accountsPaneIdentifier = "Accounts"
+
+    static func prepare() {
+        UserDefaults.standard.set(accountsPaneIdentifier, forKey: selectedPaneDefaultsKey)
+    }
+}
+
 struct RepositoryForgeDiagnosticDetails: Equatable, Sendable {
     let title: String
     let message: String

@@ -4072,6 +4072,11 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([PBMilestone3ProductCoverageHarness collaborationCloseLifecycleProofWithRepository:self.repository]);
 }
 
+- (void)testMilestone3ShippedRepositoryForgeViewStatePersistsAcrossControllerRecreation
+{
+	XCTAssertTrue([PBMilestone3ProductCoverageHarness repositoryForgeViewStateProofWithRepository:self.repository]);
+}
+
 - (void)testMilestone2ShippedCompositionCoverageProofs
 {
 	XCTAssertEqual([PBMilestone2CompositionCoverageHarness synchronousProof], (uint64_t)0b111);

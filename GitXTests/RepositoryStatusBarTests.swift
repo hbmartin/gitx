@@ -6,6 +6,70 @@ import XCTest
 final class RepositoryStatusBarTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 2_000_000)
 
+    func testContextualForgeAccountPresentationSeparatesIdentityFromPersistentFailureMirroring() {
+        let authenticated = RepositoryForgeAccountControlPresentation(
+            providerName: "GitHub",
+            login: "hbmartin",
+            isPublic: false,
+            persistentFailureText: "Forge Unavailable",
+            isStatusBarVisible: false
+        )
+        XCTAssertEqual(authenticated.title, "@hbmartin")
+        XCTAssertEqual(authenticated.avatarInitials, "HB")
+        XCTAssertEqual(authenticated.accessibilityLabel, "GitHub account, hbmartin")
+        XCTAssertTrue(authenticated.showsPersistentFailure)
+
+        let visibleStatusBar = RepositoryForgeAccountControlPresentation(
+            providerName: "GitHub",
+            login: nil,
+            isPublic: true,
+            persistentFailureText: "Forge Unavailable",
+            isStatusBarVisible: true
+        )
+        XCTAssertEqual(visibleStatusBar.title, "Public")
+        XCTAssertEqual(visibleStatusBar.avatarInitials, "P")
+        XCTAssertFalse(visibleStatusBar.showsPersistentFailure)
+    }
+
+    func testContextualForgeAccountRoutesDeterministicallyToAccountsPreferences() {
+        let defaults = UserDefaults.standard
+        let key = RepositoryForgeAccountsPreferencesRouting.selectedPaneDefaultsKey
+        let original = defaults.object(forKey: key)
+        defer {
+            if let original {
+                defaults.set(original, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+        defaults.set("Diff & Text", forKey: key)
+
+        RepositoryForgeAccountsPreferencesRouting.prepare()
+
+        XCTAssertEqual(defaults.string(forKey: key), RepositoryForgeAccountsPreferencesRouting.accountsPaneIdentifier)
+    }
+
+    func testContextualForgeAccountSelectionPreservesBindingAndChangesOnlyPreferredAccount() throws {
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let original = try ForgeAccountID(forge: forge, value: "original")
+        let replacement = try ForgeAccountID(forge: forge, value: "replacement")
+        let binding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: original
+        )
+
+        let updated = try RepositoryForgeAccountSelection.updating(
+            binding,
+            preferredAccount: replacement
+        )
+
+        XCTAssertEqual(updated.localRemoteName, "origin")
+        XCTAssertEqual(updated.primaryRepository, repository)
+        XCTAssertEqual(updated.preferredAccount, replacement)
+    }
+
     func testPorcelainParserCoversBranchDivergenceEveryWorkingStateAndRenameContinuation() {
         let records = [
             "# branch.oid 0123456789abcdef",
@@ -384,27 +448,54 @@ final class RepositoryStatusBarTests: XCTestCase {
         let windowController = PBGitWindowController(window: NSWindow())
         let toolbar = PBRepositoryToolbarController(windowController: windowController)
         toolbar.install()
+        let installedToolbar = try XCTUnwrap(windowController.window?.toolbar)
+        if let accountIndex = installedToolbar.items.firstIndex(where: {
+            $0.itemIdentifier == NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount")
+        }) {
+            installedToolbar.removeItem(at: accountIndex)
+        }
+        XCTAssertFalse(installedToolbar.items.contains {
+            $0.itemIdentifier == NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount")
+        })
         controller.updateForge(statusInput(diagnostic: .unavailable(.sessionDisabled)))
         toolbar.updateForgeDiagnostic(
             persistentFailureText: controller.currentForgePresentation.toolbarPersistentFailureText,
             statusBarVisible: false
         )
-        let item: NSToolbarItem = try XCTUnwrap(toolbar.toolbar(
-            XCTUnwrap(windowController.window?.toolbar),
+        XCTAssertTrue(
+            installedToolbar.items.contains {
+                $0.itemIdentifier == NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount")
+            },
+            "A customized or legacy toolbar must regain the Forge control while it mirrors a persistent failure"
+        )
+        let statusItem: NSToolbarItem = try XCTUnwrap(toolbar.toolbar(
+            installedToolbar,
             itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.RefreshStatus"),
             willBeInsertedIntoToolbar: true
         ))
-        let stack = try XCTUnwrap(item.view as? NSStackView)
-        let label = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSTextField }.first)
-        let warning = try XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? NSButton }.first {
+        let statusStack = try XCTUnwrap(statusItem.view as? NSStackView)
+        let label = try XCTUnwrap(statusStack.arrangedSubviews.compactMap { $0 as? NSTextField }.first)
+        let accountItem = try XCTUnwrap(installedToolbar.items.first {
+            $0.itemIdentifier == NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount")
+        })
+        let accountStack = try XCTUnwrap(accountItem.view as? NSStackView)
+        let warning = try XCTUnwrap(accountStack.arrangedSubviews.compactMap { $0 as? NSButton }.first {
             $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeWarning"
         })
 
         XCTAssertEqual(label.stringValue, "Ready", "A Forge warning must not replace repository activity text")
+        XCTAssertNil(statusStack.arrangedSubviews.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeWarning"
+        })
         XCTAssertFalse(warning.isHidden)
         XCTAssertEqual(warning.action, NSSelectorFromString("showForgeStatusDetails:"))
         XCTAssertTrue(warning.target === windowController)
         XCTAssertTrue(warning.toolTip?.contains("Show Details") == true)
+        windowController.window?.setContentSize(NSSize(width: 760, height: 180))
+        windowController.window?.layoutIfNeeded()
+        if let frameView = windowController.window?.contentView?.superview {
+            try attachScreenshot(of: frameView, named: "Milestone 1 - Toolbar Forge Persistent Failure Mirror")
+        }
 
         toolbar.updateForgeDiagnostic(
             persistentFailureText: controller.currentForgePresentation.toolbarPersistentFailureText,

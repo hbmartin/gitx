@@ -8,9 +8,12 @@ import OSLog
 
 @objc(PBRepositoryUISettings)
 // swift6-safety-justification: the shared lock serializes every preferences access; remaining state is immutable.
-final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable {
+final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable, RepositoryForgeViewStateStoring {
     private static let defaultsKey = "PBRepositoryUISettings"
     private static let forgeRepositoryBindingKey = "forgeRepositoryBinding"
+    private static let forgePullRequestsViewStateKey = "forgePullRequestsViewState"
+    private static let forgeIssuesViewStateKey = "forgeIssuesViewState"
+    private static let forgeAttentionViewStateKey = "forgeAttentionViewState"
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryViewState")
     private let repositoryKey: String
 
@@ -95,6 +98,67 @@ final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable {
             } catch {
                 Self.logger.error("Could not encode the Forge Repository Binding")
             }
+        }
+    }
+
+    func forgeReadSurfaceViewState(for kind: ForgeReadSurfaceKind) -> RepositoryForgeReadSurfaceViewState {
+        let key = switch kind {
+        case .pullRequests: Self.forgePullRequestsViewStateKey
+        case .issues: Self.forgeIssuesViewStateKey
+        }
+        let state: RepositoryForgeReadSurfaceViewState = decodedValue(
+            for: key,
+            fallback: .defaultValue
+        )
+        return state.validated(for: kind)
+    }
+
+    func setForgeReadSurfaceViewState(
+        _ state: RepositoryForgeReadSurfaceViewState,
+        for kind: ForgeReadSurfaceKind
+    ) {
+        let key = switch kind {
+        case .pullRequests: Self.forgePullRequestsViewStateKey
+        case .issues: Self.forgeIssuesViewStateKey
+        }
+        setEncodedValue(state.validated(for: kind), for: key)
+        Self.logger.debug("Saved \(kind.rawValue, privacy: .public) list and inspector view state")
+    }
+
+    var forgeAttentionViewState: RepositoryForgeAttentionViewState {
+        get {
+            let state: RepositoryForgeAttentionViewState = decodedValue(
+                for: Self.forgeAttentionViewStateKey,
+                fallback: .defaultValue
+            )
+            return RepositoryForgeAttentionViewState(
+                query: state.query,
+                selectedItemID: state.selectedItemID,
+                inspectorLayout: state.inspectorLayout,
+                inspectorMode: state.inspectorMode
+            )
+        }
+        set {
+            setEncodedValue(newValue, for: Self.forgeAttentionViewStateKey)
+            Self.logger.debug("Saved Attention list and inspector view state")
+        }
+    }
+
+    private func decodedValue<Value: Decodable>(for key: String, fallback: Value) -> Value {
+        guard let data = value(for: key) as? Data else { return fallback }
+        do {
+            return try JSONDecoder().decode(Value.self, from: data)
+        } catch {
+            Self.logger.error("Ignored invalid persisted repository view state for \(key, privacy: .public)")
+            return fallback
+        }
+    }
+
+    private func setEncodedValue<Value: Encodable>(_ value: Value, for key: String) {
+        do {
+            try setValue(JSONEncoder().encode(value), for: key)
+        } catch {
+            Self.logger.error("Could not encode repository view state for \(key, privacy: .public)")
         }
     }
 
