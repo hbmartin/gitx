@@ -433,6 +433,11 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertEqual(publications.count, 1)
         XCTAssertEqual(publications[0].displayedHead, fixture.newHead)
         XCTAssertEqual(publications[0].anchor, fixture.localAnchor)
+        await XCTAssertThrowsErrorAsync(try await session.confirmReanchor(pending)) {
+            XCTAssertEqual($0 as? ForgeReviewMutationError, .invalidTransition)
+        }
+        let publicationsAfterReplay = await service.inlinePublications()
+        XCTAssertEqual(publicationsAfterReplay.count, 1, "A consumed confirmation must publish exactly once")
         let savedInlineBodies = await drafts.savedBodies()
         let deletedInlineDrafts = await drafts.deleteCount()
         XCTAssertEqual(savedInlineBodies, ["Publish immediately", "Publish immediately"])
@@ -481,6 +486,58 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         )) {
             XCTAssertEqual($0 as? ForgeReviewMutationError, .mismatchedRepository)
         }
+    }
+
+    func testImmediateWriteDestinationsRejectConcurrentDuplicateInlineAndReply() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(
+            workspaces: [workspace],
+            mutationWorkspace: workspace
+        )
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        try await load(session)
+
+        await service.holdNextInlineCall()
+        let context = try fixture.reviewContext(head: fixture.oldHead)
+        let firstInline = Task {
+            try await session.prepareInlinePublication(
+                context: context,
+                anchor: fixture.anchor,
+                bodyMarkdown: "Publish once"
+            )
+        }
+        await service.waitForInlineCalls(1)
+        await XCTAssertThrowsErrorAsync(try await session.prepareInlinePublication(
+            context: context,
+            anchor: fixture.anchor,
+            bodyMarkdown: "Duplicate destination"
+        )) {
+            XCTAssertEqual($0 as? ForgeReviewMutationError, .invalidTransition)
+        }
+        await service.releaseHeldInline()
+        _ = try await firstInline.value
+        let inlinePublications = await service.inlinePublications()
+        XCTAssertEqual(inlinePublications.count, 1)
+
+        await service.holdNextReplyCall()
+        let firstReply = Task {
+            try await session.reply(
+                threadID: fixture.threadID,
+                bodyMarkdown: "Reply once"
+            )
+        }
+        await service.waitForReplyCalls(1)
+        await XCTAssertThrowsErrorAsync(try await session.reply(
+            threadID: fixture.threadID,
+            bodyMarkdown: "Duplicate destination"
+        )) {
+            XCTAssertEqual($0 as? ForgeReviewMutationError, .invalidTransition)
+        }
+        await service.releaseHeldReply()
+        try await firstReply.value
+        let replyPublications = await service.replyPublications()
+        XCTAssertEqual(replyPublications.count, 1)
     }
 
     func testInlineDraftIsDurableBeforeReanchorConfirmation() async throws {
@@ -1204,6 +1261,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertEqual(runner.commands, [
             ["rev-parse", "--verify", "HEAD"],
             ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", fixture.path.value],
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", fixture.path.value],
         ])
 
         let dirtyRunner = AtomicSuggestedChangeGitRunner(
@@ -1217,6 +1275,80 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await XCTAssertThrowsErrorAsync(try await dirty.applySuggestedChange(fixture.suggestedChange)) {
             XCTAssertEqual($0 as? ForgeReviewMutationError, .uncommittedTargetFile)
         }
+    }
+
+    func testProductionSuggestedChangeServiceDoesNotOverwriteExternalEditBeforeReplacement() async throws {
+        let fixture = try ReviewAppFixture()
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = temporaryDirectory.appendingPathComponent(fixture.path.value)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+        try Data("before\nlet old = true\nafter\n".utf8).write(to: fileURL)
+        let externallyEditedContents = "before\nlet editor = true\nafter\n"
+        let runner = AtomicSuggestedChangeGitRunner(head: fixture.oldHead, status: "")
+        let local = RepositoryPullRequestLocalReviewService(
+            runner: runner,
+            workingDirectory: temporaryDirectory,
+            beforeSuggestedChangeReplacement: {
+                try Data(externallyEditedContents.utf8).write(to: fileURL, options: .atomic)
+            }
+        )
+
+        await XCTAssertThrowsErrorAsync(try await local.applySuggestedChange(fixture.suggestedChange)) {
+            self.assertUnsafeLocalEdit($0)
+        }
+
+        XCTAssertEqual(
+            try String(contentsOf: fileURL, encoding: .utf8),
+            externallyEditedContents
+        )
+        XCTAssertEqual(runner.commands, [
+            ["rev-parse", "--verify", "HEAD"],
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", fixture.path.value],
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", fixture.path.value],
+        ])
+    }
+
+    func testProductionSuggestedChangeServiceRejectsPathThatBecomesDirtyAtReplacementHook() async throws {
+        let fixture = try ReviewAppFixture()
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let fileURL = temporaryDirectory.appendingPathComponent(fixture.path.value)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+        let original = "before\nlet old = true\nafter\n"
+        try Data(original.utf8).write(to: fileURL)
+        let runner = AtomicSuggestedChangeGitRunner(
+            head: fixture.oldHead,
+            statuses: ["", " M \(fixture.path.value)\0"],
+            requiresHookBeforeFinalStatus: true
+        )
+        let local = RepositoryPullRequestLocalReviewService(
+            runner: runner,
+            workingDirectory: temporaryDirectory,
+            beforeSuggestedChangeReplacement: {
+                runner.markReplacementHookReached()
+            }
+        )
+
+        await XCTAssertThrowsErrorAsync(try await local.applySuggestedChange(fixture.suggestedChange)) {
+            XCTAssertEqual($0 as? ForgeReviewMutationError, .uncommittedTargetFile)
+        }
+
+        XCTAssertTrue(runner.replacementHookWasReached)
+        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), original)
+        XCTAssertEqual(runner.commands, [
+            ["rev-parse", "--verify", "HEAD"],
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", fixture.path.value],
+            ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", fixture.path.value],
+        ])
     }
 
     func testProductionSuggestedChangeServiceRejectsTargetAndAncestorSymlinksBeforeReadOrWrite() async throws {
@@ -1309,6 +1441,64 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         var isDirectory: ObjCBool = false
         XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory))
         XCTAssertTrue(isDirectory.boolValue)
+    }
+
+    func testUpdateBranchRequiresFreshConfirmationAndRejectsChangedHead() async throws {
+        let fixture = try ReviewAppFixture()
+        let initial = try fixture.workspace(canUpdateBranch: true)
+        let fresh = try fixture.workspace(canUpdateBranch: true)
+        let service = FakeReviewMutationService(
+            workspaces: [initial, fresh],
+            mutationWorkspace: fresh
+        )
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        try await load(session)
+
+        let confirmation = try await session.prepareUpdateBranch()
+        XCTAssertEqual(confirmation.identity, fixture.identity)
+        XCTAssertEqual(confirmation.head, fixture.oldHead)
+        XCTAssertEqual(confirmation.base, fixture.base.commit)
+        try await session.confirmUpdateBranch(confirmation)
+        let lifecycleActions = await service.lifecycleActions()
+        let freshLoadCalls = await service.loadCalls()
+        XCTAssertEqual(lifecycleActions, [.updateBranch])
+        XCTAssertEqual(freshLoadCalls, 2, "Preparation must refetch before showing confirmation")
+
+        let changed = try fixture.workspace(head: fixture.newHead, canUpdateBranch: true)
+        let staleService = FakeReviewMutationService(
+            workspaces: [initial, fresh, changed],
+            mutationWorkspace: changed
+        )
+        let staleSession = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: staleService
+        )
+        try await load(staleSession)
+        let staleConfirmation = try await staleSession.prepareUpdateBranch()
+        staleSession.load()
+        try await waitForWorkspace(staleSession, state: .open)
+        await XCTAssertThrowsErrorAsync(try await staleSession.confirmUpdateBranch(staleConfirmation)) {
+            XCTAssertEqual($0 as? RepositoryPullRequestReviewServiceError, .stalePullRequest)
+        }
+        let staleLifecycleActions = await staleService.lifecycleActions()
+        XCTAssertTrue(staleLifecycleActions.isEmpty)
+    }
+
+    func testUpdateBranchFreshPreparationFailsClosedWhenServerRemovesEligibility() async throws {
+        let fixture = try ReviewAppFixture()
+        let initial = try fixture.workspace(canUpdateBranch: true)
+        let noLongerBehind = try fixture.workspace(canUpdateBranch: false)
+        let service = FakeReviewMutationService(workspaces: [initial, noLongerBehind])
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        try await load(session)
+
+        await XCTAssertThrowsErrorAsync(try await session.prepareUpdateBranch()) { error in
+            guard case .authoritative = error as? RepositoryPullRequestReviewServiceError else {
+                return XCTFail("Expected an authoritative fresh eligibility failure")
+            }
+        }
+        let lifecycleActions = await service.lifecycleActions()
+        XCTAssertTrue(lifecycleActions.isEmpty)
     }
 
     func testLifecycleQueueDeleteAndPostMergeActionsStaySeparateAndExplicit() async throws {
@@ -1459,7 +1649,8 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         let service = FakeReviewMutationService(
             workspaces: [open],
             mutationWorkspace: merged,
-            freshMergeSnapshots: [snapshot, snapshot]
+            freshMergeSnapshots: [snapshot, snapshot],
+            deletionError: .authoritative("Protected after merge")
         )
         let preferences = FakeMutationPreferences()
         let session = RepositoryPullRequestReviewSession(
@@ -1470,7 +1661,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         try await load(session)
 
         let confirmation = try await session.prepareMerge(method: .squash)
-        try await session.confirmMerge(
+        let completion = try await session.confirmMerge(
             confirmation,
             title: "Squashed title",
             message: "Squashed message",
@@ -1481,11 +1672,18 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         let preferredMethods = await preferences.mergeMethods()
         let deleteChoices = await preferences.deleteChoices()
         let deletionRequests = await service.deletionRequests()
+        let deletionPreflights = await service.freshDeletionCallCount()
         XCTAssertEqual(freshMergeCalls, 2)
         XCTAssertEqual(mergeRequests.first?.confirmation.method, .squash)
         XCTAssertEqual(preferredMethods, [.squash])
         XCTAssertEqual(deleteChoices, [true])
-        XCTAssertTrue(deletionRequests.isEmpty, "Merge and branch deletion are distinct mutations")
+        XCTAssertEqual(deletionRequests.count, 1, "Checked direct-merge choice dispatches one separate deletion")
+        XCTAssertEqual(deletionPreflights, 1)
+        XCTAssertEqual(
+            completion,
+            .mergedWithHeadBranchDeletionFailure("Protected after merge")
+        )
+        XCTAssertEqual(session.workspace?.mutationContext.state, .merged, "Deletion failure cannot undo merge")
 
         let changedSnapshot = try fixture.workspace(head: fixture.newHead).mergeSnapshot
         let racingService = FakeReviewMutationService(
@@ -1529,6 +1727,47 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await unknownService.waitForLoadCalls(2)
         let unknownMergeRequests = await unknownService.mergeRequests()
         XCTAssertEqual(unknownMergeRequests.count, 1, "Unknown outcomes are never retried")
+    }
+
+    func testDirectMergeEligibleDeleteChoiceDeletesSeparatelyWhileUncheckedChoiceDoesNot() async throws {
+        let fixture = try ReviewAppFixture()
+        let open = try fixture.workspace(deletion: true)
+        let merged = try fixture.workspace(state: .merged, deletion: true)
+        let deletingService = FakeReviewMutationService(
+            workspaces: [open],
+            mutationWorkspace: merged,
+            freshMergeSnapshots: [open.mergeSnapshot, open.mergeSnapshot]
+        )
+        let deleting = RepositoryPullRequestReviewSession(identity: fixture.identity, service: deletingService)
+        try await load(deleting)
+        let deletingConfirmation = try await deleting.prepareMerge(method: .merge)
+        let deletingCompletion = try await deleting.confirmMerge(
+            deletingConfirmation,
+            title: "Merge",
+            message: "",
+            deleteHeadBranchChoice: true
+        )
+        XCTAssertEqual(deletingCompletion, .mergedAndDeletedHeadBranch)
+        let directDeletions = await deletingService.deletionRequests()
+        XCTAssertEqual(directDeletions.count, 1)
+
+        let keepingService = FakeReviewMutationService(
+            workspaces: [open],
+            mutationWorkspace: merged,
+            freshMergeSnapshots: [open.mergeSnapshot, open.mergeSnapshot]
+        )
+        let keeping = RepositoryPullRequestReviewSession(identity: fixture.identity, service: keepingService)
+        try await load(keeping)
+        let keepingConfirmation = try await keeping.prepareMerge(method: .merge)
+        let keepingCompletion = try await keeping.confirmMerge(
+            keepingConfirmation,
+            title: "Merge",
+            message: "",
+            deleteHeadBranchChoice: false
+        )
+        XCTAssertEqual(keepingCompletion, .merged)
+        let uncheckedDeletions = await keepingService.deletionRequests()
+        XCTAssertTrue(uncheckedDeletions.isEmpty)
     }
 
     private func load(_ session: RepositoryPullRequestReviewSession) async throws {
@@ -1826,7 +2065,11 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     private var heldLoad: CheckedContinuation<Void, Never>?
     private var loadWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var inlineValues: [ForgeInlineReviewPublication] = []
+    private var shouldHoldNextInline = false
+    private var heldInline: CheckedContinuation<Void, Never>?
     private var replyValues: [ForgeReviewThreadReplyPublication] = []
+    private var shouldHoldNextReply = false
+    private var heldReply: CheckedContinuation<Void, Never>?
     private var replyWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var formalValues: [ForgeFormalReviewSubmission] = []
     private var resolutionValues: [ForgeReviewThreadResolutionMutation] = []
@@ -1889,6 +2132,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     ) async throws -> RepositoryPullRequestReviewWorkspace {
         inlineValues.append(publication)
         resumeWaiters(&inlineWaiters, count: inlineValues.count)
+        if shouldHoldNextInline {
+            shouldHoldNextInline = false
+            await withCheckedContinuation { heldInline = $0 }
+        }
         return try resultWorkspace()
     }
 
@@ -1897,6 +2144,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     ) async throws -> RepositoryPullRequestReviewWorkspace {
         replyValues.append(publication)
         resumeWaiters(&replyWaiters, count: replyValues.count)
+        if shouldHoldNextReply {
+            shouldHoldNextReply = false
+            await withCheckedContinuation { heldReply = $0 }
+        }
         return try resultWorkspace()
     }
 
@@ -2039,6 +2290,24 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
 
     func holdNextLoadCall() {
         shouldHoldNextLoad = true
+    }
+
+    func holdNextInlineCall() {
+        shouldHoldNextInline = true
+    }
+
+    func releaseHeldInline() {
+        heldInline?.resume()
+        heldInline = nil
+    }
+
+    func holdNextReplyCall() {
+        shouldHoldNextReply = true
+    }
+
+    func releaseHeldReply() {
+        heldReply?.resume()
+        heldReply = nil
     }
 
     func releaseHeldLoad() {
@@ -2406,12 +2675,25 @@ private final class AtomicSuggestedChangeGitRunner: RepositoryPullRequestGitComm
 {
     private let lock = NSLock()
     private let head: ForgeCommitID
-    private let status: String
+    private var statuses: [String]
+    private let requiresHookBeforeFinalStatus: Bool
+    private var didReachReplacementHook = false
     private var recordedCommands: [[String]] = []
 
     init(head: ForgeCommitID, status: String) {
         self.head = head
-        self.status = status
+        statuses = [status, status]
+        requiresHookBeforeFinalStatus = false
+    }
+
+    init(
+        head: ForgeCommitID,
+        statuses: [String],
+        requiresHookBeforeFinalStatus: Bool = false
+    ) {
+        self.head = head
+        self.statuses = statuses
+        self.requiresHookBeforeFinalStatus = requiresHookBeforeFinalStatus
     }
 
     var commands: [[String]] {
@@ -2420,16 +2702,37 @@ private final class AtomicSuggestedChangeGitRunner: RepositoryPullRequestGitComm
         return recordedCommands
     }
 
+    var replacementHookWasReached: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return didReachReplacementHook
+    }
+
+    func markReplacementHookReached() {
+        lock.lock()
+        didReachReplacementHook = true
+        lock.unlock()
+    }
+
     func run(_ arguments: [String]) throws -> String {
         lock.lock()
         recordedCommands.append(arguments)
-        lock.unlock()
         switch arguments.first {
         case "rev-parse":
+            lock.unlock()
             return head.value
         case "status":
+            guard !statuses.isEmpty,
+                  !requiresHookBeforeFinalStatus || statuses.count > 1 || didReachReplacementHook
+            else {
+                lock.unlock()
+                throw RepositoryPullRequestReviewServiceError.unavailable
+            }
+            let status = statuses.removeFirst()
+            lock.unlock()
             return status
         default:
+            lock.unlock()
             throw RepositoryPullRequestReviewServiceError.unavailable
         }
     }

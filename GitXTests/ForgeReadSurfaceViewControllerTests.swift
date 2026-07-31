@@ -776,6 +776,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             patch: "diff --git a/file b/file\n+native",
             cacheIdentifier: "local-pr-42"
         ))
+        let reviewOverlayHost = RecordingReviewOverlayHost()
         var edited: ForgePullRequestEditableSnapshot?
         var checkedOut: ForgePullRequestSummary?
         let controller = try ForgeReadSurfaceViewController(
@@ -786,6 +787,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             avatarRenderer: RecordingAvatarRenderer(),
             destinationRouter: RecordingDestinationRouter(),
             pullRequestChangesProvider: provider,
+            reviewOverlayHost: reviewOverlayHost,
             editPullRequestControl: .capability(
                 .verified(.knownAuthority),
                 action: "edit this Pull Request"
@@ -819,6 +821,13 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         await settleMainActor()
         let changes = try XCTUnwrap(descendant(identifier: "GitX.PullRequest.LocalChanges", in: controller.view))
         XCTAssertEqual(changes.accessibilityIdentifier(), "GitX.PullRequest.LocalChanges")
+        XCTAssertGreaterThanOrEqual(reviewOverlayHost.actionPullRequests.count, 2)
+        XCTAssertTrue(reviewOverlayHost.actionPullRequests.allSatisfy { $0 == summary })
+        XCTAssertEqual(reviewOverlayHost.installations.count, 1)
+        XCTAssertTrue(reviewOverlayHost.installations[0].view === changes)
+        XCTAssertEqual(reviewOverlayHost.installations[0].pullRequest, summary)
+        XCTAssertEqual(reviewOverlayHost.installations[0].diff.cacheIdentifier, "local-pr-42")
+        XCTAssertGreaterThanOrEqual(reviewOverlayHost.detachCount, 3)
         try attachScreenshot(of: window, named: "GitHub Pull Request local Changes inspector")
     }
 
@@ -1231,6 +1240,40 @@ private final class RecordingDestinationRouter: ForgeReadDestinationRouting {
 
     func openInBrowser(destination: ForgeDestination) {
         browserDestinations.append(destination)
+    }
+}
+
+@MainActor
+private final class RecordingReviewOverlayHost: RepositoryPullRequestReviewOverlayHosting {
+    typealias Installation = (
+        view: PBNativeContentView,
+        pullRequest: ForgePullRequestSummary,
+        diff: RepositoryLocalPullRequestDiff
+    )
+
+    var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)?
+    private(set) var actionPullRequests: [ForgePullRequestSummary] = []
+    private(set) var installations: [Installation] = []
+    private(set) var detachCount = 0
+    private let actionArea = NSView()
+
+    func actionView(for pullRequest: ForgePullRequestSummary) -> NSView {
+        actionPullRequests.append(pullRequest)
+        actionArea.setAccessibilityIdentifier("GitX.PullRequest.ReviewActions")
+        return actionArea
+    }
+
+    func install(
+        in nativeDiffView: PBNativeContentView,
+        pullRequest: ForgePullRequestSummary,
+        diff: RepositoryLocalPullRequestDiff
+    ) {
+        installations.append((nativeDiffView, pullRequest, diff))
+    }
+
+    func detach() {
+        detachCount += 1
+        actionArea.removeFromSuperview()
     }
 }
 

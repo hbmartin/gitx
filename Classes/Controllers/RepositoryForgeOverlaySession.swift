@@ -148,7 +148,7 @@ actor GitHubAnonymousRepositoryForgeOverlayReader: RepositoryForgeOverlayReading
     init(
         repository: ForgeRepositoryIdentity,
         adapter: any GitHubAnonymousRepositoryReading
-    ) {
+    ) async {
         self.repository = repository
         self.adapter = adapter
     }
@@ -242,7 +242,8 @@ nonisolated protocol RepositoryForgeOverlayCaching: Sendable {
     func putHistoryOverlay(_ snapshot: RepositoryForgeRemoteSnapshot<ForgeHistoryOverlay>) async throws
 }
 
-actor SQLiteRepositoryForgeOverlayCache: RepositoryForgeOverlayCaching {
+/// Stateless value wrapper; ForgeSQLiteStore remains the serialization owner.
+nonisolated struct SQLiteRepositoryForgeOverlayCache: RepositoryForgeOverlayCaching {
     private let database: ForgeSQLiteStore
     private let partition: ForgeRepositoryPartitionKey
 
@@ -450,7 +451,7 @@ actor RepositoryForgeOverlayLoader {
                 let preparedContext = RepositoryForgeOverlayContext(
                     access: .publicAccess,
                     authentication: .publicAccess,
-                    reader: GitHubAnonymousRepositoryForgeOverlayReader(
+                    reader: await GitHubAnonymousRepositoryForgeOverlayReader(
                         repository: repository,
                         adapter: adapter
                     ),

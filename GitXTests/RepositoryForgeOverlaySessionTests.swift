@@ -454,7 +454,7 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
             facts: anonymousResult(facts(description: "Public")),
             pullRequests: anonymousResult(pullRequests)
         )
-        let reader = GitHubAnonymousRepositoryForgeOverlayReader(
+        let reader = await GitHubAnonymousRepositoryForgeOverlayReader(
             repository: repository,
             adapter: adapter
         )
@@ -483,7 +483,10 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
             facts: anonymousResult(facts(description: "Public facts")),
             pullRequests: anonymousResult(ForgePage(items: [pullRequest(number: 43, commit: commit)]))
         )
-        let reader = GitHubAnonymousRepositoryForgeOverlayReader(repository: repository, adapter: adapter)
+        let reader = await GitHubAnonymousRepositoryForgeOverlayReader(
+            repository: repository,
+            adapter: adapter
+        )
         let firstRequest = RepositoryForgeOverlayRemoteRequest(reason: .repositoryOpened, cycle: 1)
         let factsSnapshot = try await reader.repositoryFacts(request: firstRequest)
         XCTAssertEqual(factsSnapshot.value.description, .available("Public facts"))
@@ -508,7 +511,7 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
                 partitionRepository: wrongRepository
             )
         )
-        let wrongPartitionReader = GitHubAnonymousRepositoryForgeOverlayReader(
+        let wrongPartitionReader = await GitHubAnonymousRepositoryForgeOverlayReader(
             repository: repository,
             adapter: wrongPartitionAdapter
         )

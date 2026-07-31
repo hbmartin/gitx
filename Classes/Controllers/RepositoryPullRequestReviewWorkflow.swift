@@ -214,6 +214,12 @@ nonisolated enum RepositoryPullRequestHeadDeletionOfferPolicy {
     }
 }
 
+nonisolated enum RepositoryPullRequestMergeCompletion: Equatable, Sendable {
+    case merged
+    case mergedAndDeletedHeadBranch
+    case mergedWithHeadBranchDeletionFailure(String)
+}
+
 // MARK: - Mutation, draft, local Git, and preferences boundaries
 
 nonisolated enum RepositoryPullRequestReviewServiceError: Error, Equatable, LocalizedError, Sendable {
@@ -431,8 +437,9 @@ nonisolated protocol RepositoryPullRequestLocalReviewServing: Sendable {
     func filesWithUncommittedEdits() async throws -> Set<ForgeFilePath>
     func contents(of path: ForgeFilePath) async throws -> String
     func writeUnstaged(contents: String, to path: ForgeFilePath) async throws
-    /// Revalidates checkout, dirty-file state, and file contents immediately
-    /// before one write so the safety preflight cannot race a local edit.
+    /// Revalidates checkout and dirty-file state, then compares the exact file
+    /// bytes again immediately before one replacement so a changed target
+    /// fails closed.
     func applySuggestedChange(_ change: ForgeSuggestedChange) async throws
     func fetchBase(_ base: ForgeBranchReference) async throws
     func checkOutBase(_ base: ForgeBranchReference) async throws
@@ -555,6 +562,7 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
     private let workingDirectory: URL?
     private let binding: ForgeRepositoryBinding?
     private let currentBinding: @Sendable () -> ForgeRepositoryBinding?
+    private let beforeSuggestedChangeReplacement: (@Sendable () throws -> Void)?
 
     init(repository: PBGitRepository) {
         runner = RepositoryPullRequestObjectiveGitRunner(repository: repository)
@@ -563,6 +571,7 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
             .standardizedFileURL
         binding = nil
         currentBinding = { nil }
+        beforeSuggestedChangeReplacement = nil
     }
 
     init(
@@ -576,13 +585,15 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
             .standardizedFileURL
         self.binding = binding
         self.currentBinding = currentBinding ?? { binding }
+        beforeSuggestedChangeReplacement = nil
     }
 
     init(
         runner: any RepositoryPullRequestGitCommandRunning,
         workingDirectory: URL?,
         binding: ForgeRepositoryBinding? = nil,
-        currentBinding: (@Sendable () -> ForgeRepositoryBinding?)? = nil
+        currentBinding: (@Sendable () -> ForgeRepositoryBinding?)? = nil,
+        beforeSuggestedChangeReplacement: (@Sendable () throws -> Void)? = nil
     ) {
         self.runner = runner
         self.workingDirectory = workingDirectory?
@@ -590,6 +601,7 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
             .standardizedFileURL
         self.binding = binding
         self.currentBinding = currentBinding ?? { binding }
+        self.beforeSuggestedChangeReplacement = beforeSuggestedChangeReplacement
     }
 
     func reanchorCandidates(
@@ -639,7 +651,7 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
     }
 
     func contents(of path: ForgeFilePath) async throws -> String {
-        try String(contentsOf: regularFileURL(for: path), encoding: .utf8)
+        try regularFileContents(for: path).text
     }
 
     func writeUnstaged(contents: String, to path: ForgeFilePath) async throws {
@@ -652,16 +664,28 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
         let status = try runner.run([
             "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", change.path.value,
         ])
-        let currentContents = try await contents(of: change.path)
+        let currentContents = try regularFileContents(for: change.path)
         switch ForgeSuggestedChangePolicy.decision(
             change: change,
             checkedOutHead: selectedHead,
             filesWithUncommittedEdits: status.isEmpty ? [] : [change.path],
-            currentContents: currentContents
+            currentContents: currentContents.text
         ) {
         case let .apply(updatedContents):
             try validateCurrentBindingIfConfigured()
-            try await writeUnstaged(contents: updatedContents, to: change.path)
+            try beforeSuggestedChangeReplacement?()
+            try validateCurrentBindingIfConfigured()
+            let finalStatus = try runner.run([
+                "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", change.path.value,
+            ])
+            guard finalStatus.isEmpty else {
+                throw ForgeReviewMutationError.uncommittedTargetFile
+            }
+            try replaceUnchangedFile(
+                at: change.path,
+                expectedContents: currentContents.data,
+                with: Data(updatedContents.utf8)
+            )
         case let .unavailable(error):
             throw error
         }
@@ -735,6 +759,29 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
         if let binding, currentBinding() != binding {
             throw RepositoryPullRequestReviewServiceError.invalidWorkspace
         }
+    }
+
+    private func regularFileContents(for path: ForgeFilePath) throws -> (data: Data, text: String) {
+        let data = try Data(contentsOf: regularFileURL(for: path))
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        return (data, text)
+    }
+
+    /// Foundation does not expose an atomic compare-and-swap replacement for
+    /// regular files. Keep the exact byte comparison adjacent to the atomic
+    /// replacement so any edit observed after validation fails closed.
+    private func replaceUnchangedFile(
+        at path: ForgeFilePath,
+        expectedContents: Data,
+        with updatedContents: Data
+    ) throws {
+        let fileURL = try regularFileURL(for: path)
+        guard try Data(contentsOf: fileURL) == expectedContents else {
+            throw RepositoryPullRequestReviewServiceError.unsafeLocalEdit
+        }
+        try updatedContents.write(to: fileURL, options: .atomic)
     }
 
     private func commit(at reference: String) throws -> ForgeCommitID? {
@@ -1042,6 +1089,11 @@ nonisolated enum RepositoryPullRequestMutationUnavailablePresenter {
 
 @MainActor
 final class RepositoryPullRequestReviewSession {
+    private enum ImmediateWriteDestination: Hashable {
+        case inline(context: ForgeReviewContext, anchor: ForgeReviewAnchor)
+        case reply(threadID: ForgeObjectID)
+    }
+
     enum State: Equatable {
         case idle
         case loading
@@ -1058,6 +1110,13 @@ final class RepositoryPullRequestReviewSession {
         var proposedAnchor: ForgeReviewAnchor {
             confirmation.anchor
         }
+    }
+
+    struct UpdateBranchConfirmation: Hashable, Sendable {
+        let identity: RepositoryPullRequestReviewIdentity
+        let head: ForgeCommitID
+        let base: ForgeCommitID
+        let updatedAt: Date
     }
 
     private(set) var state: State = .idle {
@@ -1086,6 +1145,9 @@ final class RepositoryPullRequestReviewSession {
     /// submission retain this value even if a background refresh installs a
     /// newer workspace while the sheet remains open.
     private var formalReviewDisplayedHead: ForgeCommitID?
+    private var reanchorsInFlight: Set<PendingReanchor> = []
+    private var consumedReanchors: Set<PendingReanchor> = []
+    private var immediateWritesInFlight: Set<ImmediateWriteDestination> = []
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestReview")
 
     init(
@@ -1172,6 +1234,11 @@ final class RepositoryPullRequestReviewSession {
             throw ForgeReviewMutationError.truncatedAnchor
         }
         _ = try RepositoryPullRequestReviewAnchorPolicy.validateInlineAnchor(anchor, context: context)
+        let destination = ImmediateWriteDestination.inline(context: context, anchor: anchor)
+        guard immediateWritesInFlight.insert(destination).inserted else {
+            throw ForgeReviewMutationError.invalidTransition
+        }
+        defer { immediateWritesInFlight.remove(destination) }
         let publication = try ForgeInlineReviewPublication(
             accountID: identity.accountID,
             repository: identity.repository,
@@ -1214,6 +1281,11 @@ final class RepositoryPullRequestReviewSession {
     }
 
     func confirmReanchor(_ pending: PendingReanchor) async throws {
+        guard !reanchorsInFlight.contains(pending), !consumedReanchors.contains(pending) else {
+            throw ForgeReviewMutationError.invalidTransition
+        }
+        reanchorsInFlight.insert(pending)
+        defer { reanchorsInFlight.remove(pending) }
         guard let workspace else { throw RepositoryPullRequestReviewServiceError.unavailable }
         try requireFresh(workspace)
         try requireOperation(.publishInlineReviewComment, workspace: workspace)
@@ -1221,6 +1293,7 @@ final class RepositoryPullRequestReviewSession {
         _ = try replacement.validating(currentHead: workspace.displayedHead)
         try await saveInlineDraft(publication: replacement, context: pending.originalContext)
         try await publishInline(replacement, draftContext: pending.originalContext)
+        consumedReanchors.insert(pending)
         try await deletePublishedDraft(identity: inlineDraftIdentity(
             context: pending.originalContext,
             anchor: pending.publication.anchor
@@ -1309,6 +1382,11 @@ final class RepositoryPullRequestReviewSession {
         guard workspace.threads.contains(where: { $0.presentation.thread.id == threadID }) else {
             throw ForgeReviewMutationError.mismatchedPullRequest
         }
+        let destination = ImmediateWriteDestination.reply(threadID: threadID)
+        guard immediateWritesInFlight.insert(destination).inserted else {
+            throw ForgeReviewMutationError.invalidTransition
+        }
+        defer { immediateWritesInFlight.remove(destination) }
         let publication = try ForgeReviewThreadReplyPublication(
             accountID: identity.accountID,
             repository: identity.repository,
@@ -1495,6 +1573,44 @@ final class RepositoryPullRequestReviewSession {
         }
     }
 
+    func prepareUpdateBranch() async throws -> UpdateBranchConfirmation {
+        guard workspace != nil else { throw RepositoryPullRequestReviewServiceError.unavailable }
+        let fresh = try await service.loadWorkspace(identity: identity)
+        try validate(fresh)
+        install(fresh)
+        try requireFresh(fresh)
+        switch ForgePullRequestLifecyclePolicy.decision(
+            context: fresh.mutationContext,
+            action: .updateBranch,
+            canUpdateBranch: fresh.canUpdateBranch
+        ) {
+        case .available:
+            break
+        case let .unavailable(reason):
+            throw RepositoryPullRequestReviewServiceError.authoritative(
+                RepositoryPullRequestMutationUnavailablePresenter.message(reason)
+            )
+        }
+        return UpdateBranchConfirmation(
+            identity: fresh.identity,
+            head: fresh.displayedHead,
+            base: fresh.base.commit,
+            updatedAt: fresh.mutationContext.updatedAt
+        )
+    }
+
+    func confirmUpdateBranch(_ confirmation: UpdateBranchConfirmation) async throws {
+        guard let workspace,
+              workspace.identity == confirmation.identity,
+              workspace.displayedHead == confirmation.head,
+              workspace.base.commit == confirmation.base,
+              workspace.mutationContext.updatedAt == confirmation.updatedAt
+        else {
+            throw RepositoryPullRequestReviewServiceError.stalePullRequest
+        }
+        try await performLifecycle(.updateBranch)
+    }
+
     func preferredMergeMethod() async -> ForgePullRequestMergeMethod? {
         guard let workspace else { return nil }
         return await preferences.preferredMergeMethod(
@@ -1526,9 +1642,11 @@ final class RepositoryPullRequestReviewSession {
         title: String?,
         message: String?,
         deleteHeadBranchChoice: Bool
-    ) async throws {
+    ) async throws -> RepositoryPullRequestMergeCompletion {
         guard let workspace else { throw RepositoryPullRequestReviewServiceError.unavailable }
         try requireFresh(workspace)
+        let deletionChoiceIsEligible = deleteHeadBranchChoice
+            && workspace.canOfferHeadBranchDeletionAfterMerge
         let fresh = try await service.freshMergeSnapshot(identity: identity)
         try validate(fresh)
         _ = try ForgePullRequestMergePolicy.validate(confirmation: confirmation, fresh: fresh)
@@ -1553,6 +1671,15 @@ final class RepositoryPullRequestReviewSession {
         } catch {
             reconcileIfUnknown(error)
             throw error
+        }
+        guard deletionChoiceIsEligible else { return .merged }
+        do {
+            try await deleteHeadBranch()
+            return .mergedAndDeletedHeadBranch
+        } catch {
+            let message = error.localizedDescription
+            logger.error("Merge succeeded, but separate head-branch deletion failed: \(message, privacy: .public)")
+            return .mergedWithHeadBranchDeletionFailure(message)
         }
     }
 

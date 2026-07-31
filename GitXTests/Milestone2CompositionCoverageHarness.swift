@@ -424,6 +424,12 @@
                 .contains(authorization.key))
             let evidenceCleared = try await services.accountStore
                 .credential(for: fixture.accountID)?.authorizationEvidence == nil
+            let reviewProvider = try await reviewDependencyProviderProof(
+                fixture,
+                services: services,
+                provider: provider
+            )
+            let reviewApplicationFactory = try reviewApplicationFactoryProof(fixture)
             let wrongReference = try ForgeCredentialReference(
                 accountID: fixture.accountID,
                 credentialID: ForgeCredentialID("wrong-composition-credential"),
@@ -479,8 +485,127 @@
             return missing && mismatch && capabilityIdentity && eligibilityDidNotPromote
                 && submittedAuthorization && rotationRejected && removalRejected
                 && offline && limited && promoted
-                && nonAuthorizationFailureRetained && denied && evidenceCleared && loaderFailure
+                && nonAuthorizationFailureRetained && denied && evidenceCleared
+                && reviewProvider && reviewApplicationFactory && loaderFailure
                 && rejectedRequest && rejectedMutationAdapter && evidenceMismatch && clearEvidenceMismatch
+        }
+
+        private static func reviewApplicationFactoryProof(
+            _ fixture: CompositionCoverageFixture
+        ) throws -> Bool {
+            let suiteName = "GitX-M3-ReviewComposition-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: suiteName) else {
+                throw CompositionCoverageError.expected
+            }
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let composition = ApplicationComposition(
+                userDefaults: defaults,
+                automaticallyStartsForgeServices: false
+            )
+            let repository = PBGitRepository()
+            let settings = RepositoryUISettings(
+                repository: repository,
+                preferences: composition.applicationPreferences
+            )
+            let unbound = composition.forgePullRequestReviewServices.session(for: repository)
+            let unboundProof = unbound.service is UnavailableRepositoryPullRequestReviewMutationService
+                && unbound.localService is UnavailableRepositoryPullRequestLocalReviewService
+                && unbound.drafts is ForgeLazySQLitePullRequestDraftStore
+                && unbound.preferences is NullRepositoryPullRequestMutationPreferenceStore
+
+            let gitLab = try ForgeIdentity(kind: .gitLab, origin: ForgeOrigin(host: "gitlab.example"))
+            settings.forgeRepositoryBinding = try ForgeRepositoryBinding(
+                localRemoteName: "origin",
+                primaryRepository: ForgeRepositoryIdentity(forge: gitLab, owner: "gitx", name: "gitx")
+            )
+            let unsupported = composition.forgePullRequestReviewServices.session(for: repository)
+            let unsupportedProof = unsupported.service is UnavailableRepositoryPullRequestReviewMutationService
+                && unsupported.localService is UnavailableRepositoryPullRequestLocalReviewService
+                && unsupported.preferences is NullRepositoryPullRequestMutationPreferenceStore
+
+            settings.forgeRepositoryBinding = try ForgeRepositoryBinding(
+                localRemoteName: "origin",
+                primaryRepository: fixture.repository,
+                preferredAccount: fixture.accountID
+            )
+            let bound = composition.forgePullRequestReviewServices.session(for: repository)
+            let boundProof = bound.service is RepositoryPullRequestReviewProductionService
+                && bound.localService is RepositoryPullRequestLocalReviewService
+                && bound.drafts is ForgeLazySQLitePullRequestDraftStore
+                && bound.preferences is RepositoryPullRequestMutationPreferenceStore
+            return unboundProof && unsupportedProof && boundProof
+        }
+
+        private static func reviewDependencyProviderProof(
+            _ fixture: CompositionCoverageFixture,
+            services: ForgeApplicationServices,
+            provider: ForgeGitHubPullRequestDependencyProvider
+        ) async throws -> Bool {
+            try CompositionCoverageURLProtocol.setHTTP(
+                statusCode: 200,
+                headers: ["x-github-request-id": "review-read-proof"],
+                body: repositoryFactsBody()
+            )
+            let requestedOperations: Set<ForgeOperation> = [
+                .publishInlineReviewComment,
+                .submitApproveReview,
+                .mergePullRequest,
+            ]
+            let readContext = try await provider.reviewReadContext(
+                accountID: fixture.accountID,
+                repository: fixture.repository,
+                operations: requestedOperations
+            )
+            let readContextIsExact = readContext.account.id == fixture.accountID
+                && readContext.credential == fixture.credential
+                && readContext.environment == .available
+                && readContext.allowedOperations == requestedOperations
+                && readContext.readAdapter is GitHubReadAdapter
+
+            try CompositionCoverageURLProtocol.setHTTP(
+                statusCode: 200,
+                headers: ["x-github-request-id": "review-mutation-proof"],
+                body: repositoryFactsBody()
+            )
+            let mutationContext = try await provider.reviewMutationContext(
+                accountID: fixture.accountID,
+                repository: fixture.repository,
+                operation: .publishInlineReviewComment
+            )
+            let authorization = mutationContext.authorization
+            let mutationContextIsExact = mutationContext.account.id == fixture.accountID
+                && mutationContext.credential == fixture.credential
+                && authorization.key.credential == fixture.credential
+                && authorization.key.repository == fixture.repository
+                && authorization.key.operation == .publishInlineReviewComment
+                && authorization.explicitConfirmation != nil
+                && mutationContext.readAdapter is GitHubReadAdapter
+                && mutationContext.mutationAdapter is GitHubMutationAdapter
+
+            let success = metadata(statusCode: 200, receivedAt: fixture.now)
+            await provider.recordSuccess(success, context: mutationContext)
+            let promoted = await services.githubMutationState
+                .promotionLedger(for: fixture.account)
+                .contains(authorization.key)
+            await provider.recordFailure(.transportFailure, context: mutationContext)
+            let nonAuthorizationFailureRetained = await services.githubMutationState
+                .promotionLedger(for: fixture.account)
+                .contains(authorization.key)
+            await provider.recordFailure(.permissionDenied(success), context: mutationContext)
+            let denied = !(await services.githubMutationState
+                .promotionLedger(for: fixture.account)
+                .contains(authorization.key))
+            let evidenceCleared = try await services.accountStore
+                .credential(for: fixture.accountID)?.authorizationEvidence == nil
+
+            let failedProvider = ForgeGitHubPullRequestDependencyProvider(
+                loader: ForgeApplicationServiceLoader { throw CompositionCoverageError.expected }
+            )
+            await failedProvider.recordSuccess(success, context: mutationContext)
+            await failedProvider.recordFailure(.transportFailure, context: mutationContext)
+
+            return readContextIsExact && mutationContextIsExact && promoted
+                && nonAuthorizationFailureRetained && denied && evidenceCleared
         }
 
         private static func credentialRotationFreshnessProof(

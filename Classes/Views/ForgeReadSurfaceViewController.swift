@@ -24,22 +24,25 @@ protocol ForgeReadDestinationRouting: AnyObject {
     func openInBrowser(destination: ForgeDestination)
 }
 
-/// M3-neutral bridge between the local-diff authority and review UI. A review
+/// Bridge between the local-diff authority and native review UI. The review
 /// implementation owns its overlay views and reports only an explicitly chosen
-/// local anchor; the M2 renderer never infers or rewrites server anchors.
+/// local anchor; the read renderer never infers or rewrites server anchors.
 @MainActor
 protocol RepositoryPullRequestReviewOverlayHosting: AnyObject {
     /// Reports the exact selected local anchor plus the displayed context and
     /// truncation state needed for fail-closed head-change re-anchoring.
-    // Milestone 3 supplies the overlay host; keep this M2 checkpoint handoff seam explicit.
-    // swiftlint:disable:next unused_declaration
     var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)? { get set }
+
+    /// Returns the reusable lifecycle/review action area for both inspector modes.
+    func actionView(for pullRequest: ForgePullRequestSummary) -> NSView
 
     func install(
         in nativeDiffView: PBNativeContentView,
         pullRequest: ForgePullRequestSummary,
         diff: RepositoryLocalPullRequestDiff
     )
+
+    func detach()
 }
 
 @MainActor
@@ -767,6 +770,7 @@ final class ForgeReadInspectorViewController: NSViewController {
 
     func showPlaceholder(_ message: String) {
         routedDestination = nil
+        reviewOverlayHost?.detach()
         resetContent()
         let label = NSTextField(wrappingLabelWithString: message)
         label.alignment = .center
@@ -777,6 +781,7 @@ final class ForgeReadInspectorViewController: NSViewController {
 
     func showLoading(for row: ForgeReadSurfaceRow) {
         routedDestination = row.destination
+        reviewOverlayHost?.detach()
         resetContent()
         let spinner = NSProgressIndicator()
         spinner.style = .spinning
@@ -794,6 +799,7 @@ final class ForgeReadInspectorViewController: NSViewController {
 
     func showError(_ message: String, item: ForgeRepositoryItem) {
         routedDestination = item.destination
+        reviewOverlayHost?.detach()
         resetContent()
         let title = NSTextField(labelWithString: "Couldn’t load details")
         title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
@@ -810,19 +816,24 @@ final class ForgeReadInspectorViewController: NSViewController {
 
     func apply(_ presentation: ForgeReadInspectorPresentation) {
         changesTask?.cancel()
+        reviewOverlayHost?.detach()
         currentPresentation = presentation
         routedDestination = presentation.item.destination
         resetContent()
 
-        if case .pullRequest = presentation.item, pullRequestChangesProvider != nil {
+        if case let .pullRequest(summary) = presentation.item,
+           pullRequestChangesProvider != nil
+        {
             let control = makePullRequestModeControl()
             contentStack.addArrangedSubview(control)
             pullRequestModeControl = control
+            addReviewActionView(for: summary)
             if control.selectedSegment == 1 {
                 showLocalChanges(for: presentation)
                 return
             }
         } else {
+            reviewOverlayHost?.detach()
             pullRequestModeControl = nil
         }
 
@@ -1067,7 +1078,7 @@ final class ForgeReadInspectorViewController: NSViewController {
                       self.routedDestination == destination,
                       self.pullRequestMode == 1
                 else { return }
-                self.renderLocalChangesError(error.localizedDescription)
+                self.renderLocalChangesError(error.localizedDescription, pullRequest: summary)
             }
         }
     }
@@ -1080,6 +1091,7 @@ final class ForgeReadInspectorViewController: NSViewController {
         let control = makePullRequestModeControl()
         contentStack.addArrangedSubview(control)
         pullRequestModeControl = control
+        addReviewActionView(for: pullRequest)
         let nativeView = PBNativeContentView(frame: .zero)
         nativeView.translatesAutoresizingMaskIntoConstraints = false
         nativeView.setAccessibilityIdentifier("GitX.PullRequest.LocalChanges")
@@ -1101,14 +1113,26 @@ final class ForgeReadInspectorViewController: NSViewController {
     }
 
     @inline(never)
-    private func renderLocalChangesError(_ message: String) {
+    private func renderLocalChangesError(
+        _ message: String,
+        pullRequest: ForgePullRequestSummary
+    ) {
         resetContent()
         let control = makePullRequestModeControl()
         contentStack.addArrangedSubview(control)
         pullRequestModeControl = control
+        addReviewActionView(for: pullRequest)
         let error = banner("Couldn’t compute local Pull Request changes. \(message)", color: .systemRed)
         error.setAccessibilityIdentifier("GitX.PullRequest.ChangesError")
         contentStack.addArrangedSubview(error)
+    }
+
+    private func addReviewActionView(for pullRequest: ForgePullRequestSummary) {
+        guard let reviewOverlayHost else { return }
+        let actionView = reviewOverlayHost.actionView(for: pullRequest)
+        actionView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(actionView)
+        actionView.widthAnchor.constraint(equalTo: contentStack.widthAnchor, constant: -28).isActive = true
     }
 
     #if DEBUG
@@ -2698,6 +2722,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private var accessResolution: ForgeCollaborationAccessResolution?
     private var activeSurface: ForgeCollaborationSurface = .pullRequests
     private var readController: ForgeReadSurfaceViewController?
+    private var pullRequestReviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)?
     private var attentionController: ForgeAttentionViewController?
     private var attentionSession: RepositoryAttentionSession?
     private var nativeOpener: RepositoryForgeNativeDestinationOpener?
@@ -2740,6 +2765,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
         preparationTask?.cancel()
         repositoryFactsTask?.cancel()
         attentionSession?.stop()
+        pullRequestReviewOverlayHost?.detach()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -2842,6 +2868,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
         preparationTask?.cancel()
         repositoryFactsTask?.cancel()
         attentionSession?.stop()
+        pullRequestReviewOverlayHost?.detach()
+        pullRequestReviewOverlayHost = nil
         super.closeView()
     }
 
@@ -2929,6 +2957,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
         attentionSession?.stop()
         attentionSession = nil
         attentionController = nil
+        pullRequestReviewOverlayHost?.detach()
+        pullRequestReviewOverlayHost = nil
         readController = nil
         destinationRouter = nil
         nativeOpener = nil
@@ -3038,6 +3068,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
         let adapter = try services.githubReadAdapterFactory.makeAdapter(
             for: account.currentCredential.reference
         )
+        let reviewApplicationSession = composition.forgePullRequestReviewServices.session(
+            for: repository
+        )
         installReadSurface(
             binding: binding,
             service: ForgeGitHubReadSurfaceService(
@@ -3046,7 +3079,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
             ),
             avatarOwner: .account(account.id),
             editPullRequestControl: editPullRequestControl,
-            onEditPullRequest: editPullRequestHandler(account: account)
+            onEditPullRequest: editPullRequestHandler(account: account),
+            reviewApplicationSession: reviewApplicationSession,
+            reviewAccountID: account.id
         )
         let session = try RepositoryAttentionSession(
             account: account,
@@ -3099,7 +3134,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
         service: any ForgeReadSurfaceServing,
         avatarOwner: ForgeAvatarCacheOwner,
         editPullRequestControl: ForgeMutationControlPresentation,
-        onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?
+        onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?,
+        reviewApplicationSession: RepositoryPullRequestReviewApplicationSession? = nil,
+        reviewAccountID: ForgeAccountID? = nil
     ) {
         guard let repository else {
             Self.logger.error("Could not install Forge read surface without its local repository")
@@ -3118,6 +3155,18 @@ final class RepositoryForgeCollaborationController: PBViewController {
         opener.owner = self
         nativeOpener = opener
         destinationRouter = router
+        pullRequestReviewOverlayHost?.detach()
+        let reviewOverlayHost: RepositoryPullRequestReviewOverlayHost?
+        if let reviewApplicationSession, let reviewAccountID {
+            reviewOverlayHost = RepositoryPullRequestReviewOverlayHost(
+                applicationSession: reviewApplicationSession,
+                accountID: reviewAccountID,
+                router: router
+            )
+        } else {
+            reviewOverlayHost = nil
+        }
+        pullRequestReviewOverlayHost = reviewOverlayHost
         let kind: ForgeReadSurfaceKind = activeSurface == .issues ? .issues : .pullRequests
         readController = ForgeReadSurfaceViewController(
             kind: kind,
@@ -3127,6 +3176,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
             avatarRenderer: ForgeReadNativeAvatarRenderer(owner: avatarOwner),
             destinationRouter: router,
             pullRequestChangesProvider: RepositoryLocalPullRequestChangesProvider(repository: repository),
+            reviewOverlayHost: reviewOverlayHost,
             editPullRequestControl: editPullRequestControl,
             onEditPullRequest: onEditPullRequest,
             onCheckoutPullRequest: { [weak self] pullRequest in
@@ -3273,6 +3323,16 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     #if DEBUG
+        func installReviewOverlayHostForCloseTesting(
+            _ host: any RepositoryPullRequestReviewOverlayHosting
+        ) {
+            pullRequestReviewOverlayHost = host
+        }
+
+        var hasReviewOverlayHostForTesting: Bool {
+            pullRequestReviewOverlayHost != nil
+        }
+
         func runMutationCapabilityProductProof(
             account: ForgeAccount,
             binding: ForgeRepositoryBinding,

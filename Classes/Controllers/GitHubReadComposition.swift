@@ -267,7 +267,9 @@ nonisolated protocol ForgeGitHubReadSurfaceAdapter: Sendable {
     ) async throws -> ForgeGitHubSurfaceRead<ForgeIssueDetails>
 }
 
-actor ForgeGitHubReadSurfaceAdapterBox: ForgeGitHubReadSurfaceAdapter {
+/// Stateless value wrapper; the underlying GitHubReadAdapter actor owns all
+/// request serialization.
+nonisolated struct ForgeGitHubReadSurfaceAdapterBox: ForgeGitHubReadSurfaceAdapter {
     private let adapter: GitHubReadAdapter
 
     init(adapter: GitHubReadAdapter) {

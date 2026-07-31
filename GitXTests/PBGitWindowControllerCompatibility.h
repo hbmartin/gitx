@@ -132,4 +132,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)asyncProofWithCompletion:(void (^)(uint64_t proof))completion;
 @end
 
+@interface PBMilestone3ProductCoverageHarness : NSObject
++ (BOOL)collaborationCloseLifecycleProofWithRepository:(PBGitRepository *)repository;
+@end
+
 NS_ASSUME_NONNULL_END

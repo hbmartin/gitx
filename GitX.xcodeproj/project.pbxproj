@@ -243,6 +243,16 @@
 		F0F50000000000000000000B /* RepositoryPullRequestMutationPreferenceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000203 /* RepositoryPullRequestMutationPreferenceStoreTests.swift */; };
 		F0F50000000000000000000C /* RepositoryPullRequestReviewCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000204 /* RepositoryPullRequestReviewCompositionTests.swift */; };
 		F0F50000000000000000000D /* RepositoryPullRequestLocalReviewServiceProductionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000205 /* RepositoryPullRequestLocalReviewServiceProductionTests.swift */; };
+		D3A300000000000000000001 /* RepositoryPullRequestReviewOverlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000101 /* RepositoryPullRequestReviewOverlayController.swift */; };
+		D3A300000000000000000002 /* RepositoryPullRequestReviewOverlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000101 /* RepositoryPullRequestReviewOverlayController.swift */; };
+		D3A300000000000000000003 /* RepositoryPullRequestReviewOverlayControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000102 /* RepositoryPullRequestReviewOverlayControllerTests.swift */; };
+		D3A300000000000000000004 /* Milestone3UITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000103 /* Milestone3UITestHarness.swift */; };
+		D3A300000000000000000005 /* Milestone3DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */; };
+		D3A300000000000000000006 /* Milestone3DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */; };
+		D3A300000000000000000007 /* Milestone3WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */; };
+		D3A300000000000000000008 /* RepositoryPullRequestReviewPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000106 /* RepositoryPullRequestReviewPerformanceTests.swift */; };
+		D3A300000000000000000009 /* Milestone3DiagnosticPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000107 /* Milestone3DiagnosticPresenterTests.swift */; };
+		D3A30000000000000000000A /* Milestone3UITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000103 /* Milestone3UITestHarness.swift */; };
 		C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE45200000000000000011 /* NativeContentTypography.swift */; };
 		C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000011 /* CommitControllerPolicies.swift */; };
 		C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */; };
@@ -1011,6 +1021,13 @@
 		F0F500000000000000000203 /* RepositoryPullRequestMutationPreferenceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestMutationPreferenceStoreTests.swift; sourceTree = "<group>"; };
 		F0F500000000000000000204 /* RepositoryPullRequestReviewCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewCompositionTests.swift; sourceTree = "<group>"; };
 		F0F500000000000000000205 /* RepositoryPullRequestLocalReviewServiceProductionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestLocalReviewServiceProductionTests.swift; sourceTree = "<group>"; };
+		D3A300000000000000000101 /* RepositoryPullRequestReviewOverlayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewOverlayController.swift; sourceTree = "<group>"; };
+		D3A300000000000000000102 /* RepositoryPullRequestReviewOverlayControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewOverlayControllerTests.swift; sourceTree = "<group>"; };
+		D3A300000000000000000103 /* Milestone3UITestHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone3UITestHarness.swift; sourceTree = "<group>"; };
+		D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone3DiagnosticPresenters.swift; sourceTree = "<group>"; };
+		D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone3WorkflowUITests.swift; sourceTree = "<group>"; };
+		D3A300000000000000000106 /* RepositoryPullRequestReviewPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewPerformanceTests.swift; sourceTree = "<group>"; };
+		D3A300000000000000000107 /* Milestone3DiagnosticPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone3DiagnosticPresenterTests.swift; sourceTree = "<group>"; };
 		F0B200000000000000000011 /* GitHubReadComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadComposition.swift; sourceTree = "<group>"; };
 		F0B200000000000000000012 /* GitHubReadCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadCompositionTests.swift; sourceTree = "<group>"; };
 		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
@@ -1369,6 +1386,7 @@
 				F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */,
 				F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */,
 				F0F200000000000000000108 /* Milestone2UITestHarness.swift */,
+				D3A300000000000000000103 /* Milestone3UITestHarness.swift */,
 				F0F200000000000000000102 /* RepositoryPullRequestGitOperations.swift */,
 				F0F200000000000000000103 /* RepositoryPullRequestUIController.swift */,
 				F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */,
@@ -1543,6 +1561,8 @@
 				F0F200000000000000000105 /* ForgePullRequestSheetController.swift */,
 				F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */,
 				F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */,
+				D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */,
+				D3A300000000000000000101 /* RepositoryPullRequestReviewOverlayController.swift */,
 				C01400000000000000000013 /* CommitProgressSheetController.swift */,
 				BF42F1431E025411004769FF /* GitXTextView.h */,
 				BF42F1321E025403004769FF /* GitXTextView.m */,
@@ -1688,6 +1708,9 @@
 				F0F500000000000000000203 /* RepositoryPullRequestMutationPreferenceStoreTests.swift */,
 				F0F500000000000000000204 /* RepositoryPullRequestReviewCompositionTests.swift */,
 				F0F500000000000000000205 /* RepositoryPullRequestLocalReviewServiceProductionTests.swift */,
+				D3A300000000000000000102 /* RepositoryPullRequestReviewOverlayControllerTests.swift */,
+				D3A300000000000000000106 /* RepositoryPullRequestReviewPerformanceTests.swift */,
+				D3A300000000000000000107 /* Milestone3DiagnosticPresenterTests.swift */,
 				C0D5B0000000000000000013 /* RepositoryStatusBarTests.swift */,
 				C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */,
 				C0D5C0000000000000000012 /* RepositoryForgeOverlaySessionTests.swift */,
@@ -1700,6 +1723,7 @@
 			children = (
 				CC0000020000002 /* GitXScreenshotTests.m */,
 				F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */,
+				D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */,
 			);
 			path = GitXUITests;
 			sourceTree = "<group>";
@@ -2207,6 +2231,9 @@
 				F0F500000000000000000002 /* RepositoryPullRequestReviewWorkflow.swift in Sources */,
 				F0F500000000000000000007 /* RepositoryPullRequestReviewComposition.swift in Sources */,
 				F0F500000000000000000009 /* RepositoryPullRequestMutationPreferenceStore.swift in Sources */,
+				D3A300000000000000000001 /* RepositoryPullRequestReviewOverlayController.swift in Sources */,
+				D3A300000000000000000004 /* Milestone3UITestHarness.swift in Sources */,
+				D3A300000000000000000005 /* Milestone3DiagnosticPresenters.swift in Sources */,
 				C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */,
 				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
@@ -2391,6 +2418,12 @@
 				F0F50000000000000000000B /* RepositoryPullRequestMutationPreferenceStoreTests.swift in Sources */,
 				F0F50000000000000000000C /* RepositoryPullRequestReviewCompositionTests.swift in Sources */,
 				F0F50000000000000000000D /* RepositoryPullRequestLocalReviewServiceProductionTests.swift in Sources */,
+				D3A300000000000000000002 /* RepositoryPullRequestReviewOverlayController.swift in Sources */,
+				D3A300000000000000000003 /* RepositoryPullRequestReviewOverlayControllerTests.swift in Sources */,
+				D3A300000000000000000006 /* Milestone3DiagnosticPresenters.swift in Sources */,
+				D3A300000000000000000008 /* RepositoryPullRequestReviewPerformanceTests.swift in Sources */,
+				D3A300000000000000000009 /* Milestone3DiagnosticPresenterTests.swift in Sources */,
+				D3A30000000000000000000A /* Milestone3UITestHarness.swift in Sources */,
 				C0D5B0000000000000000003 /* RepositoryStatusBarTests.swift in Sources */,
 				C0D5D0000000000000000003 /* HistoryForgeOverlayPresentationTests.swift in Sources */,
 				C0D5C0000000000000000003 /* RepositoryForgeOverlaySessionTests.swift in Sources */,
@@ -2409,6 +2442,7 @@
 			files = (
 				CC0000010000001 /* GitXScreenshotTests.m in Sources */,
 				F0F200000000000000000019 /* Milestone2WorkflowUITests.swift in Sources */,
+				D3A300000000000000000007 /* Milestone3WorkflowUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

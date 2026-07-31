@@ -23,6 +23,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private(set) final var createPullRequestControl = ForgeMutationControlPresentation.hidden
     #if DEBUG
         private var milestone2UITestHarness: Milestone2UITestHarness?
+        private var milestone3UITestHarness: Milestone3UITestHarness?
     #endif
     private var repositoryStatusBarController: RepositoryStatusBarController?
     private(set) final var repositoryForgeOverlaySession: RepositoryForgeOverlaySession?
@@ -50,7 +51,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     /// Retain the historical setter surface while continuing to derive the active repository from the document.
     @objc open dynamic var repository: PBGitRepository? {
-        get { (document as? PBGitRepositoryDocument)?.repository }
+        get { (document as? PBGitRepositoryDocument)?.repository ?? explicitlyAssignedRepository }
         set { explicitlyAssignedRepository = newValue }
     }
 
@@ -153,6 +154,10 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repositoryForgeOverlaySession = nil
         repositoryLocalStatusLoader = nil
         repositoryToolbarController = nil
+        #if DEBUG
+            milestone2UITestHarness = nil
+            milestone3UITestHarness = nil
+        #endif
         WelcomeWindowController.shared.showIfNeededAfterDelay()
     }
 
@@ -327,6 +332,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         refreshPreferenceDidChange(nil)
         #if DEBUG
             milestone2UITestHarness = Milestone2UITestHarness.installIfRequested(for: self)
+            milestone3UITestHarness = Milestone3UITestHarness.installIfRequested(for: self)
         #endif
         repositoryLocalStatusLoader?.refresh()
     }

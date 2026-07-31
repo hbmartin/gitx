@@ -4067,6 +4067,11 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self waitForExpectations:@[ expectation ] timeout:30.0];
 }
 
+- (void)testMilestone3ShippedCollaborationCloseDetachesReviewOverlay
+{
+	XCTAssertTrue([PBMilestone3ProductCoverageHarness collaborationCloseLifecycleProofWithRepository:self.repository]);
+}
+
 - (void)testMilestone2ShippedCompositionCoverageProofs
 {
 	XCTAssertEqual([PBMilestone2CompositionCoverageHarness synchronousProof], (uint64_t)0b111);
