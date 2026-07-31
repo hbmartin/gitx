@@ -124,12 +124,16 @@
 - (void)openPreferencesWaitingForElement:(XCUIElement *)element
 {
 	XCTAssertTrue([self waitForWindow], @"Preferences require the application to finish launching");
-	for (NSUInteger attempt = 0; attempt < 2; attempt++) {
-		[self.app activate];
-		[self.app.windows.firstMatch typeKey:@"," modifierFlags:XCUIKeyModifierCommand];
-		if ([element waitForExistenceWithTimeout:5]) return;
-	}
-	XCTFail(@"The requested preferences pane should expose %@", element);
+	[self.app activate];
+	if ([element waitForExistenceWithTimeout:1]) return;
+	XCUIElement *applicationMenu = self.app.menuBars.menuBarItems[@"GitX"];
+	XCTAssertTrue([applicationMenu waitForExistenceWithTimeout:5], @"Preferences require the GitX application menu");
+	[applicationMenu click];
+	XCUIElement *settingsItem = self.app.menuItems[@"Settings…"];
+	XCTAssertTrue([settingsItem waitForExistenceWithTimeout:5], @"The GitX application menu should offer Settings");
+	[settingsItem click];
+	XCTAssertTrue([element waitForExistenceWithTimeout:10],
+				  @"The requested preferences pane should expose %@", element);
 }
 - (BOOL)runGit:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
 {
