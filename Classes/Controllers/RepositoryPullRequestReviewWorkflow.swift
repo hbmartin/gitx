@@ -553,22 +553,43 @@ nonisolated enum RepositoryPullRequestReviewLocalRefreshPolicy {
 actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewServing {
     private let runner: any RepositoryPullRequestGitCommandRunning
     private let workingDirectory: URL?
+    private let binding: ForgeRepositoryBinding?
+    private let currentBinding: @Sendable () -> ForgeRepositoryBinding?
 
     init(repository: PBGitRepository) {
         runner = RepositoryPullRequestObjectiveGitRunner(repository: repository)
         workingDirectory = repository.workingDirectoryURL()?
             .resolvingSymlinksInPath()
             .standardizedFileURL
+        binding = nil
+        currentBinding = { nil }
+    }
+
+    init(
+        repository: PBGitRepository,
+        binding: ForgeRepositoryBinding,
+        currentBinding: (@Sendable () -> ForgeRepositoryBinding?)? = nil
+    ) {
+        runner = RepositoryPullRequestObjectiveGitRunner(repository: repository)
+        workingDirectory = repository.workingDirectoryURL()?
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        self.binding = binding
+        self.currentBinding = currentBinding ?? { binding }
     }
 
     init(
         runner: any RepositoryPullRequestGitCommandRunning,
-        workingDirectory: URL?
+        workingDirectory: URL?,
+        binding: ForgeRepositoryBinding? = nil,
+        currentBinding: (@Sendable () -> ForgeRepositoryBinding?)? = nil
     ) {
         self.runner = runner
         self.workingDirectory = workingDirectory?
             .resolvingSymlinksInPath()
             .standardizedFileURL
+        self.binding = binding
+        self.currentBinding = currentBinding ?? { binding }
     }
 
     func reanchorCandidates(
@@ -606,7 +627,7 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
     func checkedOutHead() async throws -> ForgeCommitID? {
         let value = try runner.run(["rev-parse", "--verify", "HEAD"])
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return try? ForgeCommitID(value)
+        return try ForgeCommitID(value)
     }
 
     func filesWithUncommittedEdits() async throws -> Set<ForgeFilePath> {
@@ -626,6 +647,7 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
     }
 
     func applySuggestedChange(_ change: ForgeSuggestedChange) async throws {
+        try validateCurrentBindingIfConfigured()
         let selectedHead = try await checkedOutHead()
         let status = try runner.run([
             "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", change.path.value,
@@ -638,23 +660,102 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
             currentContents: currentContents
         ) {
         case let .apply(updatedContents):
+            try validateCurrentBindingIfConfigured()
             try await writeUnstaged(contents: updatedContents, to: change.path)
         case let .unavailable(error):
             throw error
         }
     }
 
-    func fetchBase(_: ForgeBranchReference) async throws {
-        // The exact Primary Forge Repository binding and its local remote name
-        // are required to refresh one remote-tracking ref without guessing.
-        // Production composition supplies that boundary in the wiring slice.
-        throw RepositoryPullRequestReviewServiceError.unavailable
+    func fetchBase(_ branch: ForgeBranchReference) async throws {
+        let remoteName = try exactRemoteName(for: branch.repository)
+        let remoteTrackingRef = "refs/remotes/\(remoteName)/\(branch.name.value)"
+        let refspec = "+refs/heads/\(branch.name.value):\(remoteTrackingRef)"
+        try validateCurrentBindingIfConfigured()
+        _ = try runner.run(["fetch", "--no-tags", remoteName, refspec])
+        try validateCurrentBindingIfConfigured()
+        guard try commit(at: remoteTrackingRef) == branch.commit else {
+            throw RepositoryPullRequestReviewServiceError.stalePullRequest
+        }
     }
 
-    func checkOutBase(_: ForgeBranchReference) async throws {
-        // Raw `git checkout <name>` can select an unrelated local branch. The
-        // app wiring must provide an explicit, freshly validated checkout plan.
-        throw RepositoryPullRequestReviewServiceError.unavailable
+    func checkOutBase(_ base: ForgeBranchReference) async throws {
+        guard let binding, base.repository == binding.primaryRepository else {
+            throw RepositoryPullRequestReviewServiceError.invalidWorkspace
+        }
+        let remoteName = try exactRemoteName(for: base.repository)
+        let remoteTrackingRef = "refs/remotes/\(remoteName)/\(base.name.value)"
+        guard try commit(at: remoteTrackingRef) == base.commit else {
+            throw RepositoryPullRequestReviewServiceError.stalePullRequest
+        }
+        let status = try runner.run(["status", "--porcelain=v2", "-z", "--untracked-files=normal"])
+        guard status.isEmpty else {
+            throw RepositoryPullRequestReviewServiceError.unsafeLocalEdit
+        }
+
+        let localRef = "refs/heads/\(base.name.value)"
+        if let localCommit = try commit(at: localRef) {
+            guard localCommit == base.commit else {
+                throw RepositoryPullRequestReviewServiceError.stalePullRequest
+            }
+            try validateCurrentBindingIfConfigured()
+            _ = try runner.run(["checkout", base.name.value])
+        } else {
+            try validateCurrentBindingIfConfigured()
+            _ = try runner.run([
+                "checkout", "--track", "-b", base.name.value, remoteTrackingRef,
+            ])
+        }
+    }
+
+    private func exactRemoteName(for repository: ForgeRepositoryIdentity) throws -> String {
+        try validateCurrentBindingIfConfigured()
+        guard binding != nil else { throw RepositoryPullRequestReviewServiceError.invalidWorkspace }
+        let remoteNames = try runner.run(["remote"])
+            .components(separatedBy: .newlines)
+            .filter(Self.isSafeRemoteName)
+        let matching = try remoteNames.filter { remoteName in
+            let rawURL = try runner.run(["remote", "get-url", remoteName])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (try? ForgeRemoteParser.parse(rawURL).repository) == repository
+        }
+        if let binding, repository == binding.primaryRepository {
+            guard matching.contains(binding.localRemoteName) else {
+                throw RepositoryPullRequestReviewServiceError.unavailable
+            }
+            return binding.localRemoteName
+        }
+        guard matching.count == 1, let remoteName = matching.first else {
+            throw RepositoryPullRequestReviewServiceError.unavailable
+        }
+        return remoteName
+    }
+
+    private func validateCurrentBindingIfConfigured() throws {
+        if let binding, currentBinding() != binding {
+            throw RepositoryPullRequestReviewServiceError.invalidWorkspace
+        }
+    }
+
+    private func commit(at reference: String) throws -> ForgeCommitID? {
+        do {
+            let value = try runner.run(["rev-parse", "--verify", reference])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return try ForgeCommitID(value)
+        } catch let error as ForgeDestinationValidationError {
+            throw error
+        } catch {
+            return nil
+        }
+    }
+
+    private static func isSafeRemoteName(_ value: String) -> Bool {
+        guard let first = value.first, first.isASCII, first.isLetter || first.isNumber else {
+            return false
+        }
+        return value.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) || "._/-".unicodeScalars.contains($0)
+        }
     }
 
     /// Returns only an existing regular file reached entirely through real
@@ -1026,7 +1127,13 @@ final class RepositoryPullRequestReviewSession {
         task?.cancel()
         loadGeneration = loadGeneration == .max ? 1 : loadGeneration + 1
         let generation = loadGeneration
-        state = .loading
+        if let previousWorkspace,
+           let stale = try? previousWorkspace.markingMutationStateFresh(false)
+        {
+            state = .stale(stale, message: "Refreshing Pull Request…")
+        } else {
+            state = .loading
+        }
         logger.info("Loading native Pull Request review workspace")
         task = Task { [weak self, service, identity] in
             do {
@@ -1570,6 +1677,10 @@ final class RepositoryPullRequestReviewSession {
                 do {
                     let refreshed = try await service.loadWorkspace(identity: identity)
                     try validate(refreshed)
+                    guard refreshed.isMutationStateFresh else {
+                        install(refreshed)
+                        throw RepositoryPullRequestReviewServiceError.stalePullRequest
+                    }
                     guard let thread = refreshed.threads.first(where: {
                         $0.presentation.thread.id == threadID
                     }) else {
@@ -1594,22 +1705,16 @@ final class RepositoryPullRequestReviewSession {
                         isResolved: authoritativeValue
                     )
                     logger.info("Reconciled review-thread resolution generation \(generation, privacy: .public)")
-                } catch is CancellationError {
-                    return
                 } catch {
                     guard !Task.isCancelled,
                           isCurrentResolutionGeneration(generation, threadID: threadID)
                     else { return }
-                    // The mutation request completed successfully. A failed
-                    // authoritative read must never retry that write; preserve
-                    // the acknowledged value as unknown and refresh once.
-                    setResolutionState(
-                        .unknownOutcome(lastKnownValue: mutation == .resolve),
-                        threadID: threadID
-                    )
+                    // The receipt-verified mutation succeeded. A failed
+                    // authoritative read makes the workspace stale, but it
+                    // cannot retroactively make the write outcome unknown.
+                    setResolutionState(.confirmed(isResolved: mutation == .resolve), threadID: threadID)
+                    markWorkspaceStaleAfterAcknowledgedMutation(error)
                     failMutation(error)
-                    onOutcomeUnknown?()
-                    load()
                     return
                 }
 
@@ -1770,6 +1875,14 @@ final class RepositoryPullRequestReviewSession {
         let message = error.localizedDescription
         logger.error("Pull Request mutation failed: \(message, privacy: .public)")
         onMutationError?(message)
+    }
+
+    private func markWorkspaceStaleAfterAcknowledgedMutation(_ error: Error) {
+        guard let workspace,
+              let stale = try? workspace.markingMutationStateFresh(false)
+        else { return }
+        state = .stale(stale, message: error.localizedDescription)
+        logger.error("Acknowledged mutation refresh failed; preserved a stale workspace")
     }
 
     private func reconcileIfUnknown(_ error: Error) {

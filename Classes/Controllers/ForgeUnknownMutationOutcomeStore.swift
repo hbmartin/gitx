@@ -1,11 +1,51 @@
 import ForgeKit
 import Foundation
 
+/// The authoritative refresh boundary that can reconcile an unknown mutation outcome.
+/// Repository-wide refreshes may reconcile every Pull Request in the repository, while
+/// a Pull Request refresh must never consume an outcome recorded for a different item.
+nonisolated enum ForgeUnknownMutationOutcomeScope: Codable, Hashable, Sendable {
+    case repositoryWide
+    case pullRequest(ForgeItemNumber)
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case pullRequest
+    }
+
+    private enum Kind: String, Codable {
+        case repositoryWide
+        case pullRequest
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .repositoryWide:
+            self = .repositoryWide
+        case .pullRequest:
+            self = try .pullRequest(container.decode(ForgeItemNumber.self, forKey: .pullRequest))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .repositoryWide:
+            try container.encode(Kind.repositoryWide, forKey: .kind)
+        case let .pullRequest(number):
+            try container.encode(Kind.pullRequest, forKey: .kind)
+            try container.encode(number, forKey: .pullRequest)
+        }
+    }
+}
+
 nonisolated struct ForgeInFlightMutation: Codable, Hashable, Sendable {
     let registrationID: UUID
     let accountID: ForgeAccountID
     let repository: ForgeRepositoryIdentity
     let operation: ForgeOperation
+    let scope: ForgeUnknownMutationOutcomeScope
     let startedAt: Date
 
     init(
@@ -13,6 +53,7 @@ nonisolated struct ForgeInFlightMutation: Codable, Hashable, Sendable {
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
         operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope = .repositoryWide,
         startedAt: Date = Date()
     ) throws {
         guard accountID.forge == repository.forge else {
@@ -28,6 +69,7 @@ nonisolated struct ForgeInFlightMutation: Codable, Hashable, Sendable {
         self.accountID = accountID
         self.repository = repository
         self.operation = operation
+        self.scope = scope
         self.startedAt = startedAt
     }
 
@@ -36,6 +78,7 @@ nonisolated struct ForgeInFlightMutation: Codable, Hashable, Sendable {
         case accountID
         case repository
         case operation
+        case scope
         case startedAt
     }
 
@@ -46,6 +89,8 @@ nonisolated struct ForgeInFlightMutation: Codable, Hashable, Sendable {
             accountID: container.decode(ForgeAccountID.self, forKey: .accountID),
             repository: container.decode(ForgeRepositoryIdentity.self, forKey: .repository),
             operation: container.decode(ForgeOperation.self, forKey: .operation),
+            scope: container.decodeIfPresent(ForgeUnknownMutationOutcomeScope.self, forKey: .scope)
+                ?? .repositoryWide,
             startedAt: container.decode(Date.self, forKey: .startedAt)
         )
     }
@@ -62,6 +107,7 @@ nonisolated struct ForgeUnknownMutationOutcomeRecord: Codable, Hashable, Sendabl
     let accountID: ForgeAccountID
     let repository: ForgeRepositoryIdentity
     let operation: ForgeOperation
+    let scope: ForgeUnknownMutationOutcomeScope
     let startedAt: Date
     let recordedAt: Date
 
@@ -73,6 +119,7 @@ nonisolated struct ForgeUnknownMutationOutcomeRecord: Codable, Hashable, Sendabl
         accountID = mutation.accountID
         repository = mutation.repository
         operation = mutation.operation
+        scope = mutation.scope
         startedAt = mutation.startedAt
         self.recordedAt = recordedAt
     }
@@ -86,8 +133,23 @@ nonisolated struct ForgeUnknownMutationOutcomeRecord: Codable, Hashable, Sendabl
         case accountID
         case repository
         case operation
+        case scope
         case startedAt
         case recordedAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(registrationID, forKey: .registrationID)
+        try container.encode(accountID, forKey: .accountID)
+        try container.encode(repository, forKey: .repository)
+        try container.encode(operation, forKey: .operation)
+        // Preserve the exact Milestone 2 payload for repository-wide records.
+        if scope != .repositoryWide {
+            try container.encode(scope, forKey: .scope)
+        }
+        try container.encode(startedAt, forKey: .startedAt)
+        try container.encode(recordedAt, forKey: .recordedAt)
     }
 
     init(from decoder: Decoder) throws {
@@ -97,6 +159,8 @@ nonisolated struct ForgeUnknownMutationOutcomeRecord: Codable, Hashable, Sendabl
             accountID: container.decode(ForgeAccountID.self, forKey: .accountID),
             repository: container.decode(ForgeRepositoryIdentity.self, forKey: .repository),
             operation: container.decode(ForgeOperation.self, forKey: .operation),
+            scope: container.decodeIfPresent(ForgeUnknownMutationOutcomeScope.self, forKey: .scope)
+                ?? .repositoryWide,
             startedAt: container.decode(Date.self, forKey: .startedAt)
         )
         try self.init(
@@ -111,13 +175,43 @@ nonisolated protocol ForgeUnknownMutationOutcomePersisting: Sendable {
     func records(
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
-        operation: ForgeOperation
+        operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope
     ) async throws -> [ForgeUnknownMutationOutcomeRecord]
     func consume(
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
-        operation: ForgeOperation
+        operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope
     ) async throws -> [ForgeUnknownMutationOutcomeRecord]
+}
+
+nonisolated extension ForgeUnknownMutationOutcomePersisting {
+    func records(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operation: ForgeOperation
+    ) async throws -> [ForgeUnknownMutationOutcomeRecord] {
+        try await records(
+            accountID: accountID,
+            repository: repository,
+            operation: operation,
+            scope: .repositoryWide
+        )
+    }
+
+    func consume(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operation: ForgeOperation
+    ) async throws -> [ForgeUnknownMutationOutcomeRecord] {
+        try await consume(
+            accountID: accountID,
+            repository: repository,
+            operation: operation,
+            scope: .repositoryWide
+        )
+    }
 }
 
 /// Durable unknown-outcome storage partitioned by exact Account and repository.
@@ -157,7 +251,8 @@ final nonisolated class ForgeSQLiteUnknownMutationOutcomeStore: ForgeUnknownMuta
     func records(
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
-        operation: ForgeOperation
+        operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope = .repositoryWide
     ) async throws -> [ForgeUnknownMutationOutcomeRecord] {
         try Self.validate(accountID: accountID, repository: repository, operation: operation)
         let database = try await databaseProvider()
@@ -168,19 +263,21 @@ final nonisolated class ForgeSQLiteUnknownMutationOutcomeStore: ForgeUnknownMuta
         )
         return try durableRecords
             .map(Self.decode)
-            .filter { $0.operation == operation }
+            .filter { $0.operation == operation && Self.matches(recordScope: $0.scope, refreshScope: scope) }
             .sorted(by: Self.sortsBefore)
     }
 
     func consume(
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
-        operation: ForgeOperation
+        operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope = .repositoryWide
     ) async throws -> [ForgeUnknownMutationOutcomeRecord] {
         let matchingRecords = try await records(
             accountID: accountID,
             repository: repository,
-            operation: operation
+            operation: operation,
+            scope: scope
         )
         guard !matchingRecords.isEmpty else { return [] }
         let database = try await databaseProvider()
@@ -245,5 +342,17 @@ final nonisolated class ForgeSQLiteUnknownMutationOutcomeStore: ForgeUnknownMuta
             return lhs.recordedAt < rhs.recordedAt
         }
         return lhs.registrationID.uuidString < rhs.registrationID.uuidString
+    }
+
+    private static func matches(
+        recordScope: ForgeUnknownMutationOutcomeScope,
+        refreshScope: ForgeUnknownMutationOutcomeScope
+    ) -> Bool {
+        switch refreshScope {
+        case .repositoryWide:
+            true
+        case .pullRequest:
+            recordScope == refreshScope
+        }
     }
 }

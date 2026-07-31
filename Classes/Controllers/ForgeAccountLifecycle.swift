@@ -472,25 +472,23 @@ nonisolated protocol ForgeRepositoryBindingProviding: Sendable {
     func forgeRepositoryBindings() -> [ForgeRepositoryBinding]
 }
 
-// swift6-safety-justification: The lock serializes every access to the shared UserDefaults repository settings.
+// swift6-safety-justification: the shared repository-view-state lock serializes UserDefaults access.
 final nonisolated class ForgeRepositoryBindingAccountCleaner:
     ForgeRepositoryBindingCleaning,
     ForgeRepositoryBindingProviding,
-    // swift6-safety-justification: The lock serializes every access to shared UserDefaults repository settings.
+    // swift6-safety-justification: all mutable UserDefaults access uses the shared lock.
     @unchecked Sendable
 {
     static let repositorySettingsKey = "PBRepositoryUISettings"
     static let forgeBindingKey = "forgeRepositoryBinding"
 
     private let userDefaults: UserDefaults
-    private let lock = NSLock()
-
     init(userDefaults: UserDefaults) {
         self.userDefaults = userDefaults
     }
 
     func removeBindings(for accountID: ForgeAccountID) throws {
-        lock.withLock {
+        RepositoryViewStatePreferencesSynchronization.lock.withLock {
             guard var repositorySettings = userDefaults.dictionary(forKey: Self.repositorySettingsKey) else {
                 return
             }
@@ -514,7 +512,7 @@ final nonisolated class ForgeRepositoryBindingAccountCleaner:
     }
 
     func forgeRepositoryBindings() -> [ForgeRepositoryBinding] {
-        lock.withLock {
+        RepositoryViewStatePreferencesSynchronization.lock.withLock {
             guard let repositorySettings = userDefaults.dictionary(forKey: Self.repositorySettingsKey) else {
                 return []
             }

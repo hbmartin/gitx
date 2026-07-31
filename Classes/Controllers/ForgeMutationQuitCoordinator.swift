@@ -39,11 +39,29 @@ nonisolated protocol ForgeMutationLifecycleCoordinating: Sendable {
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
         operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope,
         startedAt: Date
     ) throws -> ForgeMutationRegistration
 
     @discardableResult
     func finish(_ registration: ForgeMutationRegistration) -> Bool
+}
+
+nonisolated extension ForgeMutationLifecycleCoordinating {
+    func register(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operation: ForgeOperation,
+        startedAt: Date
+    ) throws -> ForgeMutationRegistration {
+        try register(
+            accountID: accountID,
+            repository: repository,
+            operation: operation,
+            scope: .repositoryWide,
+            startedAt: startedAt
+        )
+    }
 }
 
 // swift6-safety-justification: The private lock protects active mutations and termination state.
@@ -98,12 +116,14 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
         operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope = .repositoryWide,
         startedAt: Date = Date()
     ) throws -> ForgeMutationRegistration {
         let mutation = try ForgeInFlightMutation(
             accountID: accountID,
             repository: repository,
             operation: operation,
+            scope: scope,
             startedAt: startedAt
         )
         try lock.withForgeMutationLock {
@@ -151,24 +171,28 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     func unknownOutcomes(
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
-        operation: ForgeOperation
+        operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope = .repositoryWide
     ) async throws -> [ForgeUnknownMutationOutcomeRecord] {
         try await persistence.records(
             accountID: accountID,
             repository: repository,
-            operation: operation
+            operation: operation,
+            scope: scope
         )
     }
 
     func consumeUnknownOutcomes(
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
-        operation: ForgeOperation
+        operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope = .repositoryWide
     ) async throws -> [ForgeUnknownMutationOutcomeRecord] {
         try await persistence.consume(
             accountID: accountID,
             repository: repository,
-            operation: operation
+            operation: operation,
+            scope: scope
         )
     }
 

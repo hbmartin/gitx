@@ -99,6 +99,10 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
             Set(object.keys),
             ["accountID", "operation", "recordedAt", "registrationID", "repository", "startedAt"]
         )
+        XCTAssertEqual(
+            try JSONDecoder().decode(ForgeUnknownMutationOutcomeRecord.self, from: encoded).scope,
+            .repositoryWide
+        )
     }
 
     func testPersistenceFailureCancelsQuitAndAllowsCompletedMutationToClear() async throws {
@@ -197,6 +201,100 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         )
         XCTAssertEqual(untouched, [edit])
         await database.close()
+    }
+
+    func testPullRequestRefreshConsumesOnlyItsExactScopedOutcome() async throws {
+        let fixture = try Fixture()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeMutationPullRequestScopeTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: directory.appendingPathComponent("forge.sqlite3"),
+            recoveryDirectoryURL: directory.appendingPathComponent("Recovery", isDirectory: true)
+        ))
+        let store = ForgeSQLiteUnknownMutationOutcomeStore(database: database)
+        let pullRequest42 = try ForgeItemNumber(42)
+        let pullRequest43 = try ForgeItemNumber(43)
+        let repositoryWide = try fixture.record(operation: .editPullRequest, offset: 10)
+        let exact42 = try fixture.record(
+            operation: .editPullRequest,
+            scope: .pullRequest(pullRequest42),
+            offset: 20
+        )
+        let exact43 = try fixture.record(
+            operation: .editPullRequest,
+            scope: .pullRequest(pullRequest43),
+            offset: 30
+        )
+        try await store.record([exact43, repositoryWide, exact42])
+
+        let applicable = try await store.records(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest,
+            scope: .pullRequest(pullRequest42)
+        )
+        XCTAssertEqual(applicable, [exact42])
+
+        let consumed = try await store.consume(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest,
+            scope: .pullRequest(pullRequest42)
+        )
+        XCTAssertEqual(consumed, [exact42])
+
+        let untouchedPullRequest = try await store.records(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest,
+            scope: .pullRequest(pullRequest43)
+        )
+        XCTAssertEqual(untouchedPullRequest, [exact43])
+
+        let remaining = try await store.records(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest
+        )
+        XCTAssertEqual(remaining, [repositoryWide, exact43])
+        await database.close()
+    }
+
+    func testExactPullRequestScopeIsRedactedAndSurvivesQuitRecording() async throws {
+        let persistence = PersistenceDouble()
+        let replies = ReplySpy()
+        let replied = expectation(description: "termination reply after scoped durable record")
+        replies.expectation = replied
+        let coordinator = makeCoordinator(
+            persistence: persistence,
+            choices: ChoiceSpy(choice: .quitAnyway),
+            replies: replies
+        )
+        let fixture = try Fixture()
+        let number = try ForgeItemNumber(42)
+        _ = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .publishInlineReviewComment,
+            scope: .pullRequest(number),
+            startedAt: fixture.date(40)
+        )
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        await fulfillment(of: [replied], timeout: 1)
+
+        let recorded = await persistence.recordedRecords()
+        let record = try XCTUnwrap(recorded.first)
+        XCTAssertEqual(record.scope, .pullRequest(number))
+        let encoded = try JSONEncoder().encode(record)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(
+            Set(object.keys),
+            ["accountID", "operation", "recordedAt", "registrationID", "repository", "scope", "startedAt"]
+        )
+        XCTAssertNil(object["body"])
+        XCTAssertNil(object["retry"])
     }
 
     func testSQLiteRecordPreservesExactIdentityForFractionalTimestamp() async throws {
@@ -327,7 +425,8 @@ private final class PersistenceDouble: ForgeUnknownMutationOutcomePersisting, @u
     func records(
         accountID _: ForgeAccountID,
         repository _: ForgeRepositoryIdentity,
-        operation _: ForgeOperation
+        operation _: ForgeOperation,
+        scope _: ForgeUnknownMutationOutcomeScope
     ) async -> [ForgeUnknownMutationOutcomeRecord] {
         queue.sync { recorded }
     }
@@ -335,7 +434,8 @@ private final class PersistenceDouble: ForgeUnknownMutationOutcomePersisting, @u
     func consume(
         accountID _: ForgeAccountID,
         repository _: ForgeRepositoryIdentity,
-        operation _: ForgeOperation
+        operation _: ForgeOperation,
+        scope _: ForgeUnknownMutationOutcomeScope
     ) async -> [ForgeUnknownMutationOutcomeRecord] {
         queue.sync {
             let result = recorded
@@ -371,7 +471,11 @@ private struct Fixture {
         Date(timeIntervalSince1970: 2_000_000 + offset)
     }
 
-    func record(operation: ForgeOperation, offset: TimeInterval) throws
+    func record(
+        operation: ForgeOperation,
+        scope: ForgeUnknownMutationOutcomeScope = .repositoryWide,
+        offset: TimeInterval
+    ) throws
         -> ForgeUnknownMutationOutcomeRecord
     {
         let mutation = try ForgeInFlightMutation(
@@ -379,6 +483,7 @@ private struct Fixture {
             accountID: accountID,
             repository: repository,
             operation: operation,
+            scope: scope,
             startedAt: date(offset)
         )
         return try ForgeUnknownMutationOutcomeRecord(

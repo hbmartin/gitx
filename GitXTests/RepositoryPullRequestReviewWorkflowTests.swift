@@ -251,6 +251,34 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertNil(initialFailure.workspace)
     }
 
+    func testRefreshPreservesLastGoodWorkspaceAsStaleUntilReplacementArrives() async throws {
+        let fixture = try ReviewAppFixture()
+        let initial = try fixture.workspace()
+        let replacement = try fixture.workspace(head: fixture.newHead)
+        let service = FakeReviewMutationService(workspaces: [initial, replacement])
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        try await load(session)
+
+        await service.holdNextLoadCall()
+        session.load()
+        await service.waitForLoadCalls(2)
+
+        guard case let .stale(refreshing, message) = session.state else {
+            return XCTFail("Expected last-good Pull Request state to remain visible while refreshing")
+        }
+        XCTAssertEqual(refreshing.displayedHead, fixture.oldHead)
+        XCTAssertFalse(refreshing.isMutationStateFresh)
+        XCTAssertEqual(message, "Refreshing Pull Request…")
+        await XCTAssertThrowsErrorAsync(try await session.performLifecycle(.close)) {
+            XCTAssertEqual($0 as? RepositoryPullRequestReviewServiceError, .stalePullRequest)
+        }
+
+        await service.releaseHeldLoad()
+        try await waitForWorkspace(session, state: .open)
+        XCTAssertEqual(session.workspace?.displayedHead, fixture.newHead)
+        XCTAssertTrue(session.workspace?.isMutationStateFresh == true)
+    }
+
     func testStaleLastGoodWorkspaceDisablesEveryWriteAndLocalMutation() async throws {
         let fixture = try ReviewAppFixture()
         let initial = try fixture.workspace(deletion: true)
@@ -277,7 +305,9 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await service.failNextLoad(with: .offline)
         let stale = expectation(description: "workspace became stale")
         session.onStateChange = { state in
-            if case .stale = state {
+            if case let .stale(_, message) = state,
+               message == RepositoryPullRequestReviewServiceError.offline.localizedDescription
+            {
                 stale.fulfill()
             }
         }
@@ -601,7 +631,9 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await service.failNextLoad(with: .offline)
         let stale = expectation(description: "refresh failure retained stale workspace")
         session.onStateChange = { state in
-            if case .stale = state {
+            if case let .stale(_, message) = state,
+               message == RepositoryPullRequestReviewServiceError.offline.localizedDescription
+            {
                 stale.fulfill()
             }
         }
@@ -1034,7 +1066,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertEqual(loadCalls, 2)
     }
 
-    func testResolutionReconciliationFailureBecomesUnknownAndRefreshesWithoutRetrying() async throws {
+    func testResolutionSuccessWithFailedReconciliationStaysAcknowledgedAndMarksWorkspaceStale() async throws {
         let fixture = try ReviewAppFixture()
         let service = try FakeReviewMutationService(workspaces: [fixture.workspace()])
         let session = RepositoryPullRequestReviewSession(
@@ -1045,26 +1077,73 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         )
         try await load(session)
         let failure = expectation(description: "authoritative refresh failure surfaced")
-        failure.expectedFulfillmentCount = 2
-        let unknown = expectation(description: "unknown outcome refresh requested")
+        var unknownWasPublished = false
         session.onMutationError = { message in
             if message == RepositoryPullRequestReviewServiceError.unavailable.localizedDescription {
                 failure.fulfill()
             }
         }
-        session.onOutcomeUnknown = { unknown.fulfill() }
+        session.onOutcomeUnknown = { unknownWasPublished = true }
 
         session.setResolution(threadID: fixture.threadID, mutation: .resolve, at: fixture.now)
         await service.waitForResolutionCalls(1)
-        await service.waitForLoadCalls(3)
-        await fulfillment(of: [failure, unknown])
+        await service.waitForLoadCalls(2)
+        await fulfillment(of: [failure])
         session.onMutationError = nil
         session.onOutcomeUnknown = nil
 
         XCTAssertEqual(
             session.resolutionStates[fixture.threadID],
-            .unknownOutcome(lastKnownValue: true)
+            .confirmed(isResolved: true)
         )
+        guard case let .stale(workspace, message) = session.state else {
+            return XCTFail("Expected the acknowledged mutation to preserve a stale workspace")
+        }
+        XCTAssertFalse(workspace.isMutationStateFresh)
+        XCTAssertEqual(message, RepositoryPullRequestReviewServiceError.unavailable.localizedDescription)
+        XCTAssertFalse(unknownWasPublished)
+        let mutations = await service.resolutionMutations()
+        XCTAssertEqual(mutations, [.resolve])
+    }
+
+    func testResolutionSuccessWithStaleReconciliationKeepsReceiptAcknowledged() async throws {
+        let fixture = try ReviewAppFixture()
+        let staleReconciliation = try fixture.workspace(threadIsResolved: false)
+            .markingMutationStateFresh(false)
+        let service = try FakeReviewMutationService(workspaces: [
+            fixture.workspace(),
+            staleReconciliation,
+        ])
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            now: { fixture.now },
+            undoInterval: 8
+        )
+        try await load(session)
+        let failure = expectation(description: "stale reconciliation surfaced")
+        var unknownWasPublished = false
+        session.onMutationError = { message in
+            if message == RepositoryPullRequestReviewServiceError.stalePullRequest.localizedDescription {
+                failure.fulfill()
+            }
+        }
+        session.onOutcomeUnknown = { unknownWasPublished = true }
+
+        session.setResolution(threadID: fixture.threadID, mutation: .resolve, at: fixture.now)
+        await service.waitForResolutionCalls(1)
+        await service.waitForLoadCalls(2)
+        await fulfillment(of: [failure])
+        session.onMutationError = nil
+        session.onOutcomeUnknown = nil
+
+        XCTAssertEqual(session.resolutionStates[fixture.threadID], .confirmed(isResolved: true))
+        guard case let .stale(workspace, message) = session.state else {
+            return XCTFail("Expected the partial reconciliation to remain stale")
+        }
+        XCTAssertFalse(workspace.isMutationStateFresh)
+        XCTAssertEqual(message, RepositoryPullRequestReviewServiceError.stalePullRequest.localizedDescription)
+        XCTAssertFalse(unknownWasPublished)
         let mutations = await service.resolutionMutations()
         XCTAssertEqual(mutations, [.resolve])
     }

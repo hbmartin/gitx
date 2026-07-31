@@ -1,7 +1,8 @@
 import Foundation
 
 @objc(PBApplicationPreferences)
-final nonisolated class ApplicationPreferences: NSObject {
+// swift6-safety-justification: UserDefaults is thread-safe, and this wrapper adds no mutable state of its own.
+final nonisolated class ApplicationPreferences: NSObject, @unchecked Sendable {
     let userDefaults: UserDefaults
 
     @objc(initWithUserDefaults:)
@@ -115,6 +116,7 @@ final nonisolated class ApplicationComposition: NSObject {
     let forgeServices: ForgeApplicationServiceLoader
     let forgeExternalLinkPreferences: ForgeTrustedExternalOriginStore
     let forgePullRequestServices: RepositoryPullRequestServiceResolver
+    let forgePullRequestReviewServices: RepositoryPullRequestReviewServiceResolver
     let forgeCloneServices: RepositoryForgeCloneServiceResolver
     private let automaticallyStartsForgeServices: Bool
     private let forgeServiceStartupLock = NSLock()
@@ -138,11 +140,13 @@ final nonisolated class ApplicationComposition: NSObject {
             avatarLoadingEnabled: { avatarLoadingPreferenceSource.isEnabled() }
         )
         let pullRequestDependencies = ForgeGitHubPullRequestDependencyProvider(loader: forgeServices)
+        let applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
+        let pullRequestMutationDefaults = RepositoryPullRequestMutationPreferenceDefaults(userDefaults: userDefaults)
         self.init(
             userDefaults: userDefaults,
             forgeServices: forgeServices,
             forgePullRequestServices: RepositoryPullRequestServiceResolver { repository in
-                let settings = RepositoryUISettings(repository: repository)
+                let settings = RepositoryUISettings(repository: repository, preferences: applicationPreferences)
                 guard let binding = settings.forgeRepositoryBinding,
                       ForgeGitHubReadCredentialAuthority.isGitHubDotCom(binding.primaryRepository.forge)
                 else {
@@ -161,6 +165,43 @@ final nonisolated class ApplicationComposition: NSObject {
                     drafts: ForgeLazySQLitePullRequestDraftStore(loader: forgeServices)
                 )
             },
+            forgePullRequestReviewServices: RepositoryPullRequestReviewServiceResolver { repository in
+                let settings = RepositoryUISettings(repository: repository, preferences: applicationPreferences)
+                let drafts = ForgeLazySQLitePullRequestDraftStore(loader: forgeServices)
+                guard let binding = settings.forgeRepositoryBinding,
+                      ForgeGitHubReadCredentialAuthority.isGitHubDotCom(binding.primaryRepository.forge)
+                else {
+                    return RepositoryPullRequestReviewApplicationSession(
+                        service: UnavailableRepositoryPullRequestReviewMutationService(),
+                        localService: UnavailableRepositoryPullRequestLocalReviewService(),
+                        drafts: drafts,
+                        preferences: NullRepositoryPullRequestMutationPreferenceStore()
+                    )
+                }
+                let localService = RepositoryPullRequestLocalReviewService(
+                    runner: RepositoryPullRequestObjectiveGitRunner(repository: repository),
+                    workingDirectory: repository.workingDirectoryURL(),
+                    binding: binding,
+                    currentBinding: { settings.forgeRepositoryBinding }
+                )
+                return RepositoryPullRequestReviewApplicationSession(
+                    service: RepositoryPullRequestReviewProductionService(
+                        binding: binding,
+                        dependencies: pullRequestDependencies,
+                        localService: localService,
+                        mutationLifecycle: ForgeMutationQuitCoordinator.shared,
+                        unknownOutcomes: ForgeMutationQuitCoordinator.shared,
+                        currentBinding: { settings.forgeRepositoryBinding }
+                    ),
+                    localService: localService,
+                    drafts: drafts,
+                    preferences: RepositoryPullRequestMutationPreferenceStore(
+                        repositoryViewStateIdentifier: settings.repositoryViewStateIdentifier,
+                        repository: binding.primaryRepository,
+                        defaults: pullRequestMutationDefaults
+                    )
+                )
+            },
             forgeCloneServices: RepositoryForgeCloneServiceResolver {
                 RepositoryForgeCloneProductionService(loader: forgeServices)
             },
@@ -172,12 +213,14 @@ final nonisolated class ApplicationComposition: NSObject {
         userDefaults: UserDefaults,
         forgeServices: ForgeApplicationServiceLoader,
         forgePullRequestServices: RepositoryPullRequestServiceResolver = RepositoryPullRequestServiceResolver(),
+        forgePullRequestReviewServices: RepositoryPullRequestReviewServiceResolver = RepositoryPullRequestReviewServiceResolver(),
         forgeCloneServices: RepositoryForgeCloneServiceResolver = RepositoryForgeCloneServiceResolver(),
         automaticallyStartsForgeServices: Bool = true
     ) {
         applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
         self.forgeServices = forgeServices
         self.forgePullRequestServices = forgePullRequestServices
+        self.forgePullRequestReviewServices = forgePullRequestReviewServices
         self.forgeCloneServices = forgeCloneServices
         forgeExternalLinkPreferences = ForgeTrustedExternalOriginStore(defaults: userDefaults)
         self.automaticallyStartsForgeServices = automaticallyStartsForgeServices

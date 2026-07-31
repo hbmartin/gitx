@@ -688,6 +688,98 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
     }
 }
 
+extension ForgeGitHubPullRequestDependencyProvider: ForgeGitHubPullRequestReviewDependencyProviding {
+    func reviewReadContext(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operations: Set<ForgeOperation>
+    ) async throws -> ForgeGitHubPullRequestReviewReadContext {
+        let evaluation = try await evaluateOperationCapabilities(
+            accountID: accountID,
+            repository: repository,
+            operations: operations
+        )
+        let account = evaluation.resolution.account
+        let credential = account.currentCredential.reference
+        let environment = await evaluation.services.githubMutationState.environment(
+            for: credential,
+            now: now()
+        )
+        let allowed: Set<ForgeOperation> = Set(evaluation.capabilities.compactMap { operation, capability in
+            if case .unavailable = capability {
+                return nil
+            }
+            return operation
+        })
+        return ForgeGitHubPullRequestReviewReadContext(
+            account: account,
+            credential: credential,
+            environment: environment,
+            allowedOperations: allowed,
+            readAdapter: evaluation.resolution.readAdapter
+        )
+    }
+
+    func reviewMutationContext(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operation: ForgeOperation
+    ) async throws -> ForgeGitHubPullRequestReviewMutationContext {
+        let context = try await mutationContext(
+            accountID: accountID,
+            repository: repository,
+            operation: operation
+        )
+        guard let readAdapter = context.readAdapter as? any ForgeGitHubPullRequestReviewReading,
+              let mutationAdapter = context.mutationAdapter as? any ForgeGitHubPullRequestReviewMutationExecuting
+        else {
+            throw ForgeGitHubPullRequestCompositionError.capabilityUnavailable(operation)
+        }
+        return ForgeGitHubPullRequestReviewMutationContext(
+            account: context.account,
+            credential: context.credential,
+            authorization: context.authorization,
+            readAdapter: readAdapter,
+            mutationAdapter: mutationAdapter
+        )
+    }
+
+    func recordSuccess(
+        _ result: GitHubResponseMetadata,
+        context: ForgeGitHubPullRequestReviewMutationContext
+    ) async {
+        guard let services = try? await loader.services() else { return }
+        await services.githubMutationState.recordSuccess(
+            response: result,
+            credential: context.credential,
+            confirmation: context.authorization.explicitConfirmation,
+            now: now()
+        )
+    }
+
+    func recordFailure(
+        _ error: GitHubMutationError,
+        context: ForgeGitHubPullRequestReviewMutationContext
+    ) async {
+        guard let services = try? await loader.services() else { return }
+        await services.githubMutationState.recordFailure(
+            error,
+            credential: context.credential,
+            authorization: context.authorization,
+            now: now()
+        )
+        switch error {
+        case .permissionDenied, .samlAuthorizationRequired, .capabilityUnavailable:
+            try? await services.accountStore.clearAuthorizationEvidence(for: context.credential)
+            await services.githubMutationState.recordAuthoritativeDenial(
+                for: context.authorization.key
+            )
+        default:
+            break
+        }
+    }
+}
+
 nonisolated protocol RepositoryPullRequestLocalPreparationProviding: Sendable {
     func preparation(
         accountID: ForgeAccountID,

@@ -7,10 +7,10 @@ import GitXCore
 import OSLog
 
 @objc(PBRepositoryUISettings)
-final nonisolated class RepositoryUISettings: NSObject {
+// swift6-safety-justification: the shared lock serializes every preferences access; remaining state is immutable.
+final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable {
     private static let defaultsKey = "PBRepositoryUISettings"
     private static let forgeRepositoryBindingKey = "forgeRepositoryBinding"
-    private static let preferencesLock = NSLock()
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryViewState")
     private let repositoryKey: String
 
@@ -28,6 +28,10 @@ final nonisolated class RepositoryUISettings: NSObject {
         )
         self.preferences = preferences
         super.init()
+    }
+
+    var repositoryViewStateIdentifier: String {
+        repositoryKey
     }
 
     private let preferences: ApplicationPreferences
@@ -95,15 +99,15 @@ final nonisolated class RepositoryUISettings: NSObject {
     }
 
     private func value(for key: String) -> Any? {
-        Self.preferencesLock.lock()
-        defer { Self.preferencesLock.unlock() }
+        RepositoryViewStatePreferencesSynchronization.lock.lock()
+        defer { RepositoryViewStatePreferencesSynchronization.lock.unlock() }
         let all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         return (all[repositoryKey] as? [String: Any])?[key]
     }
 
     private func setValue(_ value: Any, for key: String) {
-        Self.preferencesLock.lock()
-        defer { Self.preferencesLock.unlock() }
+        RepositoryViewStatePreferencesSynchronization.lock.lock()
+        defer { RepositoryViewStatePreferencesSynchronization.lock.unlock() }
         var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         var repository = all[repositoryKey] as? [String: Any] ?? [:]
         repository[key] = value
@@ -112,8 +116,8 @@ final nonisolated class RepositoryUISettings: NSObject {
     }
 
     private func removeValue(for key: String) {
-        Self.preferencesLock.lock()
-        defer { Self.preferencesLock.unlock() }
+        RepositoryViewStatePreferencesSynchronization.lock.lock()
+        defer { RepositoryViewStatePreferencesSynchronization.lock.unlock() }
         var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         var repository = all[repositoryKey] as? [String: Any] ?? [:]
         repository.removeValue(forKey: key)
