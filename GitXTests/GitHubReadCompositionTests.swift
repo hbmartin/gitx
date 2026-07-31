@@ -171,6 +171,467 @@ final class GitHubReadCompositionTests: XCTestCase {
         )
     }
 
+    func testRuntimeRefreshRotatesBeforeExplicitAndReadAuthorizationWhileRetainingIdentity() async throws {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let keychain = ReadCompositionKeychain()
+        let accountStore = ForgeAccountStore(keychain: keychain)
+        let accountID = try makeAccountID("runtime-background-refresh")
+        let original = try await accountStore.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("github-app:test"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: now.addingTimeInterval(-1),
+            secrets: rotatingSecrets(access: "expired-runtime-access", refresh: "runtime-refresh")
+        )
+        let rotated = try rotatingCredential(
+            access: "fresh-runtime-access",
+            refresh: "fresh-runtime-refresh",
+            accessExpiresAt: now.addingTimeInterval(3600),
+            refreshExpiresAt: now.addingTimeInterval(7200)
+        )
+        let refresher = StubRuntimeCredentialRefresher(result: .refreshed(rotated))
+        let runtimeRefresh = try ForgeAccountCredentialRefreshCoordinator(
+            accountStore: accountStore,
+            configuration: testApplicationConfiguration(),
+            refresherFactory: { _ in refresher }
+        )
+        let authority = ForgeGitHubReadCredentialAuthority(
+            accountStore: accountStore,
+            credentialRefreshCoordinator: runtimeRefresh,
+            now: { now }
+        )
+        let factory = ForgeGitHubReadAdapterFactory(credentialAuthority: authority)
+
+        let explicitlyRefreshedAccount = try await factory.refreshCredentialIfNeeded(
+            for: original.currentCredential.reference,
+            at: now
+        )
+        XCTAssertEqual(explicitlyRefreshedAccount?.currentCredential.reference, original.currentCredential.reference)
+        XCTAssertEqual(explicitlyRefreshedAccount?.currentCredential.expiresAt, rotated.accessTokenExpiresAt)
+
+        let capture = ReadCompositionRequestCapture()
+        CompositionGitHubURLProtocol.setHandler { request in
+            capture.record(request)
+            return CompositionStubResponse(status: 401, body: Data())
+        }
+        let adapter = try factory.makeAdapter(
+            for: original.currentCredential.reference,
+            sessionConfiguration: stubConfiguration()
+        )
+        await assertAuthenticationFailure(adapter)
+
+        XCTAssertEqual(capture.authorizationHeaders, ["Bearer fresh-runtime-access"])
+        let explicitAndReadRefreshCalls = await refresher.callCount()
+        XCTAssertEqual(
+            explicitAndReadRefreshCalls,
+            2,
+            "the second deterministic decision must use current material"
+        )
+        let change = try await accountStore.credentialChange(for: accountID)
+        XCTAssertEqual(change.currentReference, original.currentCredential.reference)
+        XCTAssertEqual(change.revision, 2)
+        assertRedacted(runtimeRefresh, forbidden: "runtime-refresh")
+    }
+
+    func testConcurrentRuntimeRefreshPersistsOneExactIncarnationRotation() async throws {
+        let now = Date(timeIntervalSince1970: 2_100_000_000)
+        let accountStore = ForgeAccountStore(keychain: ReadCompositionKeychain())
+        let accountID = try makeAccountID("runtime-concurrent-refresh")
+        let original = try await accountStore.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("github-app:test"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: now,
+            secrets: rotatingSecrets(access: "concurrent-old-access", refresh: "concurrent-old-refresh")
+        )
+        let rotated = try rotatingCredential(
+            access: "concurrent-new-access",
+            refresh: "concurrent-new-refresh",
+            accessExpiresAt: now.addingTimeInterval(3600),
+            refreshExpiresAt: now.addingTimeInterval(7200)
+        )
+        let refresher = ControllableRuntimeCredentialRefresher(result: .refreshed(rotated))
+        let coordinator = try ForgeAccountCredentialRefreshCoordinator(
+            accountStore: accountStore,
+            configuration: testApplicationConfiguration(),
+            refresherFactory: { _ in refresher }
+        )
+
+        let first = Task {
+            try await coordinator.credential(for: original.currentCredential.reference, at: now)
+        }
+        await refresher.waitUntilCallCount(1)
+        let second = Task {
+            try await coordinator.credential(for: original.currentCredential.reference, at: now)
+        }
+        await refresher.waitUntilCallCount(2)
+        let concurrentCalls = await refresher.callCount()
+        XCTAssertEqual(concurrentCalls, 2)
+        await refresher.releaseAll()
+        let (firstResult, secondResult) = try await(first.value, second.value)
+
+        XCTAssertEqual(
+            [firstResult, secondResult].compactMap { $0 }.count,
+            2,
+            "both concurrent consumers must reuse the one persisted rotation"
+        )
+        let change = try await accountStore.credentialChange(for: accountID)
+        XCTAssertEqual(change.revision, 2, "coalesced results must persist one rotation")
+        let storedCredential = try await accountStore.credential(for: accountID)
+        let stored = try XCTUnwrap(storedCredential)
+        XCTAssertEqual(
+            stored.secrets.withUnsafeAccessTokenBytes { Data($0) },
+            Data("concurrent-new-access".utf8)
+        )
+    }
+
+    func testCancelledRuntimeRefreshDoesNotPersistRotatedCredential() async throws {
+        let now = Date(timeIntervalSince1970: 2_200_000_000)
+        let accountStore = ForgeAccountStore(keychain: ReadCompositionKeychain())
+        let accountID = try makeAccountID("runtime-cancelled-refresh")
+        let original = try await accountStore.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("github-app:test"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: now,
+            secrets: rotatingSecrets(access: "cancel-old-access", refresh: "cancel-old-refresh")
+        )
+        let rotated = try rotatingCredential(
+            access: "cancel-new-access",
+            refresh: "cancel-new-refresh",
+            accessExpiresAt: now.addingTimeInterval(3600),
+            refreshExpiresAt: now.addingTimeInterval(7200)
+        )
+        let refresher = ControllableRuntimeCredentialRefresher(result: .refreshed(rotated))
+        let coordinator = try ForgeAccountCredentialRefreshCoordinator(
+            accountStore: accountStore,
+            configuration: testApplicationConfiguration(),
+            refresherFactory: { _ in refresher }
+        )
+        let task = Task {
+            try await coordinator.credential(for: original.currentCredential.reference, at: now)
+        }
+        await refresher.waitUntilCallCount(1)
+
+        task.cancel()
+        await refresher.releaseAll()
+        do {
+            _ = try await task.value
+            XCTFail("cancellation before persistence must reject the refresh")
+        } catch is CancellationError {
+            // Expected.
+        }
+        let change = try await accountStore.credentialChange(for: accountID)
+        XCTAssertEqual(change.revision, 1)
+        let storedCredential = try await accountStore.credential(for: accountID)
+        let stored = try XCTUnwrap(storedCredential)
+        XCTAssertEqual(
+            stored.secrets.withUnsafeAccessTokenBytes { Data($0) },
+            Data("cancel-old-access".utf8)
+        )
+    }
+
+    func testInFlightRefreshCannotOverwriteRemovedAndReaddedCredentialIncarnation() async throws {
+        let now = Date(timeIntervalSince1970: 2_300_000_000)
+        let accountStore = ForgeAccountStore(keychain: ReadCompositionKeychain())
+        let accountID = try makeAccountID("runtime-refresh-aba")
+        let original = try await accountStore.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("github-app:test"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: now,
+            secrets: rotatingSecrets(access: "aba-old-access", refresh: "aba-old-refresh")
+        )
+        let rotated = try rotatingCredential(
+            access: "aba-stale-rotated-access",
+            refresh: "aba-stale-rotated-refresh",
+            accessExpiresAt: now.addingTimeInterval(3600),
+            refreshExpiresAt: now.addingTimeInterval(7200)
+        )
+        let refresher = ControllableRuntimeCredentialRefresher(result: .refreshed(rotated))
+        let coordinator = try ForgeAccountCredentialRefreshCoordinator(
+            accountStore: accountStore,
+            configuration: testApplicationConfiguration(),
+            refresherFactory: { _ in refresher }
+        )
+        let refreshTask = Task {
+            try await coordinator.credential(for: original.currentCredential.reference, at: now)
+        }
+        await refresher.waitUntilCallCount(1)
+
+        try await accountStore.removeAccount(accountID)
+        let readded = try await accountStore.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("github-app:test"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: now.addingTimeInterval(1800),
+            secrets: rotatingSecrets(access: "aba-new-access", refresh: "aba-new-refresh")
+        )
+        XCTAssertEqual(readded.currentCredential.reference, original.currentCredential.reference)
+        await refresher.releaseAll()
+
+        let staleResult = try await refreshTask.value
+        XCTAssertNil(staleResult)
+        let change = try await accountStore.credentialChange(for: accountID)
+        XCTAssertEqual(change.revision, 3)
+        let storedCredential = try await accountStore.credential(for: accountID)
+        let stored = try XCTUnwrap(storedCredential)
+        XCTAssertEqual(
+            stored.secrets.withUnsafeAccessTokenBytes { Data($0) },
+            Data("aba-new-access".utf8)
+        )
+    }
+
+    func testMutationRefreshesExpiredDeviceFlowCredentialBeforeTransportWithoutChangingSessionIdentity() async throws {
+        let now = Date(timeIntervalSince1970: 3_000_000_000)
+        let keychain = ReadCompositionKeychain()
+        let accountStore = ForgeAccountStore(keychain: keychain)
+        let accountID = try makeAccountID("runtime-mutation-refresh")
+        let original = try await accountStore.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("github-app:test"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: now,
+            secrets: rotatingSecrets(access: "expired-mutation-access", refresh: "mutation-refresh")
+        )
+        let rotated = try rotatingCredential(
+            access: "fresh-mutation-access",
+            refresh: "fresh-mutation-refresh",
+            accessExpiresAt: now.addingTimeInterval(3600),
+            refreshExpiresAt: now.addingTimeInterval(7200)
+        )
+        let refresher = StubRuntimeCredentialRefresher(result: .refreshed(rotated))
+        let authority = try ForgeGitHubReadCredentialAuthority(
+            accountStore: accountStore,
+            credentialRefreshCoordinator: ForgeAccountCredentialRefreshCoordinator(
+                accountStore: accountStore,
+                configuration: testApplicationConfiguration(),
+                refresherFactory: { _ in refresher }
+            ),
+            now: { now }
+        )
+        let factory = ForgeGitHubReadAdapterFactory(credentialAuthority: authority)
+        let capture = ReadCompositionRequestCapture()
+        CompositionGitHubURLProtocol.setHandler { request in
+            capture.record(request)
+            return CompositionStubResponse(status: 401, body: Data())
+        }
+        let repository = try makeRepository()
+        let sessionGate = GitHubMutationSessionGate()
+        let adapter = try factory.makeMutationAdapter(
+            for: original.currentCredential.reference,
+            sessionGate: sessionGate,
+            sessionConfiguration: stubConfiguration()
+        )
+        let authorization = try GitHubMutationAuthorization(
+            key: ForgeCapabilityKey(
+                credential: original.currentCredential.reference,
+                repository: repository,
+                operation: .createPullRequest
+            ),
+            capability: .verified(.knownAuthority)
+        )
+        let form = try ForgePullRequestCreationForm(
+            repository: repository,
+            base: ForgeBranchReference(
+                repository: repository,
+                name: ForgeRefName("master"),
+                commit: ForgeCommitID("12345678")
+            ),
+            head: ForgeBranchReference(
+                repository: repository,
+                name: ForgeRefName("runtime-refresh"),
+                commit: ForgeCommitID("abcdef12")
+            ),
+            title: "Runtime refresh",
+            bodyMarkdown: "Credential rotation proof"
+        )
+
+        do {
+            _ = try await adapter.createPullRequest(
+                accountID: accountID,
+                form: form,
+                authorization: authorization
+            )
+            XCTFail("the deterministic 401 fixture must reject the mutation")
+        } catch {
+            // The transport rejection is expected; authentication must have refreshed first.
+        }
+        XCTAssertEqual(capture.authorizationHeaders, ["Bearer fresh-mutation-access"])
+        let mutationRefreshCalls = await refresher.callCount()
+        XCTAssertEqual(mutationRefreshCalls, 1)
+        let environment = await sessionGate.environment(
+            for: original.currentCredential.reference,
+            at: now
+        )
+        XCTAssertEqual(environment, .available)
+        let storedReference = try await accountStore.credential(for: accountID)?
+            .account.currentCredential.reference
+        XCTAssertEqual(storedReference, original.currentCredential.reference)
+    }
+
+    func testMutationSessionGateStopsOfflineAndCooldownBeforeCredentialRefresh() async throws {
+        let now = Date(timeIntervalSince1970: 3_100_000_000)
+        let accountStore = ForgeAccountStore(keychain: ReadCompositionKeychain())
+        let accountID = try makeAccountID("runtime-mutation-gate")
+        let original = try await accountStore.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("github-app:test"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: now,
+            secrets: rotatingSecrets(access: "gated-old-access", refresh: "gated-old-refresh")
+        )
+        let rotated = try rotatingCredential(
+            access: "gated-new-access",
+            refresh: "gated-new-refresh",
+            accessExpiresAt: Date.distantFuture.addingTimeInterval(-3600),
+            refreshExpiresAt: Date.distantFuture
+        )
+        let refresher = StubRuntimeCredentialRefresher(result: .refreshed(rotated))
+        let authority = try ForgeGitHubReadCredentialAuthority(
+            accountStore: accountStore,
+            credentialRefreshCoordinator: ForgeAccountCredentialRefreshCoordinator(
+                accountStore: accountStore,
+                configuration: testApplicationConfiguration(),
+                refresherFactory: { _ in refresher }
+            ),
+            now: { now }
+        )
+        let sessionGate = GitHubMutationSessionGate()
+        let adapter = try ForgeGitHubReadAdapterFactory(credentialAuthority: authority).makeMutationAdapter(
+            for: original.currentCredential.reference,
+            sessionGate: sessionGate,
+            sessionConfiguration: stubConfiguration()
+        )
+        let repository = try makeRepository()
+        let authorization = try GitHubMutationAuthorization(
+            key: ForgeCapabilityKey(
+                credential: original.currentCredential.reference,
+                repository: repository,
+                operation: .createPullRequest
+            ),
+            capability: .verified(.knownAuthority)
+        )
+        let form = try ForgePullRequestCreationForm(
+            repository: repository,
+            base: ForgeBranchReference(
+                repository: repository,
+                name: ForgeRefName("master"),
+                commit: ForgeCommitID("12345678")
+            ),
+            head: ForgeBranchReference(
+                repository: repository,
+                name: ForgeRefName("runtime-gate"),
+                commit: ForgeCommitID("abcdef12")
+            ),
+            title: "Runtime gate",
+            bodyMarkdown: "No refresh while gated"
+        )
+
+        await sessionGate.setOffline(true)
+        do {
+            _ = try await adapter.createPullRequest(
+                accountID: accountID,
+                form: form,
+                authorization: authorization
+            )
+            XCTFail("offline mutation must fail before Credential refresh")
+        } catch {
+            XCTAssertEqual(error as? GitHubMutationError, .offline)
+        }
+        let callsWhileOffline = await refresher.callCount()
+        XCTAssertEqual(callsWhileOffline, 0)
+
+        await sessionGate.setOffline(false)
+        let deadline = Date.distantFuture
+        await sessionGate.recordCooldown(for: original.currentCredential.reference, until: deadline)
+        do {
+            _ = try await adapter.createPullRequest(
+                accountID: accountID,
+                form: form,
+                authorization: authorization
+            )
+            XCTFail("cooldown must fail before Credential refresh")
+        } catch {
+            XCTAssertEqual(error as? GitHubMutationError, .cooldown(until: deadline))
+        }
+        let callsDuringCooldown = await refresher.callCount()
+        XCTAssertEqual(callsDuringCooldown, 0)
+    }
+
+    func testRuntimeRefreshFailsClosedAfterReauthorizationAndDoesNotRefreshOtherCredentialKinds() async throws {
+        let now = Date(timeIntervalSince1970: 4_000_000_000)
+        let keychain = ReadCompositionKeychain()
+        let accountStore = ForgeAccountStore(keychain: keychain)
+        let deviceAccountID = try makeAccountID("runtime-reauthorization")
+        let deviceAccount = try await accountStore.addAccount(
+            accountID: deviceAccountID,
+            login: "device-user",
+            credentialID: ForgeCredentialID("github-app:test"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: now.addingTimeInterval(-1),
+            secrets: rotatingSecrets(access: "expired-device-access", refresh: "expired-device-refresh")
+        )
+        let patAccountID = try makeAccountID("runtime-expired-pat")
+        let patAccount = try await accountStore.addPersonalAccessToken(
+            accountID: patAccountID,
+            login: "pat-user",
+            credentialID: ForgeCredentialID("expiring-pat"),
+            kind: .fineGrained,
+            token: Data("expired-pat-access".utf8),
+            expiresAt: now.addingTimeInterval(-1)
+        )
+        let refresher = StubRuntimeCredentialRefresher(result: .reauthorizationRequired)
+        let runtimeRefresh = try ForgeAccountCredentialRefreshCoordinator(
+            accountStore: accountStore,
+            configuration: testApplicationConfiguration(),
+            refresherFactory: { _ in refresher }
+        )
+        let authority = ForgeGitHubReadCredentialAuthority(
+            accountStore: accountStore,
+            credentialRefreshCoordinator: runtimeRefresh,
+            now: { now }
+        )
+        let factory = ForgeGitHubReadAdapterFactory(credentialAuthority: authority)
+
+        let reauthorization = try await authority.currentAuthentication(
+            for: deviceAccount.currentCredential.reference
+        )
+        XCTAssertNil(reauthorization)
+        let callsAfterDeviceAccount = await refresher.callCount()
+        XCTAssertEqual(callsAfterDeviceAccount, 1)
+        let proactiveRefresh = try await factory.refreshCredentialIfNeeded(
+            for: deviceAccount.currentCredential.reference,
+            at: now
+        )
+        XCTAssertNil(proactiveRefresh, "reauthorization must stop background and preflight work")
+        let callsAfterProactiveRefresh = await refresher.callCount()
+        XCTAssertEqual(callsAfterProactiveRefresh, 2)
+        let personalAccessToken = try await authority.currentAuthentication(
+            for: patAccount.currentCredential.reference
+        )
+        XCTAssertNil(personalAccessToken)
+        let callsAfterPAT = await refresher.callCount()
+        XCTAssertEqual(callsAfterPAT, 2, "PATs must never enter GitHub App token refresh")
+
+        let staleReference = try ForgeCredentialReference(
+            accountID: deviceAccountID,
+            credentialID: deviceAccount.currentCredential.reference.credentialID,
+            generation: ForgeCredentialGeneration(2)
+        )
+        let stale = try await authority.currentAuthentication(for: staleReference)
+        XCTAssertNil(stale)
+        let callsAfterStaleReference = await refresher.callCount()
+        XCTAssertEqual(callsAfterStaleReference, 2, "a stale identity must fail before token refresh")
+    }
+
     func testConcurrentAuthorityLoadsStayExactAndRedacted() async throws {
         let keychain = ReadCompositionKeychain()
         let accountStore = ForgeAccountStore(keychain: keychain)
@@ -611,6 +1072,27 @@ final class GitHubReadCompositionTests: XCTestCase {
         )
     }
 
+    private func rotatingCredential(
+        access: String,
+        refresh: String,
+        accessExpiresAt: Date,
+        refreshExpiresAt: Date
+    ) throws -> GitHubRotatingUserCredential {
+        try GitHubRotatingUserCredential(
+            accessToken: GitHubSecret(utf8Bytes: Data(access.utf8)),
+            accessTokenExpiresAt: accessExpiresAt,
+            refreshToken: GitHubSecret(utf8Bytes: Data(refresh.utf8)),
+            refreshTokenExpiresAt: refreshExpiresAt
+        )
+    }
+
+    private func testApplicationConfiguration() throws -> GitHubAppDeviceFlowConfiguration {
+        try GitHubAppDeviceFlowConfiguration(
+            clientID: "Iv1ABC123",
+            applicationSlug: "runtime-refresh-test-app"
+        )
+    }
+
     private func assertRedacted<Value>(
         _ value: Value,
         forbidden: String,
@@ -622,6 +1104,81 @@ final class GitHubReadCompositionTests: XCTestCase {
         if let reflected = value as? any CustomReflectable {
             XCTAssertTrue(reflected.customMirror.children.isEmpty, file: file, line: line)
         }
+    }
+}
+
+private actor StubRuntimeCredentialRefresher: ForgeGitHubCredentialRefreshing {
+    private let result: GitHubCredentialRefreshResult
+    private var calls = 0
+
+    init(result: GitHubCredentialRefreshResult) {
+        self.result = result
+    }
+
+    func refreshIfNeeded(
+        _: GitHubRotatingUserCredential,
+        at _: Date,
+        minimumValidity _: TimeInterval
+    ) async throws -> GitHubCredentialRefreshResult {
+        calls += 1
+        if calls == 1 {
+            return result
+        }
+        guard case let .refreshed(credential) = result else {
+            return result
+        }
+        return .current(refreshAt: credential.accessTokenExpiresAt)
+    }
+
+    func callCount() -> Int {
+        calls
+    }
+}
+
+private actor ControllableRuntimeCredentialRefresher: ForgeGitHubCredentialRefreshing {
+    private let result: GitHubCredentialRefreshResult
+    private var calls = 0
+    private var released = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var callCountWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    init(result: GitHubCredentialRefreshResult) {
+        self.result = result
+    }
+
+    func refreshIfNeeded(
+        _: GitHubRotatingUserCredential,
+        at _: Date,
+        minimumValidity _: TimeInterval
+    ) async -> GitHubCredentialRefreshResult {
+        calls += 1
+        let readyCallCountWaiters = callCountWaiters.filter { calls >= $0.0 }
+        callCountWaiters.removeAll { calls >= $0.0 }
+        readyCallCountWaiters.forEach { $0.1.resume() }
+        if !released {
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+        }
+        return result
+    }
+
+    func callCount() -> Int {
+        calls
+    }
+
+    func waitUntilCallCount(_ expectedCount: Int) async {
+        guard calls < expectedCount else { return }
+        await withCheckedContinuation { continuation in
+            callCountWaiters.append((expectedCount, continuation))
+        }
+    }
+
+    func releaseAll() {
+        released = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
     }
 }
 

@@ -724,6 +724,14 @@ private extension GitHubMutationAdapter {
         else {
             throw GitHubMutationError.authorizationMismatch
         }
+        switch await sessionGate.environment(for: expectedCredential, at: now()) {
+        case .available:
+            break
+        case .offline:
+            throw GitHubMutationError.offline
+        case let .rateLimited(until):
+            throw GitHubMutationError.cooldown(until: until)
+        }
         guard let authentication = try await credentialAuthority.currentAuthentication(
             for: expectedCredential
         ),
@@ -733,14 +741,6 @@ private extension GitHubMutationAdapter {
             authentication.credential.expiresAt.map({ $0 > now() }) ?? true
         else {
             throw GitHubMutationError.authenticationRequired
-        }
-        switch await sessionGate.environment(for: expectedCredential, at: now()) {
-        case .available:
-            break
-        case .offline:
-            throw GitHubMutationError.offline
-        case let .rateLimited(until):
-            throw GitHubMutationError.cooldown(until: until)
         }
         logger.debug(
             "operation=\(String(describing: operation), privacy: .public) phase=gate state=available"

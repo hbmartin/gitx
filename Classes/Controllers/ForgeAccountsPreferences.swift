@@ -204,7 +204,6 @@ actor ForgeAccountsService: ForgeAccountsClient {
     private let credentialIDProvider: CredentialIDProvider
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeAccounts")
     private var deviceFlowCoordinator: GitHubDeviceFlowCoordinator?
-    private var refreshCoordinators: [ForgeAccountID: GitHubCredentialRefreshCoordinator] = [:]
 
     init(
         services: ForgeApplicationServices,
@@ -226,7 +225,10 @@ actor ForgeAccountsService: ForgeAccountsClient {
         guard configuration != nil else { return accounts }
         for account in accounts where account.currentCredential.source == .forgeApplicationDeviceFlow {
             do {
-                try await refreshCredentialIfNeeded(account, at: date)
+                _ = try await services.githubReadAdapterFactory.refreshCredentialIfNeeded(
+                    for: account.currentCredential.reference,
+                    at: date
+                )
             } catch {
                 logger.error(
                     "GitHub App Credential refresh check failed account=\(account.id.value, privacy: .private(mask: .hash))"
@@ -332,7 +334,6 @@ actor ForgeAccountsService: ForgeAccountsClient {
 
     func removeAccount(_ accountID: ForgeAccountID) async throws {
         try await services.removalCoordinator.removeAccount(accountID)
-        refreshCoordinators[accountID] = nil
         logger.notice(
             "Forge Account removal completed account=\(accountID.value, privacy: .private(mask: .hash))"
         )
@@ -407,54 +408,6 @@ actor ForgeAccountsService: ForgeAccountsClient {
     @MainActor
     private static func notifyAttentionChanged() {
         NotificationCenter.default.post(name: .forgeAttentionInboxDidChange, object: nil)
-    }
-
-    private func refreshCredentialIfNeeded(_ account: ForgeAccount, at date: Date) async throws {
-        guard let configuration,
-              let envelope = try await services.accountStore.credential(for: account.id),
-              let accessExpiresAt = account.currentCredential.expiresAt,
-              let refreshExpiresAt = envelope.secrets.refreshTokenExpiresAt,
-              let refreshToken = envelope.secrets.withUnsafeRefreshTokenBytes({ Data($0) })
-        else {
-            return
-        }
-        let credential = try GitHubRotatingUserCredential(
-            accessToken: GitHubSecret(
-                utf8Bytes: envelope.secrets.withUnsafeAccessTokenBytes { Data($0) }
-            ),
-            accessTokenExpiresAt: accessExpiresAt,
-            refreshToken: GitHubSecret(utf8Bytes: refreshToken),
-            refreshTokenExpiresAt: refreshExpiresAt
-        )
-        let coordinator: GitHubCredentialRefreshCoordinator
-        if let current = refreshCoordinators[account.id] {
-            coordinator = current
-        } else {
-            let created = GitHubCredentialRefreshCoordinator(configuration: configuration)
-            refreshCoordinators[account.id] = created
-            coordinator = created
-        }
-        switch try await coordinator.refreshIfNeeded(
-            credential,
-            at: date,
-            minimumValidity: 5 * 60
-        ) {
-        case .current, .reauthorizationRequired:
-            return
-        case let .refreshed(rotated):
-            try await services.accountStore.rotateCredential(
-                expectedReference: account.currentCredential.reference,
-                expiresAt: rotated.accessTokenExpiresAt,
-                secrets: ForgeCredentialSecretMaterial(
-                    accessToken: rotated.accessToken.withUnsafeUTF8Bytes { Data($0) },
-                    refreshToken: rotated.refreshToken.withUnsafeUTF8Bytes { Data($0) },
-                    refreshTokenExpiresAt: rotated.refreshTokenExpiresAt
-                )
-            )
-            logger.notice(
-                "GitHub App Credential refresh token rotated account=\(account.id.value, privacy: .private(mask: .hash))"
-            )
-        }
     }
 }
 

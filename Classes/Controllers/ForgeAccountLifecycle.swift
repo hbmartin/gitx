@@ -1,5 +1,6 @@
 import ForgeKit
 import Foundation
+import GitHubForgeAdapter
 import OSLog // swiftlint:disable:this unused_import
 
 nonisolated struct ForgeCLISecretEnvironment: Equatable, Sendable,
@@ -422,6 +423,159 @@ actor ForgeAddAccountCoordinator {
         )
         await avatarLoader?.restoreAfterAccountAddition(account.id)
         return account
+    }
+}
+
+nonisolated protocol ForgeGitHubCredentialRefreshing: Sendable {
+    func refreshIfNeeded(
+        _ credential: GitHubRotatingUserCredential,
+        at date: Date,
+        minimumValidity: TimeInterval
+    ) async throws -> GitHubCredentialRefreshResult
+}
+
+extension GitHubCredentialRefreshCoordinator: ForgeGitHubCredentialRefreshing {}
+
+/// Refreshes the one exact Keychain-backed GitHub App Credential before a
+/// runtime read or mutation uses it. Exact-incarnation compare-and-swap lets
+/// concurrent consumers observe one deterministic same-generation rotation.
+actor ForgeAccountCredentialRefreshCoordinator: CustomStringConvertible,
+    CustomDebugStringConvertible, CustomReflectable
+{
+    private struct CredentialIncarnation: Hashable, Sendable {
+        let reference: ForgeCredentialReference
+        let revision: UInt64
+    }
+
+    typealias RefresherFactory = @Sendable (
+        GitHubAppDeviceFlowConfiguration
+    ) -> any ForgeGitHubCredentialRefreshing
+
+    private let accountStore: ForgeAccountStore
+    private let configuration: GitHubAppDeviceFlowConfiguration?
+    private let refresherFactory: RefresherFactory
+    private var refreshers: [CredentialIncarnation: any ForgeGitHubCredentialRefreshing] = [:]
+    private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeCredentialRefresh")
+
+    init(
+        accountStore: ForgeAccountStore,
+        configuration: GitHubAppDeviceFlowConfiguration?,
+        refresherFactory: @escaping RefresherFactory = {
+            GitHubCredentialRefreshCoordinator(configuration: $0)
+        }
+    ) {
+        self.accountStore = accountStore
+        self.configuration = configuration
+        self.refresherFactory = refresherFactory
+    }
+
+    func credential(
+        for expectedReference: ForgeCredentialReference,
+        at date: Date,
+        minimumValidity: TimeInterval = 5 * 60
+    ) async throws -> ForgeStoredCredentialEnvelope? {
+        try Task.checkCancellation()
+        guard let snapshot = try await accountStore.credentialSnapshot(for: expectedReference.accountID),
+              snapshot.envelope.account.currentCredential.reference == expectedReference
+        else {
+            logger.notice("Skipped GitHub App Credential refresh because the exact reference is no longer current")
+            return nil
+        }
+        let envelope = snapshot.envelope
+        guard envelope.account.currentCredential.source == .forgeApplicationDeviceFlow else {
+            return envelope
+        }
+        guard let configuration,
+              let accessExpiresAt = envelope.account.currentCredential.expiresAt,
+              let refreshExpiresAt = envelope.secrets.refreshTokenExpiresAt,
+              let refreshToken = envelope.secrets.withUnsafeRefreshTokenBytes({ Data($0) })
+        else {
+            logger.notice("GitHub App Credential cannot refresh without bundled configuration and rotating material")
+            return envelope
+        }
+        let credential = try GitHubRotatingUserCredential(
+            accessToken: GitHubSecret(
+                utf8Bytes: envelope.secrets.withUnsafeAccessTokenBytes { Data($0) }
+            ),
+            accessTokenExpiresAt: accessExpiresAt,
+            refreshToken: GitHubSecret(utf8Bytes: refreshToken),
+            refreshTokenExpiresAt: refreshExpiresAt
+        )
+        let incarnation = CredentialIncarnation(
+            reference: expectedReference,
+            revision: snapshot.revision
+        )
+        for stale in refreshers.keys.filter({
+            $0.reference.accountID == expectedReference.accountID && $0 != incarnation
+        }) {
+            refreshers[stale] = nil
+        }
+        let refresher: any ForgeGitHubCredentialRefreshing
+        if let current = refreshers[incarnation] {
+            refresher = current
+        } else {
+            let created = refresherFactory(configuration)
+            refreshers[incarnation] = created
+            refresher = created
+        }
+        let result = try await refresher.refreshIfNeeded(
+            credential,
+            at: date,
+            minimumValidity: minimumValidity
+        )
+        try Task.checkCancellation()
+        switch result {
+        case .current:
+            guard let current = try await accountStore.credentialSnapshot(for: expectedReference.accountID),
+                  current.envelope.account.currentCredential.reference == expectedReference,
+                  current.revision == snapshot.revision
+            else {
+                refreshers[incarnation] = nil
+                logger.notice("Rejected current GitHub App Credential because its incarnation changed")
+                return nil
+            }
+            try Task.checkCancellation()
+            return current.envelope
+        case .reauthorizationRequired:
+            refreshers[incarnation] = nil
+            logger.notice("GitHub App Credential refresh requires account reauthorization")
+            return nil
+        case let .refreshed(rotated):
+            let rotation = try await accountStore.rotateCredential(
+                expectedReference: expectedReference,
+                expectedRevision: snapshot.revision,
+                expiresAt: rotated.accessTokenExpiresAt,
+                secrets: ForgeCredentialSecretMaterial(
+                    accessToken: rotated.accessToken.withUnsafeUTF8Bytes { Data($0) },
+                    refreshToken: rotated.refreshToken.withUnsafeUTF8Bytes { Data($0) },
+                    refreshTokenExpiresAt: rotated.refreshTokenExpiresAt
+                )
+            )
+            refreshers[incarnation] = nil
+            switch rotation {
+            case let .rotated(rotatedSnapshot):
+                logger.notice("Rotated exact GitHub App Credential for runtime authorization")
+                return rotatedSnapshot.envelope
+            case let .alreadyRotated(rotatedSnapshot):
+                logger.debug("Reused one concurrently persisted GitHub App Credential rotation")
+                return rotatedSnapshot.envelope
+            case .stale:
+                logger.notice("Rejected refreshed GitHub App Credential because its incarnation changed")
+                return nil
+            }
+        }
+    }
+
+    nonisolated var description: String {
+        "GitHub App runtime Credential refresh coordinator (secrets redacted)"
+    }
+
+    nonisolated var debugDescription: String {
+        description
+    }
+
+    nonisolated var customMirror: Mirror {
+        Mirror(self, children: [:])
     }
 }
 

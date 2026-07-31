@@ -22,14 +22,20 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
     typealias NowProvider = @Sendable () -> Date
 
     private let accountStore: ForgeAccountStore
+    private let credentialRefreshCoordinator: ForgeAccountCredentialRefreshCoordinator
     private let now: NowProvider
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "GitHubReadAuthority")
 
     init(
         accountStore: ForgeAccountStore,
+        credentialRefreshCoordinator: ForgeAccountCredentialRefreshCoordinator? = nil,
         now: @escaping NowProvider = { Date() }
     ) {
         self.accountStore = accountStore
+        self.credentialRefreshCoordinator = credentialRefreshCoordinator ?? ForgeAccountCredentialRefreshCoordinator(
+            accountStore: accountStore,
+            configuration: ForgeGitHubAppConfiguration.bundled()
+        )
         self.now = now
     }
 
@@ -41,7 +47,11 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
             logger.error("Rejected non-GitHub.com read Credential")
             return nil
         }
-        guard let envelope = try await accountStore.credential(for: expectedCredential.accountID) else {
+        let evaluationDate = now()
+        guard let envelope = try await credentialRefreshCoordinator.credential(
+            for: expectedCredential,
+            at: evaluationDate
+        ) else {
             logger.notice("GitHub read Credential is unavailable")
             return nil
         }
@@ -52,7 +62,7 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
             logger.notice("GitHub read Credential reference is no longer current")
             return nil
         }
-        guard credential.expiresAt.map({ $0 > now() }) ?? true else {
+        guard credential.expiresAt.map({ $0 > evaluationDate }) ?? true else {
             logger.notice("GitHub read Credential is expired")
             return nil
         }
@@ -88,6 +98,19 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
         return try await accountStore.credentialChange(for: expectedCredential.accountID)
     }
 
+    func refreshCredentialIfNeeded(
+        for expectedCredential: ForgeCredentialReference,
+        at date: Date
+    ) async throws -> ForgeAccount? {
+        guard Self.isGitHubDotCom(expectedCredential.accountID.forge) else {
+            throw ForgeGitHubReadCompositionError.githubDotComCredentialRequired
+        }
+        return try await credentialRefreshCoordinator.credential(
+            for: expectedCredential,
+            at: date
+        )?.account
+    }
+
     static func isGitHubDotCom(_ forge: ForgeIdentity) -> Bool {
         guard forge.kind == .github else { return false }
         let origin = forge.origin.url
@@ -115,11 +138,15 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
               url.user == nil,
               url.password == nil,
               url.port == nil,
-              original.value(forHTTPHeaderField: "Authorization") == nil,
-              let envelope = try await accountStore.credential(for: expectedCredential.accountID),
-              envelope.account.currentCredential.reference == expectedCredential,
-              envelope.account.currentCredential.expiresAt.map({ $0 > now() }) ?? true
+              original.value(forHTTPHeaderField: "Authorization") == nil
         else {
+            throw ForgeGitHubReadCompositionError.githubDotComCredentialRequired
+        }
+        let evaluationDate = now()
+        guard let envelope = try await credentialRefreshCoordinator.credential(
+            for: expectedCredential,
+            at: evaluationDate
+        ), envelope.account.currentCredential.expiresAt.map({ $0 > evaluationDate }) ?? true else {
             throw ForgeGitHubReadCompositionError.githubDotComCredentialRequired
         }
         var request = original
@@ -185,6 +212,13 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
         for expectedCredential: ForgeCredentialReference
     ) async throws -> URLRequest {
         try await credentialAuthority.authorizedRequest(request, for: expectedCredential)
+    }
+
+    func refreshCredentialIfNeeded(
+        for expectedCredential: ForgeCredentialReference,
+        at date: Date
+    ) async throws -> ForgeAccount? {
+        try await credentialAuthority.refreshCredentialIfNeeded(for: expectedCredential, at: date)
     }
 
     // Exercised from the app-hosted test target, which SwiftLint analyzes separately.

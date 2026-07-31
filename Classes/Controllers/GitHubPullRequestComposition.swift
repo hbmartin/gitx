@@ -315,14 +315,14 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
         operations: Set<ForgeOperation>
     ) async throws -> CapabilityEvaluation {
         let services = try await loader.services()
-        guard let currentEnvelope = try await services.accountStore.credential(for: accountID),
-              currentEnvelope.account.id == accountID,
-              currentEnvelope.account.id.forge == repository.forge
+        guard let storedEnvelope = try await services.accountStore.credential(for: accountID),
+              storedEnvelope.account.id == accountID,
+              storedEnvelope.account.id.forge == repository.forge
         else {
             throw ForgeGitHubPullRequestCompositionError.currentCredentialRequired
         }
         switch await services.githubMutationState.environment(
-            for: currentEnvelope.account.currentCredential.reference,
+            for: storedEnvelope.account.currentCredential.reference,
             now: now()
         ) {
         case .available:
@@ -332,12 +332,18 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
         case let .rateLimited(until):
             throw ForgeGitHubPullRequestCompositionError.rateLimited(until: until)
         }
+        guard let currentAccount = try await services.githubReadAdapterFactory.refreshCredentialIfNeeded(
+            for: storedEnvelope.account.currentCredential.reference,
+            at: now()
+        ) else {
+            throw ForgeGitHubPullRequestCompositionError.currentCredentialRequired
+        }
         let resolved = try await resolve(
             services: services,
             accountID: accountID,
             repository: repository
         )
-        guard resolved.account.currentCredential.reference == currentEnvelope.account.currentCredential.reference else {
+        guard resolved.account.currentCredential.reference == currentAccount.currentCredential.reference else {
             throw ForgeGitHubPullRequestCompositionError.currentCredentialRequired
         }
         switch await services.githubMutationState.environment(for: resolved.account.currentCredential.reference, now: now()) {

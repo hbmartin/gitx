@@ -285,6 +285,12 @@ nonisolated struct ForgeCredentialSecretMaterial: Codable, Sendable,
         refreshToken != nil
     }
 
+    func matches(_ other: ForgeCredentialSecretMaterial) -> Bool {
+        accessToken == other.accessToken &&
+            refreshToken == other.refreshToken &&
+            refreshTokenExpiresAt == other.refreshTokenExpiresAt
+    }
+
     var description: String {
         "<redacted Forge Credential secrets>"
     }
@@ -451,6 +457,48 @@ nonisolated struct ForgeAccountCredentialChange: Equatable, Sendable {
     let revision: UInt64
 }
 
+/// Captures one exact in-process Credential incarnation. The revision closes
+/// the remove/re-add and same-generation rotation ABA gap that a stable
+/// Credential reference deliberately cannot represent on its own.
+nonisolated struct ForgeStoredCredentialSnapshot: Sendable,
+    CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable
+{
+    let envelope: ForgeStoredCredentialEnvelope
+    let revision: UInt64
+
+    var description: String {
+        "<redacted Forge Credential snapshot>"
+    }
+
+    var debugDescription: String {
+        description
+    }
+
+    var customMirror: Mirror {
+        Mirror(self, children: [:])
+    }
+}
+
+nonisolated enum ForgeCredentialRotationCASOutcome: Sendable,
+    CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable
+{
+    case rotated(ForgeStoredCredentialSnapshot)
+    case alreadyRotated(ForgeStoredCredentialSnapshot)
+    case stale
+
+    var description: String {
+        "<redacted Forge Credential rotation outcome>"
+    }
+
+    var debugDescription: String {
+        description
+    }
+
+    var customMirror: Mirror {
+        Mirror(self, children: [:])
+    }
+}
+
 actor ForgeAccountStore {
     private let keychain: any ForgeCredentialKeychain
     private var credentialRevisions: [ForgeAccountID: UInt64] = [:]
@@ -492,6 +540,16 @@ actor ForgeAccountStore {
         try ForgeAccountCredentialChange(
             accountID: accountID,
             currentReference: credential(for: accountID)?.account.currentCredential.reference,
+            revision: credentialRevisions[accountID, default: 0]
+        )
+    }
+
+    func credentialSnapshot(for accountID: ForgeAccountID) throws -> ForgeStoredCredentialSnapshot? {
+        guard let envelope = try credential(for: accountID) else {
+            return nil
+        }
+        return ForgeStoredCredentialSnapshot(
+            envelope: envelope,
             revision: credentialRevisions[accountID, default: 0]
         )
     }
@@ -582,6 +640,60 @@ actor ForgeAccountStore {
         advanceCredentialRevision(for: account.id)
         logger.notice("Forge Account Credential rotated generation retained")
         return account
+    }
+
+    /// Rotates only the exact Credential incarnation captured before an
+    /// asynchronous refresh. A revision mismatch is an expected stale-result
+    /// rejection and performs no Keychain write.
+    @discardableResult
+    func rotateCredential(
+        expectedReference: ForgeCredentialReference,
+        expectedRevision: UInt64,
+        expiresAt: Date?,
+        secrets: ForgeCredentialSecretMaterial
+    ) throws -> ForgeCredentialRotationCASOutcome {
+        try Task.checkCancellation()
+        let currentRevision = credentialRevisions[expectedReference.accountID, default: 0]
+        guard let envelope = try credential(for: expectedReference.accountID) else {
+            return .stale
+        }
+        if currentRevision != expectedRevision {
+            guard currentRevision == expectedRevision &+ 1,
+                  envelope.account.currentCredential.reference == expectedReference,
+                  envelope.account.currentCredential.expiresAt == expiresAt,
+                  envelope.secrets.matches(secrets)
+            else {
+                return .stale
+            }
+            return .alreadyRotated(ForgeStoredCredentialSnapshot(
+                envelope: envelope,
+                revision: currentRevision
+            ))
+        }
+        guard envelope.account.currentCredential.reference == expectedReference else {
+            return .stale
+        }
+        guard envelope.account.currentCredential.source == .forgeApplicationDeviceFlow else {
+            throw ForgeCredentialStoreError.credentialSourceMismatch
+        }
+        let account = try ForgeAccount(
+            id: envelope.account.id,
+            login: envelope.account.login,
+            currentCredential: envelope.account.currentCredential.refreshed(expiresAt: expiresAt)
+        )
+        let key = try Self.keychainAccountKey(for: account.id)
+        let rotatedEnvelope = try ForgeStoredCredentialEnvelope(
+            account: account,
+            secrets: secrets,
+            authorizationEvidence: envelope.authorizationEvidence
+        )
+        try persist(rotatedEnvelope, key: key)
+        advanceCredentialRevision(for: account.id)
+        logger.notice("Forge Account Credential rotated after exact incarnation check")
+        return .rotated(ForgeStoredCredentialSnapshot(
+            envelope: rotatedEnvelope,
+            revision: credentialRevisions[account.id, default: 0]
+        ))
     }
 
     @discardableResult
