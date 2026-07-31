@@ -42,6 +42,10 @@ protocol RepositoryPullRequestReviewOverlayHosting: AnyObject {
         diff: RepositoryLocalPullRequestDiff
     )
 
+    func refresh()
+
+    func failClosedAfterRepositoryRefresh(_ message: String)
+
     func detach()
 }
 
@@ -51,6 +55,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     private let markdownRenderer: any ForgeReadMarkdownRendering
     private let avatarRenderer: any ForgeReadAvatarRendering
     private let destinationRouter: any ForgeReadDestinationRouting
+    private let reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)?
     private let defaultRevision: ForgeRevision
     private let listController: ForgeReadListViewController
     private let inspectorController: ForgeReadInspectorViewController
@@ -59,6 +64,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     private var listTask: Task<Void, Never>?
     private var detailsTask: Task<Void, Never>?
     private var currentDetailsSnapshot: ForgeReadSurfaceDetailsSnapshot?
+    private var selectedItem: ForgeRepositoryItem?
     private var pendingDestination: ForgeDestination?
     private var detailsGeneration: UInt64 = 0
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeReadSurface")
@@ -80,6 +86,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         self.markdownRenderer = markdownRenderer
         self.avatarRenderer = avatarRenderer
         self.destinationRouter = destinationRouter
+        self.reviewOverlayHost = reviewOverlayHost
         self.defaultRevision = defaultRevision
         accumulator = ForgeReadSurfaceAccumulator(kind: kind)
         listController = ForgeReadListViewController(kind: kind)
@@ -151,9 +158,8 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     func show(kind: ForgeReadSurfaceKind) {
         guard kind != accumulator.kind else { return }
         listController.setKind(kind)
-        currentDetailsSnapshot = nil
-        inspectorController.showPlaceholder("Select a \(kind == .pullRequests ? "pull request" : "issue") to inspect it.")
         reload(kind: kind, query: listController.query)
+        inspectorController.showPlaceholder("Select a \(kind == .pullRequests ? "pull request" : "issue") to inspect it.")
     }
 
     func refresh() {
@@ -209,6 +215,11 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
 
     private func reload(kind: ForgeReadSurfaceKind? = nil, query: ForgeReadSurfaceQuery) {
         listTask?.cancel()
+        let invalidatesSelection = (kind ?? accumulator.kind) != accumulator.kind || query != accumulator.query
+        if invalidatesSelection {
+            listController.restoreSelection(row: nil)
+            selectRow(-1)
+        }
         let request = accumulator.beginReload(kind: kind, query: query)
         renderList()
         logger.info(
@@ -224,7 +235,10 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
                 guard !Task.isCancelled, let self else { return }
                 if accumulator.receive(page, for: request) {
                     logger.info("Installed \(page.items.count) Forge list items")
-                    renderList()
+                    let resolvedPendingDestination = renderList()
+                    if !resolvedPendingDestination {
+                        refreshSelectedInspectorAfterReload()
+                    }
                 } else {
                     logger.debug("Rejected an obsolete Forge list response")
                 }
@@ -235,6 +249,9 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
                 if accumulator.fail(error.localizedDescription, for: request) {
                     logger.error("Forge list refresh failed: \(error.localizedDescription, privacy: .public)")
                     renderList()
+                    if !invalidatesSelection {
+                        retainSelectedInspectorAfterRefreshFailure(error.localizedDescription)
+                    }
                 }
             }
         }
@@ -255,6 +272,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
                 if accumulator.receive(page, for: request) {
                     logger.info("Appended \(page.items.count) Forge list items")
                     renderList()
+                    reconcileSelectedInspectorAfterPagination()
                 }
             } catch is CancellationError {
                 self?.logger.debug("Cancelled Forge pagination")
@@ -268,7 +286,8 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         }
     }
 
-    private func renderList() {
+    @discardableResult
+    private func renderList() -> Bool {
         let presentation = accumulator.presentation(formatDate: Self.dateDescription)
         rows = presentation.rows
         listController.apply(presentation)
@@ -277,21 +296,41 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         {
             self.pendingDestination = nil
             listController.select(row: row)
+            return true
         }
+        let selectedRow = selectedItem.flatMap { selected in
+            rows.firstIndex(where: { $0.destination == selected.destination })
+        }
+        listController.restoreSelection(row: selectedRow)
+        return false
     }
 
     private func selectRow(_ index: Int) {
         guard rows.indices.contains(index) else {
+            selectedItem = nil
+            detailsTask?.cancel()
+            currentDetailsSnapshot = nil
+            detailsGeneration &+= 1
             inspectorController.showPlaceholder("Select an item to inspect it.")
             return
         }
         let item = rows[index].item
-        let rowNumber = rows[index].number
+        selectedItem = item
+        loadDetails(for: item, rowNumber: rows[index].number, preservingCurrentSnapshot: false)
+    }
+
+    private func loadDetails(
+        for item: ForgeRepositoryItem,
+        rowNumber: String,
+        preservingCurrentSnapshot: Bool
+    ) {
         detailsTask?.cancel()
-        currentDetailsSnapshot = nil
+        if !preservingCurrentSnapshot {
+            currentDetailsSnapshot = nil
+            inspectorController.showLoading(for: ForgeReadSurfaceRow(item: item))
+        }
         detailsGeneration &+= 1
         let generation = detailsGeneration
-        inspectorController.showLoading(for: rows[index])
         logger.info("Loading Forge inspector details for \(rowNumber, privacy: .public)")
         detailsTask = Task { @MainActor [weak self, service] in
             do {
@@ -303,7 +342,13 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
                 guard !Task.isCancelled, let self, generation == detailsGeneration else { return }
                 guard snapshot.details.item.destination == item.destination else {
                     logger.error("Rejected Forge details for a different destination")
-                    inspectorController.showError("GitHub returned details for a different item.", item: item)
+                    if !retainStaleDetailsAfterRefreshFailure(
+                        "GitHub returned details for a different item.",
+                        item: item,
+                        preservingCurrentSnapshot: preservingCurrentSnapshot
+                    ) {
+                        inspectorController.showError("GitHub returned details for a different item.", item: item)
+                    }
                     return
                 }
                 let presentation = ForgeReadInspectorPresenter.present(
@@ -311,6 +356,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
                     formatDate: Self.dateDescription
                 )
                 currentDetailsSnapshot = snapshot
+                selectedItem = snapshot.details.item
                 inspectorController.apply(presentation)
                 logger.info("Installed Forge inspector details")
             } catch is CancellationError {
@@ -318,8 +364,128 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
             } catch {
                 guard let self, generation == detailsGeneration else { return }
                 logger.error("Forge inspector load failed: \(error.localizedDescription, privacy: .public)")
-                inspectorController.showError(error.localizedDescription, item: item)
+                if !retainStaleDetailsAfterRefreshFailure(
+                    error.localizedDescription,
+                    item: item,
+                    preservingCurrentSnapshot: preservingCurrentSnapshot
+                ) {
+                    inspectorController.showError(error.localizedDescription, item: item)
+                }
             }
+        }
+    }
+
+    private func retainStaleDetailsAfterRefreshFailure(
+        _ message: String,
+        item: ForgeRepositoryItem,
+        preservingCurrentSnapshot: Bool,
+        markingPartial: Bool = false
+    ) -> Bool {
+        guard preservingCurrentSnapshot,
+              let currentDetailsSnapshot,
+              currentDetailsSnapshot.details.item.destination == item.destination
+        else { return false }
+        let staleSnapshot = ForgeReadSurfaceDetailsSnapshot(
+            details: currentDetailsSnapshot.details,
+            fetchedAt: currentDetailsSnapshot.fetchedAt,
+            isStale: true,
+            isPartial: currentDetailsSnapshot.isPartial || markingPartial
+        )
+        self.currentDetailsSnapshot = staleSnapshot
+        let stalePresentation = ForgeReadInspectorPresenter.present(
+            staleSnapshot,
+            formatDate: Self.dateDescription
+        )
+        inspectorController.apply(stalePresentation)
+        inspectorController.showRefreshError(
+            message,
+            freshnessMessage: stalePresentation.freshnessMessage
+        )
+        if case .pullRequest = item {
+            reviewOverlayHost?.failClosedAfterRepositoryRefresh(message)
+        }
+        logger.info("Retained explicitly stale Forge inspector details after refresh failure")
+        return true
+    }
+
+    @discardableResult
+    private func retainSelectedInspectorAfterPartialReload(_ item: ForgeRepositoryItem) -> Bool {
+        let message = "The refreshed list was incomplete, so the selected item could not be verified."
+        let retained = retainStaleDetailsAfterRefreshFailure(
+            message,
+            item: item,
+            preservingCurrentSnapshot: true,
+            markingPartial: true
+        )
+        if retained {
+            logger.info("Retained selected Forge inspector because a partial list cannot prove absence")
+        }
+        return retained
+    }
+
+    private func retainSelectedInspectorAfterRefreshFailure(_ message: String) {
+        guard let selectedItem else { return }
+        _ = retainStaleDetailsAfterRefreshFailure(
+            message,
+            item: selectedItem,
+            preservingCurrentSnapshot: true
+        )
+    }
+
+    private func refreshSelectedInspectorAfterReload() {
+        guard var item = selectedItem else { return }
+        let row = rows.firstIndex(where: { $0.destination == item.destination })
+        if let row {
+            item = rows[row].item
+            selectedItem = item
+            listController.restoreSelection(row: row)
+        } else {
+            listController.restoreSelection(row: nil)
+            if accumulator.isPartial {
+                if !retainSelectedInspectorAfterPartialReload(item) {
+                    loadDetails(
+                        for: item,
+                        rowNumber: ForgeReadSurfaceRow(item: item).number,
+                        preservingCurrentSnapshot: false
+                    )
+                }
+                return
+            }
+            guard accumulator.nextCursor != nil else {
+                selectRow(-1)
+                logger.info("Cleared Forge inspector because the selected item is no longer in the refreshed list")
+                return
+            }
+            logger.info("Preserving the selected Forge inspector while its item is beyond the refreshed first page")
+        }
+        if case .pullRequest = item {
+            reviewOverlayHost?.refresh()
+        }
+        loadDetails(
+            for: item,
+            rowNumber: ForgeReadSurfaceRow(item: item).number,
+            preservingCurrentSnapshot: true
+        )
+        logger.info("Refreshing Forge inspector after the selected item list reloaded")
+    }
+
+    private func reconcileSelectedInspectorAfterPagination() {
+        guard let selectedItem else { return }
+        if let row = rows.firstIndex(where: { $0.destination == selectedItem.destination }) {
+            self.selectedItem = rows[row].item
+            listController.restoreSelection(row: row)
+            logger.info("Restored selected Forge item after loading another list page")
+        } else if accumulator.nextCursor == nil {
+            if accumulator.isPartial {
+                listController.restoreSelection(row: nil)
+                _ = retainSelectedInspectorAfterPartialReload(selectedItem)
+            } else {
+                selectRow(-1)
+                logger.info("Cleared Forge inspector after the final list page omitted the selected item")
+            }
+        } else {
+            listController.restoreSelection(row: nil)
+            logger.info("Preserving selected Forge inspector while more list pages remain")
         }
     }
 
@@ -410,6 +576,7 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
     private let refreshButton = NSButton(title: "Refresh", target: nil, action: nil)
     private let loadMoreButton = NSButton(title: "Load More", target: nil, action: nil)
     private let totalLabel = NSTextField(labelWithString: "")
+    private var suppressesSelectionChanges = false
     private var presentation = ForgeReadListPresentation(
         rows: [],
         statusMessage: nil,
@@ -445,7 +612,9 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
 
     func apply(_ presentation: ForgeReadListPresentation) {
         self.presentation = presentation
+        suppressesSelectionChanges = true
         tableView.reloadData()
+        suppressesSelectionChanges = false
         statusLabel.stringValue = presentation.statusMessage ?? ""
         statusLabel.isHidden = presentation.statusMessage == nil
         freshnessLabel.stringValue = presentation.freshnessMessage ?? ""
@@ -478,11 +647,23 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
         tableView.scrollRowToVisible(row)
     }
 
+    func restoreSelection(row: Int?) {
+        suppressesSelectionChanges = true
+        if let row, presentation.rows.indices.contains(row) {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            tableView.scrollRowToVisible(row)
+        } else {
+            tableView.deselectAll(nil)
+        }
+        suppressesSelectionChanges = false
+    }
+
     func numberOfRows(in _: NSTableView) -> Int {
         presentation.rows.count
     }
 
     func tableViewSelectionDidChange(_: Notification) {
+        guard !suppressesSelectionChanges else { return }
         onSelectRow?(tableView.selectedRow)
     }
 
@@ -737,11 +918,15 @@ final class ForgeReadInspectorViewController: NSViewController {
     private var routedDestination: ForgeDestination?
     private var continuationButtons: [NSButton] = []
     private var continuationStatusView: NSView?
+    private var refreshFailureView: NSView?
+    private var refreshFailureMessage: String?
+    private weak var freshnessView: NSTextField?
     private var pullRequestModeControl: NSSegmentedControl?
     private var currentPresentation: ForgeReadInspectorPresentation?
     private var changesTask: Task<Void, Never>?
     private var pullRequestMode = 0
     private var editablePullRequestSnapshot: ForgePullRequestEditableSnapshot?
+    private weak var editPullRequestButton: NSButton?
     private var currentPullRequestSummary: ForgePullRequestSummary?
 
     init(
@@ -814,9 +999,38 @@ final class ForgeReadInspectorViewController: NSViewController {
         contentStack.addArrangedSubview(browserButton)
     }
 
+    func showRefreshError(_ message: String, freshnessMessage: String?) {
+        refreshFailureMessage = message
+        renderRefreshError(message, freshnessMessage: freshnessMessage)
+    }
+
+    private func renderRefreshError(_ message: String, freshnessMessage: String?) {
+        if let refreshFailureView {
+            contentStack.removeArrangedSubview(refreshFailureView)
+            refreshFailureView.removeFromSuperview()
+        }
+        if let freshnessMessage {
+            if let freshnessView {
+                freshnessView.stringValue = freshnessMessage
+            } else {
+                let freshness = banner(freshnessMessage, color: .systemOrange)
+                freshness.setAccessibilityIdentifier("ForgeInspectorFreshness")
+                contentStack.addArrangedSubview(freshness)
+                freshnessView = freshness
+            }
+        }
+        let failure = banner("Showing stale details. Refresh failed: \(message)", color: .systemOrange)
+        failure.setAccessibilityIdentifier("ForgeInspectorRefreshError")
+        contentStack.addArrangedSubview(failure)
+        refreshFailureView = failure
+        editPullRequestButton?.isEnabled = false
+        editPullRequestButton?.toolTip = "Refresh this Pull Request before editing; stale data cannot authorize a mutation."
+        editPullRequestButton?.setAccessibilityHelp(editPullRequestButton?.toolTip)
+    }
+
     func apply(_ presentation: ForgeReadInspectorPresentation) {
+        refreshFailureMessage = nil
         changesTask?.cancel()
-        reviewOverlayHost?.detach()
         currentPresentation = presentation
         routedDestination = presentation.item.destination
         resetContent()
@@ -905,6 +1119,7 @@ final class ForgeReadInspectorViewController: NSViewController {
                 ? editPullRequestControl.helpText
                 : "Refresh this Pull Request before editing; stale data cannot authorize a mutation."
             editButton.setAccessibilityHelp(editButton.toolTip)
+            editPullRequestButton = editButton
             headingViews.append(editButton)
         }
         headingViews.append(browserButton)
@@ -918,6 +1133,7 @@ final class ForgeReadInspectorViewController: NSViewController {
             let freshness = banner(freshnessMessage, color: .systemOrange)
             freshness.setAccessibilityIdentifier("ForgeInspectorFreshness")
             contentStack.addArrangedSubview(freshness)
+            freshnessView = freshness
         }
 
         contentStack.addArrangedSubview(separator())
@@ -1029,7 +1245,14 @@ final class ForgeReadInspectorViewController: NSViewController {
     @objc private func pullRequestModeChanged(_ sender: NSSegmentedControl) {
         pullRequestMode = sender.selectedSegment
         guard let currentPresentation else { return }
+        let refreshFailureMessage = self.refreshFailureMessage
         apply(currentPresentation)
+        if let refreshFailureMessage {
+            showRefreshError(
+                refreshFailureMessage,
+                freshnessMessage: currentPresentation.freshnessMessage
+            )
+        }
     }
 
     private func showLocalChanges(for presentation: ForgeReadInspectorPresentation) {
@@ -1110,6 +1333,12 @@ final class ForgeReadInspectorViewController: NSViewController {
             nativeView.widthAnchor.constraint(equalTo: contentStack.widthAnchor, constant: -28),
             nativeView.heightAnchor.constraint(greaterThanOrEqualToConstant: 420),
         ])
+        if let refreshFailureMessage {
+            renderRefreshError(
+                refreshFailureMessage,
+                freshnessMessage: currentPresentation?.freshnessMessage
+            )
+        }
     }
 
     @inline(never)
@@ -1125,6 +1354,12 @@ final class ForgeReadInspectorViewController: NSViewController {
         let error = banner("Couldn’t compute local Pull Request changes. \(message)", color: .systemRed)
         error.setAccessibilityIdentifier("GitX.PullRequest.ChangesError")
         contentStack.addArrangedSubview(error)
+        if let refreshFailureMessage {
+            renderRefreshError(
+                refreshFailureMessage,
+                freshnessMessage: currentPresentation?.freshnessMessage
+            )
+        }
     }
 
     private func addReviewActionView(for pullRequest: ForgePullRequestSummary) {
@@ -1194,7 +1429,10 @@ final class ForgeReadInspectorViewController: NSViewController {
 
     private func resetContent() {
         editablePullRequestSnapshot = nil
+        editPullRequestButton = nil
         currentPullRequestSummary = nil
+        refreshFailureView = nil
+        freshnessView = nil
         for view in contentStack.arrangedSubviews {
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()

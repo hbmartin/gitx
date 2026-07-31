@@ -689,7 +689,8 @@ struct ForgeReadSurfaceAccumulator: Sendable {
         for request: ForgeReadSurfaceRequest
     ) -> Bool {
         guard request == activeRequest else { return false }
-        if request.cursor == nil {
+        let isFirstPage = request.cursor == nil
+        if isFirstPage {
             items = page.items
         } else {
             var destinations = Set(items.map(\.destination))
@@ -700,8 +701,8 @@ struct ForgeReadSurfaceAccumulator: Sendable {
         nextCursor = page.nextCursor
         totalCount = page.totalCount ?? totalCount
         fetchedAt = page.fetchedAt
-        isStale = page.isStale
-        isPartial = page.isPartial
+        isStale = isFirstPage ? page.isStale : (isStale || page.isStale)
+        isPartial = isFirstPage ? page.isPartial : (isPartial || page.isPartial)
         failureMessage = nil
         activeRequest = nil
         return true

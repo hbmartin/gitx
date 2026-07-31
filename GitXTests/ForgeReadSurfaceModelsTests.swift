@@ -50,7 +50,8 @@ final class ForgeReadSurfaceModelsTests: XCTestCase {
                 items: [.issue(Fixture.issue(number: 2, title: "Current"))],
                 nextCursor: ForgePageCursor("next"),
                 totalCount: 2,
-                fetchedAt: Fixture.date(2)
+                fetchedAt: Fixture.date(2),
+                isPartial: true
             ),
             for: current
         ))
@@ -72,6 +73,10 @@ final class ForgeReadSurfaceModelsTests: XCTestCase {
             ["#2", "#3"]
         )
         XCTAssertNil(accumulator.beginNextPage())
+        XCTAssertEqual(
+            accumulator.presentation { _ in "date" }.freshnessMessage,
+            "Some fields are unavailable"
+        )
     }
 
     func testRefreshFailureRetainsRowsAndMarksThemStale() throws {

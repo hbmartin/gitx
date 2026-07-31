@@ -100,6 +100,11 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             "M3Suggested.swift"
         )
+        try requireLabel(
+            "Applied one suggested change as an unstaged local edit.",
+            for: element("GitX.PullRequest.Review.Message", in: app),
+            timeout: 10
+        )
         retainDiagnosticScreenshot(named: "M3-Suggested-02-Applied-Unstaged", of: app.windows.firstMatch, in: app)
     }
 
@@ -170,6 +175,7 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
         let fixture = try makePostMergeRepository()
         let app = try launch(repository: fixture.repository, scenario: "post-merge")
 
+        try requireHittable(app.buttons["GitX.PullRequest.Review.FetchBase"], timeout: 10)
         XCTAssertEqual(
             try git(["branch", "--show-current"], in: fixture.repository)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -382,24 +388,24 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
     }
 
     private func scrollIntoViewIfNeeded(_ element: XCUIElement) {
-        guard !element.isHittable, let application = activeApplication else { return }
-        let scrollViews = [
-            application.scrollViews["GitX.M3.Production.ScrollView"],
-            application.scrollViews["GitX.PullRequest.Review.Threads"],
-        ]
-        // The production thread surface is nested in the launch-only outer
-        // scroller. Two bounded passes let either viewport reveal the target
-        // without introducing a clock-based wait.
-        for _ in 0 ..< 2 {
-            for scrollView in scrollViews where scrollView.exists {
-                for delta in [320.0, -320.0] {
-                    for _ in 0 ..< 8 where !element.isHittable {
-                        scrollView.scroll(byDeltaX: 0, deltaY: delta)
-                    }
+        guard let application = activeApplication else { return }
+        let outer = application.scrollViews["GitX.M3.Production.ScrollView"]
+        let thread = application.scrollViews["GitX.PullRequest.Review.Threads"]
+        let scrollViews = element.identifier.hasPrefix("GitX.PullRequest.Review.Thread.")
+            ? [thread, outer]
+            : [outer]
+        for scrollView in scrollViews where scrollView.exists {
+            for _ in 0 ..< 16 {
+                let viewport = scrollView.frame.insetBy(dx: 3, dy: 3)
+                let target = element.frame
+                if viewport.contains(target) {
                     if element.isHittable {
                         return
                     }
+                    break
                 }
+                let delta = target.midY > viewport.midY ? -120.0 : 120.0
+                scrollView.scroll(byDeltaX: 0, deltaY: delta)
             }
         }
     }

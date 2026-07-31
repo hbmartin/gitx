@@ -21,6 +21,8 @@ import OSLog // swiftlint:disable:this unused_import
         private var reviewController: RepositoryPullRequestReviewOverlayController?
         private var reviewService: Milestone3ProductionReviewService?
         private var launchTask: Task<Void, Never>?
+        private var repositoryRefsObservation: NSKeyValueObservation?
+        private var repositoryCurrentBranchObservation: NSKeyValueObservation?
 
         private init(windowController: PBGitWindowController, environment: [String: String]) {
             self.windowController = windowController
@@ -71,6 +73,7 @@ import OSLog // swiftlint:disable:this unused_import
                 guard let repository = windowController.repository else {
                     throw Milestone3UITestHarnessError.repositoryUnavailable
                 }
+                installRepositoryObservations(repository)
                 guard let container = PBViewController(
                     repository: repository,
                     superController: windowController
@@ -141,6 +144,30 @@ import OSLog // swiftlint:disable:this unused_import
             stateMarker.setAccessibilityIdentifier(Milestone3AccessibilityIdentifier.harnessState(state))
             stateMarker.setAccessibilityLabel(label)
             logger.debug("Milestone 3 UI harness state=\(state, privacy: .public)")
+            if state == "PostMerge.Fetched" || state == "PostMerge.BaseCheckedOut" {
+                restoreProductionDestination()
+            }
+        }
+
+        private func restoreProductionDestination() {
+            guard let windowController, let containerController else { return }
+            windowController.changeContentController(containerController)
+        }
+
+        private func installRepositoryObservations(_ repository: PBGitRepository) {
+            repositoryRefsObservation = repository.observe(\.refs, options: []) { [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    await Task.yield()
+                    self?.restoreProductionDestination()
+                }
+            }
+            repositoryCurrentBranchObservation = repository.observe(\.currentBranch, options: []) {
+                [weak self] _, _ in
+                Task { @MainActor [weak self] in
+                    await Task.yield()
+                    self?.restoreProductionDestination()
+                }
+            }
         }
 
         private func productionRoot(
@@ -160,7 +187,8 @@ import OSLog // swiftlint:disable:this unused_import
             stack.spacing = 10
             stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
             stack.translatesAutoresizingMaskIntoConstraints = false
-            let document = NSView()
+            stack.setContentCompressionResistancePriority(.required, for: .vertical)
+            let document = Milestone3FlippedDocumentView()
             document.translatesAutoresizingMaskIntoConstraints = false
             document.setAccessibilityElement(true)
             document.setAccessibilityRole(.group)
@@ -169,6 +197,9 @@ import OSLog // swiftlint:disable:this unused_import
             document.addSubview(stack)
             root.documentView = document
             NSLayoutConstraint.activate([
+                document.leadingAnchor.constraint(equalTo: root.contentView.leadingAnchor),
+                document.trailingAnchor.constraint(equalTo: root.contentView.trailingAnchor),
+                document.topAnchor.constraint(equalTo: root.contentView.topAnchor),
                 document.widthAnchor.constraint(equalTo: root.contentView.widthAnchor),
                 stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
                 stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
@@ -178,6 +209,12 @@ import OSLog // swiftlint:disable:this unused_import
                 overlayView.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24),
             ])
             return root
+        }
+    }
+
+    private final class Milestone3FlippedDocumentView: NSView {
+        override var isFlipped: Bool {
+            true
         }
     }
 
@@ -682,6 +719,10 @@ import OSLog // swiftlint:disable:this unused_import
                 pullRequest _: ForgePullRequestSummary,
                 diff _: RepositoryLocalPullRequestDiff
             ) {}
+
+            func refresh() {}
+
+            func failClosedAfterRepositoryRefresh(_: String) {}
 
             func detach() {
                 detachCount += 1

@@ -56,11 +56,24 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         let displayedHead: ForgeCommitID
     }
 
+    private struct ResolutionControlPresentation: Equatable {
+        let resolution: RepositoryReviewThreadResolutionPresentation
+        let isEnabled: Bool
+    }
+
+    private struct ResolutionControlRow {
+        let row: RepositoryReviewWrappingButtonRow
+        let isFresh: Bool
+        var presentation: ResolutionControlPresentation?
+    }
+
     private let session: RepositoryPullRequestReviewSession
     private let router: any RepositoryPullRequestReviewRouting
     private let markdownRouter: RepositoryPullRequestReviewMarkdownRouter
     private let actionStack = NSStackView()
     private let overlayStack = NSStackView()
+    private weak var actionContentBox: RepositoryReviewContentBox?
+    private weak var overlayContentBox: RepositoryReviewContentBox?
     private(set) lazy var reviewOverlayView: NSView = makeOverlayRoot()
     private var tasks: [Task<Void, Never>] = []
     private var actionPresentationTasks: [Task<Void, Never>] = []
@@ -84,7 +97,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private var overlayDraftCoordinators: [RepositoryReviewDraftTextCoordinator] = []
     private var overlayDraftLoadTasks: [Task<Void, Never>] = []
     private var modalDraftCoordinator: RepositoryReviewDraftTextCoordinator?
-    private var resolutionControlRows: [ForgeObjectID: (row: NSStackView, isFresh: Bool)] = [:]
+    private var resolutionControlRows: [ForgeObjectID: ResolutionControlRow] = [:]
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestReviewUI")
     var onWorkspacePresentationChange: (() -> Void)?
 
@@ -123,12 +136,17 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         configure(stack: actionStack, identifier: RepositoryPullRequestReviewAccessibility.actionRoot)
         let box = makeSnowLeopardBox(containing: actionStack)
         box.setAccessibilityIdentifier(RepositoryPullRequestReviewAccessibility.actionRoot)
+        actionContentBox = box
         view = box
         renderActionArea()
     }
 
     func start() {
         session.load()
+    }
+
+    func failClosedAfterRepositoryRefresh(_ message: String) {
+        session.failClosedAfterRepositoryRefresh(message)
     }
 
     func detach() {
@@ -179,6 +197,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     }
 
     private func renderActionArea() {
+        defer { actionContentBox?.invalidateIntrinsicContentSize() }
         actionPresentationTasks.forEach { $0.cancel() }
         actionPresentationTasks.removeAll()
         // A newly installed authoritative workspace invalidates every open
@@ -215,6 +234,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     }
 
     private func renderOverlay() {
+        defer { overlayContentBox?.invalidateIntrinsicContentSize() }
         overlayDraftLoadTasks.forEach { $0.cancel() }
         overlayDraftLoadTasks.removeAll()
         overlayDraftCoordinators.forEach { $0.detach() }
@@ -233,15 +253,16 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             threadList.addArrangedSubview(empty)
         } else {
             for record in workspace.threads {
-                threadList.addArrangedSubview(threadView(record, workspace: workspace))
+                addFullWidthArrangedSubview(threadView(record, workspace: workspace), to: threadList)
             }
         }
-        overlayStack.addArrangedSubview(threadList)
+        addFullWidthArrangedSubview(threadList, to: overlayStack)
         if let selectedAnchor {
-            overlayStack.addArrangedSubview(inlineComposer(
+            let composer = inlineComposer(
                 anchor: selectedAnchor,
                 workspace: workspace
-            ))
+            )
+            addFullWidthArrangedSubview(composer, to: overlayStack)
         } else {
             let help = NSTextField(wrappingLabelWithString: "Select exact added, removed, or context lines in the local diff to add an inline review comment.")
             help.textColor = .secondaryLabelColor
@@ -403,17 +424,19 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             title: "Check Out Base",
             identifier: RepositoryPullRequestReviewAccessibility.checkOutBase
         ) { [weak self] in self?.perform { try await self?.session.checkOutBase() } }
-        let delete = makeButton(
-            title: "Delete Head Branch…",
-            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch
-        ) { [weak self] in self?.confirmDeleteHeadBranch() }
         let fresh = workspace.isMutationStateFresh
         fetch.isEnabled = fresh
         checkout.isEnabled = fresh
-        delete.isEnabled = fresh && canDeleteMergedHead(workspace)
         row.addArrangedSubview(fetch)
         row.addArrangedSubview(checkout)
-        row.addArrangedSubview(delete)
+        if workspace.headBranchDeletionSnapshot != nil {
+            let delete = makeButton(
+                title: "Delete Head Branch…",
+                identifier: RepositoryPullRequestReviewAccessibility.deleteBranch
+            ) { [weak self] in self?.confirmDeleteHeadBranch() }
+            delete.isEnabled = fresh && canDeleteMergedHead(workspace)
+            row.addArrangedSubview(delete)
+        }
         actionStack.addArrangedSubview(row)
     }
 
@@ -449,7 +472,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         if let override = threadExpansionOverrides[id] {
             presentation = presentation.updating(isExpanded: override)
         }
-        let box = NSBox()
+        let box = RepositoryReviewContentBox()
         box.boxType = .custom
         box.borderWidth = 1
         box.borderColor = presentation.isOutdated ? .systemOrange : .separatorColor
@@ -459,7 +482,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         let stack = NSStackView()
         configure(stack: stack)
         stack.edgeInsets = NSEdgeInsets(top: 7, left: 8, bottom: 7, right: 8)
-        box.contentView = stack
+        installContent(stack, in: box)
 
         let header = NSStackView()
         header.orientation = .horizontal
@@ -550,7 +573,11 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
 
         let resolutionRow = wrappingButtonRow()
         controls.addArrangedSubview(resolutionRow)
-        resolutionControlRows[id] = (resolutionRow, isFresh)
+        resolutionControlRows[id] = ResolutionControlRow(
+            row: resolutionRow,
+            isFresh: isFresh,
+            presentation: nil
+        )
         renderResolutionControls(
             threadID: id,
             state: session.resolutionStates[id] ?? .confirmed(isResolved: presentation.isResolved)
@@ -579,9 +606,18 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         threadID: ForgeObjectID,
         state: ForgeReviewThreadResolutionState
     ) {
-        guard let controls = resolutionControlRows[threadID] else { return }
-        clear(controls.row)
+        guard var controls = resolutionControlRows[threadID] else { return }
         let resolution = RepositoryReviewThreadResolutionPresenter.present(state)
+        let resolutionOperation: ForgeOperation = resolution.isResolved
+            ? .unresolveReviewThread : .resolveReviewThread
+        let presentation = ResolutionControlPresentation(
+            resolution: resolution,
+            isEnabled: controls.isFresh && workspaceAllows(resolutionOperation)
+        )
+        guard controls.presentation != presentation else { return }
+        controls.presentation = presentation
+        resolutionControlRows[threadID] = controls
+        clear(controls.row)
         let resolve = makeButton(
             title: resolution.isResolved ? "Unresolve" : "Resolve",
             identifier: RepositoryPullRequestReviewAccessibility.threadPrefix + threadID.value + ".Resolve"
@@ -591,9 +627,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 mutation: resolution.isResolved ? .unresolve : .resolve
             )
         }
-        let resolutionOperation: ForgeOperation = resolution.isResolved
-            ? .unresolveReviewThread : .resolveReviewThread
-        resolve.isEnabled = controls.isFresh && workspaceAllows(resolutionOperation)
+        resolve.isEnabled = presentation.isEnabled
         controls.row.addArrangedSubview(resolve)
         if resolution.canUndo {
             controls.row.addArrangedSubview(makeButton(
@@ -607,7 +641,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         anchor: ForgeReviewAnchor,
         workspace: RepositoryPullRequestReviewWorkspace
     ) -> NSView {
-        let box = NSBox()
+        let box = RepositoryReviewContentBox()
         box.boxType = .custom
         box.borderWidth = 1
         box.borderColor = .separatorColor
@@ -616,7 +650,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         let stack = NSStackView()
         configure(stack: stack)
         stack.edgeInsets = NSEdgeInsets(top: 7, left: 8, bottom: 7, right: 8)
-        box.contentView = stack
+        installContent(stack, in: box)
         let editor = makeMarkdownEditor(
             identifier: RepositoryPullRequestReviewAccessibility.inlineBody,
             height: 64,
@@ -1080,26 +1114,53 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.setAccessibilityIdentifier(RepositoryPullRequestReviewAccessibility.threads)
-        scroll.documentView = overlayStack
-        overlayStack.widthAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.widthAnchor).isActive = true
+        let document = RepositoryReviewFlippedDocumentView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(overlayStack)
+        scroll.documentView = document
+        NSLayoutConstraint.activate([
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            document.trailingAnchor.constraint(equalTo: scroll.contentView.trailingAnchor),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            overlayStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            overlayStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            overlayStack.topAnchor.constraint(equalTo: document.topAnchor),
+            overlayStack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
         scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
         scroll.heightAnchor.constraint(lessThanOrEqualToConstant: 330).isActive = true
         let box = makeSnowLeopardBox(containing: scroll)
+        overlayContentBox = box
         box.setAccessibilityIdentifier(RepositoryPullRequestReviewAccessibility.overlayRoot)
         renderOverlay()
         return box
     }
 
-    private func makeSnowLeopardBox(containing content: NSView) -> NSBox {
-        let box = NSBox()
+    private func makeSnowLeopardBox(containing content: NSView) -> RepositoryReviewContentBox {
+        let box = RepositoryReviewContentBox()
         box.boxType = .custom
         box.borderWidth = 1
         box.borderColor = .separatorColor
         box.fillColor = NSColor.controlBackgroundColor.withAlphaComponent(0.96)
         box.cornerRadius = 5
         box.contentViewMargins = NSSize(width: 10, height: 8)
-        box.contentView = content
+        installContent(content, in: box)
         return box
+    }
+
+    private func installContent(_ content: NSView, in box: RepositoryReviewContentBox) {
+        let container = NSView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            content.topAnchor.constraint(equalTo: container.topAnchor),
+            content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        box.installMeasuredContentView(container)
+        box.setContentCompressionResistancePriority(.required, for: .vertical)
     }
 
     private func configure(stack: NSStackView, identifier: String? = nil) {
@@ -1108,9 +1169,16 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         stack.distribution = .fill
         stack.spacing = 7
         stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setContentCompressionResistancePriority(.required, for: .vertical)
         if let identifier {
             stack.setAccessibilityIdentifier(identifier)
         }
+    }
+
+    private func addFullWidthArrangedSubview(_ view: NSView, to stack: NSStackView) {
+        stack.addArrangedSubview(view)
+        let horizontalInsets = stack.edgeInsets.left + stack.edgeInsets.right
+        view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -horizontalInsets).isActive = true
     }
 
     private func clear(_ stack: NSStackView) {
@@ -1118,6 +1186,10 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+    }
+
+    private func clear(_ row: RepositoryReviewWrappingButtonRow) {
+        row.removeAllArrangedSubviews()
     }
 
     private func addHeading(_ text: String, to stack: NSStackView) {
@@ -1137,6 +1209,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         let label = NSTextField(wrappingLabelWithString: text)
         label.textColor = color
         label.maximumNumberOfLines = 4
+        label.setAccessibilityLabel(text)
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }
@@ -1151,13 +1224,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         return label
     }
 
-    private func wrappingButtonRow() -> NSStackView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 6
-        row.distribution = .gravityAreas
-        return row
+    private func wrappingButtonRow() -> RepositoryReviewWrappingButtonRow {
+        RepositoryReviewWrappingButtonRow(horizontalSpacing: 6, verticalSpacing: 6)
     }
 
     private func makeButton(
@@ -1169,6 +1237,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         button.bezelStyle = .rounded
         button.controlSize = .small
         button.setAccessibilityIdentifier(identifier)
+        button.setAccessibilityLabel(title)
         return button
     }
 
@@ -1220,6 +1289,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private func modalStack(identifier: String) -> NSStackView {
         let stack = NSStackView()
         configure(stack: stack, identifier: identifier)
+        stack.setAccessibilityElement(true)
+        stack.setAccessibilityRole(.group)
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 420).isActive = true
         return stack
@@ -1227,6 +1298,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
 
     private func presentModal(_ content: NSView, title: String) {
         closeModal()
+        content.setAccessibilityLabel(title)
         if let owner = view.window {
             let panel = NSPanel(
                 contentRect: NSRect(x: 0, y: 0, width: 480, height: 310),
@@ -1576,6 +1648,198 @@ private final class RepositoryReviewPreferencePopUpButton: NSPopUpButton {
 }
 
 @MainActor
+private final class RepositoryReviewWrappingButtonRow: NSView {
+    private struct Line {
+        let views: [(view: NSView, size: NSSize)]
+        let height: CGFloat
+    }
+
+    private let horizontalSpacing: CGFloat
+    private let verticalSpacing: CGFloat
+    private var superviewWidthConstraint: NSLayoutConstraint?
+
+    init(horizontalSpacing: CGFloat, verticalSpacing: CGFloat) {
+        self.horizontalSpacing = horizontalSpacing
+        self.verticalSpacing = verticalSpacing
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultHigh, for: .vertical)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        superviewWidthConstraint?.isActive = false
+        if superview is RepositoryReviewWrappingButtonRow {
+            translatesAutoresizingMaskIntoConstraints = true
+            superviewWidthConstraint = nil
+            return
+        }
+        translatesAutoresizingMaskIntoConstraints = false
+        guard let superview else {
+            superviewWidthConstraint = nil
+            return
+        }
+        let stackInsets = (superview as? NSStackView)?.edgeInsets ?? NSEdgeInsets()
+        superviewWidthConstraint = widthAnchor.constraint(
+            equalTo: superview.widthAnchor,
+            constant: -(stackInsets.left + stackInsets.right)
+        )
+        superviewWidthConstraint?.isActive = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(frame.width - newSize.width) > 0.5
+        super.setFrameSize(newSize)
+        if widthChanged {
+            invalidateWrappingLayout()
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let availableWidth = bounds.width > 0 ? bounds.width : naturalWidth
+        let fittedLines = lines(fitting: availableWidth)
+        let height = fittedLines.map(\.height).reduce(0, +)
+            + (verticalSpacing * CGFloat(max(0, fittedLines.count - 1)))
+        return NSSize(
+            width: superview is RepositoryReviewWrappingButtonRow ? naturalWidth : NSView.noIntrinsicMetric,
+            height: height
+        )
+    }
+
+    override func layout() {
+        super.layout()
+        var y: CGFloat = 0
+        for line in lines(fitting: bounds.width) {
+            var x: CGFloat = 0
+            for entry in line.views {
+                entry.view.frame = NSRect(
+                    x: x,
+                    y: y + ((line.height - entry.size.height) / 2),
+                    width: entry.size.width,
+                    height: entry.size.height
+                )
+                x += entry.size.width + horizontalSpacing
+            }
+            y += line.height + verticalSpacing
+        }
+    }
+
+    func addArrangedSubview(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = !(view is RepositoryReviewWrappingButtonRow)
+        addSubview(view)
+        invalidateWrappingLayout()
+    }
+
+    func removeAllArrangedSubviews() {
+        subviews.forEach { $0.removeFromSuperview() }
+        invalidateWrappingLayout()
+    }
+
+    private func invalidateWrappingLayout() {
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+        (superview as? RepositoryReviewWrappingButtonRow)?.invalidateWrappingLayout()
+    }
+
+    private var naturalWidth: CGFloat {
+        let widths = subviews.map { fittingSize(for: $0).width }
+        return widths.reduce(0, +) + (horizontalSpacing * CGFloat(max(0, widths.count - 1)))
+    }
+
+    private func lines(fitting availableWidth: CGFloat) -> [Line] {
+        let width = max(1, availableWidth)
+        var result: [Line] = []
+        var entries: [(view: NSView, size: NSSize)] = []
+        var usedWidth: CGFloat = 0
+        var height: CGFloat = 0
+        for view in subviews {
+            let size = fittingSize(for: view, maximumWidth: width)
+            let proposedWidth = entries.isEmpty ? size.width : usedWidth + horizontalSpacing + size.width
+            if !entries.isEmpty, proposedWidth > width {
+                result.append(Line(views: entries, height: height))
+                entries = []
+                usedWidth = 0
+                height = 0
+            }
+            entries.append((view, size))
+            usedWidth = entries.count == 1 ? size.width : usedWidth + horizontalSpacing + size.width
+            height = max(height, size.height)
+        }
+        if !entries.isEmpty {
+            result.append(Line(views: entries, height: height))
+        }
+        return result
+    }
+
+    private func fittingSize(for view: NSView, maximumWidth: CGFloat? = nil) -> NSSize {
+        if let nestedRow = view as? RepositoryReviewWrappingButtonRow,
+           let maximumWidth
+        {
+            let width = min(ceil(nestedRow.naturalWidth), maximumWidth)
+            let fittedLines = nestedRow.lines(fitting: width)
+            let height = fittedLines.map(\.height).reduce(0, +)
+                + (nestedRow.verticalSpacing * CGFloat(max(0, fittedLines.count - 1)))
+            return NSSize(width: width, height: ceil(height))
+        }
+        let size = view.fittingSize
+        return NSSize(width: ceil(size.width), height: ceil(size.height))
+    }
+}
+
+@MainActor
+private final class RepositoryReviewContentBox: NSBox {
+    private var measurementWidthConstraint: NSLayoutConstraint?
+
+    func installMeasuredContentView(_ view: NSView) {
+        contentView = view
+        let initialWidth = max(1, bounds.width > horizontalInsets ? bounds.width - horizontalInsets : view.fittingSize.width)
+        let constraint = view.widthAnchor.constraint(equalToConstant: initialWidth)
+        constraint.priority = NSLayoutConstraint.Priority(999)
+        constraint.isActive = true
+        measurementWidthConstraint = constraint
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(frame.width - newSize.width) > 0.5
+        super.setFrameSize(newSize)
+        if widthChanged {
+            measurementWidthConstraint?.constant = max(1, newSize.width - horizontalInsets)
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard let contentView else { return super.intrinsicContentSize }
+        let contentSize = contentView.fittingSize
+        return NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: contentSize.height + (contentViewMargins.height * 2) + (borderWidth * 2)
+        )
+    }
+
+    private var horizontalInsets: CGFloat {
+        (contentViewMargins.width * 2) + (borderWidth * 2)
+    }
+}
+
+@MainActor
+private final class RepositoryReviewFlippedDocumentView: NSView {
+    override var isFlipped: Bool {
+        true
+    }
+}
+
+@MainActor
 private final class RepositoryReviewPreferenceCheckbox: NSButton {
     private(set) var hasUserSelected = false
 
@@ -1692,6 +1956,11 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         logger.info("Installed exact-account native review overlay in the local diff")
     }
 
+    func refresh() {
+        controller?.start()
+        logger.info("Refreshing the active native Pull Request review session")
+    }
+
     func detach() {
         removeObservers()
         removeHighlights()
@@ -1702,6 +1971,11 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         controller = nil
         identity = nil
         logger.info("Detached native Pull Request review session and cancelled owned work")
+    }
+
+    func failClosedAfterRepositoryRefresh(_ message: String) {
+        controller?.failClosedAfterRepositoryRefresh(message)
+        logger.error("Failed the active native review session closed after repository refresh failure")
     }
 
     private func activate(_ pullRequest: ForgePullRequestSummary) {

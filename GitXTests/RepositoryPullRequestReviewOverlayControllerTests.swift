@@ -14,6 +14,10 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         let container = NSStackView(views: [controller.view, controller.reviewOverlayView])
         container.orientation = .vertical
         let window = makeWindow(content: container)
+        NSLayoutConstraint.activate([
+            controller.view.widthAnchor.constraint(equalTo: container.widthAnchor),
+            controller.reviewOverlayView.widthAnchor.constraint(equalTo: container.widthAnchor),
+        ])
 
         controller.start()
         await service.waitForLoadCalls(1)
@@ -28,15 +32,36 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             identifier: RepositoryPullRequestReviewAccessibility.reviewers,
             in: controller.view
         ))
-        XCTAssertNotNil(descendant(
+        let lifecycleAction = try XCTUnwrap(descendant(
             identifier: RepositoryPullRequestReviewAccessibility.lifecyclePrefix
                 + ForgePullRequestLifecycleAction.updateBranch.rawValue,
             in: controller.view
         ))
+        window.setContentSize(NSSize(width: 420, height: 720))
+        window.layoutIfNeeded()
+        container.layoutSubtreeIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(controller.view.frame.height, lifecycleAction.frame.height)
+        let lifecycleFrame = lifecycleAction.convert(lifecycleAction.bounds, to: controller.view)
+        XCTAssertTrue(
+            controller.view.bounds.contains(lifecycleFrame),
+            "Action bounds \(controller.view.bounds) must fully contain lifecycle frame \(lifecycleFrame)"
+        )
+        let thread = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.threadPrefix + fixture.threadID.value,
+            in: controller.reviewOverlayView
+        ))
+        controller.reviewOverlayView.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(thread.frame.height, 0)
         XCTAssertNotNil(descendant(
             identifier: RepositoryPullRequestReviewAccessibility.merge,
             in: controller.view
         ))
+        let mergeQueue = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeQueue,
+            in: controller.view
+        ) as? NSButton)
+        XCTAssertEqual(mergeQueue.accessibilityLabel(), "Enter Merge Queue")
         XCTAssertNotNil(descendant(
             identifier: RepositoryPullRequestReviewAccessibility.threadPrefix
                 + fixture.threadID.value + ".Reactions.0",
@@ -77,6 +102,118 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         XCTAssertNotNil(descendant(identifier: commentID, in: controller.reviewOverlayView))
 
         try attachScreenshot(of: window, named: "GitHub Pull Request review threads and actions")
+        controller.detach()
+    }
+
+    func testReviewThreadScrollDocumentExpandsAndCanRevealSuggestedChange() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(workspaces: [workspace])
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter()
+        )
+        _ = controller.view
+        let window = makeWindow(content: controller.reviewOverlayView)
+        window.setContentSize(NSSize(width: 420, height: 220))
+        controller.start()
+        await service.waitForLoadCalls(1)
+        let suggestionID = RepositoryPullRequestReviewAccessibility.threadPrefix
+            + fixture.threadID.value + ".Suggestion.0.Apply"
+        await waitUntil("suggested change action") {
+            self.descendant(identifier: suggestionID, in: controller.reviewOverlayView) != nil
+        }
+
+        window.layoutIfNeeded()
+        controller.reviewOverlayView.layoutSubtreeIfNeeded()
+        let threadScroll = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.threads,
+            in: controller.reviewOverlayView
+        ) as? NSScrollView)
+        let threadDocument = try XCTUnwrap(threadScroll.documentView)
+        let suggestedChange = try XCTUnwrap(descendant(
+            identifier: suggestionID,
+            in: controller.reviewOverlayView
+        ))
+        let thread = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.threadPrefix + fixture.threadID.value,
+            in: controller.reviewOverlayView
+        ))
+        threadDocument.layoutSubtreeIfNeeded()
+        thread.layoutSubtreeIfNeeded()
+        let suggestedChangeFrame = suggestedChange.convert(suggestedChange.bounds, to: threadDocument)
+        let threadFrame = thread.convert(thread.bounds, to: threadDocument)
+        XCTAssertTrue(threadDocument.isFlipped)
+        XCTAssertGreaterThan(
+            threadDocument.frame.height,
+            threadScroll.contentView.bounds.height,
+            "document=\(threadDocument.frame) fitting=\(threadDocument.fittingSize) "
+                + "children=\(threadDocument.subviews.map { ($0.frame, $0.fittingSize) })"
+        )
+        XCTAssertTrue(
+            threadDocument.bounds.contains(suggestedChangeFrame),
+            "Document bounds \(threadDocument.bounds) must contain suggestion \(suggestedChangeFrame)"
+        )
+        XCTAssertGreaterThan(
+            threadFrame.width,
+            threadDocument.bounds.width * 0.9,
+            "Thread \(threadFrame) must receive the scroll document's usable width \(threadDocument.bounds)"
+        )
+        XCTAssertTrue(
+            threadDocument.bounds.contains(threadFrame),
+            "Document bounds \(threadDocument.bounds) must contain thread \(threadFrame)"
+        )
+        threadScroll.contentView.scroll(to: NSPoint(
+            x: 0,
+            y: max(0, suggestedChangeFrame.midY - (threadScroll.contentView.bounds.height / 2))
+        ))
+        threadScroll.reflectScrolledClipView(threadScroll.contentView)
+        XCTAssertTrue(threadScroll.contentView.documentVisibleRect.intersects(suggestedChangeFrame))
+        controller.detach()
+    }
+
+    func testExplicitBranchDeletionReconcilesAndRemovesDestructiveControl() async throws {
+        let fixture = try ReviewAppFixture()
+        let beforeDeletion = try fixture.workspace(state: .merged, deletion: true)
+        let afterDeletion = try fixture.workspace(state: .merged, deletion: false)
+        let service = FakeReviewMutationService(
+            workspaces: [beforeDeletion, afterDeletion],
+            mutationWorkspace: beforeDeletion
+        )
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter()
+        )
+        _ = makeWindow(content: controller.view)
+        controller.start()
+        await service.waitForLoadCalls(1)
+        await waitUntil("explicit branch deletion action") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.deleteBranch,
+                in: controller.view
+            ) != nil
+        }
+
+        let delete = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch,
+            in: controller.view
+        ) as? NSButton)
+        delete.performClick(nil)
+        let confirm = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch + ".Confirm",
+            in: controller.view
+        ) as? NSButton)
+        confirm.performClick(nil)
+        await service.waitForDeletionCalls(1)
+        await service.waitForLoadCalls(2)
+        await waitUntil("removed destructive branch deletion action") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.deleteBranch,
+                in: controller.view
+            ) == nil
+        }
         controller.detach()
     }
 
@@ -228,6 +365,20 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         let prefix = RepositoryPullRequestReviewAccessibility.threadPrefix + fixture.threadID.value
         let reply = try XCTUnwrap(descendant(identifier: prefix + ".Reply", in: controller.reviewOverlayView) as? NSTextView)
         reply.string = "Keep this unsaved reply intact"
+        let initialResolve = try XCTUnwrap(descendant(
+            identifier: prefix + ".Resolve",
+            in: controller.reviewOverlayView
+        ) as? NSButton)
+
+        session.onResolutionChange?(fixture.threadID, .confirmed(isResolved: false))
+        let unchangedResolve = try XCTUnwrap(descendant(
+            identifier: prefix + ".Resolve",
+            in: controller.reviewOverlayView
+        ) as? NSButton)
+        XCTAssertTrue(
+            initialResolve === unchangedResolve,
+            "Repeated resolution delivery must not churn the representative AppKit hierarchy"
+        )
 
         session.onResolutionChange?(
             fixture.threadID,
@@ -249,6 +400,78 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             "Unresolve"
         )
         XCTAssertNotNil(descendant(identifier: prefix + ".Undo", in: controller.reviewOverlayView))
+        controller.detach()
+    }
+
+    func testOptimisticResolutionUndoRemainsContainedAfterNarrowLayout() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(workspaces: [workspace])
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter()
+        )
+        _ = controller.view
+        _ = controller.reviewOverlayView
+        controller.start()
+        await service.waitForLoadCalls(1)
+        let prefix = RepositoryPullRequestReviewAccessibility.threadPrefix + fixture.threadID.value
+        await waitUntil("confirmed resolution controls") {
+            self.descendant(identifier: prefix + ".Resolve", in: controller.reviewOverlayView) != nil
+        }
+
+        let reply = try XCTUnwrap(descendant(
+            identifier: prefix + ".Reply.Publish",
+            in: controller.reviewOverlayView
+        ) as? NSButton)
+        let resolve = try XCTUnwrap(descendant(
+            identifier: prefix + ".Resolve",
+            in: controller.reviewOverlayView
+        ) as? NSButton)
+        let resolutionRow = try XCTUnwrap(resolve.superview)
+        let controlsRow = try XCTUnwrap(resolutionRow.superview)
+        let initialSingleLineWidth = ceil(reply.fittingSize.width + 6 + resolutionRow.fittingSize.width + 1)
+        controlsRow.removeFromSuperview()
+        let narrowContainer = NSView(frame: NSRect(x: 0, y: 0, width: initialSingleLineWidth, height: 120))
+        narrowContainer.addSubview(controlsRow)
+        NSLayoutConstraint.activate([
+            controlsRow.leadingAnchor.constraint(equalTo: narrowContainer.leadingAnchor),
+            controlsRow.topAnchor.constraint(equalTo: narrowContainer.topAnchor),
+            controlsRow.widthAnchor.constraint(equalTo: narrowContainer.widthAnchor),
+        ])
+        let window = makeWindow(content: narrowContainer)
+        window.setContentSize(NSSize(width: initialSingleLineWidth, height: 120))
+        window.layoutIfNeeded()
+        narrowContainer.layoutSubtreeIfNeeded()
+        let confirmedHeight = controlsRow.frame.height
+
+        session.onResolutionChange?(
+            fixture.threadID,
+            .optimistic(
+                mutation: .resolve,
+                priorValue: false,
+                undoDeadline: fixture.now.addingTimeInterval(8)
+            )
+        )
+        window.layoutIfNeeded()
+        narrowContainer.layoutSubtreeIfNeeded()
+
+        let undo = try XCTUnwrap(descendant(
+            identifier: prefix + ".Undo",
+            in: controlsRow
+        ) as? NSButton)
+        let updatedResolutionRow = try XCTUnwrap(undo.superview)
+        let resolutionRect = updatedResolutionRow.convert(updatedResolutionRow.bounds, to: controlsRow)
+        let undoRect = undo.convert(undo.bounds, to: controlsRow)
+        XCTAssertGreaterThan(controlsRow.frame.height, confirmedHeight)
+        XCTAssertTrue(controlsRow.bounds.contains(
+            resolutionRect
+        ), "controls=\(controlsRow.bounds) resolution=\(resolutionRect)")
+        XCTAssertTrue(
+            controlsRow.bounds.contains(undoRect),
+            "controls=\(controlsRow.bounds) undo=\(undoRect)"
+        )
         controller.detach()
     }
 
@@ -780,6 +1003,56 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             effectiveRange: nil
         ))
         XCTAssertFalse(firstActionView === host.actionView(for: pullRequest))
+        host.detach()
+    }
+
+    func testHostRefreshReusesSessionAndRepositoryFailureCannotBeOverwrittenByInFlightLoad() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(workspaces: [workspace, workspace])
+        let host = RepositoryPullRequestReviewOverlayHost(
+            applicationSession: RepositoryPullRequestReviewApplicationSession(
+                service: service,
+                localService: UnavailableRepositoryPullRequestLocalReviewService(),
+                drafts: NullRepositoryPullRequestDraftStore(),
+                preferences: NullRepositoryPullRequestMutationPreferenceStore()
+            ),
+            accountID: fixture.accountID,
+            router: OverlayRecordingRouter()
+        )
+        let pullRequest = try summary(fixture: fixture)
+        let actionView = host.actionView(for: pullRequest)
+        await service.waitForLoadCalls(1)
+        let mergeID = RepositoryPullRequestReviewAccessibility.merge
+        await waitUntil("loaded host mutation controls") {
+            (self.descendant(identifier: mergeID, in: actionView) as? NSButton)?.isEnabled == true
+        }
+
+        await service.holdNextLoadCall()
+        host.refresh()
+        await service.waitForLoadCalls(2)
+        await waitUntil("stale host mutation controls") {
+            (self.descendant(identifier: mergeID, in: actionView) as? NSButton)?.isEnabled == false
+        }
+        XCTAssertTrue(allText(in: actionView).contains("Showing stale review data"))
+        XCTAssertTrue(actionView === host.actionView(for: pullRequest))
+        let refreshLoadCalls = await service.loadCalls()
+        XCTAssertEqual(refreshLoadCalls, 2)
+
+        host.failClosedAfterRepositoryRefresh("Repository list refresh unavailable")
+        await waitUntil("repository failure remains visibly stale") {
+            self.allText(in: actionView).contains("Repository list refresh unavailable")
+                && (self.descendant(identifier: mergeID, in: actionView) as? NSButton)?.isEnabled == false
+        }
+
+        await service.releaseHeldLoad()
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        let finalLoadCalls = await service.loadCalls()
+        XCTAssertEqual(finalLoadCalls, 2)
+        XCTAssertTrue(allText(in: actionView).contains("Repository list refresh unavailable"))
+        XCTAssertFalse(try XCTUnwrap(descendant(identifier: mergeID, in: actionView) as? NSButton).isEnabled)
         host.detach()
     }
 

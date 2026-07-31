@@ -140,6 +140,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             descendant(identifier: "ForgeInspectorTitle", in: controller.view) as? NSTextField
         )
         XCTAssertEqual(title.stringValue, "Native read surface")
+        XCTAssertEqual(service.detailsCalls.count, 1)
     }
 
     func testSearchAndStateFilterReloadWithTrimmedInjectedQuery() async throws {
@@ -383,6 +384,617 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         await service.waitForListCall(count: 3)
         await settleMainActor()
         XCTAssertEqual(table.numberOfRows, 0)
+    }
+
+    func testRefreshReloadsSelectedPullRequestInspectorAndReactivatesReviewHost() async throws {
+        let pullRequest = try ReadFixture.pullRequest()
+        let page = ForgeReadSurfacePage(
+            items: [.pullRequest(pullRequest)],
+            fetchedAt: ReadFixture.date(1)
+        )
+        let initialDetails = try ForgeReadSurfaceDetailsSnapshot(
+            details: .pullRequest(ReadFixture.pullRequestDetails(
+                timelineText: "Initial selected Pull Request details"
+            )),
+            fetchedAt: ReadFixture.date(2)
+        )
+        let refreshedDetails = try ForgeReadSurfaceDetailsSnapshot(
+            details: .pullRequest(ReadFixture.pullRequestDetails(
+                timelineText: "Refreshed selected Pull Request details",
+                timelineID: "timeline-refreshed"
+            )),
+            fetchedAt: ReadFixture.date(3)
+        )
+        let service = try FakeReadService(
+            pages: [page, page],
+            details: initialDetails,
+            continuationDetails: [refreshedDetails]
+        )
+        let markdown = RecordingMarkdownRenderer()
+        let reviewOverlayHost = RecordingReviewOverlayHost()
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: markdown,
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            pullRequestChangesProvider: StubPullRequestChangesProvider(diff: RepositoryLocalPullRequestDiff(
+                title: "Changes from main to read-surface",
+                patch: "diff --git a/file b/file\n+native",
+                cacheIdentifier: "refreshed-pr-42"
+            )),
+            reviewOverlayHost: reviewOverlayHost
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await settleMainActor()
+        XCTAssertTrue(markdown.renderedMarkdown.contains("Initial selected Pull Request details"))
+        let initialActionCount = reviewOverlayHost.actionPullRequests.count
+        let initialDetachCount = reviewOverlayHost.detachCount
+
+        controller.refresh()
+        await service.waitForListCall(count: 2)
+        await service.waitForDetailsCall(count: 2)
+        await waitUntil("refreshed Pull Request inspector") {
+            markdown.renderedMarkdown.contains("Refreshed selected Pull Request details")
+        }
+
+        let destination = ForgeRepositoryItem.pullRequest(pullRequest).destination
+        XCTAssertEqual(service.detailsCalls.map(\.item.destination), [destination, destination])
+        XCTAssertTrue(markdown.renderedMarkdown.contains("Refreshed selected Pull Request details"))
+        XCTAssertEqual(reviewOverlayHost.actionPullRequests.count, initialActionCount + 1)
+        XCTAssertEqual(reviewOverlayHost.actionPullRequests.last, pullRequest)
+        XCTAssertEqual(reviewOverlayHost.refreshCount, 1)
+        XCTAssertEqual(reviewOverlayHost.detachCount, initialDetachCount)
+        XCTAssertTrue(reviewOverlayHost.repositoryRefreshFailures.isEmpty)
+        XCTAssertEqual(table.selectedRow, 0)
+    }
+
+    func testRefreshPreservesSelectedInspectorBeyondFirstPageAndRestoresItsRow() async throws {
+        let first = try ReadFixture.issue(number: 7)
+        let selected = try ReadFixture.issue(number: 8)
+        let firstPage = try ForgeReadSurfacePage(
+            items: [.issue(first)],
+            nextCursor: ForgePageCursor("page-2"),
+            totalCount: 2,
+            fetchedAt: ReadFixture.date(1)
+        )
+        let secondPage = ForgeReadSurfacePage(
+            items: [.issue(selected)],
+            totalCount: 2,
+            fetchedAt: ReadFixture.date(2)
+        )
+        let service = try FakeReadService(
+            pages: [firstPage, secondPage, firstPage, secondPage],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails(bodyMarkdown: "Initial page-two details")),
+                fetchedAt: ReadFixture.date(3)
+            ),
+            continuationDetails: [ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails(bodyMarkdown: "Refreshed page-two details")),
+                fetchedAt: ReadFixture.date(4)
+            )]
+        )
+        let markdown = RecordingMarkdownRenderer()
+        let controller = try makeController(kind: .issues, service: service, markdown: markdown)
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let loadMore = try XCTUnwrap(
+            descendant(identifier: "ForgeReadLoadMore", in: controller.view) as? NSButton
+        )
+        loadMore.performClick(nil)
+        await service.waitForListCall(count: 2)
+        await waitUntil("page-two list item") {
+            (self.descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView)?.numberOfRows == 2
+        }
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await waitUntil("initial page-two inspector") {
+            markdown.renderedMarkdown.contains("Initial page-two details")
+        }
+
+        controller.refresh()
+        await service.waitForListCall(count: 3)
+        await service.waitForDetailsCall(count: 2)
+        await waitUntil("refreshed page-two inspector") {
+            markdown.renderedMarkdown.contains("Refreshed page-two details")
+        }
+        XCTAssertEqual(table.selectedRow, -1)
+        XCTAssertNil(descendant(identifier: "ForgeInspectorPlaceholder", in: controller.view))
+
+        loadMore.performClick(nil)
+        await service.waitForListCall(count: 4)
+        await waitUntil("restored page-two selection") {
+            table.numberOfRows == 2 && table.selectedRow == 1
+        }
+        XCTAssertEqual(service.detailsCalls.count, 2)
+    }
+
+    func testRefreshClearsSelectedIssueInspectorWhenIssueLeavesTheList() async throws {
+        let issue = try ReadFixture.issue(number: 8)
+        let service = try FakeReadService(
+            pages: [
+                ForgeReadSurfacePage(
+                    items: [.issue(issue)],
+                    totalCount: 1,
+                    fetchedAt: ReadFixture.date(1)
+                ),
+                ForgeReadSurfacePage(
+                    items: [],
+                    fetchedAt: ReadFixture.date(2)
+                ),
+            ],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails()),
+                fetchedAt: ReadFixture.date(1)
+            )
+        )
+        let controller = try makeController(kind: .issues, service: service)
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await settleMainActor()
+
+        controller.refresh()
+        await service.waitForListCall(count: 2)
+        await waitUntil("cleared selected inspector") {
+            (self.descendant(
+                identifier: "ForgeInspectorPlaceholder",
+                in: controller.view
+            ) as? NSTextField)?.stringValue == "Select an item to inspect it."
+        }
+
+        XCTAssertEqual(service.detailsCalls.count, 1)
+        XCTAssertEqual(table.selectedRow, -1)
+        let placeholder = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorPlaceholder", in: controller.view) as? NSTextField
+        )
+        XCTAssertEqual(placeholder.stringValue, "Select an item to inspect it.")
+    }
+
+    func testPartialRefreshOmissionRetainsSelectedPullRequestAndFailsWritesClosed() async throws {
+        let pullRequest = try ReadFixture.pullRequest()
+        let service = try FakeReadService(
+            pages: [
+                ForgeReadSurfacePage(
+                    items: [.pullRequest(pullRequest)],
+                    fetchedAt: ReadFixture.date(1)
+                ),
+                ForgeReadSurfacePage(
+                    items: [],
+                    fetchedAt: ReadFixture.date(2),
+                    isPartial: true
+                ),
+            ],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(ReadFixture.pullRequestDetails(
+                    timelineText: "Retained after partial list"
+                )),
+                fetchedAt: ReadFixture.date(1)
+            )
+        )
+        let reviewOverlayHost = RecordingReviewOverlayHost()
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            pullRequestChangesProvider: StubPullRequestChangesProvider(diff: RepositoryLocalPullRequestDiff(
+                title: "Changes from main to partial-refresh",
+                patch: "diff --git a/file b/file\n+native",
+                cacheIdentifier: "partial-refresh-pr-42"
+            )),
+            reviewOverlayHost: reviewOverlayHost,
+            editPullRequestControl: .capability(
+                .verified(.knownAuthority),
+                action: "edit this Pull Request"
+            )
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await waitUntil("selected Pull Request before partial refresh") {
+            self.descendant(identifier: "GitX.PullRequest.ReviewActions", in: controller.view) != nil
+        }
+        let initialDetachCount = reviewOverlayHost.detachCount
+
+        controller.refresh()
+        await service.waitForListCall(count: 2)
+        await waitUntil("partial omission marks the selected inspector stale") {
+            (self.descendant(
+                identifier: "ForgeInspectorRefreshError",
+                in: controller.view
+            ) as? NSTextField)?.stringValue.contains("refreshed list was incomplete") == true
+        }
+
+        XCTAssertEqual(service.detailsCalls.count, 1)
+        XCTAssertEqual(reviewOverlayHost.refreshCount, 0)
+        XCTAssertEqual(
+            reviewOverlayHost.repositoryRefreshFailures,
+            ["The refreshed list was incomplete, so the selected item could not be verified."]
+        )
+        XCTAssertEqual(reviewOverlayHost.detachCount, initialDetachCount)
+        XCTAssertEqual(table.selectedRow, -1)
+        XCTAssertNotNil(descendant(identifier: "ForgeInspectorTitle", in: controller.view))
+        XCTAssertFalse(try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton
+        ).isEnabled)
+        let freshness = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorFreshness", in: controller.view) as? NSTextField
+        ).stringValue
+        XCTAssertTrue(freshness.contains("Stale"))
+        XCTAssertTrue(freshness.contains("Some sections are unavailable"))
+    }
+
+    func testRefreshDetailsDestinationMismatchRetainsSelectedInspectorAsStale() async throws {
+        let selected = try ReadFixture.issue(number: 8)
+        let page = ForgeReadSurfacePage(
+            items: [.issue(selected)],
+            fetchedAt: ReadFixture.date(1)
+        )
+        let service = try FakeReadService(
+            pages: [page, page],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails(bodyMarkdown: "Initial selected issue")),
+                fetchedAt: ReadFixture.date(1)
+            ),
+            continuationDetails: [ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails(bodyMarkdown: "Wrong issue", number: 9)),
+                fetchedAt: ReadFixture.date(2)
+            )]
+        )
+        let markdown = RecordingMarkdownRenderer()
+        let controller = try makeController(kind: .issues, service: service, markdown: markdown)
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await waitUntil("initial selected issue") {
+            markdown.renderedMarkdown.contains("Initial selected issue")
+        }
+
+        controller.refresh()
+        await service.waitForListCall(count: 2)
+        await service.waitForDetailsCall(count: 2)
+        await waitUntil("destination mismatch is explicit") {
+            (self.descendant(
+                identifier: "ForgeInspectorRefreshError",
+                in: controller.view
+            ) as? NSTextField)?.stringValue.contains("different item") == true
+        }
+
+        XCTAssertTrue(markdown.renderedMarkdown.contains("Initial selected issue"))
+        XCTAssertFalse(markdown.renderedMarkdown.contains("Wrong issue"))
+        XCTAssertEqual(table.selectedRow, 0)
+        XCTAssertTrue(
+            (descendant(identifier: "ForgeInspectorFreshness", in: controller.view) as? NSTextField)?
+                .stringValue.contains("Stale") == true
+        )
+    }
+
+    func testRefreshClearsSelectedInspectorWhenFinalPageStillOmitsItsItem() async throws {
+        let selected = try ReadFixture.issue(number: 8)
+        let firstReplacement = try ReadFixture.issue(number: 9)
+        let finalReplacement = try ReadFixture.issue(number: 10)
+        let service = try FakeReadService(
+            pages: [
+                ForgeReadSurfacePage(
+                    items: [.issue(selected)],
+                    totalCount: 1,
+                    fetchedAt: ReadFixture.date(1)
+                ),
+                ForgeReadSurfacePage(
+                    items: [.issue(firstReplacement)],
+                    nextCursor: ForgePageCursor("replacement-page-2"),
+                    totalCount: 3,
+                    fetchedAt: ReadFixture.date(2)
+                ),
+                ForgeReadSurfacePage(
+                    items: [.issue(finalReplacement)],
+                    fetchedAt: ReadFixture.date(3)
+                ),
+            ],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails(bodyMarkdown: "Initial selected issue")),
+                fetchedAt: ReadFixture.date(1)
+            ),
+            continuationDetails: [ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails(bodyMarkdown: "Refreshed selected issue")),
+                fetchedAt: ReadFixture.date(2)
+            )]
+        )
+        let controller = try makeController(kind: .issues, service: service)
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await settleMainActor()
+
+        controller.refresh()
+        await service.waitForListCall(count: 2)
+        await service.waitForDetailsCall(count: 2)
+        await settleMainActor()
+        XCTAssertEqual(table.selectedRow, -1)
+        XCTAssertNil(descendant(identifier: "ForgeInspectorPlaceholder", in: controller.view))
+
+        let loadMore = try XCTUnwrap(
+            descendant(identifier: "ForgeReadLoadMore", in: controller.view) as? NSButton
+        )
+        loadMore.performClick(nil)
+        await service.waitForListCall(count: 3)
+        await waitUntil("selected inspector cleared after final page") {
+            self.descendant(identifier: "ForgeInspectorPlaceholder", in: controller.view) != nil
+        }
+
+        XCTAssertEqual(service.detailsCalls.count, 2)
+        XCTAssertEqual(table.selectedRow, -1)
+        XCTAssertEqual(table.numberOfRows, 2)
+    }
+
+    func testRefreshFailureRetainsSelectedPullRequestInspectorAsExplicitlyStale() async throws {
+        let pullRequest = try ReadFixture.pullRequest()
+        let page = ForgeReadSurfacePage(
+            items: [.pullRequest(pullRequest)],
+            fetchedAt: ReadFixture.date(1)
+        )
+        let service = try FakeReadService(
+            pages: [page, page],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(ReadFixture.pullRequestDetails(
+                    timelineText: "Retained Pull Request details"
+                )),
+                fetchedAt: ReadFixture.date(2)
+            )
+        )
+        let reviewOverlayHost = RecordingReviewOverlayHost()
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            pullRequestChangesProvider: StubPullRequestChangesProvider(diff: RepositoryLocalPullRequestDiff(
+                title: "Changes from main to stale-refresh",
+                patch: "diff --git a/file b/file\n+native",
+                cacheIdentifier: "stale-refresh-pr-42"
+            )),
+            reviewOverlayHost: reviewOverlayHost,
+            editPullRequestControl: .capability(
+                .verified(.knownAuthority),
+                action: "edit this Pull Request"
+            )
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await waitUntil("selected Pull Request inspector") {
+            self.descendant(identifier: "ForgeInspectorTitle", in: controller.view) != nil
+                && self.descendant(identifier: "GitX.PullRequest.ReviewActions", in: controller.view) != nil
+        }
+        let initialDetachCount = reviewOverlayHost.detachCount
+        service.detailsError = ReadFixture.failure("Refresh details unavailable")
+
+        controller.refresh()
+        await service.waitForListCall(count: 2)
+        await service.waitForDetailsCall(count: 2)
+        await waitUntil("explicit stale refresh failure") {
+            (self.descendant(
+                identifier: "ForgeInspectorRefreshError",
+                in: controller.view
+            ) as? NSTextField)?.stringValue.contains("Refresh details unavailable") == true
+        }
+
+        XCTAssertNil(descendant(identifier: "ForgeInspectorError", in: controller.view))
+        XCTAssertEqual(
+            (descendant(identifier: "ForgeInspectorTitle", in: controller.view) as? NSTextField)?.stringValue,
+            "Native read surface"
+        )
+        XCTAssertTrue(
+            (descendant(identifier: "ForgeInspectorFreshness", in: controller.view) as? NSTextField)?
+                .stringValue.contains("Stale") == true
+        )
+        XCTAssertFalse(try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton
+        ).isEnabled)
+        XCTAssertEqual(reviewOverlayHost.actionPullRequests.last, pullRequest)
+        XCTAssertEqual(reviewOverlayHost.refreshCount, 1)
+        XCTAssertEqual(reviewOverlayHost.repositoryRefreshFailures, ["Refresh details unavailable"])
+        XCTAssertEqual(reviewOverlayHost.detachCount, initialDetachCount)
+        XCTAssertEqual(table.selectedRow, 0)
+
+        var mode = try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.InspectorMode", in: controller.view) as? NSSegmentedControl
+        )
+        mode.selectedSegment = 1
+        try NSApp.sendAction(XCTUnwrap(mode.action), to: mode.target, from: mode)
+        await waitUntil("stale Pull Request Changes inspector") {
+            self.descendant(identifier: "GitX.PullRequest.LocalChanges", in: controller.view) != nil
+        }
+        XCTAssertNotNil(descendant(identifier: "ForgeInspectorRefreshError", in: controller.view))
+
+        mode = try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.InspectorMode", in: controller.view) as? NSSegmentedControl
+        )
+        mode.selectedSegment = 0
+        try NSApp.sendAction(XCTUnwrap(mode.action), to: mode.target, from: mode)
+
+        XCTAssertTrue(
+            (descendant(identifier: "ForgeInspectorRefreshError", in: controller.view) as? NSTextField)?
+                .stringValue.contains("Refresh details unavailable") == true
+        )
+        XCTAssertTrue(
+            (descendant(identifier: "ForgeInspectorFreshness", in: controller.view) as? NSTextField)?
+                .stringValue.contains("Stale") == true
+        )
+        XCTAssertFalse(try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton
+        ).isEnabled)
+    }
+
+    func testListRefreshFailureRetainsSelectedPullRequestAndFailsEveryMutationClosed() async throws {
+        let pullRequest = try ReadFixture.pullRequest()
+        let page = ForgeReadSurfacePage(
+            items: [.pullRequest(pullRequest)],
+            fetchedAt: ReadFixture.date(1)
+        )
+        let service = try FakeReadService(
+            pages: [page],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(ReadFixture.pullRequestDetails(
+                    timelineText: "Retained after list failure"
+                )),
+                fetchedAt: ReadFixture.date(2)
+            )
+        )
+        let reviewOverlayHost = RecordingReviewOverlayHost()
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            pullRequestChangesProvider: StubPullRequestChangesProvider(diff: RepositoryLocalPullRequestDiff(
+                title: "Changes from main to list-failure",
+                patch: "diff --git a/file b/file\n+native",
+                cacheIdentifier: "list-failure-pr-42"
+            )),
+            reviewOverlayHost: reviewOverlayHost,
+            editPullRequestControl: .capability(
+                .verified(.knownAuthority),
+                action: "edit this Pull Request"
+            )
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await waitUntil("selected Pull Request before list failure") {
+            self.descendant(identifier: "GitX.PullRequest.ReviewActions", in: controller.view) != nil
+        }
+        let initialDetachCount = reviewOverlayHost.detachCount
+        service.listError = ReadFixture.failure("List refresh unavailable")
+
+        controller.refresh()
+        await service.waitForListCall(count: 2)
+        await waitUntil("list failure marks selected inspector stale") {
+            (self.descendant(
+                identifier: "ForgeInspectorRefreshError",
+                in: controller.view
+            ) as? NSTextField)?.stringValue.contains("List refresh unavailable") == true
+        }
+
+        XCTAssertEqual(service.detailsCalls.count, 1)
+        XCTAssertEqual(reviewOverlayHost.refreshCount, 0)
+        XCTAssertEqual(reviewOverlayHost.repositoryRefreshFailures, ["List refresh unavailable"])
+        XCTAssertEqual(reviewOverlayHost.detachCount, initialDetachCount)
+        XCTAssertEqual(table.selectedRow, 0)
+        XCTAssertFalse(try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton
+        ).isEnabled)
+        XCTAssertTrue(
+            (descendant(identifier: "ForgeInspectorFreshness", in: controller.view) as? NSTextField)?
+                .stringValue.contains("Stale") == true
+        )
+    }
+
+    func testQueryFailureClearsSelectionInvalidatedByTheNewQuery() async throws {
+        let issue = try ReadFixture.issue(number: 18)
+        let service = try FakeReadService(
+            pages: [ForgeReadSurfacePage(
+                items: [.issue(issue)],
+                fetchedAt: ReadFixture.date(1)
+            )],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: .issue(ReadFixture.issueDetails()),
+                fetchedAt: ReadFixture.date(2)
+            )
+        )
+        let controller = try makeController(kind: .issues, service: service)
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+
+        let table = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await settleMainActor()
+        service.listError = ReadFixture.failure("Replacement query failed")
+
+        let search = try XCTUnwrap(
+            descendant(identifier: "ForgeReadSearch", in: controller.view) as? NSSearchField
+        )
+        search.stringValue = "different"
+        try NSApp.sendAction(XCTUnwrap(search.action), to: search.target, from: search)
+        await service.waitForListCall(count: 2)
+        await settleMainActor()
+
+        XCTAssertEqual(table.numberOfRows, 0)
+        XCTAssertEqual(table.selectedRow, -1)
+        let placeholder = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorPlaceholder", in: controller.view) as? NSTextField
+        )
+        XCTAssertEqual(placeholder.stringValue, "Select an item to inspect it.")
     }
 
     func testInspectorRendersRichPresentationAndRoutesEveryContinuationAction() throws {
@@ -812,6 +1424,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         checkout.performClick(nil)
         XCTAssertEqual(edited?.number, summary.number)
         XCTAssertEqual(checkedOut?.number, summary.number)
+        let detachCountBeforeModeChange = reviewOverlayHost.detachCount
 
         let mode = try XCTUnwrap(
             descendant(identifier: "GitX.PullRequest.InspectorMode", in: controller.view) as? NSSegmentedControl
@@ -827,7 +1440,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertTrue(reviewOverlayHost.installations[0].view === changes)
         XCTAssertEqual(reviewOverlayHost.installations[0].pullRequest, summary)
         XCTAssertEqual(reviewOverlayHost.installations[0].diff.cacheIdentifier, "local-pr-42")
-        XCTAssertGreaterThanOrEqual(reviewOverlayHost.detachCount, 3)
+        XCTAssertEqual(reviewOverlayHost.detachCount, detachCountBeforeModeChange)
         try attachScreenshot(of: window, named: "GitHub Pull Request local Changes inspector")
     }
 
@@ -1030,7 +1643,7 @@ private final class FakeReadService: ForgeReadSurfaceServing {
 
     private var pages: [ForgeReadSurfacePage]
     private var detailsResponses: [ForgeReadSurfaceDetailsSnapshot]
-    private let listError: Error?
+    var listError: Error?
     var detailsError: Error?
     private var listWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var detailsWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -1254,6 +1867,8 @@ private final class RecordingReviewOverlayHost: RepositoryPullRequestReviewOverl
     var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)?
     private(set) var actionPullRequests: [ForgePullRequestSummary] = []
     private(set) var installations: [Installation] = []
+    private(set) var refreshCount = 0
+    private(set) var repositoryRefreshFailures: [String] = []
     private(set) var detachCount = 0
     private let actionArea = NSView()
 
@@ -1269,6 +1884,14 @@ private final class RecordingReviewOverlayHost: RepositoryPullRequestReviewOverl
         diff: RepositoryLocalPullRequestDiff
     ) {
         installations.append((nativeDiffView, pullRequest, diff))
+    }
+
+    func refresh() {
+        refreshCount += 1
+    }
+
+    func failClosedAfterRepositoryRefresh(_ message: String) {
+        repositoryRefreshFailures.append(message)
     }
 
     func detach() {
@@ -1397,10 +2020,10 @@ private enum ReadFixture {
         return ForgePullRequestDetailsPage(details: details, nextCheckCursor: checkCursor)
     }
 
-    static func issueDetails() throws -> ForgeIssueDetails {
+    static func issueDetails(bodyMarkdown: String = "Issue body", number: Int = 8) throws -> ForgeIssueDetails {
         try ForgeIssueDetails(
-            summary: issue(number: 8),
-            bodyMarkdown: .available("Issue body"),
+            summary: issue(number: number),
+            bodyMarkdown: .available(bodyMarkdown),
             assignees: .available([]),
             milestone: .available(nil),
             timeline: .available(ForgePage(items: []))

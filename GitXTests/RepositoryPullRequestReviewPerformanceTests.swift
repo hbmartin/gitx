@@ -31,6 +31,13 @@ final class RepositoryPullRequestReviewPerformanceTests: XCTestCase {
         )
         controller.view.frame = NSRect(x: 0, y: 0, width: 760, height: 260)
         controller.reviewOverlayView.frame = NSRect(x: 0, y: 0, width: 760, height: 330)
+        let window = NSWindow(
+            contentRect: controller.reviewOverlayView.frame,
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = controller.reviewOverlayView
 
         controller.start()
         await service.waitForLoad()
@@ -49,14 +56,15 @@ final class RepositoryPullRequestReviewPerformanceTests: XCTestCase {
         controller.reviewOverlayView.layoutSubtreeIfNeeded()
 
         var samples: [TimeInterval] = []
-        for _ in 0 ..< Budget.sampleCount {
+        for index in 0 ..< Budget.sampleCount {
             samples.append(elapsed {
                 // This is the production state observer used for optimistic
-                // resolution changes; it applies the complete current thread
-                // workspace without a test-only controller bypass.
+                // resolution changes. Alternating the confirmed value forces
+                // real control replacement and layout rather than measuring
+                // the identical-presentation cache hit.
                 renderOverlay(
                     representativeThread.presentation.thread.id,
-                    .confirmed(isResolved: false)
+                    .confirmed(isResolved: index.isMultiple(of: 2))
                 )
                 controller.reviewOverlayView.layoutSubtreeIfNeeded()
             })
@@ -75,7 +83,9 @@ final class RepositoryPullRequestReviewPerformanceTests: XCTestCase {
             renderedCommentViewCount(in: controller.reviewOverlayView),
             Budget.threadCount * Budget.commentsPerThread
         )
+        XCTAssertTrue(window.contentView === controller.reviewOverlayView)
         XCTAssertLessThanOrEqual(percentile95(samples), Budget.overlayApplication)
+        withExtendedLifetime(window) {}
     }
 
     func testCachedOverviewChangesActionAreaReuseMeetsAffectedViewBudget() async throws {

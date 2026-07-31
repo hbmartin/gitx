@@ -1213,6 +1213,21 @@ final class RepositoryPullRequestReviewSession {
         }
     }
 
+    func failClosedAfterRepositoryRefresh(_ message: String) {
+        task?.cancel()
+        task = nil
+        loadGeneration = loadGeneration == .max ? 1 : loadGeneration + 1
+        guard let workspace,
+              let stale = try? workspace.markingMutationStateFresh(false)
+        else {
+            state = .failed(message)
+            logger.error("Repository refresh failed before review state was available; mutations remain disabled")
+            return
+        }
+        state = .stale(stale, message: message)
+        logger.error("Repository refresh failed; preserved review state as explicitly stale")
+    }
+
     func prepareInlinePublication(
         context: ForgeReviewContext,
         anchor: ForgeReviewAnchor,
