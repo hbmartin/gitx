@@ -208,6 +208,8 @@ public struct ForgePullRequestMergeConfirmation: Hashable, Sendable {
     public let accountID: ForgeAccountID
     public let repository: ForgeRepositoryIdentity
     public let number: ForgeItemNumber
+    public let headReference: ForgeBranchReference
+    public let baseReference: ForgeBranchReference
     public let head: ForgeCommitID
     public let base: ForgeCommitID
     public let updatedAt: Date
@@ -218,12 +220,33 @@ public struct ForgePullRequestMergeConfirmation: Hashable, Sendable {
         accountID = snapshot.context.accountID
         repository = snapshot.context.repository
         number = snapshot.context.number
-        head = snapshot.context.head.commit
-        base = snapshot.context.base.commit
+        headReference = snapshot.context.head
+        baseReference = snapshot.context.base
+        head = headReference.commit
+        base = baseReference.commit
         updatedAt = snapshot.context.updatedAt
         self.method = method
         warnings = snapshot.warnings
     }
+
+    public var rebaseSummary: ForgePullRequestRebaseSummary? {
+        guard method == .rebase else { return nil }
+        return ForgePullRequestRebaseSummary(
+            repository: repository,
+            number: number,
+            head: headReference,
+            base: baseReference
+        )
+    }
+}
+
+/// The exact, freshly fetched identities shown before a rebase merge. This
+/// value deliberately contains no editable title or message fields.
+public struct ForgePullRequestRebaseSummary: Hashable, Sendable {
+    public let repository: ForgeRepositoryIdentity
+    public let number: ForgeItemNumber
+    public let head: ForgeBranchReference
+    public let base: ForgeBranchReference
 }
 
 public struct ForgePullRequestMergeRequest: Hashable, Sendable {
@@ -285,8 +308,8 @@ public enum ForgePullRequestMergePolicy {
         guard confirmation.accountID == context.accountID,
               confirmation.repository == context.repository,
               confirmation.number == context.number,
-              confirmation.head == context.head.commit,
-              confirmation.base == context.base.commit,
+              confirmation.headReference == context.head,
+              confirmation.baseReference == context.base,
               confirmation.updatedAt == context.updatedAt
         else {
             throw ForgePullRequestMutationError.staleConfirmation

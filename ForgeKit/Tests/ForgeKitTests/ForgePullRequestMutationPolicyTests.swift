@@ -130,12 +130,31 @@ final class ForgePullRequestMutationPolicyTests: XCTestCase {
         XCTAssertEqual(confirmation.accountID, fixture.account)
         XCTAssertEqual(confirmation.repository, fixture.repository)
         XCTAssertEqual(confirmation.number, fixture.number)
+        XCTAssertEqual(confirmation.headReference, fixture.head)
+        XCTAssertEqual(confirmation.baseReference, fixture.base)
         XCTAssertEqual(confirmation.head, fixture.head.commit)
         XCTAssertEqual(confirmation.base, fixture.base.commit)
         XCTAssertEqual(confirmation.updatedAt, fixture.updatedAt)
         XCTAssertEqual(confirmation.method, .squash)
         XCTAssertEqual(confirmation.warnings, warnings)
+        XCTAssertNil(confirmation.rebaseSummary)
         XCTAssertEqual(Set(ForgePullRequestMergeMethod.allCases), [.merge, .squash, .rebase])
+    }
+
+    func testRebaseSummaryCarriesExactPullRequestAndBranchReferencesWithoutEditableFields() throws {
+        let fixture = try MutationFixture()
+        guard case let .available(confirmation) = try ForgePullRequestMergePolicy.confirmationDecision(
+            snapshot: fixture.mergeSnapshot(),
+            method: .rebase
+        ) else {
+            return XCTFail("Expected rebase confirmation")
+        }
+
+        let summary = try XCTUnwrap(confirmation.rebaseSummary)
+        XCTAssertEqual(summary.repository, fixture.repository)
+        XCTAssertEqual(summary.number, fixture.number)
+        XCTAssertEqual(summary.head, fixture.head)
+        XCTAssertEqual(summary.base, fixture.base)
     }
 
     func testMergeTreatsBlockersAsWarningsButEnforcesHardEligibility() throws {
@@ -192,6 +211,16 @@ final class ForgePullRequestMutationPolicyTests: XCTestCase {
             fixture.mergeSnapshot(base: fixture.changedBase),
             fixture.mergeSnapshot(updatedAt: fixture.updatedAt.addingTimeInterval(1)),
             fixture.mergeSnapshot(viewerCanMerge: false),
+            fixture.mergeSnapshot(head: ForgeBranchReference(
+                repository: fixture.head.repository,
+                name: ForgeRefName("feature/renamed"),
+                commit: fixture.head.commit
+            )),
+            fixture.mergeSnapshot(base: ForgeBranchReference(
+                repository: fixture.base.repository,
+                name: ForgeRefName("release"),
+                commit: fixture.base.commit
+            )),
         ]
         for stale in staleSnapshots {
             XCTAssertThrowsError(try ForgePullRequestMergePolicy.validate(confirmation: confirmation, fresh: stale)) {

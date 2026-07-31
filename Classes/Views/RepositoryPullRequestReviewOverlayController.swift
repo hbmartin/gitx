@@ -28,6 +28,7 @@ enum RepositoryPullRequestReviewAccessibility {
     static let mergeTitle = "GitX.PullRequest.Review.MergeTitle"
     static let mergeMessage = "GitX.PullRequest.Review.MergeMessage"
     static let mergeWarnings = "GitX.PullRequest.Review.MergeWarnings"
+    static let mergeSummary = "GitX.PullRequest.Review.MergeSummary"
     static let mergeDeleteBranch = "GitX.PullRequest.Review.MergeDeleteBranch"
     static let mergeConfirm = "GitX.PullRequest.Review.MergeConfirm"
     static let mergeCancel = "GitX.PullRequest.Review.MergeCancel"
@@ -45,6 +46,24 @@ enum RepositoryPullRequestReviewAccessibility {
     static let inlineDiscard = "GitX.PullRequest.Review.InlineDiscard"
     static let inlineReanchor = "GitX.PullRequest.Review.InlineReanchor"
     static let message = "GitX.PullRequest.Review.Message"
+}
+
+nonisolated enum RepositoryPullRequestRebaseSummaryPresenter {
+    static func text(_ summary: ForgePullRequestRebaseSummary) -> String {
+        """
+        Pull Request: \(repositoryName(summary.repository)) #\(summary.number.rawValue)
+        Head: \(repositoryName(summary.head.repository)):\(summary.head.name.value)
+        \(summary.head.commit.value)
+        Base: \(repositoryName(summary.base.repository)):\(summary.base.name.value)
+        \(summary.base.commit.value)
+
+        Rebase preserves commit messages; title and message are read-only.
+        """
+    }
+
+    private static func repositoryName(_ repository: ForgeRepositoryIdentity) -> String {
+        "\(repository.owner)/\(repository.name)"
+    }
 }
 
 /// Native Snow-Leopard-inspired action and review-thread presentation. The
@@ -1107,9 +1126,14 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             identifier: RepositoryPullRequestReviewAccessibility.mergeMessage,
             height: 82
         )
-        if confirmation.method == .rebase {
-            let summary = NSTextField(wrappingLabelWithString: "Rebase preserves commit messages; title and message are read-only.")
+        if let rebaseSummary = confirmation.rebaseSummary {
+            let summaryText = RepositoryPullRequestRebaseSummaryPresenter.text(rebaseSummary)
+            let summary = NSTextField(wrappingLabelWithString: summaryText)
+            summary.font = NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
             summary.textColor = .secondaryLabelColor
+            summary.isSelectable = true
+            summary.setAccessibilityIdentifier(RepositoryPullRequestReviewAccessibility.mergeSummary)
+            summary.setAccessibilityLabel(summaryText)
             panelStack.addArrangedSubview(summary)
         } else {
             panelStack.addArrangedSubview(title)

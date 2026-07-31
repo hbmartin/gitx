@@ -860,6 +860,67 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         controller.detach()
     }
 
+    func testRebaseConfirmationShowsExactReadOnlyPullRequestHeadAndBaseSummary() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(
+            workspaces: [workspace],
+            freshMergeSnapshots: [workspace.mergeSnapshot]
+        )
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter()
+        )
+        _ = controller.view
+        controller.start()
+        await service.waitForLoadCalls(1)
+
+        let method = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeMethod,
+            in: controller.view
+        ) as? NSPopUpButton)
+        method.selectItem(withTitle: "Rebase and Merge")
+        let merge = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.merge,
+            in: controller.view
+        ) as? NSButton)
+        merge.performClick(nil)
+
+        await waitUntil("exact rebase summary") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.mergeSummary,
+                in: controller.view
+            ) != nil
+        }
+        let summary = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeSummary,
+            in: controller.view
+        ) as? NSTextField)
+        let confirmation = ForgePullRequestMergeConfirmation(
+            snapshot: workspace.mergeSnapshot,
+            method: .rebase
+        )
+        let expected = try RepositoryPullRequestRebaseSummaryPresenter.text(
+            XCTUnwrap(confirmation.rebaseSummary)
+        )
+        XCTAssertEqual(summary.stringValue, expected)
+        XCTAssertEqual(summary.accessibilityLabel(), expected)
+        XCTAssertFalse(summary.isEditable)
+        XCTAssertTrue(summary.isSelectable)
+        XCTAssertTrue(summary.stringValue.contains(fixture.oldHead.value))
+        XCTAssertTrue(summary.stringValue.contains(fixture.baseCommit.value))
+        XCTAssertNil(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeTitle,
+            in: controller.view
+        ))
+        XCTAssertNil(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeMessage,
+            in: controller.view
+        ))
+        controller.detach()
+    }
+
     func testMergeDeletionFailurePreservesMergeAndOffersBrowserAndSuccessfulRetry() async throws {
         let fixture = try ReviewAppFixture()
         let open = try fixture.workspace(deletion: true)
