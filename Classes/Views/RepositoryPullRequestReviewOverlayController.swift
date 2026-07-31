@@ -97,8 +97,11 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private var embeddedModalView: NSView?
     private var overlayDraftCoordinators: [RepositoryReviewDraftTextCoordinator] = []
     private var overlayDraftLoadTasks: [Task<Void, Never>] = []
+    private var threadDraftCoordinators: [RepositoryReviewDraftTextCoordinator] = []
+    private var threadDraftLoadTasks: [Task<Void, Never>] = []
     private var modalDraftCoordinator: RepositoryReviewDraftTextCoordinator?
     private var resolutionControlRows: [ForgeObjectID: ResolutionControlRow] = [:]
+    private var rendersThreadsInline = false
     var onWorkspacePresentationChange: (() -> Void)?
 
     init(
@@ -158,7 +161,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         overlayDraftLoadTasks.removeAll()
         overlayDraftCoordinators.forEach { $0.detach() }
         overlayDraftCoordinators.removeAll()
-        resolutionControlRows.removeAll()
+        resetThreadPresentation()
         closeModal()
         session.onStateChange = nil
         session.onResolutionChange = nil
@@ -184,6 +187,12 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         selectedDisplayedHead = nil
         pendingReanchor = nil
         reanchorConfirmationInFlight = false
+        renderOverlay()
+    }
+
+    func setRendersThreadsInline(_ enabled: Bool) {
+        guard rendersThreadsInline != enabled else { return }
+        rendersThreadsInline = enabled
         renderOverlay()
     }
 
@@ -239,8 +248,22 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         overlayDraftLoadTasks.removeAll()
         overlayDraftCoordinators.forEach { $0.detach() }
         overlayDraftCoordinators.removeAll()
-        resolutionControlRows.removeAll()
         clear(overlayStack)
+        if rendersThreadsInline {
+            guard let workspace = session.workspace, let selectedAnchor else {
+                overlayContentBox?.isHidden = true
+                return
+            }
+            overlayContentBox?.isHidden = false
+            addHeading("New Inline Review Comment", to: overlayStack)
+            addStateBanner(to: overlayStack)
+            let composer = inlineComposer(anchor: selectedAnchor, workspace: workspace)
+            addFullWidthArrangedSubview(composer, to: overlayStack)
+            return
+        }
+
+        overlayContentBox?.isHidden = false
+        resetThreadPresentation()
         addHeading("Review Threads", to: overlayStack)
         addStateBanner(to: overlayStack)
         guard let workspace = session.workspace else { return }
@@ -268,6 +291,31 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             help.textColor = .secondaryLabelColor
             help.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             overlayStack.addArrangedSubview(help)
+        }
+    }
+
+    fileprivate func inlineThreadViews(
+        for workspace: RepositoryPullRequestReviewWorkspace
+    ) -> [(record: RepositoryPullRequestReviewThreadRecord, view: NSView)] {
+        resetThreadPresentation()
+        return workspace.threads.map { record in
+            (record, threadView(record, workspace: workspace))
+        }
+    }
+
+    private func resetThreadPresentation() {
+        threadDraftLoadTasks.forEach { $0.cancel() }
+        threadDraftLoadTasks.removeAll()
+        threadDraftCoordinators.forEach { $0.detach() }
+        threadDraftCoordinators.removeAll()
+        resolutionControlRows.removeAll()
+    }
+
+    private func renderThreadPresentation() {
+        if rendersThreadsInline {
+            onWorkspacePresentationChange?()
+        } else {
+            renderOverlay()
         }
     }
 
@@ -494,7 +542,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             identifier: RepositoryPullRequestReviewAccessibility.threadPrefix + id.value + ".Toggle"
         ) { [weak self] in
             self?.threadExpansionOverrides[id] = !expanded
-            self?.renderOverlay()
+            self?.renderThreadPresentation()
         }
         toggle.bezelStyle = .inline
         header.addArrangedSubview(toggle)
@@ -655,7 +703,9 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         box.boxType = .custom
         box.borderWidth = 1
         box.borderColor = .separatorColor
-        box.title = "New Inline Review at \(RepositoryReviewThreadPresenter.anchorDescription(anchor))"
+        let title = "New Inline Review at \(RepositoryReviewThreadPresenter.anchorDescription(anchor))"
+        box.title = title
+        box.setAccessibilityLabel(title)
         box.setAccessibilityIdentifier(RepositoryPullRequestReviewAccessibility.inlinePanel)
         let stack = NSStackView()
         configure(stack: stack)
@@ -733,7 +783,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
 
     private func publishReply(threadID: ForgeObjectID, body: String) {
         guard replyWritesInFlight.insert(threadID).inserted else { return }
-        renderOverlay()
+        renderThreadPresentation()
         let task = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -831,7 +881,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             guard let session else { return }
             try await session.saveReplyDraft(threadID: threadID, bodyMarkdown: body)
         }
-        overlayDraftCoordinators.append(coordinator)
+        threadDraftCoordinators.append(coordinator)
         let task = Task { [weak session = session, weak coordinator] in
             do {
                 let body = try await session?.loadReplyDraft(threadID: threadID) ?? ""
@@ -842,7 +892,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 // the current server workspace or discard entered text.
             }
         }
-        overlayDraftLoadTasks.append(task)
+        threadDraftLoadTasks.append(task)
         return coordinator
     }
 
@@ -890,7 +940,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private func applySuggestion(_ suggestion: ForgeSuggestedChange) {
         guard suggestionInFlight == nil else { return }
         suggestionInFlight = suggestion
-        renderOverlay()
+        renderThreadPresentation()
         perform { [weak self] in
             guard let self else { return }
             defer {
@@ -1985,7 +2035,20 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         let original: NSAttributedString
     }
 
+    private struct InlineParagraphSpacing {
+        let range: NSRange
+        let original: NSAttributedString
+    }
+
+    private struct InlineThreadPlacement {
+        let view: NSView
+        let anchorRange: NSRange?
+        let order: Int
+    }
+
     private var highlightedRanges: [HighlightedRange] = []
+    private var inlineParagraphSpacings: [InlineParagraphSpacing] = []
+    private var installedInlineThreadViews: [NSView] = []
     private var isApplyingServerAnchorPlacements = false
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestReviewOverlay")
 
@@ -2023,6 +2086,7 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         if self.nativeDiffView !== nativeDiffView {
             removeObservers()
             removeHighlights()
+            removeInlineThreadPlacements()
             self.nativeDiffView?.setAccessory(nil)
         } else {
             removeObservers()
@@ -2030,6 +2094,7 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         self.nativeDiffView = nativeDiffView
         self.diff = diff
         _ = controller?.view
+        controller?.setRendersThreadsInline(true)
         nativeDiffView.setAccessory(controller?.reviewOverlayView)
         observeSelection(in: nativeDiffView)
         applyServerAnchorPlacements()
@@ -2044,6 +2109,7 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
     func detach() {
         removeObservers()
         removeHighlights()
+        removeInlineThreadPlacements()
         nativeDiffView?.setAccessory(nil)
         nativeDiffView = nil
         diff = nil
@@ -2112,11 +2178,11 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
             controller?.clearSelection()
             return
         }
-        let selected = (nativeDiffView.textView.string as NSString).substring(with: range)
         do {
             let selection = try RepositoryPullRequestReviewDiffSelectionPolicy.selection(
                 patch: diff.patch,
-                selectedText: selected
+                renderedText: nativeDiffView.textView.string,
+                selectedRange: range
             )
             controller?.select(
                 anchor: selection.anchor,
@@ -2134,12 +2200,16 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         guard !isApplyingServerAnchorPlacements else { return }
         isApplyingServerAnchorPlacements = true
         defer { isApplyingServerAnchorPlacements = false }
-        guard let nativeDiffView, let diff, let workspace = controller?.sessionWorkspaceForHost else { return }
+        guard let nativeDiffView, let diff else { return }
         removeHighlights()
+        removeInlineThreadPlacements()
+        guard let controller, let workspace = controller.sessionWorkspaceForHost else { return }
         let renderedText = nativeDiffView.textView.string
         guard !renderedText.isEmpty else { return }
         var ranges: [NSRange] = []
-        for record in workspace.threads {
+        var placements: [InlineThreadPlacement] = []
+        for (order, pair) in controller.inlineThreadViews(for: workspace).enumerated() {
+            let record = pair.record
             let thread = record.presentation.thread
             let anchor: ForgeReviewAnchor? = if thread.isOutdated {
                 // An outdated server anchor is historical and must never be
@@ -2152,7 +2222,14 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
             } else {
                 nil
             }
-            guard let anchor else { continue }
+            guard let anchor else {
+                placements.append(InlineThreadPlacement(
+                    view: pair.view,
+                    anchorRange: nil,
+                    order: order
+                ))
+                continue
+            }
             do {
                 let placement = try RepositoryPullRequestReviewDiffSelectionPolicy.anchorPlacement(
                     patch: diff.patch,
@@ -2160,11 +2237,27 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
                     anchor: anchor
                 )
                 ranges.append(contentsOf: placement.characterRanges)
+                placements.append(InlineThreadPlacement(
+                    view: pair.view,
+                    anchorRange: placement.characterRanges.last,
+                    order: order
+                ))
             } catch {
+                placements.append(InlineThreadPlacement(
+                    view: pair.view,
+                    anchorRange: nil,
+                    order: order
+                ))
                 logger.info("Review thread has no unique local rendered anchor; leaving it visibly unplaced")
             }
         }
         guard let storage = nativeDiffView.textView.textStorage else { return }
+        installInlineThreadPlacements(
+            placements,
+            in: nativeDiffView.textView,
+            renderedText: renderedText,
+            storage: storage
+        )
         for range in normalizedHighlightRanges(ranges) where NSMaxRange(range) <= storage.length {
             highlightedRanges.append(HighlightedRange(
                 range: range,
@@ -2175,6 +2268,105 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
                 .underlineColor: NSColor.systemOrange,
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
             ], range: range)
+        }
+    }
+
+    private func installInlineThreadPlacements(
+        _ placements: [InlineThreadPlacement],
+        in textView: NSTextView,
+        renderedText: String,
+        storage: NSTextStorage
+    ) {
+        guard !placements.isEmpty,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer,
+              storage.length > 0
+        else { return }
+        let source = renderedText as NSString
+        let endParagraphRange = source.lineRange(for: NSRange(location: max(0, source.length - 1), length: 0))
+        let sorted = placements.sorted { lhs, rhs in
+            let lhsLocation = lhs.anchorRange?.location ?? Int.max
+            let rhsLocation = rhs.anchorRange?.location ?? Int.max
+            return lhsLocation == rhsLocation ? lhs.order < rhs.order : lhsLocation < rhsLocation
+        }
+        let availableWidth = inlineThreadWidth(in: textView)
+        var grouped: [(range: NSRange, placements: [(view: NSView, height: CGFloat)])] = []
+        for placement in sorted {
+            let target = placement.anchorRange ?? endParagraphRange
+            let location = min(target.location, max(0, source.length - 1))
+            let paragraphRange = source.lineRange(for: NSRange(location: location, length: 0))
+            placement.view.translatesAutoresizingMaskIntoConstraints = true
+            placement.view.frame = NSRect(x: 0, y: 0, width: availableWidth, height: 1)
+            placement.view.layoutSubtreeIfNeeded()
+            let height = max(ceil(placement.view.fittingSize.height), 32)
+            placement.view.setFrameSize(NSSize(width: availableWidth, height: height))
+            if grouped.last?.range == paragraphRange {
+                grouped[grouped.count - 1].placements.append((placement.view, height))
+            } else {
+                grouped.append((paragraphRange, [(placement.view, height)]))
+            }
+        }
+
+        let verticalGap: CGFloat = 6
+        for group in grouped {
+            let totalHeight = group.placements.map(\.height).reduce(0, +)
+                + verticalGap * CGFloat(group.placements.count + 1)
+            reserveParagraphSpacing(totalHeight, range: group.range, storage: storage)
+        }
+        layoutManager.ensureLayout(for: textContainer)
+
+        for group in grouped {
+            let contentRange = NSIntersectionRange(
+                group.range,
+                NSRange(location: 0, length: storage.length)
+            )
+            guard contentRange.length > 0 else { continue }
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: contentRange,
+                actualCharacterRange: nil
+            )
+            guard glyphRange.length > 0 else { continue }
+            let lineRect = layoutManager.lineFragmentRect(
+                forGlyphAt: NSMaxRange(glyphRange) - 1,
+                effectiveRange: nil
+            )
+            var originY = lineRect.maxY + textView.textContainerInset.height + verticalGap
+            for placement in group.placements {
+                placement.view.frame.origin = NSPoint(
+                    x: textView.textContainerInset.width + 8,
+                    y: originY
+                )
+                textView.addSubview(placement.view)
+                installedInlineThreadViews.append(placement.view)
+                originY += placement.height + verticalGap
+            }
+        }
+    }
+
+    private func inlineThreadWidth(in textView: NSTextView) -> CGFloat {
+        let visibleWidth = textView.enclosingScrollView?.contentView.bounds.width ?? textView.bounds.width
+        return max(280, visibleWidth - (textView.textContainerInset.width * 2) - 16)
+    }
+
+    private func reserveParagraphSpacing(
+        _ additionalSpacing: CGFloat,
+        range: NSRange,
+        storage: NSTextStorage
+    ) {
+        guard range.length > 0, NSMaxRange(range) <= storage.length else { return }
+        inlineParagraphSpacings.append(InlineParagraphSpacing(
+            range: range,
+            original: storage.attributedSubstring(from: range)
+        ))
+        var runs: [(NSParagraphStyle?, NSRange)] = []
+        storage.enumerateAttribute(.paragraphStyle, in: range) { value, subrange, _ in
+            runs.append((value as? NSParagraphStyle, subrange))
+        }
+        for (value, subrange) in runs {
+            let style = (value?.mutableCopy() as? NSMutableParagraphStyle)
+                ?? NSMutableParagraphStyle()
+            style.paragraphSpacing += additionalSpacing
+            storage.addAttribute(.paragraphStyle, value: style, range: subrange)
         }
     }
 
@@ -2197,6 +2389,29 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
             }
         }
         highlightedRanges.removeAll()
+    }
+
+    private func removeInlineThreadPlacements() {
+        installedInlineThreadViews.forEach { $0.removeFromSuperview() }
+        installedInlineThreadViews.removeAll()
+        guard let storage = nativeDiffView?.textView.textStorage else {
+            inlineParagraphSpacings.removeAll()
+            return
+        }
+        for spacing in inlineParagraphSpacings where NSMaxRange(spacing.range) <= storage.length {
+            spacing.original.enumerateAttributes(
+                in: NSRange(location: 0, length: spacing.original.length)
+            ) { attributes, range, _ in
+                storage.setAttributes(
+                    attributes,
+                    range: NSRange(
+                        location: spacing.range.location + range.location,
+                        length: range.length
+                    )
+                )
+            }
+        }
+        inlineParagraphSpacings.removeAll()
     }
 
     private func normalizedHighlightRanges(_ ranges: [NSRange]) -> [NSRange] {

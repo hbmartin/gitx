@@ -1271,6 +1271,179 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         host.detach()
     }
 
+    func testHostPlacesInteractiveThreadsInlineInAnchorOrderWithAccessibleState() async throws {
+        let fixture = try ReviewAppFixture()
+        let source = try fixture.threadRecord()
+        let fileRecord = try replacingThread(
+            source,
+            id: "thread-file",
+            anchor: ForgeReviewAnchor(path: fixture.path, subject: .file)
+        )
+        let rangeRecord = try replacingThread(
+            source,
+            id: "thread-range",
+            anchor: ForgeReviewAnchor(
+                path: fixture.path,
+                subject: .line,
+                side: .right,
+                startSide: .right,
+                startLine: 9,
+                line: 10
+            )
+        )
+        let outdatedRecord = try replacingThread(
+            source,
+            id: "thread-outdated",
+            anchor: fixture.anchor,
+            isOutdated: true,
+            exactOutdatedLocalAnchor: ForgeReviewAnchor(
+                path: fixture.path,
+                subject: .line,
+                side: .right,
+                line: 11
+            )
+        )
+        let workspace = try replacingThreads(
+            in: fixture.workspace(),
+            with: [outdatedRecord, rangeRecord, fileRecord]
+        )
+        let service = FakeReviewMutationService(workspaces: [workspace])
+        let host = RepositoryPullRequestReviewOverlayHost(
+            applicationSession: RepositoryPullRequestReviewApplicationSession(
+                service: service,
+                localService: UnavailableRepositoryPullRequestLocalReviewService(),
+                drafts: NullRepositoryPullRequestDraftStore(),
+                preferences: NullRepositoryPullRequestMutationPreferenceStore()
+            ),
+            accountID: fixture.accountID,
+            router: OverlayRecordingRouter()
+        )
+        let pullRequest = try summary(fixture: fixture)
+        _ = host.actionView(for: pullRequest)
+        let patch = """
+        diff --git a/Sources/File.swift b/Sources/File.swift
+        --- a/Sources/File.swift
+        +++ b/Sources/File.swift
+        @@ -8,3 +8,4 @@
+         before
+        -let old = true
+        +let first = true
+        +let second = true
+         after
+        """
+        let nativeView = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 700, height: 720))
+        nativeView.textView.string = patch
+        host.install(
+            in: nativeView,
+            pullRequest: pullRequest,
+            diff: RepositoryLocalPullRequestDiff(
+                title: "Inline review threads",
+                patch: patch,
+                cacheIdentifier: "m3-inline-thread-placement-test"
+            )
+        )
+        await service.waitForLoadCalls(1)
+        let prefix = RepositoryPullRequestReviewAccessibility.threadPrefix
+        await waitUntil("all anchored inline thread cards") {
+            ["thread-file", "thread-range", "thread-outdated"].allSatisfy {
+                self.descendant(identifier: prefix + $0, in: nativeView.textView) != nil
+            }
+        }
+
+        let fileView = try XCTUnwrap(descendant(identifier: prefix + "thread-file", in: nativeView.textView))
+        let rangeView = try XCTUnwrap(descendant(identifier: prefix + "thread-range", in: nativeView.textView))
+        let outdatedView = try XCTUnwrap(descendant(
+            identifier: prefix + "thread-outdated",
+            in: nativeView.textView
+        ))
+        XCTAssertTrue(fileView.superview === nativeView.textView)
+        XCTAssertTrue(rangeView.superview === nativeView.textView)
+        XCTAssertTrue(outdatedView.superview === nativeView.textView)
+        XCTAssertLessThan(fileView.frame.minY, rangeView.frame.minY)
+        XCTAssertLessThan(rangeView.frame.minY, outdatedView.frame.minY)
+        XCTAssertFalse(fileView.accessibilityLabel()?.isEmpty ?? true)
+        XCTAssertNotNil(descendant(identifier: prefix + "thread-outdated.Outdated", in: outdatedView))
+        XCTAssertTrue(allText(in: outdatedView).contains("Minimized: Off-topic"))
+        XCTAssertTrue(allText(in: outdatedView).contains("Deleted comment"))
+        XCTAssertTrue(allText(in: outdatedView).contains("Comment unavailable"))
+        XCTAssertEqual(
+            descendants(in: nativeView).filter {
+                $0.accessibilityIdentifier() == prefix + "thread-file"
+            }.count,
+            1
+        )
+
+        host.detach()
+    }
+
+    func testHostUsesExactNativeSelectionRangeForRepeatedDiffLine() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try replacingThreads(in: fixture.workspace(), with: [])
+        let service = FakeReviewMutationService(workspaces: [workspace])
+        let host = RepositoryPullRequestReviewOverlayHost(
+            applicationSession: RepositoryPullRequestReviewApplicationSession(
+                service: service,
+                localService: UnavailableRepositoryPullRequestLocalReviewService(),
+                drafts: NullRepositoryPullRequestDraftStore(),
+                preferences: NullRepositoryPullRequestMutationPreferenceStore()
+            ),
+            accountID: fixture.accountID,
+            router: OverlayRecordingRouter()
+        )
+        let pullRequest = try summary(fixture: fixture)
+        _ = host.actionView(for: pullRequest)
+        let firstPatch = """
+        diff --git a/Sources/File.swift b/Sources/File.swift
+        --- a/Sources/File.swift
+        +++ b/Sources/File.swift
+        @@ -0,0 +1 @@
+        +let repeated = true
+        """
+        let patch = firstPatch + "\n" + firstPatch.replacingOccurrences(
+            of: "File.swift",
+            with: "Other.swift"
+        )
+        let nativeView = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 700, height: 500))
+        nativeView.textView.string = patch
+        host.install(
+            in: nativeView,
+            pullRequest: pullRequest,
+            diff: RepositoryLocalPullRequestDiff(
+                title: "Repeated inline selection",
+                patch: patch,
+                cacheIdentifier: "m3-repeated-inline-selection-test"
+            )
+        )
+        await service.waitForLoadCalls(1)
+
+        let source = patch as NSString
+        let first = source.range(of: "+let repeated = true")
+        let second = source.range(
+            of: "+let repeated = true",
+            options: [],
+            range: NSRange(location: NSMaxRange(first), length: source.length - NSMaxRange(first))
+        )
+        nativeView.textView.setSelectedRange(second)
+        NotificationCenter.default.post(
+            name: NSTextView.didChangeSelectionNotification,
+            object: nativeView.textView
+        )
+
+        await waitUntil("repeated-line inline composer") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.inlinePanel,
+                in: nativeView
+            ) != nil
+        }
+        let composer = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.inlinePanel,
+            in: nativeView
+        ) as? NSBox)
+        XCTAssertTrue(composer.title.contains("Sources/Other.swift"))
+        XCTAssertTrue(composer.accessibilityLabel()?.contains("Sources/Other.swift") == true)
+        host.detach()
+    }
+
     // MARK: - Fixtures
 
     private func replacingThreadExpansion(
@@ -1293,6 +1466,36 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             )
         }
         return try replacingThreads(in: workspace, with: threads)
+    }
+
+    private func replacingThread(
+        _ record: RepositoryPullRequestReviewThreadRecord,
+        id: String,
+        anchor: ForgeReviewAnchor,
+        isOutdated: Bool = false,
+        exactOutdatedLocalAnchor: ForgeReviewAnchor? = nil
+    ) throws -> RepositoryPullRequestReviewThreadRecord {
+        let source = record.presentation
+        let thread = try ForgeReviewThread(
+            repository: source.thread.repository,
+            id: ForgeObjectID(forge: source.thread.repository.forge, value: id),
+            isResolved: source.thread.isResolved,
+            isOutdated: isOutdated,
+            anchor: .available(anchor),
+            comments: source.thread.comments
+        )
+        let presentation = try ForgeReviewThreadPresentation(
+            thread: thread,
+            expansion: source.expansion,
+            commentVisibility: source.commentVisibility,
+            commentReactions: source.commentReactions
+        )
+        return try RepositoryPullRequestReviewThreadRecord(
+            pullRequest: record.pullRequest,
+            presentation: presentation,
+            exactOutdatedLocalAnchor: exactOutdatedLocalAnchor,
+            suggestedChanges: []
+        )
     }
 
     private func replacingThreads(

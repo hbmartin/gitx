@@ -76,6 +76,28 @@ final class RepositoryPullRequestReviewDiffSelectionTests: XCTestCase {
         }
     }
 
+    func testExactRenderedRangeDisambiguatesRepeatedDiffText() throws {
+        let repeated = patch + "\n" + patch.replacingOccurrences(of: "File.swift", with: "Other.swift")
+        let source = repeated as NSString
+        let first = source.range(of: "+let new = true")
+        let second = source.range(
+            of: "+let new = true",
+            options: [],
+            range: NSRange(location: NSMaxRange(first), length: source.length - NSMaxRange(first))
+        )
+
+        let result = try RepositoryPullRequestReviewDiffSelectionPolicy.selection(
+            patch: repeated,
+            renderedText: repeated,
+            selectedRange: second
+        )
+
+        XCTAssertEqual(result.anchor.path, try ForgeFilePath("Sources/Other.swift"))
+        XCTAssertEqual(result.anchor.side, .right)
+        XCTAssertEqual(result.anchor.line, 9)
+        XCTAssertEqual(result.contextLines, ["let new = true"])
+    }
+
     func testRejectsNoncontiguousSameSideLinesAcrossHunks() throws {
         let separatedHunks = """
         diff --git a/Sources/File.swift b/Sources/File.swift

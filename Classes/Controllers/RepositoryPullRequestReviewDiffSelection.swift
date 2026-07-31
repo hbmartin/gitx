@@ -108,10 +108,52 @@ nonisolated enum RepositoryPullRequestReviewDiffSelectionPolicy {
         guard !candidates.isEmpty else {
             throw RepositoryPullRequestReviewDiffSelectionError.unavailableSelection
         }
-        guard candidates.count == 1, let candidate = candidates.first,
-              let first = candidate.first
-        else {
+        guard candidates.count == 1, let candidate = candidates.first else {
             throw RepositoryPullRequestReviewDiffSelectionError.ambiguousSelection
+        }
+        return try makeSelection(from: candidate)
+    }
+
+    /// Maps a concrete native text selection by its presentation coordinates.
+    /// The range is authoritative when available, so identical rendered lines
+    /// remain independently selectable. The resulting provider-neutral anchor
+    /// must still exist exactly in the immutable local patch.
+    static func selection(
+        patch: String,
+        renderedText: String,
+        selectedRange: NSRange
+    ) throws -> RepositoryPullRequestReviewDiffSelection {
+        let renderedLength = (renderedText as NSString).length
+        guard selectedRange.location != NSNotFound,
+              selectedRange.length > 0,
+              NSMaxRange(selectedRange) <= renderedLength
+        else {
+            throw RepositoryPullRequestReviewDiffSelectionError.emptySelection
+        }
+        let parsed = try parse(renderedText)
+        guard !parsed.lines.isEmpty else {
+            throw RepositoryPullRequestReviewDiffSelectionError.malformedDiff
+        }
+        let selectedLines = parsed.lines.filter {
+            NSIntersectionRange($0.characterRange, selectedRange).length > 0
+        }
+        guard !selectedLines.isEmpty else {
+            throw RepositoryPullRequestReviewDiffSelectionError.unavailableSelection
+        }
+        let selection = try makeSelection(from: selectedLines[...])
+        _ = try anchorPlacement(
+            patch: patch,
+            renderedText: renderedText,
+            anchor: selection.anchor
+        )
+        return selection
+    }
+
+    private static func makeSelection(
+        from candidate: ArraySlice<Line>
+    ) throws -> RepositoryPullRequestReviewDiffSelection {
+        guard let first = candidate.first else {
+            throw RepositoryPullRequestReviewDiffSelectionError.emptySelection
         }
         guard candidate.allSatisfy({ $0.path == first.path }) else {
             throw RepositoryPullRequestReviewDiffSelectionError.unavailableSelection
