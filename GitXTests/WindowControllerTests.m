@@ -4075,13 +4075,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (void)testMilestone2ShippedCompositionCoverageProofs
 {
 	XCTAssertEqual([PBMilestone2CompositionCoverageHarness synchronousProof], (uint64_t)0b111);
-
-	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 2 composition app-target proof"];
-	[PBMilestone2CompositionCoverageHarness asyncProofWithCompletion:^(uint64_t proof) {
-		XCTAssertEqual(proof, (uint64_t)0b1111);
-		[expectation fulfill];
-	}];
-	[self waitForExpectations:@[ expectation ] timeout:30.0];
+	XCTAssertTrue([PBMilestone2CompositionCoverageHarness reviewApplicationProofWithRepository:self.repository]);
 }
 
 @end

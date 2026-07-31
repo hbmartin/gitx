@@ -1057,12 +1057,13 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         _ count: Int,
         reader: OverlayReaderDouble
     ) async throws {
-        for _ in 0 ..< 100 {
+        let deadline = ContinuousClock.now + .seconds(1)
+        repeat {
             if await reader.factsRequestCount() == count {
                 return
             }
             await Task.yield()
-        }
+        } while ContinuousClock.now < deadline
         XCTFail("Timed out waiting for \(count) Repository Facts requests")
     }
 
@@ -1070,12 +1071,13 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         _ count: Int,
         reader: SuspendingOverlayReaderDouble
     ) async throws {
-        for _ in 0 ..< 100 {
+        let deadline = ContinuousClock.now + .seconds(1)
+        repeat {
             if await reader.requests().count == count {
                 return
             }
             await Task.yield()
-        }
+        } while ContinuousClock.now < deadline
         XCTFail("Timed out waiting for \(count) suspended Repository Facts requests")
     }
 
@@ -1083,12 +1085,13 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         _ interval: TimeInterval,
         clock: ForgeRefreshClockDouble
     ) async throws {
-        for _ in 0 ..< 100 {
+        let deadline = ContinuousClock.now + .seconds(1)
+        repeat {
             if await clock.activeIntervals() == [interval] {
                 return
             }
             await Task.yield()
-        }
+        } while ContinuousClock.now < deadline
         XCTFail("Timed out waiting for Forge refresh interval \(interval)")
     }
 
@@ -1096,12 +1099,13 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         _ count: Int,
         recorder: ForgeApplicationRefreshRecorder
     ) async throws {
-        for _ in 0 ..< 100 {
+        let deadline = ContinuousClock.now + .seconds(1)
+        repeat {
             if await recorder.clientReasons().count == count {
                 return
             }
             await Task.yield()
-        }
+        } while ContinuousClock.now < deadline
         XCTFail("Timed out waiting for \(count) client Forge refreshes")
     }
 
@@ -1109,12 +1113,13 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         _ count: Int,
         recorder: ForgeApplicationRefreshRecorder
     ) async throws {
-        for _ in 0 ..< 100 {
+        let deadline = ContinuousClock.now + .seconds(1)
+        repeat {
             if await recorder.backgroundRefreshes().count == count {
                 return
             }
             await Task.yield()
-        }
+        } while ContinuousClock.now < deadline
         XCTFail("Timed out waiting for \(count) bound Forge refreshes")
     }
 
@@ -1122,12 +1127,13 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         _ count: Int,
         gate: ForgeRefreshGateDouble
     ) async throws {
-        for _ in 0 ..< 100 {
+        let deadline = ContinuousClock.now + .seconds(1)
+        repeat {
             if await gate.startedReasons().count == count {
                 return
             }
             await Task.yield()
-        }
+        } while ContinuousClock.now < deadline
         XCTFail("Timed out waiting for \(count) coalesced Forge refreshes")
     }
 

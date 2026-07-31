@@ -22,31 +22,97 @@
             }
         }
 
-        @objc(asyncProofWithCompletion:)
-        // swiftlint:disable:next unused_declaration
-        static func asyncProof(completion: @escaping (UInt64) -> Void) {
-            Task { @MainActor in
-                do {
-                    let fixture = try CompositionCoverageFixture()
-                    let environment = try await CompositionCoverageEnvironment.make(fixture: fixture)
-                    let state = await loggedProof("mutation-state") {
-                        try await mutationStateProof(fixture)
-                    }
-                    let provider = await loggedProof("pull-request-provider") {
-                        try await dependencyProviderProof(fixture, environment: environment)
-                    }
-                    let loader = await loggedProof("clone-loader") {
-                        try await cloneLoaderProof(fixture, environment: environment)
-                    }
-                    let service = await loggedProof("clone-service") {
-                        try await cloneServiceProof(fixture, environment: environment)
-                    }
-                    await environment.cleanup()
-                    completion(bitProof([state, provider, loader, service]))
-                } catch {
-                    NSLog("[M2CompositionCoverage] setup failed: %@", error.localizedDescription)
-                    completion(0)
+        /// Objective-C's generated completion-handler bridge creates the task
+        /// which executes this app-target proof, preserving Swift task-stack
+        /// ownership through the asynchronous XCTest boundary.
+        @objc
+        static func asynchronousProof() async -> UInt64 {
+            do {
+                let fixture = try CompositionCoverageFixture()
+                let environment = try await CompositionCoverageEnvironment.make(fixture: fixture)
+                let state = await loggedProof("mutation-state") {
+                    try await mutationStateProof(fixture)
                 }
+                let provider = await loggedProof("pull-request-provider") {
+                    try await dependencyProviderProof(fixture, environment: environment)
+                }
+                let loader = await loggedProof("clone-loader") {
+                    try await cloneLoaderProof(fixture, environment: environment)
+                }
+                let service = await loggedProof("clone-service") {
+                    try await cloneServiceProof(fixture, environment: environment)
+                }
+                await environment.cleanup()
+                return bitProof([state, provider, loader, service])
+            } catch {
+                NSLog("[M2CompositionCoverage] setup failed: %@", error.localizedDescription)
+                return 0
+            }
+        }
+
+        /// Runs the Milestone 3 read context in its own task frame. Xcode's
+        /// optimized async code generator requires returned existential
+        /// contexts to be released before the mutation-context proof begins.
+        @objc
+        static func reviewReadProof() async -> UInt64 {
+            do {
+                let fixture = try CompositionCoverageFixture()
+                let environment = try await CompositionCoverageEnvironment.make(fixture: fixture)
+                let provider: any ForgeGitHubPullRequestReviewDependencyProviding =
+                    ForgeGitHubPullRequestDependencyProvider(
+                        loader: environment.loader,
+                        now: { fixture.now },
+                        sessionConfiguration: { CompositionCoverageURLProtocol.configuration() }
+                    )
+                let read = await loggedProof("pull-request-review-read-provider") {
+                    try await reviewReadDependencyProviderProof(fixture, provider: provider)
+                }
+                await environment.cleanup()
+                return read ? 1 : 0
+            } catch {
+                NSLog("[M3CompositionCoverage] read setup failed: %@", error.localizedDescription)
+                return 0
+            }
+        }
+
+        @objc(reviewApplicationProofWithRepository:)
+        static func reviewApplicationProof(repository: PBGitRepository) -> Bool {
+            do {
+                return try reviewApplicationFactoryProof(
+                    CompositionCoverageFixture(),
+                    repository: repository
+                )
+            } catch {
+                NSLog("[M3CompositionCoverage] application setup failed: %@", error.localizedDescription)
+                return false
+            }
+        }
+
+        /// Runs the Milestone 3 mutation context and authorization feedback in
+        /// a distinct task frame from the read-context proof.
+        @objc
+        static func reviewMutationProof() async -> UInt64 {
+            do {
+                let fixture = try CompositionCoverageFixture()
+                let environment = try await CompositionCoverageEnvironment.make(fixture: fixture)
+                let provider: any ForgeGitHubPullRequestReviewDependencyProviding =
+                    ForgeGitHubPullRequestDependencyProvider(
+                        loader: environment.loader,
+                        now: { fixture.now },
+                        sessionConfiguration: { CompositionCoverageURLProtocol.configuration() }
+                    )
+                let mutation = await loggedProof("pull-request-review-mutation-provider") {
+                    try await reviewMutationDependencyProviderProof(
+                        fixture,
+                        services: environment.services,
+                        provider: provider
+                    )
+                }
+                await environment.cleanup()
+                return mutation ? 1 : 0
+            } catch {
+                NSLog("[M3CompositionCoverage] mutation setup failed: %@", error.localizedDescription)
+                return 0
             }
         }
 
@@ -424,12 +490,6 @@
                 .contains(authorization.key))
             let evidenceCleared = try await services.accountStore
                 .credential(for: fixture.accountID)?.authorizationEvidence == nil
-            let reviewProvider = try await reviewDependencyProviderProof(
-                fixture,
-                services: services,
-                provider: provider
-            )
-            let reviewApplicationFactory = try reviewApplicationFactoryProof(fixture)
             let wrongReference = try ForgeCredentialReference(
                 accountID: fixture.accountID,
                 credentialID: ForgeCredentialID("wrong-composition-credential"),
@@ -455,8 +515,6 @@
                     repository: fixture.repository
                 )
             }
-            await failedProvider.recordSuccess(success, context: context)
-            await failedProvider.recordFailure(.transportFailure, context: context)
 
             var preauthorized = URLRequest(url: URL(string: "https://api.github.com/user")!)
             preauthorized.setValue("Bearer existing", forHTTPHeaderField: "Authorization")
@@ -485,29 +543,32 @@
             return missing && mismatch && capabilityIdentity && eligibilityDidNotPromote
                 && submittedAuthorization && rotationRejected && removalRejected
                 && offline && limited && promoted
-                && nonAuthorizationFailureRetained && denied && evidenceCleared
-                && reviewProvider && reviewApplicationFactory && loaderFailure
+                && nonAuthorizationFailureRetained && denied && evidenceCleared && loaderFailure
                 && rejectedRequest && rejectedMutationAdapter && evidenceMismatch && clearEvidenceMismatch
         }
 
         private static func reviewApplicationFactoryProof(
-            _ fixture: CompositionCoverageFixture
+            _ fixture: CompositionCoverageFixture,
+            repository: PBGitRepository
         ) throws -> Bool {
             let suiteName = "GitX-M3-ReviewComposition-\(UUID().uuidString)"
             guard let defaults = UserDefaults(suiteName: suiteName) else {
                 throw CompositionCoverageError.expected
             }
             defer { defaults.removePersistentDomain(forName: suiteName) }
+            NSLog("[M3CompositionCoverage] application factory composition begin")
             let composition = ApplicationComposition(
                 userDefaults: defaults,
                 automaticallyStartsForgeServices: false
             )
-            let repository = PBGitRepository()
+            NSLog("[M3CompositionCoverage] application factory composition end")
             let settings = RepositoryUISettings(
                 repository: repository,
                 preferences: composition.applicationPreferences
             )
+            NSLog("[M3CompositionCoverage] application factory settings created")
             let unbound = composition.forgePullRequestReviewServices.session(for: repository)
+            NSLog("[M3CompositionCoverage] application factory unbound session created")
             let unboundProof = unbound.service is UnavailableRepositoryPullRequestReviewMutationService
                 && unbound.localService is UnavailableRepositoryPullRequestLocalReviewService
                 && unbound.drafts is ForgeLazySQLitePullRequestDraftStore
@@ -536,10 +597,9 @@
             return unboundProof && unsupportedProof && boundProof
         }
 
-        private static func reviewDependencyProviderProof(
+        private static func reviewReadDependencyProviderProof(
             _ fixture: CompositionCoverageFixture,
-            services: ForgeApplicationServices,
-            provider: ForgeGitHubPullRequestDependencyProvider
+            provider: any ForgeGitHubPullRequestReviewDependencyProviding
         ) async throws -> Bool {
             try CompositionCoverageURLProtocol.setHTTP(
                 statusCode: 200,
@@ -556,12 +616,18 @@
                 repository: fixture.repository,
                 operations: requestedOperations
             )
-            let readContextIsExact = readContext.account.id == fixture.accountID
+            return readContext.account.id == fixture.accountID
                 && readContext.credential == fixture.credential
                 && readContext.environment == .available
                 && readContext.allowedOperations == requestedOperations
                 && readContext.readAdapter is GitHubReadAdapter
+        }
 
+        private static func reviewMutationDependencyProviderProof(
+            _ fixture: CompositionCoverageFixture,
+            services: ForgeApplicationServices,
+            provider: any ForgeGitHubPullRequestReviewDependencyProviding
+        ) async throws -> Bool {
             try CompositionCoverageURLProtocol.setHTTP(
                 statusCode: 200,
                 headers: ["x-github-request-id": "review-mutation-proof"],
@@ -584,27 +650,22 @@
 
             let success = metadata(statusCode: 200, receivedAt: fixture.now)
             await provider.recordSuccess(success, context: mutationContext)
-            let promoted = await services.githubMutationState
+            let promotionLedger = await services.githubMutationState
                 .promotionLedger(for: fixture.account)
-                .contains(authorization.key)
+            let promoted = promotionLedger.contains(authorization.key)
             await provider.recordFailure(.transportFailure, context: mutationContext)
-            let nonAuthorizationFailureRetained = await services.githubMutationState
+            let retainedLedger = await services.githubMutationState
                 .promotionLedger(for: fixture.account)
-                .contains(authorization.key)
+            let nonAuthorizationFailureRetained = retainedLedger.contains(authorization.key)
             await provider.recordFailure(.permissionDenied(success), context: mutationContext)
-            let denied = !(await services.githubMutationState
+            let deniedLedger = await services.githubMutationState
                 .promotionLedger(for: fixture.account)
-                .contains(authorization.key))
-            let evidenceCleared = try await services.accountStore
-                .credential(for: fixture.accountID)?.authorizationEvidence == nil
+            let denied = !deniedLedger.contains(authorization.key)
+            let currentCredential = try await services.accountStore
+                .credential(for: fixture.accountID)
+            let evidenceCleared = currentCredential?.authorizationEvidence == nil
 
-            let failedProvider = ForgeGitHubPullRequestDependencyProvider(
-                loader: ForgeApplicationServiceLoader { throw CompositionCoverageError.expected }
-            )
-            await failedProvider.recordSuccess(success, context: mutationContext)
-            await failedProvider.recordFailure(.transportFailure, context: mutationContext)
-
-            return readContextIsExact && mutationContextIsExact && promoted
+            return mutationContextIsExact && promoted
                 && nonAuthorizationFailureRetained && denied && evidenceCleared
         }
 

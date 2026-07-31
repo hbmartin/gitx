@@ -129,7 +129,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface PBMilestone2CompositionCoverageHarness : NSObject
 + (uint64_t)synchronousProof;
-+ (void)asyncProofWithCompletion:(void (^)(uint64_t proof))completion;
++ (void)asynchronousProofWithCompletionHandler:(void (^)(uint64_t proof))completionHandler;
++ (void)reviewReadProofWithCompletionHandler:(void (^)(uint64_t proof))completionHandler;
++ (void)reviewMutationProofWithCompletionHandler:(void (^)(uint64_t proof))completionHandler;
++ (BOOL)reviewApplicationProofWithRepository:(PBGitRepository *)repository;
 @end
 
 @interface PBMilestone3ProductCoverageHarness : NSObject

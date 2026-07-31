@@ -230,6 +230,7 @@
 		C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */; };
 		F0F400000000000000000001 /* Milestone2ProductCoverageHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */; };
 		F0F400000000000000000002 /* Milestone2CompositionCoverageHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */; };
+		D3A400000000000000000001 /* Milestone2CompositionCoverageHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A400000000000000000101 /* Milestone2CompositionCoverageHarnessTests.swift */; };
 		F0F500000000000000000001 /* RepositoryPullRequestReviewDiffSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000101 /* RepositoryPullRequestReviewDiffSelection.swift */; };
 		F0F500000000000000000002 /* RepositoryPullRequestReviewWorkflow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000102 /* RepositoryPullRequestReviewWorkflow.swift */; };
 		F0F500000000000000000003 /* RepositoryPullRequestReviewDiffSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000101 /* RepositoryPullRequestReviewDiffSelection.swift */; };
@@ -1012,6 +1013,7 @@
 		F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMutationQuitCoordinatorTests.swift; sourceTree = "<group>"; };
 		F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2ProductCoverageHarness.swift; sourceTree = "<group>"; };
 		F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2CompositionCoverageHarness.swift; sourceTree = "<group>"; };
+		D3A400000000000000000101 /* Milestone2CompositionCoverageHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2CompositionCoverageHarnessTests.swift; sourceTree = "<group>"; };
 		F0F500000000000000000101 /* RepositoryPullRequestReviewDiffSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewDiffSelection.swift; sourceTree = "<group>"; };
 		F0F500000000000000000102 /* RepositoryPullRequestReviewWorkflow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewWorkflow.swift; sourceTree = "<group>"; };
 		F0F500000000000000000201 /* RepositoryPullRequestReviewDiffSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewDiffSelectionTests.swift; sourceTree = "<group>"; };
@@ -1682,6 +1684,7 @@
 				C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */,
 				F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */,
 				F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */,
+				D3A400000000000000000101 /* Milestone2CompositionCoverageHarnessTests.swift */,
 				C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */,
 				C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
@@ -2371,6 +2374,7 @@
 				C0DAA1000000000000000002 /* ForgeMarkdownNativeRenderer.swift in Sources */,
 				C0DAA2000000000000000002 /* ForgeAvatarLoading.swift in Sources */,
 				C0DAA4000000000000000001 /* ForgeMarkdownAvatarTestShims.swift in Sources */,
+				D3A400000000000000000001 /* Milestone2CompositionCoverageHarnessTests.swift in Sources */,
 				C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */,
 				C0DECE000000000000000002 /* CommitMenuPresenterTests.swift in Sources */,
 				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
