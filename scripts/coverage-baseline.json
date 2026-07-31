@@ -30,7 +30,7 @@
     "Classes/Controllers/HistoryStateCoordinator.swift": 1.0,
     "Classes/Controllers/HistoryTableInteractionCoordinator.swift": 0.9494,
     "Classes/Controllers/HistoryTreePresentation.swift": 0.8333,
-    "Classes/Controllers/Milestone2UITestHarness.swift": 0.9233,
+    "Classes/Controllers/Milestone2UITestHarness.swift": 0.9237,
     "Classes/Controllers/OpenRecentController.m": 0.0,
     "Classes/Controllers/PBAutoFetchManager.m": 0.1875,
     "Classes/Controllers/PBDiffWindowController.m": 0.5555,
