@@ -9,6 +9,13 @@ extension Notification.Name {
     )
 }
 
+/// One process-lifetime anonymous allowance is shared by repository overlays,
+/// native list/detail surfaces, and every service generation after recovery.
+nonisolated enum ForgeAnonymousRESTProcessRuntime {
+    static let budget = GitHubAnonymousRESTBudget()
+    static let adapter = GitHubAnonymousRESTAdapter(budget: budget)
+}
+
 nonisolated enum ForgeApplicationDataAvailability: Sendable {
     case available(ForgeSQLiteStore)
     case recoveryRequired(ForgeSQLiteRecoveryCopy)
@@ -335,7 +342,7 @@ final nonisolated class ForgeApplicationServices: Sendable {
         githubMutationState: ForgeGitHubMutationStateStore = ForgeGitHubMutationStateStore(),
         githubMutationNetworkMonitor: ForgeGitHubMutationNetworkMonitor? = nil,
         credentialCooldowns: ForgeCredentialCooldownRegistry = ForgeCredentialCooldownRegistry(),
-        githubAnonymousRESTBudget: GitHubAnonymousRESTBudget = GitHubAnonymousRESTBudget(),
+        githubAnonymousRESTBudget: GitHubAnonymousRESTBudget = ForgeAnonymousRESTProcessRuntime.budget,
         refreshCoordinator: ForgeApplicationRefreshCoordinator? = nil,
         deferredAccountCleanup: ForgeDeferredAccountCleanupStore,
         recoveryCoordinator: ForgeApplicationRecoveryCoordinator? = nil
@@ -399,6 +406,7 @@ actor ForgeApplicationServiceLoader {
         avatarLoader: ForgeAvatarLoader?,
         avatarLoadingEnabled: @escaping @Sendable () -> Bool,
         trustedExternalOrigins: ForgeTrustedExternalOriginStore? = nil,
+        githubAnonymousRESTBudget: GitHubAnonymousRESTBudget = ForgeAnonymousRESTProcessRuntime.budget,
         now: @escaping @Sendable () -> Date = Date.init,
         maintenanceInterval: TimeInterval = 24 * 60 * 60
     ) {
@@ -411,6 +419,7 @@ actor ForgeApplicationServiceLoader {
                 avatarLoader: avatarLoader,
                 avatarLoadingEnabled: avatarLoadingEnabled,
                 trustedExternalOrigins: trustedExternalOrigins,
+                githubAnonymousRESTBudget: githubAnonymousRESTBudget,
                 now: now
             )
         }
@@ -651,6 +660,7 @@ nonisolated enum ForgeApplicationServiceFactory {
         avatarLoader: ForgeAvatarLoader?,
         avatarLoadingEnabled: @escaping @Sendable () -> Bool,
         trustedExternalOrigins: ForgeTrustedExternalOriginStore? = nil,
+        githubAnonymousRESTBudget: GitHubAnonymousRESTBudget = ForgeAnonymousRESTProcessRuntime.budget,
         now: @escaping @Sendable () -> Date = Date.init
     ) async throws -> ForgeApplicationServices {
         let applicationSupportURL = try applicationSupportDirectory()
@@ -665,6 +675,7 @@ nonisolated enum ForgeApplicationServiceFactory {
             avatarLoader: avatarLoader,
             avatarLoadingEnabled: avatarLoadingEnabled,
             trustedExternalOrigins: trustedExternalOrigins,
+            githubAnonymousRESTBudget: githubAnonymousRESTBudget,
             now: now
         )
     }
@@ -686,6 +697,7 @@ nonisolated enum ForgeApplicationServiceFactory {
         avatarLoader: ForgeAvatarLoader? = nil,
         avatarLoadingEnabled: @escaping @Sendable () -> Bool = { true },
         trustedExternalOrigins: ForgeTrustedExternalOriginStore? = nil,
+        githubAnonymousRESTBudget: GitHubAnonymousRESTBudget = ForgeAnonymousRESTProcessRuntime.budget,
         now: @escaping @Sendable () -> Date = Date.init
     ) async throws -> ForgeApplicationServices {
         let accountStore = ForgeAccountStore(keychain: keychain)
@@ -790,6 +802,7 @@ nonisolated enum ForgeApplicationServiceFactory {
                 sessionGate: mutationSessionGate
             ),
             credentialCooldowns: cooldowns,
+            githubAnonymousRESTBudget: githubAnonymousRESTBudget,
             refreshCoordinator: refreshCoordinator,
             deferredAccountCleanup: tombstoneStore,
             recoveryCoordinator: recoveryCoordinator

@@ -1898,11 +1898,6 @@ final class ForgeReadNativeAvatarRenderer: ForgeReadAvatarRendering {
     }
 }
 
-nonisolated enum ForgeAnonymousReadAdapterPool {
-    static let budget = GitHubAnonymousRESTBudget()
-    static let shared = GitHubAnonymousRESTAdapter(budget: budget)
-}
-
 /// Explicit-only anonymous adapter for a single public GitHub.com repository.
 /// The first request is caused by opening the surface; every later request is
 /// an explicit search, filter, pagination, detail selection, or refresh action.
@@ -1914,7 +1909,7 @@ final class ForgeGitHubAnonymousReadSurfaceService: ForgeReadSurfaceServing {
 
     init(
         repository: ForgeRepositoryIdentity,
-        adapter: GitHubAnonymousRESTAdapter = ForgeAnonymousReadAdapterPool.shared
+        adapter: GitHubAnonymousRESTAdapter = ForgeAnonymousRESTProcessRuntime.adapter
     ) {
         self.repository = repository
         self.adapter = adapter
@@ -3809,7 +3804,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
                         }
                     }
                 case .publicAccess:
-                    facts = try await ForgeAnonymousReadAdapterPool.shared.repositoryFacts(
+                    facts = try await ForgeAnonymousRESTProcessRuntime.adapter.repositoryFacts(
                         repository: binding.primaryRepository,
                         reason: .repositoryOpened
                     ).value

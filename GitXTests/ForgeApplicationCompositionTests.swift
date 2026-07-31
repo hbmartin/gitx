@@ -42,6 +42,7 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         let firstServices = try await services.services()
         let secondServices = try await services.services()
         XCTAssertTrue(firstServices.githubAnonymousRESTBudget === secondServices.githubAnonymousRESTBudget)
+        XCTAssertTrue(firstServices.githubAnonymousRESTBudget === ForgeAnonymousRESTProcessRuntime.budget)
         let facts = try ForgeRepositoryFacts(
             repository: repository,
             defaultBranch: .available(ForgeRefName("main")),
@@ -476,6 +477,8 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         try await loader.resetForgeData()
 
         let resetServices = try await loader.services()
+        XCTAssertTrue(services.githubAnonymousRESTBudget === resetServices.githubAnonymousRESTBudget)
+        XCTAssertTrue(resetServices.githubAnonymousRESTBudget === ForgeAnonymousRESTProcessRuntime.budget)
         let resetAccounts = try await resetServices.accountStore.accounts()
         XCTAssertEqual(bindingCleaner.forgeRepositoryBindings(), [binding])
         XCTAssertTrue(trustedOrigins.origins().isEmpty)

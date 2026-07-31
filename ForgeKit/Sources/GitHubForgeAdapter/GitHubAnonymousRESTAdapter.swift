@@ -69,27 +69,37 @@ public struct GitHubAnonymousReadResult<Value: Sendable>: Sendable {
     }
 }
 
+struct GitHubAnonymousRESTReservation: Equatable, Sendable {
+    let generation: UInt64
+}
+
 public actor GitHubAnonymousRESTBudget {
+    private let resetAllowance: Int
     private var budget: ForgeAnonymousRateBudget
+    private var generation: UInt64 = 1
+    private var windowReset: Date?
 
     public init(initialRemainingRequestCount: Int = 60) {
-        budget = ForgeAnonymousRateBudget(remainingRequestCount: initialRemainingRequestCount)
+        resetAllowance = max(0, initialRemainingRequestCount)
+        budget = ForgeAnonymousRateBudget(remainingRequestCount: resetAllowance)
     }
 
     public func current() -> ForgeAnonymousRateBudget {
         budget
     }
 
-    func reserve(reason: ForgeRefreshReason, at date: Date) throws {
+    func reserve(reason: ForgeRefreshReason, at date: Date) throws -> GitHubAnonymousRESTReservation {
         guard ForgeRefreshPolicy.anonymousRequestIsExplicitlyAllowed(for: reason) else {
             throw GitHubAnonymousRESTError.explicitRequestRequired
         }
+        resetExpiredWindow(at: date)
         switch budget.decision(at: date) {
         case .allowed:
             budget = ForgeAnonymousRateBudget(
                 remainingRequestCount: budget.remainingRequestCount - 1,
                 cooldownDeadline: budget.cooldownDeadline
             )
+            return GitHubAnonymousRESTReservation(generation: generation)
         case .reserveProtected:
             throw GitHubAnonymousRESTError.reserveProtected
         case let .cooldown(until):
@@ -97,20 +107,53 @@ public actor GitHubAnonymousRESTBudget {
         }
     }
 
-    func update(status: Int, headers: [String: String], at date: Date) {
-        let remaining = Self.integerHeader("x-ratelimit-remaining", headers: headers)
-            ?? budget.remainingRequestCount
-        var deadline: Date?
+    func update(
+        reservation: GitHubAnonymousRESTReservation,
+        status: Int,
+        headers: [String: String],
+        at date: Date
+    ) {
+        guard reservation.generation == generation else { return }
+        let reportedRemaining = Self.integerHeader("x-ratelimit-remaining", headers: headers)
+        let remaining: Int = if let reportedRemaining {
+            min(budget.remainingRequestCount, reportedRemaining)
+        } else {
+            budget.remainingRequestCount
+        }
+        let reportedReset = Self.integerHeader("x-ratelimit-reset", headers: headers).map {
+            Date(timeIntervalSince1970: TimeInterval($0))
+        }
+        if let reportedReset, reportedReset > (windowReset ?? .distantPast) {
+            windowReset = reportedReset
+        }
+        var deadline = budget.cooldownDeadline
         if status == 403 || status == 429 || remaining == 0 {
+            let candidate: Date?
             if let retrySeconds = Self.integerHeader("retry-after", headers: headers), retrySeconds >= 0 {
-                deadline = date.addingTimeInterval(TimeInterval(retrySeconds))
-            } else if let reset = Self.integerHeader("x-ratelimit-reset", headers: headers) {
-                deadline = Date(timeIntervalSince1970: TimeInterval(reset))
+                candidate = date.addingTimeInterval(TimeInterval(retrySeconds))
+            } else {
+                candidate = reportedReset
             }
+            if let candidate, candidate > (deadline ?? .distantPast) {
+                deadline = candidate
+            }
+        } else if let activeDeadline = deadline, date >= activeDeadline {
+            deadline = nil
         }
         budget = ForgeAnonymousRateBudget(
             remainingRequestCount: remaining,
             cooldownDeadline: deadline
+        )
+    }
+
+    private func resetExpiredWindow(at date: Date) {
+        guard let windowReset, date >= windowReset else { return }
+        generation &+= 1
+        self.windowReset = nil
+        let activeCooldown = budget.cooldownDeadline.flatMap { date < $0 ? $0 : nil }
+        budget = ForgeAnonymousRateBudget(
+            remainingRequestCount: resetAllowance,
+            cooldownDeadline: activeCooldown
         )
     }
 
@@ -381,11 +424,16 @@ public actor GitHubAnonymousRESTAdapter {
             throw GitHubAnonymousRESTError.githubDotComRepositoryRequired
         }
         let requestedAt = now()
-        try await budget.reserve(reason: reason, at: requestedAt)
+        let reservation = try await budget.reserve(reason: reason, at: requestedAt)
         let request = try Self.makeRequest(repository: repository, path: path, query: query)
         let response = try await client.execute(request)
         let receivedAt = now()
-        await budget.update(status: response.statusCode, headers: response.headers, at: receivedAt)
+        await budget.update(
+            reservation: reservation,
+            status: response.statusCode,
+            headers: response.headers,
+            at: receivedAt
+        )
         switch response.statusCode {
         case 200:
             logger.info("Anonymous GitHub read completed status=200 bytes=\(response.data.count, privacy: .public)")

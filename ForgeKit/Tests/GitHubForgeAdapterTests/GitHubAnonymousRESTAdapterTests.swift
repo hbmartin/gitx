@@ -16,38 +16,129 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
         await XCTAssertThrowsErrorAsync(try await budget.reserve(reason: .scheduledOverlay, at: now)) { error in
             XCTAssertEqual(error as? GitHubAnonymousRESTError, .explicitRequestRequired)
         }
-        try await budget.reserve(reason: .repositoryOpened, at: now)
+        _ = try await budget.reserve(reason: .repositoryOpened, at: now)
         var snapshot = await budget.current()
         XCTAssertEqual(snapshot.remainingRequestCount, 11)
-        try await budget.reserve(reason: .manual, at: now)
+        _ = try await budget.reserve(reason: .manual, at: now)
         snapshot = await budget.current()
         XCTAssertEqual(snapshot.remainingRequestCount, 10)
         await XCTAssertThrowsErrorAsync(try await budget.reserve(reason: .manual, at: now)) { error in
             XCTAssertEqual(error as? GitHubAnonymousRESTError, .reserveProtected)
         }
 
-        await budget.update(
+        let cooldownBudget = GitHubAnonymousRESTBudget(initialRemainingRequestCount: 50)
+        let firstReservation = try await cooldownBudget.reserve(reason: .repositoryOpened, at: now)
+        let secondReservation = try await cooldownBudget.reserve(reason: .manual, at: now)
+        await cooldownBudget.update(
+            reservation: secondReservation,
             status: 429,
             headers: ["X-RateLimit-Remaining": "42", "Retry-After": "30"],
             at: now
         )
-        snapshot = await budget.current()
+        snapshot = await cooldownBudget.current()
         XCTAssertEqual(snapshot.remainingRequestCount, 42)
-        await XCTAssertThrowsErrorAsync(try await budget.reserve(reason: .manual, at: now)) { error in
+        await XCTAssertThrowsErrorAsync(try await cooldownBudget.reserve(reason: .manual, at: now)) { error in
             XCTAssertEqual(error as? GitHubAnonymousRESTError, .cooldown(until: now.addingTimeInterval(30)))
         }
-        try await budget.reserve(reason: .manual, at: now.addingTimeInterval(30))
+        let thirdReservation = try await cooldownBudget.reserve(
+            reason: .manual,
+            at: now.addingTimeInterval(30)
+        )
 
-        await budget.update(
+        await cooldownBudget.update(
+            reservation: thirdReservation,
             status: 403,
             headers: ["x-ratelimit-remaining": "0", "x-ratelimit-reset": "1100"],
             at: now
         )
-        snapshot = await budget.current()
+        snapshot = await cooldownBudget.current()
         XCTAssertEqual(snapshot.cooldownDeadline, Date(timeIntervalSince1970: 1100))
-        await budget.update(status: 200, headers: ["x-ratelimit-remaining": "bad"], at: now)
-        snapshot = await budget.current()
+        await cooldownBudget.update(
+            reservation: firstReservation,
+            status: 200,
+            headers: ["x-ratelimit-remaining": "bad"],
+            at: now.addingTimeInterval(31)
+        )
+        snapshot = await cooldownBudget.current()
+        XCTAssertEqual(snapshot.cooldownDeadline, Date(timeIntervalSince1970: 1100))
+        let resetReservation = try await cooldownBudget.reserve(
+            reason: .manual,
+            at: Date(timeIntervalSince1970: 1100)
+        )
+        await cooldownBudget.update(
+            reservation: resetReservation,
+            status: 200,
+            headers: ["x-ratelimit-remaining": "11"],
+            at: Date(timeIntervalSince1970: 1100)
+        )
+        snapshot = await cooldownBudget.current()
+        XCTAssertEqual(snapshot.remainingRequestCount, 11)
         XCTAssertNil(snapshot.cooldownDeadline)
+    }
+
+    func testTwoAdapterReservationResponsesCannotRaiseBudgetOrClearActiveCooldownOutOfOrder() async throws {
+        let now = Date(timeIntervalSince1970: 2000)
+        let budget = GitHubAnonymousRESTBudget(initialRemainingRequestCount: 20)
+        let firstAdapterReservation = try await budget.reserve(reason: .repositoryOpened, at: now)
+        let secondAdapterReservation = try await budget.reserve(reason: .manual, at: now)
+
+        await budget.update(
+            reservation: secondAdapterReservation,
+            status: 429,
+            headers: ["x-ratelimit-remaining": "18", "retry-after": "60"],
+            at: now
+        )
+        await budget.update(
+            reservation: firstAdapterReservation,
+            status: 200,
+            headers: ["x-ratelimit-remaining": "19"],
+            at: now.addingTimeInterval(1)
+        )
+
+        let snapshot = await budget.current()
+        XCTAssertEqual(snapshot.remainingRequestCount, 18)
+        XCTAssertEqual(snapshot.cooldownDeadline, now.addingTimeInterval(60))
+        await XCTAssertThrowsErrorAsync(
+            try await budget.reserve(reason: .manual, at: now.addingTimeInterval(1))
+        ) { error in
+            XCTAssertEqual(
+                error as? GitHubAnonymousRESTError,
+                .cooldown(until: now.addingTimeInterval(60))
+            )
+        }
+    }
+
+    func testRateWindowResetDoesNotClearLongerRetryCooldown() async throws {
+        let now = Date(timeIntervalSince1970: 3000)
+        let budget = GitHubAnonymousRESTBudget(initialRemainingRequestCount: 50)
+        let reservation = try await budget.reserve(reason: .repositoryOpened, at: now)
+
+        await budget.update(
+            reservation: reservation,
+            status: 429,
+            headers: [
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "3050",
+                "retry-after": "120",
+            ],
+            at: now
+        )
+
+        await XCTAssertThrowsErrorAsync(
+            try await budget.reserve(reason: .manual, at: Date(timeIntervalSince1970: 3050))
+        ) { error in
+            XCTAssertEqual(
+                error as? GitHubAnonymousRESTError,
+                .cooldown(until: Date(timeIntervalSince1970: 3120))
+            )
+        }
+        let snapshot = await budget.current()
+        XCTAssertEqual(snapshot.remainingRequestCount, 50)
+        XCTAssertEqual(snapshot.cooldownDeadline, Date(timeIntervalSince1970: 3120))
+
+        _ = try await budget.reserve(reason: .manual, at: Date(timeIntervalSince1970: 3120))
+        let resumed = await budget.current()
+        XCTAssertEqual(resumed.remainingRequestCount, 49)
     }
 
     func testRepositoryFactsUseExactCredentialFreeRequestAndPublicPartition() async throws {
