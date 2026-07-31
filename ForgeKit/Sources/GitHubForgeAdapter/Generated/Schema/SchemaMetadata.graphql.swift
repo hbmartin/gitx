@@ -252,6 +252,8 @@ extension GitHubAPI {
       "PushAllowance": GitHubAPI.Objects.PushAllowance,
       "Query": GitHubAPI.Objects.Query,
       "Reaction": GitHubAPI.Objects.Reaction,
+      "ReactionGroup": GitHubAPI.Objects.ReactionGroup,
+      "ReactorConnection": GitHubAPI.Objects.ReactorConnection,
       "ReadyForReviewEvent": GitHubAPI.Objects.ReadyForReviewEvent,
       "Ref": GitHubAPI.Objects.Ref,
       "ReferencedEvent": GitHubAPI.Objects.ReferencedEvent,

@@ -93,7 +93,11 @@ final class ForgeReadModelsTests: XCTestCase {
             createdAt: now,
             updatedAt: now,
             author: .available(.actor(actor)),
-            replyToID: ForgeObjectID(forge: repository.forge, value: "parent")
+            replyToID: ForgeObjectID(forge: repository.forge, value: "parent"),
+            isMinimized: true,
+            minimizedReason: "off-topic",
+            reactions: [ForgeReviewReactionSummary(kind: .eyes, count: 3, viewerReacted: true)],
+            diffHunk: "@@ -4,3 +4,3 @@"
         )
         let rootComment = try ForgeReviewComment(
             repository: repository,
@@ -112,6 +116,20 @@ final class ForgeReadModelsTests: XCTestCase {
             comments: .available(ForgePage(items: [comment, rootComment], totalCount: 2))
         )
         XCTAssertEqual(try roundTrip(thread), thread)
+        var legacyCommentObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(comment)) as? [String: Any]
+        )
+        for key in ["isMinimized", "minimizedReason", "reactions", "diffHunk"] {
+            legacyCommentObject.removeValue(forKey: key)
+        }
+        let legacyComment = try JSONDecoder().decode(
+            ForgeReviewComment.self,
+            from: JSONSerialization.data(withJSONObject: legacyCommentObject)
+        )
+        XCTAssertFalse(legacyComment.isMinimized)
+        XCTAssertNil(legacyComment.minimizedReason)
+        XCTAssertEqual(legacyComment.reactions, [])
+        XCTAssertNil(legacyComment.diffHunk)
 
         let activity = try ForgeAttentionActivity(
             id: ForgeObjectID(forge: repository.forge, value: "activity"),

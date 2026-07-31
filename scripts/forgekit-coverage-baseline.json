@@ -36,7 +36,7 @@
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthenticationTransport.swift": 0.9971,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthorization.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubForgeAdapter.swift": 1.0,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLDocumentMapper.swift": 0.9974,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLDocumentMapper.swift": 0.9975,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLTransport.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLValueMapper.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationAdapter.swift": 0.994,

@@ -87,6 +87,19 @@ fragment GitHubReviewComment on PullRequestReviewComment {
   body
   createdAt
   updatedAt
+  isMinimized
+  minimizedReason
+  diffHunk
+  reactionGroups {
+    content
+    viewerHasReacted
+    reactors(first: 1) {
+      totalCount
+      pageInfo {
+        ...GitHubPageInfo
+      }
+    }
+  }
   author {
     ...GitHubActor
   }

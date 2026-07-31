@@ -254,6 +254,10 @@ extension GitHubAPI {
                   var body: String { __data["body"] }
                   var createdAt: GitHubAPI.DateTime { __data["createdAt"] }
                   var updatedAt: GitHubAPI.DateTime { __data["updatedAt"] }
+                  var isMinimized: Bool { __data["isMinimized"] }
+                  var minimizedReason: String? { __data["minimizedReason"] }
+                  var diffHunk: String { __data["diffHunk"] }
+                  var reactionGroups: [ReactionGroup]? { __data["reactionGroups"] }
                   var author: Author? { __data["author"] }
                   var replyTo: ReplyTo? { __data["replyTo"] }
 
@@ -263,6 +267,8 @@ extension GitHubAPI {
 
                     var gitHubReviewComment: GitHubReviewComment { _toFragment() }
                   }
+
+                  typealias ReactionGroup = GitHubReviewComment.ReactionGroup
 
                   typealias Author = GitHubReviewComment.Author
 

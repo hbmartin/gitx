@@ -1033,21 +1033,29 @@ private extension GitHubGraphQLDocumentMapper {
         repository: ForgeRepositoryIdentity
     ) throws -> ReviewThreadMapping {
         let anchor: ForgeReadSection<ForgeReviewAnchor>
-        if let subject = reviewSubject(node.subjectType.value),
-           let side = reviewSide(node.diffSide.value),
-           node.startDiffSide == nil || node.startDiffSide?.value != nil
-        {
+        switch reviewSubject(node.subjectType.value) {
+        case .file where node.startDiffSide == nil
+            && node.startLine == nil
+            && node.line == nil
+            && node.originalStartLine == nil
+            && node.originalLine == nil:
             anchor = try .available(ForgeReviewAnchor(
                 path: ForgeFilePath(node.path),
-                subject: subject,
-                side: side,
+                subject: .file
+            ))
+        case .line where reviewSide(node.diffSide.value) != nil
+            && (node.startDiffSide == nil || node.startDiffSide?.value != nil):
+            anchor = try .available(ForgeReviewAnchor(
+                path: ForgeFilePath(node.path),
+                subject: .line,
+                side: reviewSide(node.diffSide.value),
                 startSide: reviewSide(node.startDiffSide?.value),
                 startLine: node.startLine,
                 line: node.line,
                 originalStartLine: node.originalStartLine,
                 originalLine: node.originalLine
             ))
-        } else {
+        default:
             anchor = .unavailable(.partialResponse)
         }
         let comments = try mapNodes(node.comments.nodes) {
@@ -1077,15 +1085,41 @@ private extension GitHubGraphQLDocumentMapper {
         _ fragment: GitHubAPI.GitHubReviewComment,
         repository: ForgeRepositoryIdentity
     ) throws -> ForgeReviewComment {
-        try ForgeReviewComment(
+        let reactions: [ForgeReviewReactionSummary] = try (fragment.reactionGroups ?? []).compactMap { group in
+            guard let kind = reviewReaction(group.content.value) else { return nil }
+            return try ForgeReviewReactionSummary(
+                kind: kind,
+                count: group.reactors.totalCount,
+                viewerReacted: group.viewerHasReacted
+            )
+        }
+        return try ForgeReviewComment(
             repository: repository,
             id: objectID(fragment.id),
             bodyMarkdown: fragment.body,
             createdAt: date(fragment.createdAt),
             updatedAt: date(fragment.updatedAt),
             author: author(fragment.author?.fragments.gitHubActor),
-            replyToID: fragment.replyTo.map { try objectID($0.id) }
+            replyToID: fragment.replyTo.map { try objectID($0.id) },
+            isMinimized: fragment.isMinimized,
+            minimizedReason: fragment.minimizedReason,
+            reactions: reactions,
+            diffHunk: fragment.diffHunk.isEmpty ? nil : fragment.diffHunk
         )
+    }
+
+    func reviewReaction(_ value: GitHubAPI.ReactionContent?) -> ForgeReviewReactionKind? {
+        switch value {
+        case .thumbsUp: .thumbsUp
+        case .thumbsDown: .thumbsDown
+        case .laugh: .laugh
+        case .hooray: .hooray
+        case .confused: .confused
+        case .heart: .heart
+        case .rocket: .rocket
+        case .eyes: .eyes
+        case nil: nil
+        }
     }
 
     func reviewSubject(_ value: GitHubAPI.PullRequestReviewThreadSubjectType?) -> ForgeReviewSubject? {

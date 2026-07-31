@@ -103,6 +103,14 @@ public struct ForgeReviewComment: Codable, Hashable, Sendable {
     public let updatedAt: Date
     public let author: ForgeReadSection<ForgeAuthor>
     public let replyToID: ForgeObjectID?
+    /// Provider-reported minimization is retained independently from the body
+    /// so native clients do not accidentally reveal content GitHub collapsed.
+    public let isMinimized: Bool
+    public let minimizedReason: String?
+    public let reactions: [ForgeReviewReactionSummary]
+    /// The immutable server diff context used to validate suggested-change
+    /// anchors. Consumers must not treat it as a complete local patch.
+    public let diffHunk: String?
 
     public init(
         repository: ForgeRepositoryIdentity,
@@ -111,7 +119,11 @@ public struct ForgeReviewComment: Codable, Hashable, Sendable {
         createdAt: Date,
         updatedAt: Date,
         author: ForgeReadSection<ForgeAuthor>,
-        replyToID: ForgeObjectID? = nil
+        replyToID: ForgeObjectID? = nil,
+        isMinimized: Bool = false,
+        minimizedReason: String? = nil,
+        reactions: [ForgeReviewReactionSummary] = [],
+        diffHunk: String? = nil
     ) {
         self.repository = repository
         self.id = id
@@ -120,6 +132,30 @@ public struct ForgeReviewComment: Codable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.author = author
         self.replyToID = replyToID
+        self.isMinimized = isMinimized
+        self.minimizedReason = minimizedReason
+        self.reactions = reactions
+        self.diffHunk = diffHunk
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            repository: container.decode(ForgeRepositoryIdentity.self, forKey: .repository),
+            id: container.decode(ForgeObjectID.self, forKey: .id),
+            bodyMarkdown: container.decode(String.self, forKey: .bodyMarkdown),
+            createdAt: container.decode(Date.self, forKey: .createdAt),
+            updatedAt: container.decode(Date.self, forKey: .updatedAt),
+            author: container.decode(ForgeReadSection<ForgeAuthor>.self, forKey: .author),
+            replyToID: container.decodeIfPresent(ForgeObjectID.self, forKey: .replyToID),
+            isMinimized: container.decodeIfPresent(Bool.self, forKey: .isMinimized) ?? false,
+            minimizedReason: container.decodeIfPresent(String.self, forKey: .minimizedReason),
+            reactions: container.decodeIfPresent(
+                [ForgeReviewReactionSummary].self,
+                forKey: .reactions
+            ) ?? [],
+            diffHunk: container.decodeIfPresent(String.self, forKey: .diffHunk)
+        )
     }
 }
 

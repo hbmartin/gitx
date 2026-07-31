@@ -110,6 +110,22 @@ final class GitHubReadAdapterTests: XCTestCase {
             after: cursor
         )
         XCTAssertEqual(comments.value.items.count, 1)
+        XCTAssertEqual(comments.value.items.first?.isMinimized, true)
+        XCTAssertEqual(comments.value.items.first?.minimizedReason, "off-topic")
+        XCTAssertEqual(comments.value.items.first?.diffHunk, "@@ -7,2 +7,2 @@")
+        let expectedReactionKinds: [ForgeReviewReactionKind] = [
+            .thumbsUp, .thumbsDown, .laugh, .hooray, .confused, .heart, .rocket, .eyes,
+        ]
+        XCTAssertEqual(
+            comments.value.items.first?.reactions,
+            try expectedReactionKinds.enumerated().map { index, kind in
+                try ForgeReviewReactionSummary(
+                    kind: kind,
+                    count: index + 1,
+                    viewerReacted: index == expectedReactionKinds.count - 1
+                )
+            }
+        )
 
         let requests = capture.requests
         XCTAssertEqual(requests.count, 10)
@@ -1040,6 +1056,92 @@ final class GitHubReadAdapterTests: XCTestCase {
         XCTAssertEqual(threads.value.items[0].comments.availableValue?.items, [])
         XCTAssertEqual(threads.value.items[0].comments.availableValue?.totalCount, 1)
 
+        let fileThread: [String: Any] = [
+            "__typename": "PullRequestReviewThread", "id": "file-thread",
+            "isResolved": false, "isOutdated": false, "path": "Sources/App.swift",
+            "subjectType": "FILE", "diffSide": "RIGHT",
+            "startLine": NSNull(), "line": NSNull(), "startDiffSide": NSNull(),
+            "originalStartLine": NSNull(), "originalLine": NSNull(),
+            "comments": Self.emptyConnection("PullRequestReviewCommentConnection"),
+        ]
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "pullRequest": [
+                "__typename": "PullRequest", "id": "pr",
+                "reviewThreads": Self.connection(
+                    "PullRequestReviewThreadConnection",
+                    nodes: [fileThread]
+                ),
+            ],
+        ]])
+        let fileThreads = try await adapter.reviewThreads(
+            repository: repository,
+            pullRequestNumber: number
+        )
+        let fileAnchor = try XCTUnwrap(fileThreads.value.items[0].anchor.availableValue)
+        XCTAssertEqual(fileAnchor.subject, .file)
+        XCTAssertEqual(fileAnchor.path, try ForgeFilePath("Sources/App.swift"))
+        XCTAssertNil(fileAnchor.side)
+
+        var fileThreadWithLineMetadata = fileThread
+        fileThreadWithLineMetadata["id"] = "invalid-file-thread"
+        fileThreadWithLineMetadata["line"] = 8
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "pullRequest": [
+                "__typename": "PullRequest", "id": "pr",
+                "reviewThreads": Self.connection(
+                    "PullRequestReviewThreadConnection",
+                    nodes: [fileThreadWithLineMetadata]
+                ),
+            ],
+        ]])
+        let invalidFileThreads = try await adapter.reviewThreads(
+            repository: repository,
+            pullRequestNumber: number
+        )
+        XCTAssertEqual(invalidFileThreads.completeness, .partial)
+        XCTAssertTrue(invalidFileThreads.value.items[0].anchor.isUnavailable)
+
+        var lineThreadWithUnknownSide = fileThread
+        lineThreadWithUnknownSide["id"] = "invalid-line-thread"
+        lineThreadWithUnknownSide["subjectType"] = "LINE"
+        lineThreadWithUnknownSide["diffSide"] = "FUTURE_SIDE"
+        lineThreadWithUnknownSide["line"] = 8
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "pullRequest": [
+                "__typename": "PullRequest", "id": "pr",
+                "reviewThreads": Self.connection(
+                    "PullRequestReviewThreadConnection",
+                    nodes: [lineThreadWithUnknownSide]
+                ),
+            ],
+        ]])
+        let invalidLineThreads = try await adapter.reviewThreads(
+            repository: repository,
+            pullRequestNumber: number
+        )
+        XCTAssertEqual(invalidLineThreads.completeness, .partial)
+        XCTAssertTrue(invalidLineThreads.value.items[0].anchor.isUnavailable)
+
+        var commentWithoutOptionalMetadata = Self.reviewComment
+        commentWithoutOptionalMetadata["reactionGroups"] = NSNull()
+        commentWithoutOptionalMetadata["diffHunk"] = ""
+        try installGraphQLData(["node": [
+            "__typename": "PullRequestReviewThread", "id": "thread",
+            "pullRequest": [
+                "__typename": "PullRequest", "repository": Self.repositoryIdentity,
+            ],
+            "comments": Self.connection(
+                "PullRequestReviewCommentConnection",
+                nodes: [commentWithoutOptionalMetadata]
+            ),
+        ]])
+        let commentPage = try await adapter.reviewThreadComments(
+            repository: repository,
+            threadID: ForgeObjectID(forge: repository.forge, value: "thread")
+        )
+        XCTAssertEqual(commentPage.value.items.first?.reactions, [])
+        XCTAssertNil(commentPage.value.items.first?.diffHunk)
+
         try installGraphQLData(["node": ["__typename": "Issue", "id": "issue"]])
         await XCTAssertThrowsMappingError(.objectNotFound) {
             try await adapter.reviewThreadComments(
@@ -1483,10 +1585,26 @@ private extension GitHubReadAdapterTests {
     }
 
     static var reviewComment: [String: Any] {
-        [
+        let reactionContents = [
+            "THUMBS_UP", "THUMBS_DOWN", "LAUGH", "HOORAY",
+            "CONFUSED", "HEART", "ROCKET", "EYES", "PARTY_PARROT",
+        ]
+        return [
             "__typename": "PullRequestReviewComment", "id": "review-comment",
             "body": "reply", "createdAt": "2026-07-29T12:34:56Z",
             "updatedAt": "2026-07-29T12:34:56Z", "author": actor,
+            "isMinimized": true, "minimizedReason": "off-topic",
+            "diffHunk": "@@ -7,2 +7,2 @@",
+            "reactionGroups": reactionContents.enumerated().map { index, content in
+                [
+                    "__typename": "ReactionGroup", "content": content,
+                    "viewerHasReacted": index == 7,
+                    "reactors": [
+                        "__typename": "ReactorConnection", "totalCount": index + 1,
+                        "pageInfo": pageInfo,
+                    ],
+                ] as [String: Any]
+            },
             "replyTo": ["__typename": "PullRequestReviewComment", "id": "root-comment"],
         ]
     }
