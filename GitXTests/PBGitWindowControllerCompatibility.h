@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
 #import "PBHistorySearchMode.h"
+#import "PBGitRepository_PBGitBinarySupport.h"
 
 @class PBViewController;
 @class PBGitSidebarController;
@@ -49,6 +50,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (IBAction)toolbarFetch:(nullable id)sender;
 - (IBAction)toolbarPull:(nullable id)sender;
 - (IBAction)toolbarPush:(nullable id)sender;
+- (IBAction)newPullRequest:(nullable id)sender;
 
 - (IBAction)checkout:(nullable id)sender;
 - (IBAction)createBranch:(nullable id)sender;
@@ -94,9 +96,21 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)performPushForBranch:(nullable PBGitRef *)branchRef
 					toRemote:(nullable PBGitRef *)remoteRef
 		requiresConfirmation:(BOOL)requiresConfirmation;
+- (void)performPushForBranch:(nullable PBGitRef *)branchRef
+					toRemote:(nullable PBGitRef *)remoteRef
+		requiresConfirmation:(BOOL)requiresConfirmation
+	initiallyCreatePullRequest:(BOOL)initiallyCreatePullRequest;
+- (void)presentNewPullRequest;
+- (BOOL)openForgeRevision:(NSString *)revision;
+- (BOOL)openForgeComparisonFrom:(NSString *)base
+							 to:(NSString *)head NS_SWIFT_NAME(openForgeComparison(base:head:));
 
 - (BOOL)confirmDialog:(NSAlert *)alert
 	suppressionIdentifier:(nullable NSString *)identifier
+				 forAction:(void (^)(void))actionBlock;
+- (BOOL)confirmDialog:(NSAlert *)alert
+	suppressionIdentifier:(nullable NSString *)identifier
+				  onCancel:(void (^)(void))cancelBlock
 				 forAction:(void (^)(void))actionBlock;
 
 @end
@@ -104,6 +118,18 @@ NS_ASSUME_NONNULL_BEGIN
 /// Objective-C layout barrier for Swift test doubles that subclass this
 /// compatibility mirror of the production Swift window controller.
 @interface PBHistoryWindowControllerTestBase : PBGitWindowController
+@end
+
+/// DEBUG app-target proof bridge. These selectors execute the shipped GitX
+/// module rather than the Swift source copies linked into the test bundle.
+@interface PBMilestone2ProductCoverageHarness : NSObject
++ (uint64_t)synchronousProof;
++ (void)asyncProofWithCompletion:(void (^)(uint64_t proof))completion;
+@end
+
+@interface PBMilestone2CompositionCoverageHarness : NSObject
++ (uint64_t)synchronousProof;
++ (void)asyncProofWithCompletion:(void (^)(uint64_t proof))completion;
 @end
 
 NS_ASSUME_NONNULL_END

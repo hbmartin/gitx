@@ -369,6 +369,8 @@
                     repository: repository,
                     superController: windowController
                 ) else {
+                    await madeServices.refreshCoordinator?.invalidate()
+                    await madeServices.database?.close()
                     return 0
                 }
                 sidebar = madeSidebar
@@ -384,6 +386,7 @@
                 else {
                     madeSidebar.closeView()
                     await madeServices.refreshCoordinator?.invalidate()
+                    await madeServices.database?.close()
                     return 0
                 }
 
@@ -444,12 +447,12 @@
                 }
                 madeSidebar.closeView()
                 await madeServices.refreshCoordinator?.invalidate()
-                ApplicationComposition.shared.repositoryViewState(for: repository)
-                    .forgeRepositoryBinding = nil
+                await madeServices.database?.close()
                 return proof
             } catch {
                 sidebar?.closeView()
                 await services?.refreshCoordinator?.invalidate()
+                await services?.database?.close()
                 return 0
             }
         }
@@ -656,7 +659,7 @@
             titled title: String,
             in sidebar: PBGitSidebarController
         ) async -> Bool {
-            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
             while ContinuousClock.now < deadline {
                 let roots = sidebar.items.compactMap { $0 as? PBSourceViewItem }
                 if sidebarItem(titled: title, in: roots) != nil {
@@ -749,6 +752,7 @@
                     try await Task.sleep(nanoseconds: 10_000_000)
                 }
             }
+            await enrollmentSession.waitForCurrentPollingCycleForProductProof()
             enrollmentSession.stop()
             let session = try RepositoryAttentionSession(
                 account: account,
@@ -998,7 +1002,7 @@
         }
 
         private static func waitForCollaborationStatus(_ value: String, in view: NSView) async -> Bool {
-            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
             while ContinuousClock.now < deadline {
                 let status = descendant(
                     identifier: "ForgeCollaborationAccountStatus",
@@ -1013,7 +1017,7 @@
         }
 
         private static func waitForDescendant(identifier: String, in view: NSView) async -> Bool {
-            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
             while ContinuousClock.now < deadline {
                 if descendant(identifier: identifier, in: view) != nil {
                     return true

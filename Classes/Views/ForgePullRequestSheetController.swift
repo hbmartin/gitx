@@ -3,7 +3,7 @@ import ForgeKit
 import OSLog // swiftlint:disable:this unused_import
 
 @MainActor
-final class ForgePullRequestSheetController: NSWindowController, NSTextViewDelegate, NSTextFieldDelegate {
+final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegate, NSTextViewDelegate, NSTextFieldDelegate {
     enum Mode {
         case create(
             preparation: RepositoryPullRequestCreationPreparation,
@@ -23,6 +23,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSTextViewDeleg
 
     var onSubmit: ((Submission) -> Void)?
     var onCancel: ((ForgeDraftContent) -> Void)?
+    var onDiscard: (() -> Void)?
     var onDraftChanged: ((ForgeDraftContent) -> Void)?
 
     private let mode: Mode
@@ -34,9 +35,11 @@ final class ForgePullRequestSheetController: NSWindowController, NSTextViewDeleg
     private let templatePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let submitButton = NSButton(title: "Create Pull Request", target: nil, action: nil)
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+    private let discardButton = NSButton(title: "Discard Draft", target: nil, action: nil)
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestSheet")
     private var selectedForm: ForgePullRequestCreationForm?
     private var previewView: ForgeMarkdownNativeView?
+    private var hasFinished = false
 
     init(mode: Mode, restoredContent: ForgeDraftContent? = nil) {
         self.mode = mode
@@ -51,6 +54,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSTextViewDeleg
         case .edit: "Edit Pull Request"
         }
         super.init(window: panel)
+        panel.delegate = self
         configure(restoredContent: restoredContent)
     }
 
@@ -121,6 +125,11 @@ final class ForgePullRequestSheetController: NSWindowController, NSTextViewDeleg
         cancelButton.action = #selector(cancel(_:))
         cancelButton.setAccessibilityIdentifier("GitX.PullRequest.Cancel")
 
+        discardButton.target = self
+        discardButton.action = #selector(discard(_:))
+        discardButton.setAccessibilityIdentifier("GitX.PullRequest.DiscardDraft")
+        discardButton.setAccessibilityLabel("Discard Pull Request draft")
+
         submitButton.keyEquivalent = "\r"
         submitButton.target = self
         submitButton.action = #selector(submit(_:))
@@ -131,7 +140,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSTextViewDeleg
         topControls.orientation = .horizontal
         topControls.alignment = .centerY
         topControls.spacing = 8
-        let buttons = NSStackView(views: [NSView(), cancelButton, submitButton])
+        let buttons = NSStackView(views: [discardButton, NSView(), cancelButton, submitButton])
         buttons.orientation = .horizontal
         buttons.alignment = .centerY
         buttons.spacing = 8
@@ -286,6 +295,12 @@ final class ForgePullRequestSheetController: NSWindowController, NSTextViewDeleg
         fieldChanged(nil)
     }
 
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === window else { return true }
+        finishCancellation()
+        return false
+    }
+
     @objc private func submit(_: Any?) {
         do {
             let submission: Submission = switch mode {
@@ -302,6 +317,8 @@ final class ForgePullRequestSheetController: NSWindowController, NSTextViewDeleg
                     destination: destination
                 )
             }
+            guard !hasFinished else { return }
+            hasFinished = true
             closeSheet()
             onSubmit?(submission)
         } catch {
@@ -311,6 +328,20 @@ final class ForgePullRequestSheetController: NSWindowController, NSTextViewDeleg
     }
 
     @objc private func cancel(_: Any?) {
+        finishCancellation()
+    }
+
+    @objc private func discard(_: Any?) {
+        guard !hasFinished else { return }
+        hasFinished = true
+        closeSheet()
+        onDiscard?()
+        logger.info("Discarded Pull Request editor draft")
+    }
+
+    private func finishCancellation() {
+        guard !hasFinished else { return }
+        hasFinished = true
         let content = currentDraftContent()
         closeSheet()
         onCancel?(content)

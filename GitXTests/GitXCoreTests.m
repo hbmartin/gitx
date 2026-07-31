@@ -1271,7 +1271,11 @@
 													  generation:unwiredGeneration
 														   error:nil];
 	XCTAssertNil(unwiredOutput);
-	XCTAssertEqual([unwiredController sections:@[] applyingDiffLayout:0].count, (NSUInteger)0);
+	NSDictionary *unwiredSection = @{PBNativeSectionTextKey : @"diff"};
+	NSArray<NSDictionary *> *unwiredSections = [unwiredController sections:@[ unwiredSection ] applyingDiffLayout:0];
+	XCTAssertEqual(unwiredSections.count, (NSUInteger)1);
+	XCTAssertEqualObjects(unwiredSections.firstObject[PBNativeSectionDiffLayoutKey], @0);
+	XCTAssertEqualObjects(unwiredSections.firstObject[PBNativeSectionSuppressionPatternsKey], @[]);
 	PBWebHistoryContentViewSpy *unwiredView = [[PBWebHistoryContentViewSpy alloc] initWithFrame:NSZeroRect];
 	[unwiredController setValue:unwiredView forKey:@"nativeView"];
 	[unwiredController didLoad];

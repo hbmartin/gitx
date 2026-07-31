@@ -228,6 +228,8 @@
 		C0DAA3000000000000000001 /* ForgeMarkdownAvatarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA3000000000000000011 /* ForgeMarkdownAvatarTests.swift */; };
 		C0DAA4000000000000000001 /* ForgeMarkdownAvatarTestShims.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA4000000000000000011 /* ForgeMarkdownAvatarTestShims.swift */; };
 		C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */; };
+		F0F400000000000000000001 /* Milestone2ProductCoverageHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */; };
+		F0F400000000000000000002 /* Milestone2CompositionCoverageHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */; };
 		C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE45200000000000000011 /* NativeContentTypography.swift */; };
 		C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000011 /* CommitControllerPolicies.swift */; };
 		C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */; };
@@ -318,12 +320,22 @@
 		F0F200000000000000000005 /* ForgePullRequestSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000105 /* ForgePullRequestSheetController.swift */; };
 		F0F200000000000000000006 /* ForgeRepositoryCloneSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */; };
 		F0F200000000000000000007 /* GitHubPullRequestComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000107 /* GitHubPullRequestComposition.swift */; };
+		F0F200000000000000000008 /* Milestone2UITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000108 /* Milestone2UITestHarness.swift */; };
+		F0F200000000000000000009 /* Milestone2DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */; };
 		F0F200000000000000000011 /* RepositoryPullRequestWorkflow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */; };
 		F0F200000000000000000012 /* RepositoryPullRequestGitOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000102 /* RepositoryPullRequestGitOperations.swift */; };
 		F0F200000000000000000015 /* ForgePullRequestSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000105 /* ForgePullRequestSheetController.swift */; };
 		F0F200000000000000000016 /* ForgeRepositoryCloneSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */; };
 		F0F200000000000000000017 /* RepositoryPullRequestWorkflowAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000201 /* RepositoryPullRequestWorkflowAppTests.swift */; };
 		F0F200000000000000000018 /* GitHubPullRequestComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000107 /* GitHubPullRequestComposition.swift */; };
+		F0F200000000000000000019 /* Milestone2WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */; };
+		F0F200000000000000000020 /* Milestone2DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */; };
+		F0F200000000000000000021 /* RepositoryPullRequestUIController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000103 /* RepositoryPullRequestUIController.swift */; };
+		F0F300000000000000000001 /* ForgeMutationQuitCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */; };
+		F0F300000000000000000002 /* ForgeUnknownMutationOutcomeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */; };
+		F0F300000000000000000003 /* ForgeMutationQuitCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */; };
+		F0F300000000000000000004 /* ForgeUnknownMutationOutcomeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */; };
+		F0F300000000000000000005 /* ForgeMutationQuitCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */; };
 		F0B200000000000000000001 /* GitHubForgeAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = F0B200000000000000000018 /* GitHubForgeAdapter */; };
 		F0B200000000000000000003 /* GitHubReadComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000011 /* GitHubReadComposition.swift */; };
 		F0B200000000000000000004 /* GitHubReadComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000011 /* GitHubReadComposition.swift */; };
@@ -968,7 +980,15 @@
 		F0F200000000000000000105 /* ForgePullRequestSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgePullRequestSheetController.swift; sourceTree = "<group>"; };
 		F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRepositoryCloneSheetController.swift; sourceTree = "<group>"; };
 		F0F200000000000000000107 /* GitHubPullRequestComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubPullRequestComposition.swift; sourceTree = "<group>"; };
+		F0F200000000000000000108 /* Milestone2UITestHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2UITestHarness.swift; sourceTree = "<group>"; };
+		F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2DiagnosticPresenters.swift; sourceTree = "<group>"; };
 		F0F200000000000000000201 /* RepositoryPullRequestWorkflowAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestWorkflowAppTests.swift; sourceTree = "<group>"; };
+		F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2WorkflowUITests.swift; sourceTree = "<group>"; };
+		F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMutationQuitCoordinator.swift; sourceTree = "<group>"; };
+		F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeUnknownMutationOutcomeStore.swift; sourceTree = "<group>"; };
+		F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMutationQuitCoordinatorTests.swift; sourceTree = "<group>"; };
+		F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2ProductCoverageHarness.swift; sourceTree = "<group>"; };
+		F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2CompositionCoverageHarness.swift; sourceTree = "<group>"; };
 		F0B200000000000000000011 /* GitHubReadComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadComposition.swift; sourceTree = "<group>"; };
 		F0B200000000000000000012 /* GitHubReadCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadCompositionTests.swift; sourceTree = "<group>"; };
 		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
@@ -1324,6 +1344,9 @@
 				C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.swift */,
 				F0F200000000000000000104 /* ForgeDeepLinkApplicationRouter.swift */,
 				F0F200000000000000000107 /* GitHubPullRequestComposition.swift */,
+				F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */,
+				F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */,
+				F0F200000000000000000108 /* Milestone2UITestHarness.swift */,
 				F0F200000000000000000102 /* RepositoryPullRequestGitOperations.swift */,
 				F0F200000000000000000103 /* RepositoryPullRequestUIController.swift */,
 				F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */,
@@ -1493,6 +1516,7 @@
 				F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */,
 				F0F200000000000000000105 /* ForgePullRequestSheetController.swift */,
 				F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */,
+				F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */,
 				C01400000000000000000013 /* CommitProgressSheetController.swift */,
 				BF42F1431E025411004769FF /* GitXTextView.h */,
 				BF42F1321E025403004769FF /* GitXTextView.m */,
@@ -1610,6 +1634,8 @@
 				C0DAA3000000000000000011 /* ForgeMarkdownAvatarTests.swift */,
 				C0DAA4000000000000000011 /* ForgeMarkdownAvatarTestShims.swift */,
 				C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */,
+				F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */,
+				F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */,
 				C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */,
 				C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
@@ -1630,6 +1656,7 @@
 				F0B200000000000000000012 /* GitHubReadCompositionTests.swift */,
 				F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */,
 				F0F200000000000000000201 /* RepositoryPullRequestWorkflowAppTests.swift */,
+				F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */,
 				C0D5B0000000000000000013 /* RepositoryStatusBarTests.swift */,
 				C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */,
 				C0D5C0000000000000000012 /* RepositoryForgeOverlaySessionTests.swift */,
@@ -1641,6 +1668,7 @@
 			isa = PBXGroup;
 			children = (
 				CC0000020000002 /* GitXScreenshotTests.m */,
+				F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */,
 			);
 			path = GitXUITests;
 			sourceTree = "<group>";
@@ -2087,6 +2115,8 @@
 				F0C100000000000000000001 /* ForgeReadSurfaceModels.swift in Sources */,
 				F0C100000000000000000002 /* ForgeReadSurfaceViewController.swift in Sources */,
 				C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */,
+				F0F400000000000000000001 /* Milestone2ProductCoverageHarness.swift in Sources */,
+				F0F400000000000000000002 /* Milestone2CompositionCoverageHarness.swift in Sources */,
 				C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */,
 				C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */,
 				C0DECE000000000000000001 /* CommitMenuPresenter.swift in Sources */,
@@ -2138,6 +2168,10 @@
 				F0F200000000000000000005 /* ForgePullRequestSheetController.swift in Sources */,
 				F0F200000000000000000006 /* ForgeRepositoryCloneSheetController.swift in Sources */,
 				F0F200000000000000000007 /* GitHubPullRequestComposition.swift in Sources */,
+				F0F300000000000000000001 /* ForgeMutationQuitCoordinator.swift in Sources */,
+				F0F300000000000000000002 /* ForgeUnknownMutationOutcomeStore.swift in Sources */,
+				F0F200000000000000000008 /* Milestone2UITestHarness.swift in Sources */,
+				F0F200000000000000000009 /* Milestone2DiagnosticPresenters.swift in Sources */,
 				C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */,
 				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
@@ -2308,6 +2342,11 @@
 				F0F200000000000000000016 /* ForgeRepositoryCloneSheetController.swift in Sources */,
 				F0F200000000000000000017 /* RepositoryPullRequestWorkflowAppTests.swift in Sources */,
 				F0F200000000000000000018 /* GitHubPullRequestComposition.swift in Sources */,
+				F0F200000000000000000020 /* Milestone2DiagnosticPresenters.swift in Sources */,
+				F0F200000000000000000021 /* RepositoryPullRequestUIController.swift in Sources */,
+				F0F300000000000000000003 /* ForgeMutationQuitCoordinator.swift in Sources */,
+				F0F300000000000000000004 /* ForgeUnknownMutationOutcomeStore.swift in Sources */,
+				F0F300000000000000000005 /* ForgeMutationQuitCoordinatorTests.swift in Sources */,
 				C0D5B0000000000000000003 /* RepositoryStatusBarTests.swift in Sources */,
 				C0D5D0000000000000000003 /* HistoryForgeOverlayPresentationTests.swift in Sources */,
 				C0D5C0000000000000000003 /* RepositoryForgeOverlaySessionTests.swift in Sources */,
@@ -2325,6 +2364,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				CC0000010000001 /* GitXScreenshotTests.m in Sources */,
+				F0F200000000000000000019 /* Milestone2WorkflowUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2766,6 +2806,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXUITests;
 				PRODUCT_NAME = GitXUITests;
 				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = GitX;
 			};
 			name = Debug;
@@ -2779,6 +2823,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXUITests;
 				PRODUCT_NAME = GitXUITests;
 				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = GitX;
 			};
 			name = Release;

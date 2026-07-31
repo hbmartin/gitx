@@ -155,7 +155,8 @@ final nonisolated class ApplicationComposition: NSObject {
                     service: RepositoryPullRequestProductionService(
                         binding: binding,
                         dependencies: pullRequestDependencies,
-                        localPreparation: RepositoryPullRequestLocalPreparationSource(repository: repository)
+                        localPreparation: RepositoryPullRequestLocalPreparationSource(repository: repository),
+                        mutationLifecycle: ForgeMutationQuitCoordinator.shared
                     ),
                     drafts: ForgeLazySQLitePullRequestDraftStore(loader: forgeServices)
                 )

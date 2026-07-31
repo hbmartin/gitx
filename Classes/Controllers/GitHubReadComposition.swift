@@ -96,7 +96,7 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
             origin.user == nil &&
             origin.password == nil &&
             origin.port == nil &&
-            (origin.path.isEmpty || origin.path == "/") &&
+            origin.path.isEmpty &&
             origin.query == nil &&
             origin.fragment == nil
     }
@@ -370,6 +370,12 @@ final class ForgeGitHubReadSurfaceService: ForgeReadSurfaceServing {
         self.adapter = adapter
         self.now = now
     }
+
+    #if DEBUG
+        func productProofNow() -> Date {
+            now()
+        }
+    #endif
 
     func loadItems(
         kind: ForgeReadSurfaceKind,

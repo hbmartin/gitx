@@ -31,6 +31,8 @@ protocol ForgeReadDestinationRouting: AnyObject {
 protocol RepositoryPullRequestReviewOverlayHosting: AnyObject {
     /// Reports the exact selected local anchor plus the displayed context and
     /// truncation state needed for fail-closed head-change re-anchoring.
+    // Milestone 3 supplies the overlay host; keep this M2 checkpoint handoff seam explicit.
+    // swiftlint:disable:next unused_declaration
     var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)? { get set }
 
     func install(
@@ -67,6 +69,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         destinationRouter: any ForgeReadDestinationRouting,
         pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)? = nil,
         reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil,
+        editPullRequestControl: ForgeMutationControlPresentation? = nil,
         onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)? = nil,
         onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)? = nil
     ) {
@@ -105,6 +108,7 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         inspectorController.onLoadMoreChecks = { [weak self] in
             self?.loadMoreDetails(.checks)
         }
+        inspectorController.editPullRequestControl = editPullRequestControl ?? .hidden
         inspectorController.onEditPullRequest = onEditPullRequest
         inspectorController.onCheckoutPullRequest = onCheckoutPullRequest
 
@@ -158,6 +162,31 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     func setVisibleColumns(_ columns: Set<ForgeReadSurfaceColumn>) {
         listController.setVisibleColumns(columns)
     }
+
+    func updateEditPullRequestControl(
+        _ presentation: ForgeMutationControlPresentation,
+        handler: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?
+    ) {
+        inspectorController.editPullRequestControl = presentation
+        inspectorController.onEditPullRequest = handler
+        if let currentDetailsSnapshot {
+            inspectorController.apply(ForgeReadInspectorPresenter.present(
+                currentDetailsSnapshot,
+                formatDate: Self.dateDescription
+            ))
+        }
+    }
+
+    #if DEBUG
+        func runProductProofDiagnostics(_ presentation: ForgeReadInspectorPresentation) async -> Bool {
+            listController.runProductProofEndEditing()
+            let localChangesError = await inspectorController.runProductProofLocalChanges(presentation)
+            selectRow(-1)
+            openRow(-1)
+            return localChangesError
+                && !Self.dateDescription(Date(timeIntervalSince1970: 1_700_200_200)).isEmpty
+        }
+    #endif
 
     @discardableResult
     func open(destination: ForgeDestination) -> Bool {
@@ -508,10 +537,20 @@ private final class ForgeReadListViewController: NSViewController, NSTableViewDa
         return cell
     }
 
+    @inline(never)
     func controlTextDidEndEditing(_ notification: Notification) {
         guard notification.object as? NSSearchField === searchField else { return }
         onReload?(query)
     }
+
+    #if DEBUG
+        func runProductProofEndEditing() {
+            controlTextDidEndEditing(Notification(
+                name: NSControl.textDidEndEditingNotification,
+                object: searchField
+            ))
+        }
+    #endif
 
     private func configureView() {
         let root = NSView()
@@ -683,12 +722,13 @@ final class ForgeReadInspectorViewController: NSViewController {
     var onLoadMoreChecks: (() -> Void)?
     var onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?
     var onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)?
+    var editPullRequestControl = ForgeMutationControlPresentation.hidden
 
     private let markdownRenderer: any ForgeReadMarkdownRendering
     private let avatarRenderer: any ForgeReadAvatarRendering
     private let destinationRouter: any ForgeReadDestinationRouting
     private let defaultRevision: ForgeRevision
-    private let pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)?
+    private var pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)?
     private let reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)?
     private let contentStack = NSStackView()
     private var routedDestination: ForgeDestination?
@@ -833,7 +873,8 @@ final class ForgeReadInspectorViewController: NSViewController {
             checkoutButton.setAccessibilityLabel("Check out Pull Request")
             headingViews.append(checkoutButton)
         }
-        if case let .pullRequest(summary) = presentation.item,
+        if editPullRequestControl.isVisible,
+           case let .pullRequest(summary) = presentation.item,
            let body = presentation.bodyMarkdown,
            let snapshot = try? ForgePullRequestEditableSnapshot(
                repository: summary.repository,
@@ -841,13 +882,18 @@ final class ForgeReadInspectorViewController: NSViewController {
                title: summary.title,
                bodyMarkdown: body,
                updatedAt: summary.updatedAt
-           ), onEditPullRequest != nil
+           )
         {
             editablePullRequestSnapshot = snapshot
             let editButton = NSButton(title: "Edit…", target: self, action: #selector(editPullRequest(_:)))
             editButton.bezelStyle = .rounded
             editButton.setAccessibilityIdentifier("GitX.PullRequest.Edit")
             editButton.setAccessibilityLabel("Edit Pull Request title and body")
+            editButton.isEnabled = editPullRequestControl.isEnabled && presentation.isMutationStateFresh
+            editButton.toolTip = presentation.isMutationStateFresh
+                ? editPullRequestControl.helpText
+                : "Refresh this Pull Request before editing; stale data cannot authorize a mutation."
+            editButton.setAccessibilityHelp(editButton.toolTip)
             headingViews.append(editButton)
         }
         headingViews.append(browserButton)
@@ -1054,6 +1100,7 @@ final class ForgeReadInspectorViewController: NSViewController {
         ])
     }
 
+    @inline(never)
     private func renderLocalChangesError(_ message: String) {
         resetContent()
         let control = makePullRequestModeControl()
@@ -1063,6 +1110,32 @@ final class ForgeReadInspectorViewController: NSViewController {
         error.setAccessibilityIdentifier("GitX.PullRequest.ChangesError")
         contentStack.addArrangedSubview(error)
     }
+
+    #if DEBUG
+        func runProductProofLocalChanges(_ presentation: ForgeReadInspectorPresentation) async -> Bool {
+            let provider = pullRequestChangesProvider
+            pullRequestChangesProvider = nil
+            apply(presentation)
+            pullRequestMode = 1
+            showLocalChanges(for: presentation)
+            let unavailable = contentStack.arrangedSubviews.contains(where: {
+                $0.accessibilityIdentifier() == "GitX.PullRequest.ChangesUnavailable"
+            })
+            pullRequestChangesProvider = provider
+            apply(presentation)
+            pullRequestMode = 1
+            showLocalChanges(for: presentation)
+            for _ in 0 ..< 500 {
+                if contentStack.arrangedSubviews.contains(where: {
+                    $0.accessibilityIdentifier() == "GitX.PullRequest.ChangesError"
+                }) {
+                    return unavailable
+                }
+                await Task.yield()
+            }
+            return false
+        }
+    #endif
 
     private func configureView() {
         let scrollView = NSScrollView()
@@ -1745,6 +1818,12 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
         didStart = false
         Self.unregister(self)
     }
+
+    #if DEBUG
+        func waitForCurrentPollingCycleForProductProof() async {
+            await pollingTask?.value
+        }
+    #endif
 
     func entries(state: ForgeAttentionViewState) async throws -> [ForgeAttentionInboxEntry] {
         try await persistence.cachedEntries(
@@ -2589,6 +2668,11 @@ private final class RepositoryForgeNativeDestinationOpener: ForgeNativeDestinati
 @objc(PBRepositoryForgeCollaborationController)
 final class RepositoryForgeCollaborationController: PBViewController {
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeCollaboration")
+    static let mutationCapabilityOperations: Set<ForgeOperation> = [
+        .createPullRequest,
+        .editPullRequest,
+        .syncFork,
+    ]
 
     private var forgeCoordinator: RepositoryForgeCoordinator!
     private var settings: RepositoryUISettings!
@@ -2604,7 +2688,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private let statusLabel = NSTextField(labelWithString: "Resolving GitHub repository…")
     private let contentContainer = NSView()
     private var preparationTask: Task<Void, Never>?
+    private var repositoryFactsTask: Task<Void, Never>?
     private var services: ForgeApplicationServices?
+    private var pullRequestMutationService: (any RepositoryPullRequestMutationServing)?
     private var accounts: [ForgeAccount] = []
     private var binding: ForgeRepositoryBinding?
     private var explicitAccountID: ForgeAccountID?
@@ -2617,6 +2703,14 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private var nativeOpener: RepositoryForgeNativeDestinationOpener?
     private var destinationRouter: ForgeCentralDestinationRouter?
     private var repositoryFacts: ForgeRepositoryFacts?
+    private var createPullRequestControl = ForgeMutationControlPresentation.hidden {
+        didSet {
+            windowController?.updateCreatePullRequestControl(createPullRequestControl)
+        }
+    }
+
+    private var editPullRequestControl = ForgeMutationControlPresentation.hidden
+    private var syncForkControl = ForgeMutationControlPresentation.hidden
     private weak var mountedController: NSViewController?
     private var isPrepared = false
 
@@ -2644,6 +2738,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
 
     isolated deinit {
         preparationTask?.cancel()
+        repositoryFactsTask?.cancel()
         attentionSession?.stop()
         NotificationCenter.default.removeObserver(self)
     }
@@ -2745,6 +2840,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
 
     override func closeView() {
         preparationTask?.cancel()
+        repositoryFactsTask?.cancel()
         attentionSession?.stop()
         super.closeView()
     }
@@ -2829,6 +2925,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
 
     private func reloadAccess(resetPublicChoice: Bool) {
         preparationTask?.cancel()
+        repositoryFactsTask?.cancel()
         attentionSession?.stop()
         attentionSession = nil
         attentionController = nil
@@ -2836,6 +2933,10 @@ final class RepositoryForgeCollaborationController: PBViewController {
         destinationRouter = nil
         nativeOpener = nil
         repositoryFacts = nil
+        pullRequestMutationService = nil
+        createPullRequestControl = .hidden
+        editPullRequestControl = .hidden
+        syncForkControl = .hidden
         if resetPublicChoice {
             explicitlyContinuesPublicly = false
         }
@@ -2909,6 +3010,10 @@ final class RepositoryForgeCollaborationController: PBViewController {
             }
         } catch {
             Self.logger.error("Could not install GitHub collaboration session")
+            createPullRequestControl = .unavailable(
+                error: error,
+                action: "create a Pull Request"
+            )
             accessResolution = .requiresExplicitChoice(
                 accounts: accounts.filter { $0.id.forge == binding.primaryRepository.forge },
                 preferredAccountUnavailable: binding.preferredAccount != nil
@@ -2926,6 +3031,10 @@ final class RepositoryForgeCollaborationController: PBViewController {
 
     private func installAuthenticated(account: ForgeAccount, binding: ForgeRepositoryBinding) throws {
         guard let services, let repository else { return }
+        pullRequestMutationService = composition.forgePullRequestServices.session(for: repository).service
+        createPullRequestControl = .checking(action: "create a Pull Request")
+        editPullRequestControl = .checking(action: "edit this Pull Request")
+        syncForkControl = .checking(action: "synchronize this fork")
         let adapter = try services.githubReadAdapterFactory.makeAdapter(
             for: account.currentCredential.reference
         )
@@ -2935,7 +3044,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 repository: binding.primaryRepository,
                 adapter: adapter
             ),
-            avatarOwner: .account(account.id)
+            avatarOwner: .account(account.id),
+            editPullRequestControl: editPullRequestControl,
+            onEditPullRequest: editPullRequestHandler(account: account)
         )
         let session = try RepositoryAttentionSession(
             account: account,
@@ -2960,10 +3071,16 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     private func installPublic(binding: ForgeRepositoryBinding) {
+        pullRequestMutationService = nil
+        createPullRequestControl = .publicReadOnly(action: "create a Pull Request")
+        editPullRequestControl = .publicReadOnly(action: "edit this Pull Request")
+        syncForkControl = .publicReadOnly(action: "synchronize this fork")
         installReadSurface(
             binding: binding,
             service: ForgeGitHubAnonymousReadSurfaceService(repository: binding.primaryRepository),
-            avatarOwner: .anonymous
+            avatarOwner: .anonymous,
+            editPullRequestControl: editPullRequestControl,
+            onEditPullRequest: nil
         )
         attentionSession = nil
         attentionController = nil
@@ -2980,8 +3097,14 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private func installReadSurface(
         binding: ForgeRepositoryBinding,
         service: any ForgeReadSurfaceServing,
-        avatarOwner: ForgeAvatarCacheOwner
+        avatarOwner: ForgeAvatarCacheOwner,
+        editPullRequestControl: ForgeMutationControlPresentation,
+        onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)?
     ) {
+        guard let repository else {
+            Self.logger.error("Could not install Forge read surface without its local repository")
+            return
+        }
         let opener = RepositoryForgeNativeDestinationOpener()
         let router = ForgeCentralDestinationRouter(
             repository: binding.primaryRepository,
@@ -3004,16 +3127,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
             avatarRenderer: ForgeReadNativeAvatarRenderer(owner: avatarOwner),
             destinationRouter: router,
             pullRequestChangesProvider: RepositoryLocalPullRequestChangesProvider(repository: repository),
-            onEditPullRequest: { [weak self] snapshot, destination in
-                guard let self,
-                      case let .authenticated(account) = self.accessResolution
-                else { return }
-                self.windowController?.editPullRequest(
-                    accountID: account.id,
-                    snapshot: snapshot,
-                    destination: destination
-                )
-            },
+            editPullRequestControl: editPullRequestControl,
+            onEditPullRequest: onEditPullRequest,
             onCheckoutPullRequest: { [weak self] pullRequest in
                 self?.windowController?.checkoutPullRequest(pullRequest)
             }
@@ -3024,9 +3139,12 @@ final class RepositoryForgeCollaborationController: PBViewController {
         binding: ForgeRepositoryBinding,
         resolution: ForgeCollaborationAccessResolution
     ) {
-        Task { [weak self, services] in
+        repositoryFactsTask?.cancel()
+        repositoryFactsTask = Task { [weak self, services, pullRequestMutationService] in
             do {
                 let facts: ForgeRepositoryFacts
+                var mutationCapabilities: [ForgeOperation: ForgeOperationCapability] = [:]
+                var mutationCapabilityError: Error?
                 switch resolution {
                 case let .authenticated(account):
                     guard let services else { return }
@@ -3034,6 +3152,18 @@ final class RepositoryForgeCollaborationController: PBViewController {
                         for: account.currentCredential.reference
                     )
                     facts = try await adapter.repositoryFacts(repository: binding.primaryRepository).value
+                    guard !Task.isCancelled else { return }
+                    if let pullRequestMutationService {
+                        do {
+                            mutationCapabilities = try await pullRequestMutationService.capabilities(
+                                accountID: account.id,
+                                repository: binding.primaryRepository,
+                                operations: Self.mutationCapabilityOperations
+                            )
+                        } catch {
+                            mutationCapabilityError = error
+                        }
+                    }
                 case .publicAccess:
                     facts = try await ForgeAnonymousReadAdapterPool.shared.repositoryFacts(
                         repository: binding.primaryRepository,
@@ -3042,15 +3172,170 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 case .requiresExplicitChoice, .browserOnly:
                     return
                 }
-                guard let self, self.binding == binding else { return }
+                guard let self,
+                      self.binding == binding,
+                      self.accessResolution == resolution,
+                      !Task.isCancelled
+                else { return }
                 self.repositoryFacts = facts
+                if let mutationCapabilityError {
+                    self.applyMutationCapabilityError(
+                        mutationCapabilityError,
+                        resolution: resolution
+                    )
+                } else {
+                    self.applyMutationCapabilities(mutationCapabilities, resolution: resolution)
+                }
                 self.updateSyncForkButton()
                 self.publishAccessChange()
+            } catch is CancellationError {
+                return
             } catch {
+                guard let self,
+                      self.binding == binding,
+                      self.accessResolution == resolution
+                else { return }
+                if case .authenticated = resolution {
+                    self.applyMutationCapabilityError(error, resolution: resolution)
+                    self.updateSyncForkButton()
+                }
                 Self.logger.info("Repository relationship metadata remains unavailable")
             }
         }
     }
+
+    private func applyMutationCapabilities(
+        _ capabilities: [ForgeOperation: ForgeOperationCapability],
+        resolution: ForgeCollaborationAccessResolution
+    ) {
+        guard case let .authenticated(account) = resolution else { return }
+        createPullRequestControl = capabilities[.createPullRequest].map {
+            .capability($0, action: "create a Pull Request")
+        } ?? .unavailable(
+            error: RepositoryPullRequestServiceError.nativeCreationUnavailable,
+            action: "create a Pull Request"
+        )
+        editPullRequestControl = capabilities[.editPullRequest].map {
+            .capability($0, action: "edit this Pull Request")
+        } ?? .unavailable(
+            error: RepositoryPullRequestServiceError.nativeCreationUnavailable,
+            action: "edit this Pull Request"
+        )
+        syncForkControl = capabilities[.syncFork].map {
+            .capability($0, action: "synchronize this fork")
+        } ?? .unavailable(
+            error: RepositoryPullRequestServiceError.nativeCreationUnavailable,
+            action: "synchronize this fork"
+        )
+        readController?.updateEditPullRequestControl(
+            editPullRequestControl,
+            handler: editPullRequestControl.isEnabled ? editPullRequestHandler(account: account) : nil
+        )
+    }
+
+    private func applyMutationCapabilityError(
+        _ error: Error,
+        resolution: ForgeCollaborationAccessResolution
+    ) {
+        guard case .authenticated = resolution else { return }
+        createPullRequestControl = .unavailable(
+            error: error,
+            action: "create a Pull Request"
+        )
+        editPullRequestControl = .unavailable(
+            error: error,
+            action: "edit this Pull Request"
+        )
+        syncForkControl = .unavailable(
+            error: error,
+            action: "synchronize this fork"
+        )
+        readController?.updateEditPullRequestControl(
+            editPullRequestControl,
+            handler: nil
+        )
+    }
+
+    private func editPullRequestHandler(
+        account: ForgeAccount
+    ) -> (ForgePullRequestEditableSnapshot, ForgeDestination) -> Void {
+        { [weak self] snapshot, destination in
+            guard let self,
+                  self.editPullRequestControl.isEnabled,
+                  self.accessResolution == .authenticated(account)
+            else { return }
+            self.windowController?.editPullRequest(
+                accountID: account.id,
+                snapshot: snapshot,
+                destination: destination
+            )
+        }
+    }
+
+    #if DEBUG
+        func runMutationCapabilityProductProof(
+            account: ForgeAccount,
+            binding: ForgeRepositoryBinding,
+            parent: ForgeRepositoryIdentity,
+            snapshot: ForgePullRequestEditableSnapshot,
+            destination: ForgeDestination
+        ) throws -> Bool {
+            self.binding = binding
+            accessResolution = .publicAccess
+            installPublic(binding: binding)
+            let publicReadOnly = !createPullRequestControl.isEnabled
+                && !editPullRequestControl.isEnabled
+                && !syncForkControl.isEnabled
+            let publishedPublicControl = windowController?.createPullRequestControl == createPullRequestControl
+
+            accessResolution = .authenticated(account)
+            applyMutationCapabilities([
+                .createPullRequest: .verified(.knownAuthority),
+                .editPullRequest: .verified(.knownAuthority),
+                .syncFork: .verified(.knownAuthority),
+            ], resolution: .authenticated(account))
+            let enabled = createPullRequestControl.isEnabled
+                && editPullRequestControl.isEnabled
+                && syncForkControl.isEnabled
+            let publishedEnabledControl = windowController?.createPullRequestControl == createPullRequestControl
+            editPullRequestHandler(account: account)(snapshot, destination)
+
+            repositoryFacts = try ForgeRepositoryFacts(
+                repository: binding.primaryRepository,
+                defaultBranch: .available(ForgeRefName("main")),
+                description: .available("Capability proof"),
+                topics: .available([]),
+                visibility: .available(.public),
+                isArchived: .available(false),
+                forkRelationship: .available(.fork(parent: parent))
+            )
+            updateSyncForkButton()
+            let enabledFork = !syncForkButton.isHidden && syncForkButton.isEnabled
+
+            applyMutationCapabilities([:], resolution: .authenticated(account))
+            updateSyncForkButton()
+            let missingFailsClosed = !createPullRequestControl.isEnabled
+                && !editPullRequestControl.isEnabled
+                && !syncForkButton.isEnabled
+
+            applyMutationCapabilityError(
+                RepositoryPullRequestServiceError.nativeCreationUnavailable,
+                resolution: .authenticated(account)
+            )
+            let errorFailsClosed = !createPullRequestControl.isEnabled
+                && !editPullRequestControl.isEnabled
+                && !syncForkControl.isEnabled
+            let publishedErrorControl = windowController?.createPullRequestControl == createPullRequestControl
+            applyMutationCapabilities([
+                .createPullRequest: .verified(.knownAuthority),
+                .editPullRequest: .verified(.knownAuthority),
+                .syncFork: .verified(.knownAuthority),
+            ], resolution: .publicAccess)
+            return publicReadOnly && publishedPublicControl
+                && enabled && publishedEnabledControl && enabledFork
+                && missingFailsClosed && errorFailsClosed && publishedErrorControl
+        }
+    #endif
 
     private func renderActiveSurface() {
         guard isViewLoaded else { return }
@@ -3213,7 +3498,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
             return
         }
         syncForkButton.isHidden = false
-        syncForkButton.isEnabled = true
+        syncForkButton.isEnabled = syncForkControl.isEnabled
+        syncForkButton.toolTip = syncForkControl.helpText
+        syncForkButton.setAccessibilityHelp(syncForkControl.helpText)
     }
 
     private static func providerName(_ kind: ForgeKind) -> String {
@@ -3268,7 +3555,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     @objc private func syncFork(_: Any?) {
-        guard let binding,
+        guard syncForkControl.isEnabled,
+              let binding,
               case let .authenticated(account) = accessResolution,
               case let .available(relationship) = repositoryFacts?.forkRelationship,
               case let .fork(parent) = relationship,

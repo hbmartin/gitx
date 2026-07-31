@@ -222,7 +222,22 @@ final class ForgeDeepLinkTests: XCTestCase {
         }
     }
 
-    func testRouterChoosesAmongMatchingCheckoutsInFrontmostStableOrder() throws {
+    func testRouterUsesUniquelyFrontmostMatchingCheckout() throws {
+        let fixture = try Fixture()
+        let destination = try ForgeDestination.pullRequest(fixture.repository, ForgeItemNumber(42))
+        let windows = try [
+            ForgeOpenCheckout(identifier: "back", repository: fixture.repository, frontmostRank: 2),
+            ForgeOpenCheckout(identifier: "front", repository: fixture.repository, frontmostRank: 0),
+            ForgeOpenCheckout(identifier: "middle", repository: fixture.repository, frontmostRank: 1),
+            ForgeOpenCheckout(identifier: "other", repository: fixture.otherRepository, frontmostRank: 0),
+        ]
+        XCTAssertEqual(
+            ForgeDeepLinkRouter.route(destination, openCheckouts: windows),
+            .open(checkoutIdentifier: "front", destination: destination)
+        )
+    }
+
+    func testRouterChoosesAmongTiedFrontmostCheckoutsInStableOrder() throws {
         let fixture = try Fixture()
         let destination = try ForgeDestination.pullRequest(fixture.repository, ForgeItemNumber(42))
         let windows = try [
@@ -236,6 +251,32 @@ final class ForgeDeepLinkTests: XCTestCase {
             .chooseCheckout(
                 checkoutIdentifiers: ["a-window", "b-window", "z-window"],
                 destination: destination
+            )
+        )
+    }
+
+    func testRouterChecksMissingObjectAgainstUniquelyFrontmostCheckout() throws {
+        let fixture = try Fixture()
+        let destination = ForgeDestination.commit(fixture.repository, fixture.commit)
+        let windows = try [
+            ForgeOpenCheckout(
+                identifier: "background-with-object",
+                repository: fixture.repository,
+                frontmostRank: 1,
+                availableCommits: [fixture.commit]
+            ),
+            ForgeOpenCheckout(
+                identifier: "front-without-object",
+                repository: fixture.repository,
+                frontmostRank: 0
+            ),
+        ]
+        XCTAssertEqual(
+            ForgeDeepLinkRouter.route(destination, openCheckouts: windows),
+            .missingLocalObject(
+                checkoutIdentifier: "front-without-object",
+                destination: destination,
+                actions: [.fetch, .openInBrowser]
             )
         )
     }

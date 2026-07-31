@@ -179,6 +179,38 @@ final class ForgeReadSurfaceModelsTests: XCTestCase {
             presentation.freshnessMessage,
             "Stale data from Jul 30 at 2:00 AM • Some sections are unavailable"
         )
+        XCTAssertFalse(presentation.isMutationStateFresh)
+    }
+
+    func testInspectorMutationFreshnessAllowsCurrentPartialDataButRejectsStaleData() throws {
+        let details = try Fixture.pullRequestDetails()
+        let current = ForgeReadInspectorPresenter.present(
+            ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(details),
+                fetchedAt: Fixture.date(41)
+            )
+        ) { _ in "date" }
+        let partial = ForgeReadInspectorPresenter.present(
+            ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(details),
+                fetchedAt: Fixture.date(42),
+                isPartial: true
+            )
+        ) { _ in "date" }
+        let stale = ForgeReadInspectorPresenter.present(
+            ForgeReadSurfaceDetailsSnapshot(
+                details: .pullRequest(details),
+                fetchedAt: Fixture.date(43),
+                isStale: true
+            )
+        ) { _ in "date" }
+
+        XCTAssertTrue(current.isMutationStateFresh)
+        XCTAssertNil(current.freshnessMessage)
+        XCTAssertTrue(partial.isMutationStateFresh)
+        XCTAssertEqual(partial.freshnessMessage, "Some sections are unavailable")
+        XCTAssertFalse(stale.isMutationStateFresh)
+        XCTAssertEqual(stale.freshnessMessage, "Stale data from date")
     }
 
     func testIssueInspectorKeepsPartialSectionsVisibleAndExplainsUnavailableBodyAndTimeline() throws {

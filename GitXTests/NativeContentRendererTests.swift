@@ -1227,7 +1227,7 @@ final class NativeContentRendererTests: XCTestCase {
     }
 
     @MainActor
-    func testBackgroundFontChangeRerendersOnMainThread() throws {
+    func testBackgroundFontChangeRerendersOnMainThread() async throws {
         let restoreName = preserveDefault("PBDiffFontName")
         let restoreSize = preserveDefault("PBDiffFontSize")
         defer {
@@ -1244,35 +1244,41 @@ final class NativeContentRendererTests: XCTestCase {
         let view = PBNativeContentView(
             frame: NSRect(x: 0, y: 0, width: 420, height: 120)
         )
+        let historyController = PBWebHistoryController()
+        let historyView = NSView(
+            frame: NSRect(x: 0, y: 0, width: 420, height: 120)
+        )
+        historyController.view = historyView
+        historyController.awakeFromNib()
+        defer { historyController.closeView() }
         view.showMessage("Loading")
         XCTAssertEqual(
             try font(in: view.textView.attributedString(), matching: "Loading")
                 .pointSize,
             13
         )
-        let rerendered = XCTNSPredicateExpectation(
-            predicate: NSPredicate { _, _ in
-                let attributedString = view.textView.attributedString()
-                guard attributedString.length > 0,
-                      let font = attributedString.attribute(
-                          .font,
-                          at: 0,
-                          effectiveRange: nil
-                      ) as? NSFont
-                else {
-                    return false
-                }
-                return font.pointSize == 19
-            },
-            object: view
-        )
+        let textStorage = try XCTUnwrap(view.textView.textStorage)
+        let rerendered = expectation(
+            forNotification: NSTextStorage.didProcessEditingNotification,
+            object: textStorage
+        ) { _ in
+            XCTAssertTrue(Thread.isMainThread)
+            return true
+        }
+        let posted = expectation(description: "font setting changed from background")
 
         DispatchQueue.global(qos: .userInitiated).async {
+            XCTAssertFalse(Thread.isMainThread)
             PBApplicationSettings.diffFontSize = 18
+            posted.fulfill()
         }
 
-        wait(for: [rerendered], timeout: 10)
-        XCTAssertTrue(Thread.isMainThread)
+        await fulfillment(of: [posted, rerendered], timeout: 10)
+        XCTAssertEqual(
+            try font(in: view.textView.attributedString(), matching: "Loading")
+                .pointSize,
+            19
+        )
         XCTAssertEqual(try role(in: view.textView.attributedString(), matching: "Loading"), "status")
     }
 

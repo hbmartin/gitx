@@ -571,7 +571,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         index.isAmend = !index.isAmend
     }
 
-    @objc private func createPullRequestAfterPushChanged(_: Any?) {
+    @objc func createPullRequestAfterPushChanged(_: Any?) {
         if createPullRequestAfterPushButton.state == .on {
             pushAfterCommitButton.state = .on
         }

@@ -24,6 +24,7 @@
 #import "RepositoryIgnoreTestSupport.h"
 #import "PBGitBinary.h"
 #import "PBGitWindowControllerCompatibility.h"
+#import "PBWebHistoryControllerCompatibility.h"
 
 NS_ASSUME_NONNULL_BEGIN
 

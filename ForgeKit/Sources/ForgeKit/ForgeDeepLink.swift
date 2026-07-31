@@ -290,7 +290,10 @@ public enum ForgeDeepLinkRouter {
         guard let frontmost = matches.first else {
             return .noMatchingCheckout(destination: destination)
         }
-        guard matches.count == 1 else {
+        let equallyFrontmost = matches.prefix {
+            $0.frontmostRank == frontmost.frontmostRank
+        }
+        guard equallyFrontmost.count == 1 else {
             return .chooseCheckout(
                 checkoutIdentifiers: matches.map(\.identifier),
                 destination: destination

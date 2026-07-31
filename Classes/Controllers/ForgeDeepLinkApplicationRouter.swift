@@ -9,6 +9,9 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
 
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeDeepLink")
     private var installed = false
+    #if DEBUG
+        private var productProofPresentationResponse: NSApplication.ModalResponse?
+    #endif
 
     func installIfNeeded() {
         guard !installed else { return }
@@ -89,6 +92,62 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
         }
     }
 
+    #if DEBUG
+        /// Deterministic app-target characterization seam for private AppKit
+        /// routing branches. Callers dismiss any resulting sheet before starting
+        /// the next scenario, so no browser or network side effect is selected.
+        func runProductProof(
+            scenario: Int,
+            destination: ForgeDestination,
+            controller: PBGitWindowController,
+            identity: ForgeRepositoryIdentity
+        ) -> Bool {
+            productProofPresentationResponse = NSApplication.ModalResponse(rawValue: -1)
+            defer { productProofPresentationResponse = nil }
+            let first = RepositoryWindow(
+                identifier: "product-proof-first",
+                controller: controller,
+                identity: identity,
+                frontmostRank: 0
+            )
+            let second = RepositoryWindow(
+                identifier: "product-proof-second",
+                controller: controller,
+                identity: identity,
+                frontmostRank: 1
+            )
+            switch scenario {
+            case 0:
+                handle(.open(checkoutIdentifier: first.identifier, destination: destination), windows: [first])
+            case 1:
+                handle(.open(checkoutIdentifier: "missing", destination: destination), windows: [first])
+            case 2:
+                handle(
+                    .chooseCheckout(
+                        checkoutIdentifiers: [first.identifier, second.identifier],
+                        destination: destination
+                    ),
+                    windows: [first, second]
+                )
+            case 3:
+                handle(
+                    .missingLocalObject(
+                        checkoutIdentifier: first.identifier,
+                        destination: destination,
+                        actions: ForgeDeepLinkMissingObjectAction.allCases
+                    ),
+                    windows: [first]
+                )
+            case 4:
+                handle(.noMatchingCheckout(destination: destination), windows: [first])
+            default:
+                _ = availableCommits(for: destination, in: controller)
+                return false
+            }
+            return true
+        }
+    #endif
+
     private func handle(_ route: ForgeDeepLinkRouteDecision, windows: [RepositoryWindow]) {
         switch route {
         case let .open(identifier, destination):
@@ -155,19 +214,11 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
             presentNoCheckout(destination)
             return
         }
-        let alert = NSAlert()
-        alert.messageText = "Choose an Open Checkout"
-        alert.informativeText = "More than one open checkout matches this GitX deep link."
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for candidate in candidates {
-            popup.addItem(withTitle: candidate.controller.window?.title ?? candidate.identifier)
-            popup.lastItem?.representedObject = candidate.identifier
-        }
-        popup.setAccessibilityIdentifier("GitX.DeepLink.CheckoutChooser")
-        popup.setAccessibilityLabel("Open checkout for GitX deep link")
-        alert.accessoryView = popup
-        alert.addButton(withTitle: "Open")
-        alert.addButton(withTitle: "Cancel")
+        let presentation = ForgeDeepLinkAlertFactory.checkoutChooser(candidates: candidates.map {
+            (title: $0.controller.window?.title ?? $0.identifier, identifier: $0.identifier)
+        })
+        let alert = presentation.alert
+        let popup = presentation.popup
         let parent = NSApp.keyWindow ?? candidates.first?.controller.window
         present(alert, parent: parent) { [weak self] response in
             guard response == .alertFirstButtonReturn,
@@ -183,17 +234,7 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
         actions: [ForgeDeepLinkMissingObjectAction],
         in controller: PBGitWindowController
     ) {
-        let alert = NSAlert()
-        alert.messageText = "Git Object Is Not Available Locally"
-        alert.informativeText = "GitX will not fetch automatically. Fetch explicitly or open the validated destination in your browser."
-        if actions.contains(.fetch) {
-            alert.addButton(withTitle: "Fetch")
-        }
-        if actions.contains(.openInBrowser) {
-            alert.addButton(withTitle: "Open in Browser")
-        }
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons.first?.setAccessibilityIdentifier("GitX.DeepLink.Fetch")
+        let alert = ForgeDeepLinkAlertFactory.missingObject(actions: actions)
         present(alert, parent: controller.window) { [weak self, weak controller] response in
             guard let self, let controller else { return }
             let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
@@ -265,7 +306,7 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
     }
 
     private func presentError(_ error: Error) {
-        let alert = NSAlert(error: error)
+        let alert = ForgeDeepLinkAlertFactory.error(error)
         present(alert, parent: NSApp.keyWindow, completion: nil)
     }
 
@@ -274,6 +315,12 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
         parent: NSWindow?,
         completion: ((NSApplication.ModalResponse) -> Void)?
     ) {
+        #if DEBUG
+            if let productProofPresentationResponse {
+                completion?(productProofPresentationResponse)
+                return
+            }
+        #endif
         if let parent {
             alert.beginSheetModal(for: parent) { completion?($0) }
         } else {

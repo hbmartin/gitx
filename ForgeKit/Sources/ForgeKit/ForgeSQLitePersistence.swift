@@ -6,6 +6,7 @@ public enum ForgeSQLiteDurableKind: Int, Codable, CaseIterable, Hashable, Sendab
     case draft = 1
     case watchedRepository = 2
     case attention = 3
+    case unknownMutationOutcome = 4
 }
 
 public struct ForgeSQLiteCacheEntry: Equatable, Sendable {
@@ -141,7 +142,7 @@ public enum ForgeSQLiteError: Error, LocalizedError, Sendable {
 /// `ForgeDraftIdentity`, `ForgeWatchedRepositoryKey`, and `ForgeAttentionItemID` remain the
 /// canonical owners of those semantics and can be encoded with `encodedKey(_:)`.
 public actor ForgeSQLiteStore {
-    public static let schemaVersion = 2
+    public static let schemaVersion = 3
 
     private static let logger = Logger(subsystem: "com.gitx.ForgeKit", category: "SQLiteStore")
     private static let recoveryPrefix = "ForgeKit-recovery-"
@@ -1141,7 +1142,7 @@ final class ForgeSQLiteConnection {
                 try execute(
                     """
                     CREATE TABLE forge_durable_records (
-                        kind INTEGER NOT NULL CHECK(kind IN (1, 2, 3)),
+                        kind INTEGER NOT NULL CHECK(kind IN (1, 2, 3, 4)),
                         account_key BLOB NOT NULL CHECK(length(account_key) > 0),
                         repository_key BLOB NOT NULL CHECK(length(repository_key) > 0),
                         record_key BLOB NOT NULL CHECK(length(record_key) > 0),
@@ -1179,6 +1180,38 @@ final class ForgeSQLiteConnection {
                     """
                 )
                 try execute("PRAGMA user_version = 2")
+            }
+            if version <= 2, supportedVersion >= 3 {
+                try execute("ALTER TABLE forge_durable_records RENAME TO forge_durable_records_v2")
+                try execute("DROP INDEX forge_durable_expiration")
+                try execute(
+                    """
+                    CREATE TABLE forge_durable_records (
+                        kind INTEGER NOT NULL CHECK(kind IN (1, 2, 3, 4)),
+                        account_key BLOB NOT NULL CHECK(length(account_key) > 0),
+                        repository_key BLOB NOT NULL CHECK(length(repository_key) > 0),
+                        record_key BLOB NOT NULL CHECK(length(record_key) > 0),
+                        payload BLOB NOT NULL,
+                        last_activity_at REAL NOT NULL,
+                        expires_at REAL,
+                        CHECK(expires_at IS NULL OR expires_at >= last_activity_at),
+                        PRIMARY KEY(kind, account_key, repository_key, record_key)
+                    )
+                    """
+                )
+                try execute(
+                    """
+                    INSERT INTO forge_durable_records
+                        (kind, account_key, repository_key, record_key, payload, last_activity_at, expires_at)
+                    SELECT kind, account_key, repository_key, record_key, payload, last_activity_at, expires_at
+                    FROM forge_durable_records_v2
+                    """
+                )
+                try execute("DROP TABLE forge_durable_records_v2")
+                try execute(
+                    "CREATE INDEX forge_durable_expiration ON forge_durable_records(expires_at) WHERE expires_at IS NOT NULL"
+                )
+                try execute("PRAGMA user_version = 3")
             }
         }
     }

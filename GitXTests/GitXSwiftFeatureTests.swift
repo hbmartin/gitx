@@ -3,6 +3,42 @@ import XCTest
 
 @MainActor
 final class GitXSwiftFeatureTests: XCTestCase {
+    private final class ForgeWindowControllerFixture: PBGitWindowController {
+        private var fixedRepository: PBGitRepository?
+        private(set) var shownErrors: [NSError] = []
+        private(set) var shownMessages: [(message: String, info: String)] = []
+        var onError: ((NSError) -> Void)?
+
+        init(repository: PBGitRepository) {
+            fixedRepository = repository
+            super.init(window: nil)
+        }
+
+        override init(window: NSWindow?) {
+            super.init(window: window)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override var repository: PBGitRepository? {
+            get { fixedRepository }
+            set { fixedRepository = newValue }
+        }
+
+        override func showErrorSheet(_ error: Error) {
+            let error = error as NSError
+            shownErrors.append(error)
+            onError?(error)
+        }
+
+        override func showMessageSheet(_ messageText: String, infoText: String) {
+            shownMessages.append((messageText, infoText))
+        }
+    }
+
     private final class TreeFixture: NSObject {
         @objc dynamic let fullPath: String
         @objc dynamic let path: String
@@ -24,6 +60,17 @@ final class GitXSwiftFeatureTests: XCTestCase {
                 defaults.set(originalValue, forKey: key)
             } else {
                 defaults.removeObject(forKey: key)
+            }
+        }
+    }
+
+    private func preserveEnvironmentVariable(_ key: String) -> () -> Void {
+        let originalValue = ProcessInfo.processInfo.environment[key]
+        return {
+            if let originalValue {
+                _ = setenv(key, originalValue, 1)
+            } else {
+                _ = unsetenv(key)
             }
         }
     }
@@ -72,6 +119,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
             "showMessageSheet:infoText:",
             "showErrorSheet:",
             "confirmDialog:suppressionIdentifier:forAction:",
+            "confirmDialog:suppressionIdentifier:onCancel:forAction:",
             "showUncommittedChanges:",
             "showHistoryView:",
             "refresh:",
@@ -537,6 +585,79 @@ final class GitXSwiftFeatureTests: XCTestCase {
             XCTAssertEqual(repository.headRef()?.ref()?.branchName, "main")
             XCTAssertTrue(repository.revisionExists("HEAD"))
             XCTAssertFalse(repository.hasRemotes())
+        }
+    }
+
+    func testWindowControllerOpensOnlyLocallyResolvableForgeRevisionsAndComparisons() throws {
+        try withTemporaryDirectory { repositoryURL in
+            try runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL)
+            try runGit(["config", "user.name", "GitX Test"], in: repositoryURL)
+            try runGit(["config", "user.email", "gitx-tests@example.invalid"], in: repositoryURL)
+            let trackedFile = repositoryURL.appendingPathComponent("tracked.txt")
+            try "first\n".write(to: trackedFile, atomically: true, encoding: .utf8)
+            try runGit(["add", "--all"], in: repositoryURL)
+            try runGit(["commit", "--quiet", "-m", "first"], in: repositoryURL)
+            try "second\n".write(to: trackedFile, atomically: true, encoding: .utf8)
+            try runGit(["commit", "--quiet", "--all", "-m", "second"], in: repositoryURL)
+
+            let repository = try PBGitRepository(url: repositoryURL)
+            let controller = ForgeWindowControllerFixture(repository: repository)
+            let existingWindows = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+            defer {
+                NSApplication.shared.windows
+                    .filter { !existingWindows.contains(ObjectIdentifier($0)) }
+                    .forEach { $0.close() }
+            }
+
+            XCTAssertFalse(controller.openForgeRevision("refs/heads/does-not-exist"))
+            XCTAssertTrue(controller.openForgeRevision("HEAD"))
+            XCTAssertFalse(controller.openForgeComparison(base: "does-not-exist", head: "HEAD"))
+            XCTAssertTrue(controller.openForgeComparison(base: "HEAD^", head: "HEAD"))
+        }
+    }
+
+    func testWindowlessConfirmationOverloadCancelsWithoutActing() {
+        let controller = PBGitWindowController(window: nil)
+        var cancellationCount = 0
+        var actionCount = 0
+
+        let didAct = controller.confirmDialog(
+            NSAlert(),
+            suppressionIdentifier: nil,
+            onCancel: { cancellationCount += 1 },
+            forAction: { actionCount += 1 }
+        )
+
+        XCTAssertFalse(didAct)
+        XCTAssertEqual(cancellationCount, 1)
+        XCTAssertEqual(actionCount, 0)
+    }
+
+    func testMilestone2UITestModeSuppressesRepositoryForgeOverlaySession() throws {
+        let restoreEnvironment = preserveEnvironmentVariable("GITX_M2_UITEST")
+        defer { restoreEnvironment() }
+        _ = setenv("GITX_M2_UITEST", "1", 1)
+
+        try withTemporaryDirectory { repositoryURL in
+            try runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL)
+            try runGit(["config", "user.name", "GitX Test"], in: repositoryURL)
+            try runGit(["config", "user.email", "gitx-tests@example.invalid"], in: repositoryURL)
+            try "tracked\n".write(
+                to: repositoryURL.appendingPathComponent("tracked.txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+            try runGit(["add", "--all"], in: repositoryURL)
+            try runGit(["commit", "--quiet", "-m", "initial"], in: repositoryURL)
+
+            let controller = try ForgeWindowControllerFixture(repository: PBGitRepository(url: repositoryURL))
+            controller.windowDidLoad()
+
+            XCTAssertEqual(
+                controller.value(forKey: "hasRepositoryForgeOverlaySessionForDiagnostics") as? Bool,
+                false
+            )
+            NotificationCenter.default.removeObserver(controller)
         }
     }
 

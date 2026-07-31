@@ -68,6 +68,9 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     private var forgeRepositoryItems: [RepositoryForgeSourceViewItem] = []
     private var forgeSurfaceItems: [ForgeCollaborationSurface: RepositoryForgeSourceViewItem] = [:]
     private var collaborationController: RepositoryForgeCollaborationController?
+    #if DEBUG
+        final var productProofForgeDestinationOpening: ((ForgeDestination) -> Bool)?
+    #endif
     private var unseenAttentionCount = 0
     @objc private dynamic var branchPresentation: BranchSidebarPresentation?
     @objc private dynamic var lastKnownHeadRef: PBGitRevSpecifier?
@@ -524,8 +527,19 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
     }
 
     @discardableResult
+    @inline(never)
     func openForgeDestination(_ destination: ForgeDestination) -> Bool {
-        guard collaborationController?.openNative(destination) == true else { return false }
+        #if DEBUG
+            let opened: Bool
+            if let productProofForgeDestinationOpening {
+                opened = productProofForgeDestinationOpening(destination)
+            } else {
+                opened = collaborationController?.openNative(destination) == true
+            }
+        #else
+            let opened = collaborationController?.openNative(destination) == true
+        #endif
+        guard opened else { return false }
         if case .pullRequest = destination {
             restoreForgeSelection(.pullRequests)
         } else if case .issue = destination {

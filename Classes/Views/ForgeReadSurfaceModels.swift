@@ -803,6 +803,9 @@ struct ForgeReadInspectorPresentation: Equatable, Sendable {
     let timelineUnavailableMessage: String?
     let nextTimelineCursor: ForgePageCursor?
     let nextCheckCursor: ForgePageCursor?
+    /// Mutation eligibility depends on authoritative staleness, not on whether
+    /// an otherwise current response omitted optional sections.
+    let isMutationStateFresh: Bool
     let freshnessMessage: String?
 }
 
@@ -857,6 +860,7 @@ enum ForgeReadInspectorPresenter {
             timelineUnavailableMessage: timeline.unavailable,
             nextTimelineCursor: timeline.nextCursor,
             nextCheckCursor: page.nextCheckCursor,
+            isMutationStateFresh: !snapshot.isStale,
             freshnessMessage: freshness(snapshot, formatDate: formatDate)
         )
     }
@@ -886,6 +890,7 @@ enum ForgeReadInspectorPresenter {
             timelineUnavailableMessage: timeline.unavailable,
             nextTimelineCursor: timeline.nextCursor,
             nextCheckCursor: nil,
+            isMutationStateFresh: !snapshot.isStale,
             freshnessMessage: freshness(snapshot, formatDate: formatDate)
         )
     }

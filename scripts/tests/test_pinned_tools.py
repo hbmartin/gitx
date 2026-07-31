@@ -31,10 +31,10 @@ class PinnedToolsTests(unittest.TestCase):
         project = (ROOT / "GitX.xcodeproj" / "project.pbxproj").read_text()
 
         self.assertNotIn("SWIFT_VERSION = 5.0", project)
-        self.assertEqual(project.count("SWIFT_VERSION = 6.0"), 4)
-        self.assertEqual(project.count("SWIFT_STRICT_CONCURRENCY = complete"), 4)
-        self.assertEqual(project.count("SWIFT_TREAT_WARNINGS_AS_ERRORS = YES"), 4)
-        self.assertEqual(project.count("SWIFT_APPROACHABLE_CONCURRENCY = YES"), 4)
+        self.assertEqual(project.count("SWIFT_VERSION = 6.0"), 6)
+        self.assertEqual(project.count("SWIFT_STRICT_CONCURRENCY = complete"), 6)
+        self.assertEqual(project.count("SWIFT_TREAT_WARNINGS_AS_ERRORS = YES"), 6)
+        self.assertEqual(project.count("SWIFT_APPROACHABLE_CONCURRENCY = YES"), 6)
         self.assertEqual(project.count("SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor"), 2)
         self.assertEqual(project.count("-enable-actor-data-race-checks"), 2)
         self.assertEqual(project.count("-Wno-error=incomplete-umbrella"), 4)
@@ -153,6 +153,26 @@ class PinnedToolsTests(unittest.TestCase):
         )
 
         self.assertNotIn("github.event_name == 'pull_request'", condition)
+
+    def test_milestone_2_mutation_harness_is_debug_only(self) -> None:
+        window_controller = (
+            ROOT / "Classes" / "Controllers" / "PBGitWindowController.swift"
+        ).read_text()
+        pull_request_controller = (
+            ROOT / "Classes" / "Controllers" / "RepositoryPullRequestUIController.swift"
+        ).read_text()
+        harness = (
+            ROOT / "Classes" / "Controllers" / "Milestone2UITestHarness.swift"
+        ).read_text()
+
+        self.assertIn("#if DEBUG\n        private var milestone2UITestHarness", window_controller)
+        self.assertIn(
+            '#if DEBUG\n            guard ProcessInfo.processInfo.environment["GITX_M2_UITEST"]',
+            window_controller,
+        )
+        self.assertIn("#if DEBUG\n        /// Environment-gated UI-test entrypoint", pull_request_controller)
+        self.assertIn("#if DEBUG\n    /// Deterministic launch-only journeys", harness)
+        self.assertTrue(harness.rstrip().endswith("#endif"))
 
 
 if __name__ == "__main__":

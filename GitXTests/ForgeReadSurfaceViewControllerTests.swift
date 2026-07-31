@@ -395,7 +395,14 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             destinationRouter: router,
             defaultRevision: .branch(ForgeRefName("main"))
         )
-        let item = try ForgeRepositoryItem.pullRequest(ReadFixture.pullRequest())
+        var editedSnapshot: ForgePullRequestEditableSnapshot?
+        controller.editPullRequestControl = .capability(
+            .verified(.knownAuthority),
+            action: "edit this Pull Request"
+        )
+        controller.onEditPullRequest = { snapshot, _ in editedSnapshot = snapshot }
+        let pullRequest = try ReadFixture.pullRequest()
+        let item = ForgeRepositoryItem.pullRequest(pullRequest)
         let referenced = try ForgeDestination.issue(ReadFixture.repository(), ForgeItemNumber(17))
         let presentation = try ForgeReadInspectorPresentation(
             item: item,
@@ -429,6 +436,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             timelineUnavailableMessage: nil,
             nextTimelineCursor: ForgePageCursor("timeline-next"),
             nextCheckCursor: ForgePageCursor("checks-next"),
+            isMutationStateFresh: true,
             freshnessMessage: "Showing partial cached data"
         )
         var loadedTimeline = 0
@@ -439,6 +447,12 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         controller.apply(presentation)
         XCTAssertEqual(avatars.displayedLogins, ["ari"])
         XCTAssertEqual(markdown.renderedMarkdown, ["## Body", "Timeline body"])
+        let partialEdit = try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton
+        )
+        XCTAssertTrue(partialEdit.isEnabled, "Current partial data must not be treated as stale")
+        partialEdit.performClick(nil)
+        XCTAssertEqual(editedSnapshot?.number, pullRequest.number)
         let browser = try XCTUnwrap(descendant(identifier: "ForgeInspectorOpenInBrowser", in: controller.view) as? NSButton)
         browser.performClick(nil)
         XCTAssertEqual(router.browserDestinations, [item.destination])
@@ -483,6 +497,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             timelineUnavailableMessage: "Timeline unavailable",
             nextTimelineCursor: nil,
             nextCheckCursor: nil,
+            isMutationStateFresh: true,
             freshnessMessage: nil
         ))
         XCTAssertNotNil(descendant(identifier: "ForgeInspectorBodyUnavailable", in: controller.view))
@@ -771,6 +786,10 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             avatarRenderer: RecordingAvatarRenderer(),
             destinationRouter: RecordingDestinationRouter(),
             pullRequestChangesProvider: provider,
+            editPullRequestControl: .capability(
+                .verified(.knownAuthority),
+                action: "edit this Pull Request"
+            ),
             onEditPullRequest: { snapshot, _ in edited = snapshot },
             onCheckoutPullRequest: { checkedOut = $0 }
         )
@@ -801,6 +820,94 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         let changes = try XCTUnwrap(descendant(identifier: "GitX.PullRequest.LocalChanges", in: controller.view))
         XCTAssertEqual(changes.accessibilityIdentifier(), "GitX.PullRequest.LocalChanges")
         try attachScreenshot(of: window, named: "GitHub Pull Request local Changes inspector")
+    }
+
+    func testPullRequestEditControlFailsClosedUntilFreshCapabilityAndSnapshotAreAvailable() async throws {
+        let summary = try ReadFixture.pullRequest()
+        let details = try ForgeReadSurfaceDetailsSnapshot(
+            details: .pullRequest(ReadFixture.pullRequestDetails()),
+            fetchedAt: ReadFixture.date(2)
+        )
+        let service = try FakeReadService(
+            pages: [ForgeReadSurfacePage(items: [.pullRequest(summary)], fetchedAt: ReadFixture.date(1))],
+            details: details
+        )
+        var edited: ForgePullRequestEditableSnapshot?
+        let controller = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: service,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            editPullRequestControl: .checking(action: "edit this Pull Request")
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await service.waitForListCall()
+        await settleMainActor()
+        let table = try XCTUnwrap(descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView)
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await service.waitForDetailsCall()
+        await settleMainActor()
+
+        var edit = try XCTUnwrap(descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton)
+        XCTAssertFalse(edit.isEnabled)
+        XCTAssertTrue(try XCTUnwrap(edit.toolTip).contains("Checking whether"))
+
+        controller.updateEditPullRequestControl(
+            .capability(.verified(.knownAuthority), action: "edit this Pull Request"),
+            handler: { snapshot, _ in edited = snapshot }
+        )
+        edit = try XCTUnwrap(descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton)
+        XCTAssertTrue(edit.isEnabled)
+        edit.performClick(nil)
+        XCTAssertEqual(edited?.number, summary.number)
+
+        controller.updateEditPullRequestControl(
+            .publicReadOnly(action: "edit this Pull Request"),
+            handler: nil
+        )
+        edit = try XCTUnwrap(descendant(identifier: "GitX.PullRequest.Edit", in: controller.view) as? NSButton)
+        XCTAssertFalse(edit.isEnabled)
+        XCTAssertTrue(try XCTUnwrap(edit.toolTip).contains("Sign in with a GitHub account"))
+
+        let staleService = try FakeReadService(
+            pages: [ForgeReadSurfacePage(items: [.pullRequest(summary)], fetchedAt: ReadFixture.date(1))],
+            details: ForgeReadSurfaceDetailsSnapshot(
+                details: details.details,
+                fetchedAt: details.fetchedAt,
+                isStale: true
+            )
+        )
+        let staleController = try ForgeReadSurfaceViewController(
+            kind: .pullRequests,
+            defaultRevision: .branch(ForgeRefName("main")),
+            service: staleService,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            editPullRequestControl: .capability(
+                .verified(.knownAuthority),
+                action: "edit this Pull Request"
+            ),
+            onEditPullRequest: { _, _ in XCTFail("A stale snapshot must not edit") }
+        )
+        _ = makeWindow(staleController)
+        staleController.viewDidAppear()
+        await staleService.waitForListCall()
+        await settleMainActor()
+        let staleTable = try XCTUnwrap(
+            descendant(identifier: "ForgeReadTable", in: staleController.view) as? NSTableView
+        )
+        staleTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await staleService.waitForDetailsCall()
+        await settleMainActor()
+        let staleEdit = try XCTUnwrap(
+            descendant(identifier: "GitX.PullRequest.Edit", in: staleController.view) as? NSButton
+        )
+        XCTAssertFalse(staleEdit.isEnabled)
+        XCTAssertTrue(try XCTUnwrap(staleEdit.toolTip).contains("stale data cannot authorize"))
     }
 
     private func makeController(

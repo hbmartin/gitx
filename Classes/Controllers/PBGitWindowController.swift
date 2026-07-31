@@ -13,15 +13,24 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private var focusRefreshCoordinator: RepositoryFocusRefreshCoordinator?
     private var actionContextResolver: RepositoryActionContextResolver?
     private var remoteActionCoordinator: RepositoryRemoteActionCoordinator?
-    private var pullRequestUIController: RepositoryPullRequestUIController?
+    final var pullRequestUIController: RepositoryPullRequestUIController?
     private var referenceActionCoordinator: RepositoryReferenceActionCoordinator?
     private var stashActionCoordinator: RepositoryStashActionCoordinator?
     private var workspaceActionCoordinator: WorkspaceActionCoordinator?
     private var repositoryForgeCoordinator: RepositoryForgeCoordinator?
     final var repositoryForgeLinkUseCase: RepositoryForgeLinkUseCase?
     private var repositoryToolbarController: RepositoryToolbarController?
+    private(set) final var createPullRequestControl = ForgeMutationControlPresentation.hidden
+    #if DEBUG
+        private var milestone2UITestHarness: Milestone2UITestHarness?
+    #endif
     private var repositoryStatusBarController: RepositoryStatusBarController?
     private(set) final var repositoryForgeOverlaySession: RepositoryForgeOverlaySession?
+    /// Read-only diagnostic state used to verify deterministic UI-test launches.
+    @objc public final var hasRepositoryForgeOverlaySessionForDiagnostics: Bool {
+        repositoryForgeOverlaySession != nil
+    }
+
     private var repositoryLocalStatusLoader: RepositoryLocalStatusLoader?
     private var repositoryLocalStatusSnapshot = RepositoryLocalStatusSnapshot.unavailable
     private var initializedContentControllers: NSHashTable<PBViewController>?
@@ -53,7 +62,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         _sidebarViewController
     }
 
-    private func ensureActionCoordinators() {
+    final func ensureActionCoordinators() {
         guard let repository else { return }
         if actionContextResolver == nil {
             actionContextResolver = RepositoryActionContextResolver()
@@ -71,7 +80,25 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 windowController: self,
                 remoteActions: remoteActionCoordinator,
                 service: session.service,
-                drafts: session.drafts
+                drafts: session.drafts,
+                destinationOpening: { [weak self] destination in
+                    self?.sidebarViewController?.openForgeDestination(destination) == true
+                },
+                bindingResolving: { [weak repository] in
+                    repository.flatMap { RepositoryForgeCoordinator(repository: $0).resolveBinding().binding }
+                },
+                postPushBrowserFallback: { [weak self, weak repository] remote in
+                    guard let self, let repository else { return }
+                    RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
+                        output: repository.lastPushOutput ?? "",
+                        repository: repository,
+                        remote: remote,
+                        presenting: self.window
+                    )
+                },
+                createPullRequestControlResolving: { [weak self] in
+                    self?.createPullRequestControl ?? .hidden
+                }
             )
         }
         if referenceActionCoordinator == nil {
@@ -130,6 +157,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc public dynamic func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(newPullRequest(_:)) {
+            menuItem.isHidden = !createPullRequestControl.isVisible
+            menuItem.toolTip = createPullRequestControl.helpText
+            return createPullRequestControl.isVisible && createPullRequestControl.isEnabled
+        }
         if let action = RepositoryForgeLinkAction(selector: menuItem.action),
            let model = RepositoryForgeLinkMenuPresenter.itemModel(action: action, context: forgeLinkContext)
         {
@@ -293,6 +325,9 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             object: repository
         )
         refreshPreferenceDidChange(nil)
+        #if DEBUG
+            milestone2UITestHarness = Milestone2UITestHarness.installIfRequested(for: self)
+        #endif
         repositoryLocalStatusLoader?.refresh()
     }
 
@@ -376,12 +411,13 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     /// remains local-only: the application router separately offers an explicit
     /// Fetch action when a required object is absent.
     @discardableResult
+    @objc(openForgeRevision:)
     final func openForgeRevision(_ revision: String) -> Bool {
         guard let repository else { return false }
         guard let resolved = try? repository.outputOfTask(withArguments: [
             "rev-parse", "--verify", "\(revision)^{commit}",
         ]).trimmingCharacters(in: .whitespacesAndNewlines),
-            let oid = GTOID(SHA: resolved)
+            let oid = GTOID(sha: resolved)
         else { return false }
         showHistoryView(self)
         _historyViewController?.selectCommit(oid)
@@ -389,11 +425,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @discardableResult
+    @objc(openForgeComparisonFrom:to:)
     final func openForgeComparison(base: String, head: String) -> Bool {
         guard let repository,
               (try? repository.outputOfTask(withArguments: ["rev-parse", "--verify", "\(base)^{commit}"])) != nil,
               (try? repository.outputOfTask(withArguments: ["rev-parse", "--verify", "\(head)^{commit}"])) != nil,
-              let diff = try? repository.outputOfTask(withArguments: ["diff"] + PBDiffCommandOptions.arguments + [
+              let diff = try? repository.outputOfTask(withArguments: ["diff"] + DiffCommandOptions.arguments + [
                   "--find-renames", "--no-ext-diff", base, head,
               ])
         else { return false }
@@ -545,7 +582,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         )
     }
 
-    func performPush(
+    @objc(performPushForBranch:toRemote:requiresConfirmation:initiallyCreatePullRequest:)
+    dynamic func performPush(
         forBranch branch: PBGitRef?,
         toRemote remote: PBGitRef?,
         requiresConfirmation: Bool,
@@ -560,9 +598,16 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         )
     }
 
-    func presentNewPullRequest() {
+    @objc(presentNewPullRequest)
+    dynamic func presentNewPullRequest() {
+        guard createPullRequestControl.isVisible, createPullRequestControl.isEnabled else { return }
         ensureActionCoordinators()
         pullRequestUIController?.newPullRequest()
+    }
+
+    final func updateCreatePullRequestControl(_ presentation: ForgeMutationControlPresentation) {
+        createPullRequestControl = presentation
+        repositoryToolbarController?.updateCreatePullRequestControl(presentation)
     }
 
     func editPullRequest(
@@ -815,7 +860,13 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repositoryForgeOverlaySession?.requestRefresh(reason: reason)
     }
 
-    private func installRepositoryForgeOverlaySession() {
+    final func installRepositoryForgeOverlaySession() {
+        #if DEBUG
+            guard ProcessInfo.processInfo.environment["GITX_M2_UITEST"] != "1" else {
+                NSLog("[UITest] Suppressed repository Forge overlay session for deterministic Milestone 2 UI verification")
+                return
+            }
+        #endif
         guard repositoryForgeOverlaySession == nil else { return }
         let binding = forgeCoordinator?.resolveBinding().binding
         let session = RepositoryForgeOverlaySession(
@@ -968,6 +1019,23 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             alert,
             suppressionIdentifier: identifier,
             for: self,
+            action: actionBlock
+        )
+    }
+
+    @discardableResult
+    @objc(confirmDialog:suppressionIdentifier:onCancel:forAction:)
+    open dynamic func confirmDialog(
+        _ alert: NSAlert,
+        suppressionIdentifier identifier: String?,
+        onCancel: @escaping () -> Void,
+        forAction actionBlock: @escaping () -> Void
+    ) -> Bool {
+        WindowDialogPresenter.confirmDialog(
+            alert,
+            suppressionIdentifier: identifier,
+            for: self,
+            onCancel: onCancel,
             action: actionBlock
         )
     }

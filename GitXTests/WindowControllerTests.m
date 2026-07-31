@@ -3,6 +3,7 @@
 #import <XCTest/XCTest.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <stdatomic.h>
 
 #import "PBMacros.h"
 #import "PBAutoFetchManager.h"
@@ -454,7 +455,7 @@ static NSString *PBWindowLastMessage;
 static NSString *PBWindowLastInfo;
 static NSString *PBWindowLastTerminalCommand;
 static NSURL *PBWindowLastTerminalDirectory;
-static BOOL PBWindowUseSnapshotTaskFake;
+static atomic_bool PBWindowUseSnapshotTaskFake;
 static NSData *PBWindowSnapshotData;
 static NSError *PBWindowSnapshotError;
 static BOOL PBWindowTrashSucceeds;
@@ -504,7 +505,7 @@ static void PBWindowPerformPull(PBGitWindowController *controller, PBGitRef *bra
 	PBTask *task = [self pb_window_taskWithLaunchPath:launchPath arguments:arguments inDirectory:directory];
 	NSString *command = arguments.firstObject;
 	BOOL isSnapshotCommand = [command isEqualToString:@"for-each-ref"] || [command isEqualToString:@"remote"] || [command isEqualToString:@"status"];
-	if (PBWindowUseSnapshotTaskFake && isSnapshotCommand) {
+	if (atomic_load_explicit(&PBWindowUseSnapshotTaskFake, memory_order_relaxed) && isSnapshotCommand) {
 		object_setClass(task, PBWindowSnapshotTask.class);
 	}
 	return task;
@@ -1211,6 +1212,25 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	if (self.shouldConfirm) actionBlock();
 	return self.shouldConfirm;
 }
+- (BOOL)confirmDialog:(NSAlert *)alert
+	suppressionIdentifier:(NSString *)identifier
+				 onCancel:(void (^)(void))cancelBlock
+				forAction:(void (^)(void))actionBlock
+{
+	if (self.useRealConfirmation) {
+		return [super confirmDialog:alert
+			  suppressionIdentifier:identifier
+						   onCancel:cancelBlock
+						  forAction:actionBlock];
+	}
+	[self.confirmations addObject:alert];
+	if (self.shouldConfirm) {
+		actionBlock();
+	} else {
+		cancelBlock();
+	}
+	return self.shouldConfirm;
+}
 - (void)performFetchForRef:(PBGitRef *)ref
 {
 	if (!self.interceptRemoteRouting) return [super performFetchForRef:ref];
@@ -1417,7 +1437,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowLastInfo = nil;
 	PBWindowLastTerminalCommand = nil;
 	PBWindowLastTerminalDirectory = nil;
-	PBWindowUseSnapshotTaskFake = NO;
+	atomic_store_explicit(&PBWindowUseSnapshotTaskFake, false, memory_order_relaxed);
 	PBWindowSnapshotData = nil;
 	PBWindowSnapshotError = nil;
 	PBWindowTrashSucceeds = YES;
@@ -1449,7 +1469,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowAddRemoteTestSheet = nil;
 	PBWindowCreateBranchTestSheet = nil;
 	PBWindowCreateTagTestSheet = nil;
-	PBWindowUseSnapshotTaskFake = NO;
+	atomic_store_explicit(&PBWindowUseSnapshotTaskFake, false, memory_order_relaxed);
 	PBWindowSnapshotData = nil;
 	PBWindowSnapshotError = nil;
 	PBWindowDocumentOpenedURLs = nil;
@@ -2551,6 +2571,17 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self waitForExpectations:@[ PBWindowProgressExpectation ] timeout:5.0];
 
 	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'push'"]].count, (NSUInteger)1);
+}
+
+- (void)testOrdinaryPushStartsLocallyWithoutAwaitingGitHubPreflight
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+	NSUInteger before = [self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'push'"]].count;
+
+	[self.controller performPushForBranch:self.branchRef toRemote:self.remoteRef requiresConfirmation:NO];
+
+	NSUInteger after = [self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'push'"]].count;
+	XCTAssertEqual(after, before + 1, @"Ordinary local push must begin before asynchronous GitHub preparation yields");
 }
 
 - (void)testRemoteAddAndMenuValidationMatrices
@@ -3951,6 +3982,41 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 									   }]);
 	XCTAssertEqual(actionCount, (NSUInteger)2);
 
+	__block NSUInteger cancellableActionCount = 0;
+	__block NSUInteger cancelCount = 0;
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	XCTAssertFalse([self.controller confirmDialog:alert
+		suppressionIdentifier:nil
+		onCancel:^{
+			cancelCount++;
+		}
+		forAction:^{
+			cancellableActionCount++;
+		}]);
+	XCTAssertEqual(cancelCount, (NSUInteger)1);
+	XCTAssertEqual(cancellableActionCount, (NSUInteger)0);
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	XCTAssertTrue([self.controller confirmDialog:alert
+		suppressionIdentifier:nil
+		onCancel:^{
+			cancelCount++;
+		}
+		forAction:^{
+			cancellableActionCount++;
+		}]);
+	XCTAssertEqual(cancelCount, (NSUInteger)1);
+	XCTAssertEqual(cancellableActionCount, (NSUInteger)1);
+	XCTAssertTrue([self.controller confirmDialog:alert
+		suppressionIdentifier:@"Test Dialog"
+		onCancel:^{
+			cancelCount++;
+		}
+		forAction:^{
+			cancellableActionCount++;
+		}]);
+	XCTAssertEqual(cancelCount, (NSUInteger)1);
+	XCTAssertEqual(cancellableActionCount, (NSUInteger)2);
+
 	PBWindowAlertResponse = NSAlertSecondButtonReturn;
 	[self.controller showRepositorySettings:self];
 	PBWindowAlertResponse = NSAlertFirstButtonReturn;
@@ -3959,7 +4025,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testFocusRefreshSnapshotsPreferenceGenerationAndCancellation
 {
-	PBWindowUseSnapshotTaskFake = YES;
+	atomic_store_explicit(&PBWindowUseSnapshotTaskFake, true, memory_order_relaxed);
 	PBWindowSnapshotData = [@"snapshot-a" dataUsingEncoding:NSUTF8StringEncoding];
 	[NSUserDefaults.standardUserDefaults setObject:@YES forKey:@"PBRefreshOnApplicationFocus"];
 	[self.controller refreshPreferenceDidChange:nil];
@@ -3987,6 +4053,30 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self.controller refreshPreferenceDidChange:nil];
 	[self pumpRunLoopFor:0.1];
 	XCTAssertGreaterThan(self.controller.synchronizeCount, changedCount);
+}
+
+- (void)testMilestone2ShippedProductCoverageProofs
+{
+	XCTAssertEqual([PBMilestone2ProductCoverageHarness synchronousProof], (uint64_t)0b11111);
+
+	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 2 app-target proof"];
+	[PBMilestone2ProductCoverageHarness asyncProofWithCompletion:^(uint64_t proof) {
+		XCTAssertEqual(proof, (uint64_t)0b11111);
+		[expectation fulfill];
+	}];
+	[self waitForExpectations:@[ expectation ] timeout:30.0];
+}
+
+- (void)testMilestone2ShippedCompositionCoverageProofs
+{
+	XCTAssertEqual([PBMilestone2CompositionCoverageHarness synchronousProof], (uint64_t)0b111);
+
+	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 2 composition app-target proof"];
+	[PBMilestone2CompositionCoverageHarness asyncProofWithCompletion:^(uint64_t proof) {
+		XCTAssertEqual(proof, (uint64_t)0b1111);
+		[expectation fulfill];
+	}];
+	[self waitForExpectations:@[ expectation ] timeout:30.0];
 }
 
 @end

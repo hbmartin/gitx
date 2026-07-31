@@ -206,6 +206,8 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private var statusViews: StatusViews?
     private var attentionItem: NSToolbarItem?
     private var attentionBadge: NSTextField?
+    private var newPullRequestItem: NSToolbarItem?
+    private var createPullRequestControl: ForgeMutationControlPresentation
     private var unseenAttentionCount = 0
     private var currentStatus = ""
     private var currentBusy = false
@@ -216,6 +218,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     @objc(initWithWindowController:)
     init(windowController: PBGitWindowController) {
         self.windowController = windowController
+        createPullRequestControl = windowController.createPullRequestControl
         super.init()
         NotificationCenter.default.addObserver(
             self,
@@ -249,6 +252,13 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         forgePersistentFailureText = persistentFailureText
         isRepositoryStatusBarVisible = statusBarVisible
         applyCurrentStatus()
+    }
+
+    func updateCreatePullRequestControl(_ presentation: ForgeMutationControlPresentation) {
+        createPullRequestControl = presentation
+        if let newPullRequestItem {
+            applyCreatePullRequestControl(to: newPullRequestItem)
+        }
     }
 
     private func installToolbar() {
@@ -369,7 +379,20 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         )
         item.target = windowController
         item.action = descriptor.action
+        if itemIdentifier == Item.newPullRequest {
+            item.autovalidates = false
+            applyCreatePullRequestControl(to: item)
+            if flag {
+                newPullRequestItem = item
+            }
+        }
         return item
+    }
+
+    private func applyCreatePullRequestControl(to item: NSToolbarItem) {
+        let defaultHelp = "Create a Pull Request for the checked-out branch"
+        item.isEnabled = createPullRequestControl.isVisible && createPullRequestControl.isEnabled
+        item.toolTip = createPullRequestControl.helpText ?? defaultHelp
     }
 
     private func viewRemoteItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {

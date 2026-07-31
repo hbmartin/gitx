@@ -361,7 +361,7 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         )
 
         store = try ForgeSQLiteStore(configuration: fixture.configuration)
-        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: fixture.databaseURL), 2)
+        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: fixture.databaseURL), 3)
         try await store?.removeAccount(fixture.firstAccount)
         let migratedAvatar = try await store?.cacheEntry(for: .avatar(avatar), accessedAt: fixture.date(2))
         XCTAssertNotNil(migratedAvatar)
@@ -369,6 +369,68 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
             "SELECT COUNT(*) FROM forge_avatar_cache_owners WHERE length(account_key) = 0",
             at: fixture.databaseURL
         ), 1)
+        await store?.close()
+    }
+
+    func testVersionTwoDurableRowsMigrateWithoutLossAndAcceptUnknownOutcomes() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        var store: ForgeSQLiteStore? = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let attention = try fixture.record(.attention, key: "existing", payload: "state", activity: 1)
+        try await store?.saveDurableRecord(attention)
+        await store?.close()
+        store = nil
+        try RawSQLite.execute(
+            """
+            ALTER TABLE forge_durable_records RENAME TO forge_durable_records_v3;
+            DROP INDEX forge_durable_expiration;
+            CREATE TABLE forge_durable_records (
+                kind INTEGER NOT NULL CHECK(kind IN (1, 2, 3)),
+                account_key BLOB NOT NULL CHECK(length(account_key) > 0),
+                repository_key BLOB NOT NULL CHECK(length(repository_key) > 0),
+                record_key BLOB NOT NULL CHECK(length(record_key) > 0),
+                payload BLOB NOT NULL,
+                last_activity_at REAL NOT NULL,
+                expires_at REAL,
+                CHECK(expires_at IS NULL OR expires_at >= last_activity_at),
+                PRIMARY KEY(kind, account_key, repository_key, record_key)
+            );
+            INSERT INTO forge_durable_records
+                (kind, account_key, repository_key, record_key, payload, last_activity_at, expires_at)
+            SELECT kind, account_key, repository_key, record_key, payload, last_activity_at, expires_at
+            FROM forge_durable_records_v3;
+            DROP TABLE forge_durable_records_v3;
+            CREATE INDEX forge_durable_expiration
+                ON forge_durable_records(expires_at) WHERE expires_at IS NOT NULL;
+            PRAGMA user_version = 2;
+            """,
+            at: fixture.databaseURL
+        )
+
+        store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: fixture.databaseURL), 3)
+        let migratedAttention = try await store?.durableRecord(
+            kind: .attention,
+            accountID: attention.accountID,
+            repository: attention.repository,
+            key: attention.key
+        )
+        XCTAssertEqual(migratedAttention, attention)
+
+        let unknownOutcome = try fixture.record(
+            .unknownMutationOutcome,
+            key: "mutation",
+            payload: "redacted",
+            activity: 2
+        )
+        try await store?.saveDurableRecord(unknownOutcome)
+        let persistedUnknownOutcome = try await store?.durableRecord(
+            kind: .unknownMutationOutcome,
+            accountID: unknownOutcome.accountID,
+            repository: unknownOutcome.repository,
+            key: unknownOutcome.key
+        )
+        XCTAssertEqual(persistedUnknownOutcome, unknownOutcome)
         await store?.close()
     }
 
@@ -696,7 +758,7 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         let store = try ForgeSQLiteStore(configuration: fixture.configuration)
         await store.close()
 
-        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: fixture.databaseURL), 2)
+        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: fixture.databaseURL), 3)
         XCTAssertEqual(try RawSQLite.scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE 'forge_%'",
             at: fixture.databaseURL
@@ -718,7 +780,7 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         let connection = try ForgeSQLiteConnection(url: databaseURL)
         try connection.configure()
         try connection.migrate(to: ForgeSQLiteStore.schemaVersion)
-        XCTAssertThrowsError(try connection.verifySchema(version: 3))
+        XCTAssertThrowsError(try connection.verifySchema(version: ForgeSQLiteStore.schemaVersion + 1))
         try connection.execute("CREATE TABLE unique_values(value INTEGER PRIMARY KEY)")
         try connection.execute("INSERT INTO unique_values VALUES (1)")
         XCTAssertThrowsError(try connection.execute("INSERT INTO unique_values VALUES (1)"))
@@ -764,12 +826,12 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
     func testCurrentVersionWithMissingSchemaIsPreservedForRecovery() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
-        try RawSQLite.execute("CREATE TABLE unrelated(value INTEGER); PRAGMA user_version = 2;", at: fixture.databaseURL)
+        try RawSQLite.execute("CREATE TABLE unrelated(value INTEGER); PRAGMA user_version = 3;", at: fixture.databaseURL)
 
         let copy = try recoveryCopy(from: fixture) {
             _ = try ForgeSQLiteStore(configuration: fixture.configuration)
         }
-        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: copy.url), 2)
+        XCTAssertEqual(try RawSQLite.scalar("PRAGMA user_version", at: copy.url), 3)
         XCTAssertEqual(try RawSQLite.scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='unrelated'",
             at: copy.url

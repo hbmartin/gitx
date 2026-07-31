@@ -50,6 +50,19 @@ nonisolated enum ForgeGitHubAppConfiguration {
         )
     }
 
+    #if DEBUG
+        static func runProductProofConfigurationBoundaries() -> Bool {
+            let missing = configuration(infoDictionary: [:])
+            let whitespace = configuration(infoDictionary: [
+                clientIDInfoKey: "   ", applicationSlugInfoKey: "gitx",
+            ])
+            let placeholder = configuration(infoDictionary: [
+                clientIDInfoKey: "$(GITHUB_APP_CLIENT_ID)", applicationSlugInfoKey: "gitx",
+            ])
+            return missing == nil && whitespace == nil && placeholder == nil
+        }
+    #endif
+
     private static func normalized(_ value: String?) -> String? {
         guard let value else { return nil }
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)

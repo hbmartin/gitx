@@ -20,6 +20,12 @@ final class GitXPerformanceTests: XCTestCase {
         return ProcessInfo.processInfo.systemUptime - start
     }
 
+    private func elapsedThrowing(_ work: () throws -> Void) rethrows -> TimeInterval {
+        let start = ProcessInfo.processInfo.systemUptime
+        try work()
+        return ProcessInfo.processInfo.systemUptime - start
+    }
+
     private func elapsedAsync(_ work: () async throws -> Void) async rethrows -> TimeInterval {
         let start = ProcessInfo.processInfo.systemUptime
         try await work()
@@ -71,6 +77,49 @@ final class GitXPerformanceTests: XCTestCase {
         NSGraphicsContext.restoreGraphicsState()
         let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
         return ForgeAvatarPayload(data: data, mediaType: .png)
+    }
+
+    private func pushFlowFixture() throws -> (
+        intent: ForgePushPullRequestIntent,
+        destination: ForgeDestination
+    ) {
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "gitx", name: "gitx")
+        let contributor = try ForgeRepositoryIdentity(
+            forge: forge,
+            owner: "contributor",
+            name: "gitx"
+        )
+        let accountID = try ForgeAccountID(forge: forge, value: "performance")
+        let baseCommit = try ForgeCommitID(String(repeating: "1", count: 40))
+        let headCommit = try ForgeCommitID(String(repeating: "2", count: 40))
+        let preparation = try RepositoryPullRequestCreationPreparation(
+            accountID: accountID,
+            repository: repository,
+            base: ForgeBranchReference(
+                repository: repository,
+                name: ForgeRefName("main"),
+                commit: baseCommit
+            ),
+            head: ForgeBranchReference(
+                repository: contributor,
+                name: ForgeRefName("feature/performance"),
+                commit: headCommit
+            ),
+            branchAlreadyPushed: false,
+            commitsOldestFirst: [ForgePullRequestCommitSummary(
+                id: headCommit,
+                subject: "Performance fixture"
+            )]
+        )
+        let form = try preparation.initialForms().forms[0]
+        return try (
+            ForgePushPullRequestIntent(
+                form: form,
+                draftIdentity: RepositoryPullRequestDraftPolicy.identity(preparation: preparation)
+            ),
+            .pullRequest(repository, ForgeItemNumber(42))
+        )
     }
 
     private func diffFixture(fileCount: Int, minimumByteCount: Int) -> DiffFixture {
@@ -389,6 +438,66 @@ final class GitXPerformanceTests: XCTestCase {
         }
 
         XCTAssertGreaterThan(classifiedCount, 0)
+    }
+
+    func testPushPullRequestDecisionWorkloadMeetsCachedFeedbackBudget() throws {
+        let fixture = try pushFlowFixture()
+        var terminalState = RepositoryPullRequestPushFlow()
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 20 {
+            try samples.append(elapsedThrowing {
+                for _ in 0 ..< 1000 {
+                    var flow = RepositoryPullRequestPushFlow()
+                    try flow.beginNewPullRequest(
+                        branchAlreadyPushed: false,
+                        intent: fixture.intent
+                    )
+                    try flow.pushBegan(createPullRequestSelected: true)
+                    try flow.pushSucceeded()
+                    try flow.createSheetCancelled()
+                    try flow.beginNewPullRequest(
+                        branchAlreadyPushed: true,
+                        intent: fixture.intent
+                    )
+                    try flow.creationSucceeded(fixture.destination)
+                    terminalState = flow
+                }
+            })
+        }
+
+        attachMeasurements("Push-to-Pull-Request decisions (1,000 journeys)", samples: samples)
+        XCTAssertEqual(terminalState.state, .completed(fixture.destination))
+        XCTAssertLessThanOrEqual(
+            percentile95(samples),
+            PBPerformanceBudgets.cachedWorkingStateFeedbackSeconds
+        )
+    }
+
+    func testPushPullRequestFormUpdateMeetsMainThreadBudget() {
+        let checkbox = RepositoryPushConfirmationPresenter.createPullRequestButton(
+            initiallySelected: true
+        )
+        let alert = RepositoryPushConfirmationPresenter.alert(
+            description: "Push branch 'feature/performance' to default remote",
+            accessoryView: checkbox
+        )
+        let contentView = alert.window.contentView
+        contentView?.layoutSubtreeIfNeeded()
+        var samples: [TimeInterval] = []
+        for index in 0 ..< 40 {
+            samples.append(elapsed {
+                checkbox.state = index.isMultiple(of: 2) ? .on : .off
+                checkbox.sizeToFit()
+                contentView?.needsLayout = true
+                contentView?.layoutSubtreeIfNeeded()
+            })
+        }
+
+        attachMeasurements("Push Pull Request checkbox/form update", samples: samples)
+        XCTAssertLessThanOrEqual(
+            percentile95(samples),
+            PBPerformanceBudgets.mainThreadBlockSeconds
+        )
     }
 
     func testSourceLanguageClassificationPerformance() {

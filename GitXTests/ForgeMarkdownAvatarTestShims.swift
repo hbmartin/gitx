@@ -6,6 +6,9 @@ import Foundation
 /// the production-only pure Swift boundary files compile into the test module
 /// for focused decision-level coverage without duplicating product behavior.
 typealias ApplicationSettings = PBApplicationSettings
+// SwiftLint cannot see this alias's use from the separately compiled production source.
+// swiftlint:disable:next unused_declaration
+typealias DiffCommandOptions = PBDiffCommandOptions
 
 extension PBApplicationSettings {
     static var attentionPollingPreset: ForgeAttentionPollingPreset {

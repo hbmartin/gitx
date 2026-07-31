@@ -151,12 +151,56 @@ nonisolated struct ForgeGitHubPullRequestPreparationContext: Sendable {
     let facts: ForgeRepositoryFacts
 }
 
+/// Narrow adapter boundaries keep the production service independently
+/// verifiable while the concrete GitHub adapters remain the shipping defaults.
+nonisolated protocol ForgeGitHubPullRequestReading: Sendable {
+    func pullRequests(
+        repository: ForgeRepositoryIdentity,
+        pageSize: Int,
+        after: ForgePageCursor?,
+        states: Set<ForgePullRequestState>?
+    ) async throws -> GitHubReadResult<ForgePage<ForgePullRequestSummary>>
+
+    func pullRequestDetails(
+        repository: ForgeRepositoryIdentity,
+        number: ForgeItemNumber,
+        timelinePageSize: Int,
+        timelineAfter: ForgePageCursor?,
+        checkPageSize: Int,
+        checkAfter: ForgePageCursor?
+    ) async throws -> GitHubReadResult<ForgePullRequestDetailsPage>
+}
+
+extension GitHubReadAdapter: ForgeGitHubPullRequestReading {}
+
+nonisolated protocol ForgeGitHubPullRequestMutationExecuting: Sendable {
+    func createPullRequest(
+        accountID: ForgeAccountID,
+        form: ForgePullRequestCreationForm,
+        authorization: GitHubMutationAuthorization
+    ) async throws -> GitHubMutationResult<GitHubPullRequestCreationOutcome>
+
+    func editPullRequest(
+        accountID: ForgeAccountID,
+        edit: ForgePullRequestEdit,
+        authorization: GitHubMutationAuthorization
+    ) async throws -> GitHubMutationResult<GitHubPullRequestMutationValue>
+
+    func syncFork(
+        accountID: ForgeAccountID,
+        plan: ForgeSyncForkPlan,
+        authorization: GitHubMutationAuthorization
+    ) async throws -> GitHubMutationResult<GitHubForkSyncReceipt>
+}
+
+extension GitHubMutationAdapter: ForgeGitHubPullRequestMutationExecuting {}
+
 nonisolated struct ForgeGitHubPullRequestMutationContext: Sendable {
     let account: ForgeAccount
     let credential: ForgeCredentialReference
     let authorization: GitHubMutationAuthorization
-    let readAdapter: GitHubReadAdapter
-    let mutationAdapter: GitHubMutationAdapter
+    let readAdapter: any ForgeGitHubPullRequestReading
+    let mutationAdapter: any ForgeGitHubPullRequestMutationExecuting
 }
 
 nonisolated protocol ForgeGitHubPullRequestDependencyProviding: Sendable {
@@ -164,6 +208,12 @@ nonisolated protocol ForgeGitHubPullRequestDependencyProviding: Sendable {
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity
     ) async throws -> ForgeGitHubPullRequestPreparationContext
+
+    func operationCapabilities(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operations: Set<ForgeOperation>
+    ) async throws -> [ForgeOperation: ForgeOperationCapability]
 
     func mutationContext(
         accountID: ForgeAccountID,
@@ -190,11 +240,17 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
 {
     private let loader: ForgeApplicationServiceLoader
     private let now: @Sendable () -> Date
+    private let sessionConfiguration: @Sendable () -> URLSessionConfiguration
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "GitHubPullRequestComposition")
 
-    init(loader: ForgeApplicationServiceLoader, now: @escaping @Sendable () -> Date = { Date() }) {
+    init(
+        loader: ForgeApplicationServiceLoader,
+        now: @escaping @Sendable () -> Date = { Date() },
+        sessionConfiguration: @escaping @Sendable () -> URLSessionConfiguration = { .ephemeral }
+    ) {
         self.loader = loader
         self.now = now
+        self.sessionConfiguration = sessionConfiguration
     }
 
     func preparationContext(
@@ -205,11 +261,59 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
         return ForgeGitHubPullRequestPreparationContext(account: resolved.account, facts: resolved.facts)
     }
 
+    func operationCapabilities(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operations: Set<ForgeOperation>
+    ) async throws -> [ForgeOperation: ForgeOperationCapability] {
+        try await evaluateOperationCapabilities(
+            accountID: accountID,
+            repository: repository,
+            operations: operations
+        ).capabilities
+    }
+
     func mutationContext(
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity,
         operation: ForgeOperation
     ) async throws -> ForgeGitHubPullRequestMutationContext {
+        let evaluation = try await evaluateOperationCapabilities(
+            accountID: accountID,
+            repository: repository,
+            operations: [operation]
+        )
+        guard let capability = evaluation.capabilities[operation] else {
+            throw ForgeGitHubPullRequestCompositionError.capabilityUnavailable(operation)
+        }
+        let key = ForgeCapabilityKey(
+            credential: evaluation.resolution.account.currentCredential.reference,
+            repository: repository,
+            operation: operation
+        )
+        let authorization = try Self.authorization(
+            key: key,
+            capability: capability,
+            operationWasConfirmed: true
+        )
+        logger.debug("Authorized exact-account GitHub mutation operation=\(operation.rawValue, privacy: .public)")
+        return try ForgeGitHubPullRequestMutationContext(
+            account: evaluation.resolution.account,
+            credential: evaluation.resolution.account.currentCredential.reference,
+            authorization: authorization,
+            readAdapter: evaluation.resolution.readAdapter,
+            mutationAdapter: evaluation.services.githubReadAdapterFactory.makeMutationAdapter(
+                for: evaluation.resolution.account.currentCredential.reference,
+                sessionGate: evaluation.services.githubMutationState.sessionGate
+            )
+        )
+    }
+
+    private func evaluateOperationCapabilities(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operations: Set<ForgeOperation>
+    ) async throws -> CapabilityEvaluation {
         let services = try await loader.services()
         guard let currentEnvelope = try await services.accountStore.credential(for: accountID),
               currentEnvelope.account.id == accountID,
@@ -244,7 +348,7 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
         case let .rateLimited(until):
             throw ForgeGitHubPullRequestCompositionError.rateLimited(until: until)
         }
-        let permissionEvidence = try await permissionEvidence(
+        let permissionResolution = try await permissionEvidence(
             services: services,
             account: resolved.account,
             repository: repository,
@@ -254,37 +358,44 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
         guard let accessEvidence = resolved.result.accessEvidence else {
             throw ForgeGitHubPullRequestCompositionError.authorizationEvidenceUnavailable
         }
-        let capability = ForgeCapabilityEvaluator.capability(
-            account: resolved.account,
-            repository: repository,
-            operation: operation,
-            operationSupported: true,
-            credentialAvailability: .available,
-            now: now(),
-            permissionEvidence: permissionEvidence,
-            accessEvidence: accessEvidence,
-            promotions: await services.githubMutationState.promotionLedger(for: resolved.account)
-        )
-        let key = ForgeCapabilityKey(
-            credential: resolved.account.currentCredential.reference,
-            repository: repository,
-            operation: operation
-        )
-        let authorization = try Self.authorization(
-            key: key,
-            capability: capability,
-            operationWasConfirmed: true
-        )
-        logger.debug("Authorized exact-account GitHub mutation operation=\(operation.rawValue, privacy: .public)")
-        return try ForgeGitHubPullRequestMutationContext(
-            account: resolved.account,
-            credential: resolved.account.currentCredential.reference,
-            authorization: authorization,
+        let evaluationDate = now()
+        let promotions = await services.githubMutationState.promotionLedger(for: resolved.account)
+        guard let currentEnvelope = try await services.accountStore.credential(for: accountID),
+              currentEnvelope.account.id == resolved.account.id,
+              currentEnvelope.account.currentCredential.reference == resolved.account.currentCredential.reference,
+              currentEnvelope.authorizationEvidence == permissionResolution.storedEvidence
+        else {
+            logger.notice("Rejected GitHub capability result because its exact Credential or evidence is no longer current")
+            throw ForgeGitHubPullRequestCompositionError.currentCredentialRequired
+        }
+        let currentResolution = Resolution(
+            account: currentEnvelope.account,
+            facts: resolved.facts,
+            result: resolved.result,
             readAdapter: resolved.readAdapter,
-            mutationAdapter: services.githubReadAdapterFactory.makeMutationAdapter(
-                for: resolved.account.currentCredential.reference,
-                sessionGate: services.githubMutationState.sessionGate
+            authorizationEvidence: currentEnvelope.authorizationEvidence
+        )
+        let capabilities = Dictionary(uniqueKeysWithValues: operations.map { operation in
+            (
+                operation,
+                ForgeCapabilityEvaluator.capability(
+                    account: currentEnvelope.account,
+                    repository: repository,
+                    operation: operation,
+                    operationSupported: true,
+                    credentialAvailability: .available,
+                    now: evaluationDate,
+                    permissionEvidence: permissionResolution.evidence,
+                    accessEvidence: accessEvidence,
+                    promotions: promotions
+                )
             )
+        })
+        logger.debug("Evaluated fresh exact-account GitHub capabilities count=\(capabilities.count, privacy: .public)")
+        return CapabilityEvaluation(
+            services: services,
+            resolution: currentResolution,
+            capabilities: capabilities
         )
     }
 
@@ -331,6 +442,17 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
         let authorizationEvidence: ForgeStoredCredentialAuthorizationEvidence?
     }
 
+    private struct CapabilityEvaluation {
+        let services: ForgeApplicationServices
+        let resolution: Resolution
+        let capabilities: [ForgeOperation: ForgeOperationCapability]
+    }
+
+    private struct PermissionResolution {
+        let evidence: ForgePermissionEvidence
+        let storedEvidence: ForgeStoredCredentialAuthorizationEvidence
+    }
+
     private func resolve(
         accountID: ForgeAccountID,
         repository: ForgeRepositoryIdentity
@@ -362,7 +484,7 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
         }
         let adapter = try services.githubReadAdapterFactory.makeAdapter(
             for: account.currentCredential.reference,
-            sessionConfiguration: .ephemeral
+            sessionConfiguration: sessionConfiguration()
         )
         let result = try await adapter.repositoryFacts(repository: repository)
         guard result.ownership.credential == account.currentCredential.reference,
@@ -376,12 +498,19 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
             credential: account.currentCredential.reference,
             now: now()
         )
+        guard let currentEnvelope = try await services.accountStore.credential(for: accountID),
+              currentEnvelope.account.id == account.id,
+              currentEnvelope.account.currentCredential.reference == account.currentCredential.reference
+        else {
+            logger.notice("Rejected GitHub repository facts because their exact Credential is no longer current")
+            throw ForgeGitHubPullRequestCompositionError.currentCredentialRequired
+        }
         return Resolution(
-            account: account,
+            account: currentEnvelope.account,
             facts: result.value,
             result: result,
             readAdapter: adapter,
-            authorizationEvidence: envelope.authorizationEvidence
+            authorizationEvidence: currentEnvelope.authorizationEvidence
         )
     }
 
@@ -391,7 +520,7 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
         repository: ForgeRepositoryIdentity,
         facts: ForgeRepositoryFacts,
         storedEvidence: ForgeStoredCredentialAuthorizationEvidence?
-    ) async throws -> ForgePermissionEvidence {
+    ) async throws -> PermissionResolution {
         let credential = account.currentCredential
         let effectiveEvidence: ForgeStoredCredentialAuthorizationEvidence
         switch (credential.source, storedEvidence) {
@@ -454,11 +583,14 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
                 )
             }
         }
-        return try ForgePermissionEvidence(
-            credential: credential.reference,
-            repository: repository,
-            freshness: .current,
-            grants: grants
+        return try PermissionResolution(
+            evidence: ForgePermissionEvidence(
+                credential: credential.reference,
+                repository: repository,
+                freshness: .current,
+                grants: grants
+            ),
+            storedEvidence: effectiveEvidence
         )
     }
 
@@ -572,16 +704,19 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
     private let binding: ForgeRepositoryBinding
     private let dependencies: any ForgeGitHubPullRequestDependencyProviding
     private let localPreparation: any RepositoryPullRequestLocalPreparationProviding
+    private let mutationLifecycle: (any ForgeMutationLifecycleCoordinating)?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestApplicationService")
 
     init(
         binding: ForgeRepositoryBinding,
         dependencies: any ForgeGitHubPullRequestDependencyProviding,
-        localPreparation: any RepositoryPullRequestLocalPreparationProviding
+        localPreparation: any RepositoryPullRequestLocalPreparationProviding,
+        mutationLifecycle: (any ForgeMutationLifecycleCoordinating)? = nil
     ) {
         self.binding = binding
         self.dependencies = dependencies
         self.localPreparation = localPreparation
+        self.mutationLifecycle = mutationLifecycle
     }
 
     func prepareCreation(
@@ -590,10 +725,22 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
         localHead: ForgeCommitID
     ) async throws -> RepositoryPullRequestCreationPreparation {
         let accountID = try exactAccountID(repository: repository)
+        let capabilities = try await dependencies.operationCapabilities(
+            accountID: accountID,
+            repository: repository,
+            operations: [.createPullRequest]
+        )
+        guard let capability = capabilities[.createPullRequest] else {
+            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
+        }
+        if case .unavailable = capability {
+            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
+        }
         let context = try await dependencies.preparationContext(
             accountID: accountID,
             repository: repository
         )
+        try Task.checkCancellation()
         guard case let .available(defaultBranch) = context.facts.defaultBranch else {
             throw RepositoryPullRequestServiceError.nativeCreationUnavailable
         }
@@ -603,6 +750,19 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
             localBranch: localBranch,
             localHead: localHead,
             defaultBranch: defaultBranch
+        )
+    }
+
+    func capabilities(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        operations: Set<ForgeOperation>
+    ) async throws -> [ForgeOperation: ForgeOperationCapability] {
+        try validate(accountID: accountID, repository: repository)
+        return try await dependencies.operationCapabilities(
+            accountID: accountID,
+            repository: repository,
+            operations: operations
         )
     }
 
@@ -616,6 +776,17 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
             repository: form.repository,
             operation: .createPullRequest
         )
+        let registration = try mutationLifecycle?.register(
+            accountID: accountID,
+            repository: form.repository,
+            operation: .createPullRequest,
+            startedAt: Date()
+        )
+        defer {
+            if let registration {
+                _ = mutationLifecycle?.finish(registration)
+            }
+        }
         do {
             let result = try await context.mutationAdapter.createPullRequest(
                 accountID: accountID,
@@ -646,6 +817,17 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
             repository: edit.repository,
             operation: .editPullRequest
         )
+        let registration = try mutationLifecycle?.register(
+            accountID: accountID,
+            repository: edit.repository,
+            operation: .editPullRequest,
+            startedAt: Date()
+        )
+        defer {
+            if let registration {
+                _ = mutationLifecycle?.finish(registration)
+            }
+        }
         do {
             let result = try await context.mutationAdapter.editPullRequest(
                 accountID: accountID,
@@ -676,6 +858,17 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
             repository: plan.fork,
             operation: .syncFork
         )
+        let registration = try mutationLifecycle?.register(
+            accountID: accountID,
+            repository: plan.fork,
+            operation: .syncFork,
+            startedAt: Date()
+        )
+        defer {
+            if let registration {
+                _ = mutationLifecycle?.finish(registration)
+            }
+        }
         do {
             let result = try await context.mutationAdapter.syncFork(
                 accountID: accountID,
@@ -718,13 +911,6 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
         error: GitHubMutationError,
         context: ForgeGitHubPullRequestMutationContext
     ) async throws -> RepositoryPullRequestCreationOutcome? {
-        let canReconcile: Bool
-        if case .authoritative = error {
-            canReconcile = true
-        } else {
-            canReconcile = Self.isUnknown(error)
-        }
-        guard canReconcile else { return nil }
         let key = try ForgePullRequestComparisonKey(
             repository: form.repository,
             baseRepository: form.base.repository,
@@ -732,15 +918,39 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
             headRepository: form.head.repository,
             head: form.head.name
         )
+        if case let .authoritative(problems, _) = error {
+            let message = problems.first?.authoritativeMessage ?? error.localizedDescription
+            let rejection = try ForgeCreatePullRequestAuthoritativeRejection(
+                comparison: key,
+                message: message
+            )
+            let refreshed: [ForgePullRequestSummary]
+            do {
+                refreshed = try await openPullRequests(
+                    repository: form.repository,
+                    adapter: context.readAdapter
+                )
+            } catch {
+                logger.error("Could not refresh Pull Requests after authoritative create rejection; preserving draft")
+                throw ForgeGitHubPullRequestCompositionError.authoritative(message)
+            }
+            switch ForgeCreatePullRequestReconciliationPolicy.decision(
+                rejection: rejection,
+                refreshedPullRequests: refreshed
+            ) {
+            case let .openExisting(summary):
+                logger.notice("Authoritative create reconciliation found the exact open Pull Request")
+                return .existing(.pullRequest(summary.repository, summary.number))
+            case let .preserveDraft(authoritativeMessage):
+                throw ForgeGitHubPullRequestCompositionError.authoritative(authoritativeMessage)
+            }
+        }
+
+        guard Self.isUnknown(error) else { return nil }
         let refreshed = try await openPullRequests(repository: form.repository, adapter: context.readAdapter)
         if case let .openExisting(summary) = ForgeDuplicatePullRequestPolicy.decision(for: key, among: refreshed) {
-            logger.notice("Authoritative create reconciliation found the exact open Pull Request")
+            logger.notice("Unknown create outcome reconciled to the exact open Pull Request")
             return .existing(.pullRequest(summary.repository, summary.number))
-        }
-        if case let .authoritative(problems, _) = error {
-            throw ForgeGitHubPullRequestCompositionError.authoritative(
-                problems.first?.authoritativeMessage ?? error.localizedDescription
-            )
         }
         return nil
     }
@@ -751,7 +961,11 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
     ) async throws -> RepositoryPullRequestEditOutcome? {
         let result = try await context.readAdapter.pullRequestDetails(
             repository: edit.repository,
-            number: edit.number
+            number: edit.number,
+            timelinePageSize: 50,
+            timelineAfter: nil,
+            checkPageSize: 50,
+            checkAfter: nil
         )
         let details = result.value.details
         guard details.summary.title == edit.title,
@@ -774,7 +988,7 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
 
     private func openPullRequests(
         repository: ForgeRepositoryIdentity,
-        adapter: GitHubReadAdapter
+        adapter: any ForgeGitHubPullRequestReading
     ) async throws -> [ForgePullRequestSummary] {
         var items: [ForgePullRequestSummary] = []
         var cursor: ForgePageCursor?
@@ -797,7 +1011,14 @@ actor RepositoryPullRequestProductionService: RepositoryPullRequestMutationServi
     ) async {
         guard case let .pullRequest(repository, number) = destination else { return }
         do {
-            _ = try await context.readAdapter.pullRequestDetails(repository: repository, number: number)
+            _ = try await context.readAdapter.pullRequestDetails(
+                repository: repository,
+                number: number,
+                timelinePageSize: 50,
+                timelineAfter: nil,
+                checkPageSize: 50,
+                checkAfter: nil
+            )
             logger.debug("Refreshed Pull Request authoritatively after mutation success")
         } catch {
             logger.error("Post-mutation Pull Request reconciliation refresh failed")

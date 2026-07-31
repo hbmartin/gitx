@@ -1269,6 +1269,8 @@ extension GitHubMutationAdapter {
         next.resume(returning: nextGeneration)
     }
 
+    // Exercised by ForgeKit package tests, which the app-target analyzer log does not include.
+    // swiftlint:disable:next unused_declaration
     func hasQueuedResolutionTransition(for threadID: ForgeObjectID) -> Bool {
         !(resolutionWaiters[threadID] ?? []).isEmpty
     }

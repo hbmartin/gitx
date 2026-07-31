@@ -602,8 +602,16 @@ open class PBWebHistoryController: PBWebController, PBNativeContentViewDelegate 
     }
 
     override open nonisolated func preferencesChanged() {
-        // swift6-safety-justification: PBWebController delivers preferences changes through the main-thread AppKit notification center.
-        MainActor.assumeIsolated {
+        if Thread.isMainThread {
+            // swift6-safety-justification: The explicit main-thread check proves this synchronous legacy callback is executing on MainActor's executor.
+            MainActor.assumeIsolated {
+                changeContent(to: displayedCommits)
+            }
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
             changeContent(to: displayedCommits)
         }
     }

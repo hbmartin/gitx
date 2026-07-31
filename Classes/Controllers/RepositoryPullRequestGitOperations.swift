@@ -4,15 +4,7 @@ import OSLog // swiftlint:disable:this unused_import
 
 private nonisolated enum RepositoryPullRequestDiffCommandOptions {
     static var arguments: [String] {
-        #if GITX_APP_TARGET
-            PBDiffCommandOptions.arguments
-        #else
-            // The app-hosted test target compiles this workflow source directly,
-            // without the preferences-window implementation that owns the
-            // Objective-C-compatible options facade. Tests that exercise the
-            // command plan only need stable, valid defaults.
-            ["--diff-algorithm=myers", "--unified=3"]
-        #endif
+        DiffCommandOptions.arguments
     }
 }
 
@@ -55,9 +47,9 @@ private final nonisolated class RepositoryPullRequestDiffWorker: @unchecked Send
             throw ForgePullRequestWorkflowError.mismatchedRepository
         }
         return try await withCheckedThrowingContinuation { continuation in
-            queue.addOperation { [repository] in
+            queue.addOperation { [self] in
                 do {
-                    let mergeBase = try repository.outputOfTask(withArguments: [
+                    let mergeBase = try self.repository.outputOfTask(withArguments: [
                         "merge-base", base.commit.value, head.commit.value,
                     ]).trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !mergeBase.isEmpty else {
@@ -68,7 +60,7 @@ private final nonisolated class RepositoryPullRequestDiffWorker: @unchecked Send
                     arguments.append(contentsOf: [
                         "--find-renames", "--no-ext-diff", mergeBase, head.commit.value,
                     ])
-                    let patch = try repository.outputOfTask(withArguments: arguments)
+                    let patch = try self.repository.outputOfTask(withArguments: arguments)
                     continuation.resume(returning: RepositoryLocalPullRequestDiff(
                         title: "Changes from \(base.name.value) to \(head.name.value)",
                         patch: patch,
@@ -182,9 +174,9 @@ final nonisolated class RepositoryPullRequestCheckoutPlanner: @unchecked Sendabl
 
     func plan(for pullRequest: ForgePullRequestSummary) async throws -> ForgePullRequestCheckoutPlan {
         try await withCheckedThrowingContinuation { continuation in
-            queue.addOperation { [repository] in
+            queue.addOperation { [self] in
                 do {
-                    let status = try repository.outputOfTask(withArguments: [
+                    let status = try self.repository.outputOfTask(withArguments: [
                         "status", "--porcelain=v2", "--untracked-files=normal",
                     ]).trimmingCharacters(in: .whitespacesAndNewlines)
                     let workingState = ForgeLocalWorkingState(
@@ -194,17 +186,17 @@ final nonisolated class RepositoryPullRequestCheckoutPlanner: @unchecked Sendabl
                         conflictCount: 0,
                         operationName: nil
                     )
-                    let remoteNames = try repository.outputOfTask(withArguments: ["remote"])
+                    let remoteNames = try self.repository.outputOfTask(withArguments: ["remote"])
                         .components(separatedBy: .newlines)
                         .filter { !$0.isEmpty }
                     let remotes = try remoteNames.compactMap { name -> ForgeGitRemote? in
-                        let rawURL = try repository.outputOfTask(withArguments: ["remote", "get-url", name])
+                        let rawURL = try self.repository.outputOfTask(withArguments: ["remote", "get-url", name])
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         guard let normalizedURL = Self.normalizedRemoteURL(rawURL) else { return nil }
                         let identity = try? ForgeRemoteParser.parse(rawURL).repository
                         return try ForgeGitRemote(name: name, repository: identity, fetchURL: normalizedURL)
                     }
-                    let branches = try Set(repository.outputOfTask(withArguments: [
+                    let branches = try Set(self.repository.outputOfTask(withArguments: [
                         "for-each-ref", "--format=%(refname:short)", "refs/heads",
                     ]).components(separatedBy: .newlines).filter { !$0.isEmpty }.map(ForgeRefName.init))
                     guard case let .available(head) = pullRequest.head else {
@@ -440,6 +432,34 @@ nonisolated struct RepositoryForgeCloneExecutor: Sendable {
 
 // MARK: - Create Pull Request preparation
 
+// swift6-safety-justification: the lock linearizes parent cancellation with detached task installation.
+private final nonisolated class RepositoryPullRequestPreparationTaskOwnership: @unchecked Sendable {
+    typealias PreparationTask = Task<RepositoryPullRequestCreationPreparation, Error>
+
+    private let lock = NSLock()
+    private var task: PreparationTask?
+    private var cancelled = false
+
+    func install(_ task: PreparationTask) {
+        let shouldCancel = lock.withLock { () -> Bool in
+            guard !cancelled else { return true }
+            self.task = task
+            return false
+        }
+        if shouldCancel {
+            task.cancel()
+        }
+    }
+
+    func cancel() {
+        let task = lock.withLock { () -> PreparationTask? in
+            cancelled = true
+            return self.task
+        }
+        task?.cancel()
+    }
+}
+
 /// Builds the provider-neutral Create Pull Request input exclusively from the
 /// exact bound remotes and local Git objects. Repository templates and commit
 /// heuristics therefore remain available offline after the live account and
@@ -464,15 +484,25 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
         localHead: ForgeCommitID,
         defaultBranch: ForgeRefName
     ) async throws -> RepositoryPullRequestCreationPreparation {
-        try await Task.detached(priority: .userInitiated) {
-            try prepare(
-                accountID: accountID,
-                binding: binding,
-                localBranch: localBranch,
-                localHead: localHead,
-                defaultBranch: defaultBranch
-            )
-        }.value
+        let ownership = RepositoryPullRequestPreparationTaskOwnership()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            let task = Task.detached(priority: .userInitiated) {
+                try prepare(
+                    accountID: accountID,
+                    binding: binding,
+                    localBranch: localBranch,
+                    localHead: localHead,
+                    defaultBranch: defaultBranch
+                )
+            }
+            ownership.install(task)
+            let preparation = try await task.value
+            try Task.checkCancellation()
+            return preparation
+        } onCancel: {
+            ownership.cancel()
+        }
     }
 
     private func prepare(
@@ -482,22 +512,39 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
         localHead: ForgeCommitID,
         defaultBranch: ForgeRefName
     ) throws -> RepositoryPullRequestCreationPreparation {
-        let upstream = (try? runner.run([
+        let upstream = try optionalRun([
             "for-each-ref", "--format=%(upstream:short)", "refs/heads/\(localBranch.value)",
-        ]))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        ])?.trimmingCharacters(in: .whitespacesAndNewlines)
         let upstreamParts = upstream?.split(separator: "/", maxSplits: 1).map(String.init) ?? []
-        let headRemoteName = upstreamParts.count == 2 ? upstreamParts[0] : binding.localRemoteName
-        let headRemoteURL = try runner.run(["remote", "get-url", headRemoteName])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let headRepository = try ForgeRemoteParser.parse(headRemoteURL).repository
+        let trackingRemoteName = upstreamParts.count == 2 ? upstreamParts[0] : nil
+        let branchPushRemoteName = try optionalConfigurationValue(
+            for: "branch.\(localBranch.value).pushRemote"
+        )
+        let defaultPushRemoteName = try optionalConfigurationValue(for: "remote.pushDefault")
+        guard let headRemoteName = RepositoryPullRequestPushRemotePolicy.effectiveRemoteName(
+            requestedRemoteName: nil,
+            branchPushRemoteName: branchPushRemoteName,
+            defaultPushRemoteName: defaultPushRemoteName,
+            trackingRemoteName: trackingRemoteName,
+            boundRemoteName: binding.localRemoteName
+        ) else {
+            throw RepositoryPullRequestServiceError.repositoryUnavailable
+        }
+        let pushURLs = try run(
+            RepositoryPullRequestPushRemotePolicy.pushURLArguments(remoteName: headRemoteName)
+        )
+        guard let headRepository = RepositoryPullRequestPushRemotePolicy.pushRepository(rawURLs: pushURLs)
+        else {
+            throw ForgePullRequestWorkflowError.invalidRemoteURL
+        }
         guard headRepository.forge == binding.primaryRepository.forge else {
             throw ForgePullRequestWorkflowError.mismatchedForge
         }
 
         let remoteHeadRef = "refs/remotes/\(headRemoteName)/\(localBranch.value)"
-        let pushedCommit = try? ForgeCommitID(runner.run([
+        let pushedCommit = try optionalRun([
             "rev-parse", "--verify", remoteHeadRef,
-        ]).trimmingCharacters(in: .whitespacesAndNewlines))
+        ]).flatMap { try? ForgeCommitID($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
         let branchAlreadyPushed = pushedCommit == localHead
 
         let baseRemoteRef = "refs/remotes/\(binding.localRemoteName)/\(defaultBranch.value)"
@@ -527,7 +574,7 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
 
     private func resolveCommit(candidates: [String]) throws -> ForgeCommitID {
         for candidate in candidates {
-            if let value = try? runner.run(["rev-parse", "--verify", candidate])
+            if let value = try optionalRun(["rev-parse", "--verify", candidate])?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                 let commit = try? ForgeCommitID(value)
             {
@@ -537,7 +584,7 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
         throw RepositoryPullRequestServiceError.invalidLocalHead
     }
 
-    private func templates(at commit: ForgeCommitID) -> [ForgePullRequestTemplate] {
+    private func templates(at commit: ForgeCommitID) throws -> [ForgePullRequestTemplate] {
         let roots = [
             ".github/PULL_REQUEST_TEMPLATE.md",
             "docs/PULL_REQUEST_TEMPLATE.md",
@@ -546,10 +593,11 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
             "docs/PULL_REQUEST_TEMPLATE",
             "PULL_REQUEST_TEMPLATE",
         ]
-        guard let names = try? runner.run([
+        guard let names = try optionalRun([
             "ls-tree", "-r", "--name-only", commit.value, "--",
         ]) else { return [] }
-        return names.components(separatedBy: .newlines).compactMap { path -> ForgePullRequestTemplate? in
+        var templates: [ForgePullRequestTemplate] = []
+        for path in names.components(separatedBy: .newlines) {
             let lowercased = path.lowercased()
             guard !path.isEmpty,
                   lowercased.hasSuffix(".md"),
@@ -557,17 +605,19 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
                       lowercased == $0.lowercased() || lowercased.hasPrefix($0.lowercased() + "/")
                   }),
                   let filePath = try? ForgeFilePath(path),
-                  let markdown = try? runner.run(["show", "\(commit.value):\(path)"])
-            else { return nil }
-            return try? ForgePullRequestTemplate(path: filePath, bodyMarkdown: markdown)
+                  let markdown = try optionalRun(["show", "\(commit.value):\(path)"]),
+                  let template = try? ForgePullRequestTemplate(path: filePath, bodyMarkdown: markdown)
+            else { continue }
+            templates.append(template)
         }
+        return templates
     }
 
     private func commitSummaries(
         base: ForgeCommitID,
         head: ForgeCommitID
-    ) -> [ForgePullRequestCommitSummary] {
-        guard let output = try? runner.run([
+    ) throws -> [ForgePullRequestCommitSummary] {
+        guard let output = try optionalRun([
             "log", "--reverse", "--format=%H%x00%s%x00%b%x00", "\(base.value)..\(head.value)",
         ]) else { return [] }
         let values = output.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
@@ -580,5 +630,28 @@ nonisolated struct RepositoryPullRequestLocalPreparationSource:
                 body: values[index + 2].trimmingCharacters(in: .newlines)
             )
         }
+    }
+
+    private func optionalConfigurationValue(for key: String) throws -> String? {
+        let value = try optionalRun(["config", "--get", key])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value?.isEmpty == false ? value : nil
+    }
+
+    private func optionalRun(_ arguments: [String]) throws -> String? {
+        do {
+            return try run(arguments)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
+    }
+
+    private func run(_ arguments: [String]) throws -> String {
+        try Task.checkCancellation()
+        let output = try runner.run(arguments)
+        try Task.checkCancellation()
+        return output
     }
 }

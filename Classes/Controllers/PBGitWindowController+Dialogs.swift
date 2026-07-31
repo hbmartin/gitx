@@ -48,6 +48,7 @@ enum WindowDialogPresenter {
         _ alert: NSAlert,
         suppressionIdentifier identifier: String?,
         for windowController: PBGitWindowController,
+        onCancel: (() -> Void)? = nil,
         action actionBlock: @escaping () -> Void
     ) -> Bool {
         var didAct = true
@@ -56,10 +57,13 @@ enum WindowDialogPresenter {
             return didAct
         }
         alert.showsSuppressionButton = true
-        guard let window = windowController.window else { return didAct }
+        guard let window = windowController.window else {
+            return WindowDialogPresentationPolicy.cancelWithoutPresentation(onCancel: onCancel)
+        }
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else {
                 didAct = false
+                onCancel?()
                 return
             }
             if let identifier, alert.suppressionButton?.state == .on {
