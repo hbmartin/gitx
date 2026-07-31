@@ -197,7 +197,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             repository: repository,
             scenario: "deep-link-no-checkout",
             additionalEnvironment: [
-                "GITX_M2_DEEP_LINK": "x-gitx://github.com/gitx/gitx/pull/42",
+                "GITX_M2_DEEP_LINK": "x-gitx://github.com/gitx/gitx/pull-request/42",
             ]
         )
 
@@ -217,6 +217,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         let app = try launch(repository: repository, scenario: "staging-create")
 
         let createPullRequest = app.checkBoxes["GitX.Staging.CreatePullRequestAfterPush"]
+        try openStagingView(in: app, waitingFor: createPullRequest)
         try requireHittable(createPullRequest, timeout: 15)
         XCTAssertFalse(isChecked(createPullRequest))
         try click(createPullRequest, timeout: 5)
@@ -266,6 +267,19 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         app.launch()
         try requireHarnessState("Ready.\(scenario)", in: app, timeout: 15)
         return app
+    }
+
+    private func openStagingView(in app: XCUIApplication, waitingFor element: XCUIElement) throws {
+        if element.waitForExistence(timeout: 2) {
+            return
+        }
+        app.activate()
+        app.windows.firstMatch.typeKey("2", modifierFlags: .command)
+        if element.waitForExistence(timeout: 3) {
+            return
+        }
+        app.activate()
+        try click(app.buttons["Uncommitted Changes"], timeout: 5)
     }
 
     private func makePushFixture() throws -> (repository: URL, remote: URL, expectedHead: String) {

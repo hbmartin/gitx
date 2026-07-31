@@ -532,7 +532,10 @@ import OSLog // swiftlint:disable:this unused_import
                 onCheckoutPullRequest: onCheckout
             )
             let root = NSView()
+            root.setAccessibilityElement(true)
+            root.setAccessibilityRole(.group)
             root.setAccessibilityIdentifier("GitX.M2.NativePullRequestDestination")
+            root.setAccessibilityLabel("Native Pull Request destination")
             controller.addChild(readController)
             let readView = readController.view
             readView.translatesAutoresizingMaskIntoConstraints = false

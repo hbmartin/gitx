@@ -261,8 +261,16 @@
 	[self waitForExpectations:@[ readyExpectation ] timeout:15];
 	// Exercise the remapped entry point: Cmd-2 selects the Uncommitted
 	// Changes row, which swaps the Details tab to the staging pane.
-	if (!stagingTable.exists)
+	if (!stagingTable.exists) {
+		[self.app activate];
 		[self.app.windows.firstMatch typeKey:@"2" modifierFlags:XCUIKeyModifierCommand];
+	}
+	if (![stagingTable waitForExistenceWithTimeout:3]) {
+		[self.app activate];
+		XCTAssertTrue([workingStateToolbarButton waitForExistenceWithTimeout:5],
+					  @"Staging should expose the Uncommitted Changes toolbar button as a fallback");
+		[workingStateToolbarButton click];
+	}
 	XCTAssertTrue([stagingTable waitForExistenceWithTimeout:10],
 				  @"The %@ list should be ready before using the staging pane", tableIdentifier);
 }
@@ -377,9 +385,12 @@
 	}
 	XCTAssertTrue([stagedFile waitForExistenceWithTimeout:15]);
 	XCTAssertTrue([unstagedTable.staticTexts[@"partial.txt"] waitForExistenceWithTimeout:10]);
-	[stagedFile click];
 	XCUIElement *diff = self.app.textViews.firstMatch;
 	NSPredicate *indexedContent = [NSPredicate predicateWithFormat:@"value CONTAINS 'staged line' AND NOT value CONTAINS 'unstaged line'"];
+	XCTNSPredicateExpectation *initialSelection = [[XCTNSPredicateExpectation alloc] initWithPredicate:indexedContent object:diff];
+	if ([XCTWaiter waitForExpectations:@[ initialSelection ] timeout:2] != XCTWaiterResultCompleted) {
+		[stagedFile click];
+	}
 	XCTNSPredicateExpectation *diffExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:indexedContent object:diff];
 	[self waitForExpectations:@[ diffExpectation ] timeout:15];
 	[self saveWindowScreenshotNamed:@"partially-staged-addition-index-diff"];
