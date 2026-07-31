@@ -1296,11 +1296,9 @@ final class RepositoryPullRequestReviewSession {
         try await saveInlineDraft(publication: publication, context: context)
     }
 
-    // The review overlay wires this accepted explicit-discard product seam in
-    // the next behavior commit; retain it while analyzer debt is removed.
-    // swiftlint:disable:next unused_declaration
     func discardInlineDraft(context: ForgeReviewContext, anchor: ForgeReviewAnchor) async throws {
         try await drafts.delete(identity: inlineDraftIdentity(context: context, anchor: anchor))
+        logger.notice("Explicitly discarded one head-bound inline Forge Draft")
     }
 
     func loadReplyDraft(threadID: ForgeObjectID) async throws -> String {
@@ -1313,6 +1311,11 @@ final class RepositoryPullRequestReviewSession {
             content: ForgeDraftContent(body: bodyMarkdown),
             at: now()
         )
+    }
+
+    func discardReplyDraft(threadID: ForgeObjectID) async throws {
+        try await drafts.delete(identity: replyDraftIdentity(threadID: threadID))
+        logger.notice("Explicitly discarded one review-thread reply Forge Draft")
     }
 
     func loadFormalReviewDraft(displayedHead: ForgeCommitID) async throws -> String {
@@ -1337,13 +1340,11 @@ final class RepositoryPullRequestReviewSession {
         )
     }
 
-    // The review overlay wires this accepted explicit-discard product seam in
-    // the next behavior commit; retain it while analyzer debt is removed.
-    // swiftlint:disable:next unused_declaration
     func discardFormalReviewDraft(displayedHead: ForgeCommitID) async throws {
         try requireActiveFormalReviewHead(displayedHead)
         try await drafts.delete(identity: formalReviewDraftIdentity(head: displayedHead))
         formalReviewDisplayedHead = nil
+        logger.notice("Explicitly discarded one head-bound formal-review Forge Draft")
     }
 
     func reply(threadID: ForgeObjectID, bodyMarkdown: String) async throws {

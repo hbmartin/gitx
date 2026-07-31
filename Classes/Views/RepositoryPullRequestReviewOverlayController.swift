@@ -16,6 +16,7 @@ enum RepositoryPullRequestReviewAccessibility {
     static let formalReviewKind = "GitX.PullRequest.Review.FormalReviewKind"
     static let formalReviewBody = "GitX.PullRequest.Review.FormalReviewBody"
     static let formalReviewSubmit = "GitX.PullRequest.Review.FormalReviewSubmit"
+    static let formalReviewDiscard = "GitX.PullRequest.Review.FormalReviewDiscard"
     static let formalReviewCancel = "GitX.PullRequest.Review.FormalReviewCancel"
     static let lifecyclePrefix = "GitX.PullRequest.Review.Lifecycle."
     static let updateBranchSheet = "GitX.PullRequest.Review.Lifecycle.updateBranch.Sheet"
@@ -41,6 +42,7 @@ enum RepositoryPullRequestReviewAccessibility {
     static let inlinePanel = "GitX.PullRequest.Review.Inline"
     static let inlineBody = "GitX.PullRequest.Review.InlineBody"
     static let inlinePublish = "GitX.PullRequest.Review.InlinePublish"
+    static let inlineDiscard = "GitX.PullRequest.Review.InlineDiscard"
     static let inlineReanchor = "GitX.PullRequest.Review.InlineReanchor"
     static let message = "GitX.PullRequest.Review.Message"
 }
@@ -554,7 +556,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             height: 50,
             context: markdownContext(for: record, workspace: workspace)
         )
-        installReplyDraftEditor(reply.textView, threadID: id)
+        let replyDraftCoordinator = installReplyDraftEditor(reply.textView, threadID: id)
         stack.addArrangedSubview(reply)
         let controls = wrappingButtonRow()
         let replyButton = makeButton(
@@ -568,6 +570,16 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             && workspaceAllows(.replyToReviewThread)
             && !replyWritesInFlight.contains(id)
         controls.addArrangedSubview(replyButton)
+        controls.addArrangedSubview(makeButton(
+            title: "Discard Draft",
+            identifier: RepositoryPullRequestReviewAccessibility.threadPrefix + id.value + ".Reply.Discard"
+        ) { [weak self, weak replyDraftCoordinator] in
+            guard let self, let replyDraftCoordinator else { return }
+            discardDraft(using: replyDraftCoordinator) { [weak session = session] in
+                guard let session else { return }
+                try await session.discardReplyDraft(threadID: id)
+            }
+        })
 
         let resolutionRow = wrappingButtonRow()
         controls.addArrangedSubview(resolutionRow)
@@ -660,7 +672,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 )
             )
         )
-        installInlineDraftEditor(editor.textView, anchor: anchor, workspace: workspace)
+        let inlineDraft = installInlineDraftEditor(editor.textView, anchor: anchor, workspace: workspace)
+        let inlineContext = inlineDraft?.context
         stack.addArrangedSubview(editor)
         let row = wrappingButtonRow()
         let publish = makeButton(
@@ -679,6 +692,18 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 displayedHead: selectedDisplayedHead ?? workspace.displayedHead
             ))
         row.addArrangedSubview(publish)
+        let discard = makeButton(
+            title: "Discard Draft",
+            identifier: RepositoryPullRequestReviewAccessibility.inlineDiscard
+        ) { [weak self, weak coordinator = inlineDraft?.coordinator] in
+            guard let self, let coordinator, let context = inlineContext else { return }
+            discardDraft(using: coordinator) { [weak session = session] in
+                guard let session else { return }
+                try await session.discardInlineDraft(context: context, anchor: anchor)
+            }
+        }
+        discard.isEnabled = inlineDraft != nil
+        row.addArrangedSubview(discard)
         if let pendingReanchor {
             let confirm = makeButton(
                 title: "Confirm Exact Re-anchor & Publish",
@@ -797,7 +822,10 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         )
     }
 
-    private func installReplyDraftEditor(_ textView: NSTextView, threadID: ForgeObjectID) {
+    private func installReplyDraftEditor(
+        _ textView: NSTextView,
+        threadID: ForgeObjectID
+    ) -> RepositoryReviewDraftTextCoordinator {
         let coordinator = RepositoryReviewDraftTextCoordinator(textView: textView) {
             [weak session = session] body in
             guard let session else { return }
@@ -815,14 +843,15 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             }
         }
         overlayDraftLoadTasks.append(task)
+        return coordinator
     }
 
     private func installInlineDraftEditor(
         _ textView: NSTextView,
         anchor: ForgeReviewAnchor,
         workspace: RepositoryPullRequestReviewWorkspace
-    ) {
-        guard let context = try? selectedReviewContext(anchor: anchor, workspace: workspace) else { return }
+    ) -> (coordinator: RepositoryReviewDraftTextCoordinator, context: ForgeReviewContext)? {
+        guard let context = try? selectedReviewContext(anchor: anchor, workspace: workspace) else { return nil }
         let coordinator = RepositoryReviewDraftTextCoordinator(textView: textView) {
             [weak session = session] body in
             guard let session else { return }
@@ -844,6 +873,18 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             }
         }
         overlayDraftLoadTasks.append(task)
+        return (coordinator, context)
+    }
+
+    private func discardDraft(
+        using coordinator: RepositoryReviewDraftTextCoordinator,
+        delete: @escaping @MainActor () async throws -> Void,
+        onSuccess: @escaping @MainActor () -> Void = {}
+    ) {
+        perform {
+            try await coordinator.discard(delete: delete)
+            onSuccess()
+        }
     }
 
     private func applySuggestion(_ suggestion: ForgeSuggestedChange) {
@@ -899,6 +940,22 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             title: "Cancel",
             identifier: RepositoryPullRequestReviewAccessibility.formalReviewCancel
         ) { [weak self] in self?.closeModal() })
+        let discard = makeButton(
+            title: "Discard Draft",
+            identifier: RepositoryPullRequestReviewAccessibility.formalReviewDiscard
+        ) { [weak self, weak draftCoordinator] in
+            guard let self, let draftCoordinator else { return }
+            discardDraft(
+                using: draftCoordinator,
+                delete: { [weak session = session] in
+                    guard let session else { return }
+                    try await session.discardFormalReviewDraft(displayedHead: displayedHead)
+                },
+                onSuccess: { [weak self] in self?.closeModal() }
+            )
+        }
+        discard.isEnabled = false
+        row.addArrangedSubview(discard)
         let submit = makeButton(
             title: "Submit Review",
             identifier: RepositoryPullRequestReviewAccessibility.formalReviewSubmit
@@ -921,12 +978,14 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         panelStack.addArrangedSubview(row)
         presentModal(panelStack, title: "Pull Request Review")
         modalDraftCoordinator = draftCoordinator
-        let task = Task { [weak self, weak draftCoordinator, weak textView = editor.textView, weak submit] in
+        let task = Task {
+            [weak self, weak discard, weak draftCoordinator, weak textView = editor.textView, weak submit] in
             do {
                 let draft = try await self?.session.loadFormalReviewDraft(displayedHead: displayedHead) ?? ""
                 guard !Task.isCancelled else { return }
                 draftCoordinator?.install(draft)
                 textView?.isEditable = true
+                discard?.isEnabled = true
                 submit?.isEnabled = true
             } catch {
                 self?.transientMessage = error.localizedDescription
@@ -1578,6 +1637,7 @@ private final class RepositoryReviewDraftTextCoordinator: NSObject, NSTextViewDe
     private weak var textView: NSTextView?
     private let save: @MainActor (String) async throws -> Void
     private var isInstalling = false
+    private var isDiscarding = false
     private var saveTask: Task<Void, Never>?
 
     init(
@@ -1599,6 +1659,7 @@ private final class RepositoryReviewDraftTextCoordinator: NSObject, NSTextViewDe
 
     func textDidChange(_ notification: Notification) {
         guard !isInstalling,
+              !isDiscarding,
               let textView = notification.object as? NSTextView,
               textView === self.textView
         else { return }
@@ -1615,6 +1676,29 @@ private final class RepositoryReviewDraftTextCoordinator: NSObject, NSTextViewDe
                 // turn a failed network mutation into lost input.
             }
         }
+    }
+
+    func discard(delete: @escaping @MainActor () async throws -> Void) async throws {
+        guard !isDiscarding else { return }
+        isDiscarding = true
+        let wasEditable = textView?.isEditable
+        textView?.isEditable = false
+        defer {
+            if let wasEditable {
+                textView?.isEditable = wasEditable
+            }
+            isDiscarding = false
+        }
+
+        let pendingSave = saveTask
+        saveTask = nil
+        pendingSave?.cancel()
+        await pendingSave?.value
+        try await delete()
+
+        isInstalling = true
+        textView?.string = ""
+        isInstalling = false
     }
 
     func detach() {

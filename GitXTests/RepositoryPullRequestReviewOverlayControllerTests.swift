@@ -553,6 +553,97 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
                 in: controller.view
             ) as? NSTextView)?.string == "Head-bound formal review"
         }
+        let restoredInline = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.inlineBody,
+            in: controller.reviewOverlayView
+        ) as? NSTextView)
+        let restoredReply = try XCTUnwrap(descendant(identifier: replyID, in: controller.reviewOverlayView) as? NSTextView)
+        let inlineDiscard = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.inlineDiscard,
+            in: controller.reviewOverlayView
+        ) as? NSButton)
+        let replyDiscard = try XCTUnwrap(descendant(
+            identifier: replyID + ".Discard",
+            in: controller.reviewOverlayView
+        ) as? NSButton)
+        let formalDiscard = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.formalReviewDiscard,
+            in: controller.view
+        ) as? NSButton)
+        inlineDiscard.performClick(nil)
+        replyDiscard.performClick(nil)
+        formalDiscard.performClick(nil)
+        await drafts.waitForDeleteCalls(3)
+        await waitUntil("explicit discard clears exact drafts and closes the formal sheet") {
+            restoredInline.string.isEmpty
+                && restoredReply.string.isEmpty
+                && self.descendant(
+                    identifier: RepositoryPullRequestReviewAccessibility.formalReviewSheet,
+                    in: controller.view
+                ) == nil
+        }
+        controller.detach()
+    }
+
+    func testFailedFormalDraftDiscardKeepsDurableTextAvailableToReopen() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(workspaces: [workspace])
+        let drafts = FakeReviewDraftStore()
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            drafts: drafts
+        )
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter()
+        )
+        _ = controller.view
+        controller.start()
+        await service.waitForLoadCalls(1)
+        let review = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.formalReview,
+            in: controller.view
+        ) as? NSButton)
+        review.performClick(nil)
+        await waitUntil("loaded formal draft discard control") {
+            (self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.formalReviewDiscard,
+                in: controller.view
+            ) as? NSButton)?.isEnabled == true
+        }
+        let editor = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.formalReviewBody,
+            in: controller.view
+        ) as? NSTextView)
+        editor.string = "Preserve after local deletion failure"
+        editor.didChangeText()
+        await drafts.waitForSaveCalls(1)
+        await drafts.failDeletes(with: .unavailable)
+        let discard = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.formalReviewDiscard,
+            in: controller.view
+        ) as? NSButton)
+        discard.performClick(nil)
+        await waitUntil("failed discard message") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.message,
+                in: controller.view
+            ) != nil
+        }
+
+        let restoredReview = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.formalReview,
+            in: controller.view
+        ) as? NSButton)
+        restoredReview.performClick(nil)
+        await waitUntil("restored formal draft after failed discard") {
+            (self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.formalReviewBody,
+                in: controller.view
+            ) as? NSTextView)?.string == "Preserve after local deletion failure"
+        }
         controller.detach()
     }
 

@@ -806,6 +806,88 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertEqual(reviews.map(\.bodyMarkdown), ["Confirmed on the refreshed head"])
     }
 
+    func testExplicitDiscardDeletesExactInlineReplyAndHeadBoundFormalDrafts() async throws {
+        let fixture = try ReviewAppFixture()
+        let service = try FakeReviewMutationService(workspaces: [fixture.workspace()])
+        let drafts = FakeReviewDraftStore()
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            drafts: drafts,
+            now: { fixture.now }
+        )
+        try await load(session)
+
+        let context = try fixture.reviewContext(head: fixture.oldHead)
+        try await session.saveInlineDraft(
+            context: context,
+            anchor: fixture.anchor,
+            bodyMarkdown: "Discard inline"
+        )
+        try await session.saveReplyDraft(
+            threadID: fixture.threadID,
+            bodyMarkdown: "Discard reply"
+        )
+        _ = try await session.loadFormalReviewDraft(displayedHead: fixture.oldHead)
+        try await session.saveFormalReviewDraft(
+            displayedHead: fixture.oldHead,
+            bodyMarkdown: "Discard formal"
+        )
+        let savedIdentities = await drafts.savedIdentities()
+        XCTAssertEqual(savedIdentities.count, 3)
+
+        try await session.discardInlineDraft(context: context, anchor: fixture.anchor)
+        try await session.discardReplyDraft(threadID: fixture.threadID)
+        try await session.discardFormalReviewDraft(displayedHead: fixture.oldHead)
+
+        let deleteCount = await drafts.deleteCount()
+        XCTAssertEqual(deleteCount, 3)
+        for identity in savedIdentities {
+            let discarded = try await drafts.load(identity: identity)
+            XCTAssertNil(discarded)
+        }
+        await XCTAssertThrowsErrorAsync(try await session.saveFormalReviewDraft(
+            displayedHead: fixture.oldHead,
+            bodyMarkdown: "Requires a newly prepared sheet"
+        )) {
+            XCTAssertEqual($0 as? ForgeReviewMutationError, .displayedHeadChanged)
+        }
+    }
+
+    func testExplicitDiscardFailurePreservesFormalDraftAndPreparedHead() async throws {
+        let fixture = try ReviewAppFixture()
+        let service = try FakeReviewMutationService(workspaces: [fixture.workspace()])
+        let drafts = FakeReviewDraftStore()
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            drafts: drafts,
+            now: { fixture.now }
+        )
+        try await load(session)
+        _ = try await session.loadFormalReviewDraft(displayedHead: fixture.oldHead)
+        try await session.saveFormalReviewDraft(
+            displayedHead: fixture.oldHead,
+            bodyMarkdown: "Preserve after failed discard"
+        )
+        await drafts.failDeletes(with: .unavailable)
+
+        await XCTAssertThrowsErrorAsync(try await session.discardFormalReviewDraft(
+            displayedHead: fixture.oldHead
+        )) {
+            XCTAssertEqual($0 as? RepositoryPullRequestReviewServiceError, .unavailable)
+        }
+
+        let restored = try await session.loadFormalReviewDraft(displayedHead: fixture.oldHead)
+        XCTAssertEqual(restored, "Preserve after failed discard")
+        try await session.saveFormalReviewDraft(
+            displayedHead: fixture.oldHead,
+            bodyMarkdown: "Prepared head remains active"
+        )
+        let savedBodies = await drafts.savedBodies()
+        XCTAssertEqual(savedBodies.last, "Prepared head remains active")
+    }
+
     func testFormalReviewRejectsHeadThatWasNotTheExplicitlyPreparedSheetHead() async throws {
         let fixture = try ReviewAppFixture()
         let service = try FakeReviewMutationService(workspaces: [fixture.workspace()])
@@ -2426,6 +2508,7 @@ actor FakeReviewDraftStore: RepositoryPullRequestDraftPersisting {
     private var shouldHoldNextSave = false
     private var heldSave: CheckedContinuation<Void, Never>?
     private var saveWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var deleteWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     func load(identity: ForgeDraftIdentity) async throws -> ForgeDraft? {
         values[identity]
@@ -2455,6 +2538,9 @@ actor FakeReviewDraftStore: RepositoryPullRequestDraftPersisting {
         }
         deletes += 1
         values[identity] = nil
+        let ready = deleteWaiters.filter { deletes >= $0.0 }
+        deleteWaiters.removeAll { deletes >= $0.0 }
+        ready.forEach { $0.1.resume() }
     }
 
     func failDeletes(with error: RepositoryPullRequestReviewServiceError) {
@@ -2470,6 +2556,13 @@ actor FakeReviewDraftStore: RepositoryPullRequestDraftPersisting {
             return
         }
         await withCheckedContinuation { saveWaiters.append((count, $0)) }
+    }
+
+    func waitForDeleteCalls(_ count: Int) async {
+        if deletes >= count {
+            return
+        }
+        await withCheckedContinuation { deleteWaiters.append((count, $0)) }
     }
 
     func releaseHeldSave() {
