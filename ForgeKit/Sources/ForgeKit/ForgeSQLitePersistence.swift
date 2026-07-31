@@ -53,6 +53,9 @@ public struct ForgeSQLiteDurableRecord: Equatable, Sendable {
         guard expiresAt?.timeIntervalSince1970.isFinite != false else {
             throw ForgeSQLiteError.invalidTimestamp
         }
+        guard expiresAt.map({ $0 >= lastActivityAt }) != false else {
+            throw ForgeSQLiteError.invalidTimestampOrder
+        }
         self.kind = kind
         self.accountID = accountID
         self.repository = repository
@@ -100,6 +103,7 @@ public enum ForgeSQLiteError: Error, LocalizedError, Sendable {
     case emptyKey
     case mismatchedByteCount
     case invalidTimestamp
+    case invalidTimestampOrder
     case notAvatarCacheEntry
     case missingAvatarOwner
     case unsupportedAvatarOwner
@@ -117,6 +121,8 @@ public enum ForgeSQLiteError: Error, LocalizedError, Sendable {
             "The Forge cache payload size differs from its validated byte count."
         case .invalidTimestamp:
             "Forge SQLite timestamps must be finite."
+        case .invalidTimestampOrder:
+            "Forge SQLite expiration timestamps must not precede their last activity."
         case .notAvatarCacheEntry:
             "The Forge SQLite avatar operation requires an avatar cache entry."
         case .missingAvatarOwner:
@@ -447,7 +453,7 @@ public actor ForgeSQLiteStore {
                     FROM forge_cache_entries
                     WHERE cache_kind = 0
                     GROUP BY partition_kind, account_key, repository_key
-                    HAVING MAX(accessed_at) < ?
+                    HAVING MAX(accessed_at) <= ?
                 )
                 """,
                 bindings: [.double(cutoff.timeIntervalSince1970)]
@@ -765,21 +771,32 @@ public actor ForgeSQLiteStore {
             includingPropertiesForKeys: [.creationDateKey],
             options: [.skipsHiddenFiles]
         )
+        let fileManager = FileManager.default
+        let baseURLs = urls.filter(isRecoveryDatabaseURL)
         var retained: [ForgeSQLiteRecoveryCopy] = []
-        for url in urls where url.lastPathComponent.hasPrefix(recoveryPrefix)
-            && url.pathExtension == String(recoverySuffix.dropFirst())
-        {
+        for url in baseURLs {
             let createdAt = try url.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
             if now.timeIntervalSince(createdAt) >= maximumAge {
-                try FileManager.default.removeItem(at: url)
-                for suffix in ["-wal", "-shm", "-journal"] {
-                    try? FileManager.default.removeItem(at: URL(fileURLWithPath: url.path + suffix))
+                for sidecar in recoverySidecarURLs(for: url)
+                    where fileManager.fileExists(atPath: sidecar.path)
+                {
+                    try fileManager.removeItem(at: sidecar)
                 }
+                try fileManager.removeItem(at: url)
             } else {
-                let sidecars = ["-wal", "-shm", "-journal"]
-                    .map { URL(fileURLWithPath: url.path + $0) }
-                    .filter { FileManager.default.fileExists(atPath: $0.path) }
+                let sidecars = recoverySidecarURLs(for: url)
+                    .filter { fileManager.fileExists(atPath: $0.path) }
                 retained.append(ForgeSQLiteRecoveryCopy(url: url, sidecarURLs: sidecars, createdAt: createdAt))
+            }
+        }
+
+        let basePaths = Set(baseURLs.map(\.standardizedFileURL.path))
+        for sidecar in urls where isRecoverySidecarURL(sidecar) {
+            let baseURL = recoveryDatabaseURL(for: sidecar)
+            guard !basePaths.contains(baseURL.standardizedFileURL.path) else { continue }
+            let createdAt = try sidecar.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
+            if now.timeIntervalSince(createdAt) >= maximumAge {
+                try fileManager.removeItem(at: sidecar)
             }
         }
         return retained.sorted { $0.createdAt < $1.createdAt }
@@ -803,10 +820,38 @@ public actor ForgeSQLiteStore {
             else { throw CocoaError(.fileNoSuchFile) }
             resolvedSidecars.append(resolved)
         }
-        try FileManager.default.removeItem(at: candidate)
-        for sidecar in resolvedSidecars {
-            try FileManager.default.removeItem(at: sidecar)
+        let fileManager = FileManager.default
+        let discoveredSidecars = recoverySidecarURLs(for: candidate)
+            .filter { fileManager.fileExists(atPath: $0.path) }
+        for sidecar in Set(resolvedSidecars + discoveredSidecars)
+            where fileManager.fileExists(atPath: sidecar.path)
+        {
+            try fileManager.removeItem(at: sidecar)
         }
+        if fileManager.fileExists(atPath: candidate.path) {
+            try fileManager.removeItem(at: candidate)
+        }
+    }
+
+    private static func isRecoveryDatabaseURL(_ url: URL) -> Bool {
+        url.lastPathComponent.hasPrefix(recoveryPrefix)
+            && url.pathExtension == String(recoverySuffix.dropFirst())
+    }
+
+    private static func isRecoverySidecarURL(_ url: URL) -> Bool {
+        let baseURL = recoveryDatabaseURL(for: url)
+        return baseURL != url && isRecoveryDatabaseURL(baseURL)
+    }
+
+    private static func recoveryDatabaseURL(for sidecar: URL) -> URL {
+        for suffix in ["-wal", "-shm", "-journal"] where sidecar.path.hasSuffix(suffix) {
+            return URL(fileURLWithPath: String(sidecar.path.dropLast(suffix.count)))
+        }
+        return sidecar
+    }
+
+    private static func recoverySidecarURLs(for database: URL) -> [URL] {
+        ["-wal", "-shm", "-journal"].map { URL(fileURLWithPath: database.path + $0) }
     }
 
     private func activeConnection() throws -> ForgeSQLiteConnection {

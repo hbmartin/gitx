@@ -3,6 +3,12 @@ import Foundation
 import GitHubForgeAdapter
 import OSLog // swiftlint:disable:this unused_import
 
+extension Notification.Name {
+    nonisolated static let forgeApplicationAvailabilityDidChange = Notification.Name(
+        "PBForgeApplicationAvailabilityDidChangeNotification"
+    )
+}
+
 nonisolated enum ForgeApplicationDataAvailability: Sendable {
     case available(ForgeSQLiteStore)
     case recoveryRequired(ForgeSQLiteRecoveryCopy)
@@ -18,6 +24,140 @@ nonisolated enum ForgeApplicationDataAvailability: Sendable {
         switch self {
         case .available: nil
         case let .recoveryRequired(copy): copy
+        }
+    }
+}
+
+nonisolated struct ForgeApplicationMaintenanceResult: Equatable, Sendable {
+    let idleCacheRecordsRemoved: Int
+    let expiredDurableRecordsRemoved: Int
+    let cacheLimitRecordsRemoved: Int
+}
+
+nonisolated struct ForgeApplicationRecoveryResult: Equatable, Sendable {
+    let restoredDurableRecordCount: Int
+    let skippedDurableRecordCount: Int
+    let maintenance: ForgeApplicationMaintenanceResult
+}
+
+nonisolated enum ForgeApplicationRecoveryError: Error, LocalizedError, Sendable {
+    case unavailable
+    case sessionDisabled
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "Forge recovery is unavailable in this application composition."
+        case .sessionDisabled:
+            "Forge features are disabled for the current application session."
+        }
+    }
+}
+
+/// Owns the destructive filesystem boundary for Forge database recovery.
+/// Accounts remain in Keychain and repository bindings remain in Repository
+/// View State because neither store is reachable through this coordinator.
+actor ForgeApplicationRecoveryCoordinator {
+    private let configuration: ForgeSQLiteConfiguration
+    private let deferredAccountCleanup: ForgeDeferredAccountCleanupStore
+    private let clearTrustedExternalOrigins: @MainActor @Sendable () -> Void
+    private let now: @Sendable () -> Date
+    private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeRecovery")
+
+    init(
+        configuration: ForgeSQLiteConfiguration,
+        deferredAccountCleanup: ForgeDeferredAccountCleanupStore,
+        clearTrustedExternalOrigins: @escaping @MainActor @Sendable () -> Void = {},
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.configuration = configuration
+        self.deferredAccountCleanup = deferredAccountCleanup
+        self.clearTrustedExternalOrigins = clearTrustedExternalOrigins
+        self.now = now
+    }
+
+    func retainedRecoveryCopies() async throws -> [ForgeSQLiteRecoveryCopy] {
+        let copies = try ForgeSQLiteStore.recoveryCopies(
+            in: configuration.recoveryDirectoryURL,
+            now: now()
+        )
+        try await deferredAccountCleanup.pruneResolvedEntries()
+        logger.info("Retained \(copies.count) unexpired Forge database recovery copies")
+        return copies
+    }
+
+    func performMaintenance(on database: ForgeSQLiteStore) async throws -> ForgeApplicationMaintenanceResult {
+        let maintenanceDate = now()
+        _ = try await retainedRecoveryCopies()
+        let idleCacheRecordsRemoved = try await database.removeIdleCacheRepositories(
+            notAccessedSince: maintenanceDate.addingTimeInterval(-ForgePolicyConstants.repositoryIdleExpiration)
+        )
+        let expiredDurableRecordsRemoved = try await database.removeExpiredDurableRecords(at: maintenanceDate)
+        let cacheLimitRecordsRemoved = try await database.enforceCacheLimits()
+        let result = ForgeApplicationMaintenanceResult(
+            idleCacheRecordsRemoved: idleCacheRecordsRemoved,
+            expiredDurableRecordsRemoved: expiredDurableRecordsRemoved,
+            cacheLimitRecordsRemoved: cacheLimitRecordsRemoved
+        )
+        logger.info(
+            "Completed Forge retention maintenance idle=\(idleCacheRecordsRemoved) durable=\(expiredDurableRecordsRemoved) lru=\(cacheLimitRecordsRemoved)"
+        )
+        return result
+    }
+
+    /// Salvages only durable records. Disposable snapshots are deliberately
+    /// rebuilt after a recovery, preserving the public/account cache boundary.
+    func recoverDurableRecords(from recoveryCopy: ForgeSQLiteRecoveryCopy) async throws
+        -> ForgeApplicationRecoveryResult
+    {
+        let salvage = try ForgeSQLiteStore.salvageDurableRecords(from: recoveryCopy.url)
+        let filteredSalvage = try await deferredAccountCleanup.filtering(salvage)
+        try removeLiveDatabaseFiles()
+        let replacement = try ForgeSQLiteStore(configuration: configuration)
+        do {
+            try await replacement.restore(filteredSalvage)
+            try await deferredAccountCleanup.replay(into: replacement)
+            let maintenance = try await performMaintenance(on: replacement)
+            await replacement.close()
+            let result = ForgeApplicationRecoveryResult(
+                restoredDurableRecordCount: filteredSalvage.durableRecords.count,
+                skippedDurableRecordCount: filteredSalvage.skippedRecordCount,
+                maintenance: maintenance
+            )
+            logger.notice(
+                "Recovered Forge durable state restored=\(result.restoredDurableRecordCount) skipped=\(result.skippedDurableRecordCount)"
+            )
+            return result
+        } catch {
+            await replacement.close()
+            logger.error("Forge durable-state recovery failed; retained recovery copy remains available")
+            throw error
+        }
+    }
+
+    /// Removes only Forge database files. Keychain accounts and Repository View
+    /// State bindings remain intact; the accepted reset policy additionally
+    /// clears exact trusted external origins from Application Preferences.
+    func resetForgeData() async throws {
+        try removeLiveDatabaseFiles()
+        await clearTrustedExternalOrigins()
+        logger.notice("Reset Forge database and cleared trusted external origins")
+    }
+
+    func deleteRecoveryCopy(_ copy: ForgeSQLiteRecoveryCopy) throws {
+        try ForgeSQLiteStore.deleteRecoveryCopy(copy, in: configuration.recoveryDirectoryURL)
+        logger.notice("Permanently deleted one Forge recovery copy at explicit user request")
+    }
+
+    private func removeLiveDatabaseFiles() throws {
+        let fileManager = FileManager.default
+        for url in [
+            configuration.databaseURL,
+            URL(fileURLWithPath: configuration.databaseURL.path + "-wal"),
+            URL(fileURLWithPath: configuration.databaseURL.path + "-shm"),
+            URL(fileURLWithPath: configuration.databaseURL.path + "-journal"),
+        ] where fileManager.fileExists(atPath: url.path) {
+            try fileManager.removeItem(at: url)
         }
     }
 }
@@ -60,11 +200,18 @@ actor ForgeDeferredAccountCleanupStore {
         for entry in payload.entries {
             try await database.removeAccount(entry.accountID)
         }
-        payload.entries.removeAll { entry in
-            entry.recoveryCopyURLs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
-        }
+        Self.removeResolvedEntries(from: &payload)
         try persist(payload)
         logger.notice("Replayed deferred Forge account cleanup")
+    }
+
+    func pruneResolvedEntries() throws {
+        var payload = try load()
+        let previousCount = payload.entries.count
+        Self.removeResolvedEntries(from: &payload)
+        guard payload.entries.count != previousCount else { return }
+        try persist(payload)
+        logger.notice("Removed resolved deferred Forge account-cleanup tombstones")
     }
 
     /// Recovery copies are quarantined archival evidence, never live account
@@ -134,6 +281,12 @@ actor ForgeDeferredAccountCleanupStore {
         let rhsKey = [rhs.forge.kind.rawValue, rhs.forge.origin.url.absoluteString, rhs.value]
         return lhsKey.lexicographicallyPrecedes(rhsKey)
     }
+
+    private static func removeResolvedEntries(from payload: inout Payload) {
+        payload.entries.removeAll { entry in
+            entry.recoveryCopyURLs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }
+        }
+    }
 }
 
 nonisolated struct ForgeRecoveryDeferredAccountPersistenceCleaner: ForgeAccountPersistenceCleaning {
@@ -167,6 +320,7 @@ final nonisolated class ForgeApplicationServices: Sendable {
     let githubAnonymousRESTBudget: GitHubAnonymousRESTBudget
     let refreshCoordinator: ForgeApplicationRefreshCoordinator?
     let deferredAccountCleanup: ForgeDeferredAccountCleanupStore
+    let recoveryCoordinator: ForgeApplicationRecoveryCoordinator?
 
     var database: ForgeSQLiteStore? {
         dataAvailability.database
@@ -183,7 +337,8 @@ final nonisolated class ForgeApplicationServices: Sendable {
         credentialCooldowns: ForgeCredentialCooldownRegistry = ForgeCredentialCooldownRegistry(),
         githubAnonymousRESTBudget: GitHubAnonymousRESTBudget = GitHubAnonymousRESTBudget(),
         refreshCoordinator: ForgeApplicationRefreshCoordinator? = nil,
-        deferredAccountCleanup: ForgeDeferredAccountCleanupStore
+        deferredAccountCleanup: ForgeDeferredAccountCleanupStore,
+        recoveryCoordinator: ForgeApplicationRecoveryCoordinator? = nil
     ) {
         self.dataAvailability = dataAvailability
         self.accountStore = accountStore
@@ -196,19 +351,45 @@ final nonisolated class ForgeApplicationServices: Sendable {
         self.githubAnonymousRESTBudget = githubAnonymousRESTBudget
         self.refreshCoordinator = refreshCoordinator
         self.deferredAccountCleanup = deferredAccountCleanup
+        self.recoveryCoordinator = recoveryCoordinator
     }
+}
+
+nonisolated enum ForgeApplicationOverlayServices: Sendable {
+    case enabled(ForgeApplicationServices)
+    case sessionDisabled(ForgeSQLiteRecoveryCopy?)
 }
 
 actor ForgeApplicationServiceLoader {
     typealias Factory = @Sendable () async throws -> ForgeApplicationServices
 
     private let factory: Factory
+    private let now: @Sendable () -> Date
+    private let maintenanceInterval: TimeInterval
     private var loadingTask: Task<ForgeApplicationServices, Error>?
     private var generation: UInt64 = 0
+    private var forgeDisabledForSession = false
+    private var lastRecoveryCopy: ForgeSQLiteRecoveryCopy?
+    private var lastMaintenanceAt: Date?
+    private var destructiveOperationInProgress = false
+    private var destructiveOperationWaiters: [CheckedContinuation<Void, Never>] = []
+    private var serviceWaiters: [CheckedContinuation<Void, Never>] = []
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeComposition")
 
     init(factory: @escaping Factory) {
         self.factory = factory
+        now = Date.init
+        maintenanceInterval = 24 * 60 * 60
+    }
+
+    init(
+        now: @escaping @Sendable () -> Date,
+        maintenanceInterval: TimeInterval = 24 * 60 * 60,
+        factory: @escaping Factory
+    ) {
+        self.factory = factory
+        self.now = now
+        self.maintenanceInterval = maintenanceInterval
     }
 
     init(
@@ -216,19 +397,48 @@ actor ForgeApplicationServiceLoader {
         applicationSupportDirectory: @escaping ForgeApplicationServiceFactory.ApplicationSupportDirectoryProvider =
             ForgeApplicationServiceFactory.systemApplicationSupportDirectory,
         avatarLoader: ForgeAvatarLoader?,
-        avatarLoadingEnabled: @escaping @Sendable () -> Bool
+        avatarLoadingEnabled: @escaping @Sendable () -> Bool,
+        trustedExternalOrigins: ForgeTrustedExternalOriginStore? = nil,
+        now: @escaping @Sendable () -> Date = Date.init,
+        maintenanceInterval: TimeInterval = 24 * 60 * 60
     ) {
+        self.now = now
+        self.maintenanceInterval = maintenanceInterval
         factory = {
             try await ForgeApplicationServiceFactory.makeDefault(
                 bindingCleaner: bindingCleaner,
                 applicationSupportDirectory: applicationSupportDirectory,
                 avatarLoader: avatarLoader,
-                avatarLoadingEnabled: avatarLoadingEnabled
+                avatarLoadingEnabled: avatarLoadingEnabled,
+                trustedExternalOrigins: trustedExternalOrigins,
+                now: now
             )
         }
     }
 
     func services() async throws -> ForgeApplicationServices {
+        await waitForDestructiveOperation()
+        guard !forgeDisabledForSession else {
+            throw ForgeApplicationRecoveryError.sessionDisabled
+        }
+        let applicationServices = try await loadServicesIgnoringSessionGate()
+        guard !forgeDisabledForSession else {
+            throw ForgeApplicationRecoveryError.sessionDisabled
+        }
+        await performMaintenanceIfNeeded(on: applicationServices)
+        return applicationServices
+    }
+
+    /// Application Preferences may continue account management while ordinary
+    /// Forge reads and writes are disabled for the current session.
+    func accountManagementServices() async throws -> ForgeApplicationServices {
+        await waitForDestructiveOperation()
+        let applicationServices = try await loadServicesIgnoringSessionGate()
+        await performMaintenanceIfNeeded(on: applicationServices)
+        return applicationServices
+    }
+
+    private func loadServicesIgnoringSessionGate() async throws -> ForgeApplicationServices {
         if let loadingTask {
             return try await loadingTask.value
         }
@@ -241,6 +451,10 @@ actor ForgeApplicationServiceLoader {
         loadingTask = task
         do {
             let services = try await task.value
+            lastRecoveryCopy = services.dataAvailability.recoveryCopy
+            if lastMaintenanceAt == nil {
+                lastMaintenanceAt = now()
+            }
             logger.notice("Lazy Forge application services initialized")
             return services
         } catch {
@@ -249,6 +463,181 @@ actor ForgeApplicationServiceLoader {
             }
             logger.error("Lazy Forge application services initialization failed")
             throw error
+        }
+    }
+
+    func overlayServices() async throws -> ForgeApplicationOverlayServices {
+        await waitForDestructiveOperation()
+        guard !forgeDisabledForSession else {
+            return .sessionDisabled(lastRecoveryCopy)
+        }
+        let applicationServices = try await loadServicesIgnoringSessionGate()
+        guard !forgeDisabledForSession else {
+            return .sessionDisabled(lastRecoveryCopy)
+        }
+        await performMaintenanceIfNeeded(on: applicationServices)
+        return .enabled(applicationServices)
+    }
+
+    func disableForgeForSession() async {
+        await waitForDestructiveOperation()
+        forgeDisabledForSession = true
+        if let loadingTask, let services = try? await loadingTask.value {
+            lastRecoveryCopy = services.dataAvailability.recoveryCopy
+            await services.refreshCoordinator?.invalidate()
+        }
+        await notifyAvailabilityChanged()
+        logger.notice("Disabled Forge features for the current session; local Git remains available")
+    }
+
+    func retainedRecoveryCopies() async throws -> [ForgeSQLiteRecoveryCopy] {
+        let applicationServices = try await accountManagementServices()
+        guard let recoveryCoordinator = applicationServices.recoveryCoordinator else {
+            throw ForgeApplicationRecoveryError.unavailable
+        }
+        return try await recoveryCoordinator.retainedRecoveryCopies()
+    }
+
+    @discardableResult
+    func retryForgeRecovery(_ recoveryCopy: ForgeSQLiteRecoveryCopy? = nil) async throws
+        -> ForgeApplicationRecoveryResult?
+    {
+        await beginDestructiveOperation()
+        defer { endDestructiveOperation() }
+        let currentServices = try await loadServicesIgnoringSessionGate()
+        let requestedCopy = recoveryCopy ?? currentServices.dataAvailability.recoveryCopy ?? lastRecoveryCopy
+        guard let targetCopy = requestedCopy else {
+            forgeDisabledForSession = false
+            await notifyAvailabilityChanged()
+            return nil
+        }
+        guard FileManager.default.fileExists(atPath: targetCopy.url.path) else {
+            throw ForgeApplicationRecoveryError.unavailable
+        }
+        guard let recoveryCoordinator = currentServices.recoveryCoordinator else {
+            throw ForgeApplicationRecoveryError.unavailable
+        }
+        invalidateLoadedServices()
+        await currentServices.refreshCoordinator?.invalidate()
+        if let database = currentServices.database {
+            await database.close()
+        }
+        do {
+            let result = try await recoveryCoordinator.recoverDurableRecords(from: targetCopy)
+            forgeDisabledForSession = false
+            _ = try await loadServicesIgnoringSessionGate()
+            await notifyAvailabilityChanged()
+            logger.notice("Retried Forge recovery and reloaded application services")
+            return result
+        } catch {
+            await persistRecoveryFailure(copy: targetCopy)
+            throw error
+        }
+    }
+
+    func resetForgeData() async throws {
+        await beginDestructiveOperation()
+        defer { endDestructiveOperation() }
+        let currentServices = try await loadServicesIgnoringSessionGate()
+        guard let recoveryCoordinator = currentServices.recoveryCoordinator else {
+            throw ForgeApplicationRecoveryError.unavailable
+        }
+        let recoveryCopy = currentServices.dataAvailability.recoveryCopy ?? lastRecoveryCopy
+        invalidateLoadedServices()
+        await currentServices.refreshCoordinator?.invalidate()
+        if let database = currentServices.database {
+            await database.close()
+        }
+        do {
+            try await recoveryCoordinator.resetForgeData()
+            forgeDisabledForSession = false
+            _ = try await loadServicesIgnoringSessionGate()
+            await notifyAvailabilityChanged()
+            logger.notice("Reloaded Forge application services after explicit reset")
+        } catch {
+            await persistRecoveryFailure(copy: recoveryCopy)
+            throw error
+        }
+    }
+
+    func deleteRecoveryCopy(_ recoveryCopy: ForgeSQLiteRecoveryCopy) async throws {
+        let applicationServices = try await accountManagementServices()
+        guard let recoveryCoordinator = applicationServices.recoveryCoordinator else {
+            throw ForgeApplicationRecoveryError.unavailable
+        }
+        try await recoveryCoordinator.deleteRecoveryCopy(recoveryCopy)
+        if lastRecoveryCopy?.url == recoveryCopy.url {
+            lastRecoveryCopy = nil
+        }
+    }
+
+    private func invalidateLoadedServices() {
+        generation &+= 1
+        loadingTask = nil
+        lastMaintenanceAt = nil
+    }
+
+    private func performMaintenanceIfNeeded(on services: ForgeApplicationServices) async {
+        let maintenanceDate = now()
+        guard let lastMaintenanceAt else {
+            lastMaintenanceAt = maintenanceDate
+            return
+        }
+        guard maintenanceDate.timeIntervalSince(lastMaintenanceAt) >= maintenanceInterval,
+              let recoveryCoordinator = services.recoveryCoordinator
+        else { return }
+        do {
+            if let database = services.database {
+                _ = try await recoveryCoordinator.performMaintenance(on: database)
+            } else {
+                _ = try await recoveryCoordinator.retainedRecoveryCopies()
+            }
+            self.lastMaintenanceAt = maintenanceDate
+        } catch {
+            logger.error("Periodic Forge retention maintenance failed; will retry on the next access")
+        }
+    }
+
+    private func beginDestructiveOperation() async {
+        guard destructiveOperationInProgress else {
+            destructiveOperationInProgress = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            destructiveOperationWaiters.append(continuation)
+        }
+    }
+
+    private func endDestructiveOperation() {
+        if !destructiveOperationWaiters.isEmpty {
+            destructiveOperationWaiters.removeFirst().resume()
+            return
+        }
+        destructiveOperationInProgress = false
+        let waiters = serviceWaiters
+        serviceWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    private func waitForDestructiveOperation() async {
+        while destructiveOperationInProgress {
+            await withCheckedContinuation { continuation in
+                serviceWaiters.append(continuation)
+            }
+        }
+    }
+
+    private func persistRecoveryFailure(copy: ForgeSQLiteRecoveryCopy?) async {
+        invalidateLoadedServices()
+        forgeDisabledForSession = true
+        lastRecoveryCopy = copy
+        await notifyAvailabilityChanged()
+        logger.error("Forge recovery operation failed; unpublished closed services remain invalidated")
+    }
+
+    private func notifyAvailabilityChanged() async {
+        await MainActor.run {
+            NotificationCenter.default.post(name: .forgeApplicationAvailabilityDidChange, object: nil)
         }
     }
 }
@@ -260,7 +649,9 @@ nonisolated enum ForgeApplicationServiceFactory {
         bindingCleaner: any ForgeRepositoryBindingCleaning,
         applicationSupportDirectory: ApplicationSupportDirectoryProvider = systemApplicationSupportDirectory,
         avatarLoader: ForgeAvatarLoader?,
-        avatarLoadingEnabled: @escaping @Sendable () -> Bool
+        avatarLoadingEnabled: @escaping @Sendable () -> Bool,
+        trustedExternalOrigins: ForgeTrustedExternalOriginStore? = nil,
+        now: @escaping @Sendable () -> Date = Date.init
     ) async throws -> ForgeApplicationServices {
         let applicationSupportURL = try applicationSupportDirectory()
         let forgeDirectory = applicationSupportURL
@@ -272,7 +663,9 @@ nonisolated enum ForgeApplicationServiceFactory {
             keychain: SecurityForgeCredentialKeychain(),
             cliRunner: SystemForgeCLICommandRunner(),
             avatarLoader: avatarLoader,
-            avatarLoadingEnabled: avatarLoadingEnabled
+            avatarLoadingEnabled: avatarLoadingEnabled,
+            trustedExternalOrigins: trustedExternalOrigins,
+            now: now
         )
     }
 
@@ -291,7 +684,9 @@ nonisolated enum ForgeApplicationServiceFactory {
         keychain: any ForgeCredentialKeychain,
         cliRunner: any ForgeCLICommandRunning,
         avatarLoader: ForgeAvatarLoader? = nil,
-        avatarLoadingEnabled: @escaping @Sendable () -> Bool = { true }
+        avatarLoadingEnabled: @escaping @Sendable () -> Bool = { true },
+        trustedExternalOrigins: ForgeTrustedExternalOriginStore? = nil,
+        now: @escaping @Sendable () -> Date = Date.init
     ) async throws -> ForgeApplicationServices {
         let accountStore = ForgeAccountStore(keychain: keychain)
         let tombstoneStore = ForgeDeferredAccountCleanupStore(forgeDirectory: forgeDirectory)
@@ -299,12 +694,22 @@ nonisolated enum ForgeApplicationServiceFactory {
             databaseURL: forgeDirectory.appendingPathComponent("Forge.sqlite3"),
             recoveryDirectoryURL: forgeDirectory.appendingPathComponent("Recovery", isDirectory: true)
         )
+        let recoveryCoordinator = ForgeApplicationRecoveryCoordinator(
+            configuration: databaseConfiguration,
+            deferredAccountCleanup: tombstoneStore,
+            clearTrustedExternalOrigins: {
+                _ = trustedExternalOrigins?.removeAll()
+            },
+            now: now
+        )
+        _ = try await recoveryCoordinator.retainedRecoveryCopies()
         let dataAvailability: ForgeApplicationDataAvailability
         let persistenceCleaner: any ForgeAccountPersistenceCleaning
         let avatarCleaner: any ForgeAccountAvatarCleaning
         do {
             let database = try ForgeSQLiteStore(configuration: databaseConfiguration)
             try await tombstoneStore.replay(into: database)
+            _ = try await recoveryCoordinator.performMaintenance(on: database)
             if let avatarLoader {
                 try await avatarLoader.installBackingStore(
                     ForgeSQLiteAvatarBackingStore(store: database),
@@ -318,17 +723,36 @@ nonisolated enum ForgeApplicationServiceFactory {
                 loader: avatarLoader
             )
         } catch let ForgeSQLiteError.recoveryRequired(copy, _) {
-            dataAvailability = .recoveryRequired(copy)
-            persistenceCleaner = ForgeRecoveryDeferredAccountPersistenceCleaner(
-                tombstoneStore: tombstoneStore,
-                recoveryCopy: copy
-            )
-            avatarCleaner = PreservingSharedForgeAvatarCleaner(loader: avatarLoader)
-            if let avatarLoader {
-                try await avatarLoader.installBackingStore(
-                    ForgeAvatarMemoryOnlyBackingStore(),
-                    loadingEnabled: avatarLoadingEnabled()
+            do {
+                _ = try await recoveryCoordinator.recoverDurableRecords(from: copy)
+                let database = try ForgeSQLiteStore(configuration: databaseConfiguration)
+                try await tombstoneStore.replay(into: database)
+                _ = try await recoveryCoordinator.performMaintenance(on: database)
+                if let avatarLoader {
+                    try await avatarLoader.installBackingStore(
+                        ForgeSQLiteAvatarBackingStore(store: database),
+                        loadingEnabled: avatarLoadingEnabled()
+                    )
+                }
+                dataAvailability = .available(database)
+                persistenceCleaner = database
+                avatarCleaner = ForgeSQLiteAvatarAccountCleaner(
+                    store: database,
+                    loader: avatarLoader
                 )
+            } catch {
+                dataAvailability = .recoveryRequired(copy)
+                persistenceCleaner = ForgeRecoveryDeferredAccountPersistenceCleaner(
+                    tombstoneStore: tombstoneStore,
+                    recoveryCopy: copy
+                )
+                avatarCleaner = PreservingSharedForgeAvatarCleaner(loader: avatarLoader)
+                if let avatarLoader {
+                    try await avatarLoader.installBackingStore(
+                        ForgeAvatarMemoryOnlyBackingStore(),
+                        loadingEnabled: avatarLoadingEnabled()
+                    )
+                }
             }
         }
         let broker = GitHubCLIAccountBroker(runner: cliRunner)
@@ -367,7 +791,8 @@ nonisolated enum ForgeApplicationServiceFactory {
             ),
             credentialCooldowns: cooldowns,
             refreshCoordinator: refreshCoordinator,
-            deferredAccountCleanup: tombstoneStore
+            deferredAccountCleanup: tombstoneStore,
+            recoveryCoordinator: recoveryCoordinator
         )
     }
 }

@@ -100,6 +100,40 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         await store.close()
     }
 
+    func testIdleRepositoryRemovalIncludesTheExactCutoffBoundary() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let boundaryRepository = try ForgeRepositoryIdentity(
+            forge: fixture.forge,
+            owner: "acme",
+            name: "boundary"
+        )
+        let boundaryPartition = try ForgeRepositoryPartitionKey(
+            cachePartition: .account(fixture.firstAccount),
+            repository: boundaryRepository
+        )
+        let boundaryKey = ForgeDisposableCacheKey.snapshot(ForgeCacheRecordKey(
+            repositoryPartition: boundaryPartition,
+            kind: .pullRequestTimeline,
+            identity: "boundary"
+        ))
+        try await store.putCacheEntry(fixture.entry(
+            boundaryKey,
+            payload: "expired",
+            fetched: 1,
+            accessed: 30
+        ))
+
+        let removed = try await store.removeIdleCacheRepositories(
+            notAccessedSince: fixture.date(30)
+        )
+        let removedEntry = try await store.cacheEntry(for: boundaryKey, accessedAt: fixture.date(31))
+        XCTAssertEqual(removed, 1)
+        XCTAssertNil(removedEntry)
+        await store.close()
+    }
+
     func testCacheReadFailsClosedOnPartitionMetadataMismatchAndUpsertRepairsIt() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -890,7 +924,10 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
             in: fixture.recoveryURL
         ))
         XCTAssertTrue(FileManager.default.fileExists(atPath: copy.url.path))
-        try ForgeSQLiteStore.deleteRecoveryCopy(copy, in: fixture.recoveryURL)
+        try ForgeSQLiteStore.deleteRecoveryCopy(
+            ForgeSQLiteRecoveryCopy(url: copy.url, createdAt: copy.createdAt),
+            in: fixture.recoveryURL
+        )
         XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url.path))
         XCTAssertTrue(copy.sidecarURLs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
     }
@@ -968,6 +1005,43 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         )
     }
 
+    func testSalvageSkipsInvalidTimestampOrderingWithoutAbortingValidRows() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let invalid = try fixture.record(.draft, key: "invalid-order", payload: "bad", activity: 1)
+        let valid = try fixture.record(.draft, key: "valid-order", payload: "good", activity: 2)
+        try await store.saveDurableRecord(invalid)
+        try await store.saveDurableRecord(valid)
+        await store.close()
+        try RawSQLite.execute(
+            """
+            PRAGMA ignore_check_constraints = ON;
+            UPDATE forge_durable_records SET expires_at = last_activity_at - 1 WHERE record_key = X'696e76616c69642d6f72646572';
+            """,
+            at: fixture.databaseURL
+        )
+
+        let salvage = try ForgeSQLiteStore.salvageDurableRecords(from: fixture.databaseURL)
+        XCTAssertEqual(salvage.durableRecords, [valid])
+        XCTAssertEqual(salvage.skippedRecordCount, 1)
+
+        let replacementURL = fixture.root.appendingPathComponent("replacement.sqlite3")
+        let replacement = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: replacementURL,
+            recoveryDirectoryURL: fixture.recoveryURL
+        ))
+        try await replacement.restore(salvage)
+        let restored = try await replacement.durableRecord(
+            kind: .draft,
+            accountID: fixture.firstAccount,
+            repository: fixture.repository,
+            key: valid.key
+        )
+        XCTAssertEqual(restored, valid)
+        await replacement.close()
+    }
+
     func testRecoveryCopiesCanBeListedExpiredAndDeletedOnlyWithinRecoveryDirectory() throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -1005,6 +1079,21 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         ), [])
     }
 
+    func testExpiredOrphanRecoverySidecarsAreRemoved() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        try FileManager.default.createDirectory(at: fixture.recoveryURL, withIntermediateDirectories: true)
+        let orphan = fixture.recoveryURL
+            .appendingPathComponent("ForgeKit-recovery-orphan.sqlite3-wal")
+        try Data("private draft fragment".utf8).write(to: orphan)
+
+        XCTAssertEqual(try ForgeSQLiteStore.recoveryCopies(
+            in: fixture.recoveryURL,
+            now: .distantFuture
+        ), [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+    }
+
     func testEncodedKeysAreStableAndErrorsDoNotExposePayloads() throws {
         struct Key: Encodable { let z: Int; let a: String }
         XCTAssertEqual(
@@ -1021,6 +1110,7 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
             "The Forge cache payload size differs from its validated byte count."
         )
         XCTAssertEqual(ForgeSQLiteError.invalidTimestamp.localizedDescription, "Forge SQLite timestamps must be finite.")
+        XCTAssertTrue(ForgeSQLiteError.invalidTimestampOrder.localizedDescription.contains("must not precede"))
         XCTAssertTrue(ForgeSQLiteError.notAvatarCacheEntry.localizedDescription.contains("avatar"))
         XCTAssertTrue(ForgeSQLiteError.missingAvatarOwner.localizedDescription.contains("owner"))
         XCTAssertTrue(ForgeSQLiteError.unsupportedAvatarOwner.localizedDescription.contains("GitHub.com"))

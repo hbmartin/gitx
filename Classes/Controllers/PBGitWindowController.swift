@@ -329,6 +329,12 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             name: .repositoryRemoteOperationDidSucceed,
             object: repository
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(forgeApplicationAvailabilityDidChange(_:)),
+            name: .forgeApplicationAvailabilityDidChange,
+            object: nil
+        )
         refreshPreferenceDidChange(nil)
         #if DEBUG
             milestone2UITestHarness = Milestone2UITestHarness.installIfRequested(for: self)
@@ -342,6 +348,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         ensureFocusRefreshCoordinator()
         focusRefreshCoordinator?.applicationDidBecomeActive()
         repositoryForgeOverlaySession?.requestRefresh(reason: .applicationActivated)
+    }
+
+    @objc(forgeApplicationAvailabilityDidChange:)
+    private dynamic func forgeApplicationAvailabilityDidChange(_ notification: Notification) {
+        reloadRepositoryForgeOverlaySession()
     }
 
     @objc(refreshPreferenceDidChange:)
@@ -925,32 +936,182 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
     ) {
         let details = RepositoryForgeDiagnosticDetailsPresenter.present(action)
+        let recoveryCopy = recoveryCopyOverride ?? repositoryForgeOverlaySession?.recoveryCopy
+        if action == .recoverForgeData {
+            if let recoveryCopyOverride {
+                presentForgeRecoveryAlert(
+                    recoveryCopies: [recoveryCopyOverride],
+                    currentRecoveryCopy: recoveryCopyOverride,
+                    revealRecoveryCopy: revealRecoveryCopy
+                )
+            } else {
+                Task { [weak self] in
+                    guard let self else { return }
+                    let retainedCopies = (try? await ApplicationComposition.shared.forgeServices
+                        .retainedRecoveryCopies()) ?? []
+                    let candidates = recoveryCopy.map { copy in
+                        retainedCopies.contains(where: { $0.url == copy.url })
+                            ? retainedCopies
+                            : retainedCopies + [copy]
+                    } ?? retainedCopies
+                    let copies = candidates.filter {
+                        FileManager.default.fileExists(atPath: $0.url.path)
+                    }
+                    self.presentForgeRecoveryAlert(
+                        recoveryCopies: copies,
+                        currentRecoveryCopy: recoveryCopy.flatMap { current in
+                            copies.first { $0.url == current.url }
+                        } ?? copies.last,
+                        revealRecoveryCopy: revealRecoveryCopy
+                    )
+                }
+            }
+            return
+        }
+
         let alert = NSAlert()
         alert.messageText = details.title
-        var message = details.message
-        let recoveryCopy = recoveryCopyOverride ?? repositoryForgeOverlaySession?.recoveryCopy
-        if action == .recoverForgeData,
-           let recoveryCopy
-        {
-            message += "\n\nRecovery copy: \(recoveryCopy.url.lastPathComponent)"
-            alert.addButton(withTitle: "Reveal in Finder")
-            alert.addButton(withTitle: "OK")
+        alert.informativeText = details.message
+        alert.addButton(withTitle: "OK")
+        guard let window else { return }
+        alert.beginSheetModal(for: window)
+    }
+
+    private func presentForgeRecoveryAlert(
+        recoveryCopies: [ForgeSQLiteRecoveryCopy],
+        currentRecoveryCopy: ForgeSQLiteRecoveryCopy?,
+        revealRecoveryCopy: @escaping (URL) -> Void
+    ) {
+        let copies = Dictionary(grouping: recoveryCopies, by: { $0.url.standardizedFileURL })
+            .compactMap(\.value.first)
+            .filter { FileManager.default.fileExists(atPath: $0.url.path) }
+            .sorted { $0.createdAt < $1.createdAt }
+        let presentation = ForgeRecoveryAlertPresentation.make(recoveryCopies: copies)
+        let alert = NSAlert()
+        alert.messageText = presentation.title
+        alert.informativeText = presentation.message
+        presentation.buttonTitles.forEach { alert.addButton(withTitle: $0) }
+        let copySelector: NSPopUpButton? = if copies.count > 1 {
+            NSPopUpButton(
+                frame: NSRect(x: 0, y: 0, width: 420, height: 26),
+                pullsDown: false
+            )
         } else {
-            alert.addButton(withTitle: "OK")
+            nil
         }
-        alert.informativeText = message
+        if let copySelector {
+            copySelector.addItems(withTitles: copies.map(\.url.lastPathComponent))
+            copySelector.setAccessibilityIdentifier("ForgeRecoveryCopySelector")
+            copySelector.setAccessibilityLabel("Recovery copy")
+            if let currentRecoveryCopy,
+               let index = copies.firstIndex(where: { $0.url == currentRecoveryCopy.url })
+            {
+                copySelector.selectItem(at: index)
+            }
+            alert.accessoryView = copySelector
+        }
         guard let window else { return }
         alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn,
-                  action == .recoverForgeData,
-                  self != nil,
-                  let recoveryCopy
-            else { return }
-            revealRecoveryCopy(recoveryCopy.url)
+            guard let self, let action = ForgeRecoveryAlertAction(response: response) else { return }
+            let selectedCopy = copySelector.flatMap { selector in
+                copies.indices.contains(selector.indexOfSelectedItem)
+                    ? copies[selector.indexOfSelectedItem]
+                    : nil
+            } ?? currentRecoveryCopy.flatMap { current in
+                copies.first { $0.url == current.url }
+            } ?? copies.first
+            if action == .revealInFinder, let selectedCopy {
+                revealRecoveryCopy(selectedCopy.url)
+                return
+            }
+            self.performForgeRecoveryAction(action, recoveryCopy: selectedCopy)
         }
     }
 
+    private func performForgeRecoveryAction(
+        _ action: ForgeRecoveryAlertAction,
+        recoveryCopy: ForgeSQLiteRecoveryCopy?
+    ) {
+        switch action {
+        case .retry:
+            Task { [weak self] in
+                do {
+                    _ = try await ApplicationComposition.shared.forgeServices.retryForgeRecovery(recoveryCopy)
+                } catch {
+                    self?.presentForgeRecoveryOperationFailure()
+                }
+            }
+        case .resetForgeData:
+            confirmForgeDataReset()
+        case .notNow:
+            Task {
+                await ApplicationComposition.shared.forgeServices.disableForgeForSession()
+            }
+        case .revealInFinder:
+            break
+        case .deleteNow:
+            guard let recoveryCopy else { return }
+            Task { [weak self] in
+                do {
+                    try await ApplicationComposition.shared.forgeServices.deleteRecoveryCopy(recoveryCopy)
+                } catch {
+                    self?.presentForgeRecoveryOperationFailure()
+                }
+            }
+        }
+    }
+
+    private func confirmForgeDataReset() {
+        let alert = NSAlert()
+        alert.messageText = "Reset Forge Data?"
+        alert.informativeText = """
+        This permanently removes cached Forge data and any unrecovered drafts. GitHub accounts, Keychain credentials, and repository bindings are preserved. Trusted external-link origins are cleared.
+        """
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Reset Forge Data")
+        alert.addButton(withTitle: "Cancel")
+        guard let window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            Task { [weak self] in
+                do {
+                    try await ApplicationComposition.shared.forgeServices.resetForgeData()
+                } catch {
+                    self?.presentForgeRecoveryOperationFailure()
+                }
+            }
+        }
+    }
+
+    private func reloadRepositoryForgeOverlaySession() {
+        repositoryForgeOverlaySession?.invalidate()
+        repositoryForgeOverlaySession = nil
+        installRepositoryForgeOverlaySession()
+        if let repositoryForgeOverlaySession {
+            repositoryStatusBarController?.bind(to: repositoryForgeOverlaySession)
+        }
+        updateToolbarForgeDiagnostic()
+        NSLog("[GitX] Reloaded the repository Forge overlay after a recovery action")
+    }
+
+    private func presentForgeRecoveryOperationFailure() {
+        let alert = NSAlert()
+        alert.messageText = "Forge Recovery Did Not Complete"
+        alert.informativeText = "The recovery copy remains available. Local Git is unaffected; choose Details to retry, reset Forge data, or defer recovery."
+        alert.addButton(withTitle: "OK")
+        guard let window else { return }
+        alert.beginSheetModal(for: window)
+    }
+
     #if DEBUG
+        @objc(repositoryForgeOverlaySessionIdentityForTesting)
+        // Objective-C app-hosted tests compare this opaque identity across availability reloads.
+        // swiftlint:disable:next unused_declaration
+        dynamic func repositoryForgeOverlaySessionIdentityForTesting() -> UInt {
+            guard let repositoryForgeOverlaySession else { return 0 }
+            return UInt(bitPattern: ObjectIdentifier(repositoryForgeOverlaySession))
+        }
+
         @objc(presentForgeRecoveryStatusDetailsWithCopyURL:)
         // Objective-C app-hosted tests invoke this explicit runtime selector.
         // swiftlint:disable:next unused_declaration
@@ -971,6 +1132,26 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             presentForgeStatusDetails(
                 .recoverForgeData,
                 recoveryCopyOverride: ForgeSQLiteRecoveryCopy(url: copyURL, createdAt: Date()),
+                revealRecoveryCopy: revealHandler
+            )
+        }
+
+        @objc(presentForgeRecoveryStatusDetailsWithCopyURLs:revealHandler:)
+        // Objective-C app-hosted tests invoke this explicit runtime selector.
+        // swiftlint:disable:next unused_declaration
+        dynamic func presentForgeRecoveryStatusDetails(
+            copyURLs: [URL],
+            revealHandler: @escaping (URL) -> Void
+        ) {
+            let copies = copyURLs.enumerated().map { index, url in
+                ForgeSQLiteRecoveryCopy(
+                    url: url,
+                    createdAt: Date(timeIntervalSinceReferenceDate: TimeInterval(index))
+                )
+            }
+            presentForgeRecoveryAlert(
+                recoveryCopies: copies,
+                currentRecoveryCopy: copies.first,
                 revealRecoveryCopy: revealHandler
             )
         }

@@ -134,10 +134,12 @@ final nonisolated class ApplicationComposition: NSObject {
     ) {
         let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: userDefaults)
         let avatarLoadingPreferenceSource = ForgeAvatarLoadingPreferenceSource(userDefaults: userDefaults)
+        let trustedExternalOrigins = ForgeTrustedExternalOriginStore(defaults: userDefaults)
         let forgeServices = ForgeApplicationServiceLoader(
             bindingCleaner: bindingCleaner,
             avatarLoader: .shared,
-            avatarLoadingEnabled: { avatarLoadingPreferenceSource.isEnabled() }
+            avatarLoadingEnabled: { avatarLoadingPreferenceSource.isEnabled() },
+            trustedExternalOrigins: trustedExternalOrigins
         )
         let pullRequestDependencies = ForgeGitHubPullRequestDependencyProvider(loader: forgeServices)
         let applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
@@ -205,6 +207,7 @@ final nonisolated class ApplicationComposition: NSObject {
             forgeCloneServices: RepositoryForgeCloneServiceResolver {
                 RepositoryForgeCloneProductionService(loader: forgeServices)
             },
+            forgeExternalLinkPreferences: trustedExternalOrigins,
             automaticallyStartsForgeServices: automaticallyStartsForgeServices
         )
     }
@@ -215,6 +218,7 @@ final nonisolated class ApplicationComposition: NSObject {
         forgePullRequestServices: RepositoryPullRequestServiceResolver = RepositoryPullRequestServiceResolver(),
         forgePullRequestReviewServices: RepositoryPullRequestReviewServiceResolver = RepositoryPullRequestReviewServiceResolver(),
         forgeCloneServices: RepositoryForgeCloneServiceResolver = RepositoryForgeCloneServiceResolver(),
+        forgeExternalLinkPreferences: ForgeTrustedExternalOriginStore? = nil,
         automaticallyStartsForgeServices: Bool = true
     ) {
         applicationPreferences = ApplicationPreferences(userDefaults: userDefaults)
@@ -222,7 +226,9 @@ final nonisolated class ApplicationComposition: NSObject {
         self.forgePullRequestServices = forgePullRequestServices
         self.forgePullRequestReviewServices = forgePullRequestReviewServices
         self.forgeCloneServices = forgeCloneServices
-        forgeExternalLinkPreferences = ForgeTrustedExternalOriginStore(defaults: userDefaults)
+        self.forgeExternalLinkPreferences = forgeExternalLinkPreferences ?? ForgeTrustedExternalOriginStore(
+            defaults: userDefaults
+        )
         self.automaticallyStartsForgeServices = automaticallyStartsForgeServices
         super.init()
     }

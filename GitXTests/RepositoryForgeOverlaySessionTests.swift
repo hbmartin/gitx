@@ -732,6 +732,12 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
                 .partialResponse,
                 .unavailable(.persistentStorageFailure)
             ),
+            (
+                .sessionDisabled(repository, recovery),
+                .unavailable(.partialResponse),
+                .partialResponse,
+                .unavailable(.sessionDisabled)
+            ),
             (.unavailable(repository), .unavailable(.partialResponse), .partialResponse, .unavailable(.other)),
         ]
 
@@ -770,7 +776,7 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
             XCTAssertEqual(factsObservations.first, .unavailable(.notRequested))
             XCTAssertEqual(historyObservations.first, .loading(previous: nil))
             XCTAssertEqual(historyObservations.last, .unavailable(fixture.2))
-            XCTAssertEqual(session.recoveryCopy, index == 3 ? recovery : nil)
+            XCTAssertEqual(session.recoveryCopy, [3, 4].contains(index) ? recovery : nil)
             session.showDetails(for: .authenticate)
             XCTAssertEqual(detailsActions, [.authenticate])
             let override = ForgeRepositoryStatusInput(

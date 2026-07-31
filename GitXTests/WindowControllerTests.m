@@ -419,6 +419,9 @@
 - (void)presentForgeRecoveryStatusDetailsWithCopyURL:(NSURL *)copyURL;
 - (void)presentForgeRecoveryStatusDetailsWithCopyURL:(NSURL *)copyURL
 									   revealHandler:(void (^)(NSURL *copyURL))revealHandler;
+- (void)presentForgeRecoveryStatusDetailsWithCopyURLs:(NSArray<NSURL *> *)copyURLs
+										revealHandler:(void (^)(NSURL *copyURL))revealHandler;
+- (NSUInteger)repositoryForgeOverlaySessionIdentityForTesting;
 @end
 
 static NSModalResponse PBWindowAlertResponse;
@@ -1651,11 +1654,21 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBRepositoryRemoteOperationDidSucceedNotification"
 														object:self.repository
 													  userInfo:@{@"operation" : @"push"}];
+	NSUInteger forgeSessionBeforeAvailabilityChange = [controller repositoryForgeOverlaySessionIdentityForTesting];
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBForgeApplicationAvailabilityDidChangeNotification"
+														object:nil];
+	NSUInteger forgeSessionAfterAvailabilityChange = [controller repositoryForgeOverlaySessionIdentityForTesting];
+	XCTAssertNotEqual(forgeSessionBeforeAvailabilityChange, forgeSessionAfterAvailabilityChange);
 	[controller showForgeStatusDetails:self];
 	XCTAssertEqualObjects(PBWindowPresentedAlerts.lastObject.messageText, @"Sign In Required");
 	NSURL *recoveryCopyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
 														stringByAppendingPathComponent:[NSString stringWithFormat:@"Forge-recovery-%@.sqlite3", NSUUID.UUID.UUIDString]]];
+	XCTAssertTrue([[NSData dataWithBytes:"recovery" length:8] writeToURL:recoveryCopyURL atomically:YES]);
+	[self addTeardownBlock:^{
+		[[NSFileManager defaultManager] removeItemAtURL:recoveryCopyURL error:nil];
+	}];
 	__block NSURL *revealedRecoveryCopyURL = nil;
+	PBWindowAlertResponse = NSAlertFirstButtonReturn + 3;
 	[controller presentForgeRecoveryStatusDetailsWithCopyURL:recoveryCopyURL
 											   revealHandler:^(NSURL *copyURL) {
 												   revealedRecoveryCopyURL = copyURL;
@@ -1663,11 +1676,42 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSAlert *recoveryAlert = PBWindowPresentedAlerts.lastObject;
 	XCTAssertEqualObjects(recoveryAlert.messageText, @"Forge Data Unavailable");
 	XCTAssertTrue([recoveryAlert.informativeText containsString:recoveryCopyURL.lastPathComponent]);
-	XCTAssertEqualObjects([recoveryAlert.buttons valueForKey:@"title"], (@[ @"Reveal in Finder", @"OK" ]));
+	XCTAssertTrue([recoveryAlert.informativeText containsString:@"Local Git remains fully available"]);
+	XCTAssertEqualObjects([recoveryAlert.buttons valueForKey:@"title"],
+						  (@[ @"Retry", @"Reset Forge Data…", @"Not Now", @"Reveal in Finder", @"Delete Now" ]));
 	XCTAssertEqualObjects(revealedRecoveryCopyURL, recoveryCopyURL);
 	XCTAssertEqual(PBWindowWorkspaceRevealCount, (NSUInteger)0);
 	[controller presentForgeRecoveryStatusDetailsWithCopyURL:recoveryCopyURL];
 	XCTAssertEqual(PBWindowWorkspaceRevealCount, (NSUInteger)1);
+	NSURL *secondRecoveryCopyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+															  stringByAppendingPathComponent:[NSString stringWithFormat:@"Forge-recovery-%@.sqlite3", NSUUID.UUID.UUIDString]]];
+	XCTAssertTrue([[NSData dataWithBytes:"second" length:6] writeToURL:secondRecoveryCopyURL atomically:YES]);
+	[self addTeardownBlock:^{
+		[[NSFileManager defaultManager] removeItemAtURL:secondRecoveryCopyURL error:nil];
+	}];
+	PBWindowAlertResponse = NSAlertFirstButtonReturn + 3;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		NSPopUpButton *copySelector = (NSPopUpButton *)alert.accessoryView;
+		XCTAssertTrue([copySelector isKindOfClass:NSPopUpButton.class]);
+		XCTAssertEqual(copySelector.numberOfItems, (NSInteger)2);
+		[copySelector selectItemAtIndex:1];
+	};
+	[controller presentForgeRecoveryStatusDetailsWithCopyURLs:@[ recoveryCopyURL, secondRecoveryCopyURL ]
+												revealHandler:^(NSURL *copyURL) {
+													revealedRecoveryCopyURL = copyURL;
+												}];
+	PBWindowAlertPresentationHook = nil;
+	XCTAssertEqualObjects(revealedRecoveryCopyURL, secondRecoveryCopyURL);
+	revealedRecoveryCopyURL = nil;
+	NSURL *staleRecoveryCopyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+															 stringByAppendingPathComponent:[NSString stringWithFormat:@"Forge-recovery-stale-%@.sqlite3", NSUUID.UUID.UUIDString]]];
+	[controller presentForgeRecoveryStatusDetailsWithCopyURL:staleRecoveryCopyURL
+											   revealHandler:^(NSURL *copyURL) {
+												   revealedRecoveryCopyURL = copyURL;
+											   }];
+	XCTAssertNil(revealedRecoveryCopyURL);
+	XCTAssertTrue([PBWindowPresentedAlerts.lastObject.informativeText containsString:@"No retained recovery copies"]);
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
 
 	[controller changeContentController:history];
 	history.status = @"History ready";

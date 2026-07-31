@@ -1,5 +1,52 @@
+import AppKit
 import ForgeKit
 import Foundation
+
+nonisolated enum ForgeRecoveryAlertAction: Equatable, Sendable {
+    case retry
+    case resetForgeData
+    case notNow
+    case revealInFinder
+    case deleteNow
+
+    init?(response: NSApplication.ModalResponse) {
+        switch response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue {
+        case 0: self = .retry
+        case 1: self = .resetForgeData
+        case 2: self = .notNow
+        case 3: self = .revealInFinder
+        case 4: self = .deleteNow
+        default: return nil
+        }
+    }
+}
+
+nonisolated struct ForgeRecoveryAlertPresentation: Equatable, Sendable {
+    let title: String
+    let message: String
+    let buttonTitles: [String]
+
+    static func make(recoveryCopies: [ForgeSQLiteRecoveryCopy]) -> Self {
+        let copies = recoveryCopies.sorted { $0.createdAt < $1.createdAt }
+        let retainedCopyList = copies.isEmpty
+            ? "No retained recovery copies are currently available."
+            : copies.map { "• \($0.url.lastPathComponent)" }.joined(separator: "\n")
+        return Self(
+            title: "Forge Data Unavailable",
+            message: """
+            GitX could not open its Forge database. Local Git remains fully available.
+
+            GitX will retry automatically on the next launch. Retry attempts to salvage durable drafts, watched choices, seen state, and unknown mutation outcomes. Disposable Forge snapshots are rebuilt.
+
+            Retained recovery copies (automatically deleted after 30 days):
+            \(retainedCopyList)
+
+            Reveal in Finder and Delete Now apply to the selected recovery copy. Delete Now permanently removes that file without moving it to the Trash and may remove the last copy of unrecovered drafts. This is normal filesystem deletion, not secure erase.
+            """,
+            buttonTitles: ["Retry", "Reset Forge Data…", "Not Now", "Reveal in Finder", "Delete Now"]
+        )
+    }
+}
 
 enum RepositoryHeadStatus: Equatable, Sendable {
     case branch(name: String, unborn: Bool)

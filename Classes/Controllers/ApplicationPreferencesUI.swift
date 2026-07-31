@@ -409,7 +409,7 @@ private final class ForgeTrustedOriginsPreferencesView: NSView {
 final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_declaration
     @objc static func accountsView() -> NSView {
         ForgeAccountsPreferencesView {
-            let services = try await ApplicationComposition.shared.forgeServices.services()
+            let services = try await ApplicationComposition.shared.forgeServices.accountManagementServices()
             return ForgeAccountsService(
                 services: services,
                 configuration: ForgeGitHubAppConfiguration.bundled()

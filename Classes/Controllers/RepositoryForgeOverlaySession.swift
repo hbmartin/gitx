@@ -388,6 +388,7 @@ nonisolated enum RepositoryForgeOverlayBootstrap: Sendable {
     case unsupported(ForgeRepositoryIdentity)
     case authenticationRequired(ForgeRepositoryIdentity)
     case recoveryRequired(ForgeRepositoryIdentity, ForgeSQLiteRecoveryCopy)
+    case sessionDisabled(ForgeRepositoryIdentity, ForgeSQLiteRecoveryCopy?)
     case unavailable(ForgeRepositoryIdentity)
     case ready(ForgeRepositoryIdentity, RepositoryForgeOverlayContext)
 }
@@ -432,7 +433,14 @@ actor RepositoryForgeOverlayLoader {
         guard Self.isGitHubDotCom(repository) else { return remember(.unsupported(repository)) }
         do {
             guard let services else { return remember(.unavailable(repository)) }
-            let applicationServices = try await services.services()
+            let applicationServices: ForgeApplicationServices
+            switch try await services.overlayServices() {
+            case let .enabled(enabledServices):
+                applicationServices = enabledServices
+            case let .sessionDisabled(copy):
+                logger.notice("Kept Forge disabled for this session while preserving local Git access")
+                return remember(.sessionDisabled(repository, copy))
+            }
             guard let database = applicationServices.database else {
                 guard let copy = applicationServices.dataAvailability.recoveryCopy else {
                     return remember(.unavailable(repository))
@@ -1055,6 +1063,16 @@ final class RepositoryForgeOverlaySession: RepositoryForgeStatusCoordinating {
                 access: .noAccount,
                 freshness: .notLoaded,
                 diagnostic: .unavailable(.persistentStorageFailure)
+            ))
+            publishFacts(.unavailable(.partialResponse))
+        case let .sessionDisabled(repository, copy):
+            historyUnavailableReason = .partialResponse
+            recoveryCopy = copy
+            publishStatus(ForgeRepositoryStatusInput(
+                repository: repository,
+                access: .noAccount,
+                freshness: .notLoaded,
+                diagnostic: .unavailable(.sessionDisabled)
             ))
             publishFacts(.unavailable(.partialResponse))
         case let .unavailable(repository):

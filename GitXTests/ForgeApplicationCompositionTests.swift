@@ -1,3 +1,4 @@
+import AppKit
 import ForgeKit
 import XCTest
 
@@ -262,6 +263,405 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         XCTAssertEqual(probe.invocationThreads, [false, false])
     }
 
+    func testFactoryComposesCacheDurableAndRecoveryCopyRetentionAtDeterministicClock() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeApplicationRetentionTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configuration = ForgeSQLiteConfiguration(
+            databaseURL: root.appendingPathComponent("Forge.sqlite3"),
+            recoveryDirectoryURL: root.appendingPathComponent("Recovery", isDirectory: true)
+        )
+        let database = try ForgeSQLiteStore(configuration: configuration)
+        let now = Date(timeIntervalSince1970: 10_000_000_000)
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "retention-account")
+        let staleRepository = try ForgeRepositoryIdentity(forge: forge, owner: "acme", name: "stale")
+        let activeRepository = try ForgeRepositoryIdentity(forge: forge, owner: "acme", name: "active")
+        let staleKey = try snapshotKey(accountID: accountID, repository: staleRepository, identity: "stale")
+        let activeKey = try snapshotKey(accountID: accountID, repository: activeRepository, identity: "active")
+        let staleDate = now.addingTimeInterval(-ForgePolicyConstants.repositoryIdleExpiration - 1)
+        let activeDate = now.addingTimeInterval(-1)
+        try await database.putCacheEntry(cacheEntry(key: staleKey, payload: "stale", at: staleDate))
+        try await database.putCacheEntry(cacheEntry(key: activeKey, payload: "active", at: activeDate))
+        let expiredRecord = try ForgeSQLiteDurableRecord(
+            kind: .draft,
+            accountID: accountID,
+            repository: activeRepository,
+            key: Data("expired".utf8),
+            payload: Data("expired draft".utf8),
+            lastActivityAt: staleDate,
+            expiresAt: now
+        )
+        let activeRecord = try ForgeSQLiteDurableRecord(
+            kind: .attention,
+            accountID: accountID,
+            repository: activeRepository,
+            key: Data("active".utf8),
+            payload: Data("active attention".utf8),
+            lastActivityAt: activeDate,
+            expiresAt: now.addingTimeInterval(1)
+        )
+        try await database.saveDurableRecord(expiredRecord)
+        try await database.saveDurableRecord(activeRecord)
+        await database.close()
+
+        let expiredRecoveryCopy = configuration.recoveryDirectoryURL
+            .appendingPathComponent("ForgeKit-recovery-expired.sqlite3")
+        try Data("old recovery".utf8).write(to: expiredRecoveryCopy)
+        try Data("old sidecar".utf8).write(to: URL(fileURLWithPath: expiredRecoveryCopy.path + "-wal"))
+
+        let services = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: root,
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: makeDefaults()),
+            keychain: CompositionKeychain(),
+            cliRunner: CompositionRunner(),
+            now: { now }
+        )
+        let maintainedDatabase = try XCTUnwrap(services.database)
+        let maintainedStale = try await maintainedDatabase.cacheEntry(for: staleKey, accessedAt: now)
+        let maintainedActive = try await maintainedDatabase.cacheEntry(for: activeKey, accessedAt: now)
+        let maintainedExpiredDurable = try await maintainedDatabase.durableRecord(
+            kind: expiredRecord.kind,
+            accountID: accountID,
+            repository: activeRepository,
+            key: expiredRecord.key
+        )
+        let maintainedActiveDurable = try await maintainedDatabase.durableRecord(
+            kind: activeRecord.kind,
+            accountID: accountID,
+            repository: activeRepository,
+            key: activeRecord.key
+        )
+        XCTAssertNil(maintainedStale)
+        XCTAssertEqual(
+            maintainedActive?.payload,
+            Data("active".utf8)
+        )
+        XCTAssertNil(maintainedExpiredDurable)
+        XCTAssertEqual(maintainedActiveDurable, activeRecord)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: expiredRecoveryCopy.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: expiredRecoveryCopy.path + "-wal"))
+    }
+
+    func testRecoverySalvagesOnlyDurableRecordsAndKeepsDiagnosticCopy() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeApplicationDurableSalvageTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceConfiguration = ForgeSQLiteConfiguration(
+            databaseURL: root.appendingPathComponent("RecoverySource.sqlite3"),
+            recoveryDirectoryURL: root.appendingPathComponent("SourceRecovery", isDirectory: true)
+        )
+        let source = try ForgeSQLiteStore(configuration: sourceConfiguration)
+        let now = Date(timeIntervalSince1970: 5_000_000)
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "salvage-account")
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let durable = try ForgeSQLiteDurableRecord(
+            kind: .draft,
+            accountID: accountID,
+            repository: repository,
+            key: Data("draft".utf8),
+            payload: Data("recover me".utf8),
+            lastActivityAt: now,
+            expiresAt: now.addingTimeInterval(ForgePolicyConstants.durableRecordExpiration)
+        )
+        let disposableKey = try snapshotKey(
+            accountID: accountID,
+            repository: repository,
+            identity: "discard-me"
+        )
+        try await source.saveDurableRecord(durable)
+        try await source.putCacheEntry(cacheEntry(key: disposableKey, payload: "disposable", at: now))
+        await source.close()
+
+        let targetConfiguration = ForgeSQLiteConfiguration(
+            databaseURL: root.appendingPathComponent("Target/Forge.sqlite3"),
+            recoveryDirectoryURL: root.appendingPathComponent("Target/Recovery", isDirectory: true)
+        )
+        try FileManager.default.createDirectory(
+            at: targetConfiguration.databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("broken live database".utf8).write(to: targetConfiguration.databaseURL)
+        let recoveryCopy = ForgeSQLiteRecoveryCopy(url: sourceConfiguration.databaseURL, createdAt: now)
+        let coordinator = ForgeApplicationRecoveryCoordinator(
+            configuration: targetConfiguration,
+            deferredAccountCleanup: ForgeDeferredAccountCleanupStore(
+                forgeDirectory: targetConfiguration.databaseURL.deletingLastPathComponent()
+            ),
+            now: { now }
+        )
+
+        let result = try await coordinator.recoverDurableRecords(from: recoveryCopy)
+
+        XCTAssertEqual(result.restoredDurableRecordCount, 1)
+        XCTAssertEqual(result.skippedDurableRecordCount, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recoveryCopy.url.path))
+        let replacement = try ForgeSQLiteStore(configuration: targetConfiguration)
+        let restoredDurable = try await replacement.durableRecord(
+            kind: durable.kind,
+            accountID: accountID,
+            repository: repository,
+            key: durable.key
+        )
+        let discardedDisposable = try await replacement.cacheEntry(for: disposableKey, accessedAt: now)
+        XCTAssertEqual(restoredDurable, durable)
+        XCTAssertNil(discardedDisposable)
+        await replacement.close()
+    }
+
+    func testResetPreservesAccountsAndBindingsWhileClearingDatabaseAndTrustedOrigins() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeApplicationResetTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let trustedOrigins = ForgeTrustedExternalOriginStore(defaults: defaults)
+        let keychain = CompositionKeychain()
+        let loader = ForgeApplicationServiceLoader {
+            try await ForgeApplicationServiceFactory.make(
+                forgeDirectory: root,
+                bindingCleaner: bindingCleaner,
+                keychain: keychain,
+                cliRunner: CompositionRunner(),
+                trustedExternalOrigins: trustedOrigins
+            )
+        }
+        let services = try await loader.services()
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "reset-account")
+        let account = try await services.accountStore.addPersonalAccessToken(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("reset-pat"),
+            kind: .classic,
+            token: Data("reset-token".utf8),
+            expiresAt: nil
+        )
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let binding = try ForgeRepositoryBinding(
+            localRemoteName: "origin",
+            primaryRepository: repository,
+            preferredAccount: accountID
+        )
+        try defaults.set([
+            "reset-repository": [
+                ForgeRepositoryBindingAccountCleaner.forgeBindingKey: JSONEncoder().encode(binding),
+            ],
+        ], forKey: ForgeRepositoryBindingAccountCleaner.repositorySettingsKey)
+        let trustedOrigin = try ForgeTrustedExternalOrigin(
+            origin: ForgeOrigin(host: "docs.example")
+        )
+        XCTAssertTrue(trustedOrigins.add(trustedOrigin))
+        let trustedOriginNotificationThreads = CompositionThreadProbe()
+        let trustedOriginObserver = NotificationCenter.default.addObserver(
+            forName: .forgeTrustedExternalOriginsDidChange,
+            object: trustedOrigins,
+            queue: nil
+        ) { _ in
+            trustedOriginNotificationThreads.recordCurrentThread()
+        }
+        defer { NotificationCenter.default.removeObserver(trustedOriginObserver) }
+        let database = try XCTUnwrap(services.database)
+        let durable = try ForgeSQLiteDurableRecord(
+            kind: .draft,
+            accountID: accountID,
+            repository: repository,
+            key: Data("reset-draft".utf8),
+            payload: Data("discarded by reset".utf8),
+            lastActivityAt: Date()
+        )
+        try await database.saveDurableRecord(durable)
+
+        try await loader.resetForgeData()
+
+        let resetServices = try await loader.services()
+        let resetAccounts = try await resetServices.accountStore.accounts()
+        XCTAssertEqual(bindingCleaner.forgeRepositoryBindings(), [binding])
+        XCTAssertTrue(trustedOrigins.origins().isEmpty)
+        XCTAssertEqual(trustedOriginNotificationThreads.mainThreadValues, [true])
+        let resetDatabase = try XCTUnwrap(resetServices.database)
+        let resetDurable = try await resetDatabase.durableRecord(
+            kind: durable.kind,
+            accountID: accountID,
+            repository: repository,
+            key: durable.key
+        )
+        XCTAssertEqual(resetAccounts, [account])
+        XCTAssertNil(resetDurable)
+    }
+
+    func testNotNowIsSessionLocalAndRecoveryPresentationPinsEveryAction() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeApplicationNotNowTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("not sqlite".utf8).write(to: root.appendingPathComponent("Forge.sqlite3"))
+        let defaults = try makeDefaults()
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let loader = ForgeApplicationServiceLoader {
+            try await ForgeApplicationServiceFactory.make(
+                forgeDirectory: root,
+                bindingCleaner: bindingCleaner,
+                keychain: CompositionKeychain(),
+                cliRunner: CompositionRunner()
+            )
+        }
+        let services = try await loader.services()
+        let copy = try XCTUnwrap(services.dataAvailability.recoveryCopy)
+
+        let availabilityNotificationThreads = CompositionThreadProbe()
+        let availabilityObserver = NotificationCenter.default.addObserver(
+            forName: .forgeApplicationAvailabilityDidChange,
+            object: nil,
+            queue: nil
+        ) { _ in
+            availabilityNotificationThreads.recordCurrentThread()
+        }
+        defer { NotificationCenter.default.removeObserver(availabilityObserver) }
+
+        await loader.disableForgeForSession()
+
+        guard case let .sessionDisabled(disabledCopy) = try await loader.overlayServices() else {
+            return XCTFail("Not Now must disable only the Forge overlay for this loader session")
+        }
+        XCTAssertEqual(disabledCopy, copy)
+        await XCTAssertThrowsErrorAsync(try await loader.services()) { error in
+            guard case ForgeApplicationRecoveryError.sessionDisabled = error else {
+                return XCTFail("ordinary Forge service access must honor the session-wide gate")
+            }
+        }
+        let accountServices = try await loader.accountManagementServices()
+        XCTAssertTrue(accountServices === services, "account access remains available in-session")
+        XCTAssertEqual(availabilityNotificationThreads.mainThreadValues, [true])
+
+        let presentation = ForgeRecoveryAlertPresentation.make(recoveryCopies: [copy])
+        XCTAssertEqual(presentation.title, "Forge Data Unavailable")
+        XCTAssertTrue(presentation.message.contains(copy.url.lastPathComponent))
+        XCTAssertTrue(presentation.message.contains("Local Git remains fully available"))
+        XCTAssertTrue(presentation.message.contains("last copy of unrecovered drafts"))
+        XCTAssertEqual(
+            presentation.buttonTitles,
+            ["Retry", "Reset Forge Data…", "Not Now", "Reveal in Finder", "Delete Now"]
+        )
+        let first = NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        XCTAssertEqual(ForgeRecoveryAlertAction(response: .init(rawValue: first)), .retry)
+        XCTAssertEqual(ForgeRecoveryAlertAction(response: .init(rawValue: first + 1)), .resetForgeData)
+        XCTAssertEqual(ForgeRecoveryAlertAction(response: .init(rawValue: first + 2)), .notNow)
+        XCTAssertEqual(ForgeRecoveryAlertAction(response: .init(rawValue: first + 3)), .revealInFinder)
+        XCTAssertEqual(ForgeRecoveryAlertAction(response: .init(rawValue: first + 4)), .deleteNow)
+        XCTAssertNil(ForgeRecoveryAlertAction(response: .init(rawValue: first + 5)))
+
+        try await loader.deleteRecoveryCopy(copy)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy.url.path))
+        await XCTAssertThrowsErrorAsync(try await loader.retryForgeRecovery(copy)) { error in
+            guard case ForgeApplicationRecoveryError.unavailable = error else {
+                return XCTFail("retry must reject a stale recovery-copy selection")
+            }
+        }
+    }
+
+    func testConcurrentResetsSerializeAndNeverRepublishAClosedDatabase() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeApplicationSerializedResetTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let probe = CompositionFactoryProbe()
+        let loader = ForgeApplicationServiceLoader {
+            probe.recordInvocation()
+            return try await ForgeApplicationServiceFactory.make(
+                forgeDirectory: root,
+                bindingCleaner: bindingCleaner,
+                keychain: CompositionKeychain(),
+                cliRunner: CompositionRunner()
+            )
+        }
+        _ = try await loader.services()
+
+        async let firstReset: Void = loader.resetForgeData()
+        async let secondReset: Void = loader.resetForgeData()
+        _ = try await(firstReset, secondReset)
+
+        let services = try await loader.services()
+        let database = try XCTUnwrap(services.database)
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "serialized-reset")
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let record = try ForgeSQLiteDurableRecord(
+            kind: .draft,
+            accountID: accountID,
+            repository: repository,
+            key: Data("after-reset".utf8),
+            payload: Data("open database".utf8),
+            lastActivityAt: Date()
+        )
+        try await database.saveDurableRecord(record)
+        let loadedRecord = try await database.durableRecord(
+            kind: record.kind,
+            accountID: accountID,
+            repository: repository,
+            key: record.key
+        )
+        XCTAssertEqual(loadedRecord, record)
+        XCTAssertEqual(probe.invocationCount, 3)
+    }
+
+    func testLazyMaintenanceExpiresRecordsDuringLongRunningSession() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeApplicationLazyMaintenanceTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let clock = CompositionDateAuthority(Date().addingTimeInterval(1))
+        let loader = ForgeApplicationServiceLoader(
+            now: { clock.value },
+            maintenanceInterval: 60
+        ) {
+            try await ForgeApplicationServiceFactory.make(
+                forgeDirectory: root,
+                bindingCleaner: bindingCleaner,
+                keychain: CompositionKeychain(),
+                cliRunner: CompositionRunner(),
+                now: { clock.value }
+            )
+        }
+        let services = try await loader.services()
+        let database = try XCTUnwrap(services.database)
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "long-session")
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let record = try ForgeSQLiteDurableRecord(
+            kind: .draft,
+            accountID: accountID,
+            repository: repository,
+            key: Data("expires-in-session".utf8),
+            payload: Data("draft".utf8),
+            lastActivityAt: clock.value,
+            expiresAt: clock.value.addingTimeInterval(30)
+        )
+        try await database.saveDurableRecord(record)
+        let recoveryDirectory = root.appendingPathComponent("Recovery", isDirectory: true)
+        try FileManager.default.createDirectory(at: recoveryDirectory, withIntermediateDirectories: true)
+        let recoveryCopy = recoveryDirectory.appendingPathComponent("ForgeKit-recovery-long-session.sqlite3")
+        let recoverySidecar = URL(fileURLWithPath: recoveryCopy.path + "-wal")
+        try Data("private recovery".utf8).write(to: recoveryCopy)
+        try Data("private sidecar".utf8).write(to: recoverySidecar)
+
+        clock.advance(by: ForgePolicyConstants.recoveryCopyExpiration)
+        _ = try await loader.services()
+
+        let expiredRecord = try await database.durableRecord(
+            kind: record.kind,
+            accountID: accountID,
+            repository: repository,
+            key: record.key
+        )
+        XCTAssertNil(expiredRecord)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recoveryCopy.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recoverySidecar.path))
+    }
+
     func testSQLiteRecoveryKeepsAccountsKeychainAndRemovalAvailableWithoutCLIFallback() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ForgeApplicationRecoveryCompositionTests-\(UUID().uuidString)", isDirectory: true)
@@ -501,6 +901,9 @@ final class ForgeApplicationCompositionTests: XCTestCase {
             try XCTUnwrap(encoded.range(of: "z-account")?.lowerBound)
         )
 
+        try await store.pruneResolvedEntries()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tombstoneURL.path))
+
         try Data("{\"entries\":[],\"version\":1}".utf8).write(to: tombstoneURL, options: .atomic)
         do {
             _ = try await store.filtering(
@@ -597,6 +1000,38 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         defaults.removePersistentDomain(forName: name)
         return defaults
     }
+
+    private func snapshotKey(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        identity: String
+    ) throws -> ForgeDisposableCacheKey {
+        try .snapshot(ForgeCacheRecordKey(
+            repositoryPartition: ForgeRepositoryPartitionKey(
+                cachePartition: .account(accountID),
+                repository: repository
+            ),
+            kind: .repositoryFacts,
+            identity: identity
+        ))
+    }
+
+    private func cacheEntry(
+        key: ForgeDisposableCacheKey,
+        payload: String,
+        at date: Date
+    ) throws -> ForgeSQLiteCacheEntry {
+        let data = Data(payload.utf8)
+        return try ForgeSQLiteCacheEntry(
+            record: ForgeDisposableCacheRecord(
+                key: key,
+                byteCount: UInt64(data.count),
+                fetchedAt: date,
+                lastAccessedAt: date
+            ),
+            payload: data
+        )
+    }
 }
 
 private enum CompositionFactoryError: Error, Equatable {
@@ -642,6 +1077,38 @@ private final nonisolated class CompositionAvatarLoadingAuthority: @unchecked Se
 
     func set(_ enabled: Bool) {
         lock.withLock { self.enabled = enabled }
+    }
+}
+
+// swift6-safety-justification: The lock serializes mutable dates captured by detached factory tasks.
+private final nonisolated class CompositionDateAuthority: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date: Date
+
+    init(_ date: Date) {
+        self.date = date
+    }
+
+    var value: Date {
+        lock.withLock { date }
+    }
+
+    func advance(by interval: TimeInterval) {
+        lock.withLock { date = date.addingTimeInterval(interval) }
+    }
+}
+
+// swift6-safety-justification: The lock serializes notification thread observations.
+private final nonisolated class CompositionThreadProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Bool] = []
+
+    var mainThreadValues: [Bool] {
+        lock.withLock { values }
+    }
+
+    func recordCurrentThread() {
+        lock.withLock { values.append(Thread.isMainThread) }
     }
 }
 
