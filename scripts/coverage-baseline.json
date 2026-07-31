@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8817,
+  "minimumLineCoverage": 0.8829,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4716,
@@ -20,8 +20,8 @@
     "Classes/Controllers/ForgeDeepLinkApplicationRouter.swift": 0.7026,
     "Classes/Controllers/ForgeDestinationScriptCommand.swift": 0.9585,
     "Classes/Controllers/ForgeExternalLinkRouting.swift": 0.9548,
-    "Classes/Controllers/ForgeMutationQuitCoordinator.swift": 0.8188,
-    "Classes/Controllers/ForgeUnknownMutationOutcomeStore.swift": 0.8648,
+    "Classes/Controllers/ForgeMutationQuitCoordinator.swift": 0.8819,
+    "Classes/Controllers/ForgeUnknownMutationOutcomeStore.swift": 0.9112,
     "Classes/Controllers/GitHubPullRequestComposition.swift": 0.8428,
     "Classes/Controllers/GitHubReadComposition.swift": 0.997,
     "Classes/Controllers/GitXCoreAdapters.swift": 1.0,
@@ -57,7 +57,7 @@
     "Classes/Controllers/RepositoryForgeCoordinator.swift": 0.9584,
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
     "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8791,
-    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.6747,
+    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.6889,
     "Classes/Controllers/RepositoryPullRequestGitOperations.swift": 0.9229,
     "Classes/Controllers/RepositoryPullRequestMutationPreferenceStore.swift": 0.9492,
     "Classes/Controllers/RepositoryPullRequestReviewComposition.swift": 0.8986,
