@@ -279,19 +279,22 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         let remaining = try await repositoryRefresh.records(
             accountID: fixture.accountID,
             repository: fixture.repository,
-            operation: .editPullRequest
+            operation: .editPullRequest,
+            scope: .repositoryWide
         )
         XCTAssertEqual(remaining, [repositoryWide, exact43])
         let consumedByRepositoryRefresh = try await repositoryRefresh.consume(
             accountID: fixture.accountID,
             repository: fixture.repository,
-            operation: .editPullRequest
+            operation: .editPullRequest,
+            scope: .repositoryWide
         )
         XCTAssertEqual(consumedByRepositoryRefresh, remaining)
         let recordsAfterRepositoryRefresh = try await repositoryRefresh.records(
             accountID: fixture.accountID,
             repository: fixture.repository,
-            operation: .editPullRequest
+            operation: .editPullRequest,
+            scope: .repositoryWide
         )
         XCTAssertTrue(recordsAfterRepositoryRefresh.isEmpty)
         await database.close()

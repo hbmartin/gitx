@@ -1811,16 +1811,6 @@ private final nonisolated class LocalReviewServiceSpy: RepositoryPullRequestLoca
         return result.head
     }
 
-    func filesWithUncommittedEdits() async throws -> Set<ForgeFilePath> {
-        []
-    }
-
-    func contents(of _: ForgeFilePath) async throws -> String {
-        ""
-    }
-
-    func writeUnstaged(contents _: String, to _: ForgeFilePath) async throws {}
-
     func applySuggestedChange(_: ForgeSuggestedChange) async throws {}
 
     func fetchBase(_ base: ForgeBranchReference) async throws {

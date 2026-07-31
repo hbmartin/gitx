@@ -29,10 +29,6 @@ protocol ForgeReadDestinationRouting: AnyObject {
 /// local anchor; the read renderer never infers or rewrites server anchors.
 @MainActor
 protocol RepositoryPullRequestReviewOverlayHosting: AnyObject {
-    /// Reports the exact selected local anchor plus the displayed context and
-    /// truncation state needed for fail-closed head-change re-anchoring.
-    var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)? { get set }
-
     /// Returns the reusable lifecycle/review action area for both inspector modes.
     func actionView(for pullRequest: ForgePullRequestSummary) -> NSView
 

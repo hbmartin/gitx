@@ -9,7 +9,6 @@ enum RepositoryPullRequestReviewAccessibility {
     static let overlayRoot = "GitX.PullRequest.Review.Overlay"
     static let status = "GitX.PullRequest.Review.Status"
     static let retry = "GitX.PullRequest.Review.Retry"
-    static let refresh = "GitX.PullRequest.Review.Refresh"
     static let reviewers = "GitX.PullRequest.Review.Reviewers"
     static let manageReviewers = "GitX.PullRequest.Review.ManageReviewers"
     static let formalReview = "GitX.PullRequest.Review.FormalReview"
@@ -98,7 +97,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private var overlayDraftLoadTasks: [Task<Void, Never>] = []
     private var modalDraftCoordinator: RepositoryReviewDraftTextCoordinator?
     private var resolutionControlRows: [ForgeObjectID: ResolutionControlRow] = [:]
-    private let logger = Logger(subsystem: "com.gitx.gitx", category: "PullRequestReviewUI")
     var onWorkspacePresentationChange: (() -> Void)?
 
     init(
@@ -1889,8 +1887,6 @@ private final class RepositoryReviewButton: NSButton {
 final class RepositoryPullRequestReviewOverlayHost: NSObject,
     RepositoryPullRequestReviewOverlayHosting
 {
-    var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)?
-
     private let applicationSession: RepositoryPullRequestReviewApplicationSession
     private let accountID: ForgeAccountID
     private let router: any RepositoryPullRequestReviewRouting
@@ -2043,7 +2039,6 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
                 contextLines: selection.contextLines,
                 isTruncated: selection.isTruncated
             )
-            onSelectedAnchor?(selection.anchor, selection.contextLines, selection.isTruncated)
             logger.info("Mapped explicit native diff selection to one exact review anchor")
         } catch {
             controller?.clearSelection()

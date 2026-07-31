@@ -434,9 +434,6 @@ nonisolated protocol RepositoryPullRequestLocalReviewServing: Sendable {
     ) async throws -> [ForgeReviewReanchorCandidate]
 
     func checkedOutHead() async throws -> ForgeCommitID?
-    func filesWithUncommittedEdits() async throws -> Set<ForgeFilePath>
-    func contents(of path: ForgeFilePath) async throws -> String
-    func writeUnstaged(contents: String, to path: ForgeFilePath) async throws
     /// Revalidates checkout and dirty-file state, then compares the exact file
     /// bytes again immediately before one replacement so a changed target
     /// fails closed.
@@ -459,18 +456,6 @@ nonisolated struct UnavailableRepositoryPullRequestLocalReviewService: Repositor
 
     func checkedOutHead() async throws -> ForgeCommitID? {
         try fail()
-    }
-
-    func filesWithUncommittedEdits() async throws -> Set<ForgeFilePath> {
-        try fail()
-    }
-
-    func contents(of _: ForgeFilePath) async throws -> String {
-        try fail()
-    }
-
-    func writeUnstaged(contents _: String, to _: ForgeFilePath) async throws {
-        let _: Void = try fail()
     }
 
     func applySuggestedChange(_: ForgeSuggestedChange) async throws {
@@ -640,22 +625,6 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
         let value = try runner.run(["rev-parse", "--verify", "HEAD"])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return try ForgeCommitID(value)
-    }
-
-    func filesWithUncommittedEdits() async throws -> Set<ForgeFilePath> {
-        let output = try runner.run(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
-        return Set(output.split(separator: "\0").compactMap { entry in
-            guard entry.count > 3 else { return nil }
-            return try? ForgeFilePath(String(entry.dropFirst(3)))
-        })
-    }
-
-    func contents(of path: ForgeFilePath) async throws -> String {
-        try regularFileContents(for: path).text
-    }
-
-    func writeUnstaged(contents: String, to path: ForgeFilePath) async throws {
-        try Data(contents.utf8).write(to: regularFileURL(for: path), options: .atomic)
     }
 
     func applySuggestedChange(_ change: ForgeSuggestedChange) async throws {
@@ -1106,10 +1075,6 @@ final class RepositoryPullRequestReviewSession {
         let originalContext: ForgeReviewContext
         let publication: ForgeInlineReviewPublication
         let confirmation: ForgeReviewReanchorConfirmation
-
-        var proposedAnchor: ForgeReviewAnchor {
-            confirmation.anchor
-        }
     }
 
     struct UpdateBranchConfirmation: Hashable, Sendable {
@@ -1331,6 +1296,9 @@ final class RepositoryPullRequestReviewSession {
         try await saveInlineDraft(publication: publication, context: context)
     }
 
+    // The review overlay wires this accepted explicit-discard product seam in
+    // the next behavior commit; retain it while analyzer debt is removed.
+    // swiftlint:disable:next unused_declaration
     func discardInlineDraft(context: ForgeReviewContext, anchor: ForgeReviewAnchor) async throws {
         try await drafts.delete(identity: inlineDraftIdentity(context: context, anchor: anchor))
     }
@@ -1347,11 +1315,6 @@ final class RepositoryPullRequestReviewSession {
         )
     }
 
-    func loadFormalReviewDraft() async throws -> String {
-        guard let workspace else { throw RepositoryPullRequestReviewServiceError.unavailable }
-        return try await loadFormalReviewDraft(displayedHead: workspace.displayedHead)
-    }
-
     func loadFormalReviewDraft(displayedHead: ForgeCommitID) async throws -> String {
         guard let workspace else { throw RepositoryPullRequestReviewServiceError.unavailable }
         try requireFresh(workspace)
@@ -1365,11 +1328,6 @@ final class RepositoryPullRequestReviewSession {
         return try await drafts.load(identity: formalReviewDraftIdentity(head: displayedHead))?.content.body ?? ""
     }
 
-    func saveFormalReviewDraft(bodyMarkdown: String) async throws {
-        let displayedHead = try activeFormalReviewHead()
-        try await saveFormalReviewDraft(displayedHead: displayedHead, bodyMarkdown: bodyMarkdown)
-    }
-
     func saveFormalReviewDraft(displayedHead: ForgeCommitID, bodyMarkdown: String) async throws {
         try requireActiveFormalReviewHead(displayedHead)
         try await drafts.save(
@@ -1379,11 +1337,9 @@ final class RepositoryPullRequestReviewSession {
         )
     }
 
-    func discardFormalReviewDraft() async throws {
-        let displayedHead = try activeFormalReviewHead()
-        try await discardFormalReviewDraft(displayedHead: displayedHead)
-    }
-
+    // The review overlay wires this accepted explicit-discard product seam in
+    // the next behavior commit; retain it while analyzer debt is removed.
+    // swiftlint:disable:next unused_declaration
     func discardFormalReviewDraft(displayedHead: ForgeCommitID) async throws {
         try requireActiveFormalReviewHead(displayedHead)
         try await drafts.delete(identity: formalReviewDraftIdentity(head: displayedHead))
@@ -1480,14 +1436,6 @@ final class RepositoryPullRequestReviewSession {
         else { return }
         resolutionReconciliations[threadID] = nil
         setResolutionState(.confirmed(isResolved: reconciliation.isResolved), threadID: threadID)
-    }
-
-    func submitFormalReview(kind: ForgeFormalReviewKind, bodyMarkdown: String) async throws {
-        try await submitFormalReview(
-            displayedHead: activeFormalReviewHead(allowingCurrentWorkspaceFallback: true),
-            kind: kind,
-            bodyMarkdown: bodyMarkdown
-        )
     }
 
     func submitFormalReview(
@@ -1928,19 +1876,6 @@ final class RepositoryPullRequestReviewSession {
         guard workspace.identity == identity else {
             throw RepositoryPullRequestReviewServiceError.invalidWorkspace
         }
-    }
-
-    private func activeFormalReviewHead(
-        allowingCurrentWorkspaceFallback: Bool = false
-    ) throws -> ForgeCommitID {
-        if let formalReviewDisplayedHead {
-            return formalReviewDisplayedHead
-        }
-        guard allowingCurrentWorkspaceFallback, let workspace else {
-            throw ForgeReviewMutationError.displayedHeadChanged
-        }
-        formalReviewDisplayedHead = workspace.displayedHead
-        return workspace.displayedHead
     }
 
     private func requireActiveFormalReviewHead(_ displayedHead: ForgeCommitID) throws {

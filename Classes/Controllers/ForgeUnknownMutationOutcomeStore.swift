@@ -186,34 +186,6 @@ nonisolated protocol ForgeUnknownMutationOutcomePersisting: Sendable {
     ) async throws -> [ForgeUnknownMutationOutcomeRecord]
 }
 
-nonisolated extension ForgeUnknownMutationOutcomePersisting {
-    func records(
-        accountID: ForgeAccountID,
-        repository: ForgeRepositoryIdentity,
-        operation: ForgeOperation
-    ) async throws -> [ForgeUnknownMutationOutcomeRecord] {
-        try await records(
-            accountID: accountID,
-            repository: repository,
-            operation: operation,
-            scope: .repositoryWide
-        )
-    }
-
-    func consume(
-        accountID: ForgeAccountID,
-        repository: ForgeRepositoryIdentity,
-        operation: ForgeOperation
-    ) async throws -> [ForgeUnknownMutationOutcomeRecord] {
-        try await consume(
-            accountID: accountID,
-            repository: repository,
-            operation: operation,
-            scope: .repositoryWide
-        )
-    }
-}
-
 /// Durable unknown-outcome storage partitioned by exact Account and repository.
 /// Consumers call `consume` from the next applicable refresh after reconciling
 /// server state. This type deliberately exposes no operation-retry API.

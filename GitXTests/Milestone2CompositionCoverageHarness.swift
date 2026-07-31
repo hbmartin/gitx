@@ -76,6 +76,8 @@
         }
 
         @objc(reviewApplicationProofWithRepository:)
+        // Referenced through the generated Objective-C interface by WindowControllerTests.
+        // swiftlint:disable:next unused_declaration
         static func reviewApplicationProof(repository: PBGitRepository) -> Bool {
             do {
                 return try reviewApplicationFactoryProof(

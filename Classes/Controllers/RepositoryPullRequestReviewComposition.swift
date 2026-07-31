@@ -1,4 +1,3 @@
-import AppKit
 import ForgeKit
 import Foundation
 import GitHubForgeAdapter
@@ -86,14 +85,6 @@ final nonisolated class RepositoryPullRequestReviewServiceResolver: Sendable {
     @MainActor
     func session(for repository: PBGitRepository) -> RepositoryPullRequestReviewApplicationSession {
         factory(repository)
-    }
-}
-
-@MainActor
-final class RepositoryPullRequestReviewBrowserRouter: RepositoryPullRequestReviewRouting {
-    func openInBrowser(_ destination: ForgeDestination) {
-        guard let url = try? ForgeDestinationURLCodec.url(for: destination) else { return }
-        NSWorkspace.shared.open(url)
     }
 }
 

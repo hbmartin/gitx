@@ -116,6 +116,8 @@ import OSLog // swiftlint:disable:this unused_import
     /// workflows retained for focused app-hosted diagnostics and supplemental
     /// screenshots. Launched UI journeys mount the production review controller.
     @MainActor
+    // Referenced from the app-hosted test target, which SwiftLint's app compilation cannot discover.
+    // swiftlint:disable:next unused_declaration
     final class Milestone3DiagnosticViewController: NSViewController {
         typealias StateHandler = (_ state: String, _ label: String) -> Void
 

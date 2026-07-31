@@ -1864,7 +1864,6 @@ private final class RecordingReviewOverlayHost: RepositoryPullRequestReviewOverl
         diff: RepositoryLocalPullRequestDiff
     )
 
-    var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)?
     private(set) var actionPullRequests: [ForgePullRequestSummary] = []
     private(set) var installations: [Installation] = []
     private(set) var refreshCount = 0

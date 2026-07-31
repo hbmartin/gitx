@@ -325,6 +325,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
             bodyMarkdown: "Never reply"
         ))
         try await assertStale(await session.submitFormalReview(
+            displayedHead: fixture.oldHead,
             kind: .comment,
             bodyMarkdown: "Never review"
         ))
@@ -424,7 +425,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
             bodyMarkdown: "Publish immediately"
         )
         let pending = try XCTUnwrap(pendingValue)
-        XCTAssertEqual(pending.proposedAnchor, fixture.localAnchor)
+        XCTAssertEqual(pending.confirmation.anchor, fixture.localAnchor)
         let initialPublications = await service.inlinePublications()
         XCTAssertTrue(initialPublications.isEmpty)
 
@@ -728,6 +729,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertEqual(deletedReplyDrafts, 1)
 
         await XCTAssertThrowsErrorAsync(try await session.submitFormalReview(
+            displayedHead: fixture.oldHead,
             kind: .requestChanges,
             bodyMarkdown: "Head-bound review"
         )) {
@@ -758,7 +760,10 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
 
         let initialDraft = try await session.loadFormalReviewDraft(displayedHead: fixture.oldHead)
         XCTAssertEqual(initialDraft, "")
-        try await session.saveFormalReviewDraft(bodyMarkdown: "Draft for the displayed head")
+        try await session.saveFormalReviewDraft(
+            displayedHead: fixture.oldHead,
+            bodyMarkdown: "Draft for the displayed head"
+        )
 
         let installedNewHead = expectation(description: "background refresh installed a new head")
         session.onStateChange = { state in
@@ -770,8 +775,12 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await fulfillment(of: [installedNewHead])
         session.onStateChange = nil
 
-        try await session.saveFormalReviewDraft(bodyMarkdown: "Still bound to the old head")
+        try await session.saveFormalReviewDraft(
+            displayedHead: fixture.oldHead,
+            bodyMarkdown: "Still bound to the old head"
+        )
         await XCTAssertThrowsErrorAsync(try await session.submitFormalReview(
+            displayedHead: fixture.oldHead,
             kind: .comment,
             bodyMarkdown: "Must be confirmed again"
         )) {
@@ -1378,14 +1387,6 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
             workingDirectory: temporaryDirectory
         )
 
-        await XCTAssertThrowsErrorAsync(try await local.contents(of: fixture.path)) {
-            self.assertUnsafeLocalEdit($0)
-        }
-        await XCTAssertThrowsErrorAsync(
-            try await local.writeUnstaged(contents: "must not be written", to: fixture.path)
-        ) {
-            self.assertUnsafeLocalEdit($0)
-        }
         await XCTAssertThrowsErrorAsync(try await local.applySuggestedChange(fixture.suggestedChange)) {
             self.assertUnsafeLocalEdit($0)
         }
@@ -1427,14 +1428,6 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
             workingDirectory: temporaryDirectory
         )
 
-        await XCTAssertThrowsErrorAsync(try await local.contents(of: fixture.path)) {
-            self.assertUnsafeLocalEdit($0)
-        }
-        await XCTAssertThrowsErrorAsync(
-            try await local.writeUnstaged(contents: "must not be written", to: fixture.path)
-        ) {
-            self.assertUnsafeLocalEdit($0)
-        }
         await XCTAssertThrowsErrorAsync(try await local.applySuggestedChange(fixture.suggestedChange)) {
             self.assertUnsafeLocalEdit($0)
         }
@@ -2085,11 +2078,9 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     private var mergeValues: [ForgePullRequestMergeRequest] = []
     private var mergeWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var queueValues: [ForgePullRequestMergeQueueRequest] = []
-    private var queueWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var deletionValues: [ForgeHeadBranchDeletionRequest] = []
     private var deletionError: RepositoryPullRequestReviewServiceError?
     private var deletionWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
-    private var formalWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var inlineWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var deletionSnapshot: ForgeHeadBranchDeletionSnapshot?
     private var freshDeletionCalls = 0
@@ -2176,7 +2167,6 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
         _ submission: ForgeFormalReviewSubmission
     ) async throws -> RepositoryPullRequestReviewWorkspace {
         formalValues.append(submission)
-        resumeWaiters(&formalWaiters, count: formalValues.count)
         return try resultWorkspace()
     }
 
@@ -2215,7 +2205,6 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
         _ request: ForgePullRequestMergeQueueRequest
     ) async throws -> RepositoryPullRequestReviewWorkspace {
         queueValues.append(request)
-        resumeWaiters(&queueWaiters, count: queueValues.count)
         return try resultWorkspace()
     }
 
@@ -2372,13 +2361,6 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
         await withCheckedContinuation { replyWaiters.append((count, $0)) }
     }
 
-    func waitForFormalCalls(_ count: Int) async {
-        if formalValues.count >= count {
-            return
-        }
-        await withCheckedContinuation { formalWaiters.append((count, $0)) }
-    }
-
     func waitForLifecycleCalls(_ count: Int) async {
         if lifecycleValues.count >= count {
             return
@@ -2391,13 +2373,6 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
             return
         }
         await withCheckedContinuation { mergeWaiters.append((count, $0)) }
-    }
-
-    func waitForQueueCalls(_ count: Int) async {
-        if queueValues.count >= count {
-            return
-        }
-        await withCheckedContinuation { queueWaiters.append((count, $0)) }
     }
 
     func waitForDeletionCalls(_ count: Int) async {
@@ -2532,9 +2507,6 @@ actor FakeLocalReviewService: RepositoryPullRequestLocalReviewServing {
     private var writeValues: [Write] = []
     private var fetchValues: [ForgeBranchReference] = []
     private var checkoutValues: [ForgeBranchReference] = []
-    private var writeWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
-    private var fetchWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
-    private var checkoutWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     init(candidates: [ForgeReviewReanchorCandidate], checkedOutHead: ForgeCommitID?, contents: String) {
         self.candidates = candidates
@@ -2553,18 +2525,9 @@ actor FakeLocalReviewService: RepositoryPullRequestLocalReviewServing {
         selectedHead
     }
 
-    func filesWithUncommittedEdits() async throws -> Set<ForgeFilePath> {
-        editedFiles
-    }
-
-    func contents(of _: ForgeFilePath) async throws -> String {
-        currentContents
-    }
-
-    func writeUnstaged(contents: String, to path: ForgeFilePath) async throws {
+    private func writeUnstaged(contents: String, to path: ForgeFilePath) {
         currentContents = contents
         writeValues.append(Write(path: path, contents: contents))
-        resumeWaiters(&writeWaiters, count: writeValues.count)
     }
 
     func applySuggestedChange(_ change: ForgeSuggestedChange) async throws {
@@ -2575,7 +2538,7 @@ actor FakeLocalReviewService: RepositoryPullRequestLocalReviewServing {
             currentContents: currentContents
         ) {
         case let .apply(updatedContents):
-            try await writeUnstaged(contents: updatedContents, to: change.path)
+            writeUnstaged(contents: updatedContents, to: change.path)
         case let .unavailable(error):
             throw error
         }
@@ -2583,12 +2546,10 @@ actor FakeLocalReviewService: RepositoryPullRequestLocalReviewServing {
 
     func fetchBase(_ base: ForgeBranchReference) async throws {
         fetchValues.append(base)
-        resumeWaiters(&fetchWaiters, count: fetchValues.count)
     }
 
     func checkOutBase(_ base: ForgeBranchReference) async throws {
         checkoutValues.append(base)
-        resumeWaiters(&checkoutWaiters, count: checkoutValues.count)
     }
 
     func setEditedFiles(_ values: Set<ForgeFilePath>) {
@@ -2605,36 +2566,6 @@ actor FakeLocalReviewService: RepositoryPullRequestLocalReviewServing {
 
     func checkouts() -> [ForgeBranchReference] {
         checkoutValues
-    }
-
-    func waitForWrites(_ count: Int) async {
-        if writeValues.count >= count {
-            return
-        }
-        await withCheckedContinuation { writeWaiters.append((count, $0)) }
-    }
-
-    func waitForFetches(_ count: Int) async {
-        if fetchValues.count >= count {
-            return
-        }
-        await withCheckedContinuation { fetchWaiters.append((count, $0)) }
-    }
-
-    func waitForCheckouts(_ count: Int) async {
-        if checkoutValues.count >= count {
-            return
-        }
-        await withCheckedContinuation { checkoutWaiters.append((count, $0)) }
-    }
-
-    private func resumeWaiters(
-        _ waiters: inout [(Int, CheckedContinuation<Void, Never>)],
-        count: Int
-    ) {
-        let ready = waiters.filter { count >= $0.0 }
-        waiters.removeAll { count >= $0.0 }
-        ready.forEach { $0.1.resume() }
     }
 }
 

@@ -49,19 +49,21 @@ import OSLog // swiftlint:disable:this unused_import
             return harness
         }
 
-        /// App-hosted tests can install a deterministic journey without changing
-        /// the process environment shared by neighboring tests.
-        static func runProductProof(
-            for windowController: PBGitWindowController,
-            environment: [String: String]
-        ) -> AnyObject {
-            let harness = Milestone3UITestHarness(
-                windowController: windowController,
-                environment: environment
-            )
-            harness.start()
-            return harness
-        }
+        #if !GITX_APP_TARGET
+            /// App-hosted tests can install a deterministic journey without changing
+            /// the process environment shared by neighboring tests.
+            static func runProductProof(
+                for windowController: PBGitWindowController,
+                environment: [String: String]
+            ) -> AnyObject {
+                let harness = Milestone3UITestHarness(
+                    windowController: windowController,
+                    environment: environment
+                )
+                harness.start()
+                return harness
+            }
+        #endif
 
         private func start() {
             let rawScenario = environment["GITX_M3_SCENARIO"] ?? "missing"
@@ -618,18 +620,6 @@ import OSLog // swiftlint:disable:this unused_import
             try await production.checkedOutHead()
         }
 
-        func filesWithUncommittedEdits() async throws -> Set<ForgeFilePath> {
-            try await production.filesWithUncommittedEdits()
-        }
-
-        func contents(of path: ForgeFilePath) async throws -> String {
-            try await production.contents(of: path)
-        }
-
-        func writeUnstaged(contents: String, to path: ForgeFilePath) async throws {
-            try await production.writeUnstaged(contents: contents, to: path)
-        }
-
         func applySuggestedChange(_ change: ForgeSuggestedChange) async throws {
             try await production.applySuggestedChange(change)
             await stateHandler(
@@ -686,8 +676,12 @@ import OSLog // swiftlint:disable:this unused_import
         /// collaboration controller instead of a test-target source copy.
         @MainActor
         @objc(PBMilestone3ProductCoverageHarness)
+        // Referenced through the generated Objective-C interface by WindowControllerTests.
+        // swiftlint:disable:next unused_declaration
         final class Milestone3ProductCoverageHarness: NSObject {
             @objc(collaborationCloseLifecycleProofWithRepository:)
+            // Referenced through the generated Objective-C interface by WindowControllerTests.
+            // swiftlint:disable:next unused_declaration
             static func collaborationCloseLifecycleProof(repository: PBGitRepository) -> Bool {
                 guard let controller = RepositoryForgeCollaborationController(
                     repository: repository,
@@ -707,7 +701,6 @@ import OSLog // swiftlint:disable:this unused_import
         private final class Milestone3CloseLifecycleReviewOverlayHost:
             RepositoryPullRequestReviewOverlayHosting
         {
-            var onSelectedAnchor: ((ForgeReviewAnchor, [String], Bool) -> Void)?
             private(set) var detachCount = 0
 
             func actionView(for _: ForgePullRequestSummary) -> NSView {
