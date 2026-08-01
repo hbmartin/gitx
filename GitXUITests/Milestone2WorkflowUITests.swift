@@ -104,7 +104,9 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
                 "GITX_M2_EXPECTED_HEAD": fixture.expectedHead,
                 "GITX_M2_CHECKOUT_REMOTE": "contributor",
                 "GITX_M2_CHECKOUT_REMOTE_PATH": fixture.remote.path,
-                "GIT_SSH_COMMAND": fixture.sshCommand.path,
+                // macOS does not permit the app under test to execute a helper directly
+                // from the UI test runner's container. Let the system shell read it.
+                "GIT_SSH_COMMAND": "/bin/sh \(fixture.sshCommand.path)",
             ]
         )
 
