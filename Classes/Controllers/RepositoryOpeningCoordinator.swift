@@ -679,10 +679,11 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
     }
 }
 
+/// Provides the test-session gate through the `PBWindowSessionLaunchPolicy` Objective-C bridge.
 @objc(PBWindowSessionLaunchPolicy)
-final nonisolated class WindowSessionLaunchPolicy: NSObject {
+final nonisolated class WindowSessionLaunchPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(shouldManageSessionForEnvironment:)
-    static func shouldManageSession(environment: [String: String]) -> Bool {
+    static func shouldManageSession(environment: [String: String]) -> Bool { // swiftlint:disable:this unused_declaration
         environment["XCTestConfigurationFilePath"] == nil
     }
 }
