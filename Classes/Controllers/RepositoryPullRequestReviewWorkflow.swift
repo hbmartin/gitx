@@ -734,6 +734,12 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
             try validateCurrentBindingIfConfigured()
             _ = try runner.run(["checkout", base.name.value])
         }
+
+        try validateCurrentBindingIfConfigured()
+        guard let checkedOutCommit = try commit(at: "HEAD"), checkedOutCommit == remoteCommit else {
+            throw RepositoryPullRequestReviewServiceError.stalePullRequest
+        }
+        try validateCurrentBindingIfConfigured()
     }
 
     private func isAncestor(_ ancestor: ForgeCommitID, of descendant: ForgeCommitID) throws -> Bool {

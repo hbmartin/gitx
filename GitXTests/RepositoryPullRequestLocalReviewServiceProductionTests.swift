@@ -303,6 +303,7 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
         XCTAssertEqual(runner.commands, fixture.checkoutPrefix + [
             fixture.localBranchOIDArguments(branch: fixture.primaryBase),
             ["checkout", fixture.primaryBase.name.value],
+            fixture.headOIDArguments,
         ])
         XCTAssertTrue(runner.unusedArguments.isEmpty)
     }
@@ -319,6 +320,7 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
             fixture.localBranchOIDArguments(branch: fixture.primaryBase): .output(fixture.baseCommit.value),
             ["checkout", fixture.primaryBase.name.value]: .output(""),
             ["merge", "--ff-only", fixture.advancedCommit.value]: .output(""),
+            fixture.headOIDArguments: .output(fixture.advancedCommit.value),
         ])
         let service = try RepositoryPullRequestLocalReviewService(
             runner: runner,
@@ -328,9 +330,10 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
 
         try await service.checkOutBase(fixture.primaryBase)
 
-        XCTAssertEqual(runner.commands.suffix(2), [
+        XCTAssertEqual(runner.commands.suffix(3), [
             ["checkout", fixture.primaryBase.name.value],
             ["merge", "--ff-only", fixture.advancedCommit.value],
+            fixture.headOIDArguments,
         ])
         XCTAssertTrue(runner.unusedArguments.isEmpty)
     }
@@ -353,6 +356,7 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
                 .output(fixture.intermediateCommit.value),
             ["checkout", fixture.primaryBase.name.value]: .output(""),
             ["merge", "--ff-only", fixture.advancedCommit.value]: .output(""),
+            fixture.headOIDArguments: .output(fixture.advancedCommit.value),
         ])
         let service = try RepositoryPullRequestLocalReviewService(
             runner: runner,
@@ -366,9 +370,39 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
             return XCTFail("Expected safe intermediate base checkout, got \(error); commands: \(runner.commands)")
         }
 
-        XCTAssertEqual(runner.commands.suffix(2), [
+        XCTAssertEqual(runner.commands.suffix(3), [
             ["checkout", fixture.primaryBase.name.value],
             ["merge", "--ff-only", fixture.advancedCommit.value],
+            fixture.headOIDArguments,
+        ])
+        XCTAssertTrue(runner.unusedArguments.isEmpty)
+    }
+
+    func testCheckOutBaseRejectsBranchMoveBetweenValidationAndCheckout() async throws {
+        let fixture = try LocalReviewGitFixture()
+        let runner = ScriptedLocalReviewGitRunner(responses: [
+            ["remote"]: .output("origin\n"),
+            ["remote", "get-url", "origin"]: .output(fixture.primaryRemoteURL),
+            fixture.remoteTrackingOIDArguments(remote: "origin", branch: fixture.primaryBase):
+                .output(fixture.baseCommit.value),
+            fixture.statusArguments: .output(""),
+            fixture.localBranchOIDArguments(branch: fixture.primaryBase): .output(fixture.baseCommit.value),
+            ["checkout", fixture.primaryBase.name.value]: .output(""),
+            fixture.headOIDArguments: .output(fixture.aheadCommit.value),
+        ])
+        let service = try RepositoryPullRequestLocalReviewService(
+            runner: runner,
+            workingDirectory: nil,
+            binding: fixture.binding()
+        )
+
+        await assertServiceError(.stalePullRequest) {
+            try await service.checkOutBase(fixture.primaryBase)
+        }
+
+        XCTAssertEqual(runner.commands.suffix(2), [
+            ["checkout", fixture.primaryBase.name.value],
+            fixture.headOIDArguments,
         ])
         XCTAssertTrue(runner.unusedArguments.isEmpty)
     }
@@ -448,6 +482,7 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
             ["branch", fixture.primaryBase.name.value, fixture.baseCommit.value]: .output(""),
             ["branch", "--set-upstream-to", remoteTrackingRef, fixture.primaryBase.name.value]: .output(""),
             ["checkout", fixture.primaryBase.name.value]: .output(""),
+            fixture.headOIDArguments: .output(fixture.baseCommit.value),
         ])
         let service = try RepositoryPullRequestLocalReviewService(
             runner: runner,
@@ -462,6 +497,7 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
             ["branch", fixture.primaryBase.name.value, fixture.baseCommit.value],
             ["branch", "--set-upstream-to", remoteTrackingRef, fixture.primaryBase.name.value],
             ["checkout", fixture.primaryBase.name.value],
+            fixture.headOIDArguments,
         ])
         XCTAssertTrue(runner.unusedArguments.isEmpty)
     }
@@ -544,6 +580,10 @@ private struct LocalReviewGitFixture {
         ]
     }
 
+    var headOIDArguments: [String] {
+        ["rev-parse", "--verify", "HEAD"]
+    }
+
     func binding() throws -> ForgeRepositoryBinding {
         try ForgeRepositoryBinding(localRemoteName: "origin", primaryRepository: primary)
     }
@@ -586,11 +626,13 @@ private struct LocalReviewGitFixture {
             switch localOID {
             case .output:
                 responses[["checkout", primaryBase.name.value]] = .output("")
+                responses[headOIDArguments] = .output(baseCommit.value)
             case .failure:
                 let remoteTrackingRef = remoteTrackingRef(remote: "origin", branch: primaryBase)
                 responses[["branch", primaryBase.name.value, baseCommit.value]] = .output("")
                 responses[["branch", "--set-upstream-to", remoteTrackingRef, primaryBase.name.value]] = .output("")
                 responses[["checkout", primaryBase.name.value]] = .output("")
+                responses[headOIDArguments] = .output(baseCommit.value)
             }
         }
         return ScriptedLocalReviewGitRunner(responses: responses)
