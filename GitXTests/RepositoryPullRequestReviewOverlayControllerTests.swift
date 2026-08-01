@@ -1110,7 +1110,7 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         checkout.performClick(nil)
         await waitUntil("post-merge checkout completion") { completions == ["fetch", "checkout"] }
 
-        let fetches = await local.fetches()
+        let fetches = await local.postMergeFetches()
         let checkouts = await local.checkouts()
         XCTAssertEqual(fetches, [workspace.base])
         XCTAssertEqual(checkouts, [workspace.base])
