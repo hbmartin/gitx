@@ -78,7 +78,7 @@ final class ApplicationCompositionTests: XCTestCase {
         XCTAssertNil(ProcessInfo.processInfo.environment["GITX_UITEST_REPO"])
         let documentsAreEmpty = NSDocumentController.shared.documents.isEmpty
         XCTAssertTrue(documentsAreEmpty)
-        standard.set([], forKey: snapshotKey)
+        standard.removeObject(forKey: snapshotKey)
         standard.set(true, forKey: cleanShutdownKey)
         PBApplicationSettings.restorePolicy = .always
 

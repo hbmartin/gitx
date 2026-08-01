@@ -1281,7 +1281,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         pane.perform(NSSelectorFromString("commit:"), with: nil)
         wait(for: [committed], timeout: 20)
-        pumpRunLoop()
+        refreshIndex()
         XCTAssertNotEqual(try fixture.git(["rev-parse", "HEAD"]), initialHead)
         XCTAssertEqual(fileList.stagedFileCount, 0)
     }

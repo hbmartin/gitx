@@ -1217,6 +1217,11 @@
                 token: Data("sidebar-token".utf8),
                 expiresAt: account.currentCredential.expiresAt
             )
+            let enrollmentFailureWasActionable = try await exerciseAttentionEnrollmentFailure(
+                account: account,
+                repositoryIdentity: repositoryIdentity,
+                repositoryObject: repositoryObject
+            )
             session.stop()
             session.stop()
             return initial.map(\.record.item.id) == [itemID]
@@ -1229,6 +1234,49 @@
                 && afterCurrentMarkAll.isEmpty
                 && afterAccountMarkAll.isEmpty
                 && refreshFailureWasActionable
+                && enrollmentFailureWasActionable
+        }
+
+        private static func exerciseAttentionEnrollmentFailure(
+            account: ForgeAccount,
+            repositoryIdentity: ForgeRepositoryIdentity,
+            repositoryObject: PBGitRepository
+        ) async throws -> Bool {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("GitXAttentionEnrollmentFailure-\(UUID().uuidString)", isDirectory: true)
+            let defaultsName = "GitXAttentionEnrollmentFailure-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: defaultsName) else { return false }
+            defaults.removePersistentDomain(forName: defaultsName)
+            defer {
+                defaults.removePersistentDomain(forName: defaultsName)
+                try? FileManager.default.removeItem(at: root)
+            }
+            let services = try await ForgeApplicationServiceFactory.make(
+                forgeDirectory: root,
+                bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+                keychain: HarnessForgeKeychain(),
+                cliRunner: HarnessForgeCLIRunner()
+            )
+            guard let database = services.database else { return false }
+            let identity = try ForgeRepositoryIdentity(
+                forge: repositoryIdentity.forge,
+                owner: repositoryIdentity.owner,
+                name: "gitx-attention-enrollment-failure"
+            )
+            let session = try RepositoryAttentionSession(
+                account: account,
+                repositoryIdentity: identity,
+                repositoryObject: repositoryObject,
+                services: services
+            )
+            await services.refreshCoordinator?.invalidate()
+            await database.close()
+            session.start()
+            await session.waitForCurrentPollingCycleForProductProof()
+            let failureWasActionable = session.lastRefreshErrorDescription
+                == ForgeSQLiteError.closed.localizedDescription
+            session.stop()
+            return failureWasActionable
         }
 
         private static func exerciseUnboundCollaboration(
