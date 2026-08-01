@@ -963,10 +963,15 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
                 access: fixture.0.isAnonymous ? .publicAccess : .account(login: "octocat"),
                 authentication: fixture.0.isAnonymous ? .publicAccess : .credential(credentialReference())
             )
-            session.start()
-            for _ in 0 ..< 100 where session.currentInput.diagnostic != fixture.1 {
-                await Task.yield()
+            let diagnosticArrived = expectation(description: "failure diagnostic \(index)")
+            var didObserveDiagnostic = false
+            session.inputDidChange = { input in
+                guard !didObserveDiagnostic, input.diagnostic == fixture.1 else { return }
+                didObserveDiagnostic = true
+                diagnosticArrived.fulfill()
             }
+            session.start()
+            await fulfillment(of: [diagnosticArrived], timeout: 1)
             XCTAssertEqual(session.currentInput.diagnostic, fixture.1, "failure case \(index)")
             session.invalidate()
         }
@@ -1322,7 +1327,7 @@ private actor OverlayReaderDouble: RepositoryForgeOverlayReading {
     }
 
     func factsRemoteRequests() -> [RepositoryForgeOverlayRemoteRequest] {
-        recordedFactsRequests
+        recordedFactsRequests.map { $0 }
     }
 
     func historyRequestCount(for commit: ForgeCommitID) -> Int {
@@ -1432,7 +1437,7 @@ private actor SuspendingOverlayReaderDouble: RepositoryForgeOverlayReading {
     }
 
     func requests() -> [RepositoryForgeOverlayRemoteRequest] {
-        recordedRequests
+        recordedRequests.map { $0 }
     }
 
     func releaseNext() {
@@ -1724,11 +1729,11 @@ private actor ForgeApplicationRefreshRecorder {
     }
 
     func clientReasons() -> [ForgeRefreshReason] {
-        recordedClientReasons
+        recordedClientReasons.map { $0 }
     }
 
     func backgroundRefreshes() -> [BackgroundRefresh] {
-        recordedBackgroundRefreshes
+        recordedBackgroundRefreshes.map { $0 }
     }
 }
 
@@ -1749,6 +1754,6 @@ private actor ForgeRefreshGateDouble {
     }
 
     func startedReasons() -> [ForgeRefreshReason] {
-        reasons
+        reasons.map { $0 }
     }
 }
