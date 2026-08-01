@@ -1791,9 +1791,11 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertTrue(explicitDeleteChoices.contains(true))
 
         try await session.fetchBase()
-        let fetches = await local.fetches()
+        let fetches = await local.postMergeFetches()
+        let exactFetches = await local.fetches()
         let checkoutsAfterFetch = await local.checkouts()
         XCTAssertEqual(fetches, [fixture.base])
+        XCTAssertTrue(exactFetches.isEmpty, "Post-merge fetch must not relax exact Update Branch refresh semantics")
         XCTAssertTrue(checkoutsAfterFetch.isEmpty, "Fetch must not change checkout")
         try await session.checkOutBase()
         let explicitCheckouts = await local.checkouts()
@@ -2810,6 +2812,7 @@ actor FakeLocalReviewService: RepositoryPullRequestLocalReviewServing {
     private var currentContents: String
     private var writeValues: [Write] = []
     private var fetchValues: [ForgeBranchReference] = []
+    private var postMergeFetchValues: [ForgeBranchReference] = []
     private var checkoutValues: [ForgeBranchReference] = []
 
     init(candidates: [ForgeReviewReanchorCandidate], checkedOutHead: ForgeCommitID?, contents: String) {
@@ -2852,6 +2855,10 @@ actor FakeLocalReviewService: RepositoryPullRequestLocalReviewServing {
         fetchValues.append(base)
     }
 
+    func fetchPostMergeBase(_ base: ForgeBranchReference) async throws {
+        postMergeFetchValues.append(base)
+    }
+
     func checkOutBase(_ base: ForgeBranchReference) async throws {
         checkoutValues.append(base)
     }
@@ -2866,6 +2873,10 @@ actor FakeLocalReviewService: RepositoryPullRequestLocalReviewServing {
 
     func fetches() -> [ForgeBranchReference] {
         fetchValues
+    }
+
+    func postMergeFetches() -> [ForgeBranchReference] {
+        postMergeFetchValues
     }
 
     func checkouts() -> [ForgeBranchReference] {

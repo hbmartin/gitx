@@ -439,7 +439,14 @@ nonisolated protocol RepositoryPullRequestLocalReviewServing: Sendable {
     /// fails closed.
     func applySuggestedChange(_ change: ForgeSuggestedChange) async throws
     func fetchBase(_ base: ForgeBranchReference) async throws
+    func fetchPostMergeBase(_ base: ForgeBranchReference) async throws
     func checkOutBase(_ base: ForgeBranchReference) async throws
+}
+
+extension RepositoryPullRequestLocalReviewServing {
+    func fetchPostMergeBase(_ base: ForgeBranchReference) async throws {
+        try await fetchBase(base)
+    }
 }
 
 nonisolated struct UnavailableRepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewServing {
@@ -661,13 +668,27 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
     }
 
     func fetchBase(_ branch: ForgeBranchReference) async throws {
+        try fetchBase(branch, acceptsDescendant: false)
+    }
+
+    func fetchPostMergeBase(_ branch: ForgeBranchReference) async throws {
+        try fetchBase(branch, acceptsDescendant: true)
+    }
+
+    private func fetchBase(
+        _ branch: ForgeBranchReference,
+        acceptsDescendant: Bool
+    ) throws {
         let remoteName = try exactRemoteName(for: branch.repository)
         let remoteTrackingRef = "refs/remotes/\(remoteName)/\(branch.name.value)"
         let refspec = "+refs/heads/\(branch.name.value):\(remoteTrackingRef)"
         try validateCurrentBindingIfConfigured()
         _ = try runner.run(["fetch", "--no-tags", remoteName, refspec])
         try validateCurrentBindingIfConfigured()
-        guard try commit(at: remoteTrackingRef) == branch.commit else {
+        guard let fetchedCommit = try commit(at: remoteTrackingRef),
+              try fetchedCommit == branch.commit ||
+              (acceptsDescendant && isAncestor(branch.commit, of: fetchedCommit))
+        else {
             throw RepositoryPullRequestReviewServiceError.stalePullRequest
         }
     }
@@ -678,7 +699,9 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
         }
         let remoteName = try exactRemoteName(for: base.repository)
         let remoteTrackingRef = "refs/remotes/\(remoteName)/\(base.name.value)"
-        guard try commit(at: remoteTrackingRef) == base.commit else {
+        guard let remoteCommit = try commit(at: remoteTrackingRef),
+              try remoteCommit == base.commit || isAncestor(base.commit, of: remoteCommit)
+        else {
             throw RepositoryPullRequestReviewServiceError.stalePullRequest
         }
         let status = try runner.run(["status", "--porcelain=v2", "-z", "--untracked-files=normal"])
@@ -688,17 +711,32 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
 
         let localRef = "refs/heads/\(base.name.value)"
         if let localCommit = try commit(at: localRef) {
-            guard localCommit == base.commit else {
+            guard localCommit == remoteCommit || localCommit == base.commit else {
                 throw RepositoryPullRequestReviewServiceError.stalePullRequest
             }
             try validateCurrentBindingIfConfigured()
             _ = try runner.run(["checkout", base.name.value])
+            if localCommit != remoteCommit {
+                try validateCurrentBindingIfConfigured()
+                _ = try runner.run(["merge", "--ff-only", remoteTrackingRef])
+            }
         } else {
             try validateCurrentBindingIfConfigured()
             _ = try runner.run([
                 "checkout", "--track", "-b", base.name.value, remoteTrackingRef,
             ])
         }
+    }
+
+    private func isAncestor(_ ancestor: ForgeCommitID, of descendant: ForgeCommitID) throws -> Bool {
+        try validateCurrentBindingIfConfigured()
+        do {
+            _ = try runner.run(["merge-base", "--is-ancestor", ancestor.value, descendant.value])
+        } catch {
+            return false
+        }
+        try validateCurrentBindingIfConfigured()
+        return true
     }
 
     private func exactRemoteName(for repository: ForgeRepositoryIdentity) throws -> String {
@@ -1702,7 +1740,7 @@ final class RepositoryPullRequestReviewSession {
     func fetchBase() async throws {
         guard let workspace else { throw RepositoryPullRequestReviewServiceError.unavailable }
         try requirePostMergeLocalAction(workspace)
-        try await localService.fetchBase(workspace.base)
+        try await localService.fetchPostMergeBase(workspace.base)
         logger.notice("Fetched Pull Request base after merge by explicit user action")
     }
 

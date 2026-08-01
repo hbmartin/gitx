@@ -49,6 +49,58 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
         XCTAssertTrue(runner.unusedArguments.isEmpty)
     }
 
+    func testFetchBaseAcceptsAdvancedDescendantAfterPullRequestMerge() async throws {
+        let fixture = try LocalReviewGitFixture()
+        let runner = ScriptedLocalReviewGitRunner(responses: [
+            ["remote"]: .output("origin\n"),
+            ["remote", "get-url", "origin"]: .output(fixture.primaryRemoteURL),
+            fixture.fetchArguments(remote: "origin", branch: fixture.primaryBase): .output(""),
+            fixture.remoteTrackingOIDArguments(remote: "origin", branch: fixture.primaryBase):
+                .output("\(fixture.advancedCommit.value)\n"),
+            fixture.ancestorArguments(ancestor: fixture.baseCommit, descendant: fixture.advancedCommit): .output(""),
+        ])
+        let service = try RepositoryPullRequestLocalReviewService(
+            runner: runner,
+            workingDirectory: nil,
+            binding: fixture.binding()
+        )
+
+        try await service.fetchPostMergeBase(fixture.primaryBase)
+
+        XCTAssertEqual(
+            runner.commands.last,
+            fixture.ancestorArguments(ancestor: fixture.baseCommit, descendant: fixture.advancedCommit)
+        )
+        XCTAssertTrue(runner.unusedArguments.isEmpty)
+    }
+
+    func testFetchPostMergeBaseRejectsRewrittenTip() async throws {
+        let fixture = try LocalReviewGitFixture()
+        let runner = ScriptedLocalReviewGitRunner(responses: [
+            ["remote"]: .output("origin\n"),
+            ["remote", "get-url", "origin"]: .output(fixture.primaryRemoteURL),
+            fixture.fetchArguments(remote: "origin", branch: fixture.primaryBase): .output(""),
+            fixture.remoteTrackingOIDArguments(remote: "origin", branch: fixture.primaryBase):
+                .output(fixture.staleCommit.value),
+            fixture.ancestorArguments(ancestor: fixture.baseCommit, descendant: fixture.staleCommit): .failure,
+        ])
+        let service = try RepositoryPullRequestLocalReviewService(
+            runner: runner,
+            workingDirectory: nil,
+            binding: fixture.binding()
+        )
+
+        await assertServiceError(.stalePullRequest) {
+            try await service.fetchPostMergeBase(fixture.primaryBase)
+        }
+
+        XCTAssertEqual(
+            runner.commands.last,
+            fixture.ancestorArguments(ancestor: fixture.baseCommit, descendant: fixture.staleCommit)
+        )
+        XCTAssertTrue(runner.unusedArguments.isEmpty)
+    }
+
     func testFetchBaseDiscoversTheOneExactForkRemote() async throws {
         let fixture = try LocalReviewGitFixture()
         let runner = ScriptedLocalReviewGitRunner(responses: [
@@ -218,6 +270,7 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
             ["remote", "get-url", "origin"]: .output(fixture.primaryRemoteURL),
             fixture.remoteTrackingOIDArguments(remote: "origin", branch: fixture.primaryBase):
                 .output(fixture.staleCommit.value),
+            fixture.ancestorArguments(ancestor: fixture.baseCommit, descendant: fixture.staleCommit): .failure,
         ])
         let service = try RepositoryPullRequestLocalReviewService(
             runner: runner,
@@ -231,7 +284,7 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
 
         XCTAssertEqual(
             runner.commands.last,
-            fixture.remoteTrackingOIDArguments(remote: "origin", branch: fixture.primaryBase)
+            fixture.ancestorArguments(ancestor: fixture.baseCommit, descendant: fixture.staleCommit)
         )
         XCTAssertFalse(runner.commands.contains(fixture.statusArguments))
     }
@@ -250,6 +303,35 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
         XCTAssertEqual(runner.commands, fixture.checkoutPrefix + [
             fixture.localBranchOIDArguments(branch: fixture.primaryBase),
             ["checkout", fixture.primaryBase.name.value],
+        ])
+        XCTAssertTrue(runner.unusedArguments.isEmpty)
+    }
+
+    func testCheckOutBaseFastForwardsExactPreMergeBaseToAdvancedDescendant() async throws {
+        let fixture = try LocalReviewGitFixture()
+        let remoteTrackingRef = fixture.remoteTrackingRef(remote: "origin", branch: fixture.primaryBase)
+        let runner = ScriptedLocalReviewGitRunner(responses: [
+            ["remote"]: .output("origin\n"),
+            ["remote", "get-url", "origin"]: .output(fixture.primaryRemoteURL),
+            fixture.remoteTrackingOIDArguments(remote: "origin", branch: fixture.primaryBase):
+                .output(fixture.advancedCommit.value),
+            fixture.ancestorArguments(ancestor: fixture.baseCommit, descendant: fixture.advancedCommit): .output(""),
+            fixture.statusArguments: .output(""),
+            fixture.localBranchOIDArguments(branch: fixture.primaryBase): .output(fixture.baseCommit.value),
+            ["checkout", fixture.primaryBase.name.value]: .output(""),
+            ["merge", "--ff-only", remoteTrackingRef]: .output(""),
+        ])
+        let service = try RepositoryPullRequestLocalReviewService(
+            runner: runner,
+            workingDirectory: nil,
+            binding: fixture.binding()
+        )
+
+        try await service.checkOutBase(fixture.primaryBase)
+
+        XCTAssertEqual(runner.commands.suffix(2), [
+            ["checkout", fixture.primaryBase.name.value],
+            ["merge", "--ff-only", remoteTrackingRef],
         ])
         XCTAssertTrue(runner.unusedArguments.isEmpty)
     }
@@ -331,6 +413,7 @@ private struct LocalReviewGitFixture {
     let unrelated: ForgeRepositoryIdentity
     let baseCommit = try! ForgeCommitID(String(repeating: "a", count: 40))
     let staleCommit = try! ForgeCommitID(String(repeating: "b", count: 40))
+    let advancedCommit = try! ForgeCommitID(String(repeating: "c", count: 40))
     let primaryBase: ForgeBranchReference
     let forkBase: ForgeBranchReference
 
@@ -389,6 +472,10 @@ private struct LocalReviewGitFixture {
 
     func localBranchOIDArguments(branch: ForgeBranchReference) -> [String] {
         ["rev-parse", "--verify", "refs/heads/\(branch.name.value)"]
+    }
+
+    func ancestorArguments(ancestor: ForgeCommitID, descendant: ForgeCommitID) -> [String] {
+        ["merge-base", "--is-ancestor", ancestor.value, descendant.value]
     }
 
     func checkoutRunner(
