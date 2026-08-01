@@ -146,6 +146,15 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
             }
             return true
         }
+
+        func runPresentationProductProof(parent: NSWindow?) -> Bool {
+            let response = NSApplication.ModalResponse(rawValue: -1)
+            productProofPresentationResponse = response
+            defer { productProofPresentationResponse = nil }
+            var receivedResponse: NSApplication.ModalResponse?
+            present(NSAlert(), parent: parent) { receivedResponse = $0 }
+            return receivedResponse == response
+        }
     #endif
 
     private func handle(_ route: ForgeDeepLinkRouteDecision, windows: [RepositoryWindow]) {
@@ -315,15 +324,21 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
         parent: NSWindow?,
         completion: ((NSApplication.ModalResponse) -> Void)?
     ) {
-        #if DEBUG
-            if let productProofPresentationResponse {
-                completion?(productProofPresentationResponse)
-                return
-            }
-        #endif
         if let parent {
+            #if DEBUG
+                if let productProofPresentationResponse {
+                    completion?(productProofPresentationResponse)
+                    return
+                }
+            #endif
             alert.beginSheetModal(for: parent) { completion?($0) }
         } else {
+            #if DEBUG
+                if let productProofPresentationResponse {
+                    completion?(productProofPresentationResponse)
+                    return
+                }
+            #endif
             completion?(alert.runModal())
         }
     }

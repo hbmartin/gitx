@@ -750,6 +750,12 @@
             let router = ForgeDeepLinkApplicationRouter()
             router.installIfNeeded()
             router.installIfNeeded()
+            let parent = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
             let repositoryURL = try ForgeDeepLinkCodec.url(for: .repository(fixture.repository))
             let pullRequestURL = try ForgeDeepLinkCodec.url(
                 for: .pullRequest(fixture.repository, ForgeItemNumber(42))
@@ -760,7 +766,10 @@
                 _ = try router.parse(URL(string: "x-gitx://gitlab.example/a/b/issues/1")!, knownRepositories: [])
             }
             return try inferred == .repository(fixture.repository)
-                && exact == .pullRequest(fixture.repository, ForgeItemNumber(42)) && rejected
+                && exact == .pullRequest(fixture.repository, ForgeItemNumber(42))
+                && rejected
+                && router.runPresentationProductProof(parent: parent)
+                && router.runPresentationProductProof(parent: nil)
         }
 
         // MARK: Production composition service
