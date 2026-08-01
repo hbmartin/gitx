@@ -489,7 +489,8 @@
         private static func makeSidebarAttentionProof() async -> UInt64 {
             let originalComposition = ApplicationComposition.shared
             let originalPollingPreset = ApplicationSettings.attentionPollingPreset
-            ApplicationSettings.attentionPollingPreset = .manual
+            let originalAlertCategoryRawValues = ApplicationSettings.attentionAlertCategoryRawValues
+            let originalAttentionViewStateData = ApplicationSettings.attentionViewStateData
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("GitXSidebarAttentionHarness-\(UUID().uuidString)", isDirectory: true)
             let repositoryURL = root.appendingPathComponent("repository", isDirectory: true)
@@ -499,9 +500,34 @@
             defer {
                 ApplicationComposition.setSharedComposition(originalComposition)
                 ApplicationSettings.attentionPollingPreset = originalPollingPreset
+                ApplicationSettings.attentionAlertCategoryRawValues = originalAlertCategoryRawValues
+                ApplicationSettings.attentionViewStateData = originalAttentionViewStateData
                 defaults.removePersistentDomain(forName: defaultsName)
                 try? FileManager.default.removeItem(at: root)
             }
+            ApplicationSettings.attentionPollingPreset = .manual
+            let selectedAlertCategories: Set<ForgeAttentionAlertCategory> = [
+                .assignments,
+                .reviewRequests,
+            ]
+            ApplicationSettings.attentionAlertCategories = selectedAlertCategories
+            let alertCategoriesRoundTrip = ApplicationSettings.attentionAlertCategories == selectedAlertCategories
+                && ApplicationSettings.attentionAlertCategoryRawValues
+                == selectedAlertCategories.map(\.rawValue).sorted()
+            ApplicationSettings.attentionViewStateData = Data([0xFF])
+            let malformedViewStateFallsBack = ApplicationSettings.attentionViewState == .defaultValue
+            let storedViewState = ForgeAttentionViewState(
+                scope: .all,
+                visibility: .active,
+                sortOrder: .oldestFirst,
+                kinds: [.assignment, .reviewRequest],
+                columns: [.kind, .repository, .title]
+            )
+            ApplicationSettings.attentionViewState = storedViewState
+            let attentionViewStateRoundTrips = ApplicationSettings.attentionViewState == storedViewState
+            let settingsPersistenceProof = alertCategoriesRoundTrip
+                && malformedViewStateFallsBack
+                && attentionViewStateRoundTrips
 
             var sidebar: PBGitSidebarController?
             var services: ForgeApplicationServices?
@@ -676,7 +702,9 @@
                     unboundCollaborationBehavior,
                     boundCollaborationProof.baseline,
                     boundCollaborationProof.collaborationCooldown,
-                    boundCollaborationProof.toolbarCooldown && publicFallbackSelected,
+                    boundCollaborationProof.toolbarCooldown
+                        && publicFallbackSelected
+                        && settingsPersistenceProof,
                 ]
                 let proof = conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
                     if condition.element {
@@ -1573,6 +1601,40 @@
                 updatedBinding?.primaryRepository == binding.primaryRepository &&
                 updatedBinding?.preferredAccount == alternateAccount.id &&
                 notificationCounter.value == missingCredentialNotificationCount + 1
+
+            postToolbarAccountContext(currentAccount: nil, choices: choices)
+            settings.forgeRepositoryBinding = nil
+            let missingBindingNotificationCount = notificationCounter.value
+            let missingBindingSelectionStarted = await selectToolbarAccount(alternateAccount.id)
+            let missingBindingRefused = missingBindingSelectionStarted &&
+                settings.forgeRepositoryBinding == nil &&
+                notificationCounter.value == missingBindingNotificationCount
+            settings.forgeRepositoryBinding = binding
+
+            let standardDefaults = UserDefaults.standard
+            let paneKey = RepositoryForgeAccountsPreferencesRouting.selectedPaneDefaultsKey
+            let originalPane = standardDefaults.object(forKey: paneKey)
+            let previouslyVisibleWindows = Set(
+                NSApp.windows.filter(\.isVisible).map { ObjectIdentifier($0) }
+            )
+            let manageItem = toolbarPopup.menu?.items.first(where: {
+                $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount.Manage"
+            })
+            let manageDelivered = manageItem.flatMap { item in
+                item.action.map { NSApp.sendAction($0, to: item.target, from: item) }
+            } ?? false
+            let manageAccountsRouted = manageDelivered && standardDefaults.string(forKey: paneKey)
+                == RepositoryForgeAccountsPreferencesRouting.accountsPaneIdentifier
+            for window in NSApp.windows where window.isVisible
+                && !previouslyVisibleWindows.contains(ObjectIdentifier(window))
+            {
+                window.orderOut(nil)
+            }
+            if let originalPane {
+                standardDefaults.set(originalPane, forKey: paneKey)
+            } else {
+                standardDefaults.removeObject(forKey: paneKey)
+            }
             return (
                 sharedStateBehavior && collaborationWaitingRefused && collaborationRetryPendingRefused,
                 sharedStateBehavior &&
@@ -1581,7 +1643,9 @@
                     staleSelectionRefused &&
                     missingCredentialRefused &&
                     mismatchedSelectionRefused &&
-                    successfulSelection
+                    successfulSelection &&
+                    missingBindingRefused &&
+                    manageAccountsRouted
             )
         }
 

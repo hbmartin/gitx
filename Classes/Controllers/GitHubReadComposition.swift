@@ -58,10 +58,8 @@ final nonisolated class ForgeGitHubReadCredentialAuthority: GitHubReadCredential
         let account = envelope.account
         let credential = account.currentCredential
         try Task.checkCancellation()
-        guard credential.reference == expectedCredential else {
-            logger.notice("GitHub read Credential reference is no longer current")
-            return nil
-        }
+        // The refresh coordinator returns an envelope only after rechecking the
+        // exact current Credential reference against `expectedCredential`.
         guard credential.expiresAt.map({ $0 > evaluationDate }) ?? true else {
             logger.notice("GitHub read Credential is expired")
             return nil

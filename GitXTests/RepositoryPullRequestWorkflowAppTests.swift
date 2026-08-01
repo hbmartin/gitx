@@ -888,53 +888,6 @@ final class RepositoryPullRequestUIControllerAppTests: XCTestCase {
         XCTAssertEqual(browserFallbackCount, 0)
     }
 
-    #if DEBUG
-        func testExplicitNewPullRequestPushCarriesExactIntentIntoSuccessfulCreateSheet() throws {
-            let fixture = try PullRequestAppFixture()
-            let context = try makeCachedPushContext(fixture: fixture)
-            defer { context.repositoryFixture.cleanup() }
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-                styleMask: [.titled],
-                backing: .buffered,
-                defer: false
-            )
-            let windowController = PBGitWindowController(window: window)
-            let remoteActions = RecordingRepositoryRemoteActions(events: [
-                .began(createPullRequestSelected: true),
-                .succeeded,
-            ])
-            let controller = RepositoryPullRequestUIController(
-                repository: context.repositoryFixture.repository,
-                windowController: windowController,
-                remoteActions: remoteActions,
-                service: CapabilityOnlyMutationService(capability: .verified(.knownAuthority)),
-                destinationOpening: { _ in false },
-                bindingResolving: { context.binding },
-                postPushBrowserFallback: { _ in XCTFail("The exact native intent must not use browser fallback") }
-            )
-
-            try controller.beginUITestCreateJourney(
-                preparation: context.cache.preparation,
-                initialForm: context.cache.initialForm,
-                branch: context.branch,
-                requiresPush: true
-            )
-
-            let invocation = try XCTUnwrap(remoteActions.invocations.first)
-            XCTAssertEqual(invocation.branch?.ref, context.branch.ref)
-            XCTAssertNotNil(invocation.remote)
-            XCTAssertEqual(invocation.option?.preparation, context.cache.preparation)
-            XCTAssertEqual(invocation.option?.intent.form, context.cache.initialForm)
-            XCTAssertNil(invocation.offer)
-            XCTAssertTrue(invocation.requiresConfirmation)
-            XCTAssertFalse(invocation.suppressesPostPushBrowserSuggestion)
-            let sheetView = try XCTUnwrap(window.attachedSheet?.contentView)
-            let title = try XCTUnwrap(descendant("GitX.PullRequest.Title", in: sheetView) as? NSTextField)
-            XCTAssertEqual(title.stringValue, context.cache.initialForm.title)
-        }
-    #endif
-
     func testUncheckedDeferredOrdinaryPushHasNoPullRequestNavigationSideEffect() throws {
         let fixture = try PullRequestAppFixture()
         let binding = try ForgeRepositoryBinding(

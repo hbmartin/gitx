@@ -1061,6 +1061,62 @@
             editButton.performClick(nil)
             let edited = await eventually { opened.count >= 2 }
 
+            let exactPushWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
+            let exactPushWindowController = PBGitWindowController(window: exactPushWindow)
+            let exactPushActions = HarnessRemoteActions(events: [
+                .began(createPullRequestSelected: true), .succeeded,
+            ])
+            let exactPushPreparation = try RepositoryPullRequestCreationPreparation(
+                accountID: preparation.accountID,
+                repository: preparation.repository,
+                base: preparation.base,
+                head: preparation.head,
+                branchAlreadyPushed: false,
+                commitsOldestFirst: preparation.commitsOldestFirst
+            )
+            let exactPushForm = try exactPushPreparation.initialForms().forms[0]
+            var exactPushUsedBrowserFallback = false
+            let exactPushController = RepositoryPullRequestUIController(
+                repository: local.repository,
+                windowController: exactPushWindowController,
+                remoteActions: exactPushActions,
+                service: service,
+                drafts: drafts,
+                destinationOpening: { _ in false },
+                bindingResolving: { try? fixture.binding() },
+                postPushBrowserFallback: { _ in exactPushUsedBrowserFallback = true }
+            )
+            let exactPushBranch = local.repository.headRef()?.ref()
+            try exactPushController.beginUITestCreateJourney(
+                preparation: exactPushPreparation,
+                initialForm: exactPushForm,
+                branch: exactPushBranch,
+                requiresPush: true
+            )
+            let exactPushSheet = await eventually { exactPushWindow.attachedSheet != nil }
+            let exactPushTitle = descendant(
+                "GitX.PullRequest.Title",
+                in: exactPushWindow.attachedSheet?.contentView
+            ) as? NSTextField
+            let exactPushInvocation = exactPushActions.recordedInvocations.first
+            let exactPushProof = exactPushActions.recordedInvocations.count == 1
+                && exactPushInvocation?.branch?.ref == exactPushBranch?.ref
+                && exactPushInvocation?.remote?.ref == "refs/remotes/origin"
+                && exactPushInvocation?.requiresConfirmation == true
+                && exactPushInvocation?.option?.preparation == exactPushPreparation
+                && exactPushInvocation?.option?.intent.form == exactPushForm
+                && exactPushInvocation?.option?.initiallySelected == true
+                && exactPushInvocation?.offer == nil
+                && exactPushInvocation?.suppressesPostPushBrowserSuggestion == false
+                && exactPushSheet
+                && exactPushTitle?.stringValue == exactPushForm.title
+                && !exactPushUsedBrowserFallback
+
             let pushActions = HarnessRemoteActions(events: [
                 .began(createPullRequestSelected: false), .succeeded,
             ])
@@ -1231,7 +1287,7 @@
                 deferredActions.invocations,
                 wiringProof
             )
-            return created && edited && pushActions.invocations >= 1
+            return created && edited && exactPushProof && pushActions.invocations >= 1
                 && deferredSheet && deferredClosed && deferredActions.invocations == 1
                 && newCreated && checkoutPrompt && checkoutFailure && syncFailure && wiringProof
                 && saveCount >= 2 && deleteCount >= 2
@@ -2134,22 +2190,42 @@
 
     @MainActor
     private final class HarnessRemoteActions: RepositoryRemoteActionCoordinating {
+        struct Invocation {
+            let branch: PBGitRef?
+            let remote: PBGitRef?
+            let requiresConfirmation: Bool
+            let option: RepositoryPullRequestPushOption?
+            let offer: RepositoryPullRequestPushOffer?
+            let suppressesPostPushBrowserSuggestion: Bool
+        }
+
         private let events: [RepositoryPushEvent]
-        private(set) var invocations = 0
+        private(set) var recordedInvocations: [Invocation] = []
+        var invocations: Int {
+            recordedInvocations.count
+        }
+
         init(events: [RepositoryPushEvent]) {
             self.events = events
         }
 
         func performPush(
-            branch _: PBGitRef?,
-            remote _: PBGitRef?,
-            requiresConfirmation _: Bool,
-            pullRequestOption _: RepositoryPullRequestPushOption?,
-            pullRequestOffer _: RepositoryPullRequestPushOffer?,
-            suppressesPostPushBrowserSuggestion _: Bool,
+            branch: PBGitRef?,
+            remote: PBGitRef?,
+            requiresConfirmation: Bool,
+            pullRequestOption: RepositoryPullRequestPushOption?,
+            pullRequestOffer: RepositoryPullRequestPushOffer?,
+            suppressesPostPushBrowserSuggestion: Bool,
             completion: ((RepositoryPushEvent) -> Void)?
         ) {
-            invocations += 1
+            recordedInvocations.append(Invocation(
+                branch: branch,
+                remote: remote,
+                requiresConfirmation: requiresConfirmation,
+                option: pullRequestOption,
+                offer: pullRequestOffer,
+                suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion
+            ))
             events.forEach { completion?($0) }
         }
     }
