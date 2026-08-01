@@ -343,6 +343,8 @@ actor ForgeCredentialCooldownRegistry {
         }
     }
 
+    // Decision-level app-hosted tests verify that an expired cooldown remains retained until retry.
+    // swiftlint:disable:next unused_declaration
     func retainedDeadline(for credential: ForgeCredentialReference) async -> Date? {
         await sessionGate.retainedCooldownDeadline(for: credential)
     }

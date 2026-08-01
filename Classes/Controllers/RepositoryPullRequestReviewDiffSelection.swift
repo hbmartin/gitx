@@ -82,6 +82,8 @@ nonisolated enum RepositoryPullRequestReviewDiffSelectionPolicy {
         let characterRange: NSRange
     }
 
+    // Decision-level app-hosted tests exercise text-only ambiguity and malformed-diff boundaries.
+    // swiftlint:disable:next unused_declaration
     static func selection(
         patch: String,
         selectedText: String

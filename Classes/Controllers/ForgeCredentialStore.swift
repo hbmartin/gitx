@@ -614,6 +614,8 @@ actor ForgeAccountStore {
     }
 
     @discardableResult
+    // Decision-level app-hosted tests exercise the synchronous rotation contract directly.
+    // swiftlint:disable:next unused_declaration
     func rotateCredential(
         expectedReference: ForgeCredentialReference,
         expiresAt: Date?,

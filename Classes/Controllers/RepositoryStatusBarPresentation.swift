@@ -283,6 +283,8 @@ struct RepositoryForgeAccountControlPresentation: Equatable {
         return isPublic ? "Public" : providerName
     }
 
+    // Decision-level app-hosted tests cover the compact-avatar fallback presentation.
+    // swiftlint:disable:next unused_declaration
     var avatarInitials: String {
         if let login {
             return String(login.prefix(2)).uppercased()
