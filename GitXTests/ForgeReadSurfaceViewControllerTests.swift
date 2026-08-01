@@ -5,6 +5,14 @@ import XCTest
 
 @MainActor
 final class ForgeReadSurfaceViewControllerTests: XCTestCase {
+    func testReviewOverlayHostMayIgnoreDefaultRevisionUpdates() throws {
+        let host = DefaultRevisionIgnoringReviewOverlayHost()
+
+        try host.updateDefaultRevision(.branch(ForgeRefName("main")))
+
+        XCTAssertFalse(host.didDetach)
+    }
+
     func testNativeAppKitHarnessLoadsListInspectorMarkdownAvatarAndRoutesBrowserAction() async throws {
         let service = try FakeReadService(
             pages: [ForgeReadSurfacePage(
@@ -43,9 +51,13 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         let total = try XCTUnwrap(descendant(identifier: "ForgeReadTotal", in: controller.view) as? NSTextField)
         XCTAssertEqual(total.stringValue, "Showing 1 of 1")
 
-        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        XCTAssertTrue(try controller.open(destination: .pullRequest(
+            ReadFixture.repository(),
+            ForgeItemNumber(42)
+        )))
         await service.waitForDetailsCall()
         await settleMainActor()
+        XCTAssertEqual(table.selectedRow, 0)
 
         let title = try XCTUnwrap(descendant(identifier: "ForgeInspectorTitle", in: controller.view) as? NSTextField)
         XCTAssertEqual(title.stringValue, "Native read surface")
@@ -587,6 +599,16 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         let authorColumn = try XCTUnwrap(columns.menu?.items.first { $0.representedObject as? String == "author" })
         try NSApp.sendAction(XCTUnwrap(authorColumn.action), to: authorColumn.target, from: authorColumn)
+        XCTAssertFalse(try XCTUnwrap(store.readStates[.issues]).visibleColumns.contains(.author))
+        let restoredAuthorColumn = try XCTUnwrap(
+            columns.menu?.items.first { $0.representedObject as? String == "author" }
+        )
+        XCTAssertEqual(restoredAuthorColumn.state, .off)
+        try NSApp.sendAction(
+            XCTUnwrap(restoredAuthorColumn.action),
+            to: restoredAuthorColumn.target,
+            from: restoredAuthorColumn
+        )
         let table = try XCTUnwrap(descendant(identifier: "ForgeReadTable", in: controller.view) as? NSTableView)
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         await service.waitForDetailsCall()
@@ -596,7 +618,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         let saved = try XCTUnwrap(store.readStates[.issues])
         XCTAssertEqual(saved.searchText, "regression")
         XCTAssertEqual(saved.stateFilter, .all)
-        XCTAssertFalse(saved.visibleColumns.contains(.author))
+        XCTAssertTrue(saved.visibleColumns.contains(.author))
         XCTAssertTrue(saved.visibleColumns.contains(.title))
         XCTAssertEqual(saved.selectedDestination, ForgeRepositoryItem.issue(issue).destination)
         XCTAssertTrue(saved.inspectorLayout.isCollapsed)
@@ -2225,6 +2247,29 @@ private final class RecordingReviewOverlayHost: RepositoryPullRequestReviewOverl
     func detach() {
         detachCount += 1
         actionArea.removeFromSuperview()
+    }
+}
+
+@MainActor
+private final class DefaultRevisionIgnoringReviewOverlayHost: RepositoryPullRequestReviewOverlayHosting {
+    private(set) var didDetach = false
+
+    func actionView(for _: ForgePullRequestSummary) -> NSView {
+        NSView()
+    }
+
+    func install(
+        in _: PBNativeContentView,
+        pullRequest _: ForgePullRequestSummary,
+        diff _: RepositoryLocalPullRequestDiff
+    ) {}
+
+    func refresh() {}
+
+    func failClosedAfterRepositoryRefresh(_: String) {}
+
+    func detach() {
+        didDetach = true
     }
 }
 

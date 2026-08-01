@@ -261,15 +261,22 @@
             let originalComposition = ApplicationComposition.shared
             let defaultsName = "GitXApplicationStartupFailureHarness-\(UUID().uuidString)"
             guard let defaults = UserDefaults(suiteName: defaultsName) else { return 0 }
+            let repositoryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("GitXApplicationStartupFailureHarness-\(UUID().uuidString)", isDirectory: true)
             defaults.removePersistentDomain(forName: defaultsName)
             defer {
                 ApplicationComposition.setSharedComposition(originalComposition)
                 defaults.removePersistentDomain(forName: defaultsName)
+                try? FileManager.default.removeItem(at: repositoryURL)
             }
             let probe = HarnessStartupFailureProbe()
             let loader = ForgeApplicationServiceLoader {
                 probe.recordInvocation()
-                throw HarnessStartupFailure.expected
+                throw NSError(
+                    domain: "GitXApplicationStartupFailureHarness",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Forge services unavailable"]
+                )
             }
             let composition = ApplicationComposition(
                 userDefaults: defaults,
@@ -285,8 +292,54 @@
                 }
             }
             guard probe.invocationCount == 1 else { return 0 }
-            await Task.yield()
-            return 1
+            var proof: UInt64 = 1 << 0
+
+            do {
+                try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+                guard runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL),
+                      runGit(
+                          ["remote", "add", "origin", "https://github.com/hbmartin/gitx.git"],
+                          in: repositoryURL
+                      )
+                else { return proof }
+                let repository = try PBGitRepository(url: repositoryURL)
+                let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+                let identity = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+                composition.repositoryViewState(for: repository).forgeRepositoryBinding = try ForgeRepositoryBinding(
+                    localRemoteName: "origin",
+                    primaryRepository: identity
+                )
+                var controller = RepositoryForgeCollaborationController(
+                    repository: repository,
+                    superController: nil
+                )
+                guard let view = controller?.view else { return proof }
+                controller?.prepare()
+                let failureWasRendered = await waitForCondition {
+                    let status = descendant(
+                        identifier: "ForgeCollaborationAccountStatus",
+                        in: view
+                    ) as? NSTextField
+                    return status?.stringValue == "Forge data unavailable — Forge services unavailable"
+                        && descendant(identifier: "ForgeCollaborationGateway", in: view) != nil
+                }
+                if failureWasRendered {
+                    proof |= 1 << 1
+                }
+
+                weak let releasedController = controller
+                controller?.closeView()
+                controller = nil
+                for _ in 0 ..< 100 where releasedController != nil {
+                    await Task.yield()
+                }
+                if releasedController == nil {
+                    proof |= 1 << 2
+                }
+            } catch {
+                return proof
+            }
+            return proof
         }
 
         private static func makeWindowRecoveryProof() async -> UInt64 {

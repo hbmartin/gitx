@@ -902,7 +902,7 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         XCTAssertEqual(windowRecoveryProof, 0b1111111)
 
         let startupFailureProof = await PBForgeMarkdownAvatarProductHarness.applicationStartupFailureProof()
-        XCTAssertEqual(startupFailureProof, 1)
+        XCTAssertEqual(startupFailureProof, 0b111)
     }
 
     private func cell(_ text: String) -> ForgeMarkdownTableCell {

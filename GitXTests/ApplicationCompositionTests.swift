@@ -88,6 +88,66 @@ final class ApplicationCompositionTests: XCTestCase {
         XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
     }
 
+    @MainActor
+    func testUncleanSessionOffersRestoreAndCanDiscardSavedTopology() async throws {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let cleanShutdownKey = "PBWindowSessionCleanShutdown"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        let previousCleanShutdown = standard.object(forKey: cleanShutdownKey)
+        let originalWindows = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApplication.shared.windows where !originalWindows.contains(ObjectIdentifier(window)) {
+                window.close()
+            }
+            restore(previousSnapshot, forKey: snapshotKey, in: standard)
+            restore(previousCleanShutdown, forKey: cleanShutdownKey, in: standard)
+        }
+
+        if let existingWelcome = NSApplication.shared.windows.first(where: { $0.title == "Welcome to GitX" }),
+           let existingSheet = existingWelcome.attachedSheet
+        {
+            existingWelcome.endSheet(
+                existingSheet,
+                returnCode: NSApplication.ModalResponse.alertSecondButtonReturn
+            )
+            let dismissalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while existingWelcome.attachedSheet != nil, ContinuousClock.now < dismissalDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
+        XCTAssertNil(ProcessInfo.processInfo.environment["GITX_UITEST_REPO"])
+        XCTAssertTrue(NSDocumentController.shared.documents.isEmpty)
+        standard.set([["path": "/tmp/GitX-unrestored-session"]], forKey: snapshotKey)
+        standard.set(false, forKey: cleanShutdownKey)
+
+        PBWindowSessionCoordinator.shared.applicationDidFinishLaunching()
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !NSApplication.shared.windows.contains(where: {
+            $0.title == "Welcome to GitX" && $0.attachedSheet != nil
+        }),
+            ContinuousClock.now < deadline
+        {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let welcome = try XCTUnwrap(NSApplication.shared.windows.first { $0.title == "Welcome to GitX" })
+        let restoreSheet = try XCTUnwrap(welcome.attachedSheet)
+        let promptIsVisible = descendantText(in: restoreSheet.contentView)
+            .contains("Restore Windows from the Previous Session?")
+        XCTAssertTrue(promptIsVisible)
+        welcome.endSheet(restoreSheet, returnCode: NSApplication.ModalResponse.alertSecondButtonReturn)
+        let dismissalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while welcome.attachedSheet != nil, ContinuousClock.now < dismissalDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertNil(standard.object(forKey: snapshotKey))
+        XCTAssertNil(welcome.attachedSheet)
+        XCTAssertFalse(standard.bool(forKey: cleanShutdownKey))
+    }
+
     func testLegacyGeneralDefaultsExcludeCommitGuidesAndForwardRemainingToggles() {
         defaults.set(false, forKey: "PBEnableGist")
         defaults.set(false, forKey: "PBEnableGravatar")
@@ -187,6 +247,13 @@ final class ApplicationCompositionTests: XCTestCase {
         } else {
             defaults.removeObject(forKey: key)
         }
+    }
+
+    @MainActor
+    private func descendantText(in view: NSView?) -> [String] {
+        guard let view else { return [] }
+        let ownText = (view as? NSTextField).map { [$0.stringValue] } ?? []
+        return ownText + view.subviews.flatMap { descendantText(in: $0) }
     }
 
     func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {
