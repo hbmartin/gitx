@@ -147,6 +147,18 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    private final class CommitListDataSource: NSObject, NSTableViewDataSource {
+        let rowCount: Int
+
+        init(rowCount: Int) {
+            self.rowCount = rowCount
+        }
+
+        func numberOfRows(in tableView: NSTableView) -> Int {
+            rowCount
+        }
+    }
+
     private final class QLTextViewFake: PBQLTextView {
         private(set) var findActionCount = 0
 
@@ -856,6 +868,50 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         scroll(historyController, selector, NSNotFound)
         scroll(historyController, selector, 0)
+    }
+
+    func testCommitListAdjustScrollUsesDeterministicRowGeometry() throws {
+        let commitListClass = try XCTUnwrap(NSClassFromString("GitX.PBCommitList") as? NSTableView.Type)
+        let commitList = commitListClass.init(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        let dataSource = CommitListDataSource(rowCount: 5)
+        commitList.dataSource = dataSource
+        commitList.rowHeight = 20
+        commitList.intercellSpacing = .zero
+        commitList.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SubjectColumn")))
+        commitList.reloadData()
+        commitList.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
+
+        let selectedRect = commitList.rect(ofRow: 2)
+        XCTAssertGreaterThan(selectedRect.origin.y, 0)
+        let lowerProposedRect = NSRect(
+            x: 0,
+            y: selectedRect.origin.y - 1,
+            width: 300,
+            height: 100
+        )
+        commitList.setValue(false, forKey: "useAdjustScroll")
+        XCTAssertEqual(commitList.adjustScroll(lowerProposedRect), lowerProposedRect)
+
+        commitList.setValue(true, forKey: "useAdjustScroll")
+        let rowHeight = Int(commitList.rowHeight)
+        let lowerRemainder = Int(lowerProposedRect.origin.y) % rowHeight
+        let adjustedLowerRect = commitList.adjustScroll(lowerProposedRect)
+        XCTAssertEqual(
+            adjustedLowerRect.origin.y,
+            lowerProposedRect.origin.y + CGFloat(rowHeight - lowerRemainder)
+        )
+        XCTAssertGreaterThan(adjustedLowerRect.origin.y, lowerProposedRect.origin.y)
+
+        let upperProposedRect = NSRect(
+            x: 0,
+            y: selectedRect.origin.y + CGFloat(rowHeight) + 1,
+            width: 300,
+            height: 100
+        )
+        let upperRemainder = Int(upperProposedRect.origin.y) % rowHeight
+        let adjustedUpperRect = commitList.adjustScroll(upperProposedRect)
+        XCTAssertEqual(adjustedUpperRect.origin.y, upperProposedRect.origin.y - CGFloat(upperRemainder))
+        XCTAssertLessThan(adjustedUpperRect.origin.y, upperProposedRect.origin.y)
     }
 
     func testApplicationDelegateCoversActivationAndFileOpens() throws {

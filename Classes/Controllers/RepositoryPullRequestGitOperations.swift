@@ -433,7 +433,7 @@ nonisolated struct RepositoryForgeCloneExecutor: Sendable {
 // MARK: - Create Pull Request preparation
 
 // swift6-safety-justification: the lock linearizes parent cancellation with detached task installation.
-private final nonisolated class RepositoryPullRequestPreparationTaskOwnership: @unchecked Sendable {
+final nonisolated class RepositoryPullRequestPreparationTaskOwnership: @unchecked Sendable {
     typealias PreparationTask = Task<RepositoryPullRequestCreationPreparation, Error>
 
     private let lock = NSLock()

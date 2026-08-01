@@ -1341,6 +1341,24 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
         ]])
     }
 
+    func testCancelledOwnershipCancelsATaskInstalledAfterCancellation() async throws {
+        let ownership = RepositoryPullRequestPreparationTaskOwnership()
+        let task = Task.detached { () throws -> RepositoryPullRequestCreationPreparation in
+            try await Task.sleep(nanoseconds: 60_000_000_000)
+            throw CancellationError()
+        }
+
+        ownership.cancel()
+        ownership.install(task)
+        do {
+            _ = try await task.value
+            XCTFail("A task installed after parent cancellation must be cancelled immediately")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Expected CancellationError, got \(error)")
+        }
+    }
+
     func testPreCancelledLocalPreparationDoesNotStartAGitCommand() async throws {
         let fixture = try PullRequestAppFixture()
         let binding = try ForgeRepositoryBinding(
