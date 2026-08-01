@@ -126,10 +126,16 @@ final class GitHubReadCompositionTests: XCTestCase {
             login: "octocat",
             credentialID: ForgeCredentialID("app-credential"),
             source: .forgeApplicationDeviceFlow,
-            expiresAt: Date.distantFuture,
+            expiresAt: Date.distantFuture.addingTimeInterval(-3600),
             secrets: rotatingSecrets(access: "original-access", refresh: "original-refresh")
         )
-        let authority = ForgeGitHubReadCredentialAuthority(accountStore: accountStore)
+        let authority = ForgeGitHubReadCredentialAuthority(
+            accountStore: accountStore,
+            credentialRefreshCoordinator: ForgeAccountCredentialRefreshCoordinator(
+                accountStore: accountStore,
+                configuration: nil
+            )
+        )
         let factory = ForgeGitHubReadAdapterFactory(credentialAuthority: authority)
         let capture = ReadCompositionRequestCapture()
         CompositionGitHubURLProtocol.setHandler { request in
@@ -148,7 +154,7 @@ final class GitHubReadCompositionTests: XCTestCase {
 
         let rotated = try await accountStore.rotateCredential(
             expectedReference: original.currentCredential.reference,
-            expiresAt: Date.distantFuture,
+            expiresAt: Date.distantFuture.addingTimeInterval(-3600),
             secrets: rotatingSecrets(access: "rotated-access", refresh: "rotated-refresh")
         )
         XCTAssertEqual(rotated.currentCredential.reference, original.currentCredential.reference)
@@ -187,6 +193,10 @@ final class GitHubReadCompositionTests: XCTestCase {
         XCTAssertEqual(capture.authorizationHeaders.last, "Bearer replacement-access")
 
         try await accountStore.removeAccount(accountID)
+        let removedAuthentication = try await authority.currentAuthentication(
+            for: replacement.currentCredential.reference
+        )
+        XCTAssertNil(removedAuthentication)
         await assertAuthenticationFailure(replacementAdapter)
         XCTAssertEqual(capture.authorizationHeaders.count, 3, "removal must reject before transport")
         let removedChange = try await factory.credentialChange(for: replacement.currentCredential.reference)
@@ -961,8 +971,14 @@ final class GitHubReadCompositionTests: XCTestCase {
         do {
             _ = try await adapter.repositoryFacts(repository: makeRepository())
             XCTFail("request must be rejected", file: file, line: line)
+        } catch let error as GitHubReadError {
+            XCTAssertEqual(error, .authenticationRequired, file: file, line: line)
         } catch {
-            XCTAssertEqual(error as? GitHubReadError, .authenticationRequired, file: file, line: line)
+            XCTFail(
+                "unexpected authentication failure \(String(reflecting: type(of: error)))",
+                file: file,
+                line: line
+            )
         }
     }
 
