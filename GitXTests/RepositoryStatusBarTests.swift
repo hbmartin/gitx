@@ -28,6 +28,8 @@ final class RepositoryStatusBarTests: XCTestCase {
         )
         XCTAssertEqual(visibleStatusBar.title, "Public")
         XCTAssertEqual(visibleStatusBar.avatarInitials, "P")
+        XCTAssertEqual(visibleStatusBar.toolTip, "Public GitHub access — Manage Accounts")
+        XCTAssertEqual(visibleStatusBar.accessibilityLabel, "Public GitHub access")
         XCTAssertFalse(visibleStatusBar.showsPersistentFailure)
     }
 
@@ -474,7 +476,7 @@ final class RepositoryStatusBarTests: XCTestCase {
         try attachScreenshot(of: view, named: "Milestone 1 - Repository Status Bar - Rate Limited")
     }
 
-    func testStatusBarToolbarBridgeUsesWarningDetailsForPersistentFailuresOnlyWhenHidden() throws {
+    func testStatusBarToolbarBridgeUsesWarningDetailsForPersistentFailuresOnlyWhenHidden() async throws {
         let controller = RepositoryStatusBarController(
             splitView: NSView(),
             contentView: NSView(),
@@ -552,6 +554,25 @@ final class RepositoryStatusBarTests: XCTestCase {
             XCTAssertTrue(warning.isHidden, "\(diagnostic) must not be mirrored in the toolbar")
             XCTAssertEqual(label.stringValue, "Ready")
         }
+
+        controller.updateForge(statusInput(diagnostic: .unavailable(.sessionDisabled)))
+        toolbar.updateForgeDiagnostic(
+            persistentFailureText: controller.currentForgePresentation.toolbarPersistentFailureText,
+            statusBarVisible: false
+        )
+        let restored = expectation(description: "persistent Forge toolbar item restored after removal")
+        let restoredIdentifier = NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount")
+        let removedIndex = try XCTUnwrap(installedToolbar.items.firstIndex {
+            $0.itemIdentifier == restoredIdentifier
+        })
+        installedToolbar.removeItem(at: removedIndex)
+        DispatchQueue.main.async {
+            if installedToolbar.items.contains(where: { $0.itemIdentifier == restoredIdentifier }) {
+                restored.fulfill()
+            }
+        }
+        await fulfillment(of: [restored], timeout: 1)
+        XCTAssertTrue(installedToolbar.items.contains { $0.itemIdentifier == restoredIdentifier })
     }
 
     func testLocalStatusLoaderReadsRealRepositoryAndFailsClosedWithoutLeakingOutput() throws {

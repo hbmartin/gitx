@@ -57,6 +57,20 @@ final class RepositoryPullRequestReviewDiffSelectionTests: XCTestCase {
         }
         XCTAssertThrowsError(try RepositoryPullRequestReviewDiffSelectionPolicy.selection(
             patch: patch,
+            renderedText: patch,
+            selectedRange: NSRange(location: 0, length: 0)
+        )) {
+            XCTAssertEqual($0 as? RepositoryPullRequestReviewDiffSelectionError, .emptySelection)
+        }
+        XCTAssertThrowsError(try RepositoryPullRequestReviewDiffSelectionPolicy.selection(
+            patch: patch,
+            renderedText: "not a diff",
+            selectedRange: NSRange(location: 0, length: 1)
+        )) {
+            XCTAssertEqual($0 as? RepositoryPullRequestReviewDiffSelectionError, .malformedDiff)
+        }
+        XCTAssertThrowsError(try RepositoryPullRequestReviewDiffSelectionPolicy.selection(
+            patch: patch,
             selectedText: "+missing"
         )) {
             XCTAssertEqual($0 as? RepositoryPullRequestReviewDiffSelectionError, .unavailableSelection)
@@ -441,6 +455,32 @@ final class RepositoryPullRequestReviewDiffSelectionTests: XCTestCase {
             try (renderedText as NSString).substring(with: XCTUnwrap(placement.characterRanges.first)),
             "▾ Assets/Icon.png"
         )
+    }
+
+    func testFileAnchorRequiresOneExactRenderedFileHeader() throws {
+        let anchor = try ForgeReviewAnchor(
+            path: ForgeFilePath("Sources/File.swift"),
+            subject: .file
+        )
+        let otherRenderedDiff = patch.replacingOccurrences(
+            of: "Sources/File.swift",
+            with: "Sources/Other.swift"
+        )
+        XCTAssertThrowsError(try RepositoryPullRequestReviewDiffSelectionPolicy.anchorPlacement(
+            patch: patch,
+            renderedText: otherRenderedDiff,
+            anchor: anchor
+        )) {
+            XCTAssertEqual($0 as? RepositoryPullRequestReviewDiffAnchorError, .unavailableAnchor)
+        }
+
+        XCTAssertThrowsError(try RepositoryPullRequestReviewDiffSelectionPolicy.anchorPlacement(
+            patch: patch,
+            renderedText: patch + "\n" + patch,
+            anchor: anchor
+        )) {
+            XCTAssertEqual($0 as? RepositoryPullRequestReviewDiffAnchorError, .ambiguousAnchor)
+        }
     }
 
     func testAnchorPlacementFailsClosedWhenRenderedRangeIsMissingOrAmbiguous() throws {

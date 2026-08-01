@@ -227,4 +227,26 @@ final class ApplicationCompositionTests: XCTestCase {
         XCTAssertEqual(PBApplicationSettings.attentionAlertCategories, [.mentionsAndReplies])
         XCTAssertEqual(PBApplicationSettings.attentionViewState, .defaultValue)
     }
+
+    func testSwiftAttentionSettingsNormalizeCategoriesAndRejectMalformedViewState() {
+        ApplicationSettings.attentionAlertCategories = [.reviewRequests, .assignments]
+        XCTAssertEqual(
+            defaults.stringArray(forKey: "PBForgeAttentionAlertCategories"),
+            ["assignments", "reviewRequests"]
+        )
+        XCTAssertEqual(ApplicationSettings.attentionAlertCategories, [.assignments, .reviewRequests])
+
+        let state = ForgeAttentionViewState(
+            scope: .currentRepository,
+            visibility: .all,
+            sortOrder: .newestFirst,
+            kinds: [.reviewRequest],
+            columns: [.title]
+        )
+        ApplicationSettings.attentionViewState = state
+        XCTAssertEqual(ApplicationSettings.attentionViewState, state)
+
+        defaults.set(Data("not-json".utf8), forKey: "PBForgeAttentionViewState")
+        XCTAssertEqual(ApplicationSettings.attentionViewState, .defaultValue)
+    }
 }

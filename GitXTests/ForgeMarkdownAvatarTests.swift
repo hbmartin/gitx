@@ -898,6 +898,9 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         let sidebarAttentionProof = await PBForgeMarkdownAvatarProductHarness.sidebarAttentionProof()
         XCTAssertEqual(sidebarAttentionProof, 0b111_1111_1111_1111)
 
+        let windowRecoveryProof = await PBForgeMarkdownAvatarProductHarness.windowRecoveryProof()
+        XCTAssertEqual(windowRecoveryProof, 0b1111111)
+
         let startupFailureProof = await PBForgeMarkdownAvatarProductHarness.applicationStartupFailureProof()
         XCTAssertEqual(startupFailureProof, 1)
     }

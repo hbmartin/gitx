@@ -606,7 +606,17 @@ final class ForgeApplicationCompositionTests: XCTestCase {
             repository: repository,
             key: record.key
         )
-        XCTAssertEqual(loadedRecord, record)
+        XCTAssertEqual(loadedRecord?.kind, record.kind)
+        XCTAssertEqual(loadedRecord?.accountID, record.accountID)
+        XCTAssertEqual(loadedRecord?.repository, record.repository)
+        XCTAssertEqual(loadedRecord?.key, record.key)
+        XCTAssertEqual(loadedRecord?.payload, record.payload)
+        XCTAssertEqual(loadedRecord?.expiresAt, record.expiresAt)
+        XCTAssertEqual(
+            try XCTUnwrap(loadedRecord?.lastActivityAt).timeIntervalSince1970,
+            record.lastActivityAt.timeIntervalSince1970,
+            accuracy: 0.001
+        )
         XCTAssertEqual(probe.invocationCount, 3)
     }
 
@@ -995,6 +1005,421 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         XCTAssertEqual(restoredFetchCount, 2)
     }
 
+    func testRecoveryLoaderReportsUnavailableOperationsWithoutCoordinatorAndUsesDefaultPolicies() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeRecoveryUnavailableTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let composed = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: root,
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+            keychain: CompositionKeychain(),
+            cliRunner: CompositionRunner()
+        )
+        defer { Task { await composed.database?.close() } }
+        let services = ForgeApplicationServices(
+            dataAvailability: composed.dataAvailability,
+            accountStore: composed.accountStore,
+            addAccountCoordinator: composed.addAccountCoordinator,
+            removalCoordinator: composed.removalCoordinator,
+            githubReadAdapterFactory: composed.githubReadAdapterFactory,
+            githubMutationNetworkMonitor: composed.githubMutationNetworkMonitor,
+            githubAnonymousRESTBudget: composed.githubAnonymousRESTBudget,
+            refreshCoordinator: composed.refreshCoordinator,
+            deferredAccountCleanup: composed.deferredAccountCleanup
+        )
+        let loader = ForgeApplicationServiceLoader { services }
+
+        XCTAssertEqual(
+            ForgeApplicationRecoveryError.unavailable.localizedDescription,
+            "Forge recovery is unavailable in this application composition."
+        )
+        XCTAssertEqual(
+            ForgeApplicationRecoveryError.sessionDisabled.localizedDescription,
+            "Forge features are disabled for the current application session."
+        )
+        let absentRecovery = try await loader.retryForgeRecovery()
+        XCTAssertNil(absentRecovery)
+        await XCTAssertThrowsErrorAsync(try await loader.retainedRecoveryCopies()) { error in
+            guard case ForgeApplicationRecoveryError.unavailable = error else {
+                return XCTFail("recovery-copy enumeration requires a recovery coordinator")
+            }
+        }
+        let explicitCopyURL = root.appendingPathComponent("explicit-copy.sqlite3")
+        try Data("copy".utf8).write(to: explicitCopyURL)
+        let explicitCopy = ForgeSQLiteRecoveryCopy(url: explicitCopyURL, createdAt: Date())
+        await XCTAssertThrowsErrorAsync(try await loader.retryForgeRecovery(explicitCopy)) { error in
+            guard case ForgeApplicationRecoveryError.unavailable = error else {
+                return XCTFail("explicit recovery requires a recovery coordinator")
+            }
+        }
+        await XCTAssertThrowsErrorAsync(try await loader.resetForgeData()) { error in
+            guard case ForgeApplicationRecoveryError.unavailable = error else {
+                return XCTFail("reset requires a recovery coordinator")
+            }
+        }
+        await XCTAssertThrowsErrorAsync(try await loader.deleteRecoveryCopy(explicitCopy)) { error in
+            guard case ForgeApplicationRecoveryError.unavailable = error else {
+                return XCTFail("copy deletion requires a recovery coordinator")
+            }
+        }
+
+        let defaultPolicyRoot = root.appendingPathComponent("DefaultPolicy", isDirectory: true)
+        let defaultPolicyCoordinator = ForgeApplicationRecoveryCoordinator(
+            configuration: ForgeSQLiteConfiguration(
+                databaseURL: defaultPolicyRoot.appendingPathComponent("Forge.sqlite3"),
+                recoveryDirectoryURL: defaultPolicyRoot.appendingPathComponent("Recovery", isDirectory: true)
+            ),
+            deferredAccountCleanup: ForgeDeferredAccountCleanupStore(forgeDirectory: defaultPolicyRoot)
+        )
+        let retainedCopies = try await defaultPolicyCoordinator.retainedRecoveryCopies()
+        XCTAssertEqual(retainedCopies, [])
+        try await defaultPolicyCoordinator.resetForgeData()
+
+        let defaultFactoryRoot = root.appendingPathComponent("DefaultFactory", isDirectory: true)
+        let defaultFactoryServices = try await ForgeApplicationServiceFactory.makeDefault(
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+            applicationSupportDirectory: { defaultFactoryRoot },
+            avatarLoader: nil,
+            avatarLoadingEnabled: { false }
+        )
+        await defaultFactoryServices.database?.close()
+    }
+
+    func testFactoryAutomaticallySalvagesDurableRecordsFromANewerConsistentSchema() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeAutomaticRecoveryTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("Forge.sqlite3")
+        let source = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: databaseURL,
+            recoveryDirectoryURL: root.appendingPathComponent("Recovery", isDirectory: true)
+        ))
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "automatic-recovery")
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let durable = try ForgeSQLiteDurableRecord(
+            kind: .draft,
+            accountID: accountID,
+            repository: repository,
+            key: Data("automatic".utf8),
+            payload: Data("salvaged".utf8),
+            lastActivityAt: Date()
+        )
+        try await source.saveDurableRecord(durable)
+        await source.close()
+        let sqlite = Process()
+        sqlite.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        sqlite.arguments = [databaseURL.path, "PRAGMA user_version=4;"]
+        try sqlite.run()
+        sqlite.waitUntilExit()
+        XCTAssertEqual(sqlite.terminationStatus, 0)
+        let avatarLoader = ForgeAvatarLoader(
+            transport: CompositionAvatarTransport(
+                payload: ForgeAvatarPayload(data: Data([1, 2, 3]), mediaType: .png)
+            ),
+            loadingEnabled: false,
+            requiresBackingStoreInstallation: true
+        )
+
+        let services = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: root,
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: makeDefaults()),
+            keychain: CompositionKeychain(),
+            cliRunner: CompositionRunner(),
+            avatarLoader: avatarLoader,
+            avatarLoadingEnabled: { false }
+        )
+        let recoveredDatabase = try XCTUnwrap(services.database)
+        defer { Task { await recoveredDatabase.close() } }
+
+        let recoveredRecord = try await recoveredDatabase.durableRecord(
+            kind: durable.kind,
+            accountID: accountID,
+            repository: repository,
+            key: durable.key
+        )
+        XCTAssertEqual(recoveredRecord?.kind, durable.kind)
+        XCTAssertEqual(recoveredRecord?.accountID, durable.accountID)
+        XCTAssertEqual(recoveredRecord?.repository, durable.repository)
+        XCTAssertEqual(recoveredRecord?.key, durable.key)
+        XCTAssertEqual(recoveredRecord?.payload, durable.payload)
+        XCTAssertEqual(recoveredRecord?.expiresAt, durable.expiresAt)
+        XCTAssertEqual(
+            try XCTUnwrap(recoveredRecord?.lastActivityAt).timeIntervalSince1970,
+            durable.lastActivityAt.timeIntervalSince1970,
+            accuracy: 0.001
+        )
+    }
+
+    func testRetryFailureDisablesForgeAndPeriodicRecoveryMaintenanceHandlesUnavailableStorage() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeRetryFailureTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("not sqlite".utf8).write(to: root.appendingPathComponent("Forge.sqlite3"))
+        let defaults = try makeDefaults()
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let loader = ForgeApplicationServiceLoader(now: Date.init, maintenanceInterval: 0) {
+            try await ForgeApplicationServiceFactory.make(
+                forgeDirectory: root,
+                bindingCleaner: bindingCleaner,
+                keychain: CompositionKeychain(),
+                cliRunner: CompositionRunner()
+            )
+        }
+        let services = try await loader.services()
+        let copy = try XCTUnwrap(services.dataAvailability.recoveryCopy)
+
+        await XCTAssertThrowsErrorAsync(try await loader.retryForgeRecovery(copy)) { _ in }
+        await XCTAssertThrowsErrorAsync(try await loader.services()) { error in
+            guard case ForgeApplicationRecoveryError.sessionDisabled = error else {
+                return XCTFail("failed recovery must disable ordinary Forge access for this session")
+            }
+        }
+        guard case let .sessionDisabled(retainedCopy) = try await loader.overlayServices() else {
+            return XCTFail("the recovery copy must remain available after a failed retry")
+        }
+        XCTAssertEqual(retainedCopy, copy)
+
+        let maintenanceRoot = root.appendingPathComponent("MaintenanceFailure", isDirectory: true)
+        try FileManager.default.createDirectory(at: maintenanceRoot, withIntermediateDirectories: true)
+        let invalidRecoveryDirectory = maintenanceRoot.appendingPathComponent("not-a-directory")
+        try Data("file".utf8).write(to: invalidRecoveryDirectory)
+        let coordinator = ForgeApplicationRecoveryCoordinator(
+            configuration: ForgeSQLiteConfiguration(
+                databaseURL: maintenanceRoot.appendingPathComponent("Forge.sqlite3"),
+                recoveryDirectoryURL: invalidRecoveryDirectory
+            ),
+            deferredAccountCleanup: ForgeDeferredAccountCleanupStore(forgeDirectory: maintenanceRoot)
+        )
+        let maintenanceServices = ForgeApplicationServices(
+            dataAvailability: .recoveryRequired(copy),
+            accountStore: services.accountStore,
+            addAccountCoordinator: services.addAccountCoordinator,
+            removalCoordinator: services.removalCoordinator,
+            githubReadAdapterFactory: services.githubReadAdapterFactory,
+            githubMutationState: services.githubMutationState,
+            githubMutationNetworkMonitor: services.githubMutationNetworkMonitor,
+            credentialCooldowns: services.credentialCooldowns,
+            githubAnonymousRESTBudget: services.githubAnonymousRESTBudget,
+            refreshCoordinator: nil,
+            deferredAccountCleanup: services.deferredAccountCleanup,
+            recoveryCoordinator: coordinator
+        )
+        let maintenanceLoader = ForgeApplicationServiceLoader(now: Date.init, maintenanceInterval: 0) {
+            maintenanceServices
+        }
+        let maintainedServices = try await maintenanceLoader.services()
+        XCTAssertTrue(maintainedServices === maintenanceServices)
+    }
+
+    func testSuccessfulRetrySerializesServiceAccessAndReloadsRecoveredDurableState() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeSuccessfulRetryTests-\(UUID().uuidString)", isDirectory: true)
+        let sourceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeSuccessfulRetrySource-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: sourceRoot)
+        }
+        let defaults = try makeDefaults()
+        let sourceURL = sourceRoot.appendingPathComponent("Recovery.sqlite3")
+        let source = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: sourceURL,
+            recoveryDirectoryURL: sourceRoot.appendingPathComponent("Copies", isDirectory: true)
+        ))
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "successful-retry")
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+        let durable = try ForgeSQLiteDurableRecord(
+            kind: .draft,
+            accountID: accountID,
+            repository: repository,
+            key: Data("retry".utf8),
+            payload: Data("recovered".utf8),
+            lastActivityAt: Date()
+        )
+        try await source.saveDurableRecord(durable)
+        await source.close()
+        let recoveryCopy = ForgeSQLiteRecoveryCopy(url: sourceURL, createdAt: Date())
+        let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
+        let factory = BlockingSecondCompositionFactory {
+            try await ForgeApplicationServiceFactory.make(
+                forgeDirectory: root,
+                bindingCleaner: bindingCleaner,
+                keychain: CompositionKeychain(),
+                cliRunner: CompositionRunner()
+            )
+        }
+        let loader = ForgeApplicationServiceLoader { try await factory.load() }
+        _ = try await loader.services()
+
+        let retry = Task { try await loader.retryForgeRecovery(recoveryCopy) }
+        await factory.waitForSecondInvocation()
+        let waitingService = Task { try await loader.accountManagementServices() }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        await factory.releaseSecondInvocation()
+        let result = try await retry.value
+        let reloaded = try await waitingService.value
+        let database = try XCTUnwrap(reloaded.database)
+
+        XCTAssertEqual(result?.restoredDurableRecordCount, 1)
+        let recoveredRecord = try await database.durableRecord(
+            kind: durable.kind,
+            accountID: accountID,
+            repository: repository,
+            key: durable.key
+        )
+        XCTAssertEqual(recoveredRecord?.kind, durable.kind)
+        XCTAssertEqual(recoveredRecord?.accountID, durable.accountID)
+        XCTAssertEqual(recoveredRecord?.repository, durable.repository)
+        XCTAssertEqual(recoveredRecord?.key, durable.key)
+        XCTAssertEqual(recoveredRecord?.payload, durable.payload)
+        XCTAssertEqual(recoveredRecord?.expiresAt, durable.expiresAt)
+        XCTAssertEqual(
+            try XCTUnwrap(recoveredRecord?.lastActivityAt).timeIntervalSince1970,
+            durable.lastActivityAt.timeIntervalSince1970,
+            accuracy: 0.001
+        )
+        await database.close()
+    }
+
+    func testRecoveryCoordinatorClosesReplacementOnMaintenanceFailure() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeRecoveryCleanupTests-\(UUID().uuidString)", isDirectory: true)
+        let sourceRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeRecoveryCleanupSource-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: sourceRoot)
+        }
+        let sourceURL = sourceRoot.appendingPathComponent("Recovery.sqlite3")
+        let source = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: sourceURL,
+            recoveryDirectoryURL: sourceRoot.appendingPathComponent("Copies", isDirectory: true)
+        ))
+        await source.close()
+        let coordinator = ForgeApplicationRecoveryCoordinator(
+            configuration: ForgeSQLiteConfiguration(
+                databaseURL: root.appendingPathComponent("Forge.sqlite3"),
+                recoveryDirectoryURL: root.appendingPathComponent("Recovery", isDirectory: true)
+            ),
+            deferredAccountCleanup: ForgeDeferredAccountCleanupStore(forgeDirectory: root),
+            now: { Date(timeIntervalSince1970: .infinity) }
+        )
+
+        await XCTAssertThrowsErrorAsync(
+            try await coordinator.recoverDurableRecords(
+                from: ForgeSQLiteRecoveryCopy(url: sourceURL, createdAt: Date())
+            )
+        ) { _ in }
+
+        let replacement = try ForgeSQLiteStore(configuration: ForgeSQLiteConfiguration(
+            databaseURL: root.appendingPathComponent("Forge.sqlite3"),
+            recoveryDirectoryURL: root.appendingPathComponent("Recovery", isDirectory: true)
+        ))
+        await replacement.close()
+    }
+
+    func testResetFailureRetainsRecoveryStateAndDisablesTheSession() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeResetFailureTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try makeDefaults()
+        let composed = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: root.appendingPathComponent("Composed", isDirectory: true),
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+            keychain: CompositionKeychain(),
+            cliRunner: CompositionRunner()
+        )
+        await composed.database?.close()
+        let protectedRoot = root.appendingPathComponent("Protected", isDirectory: true)
+        try FileManager.default.createDirectory(at: protectedRoot, withIntermediateDirectories: true)
+        let protectedDatabase = protectedRoot.appendingPathComponent("Forge.sqlite3")
+        try Data("protected".utf8).write(to: protectedDatabase)
+        let copyURL = root.appendingPathComponent("retained-copy.sqlite3")
+        try Data("copy".utf8).write(to: copyURL)
+        let copy = ForgeSQLiteRecoveryCopy(url: copyURL, createdAt: Date())
+        let coordinator = ForgeApplicationRecoveryCoordinator(
+            configuration: ForgeSQLiteConfiguration(
+                databaseURL: protectedDatabase,
+                recoveryDirectoryURL: protectedRoot.appendingPathComponent("Recovery", isDirectory: true)
+            ),
+            deferredAccountCleanup: composed.deferredAccountCleanup
+        )
+        let services = ForgeApplicationServices(
+            dataAvailability: .recoveryRequired(copy),
+            accountStore: composed.accountStore,
+            addAccountCoordinator: composed.addAccountCoordinator,
+            removalCoordinator: composed.removalCoordinator,
+            githubReadAdapterFactory: composed.githubReadAdapterFactory,
+            githubMutationState: composed.githubMutationState,
+            githubMutationNetworkMonitor: composed.githubMutationNetworkMonitor,
+            credentialCooldowns: composed.credentialCooldowns,
+            githubAnonymousRESTBudget: composed.githubAnonymousRESTBudget,
+            refreshCoordinator: nil,
+            deferredAccountCleanup: composed.deferredAccountCleanup,
+            recoveryCoordinator: coordinator
+        )
+        let loader = ForgeApplicationServiceLoader { services }
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: protectedRoot.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: protectedRoot.path)
+        }
+
+        await XCTAssertThrowsErrorAsync(try await loader.resetForgeData()) { _ in }
+        guard case let .sessionDisabled(retainedCopy) = try await loader.overlayServices() else {
+            return XCTFail("a failed reset must disable Forge and retain the selected recovery copy")
+        }
+        XCTAssertEqual(retainedCopy, copy)
+    }
+
+    func testServiceAndOverlayLoadsRejectAConcurrentSessionDisableAfterFactoryCompletion() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeSessionDisableRaceTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let services = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: root,
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: makeDefaults()),
+            keychain: CompositionKeychain(),
+            cliRunner: CompositionRunner()
+        )
+        defer { Task { await services.database?.close() } }
+
+        let serviceGate = CompositionServiceLoadGate()
+        let serviceLoader = ForgeApplicationServiceLoader { await serviceGate.load() }
+        let serviceLoad = Task { try await serviceLoader.services() }
+        await serviceGate.waitUntilStarted()
+        let serviceDisable = Task { await serviceLoader.disableForgeForSession() }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        await serviceGate.release(services)
+        await XCTAssertThrowsErrorAsync(try await serviceLoad.value) { error in
+            guard case ForgeApplicationRecoveryError.sessionDisabled = error else {
+                return XCTFail("a session disable must win over an in-flight service publication")
+            }
+        }
+        await serviceDisable.value
+
+        let overlayGate = CompositionServiceLoadGate()
+        let overlayLoader = ForgeApplicationServiceLoader { await overlayGate.load() }
+        let overlayLoad = Task { try await overlayLoader.overlayServices() }
+        await overlayGate.waitUntilStarted()
+        let overlayDisable = Task { await overlayLoader.disableForgeForSession() }
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        await overlayGate.release(services)
+        guard case .sessionDisabled = try await overlayLoad.value else {
+            return XCTFail("an overlay session disable must win over in-flight publication")
+        }
+        await overlayDisable.value
+    }
+
     private func makeDefaults() throws -> UserDefaults {
         let name = "ForgeApplicationCompositionTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: name) else {
@@ -1174,6 +1599,62 @@ private actor CompositionAvatarTransport: ForgeAvatarTransport {
     func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
         fetchCount += 1
         return payload
+    }
+}
+
+private actor BlockingSecondCompositionFactory {
+    typealias Factory = @Sendable () async throws -> ForgeApplicationServices
+
+    private let factory: Factory
+    private var invocationCount = 0
+    private var secondInvocationContinuation: CheckedContinuation<Void, Never>?
+    private var secondInvocationWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(factory: @escaping Factory) {
+        self.factory = factory
+    }
+
+    func load() async throws -> ForgeApplicationServices {
+        invocationCount += 1
+        if invocationCount == 2 {
+            let waiters = secondInvocationWaiters
+            secondInvocationWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+            await withCheckedContinuation { secondInvocationContinuation = $0 }
+        }
+        return try await factory()
+    }
+
+    func waitForSecondInvocation() async {
+        guard invocationCount < 2 else { return }
+        await withCheckedContinuation { secondInvocationWaiters.append($0) }
+    }
+
+    func releaseSecondInvocation() {
+        secondInvocationContinuation?.resume()
+        secondInvocationContinuation = nil
+    }
+}
+
+private actor CompositionServiceLoadGate {
+    private var continuation: CheckedContinuation<ForgeApplicationServices, Never>?
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func load() async -> ForgeApplicationServices {
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitUntilStarted() async {
+        guard continuation == nil else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func release(_ services: ForgeApplicationServices) {
+        continuation?.resume(returning: services)
+        continuation = nil
     }
 }
 

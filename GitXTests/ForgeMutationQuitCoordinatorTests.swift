@@ -161,6 +161,18 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(coordinator.activeMutations().isEmpty)
     }
 
+    func testRepositoryWideOutcomeScopeRoundTripsItsExplicitCodableDiscriminator() throws {
+        let encoded = try JSONEncoder().encode(ForgeUnknownMutationOutcomeScope.repositoryWide)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+
+        XCTAssertEqual(object["kind"] as? String, "repositoryWide")
+        XCTAssertNil(object["pullRequest"])
+        XCTAssertEqual(
+            try JSONDecoder().decode(ForgeUnknownMutationOutcomeScope.self, from: encoded),
+            .repositoryWide
+        )
+    }
+
     func testLifecycleProtocolDefaultRegistersRepositoryWideAndErrorsRemainActionable() throws {
         let coordinator = makeCoordinator()
         let lifecycle: any ForgeMutationLifecycleCoordinating = coordinator

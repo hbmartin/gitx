@@ -216,16 +216,33 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             ),
             listError: ReadFixture.failure("Permission denied")
         )
-        let failedController = try makeController(kind: .issues, service: failing)
+        var recoveredErrors: [String] = []
+        var retryListLoad: (@MainActor () -> Void)?
+        let failedController = try makeController(
+            kind: .issues,
+            service: failing,
+            authorizationRecoveryHandler: { error, retry in
+                recoveredErrors.append(error.localizedDescription)
+                retryListLoad = retry
+            }
+        )
         _ = makeWindow(failedController)
         failedController.viewDidAppear()
         await failing.waitForListCall()
-        await settleMainActor()
+        await waitUntil("list authorization recovery") { retryListLoad != nil }
         let failedStatus = try XCTUnwrap(
             descendant(identifier: "ForgeReadStatus", in: failedController.view) as? NSTextField
         )
         XCTAssertEqual(failedStatus.stringValue, "Couldn’t load Issues. Permission denied")
         XCTAssertFalse(failedStatus.isHidden)
+        XCTAssertEqual(recoveredErrors, ["Permission denied"])
+
+        failing.listError = nil
+        retryListLoad?()
+        await failing.waitForListCall(count: 2)
+        await waitUntil("successful list authorization retry") {
+            failedStatus.stringValue == "No issues match this view."
+        }
 
         let stale = try FakeReadService(
             pages: [ForgeReadSurfacePage(
@@ -265,7 +282,17 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             detailsError: ReadFixture.failure("Details unavailable")
         )
         let router = RecordingDestinationRouter()
-        let controller = try makeController(kind: .issues, service: service, router: router)
+        var recoveredErrors: [String] = []
+        var retryDetailsLoad: (@MainActor () -> Void)?
+        let controller = try makeController(
+            kind: .issues,
+            service: service,
+            router: router,
+            authorizationRecoveryHandler: { error, retry in
+                recoveredErrors.append(error.localizedDescription)
+                retryDetailsLoad = retry
+            }
+        )
         _ = makeWindow(controller)
         controller.viewDidAppear()
         await service.waitForListCall()
@@ -283,6 +310,14 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         browser.performClick(nil)
         XCTAssertEqual(router.browserDestinations, try [.issue(ReadFixture.repository(), ForgeItemNumber(8))])
+        XCTAssertEqual(recoveredErrors, ["Details unavailable"])
+
+        service.detailsError = nil
+        retryDetailsLoad?()
+        await service.waitForDetailsCall(count: 2)
+        await waitUntil("successful inspector authorization retry") {
+            self.descendant(identifier: "ForgeInspectorError", in: controller.view) == nil
+        }
     }
 
     func testInspectorLoadsAndMergesTimelineContinuationThroughInjectedService() async throws {
@@ -1812,7 +1847,8 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         markdown: RecordingMarkdownRenderer = RecordingMarkdownRenderer(),
         avatars: RecordingAvatarRenderer = RecordingAvatarRenderer(),
         router: RecordingDestinationRouter = RecordingDestinationRouter(),
-        reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil
+        reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil,
+        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Void)? = nil
     ) throws -> ForgeReadSurfaceViewController {
         try ForgeReadSurfaceViewController(
             kind: kind,
@@ -1821,7 +1857,8 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             markdownRenderer: markdown,
             avatarRenderer: avatars,
             destinationRouter: router,
-            reviewOverlayHost: reviewOverlayHost
+            reviewOverlayHost: reviewOverlayHost,
+            authorizationRecoveryHandler: authorizationRecoveryHandler
         )
     }
 

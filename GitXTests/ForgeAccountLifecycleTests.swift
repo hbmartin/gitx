@@ -340,6 +340,46 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         ))
     }
 
+    @MainActor
+    func testRuntimeAuthorizationRecoveryPresenterCompletesBrowserAndRetrySheets() async throws {
+        let alerts = ScopedAlertRunModalDriver()
+        defer { alerts.restore() }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        defer { window.close() }
+        let controller = PBGitWindowController(window: window)
+        let authorizationURL = try XCTUnwrap(URL(string: "https://github.com/orgs/example/sso"))
+        let metadata = GitHubResponseMetadata(
+            statusCode: 403,
+            rateLimit: GitHubRateLimitParser.parse(
+                statusCode: 403,
+                headers: [:],
+                receivedAt: Date(timeIntervalSince1970: 1)
+            ),
+            saml: GitHubSAMLMetadata(authorizationURL: authorizationURL)
+        )
+        var retryCount = 0
+
+        XCTAssertTrue(GitHubAuthorizationRecoveryPresenter.present(
+            error: GitHubReadError.samlAuthorizationRequired(metadata),
+            for: controller,
+            retry: { retryCount += 1 }
+        ))
+        let browserSheet = try XCTUnwrap(window.sheets.first)
+        window.endSheet(browserSheet, returnCode: .alertFirstButtonReturn)
+        await settleMainActor()
+
+        XCTAssertEqual(alerts.openedURLs, [authorizationURL])
+        let retrySheet = try XCTUnwrap(window.sheets.first)
+        window.endSheet(retrySheet, returnCode: .alertFirstButtonReturn)
+        await settleMainActor()
+        XCTAssertEqual(retryCount, 1)
+    }
+
     func testAuthorizationRecoverySourcePolicyMatchesCredentialAuthority() throws {
         let samlURL = try XCTUnwrap(URL(string: "https://github.com/orgs/example/sso"))
         let installationURL = try XCTUnwrap(
@@ -909,6 +949,83 @@ final class ForgeAccountLifecycleTests: XCTestCase {
             XCTAssertEqual(error as? ForgeCLIBrokerError, .invalidTokenResponse)
             XCTAssertEqual(error.localizedDescription, "GitHub CLI returned invalid Credential material.")
         }
+
+        let invalidTypedIdentityRunner = StubForgeCLICommandRunner(results: [
+            ForgeCLICommandResult(
+                standardOutput: Data("token".utf8),
+                standardError: Data(),
+                terminationStatus: 0
+            ),
+            ForgeCLICommandResult(
+                standardOutput: Data(#"{"node_id":"","login":"octocat"}"#.utf8),
+                standardError: Data(),
+                terminationStatus: 0
+            ),
+        ])
+        await XCTAssertThrowsErrorAsync(
+            try await GitHubCLIAccountBroker(runner: invalidTypedIdentityRunner).brokerForExplicitAddAccount()
+        ) { error in
+            XCTAssertEqual(error as? ForgeCLIBrokerError, .invalidIdentityResponse)
+        }
+    }
+
+    func testCredentialRefreshRejectsCurrentResultAfterIncarnationChangesAndUsesDefaultFactory() async throws {
+        let store = ForgeAccountStore(keychain: LifecycleKeychain())
+        let accountID = try makeAccountID("refresh-incarnation")
+        let original = try await store.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("github-app"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: Date(timeIntervalSince1970: 10000),
+            secrets: ForgeCredentialSecretMaterial(
+                accessToken: Data("access".utf8),
+                refreshToken: Data("refresh".utf8),
+                refreshTokenExpiresAt: Date(timeIntervalSince1970: 20000)
+            )
+        )
+        let optionalSnapshot = try await store.credentialSnapshot(for: accountID)
+        let snapshot = try XCTUnwrap(optionalSnapshot)
+        let configuration = try GitHubAppDeviceFlowConfiguration(
+            clientID: "Iv1ABC123",
+            applicationSlug: "gitx-test"
+        )
+        let mutatingRefresher = MutatingCurrentCredentialRefresher {
+            _ = try await store.rotateCredential(
+                expectedReference: original.currentCredential.reference,
+                expectedRevision: snapshot.revision,
+                expiresAt: Date(timeIntervalSince1970: 11000),
+                secrets: ForgeCredentialSecretMaterial(
+                    accessToken: Data("rotated-access".utf8),
+                    refreshToken: Data("rotated-refresh".utf8),
+                    refreshTokenExpiresAt: Date(timeIntervalSince1970: 21000)
+                )
+            )
+        }
+        let coordinator = ForgeAccountCredentialRefreshCoordinator(
+            accountStore: store,
+            configuration: configuration,
+            refresherFactory: { _ in mutatingRefresher }
+        )
+
+        let staleCredential = try await coordinator.credential(
+            for: original.currentCredential.reference,
+            at: Date(timeIntervalSince1970: 9900)
+        )
+        XCTAssertNil(staleCredential)
+
+        let optionalCurrent = try await store.credential(for: accountID)
+        let current = try XCTUnwrap(optionalCurrent)
+        let defaultCoordinator = ForgeAccountCredentialRefreshCoordinator(
+            accountStore: store,
+            configuration: configuration
+        )
+        let defaultCredential = try await defaultCoordinator.credential(
+            for: current.account.currentCredential.reference,
+            at: Date(timeIntervalSince1970: 9900),
+            minimumValidity: 1
+        )
+        XCTAssertNotNil(defaultCredential)
     }
 
     func testCLIBrokerBindsIdentityToTokenWhenActiveCLIAccountChangesBetweenCommands() async throws {
@@ -1972,6 +2089,23 @@ private actor StubForgeCLICommandRunner: ForgeCLICommandRunning {
 
     func commands() -> [ForgeCLICommand] {
         recordedCommands
+    }
+}
+
+private actor MutatingCurrentCredentialRefresher: ForgeGitHubCredentialRefreshing {
+    private let mutation: @Sendable () async throws -> Void
+
+    init(mutation: @escaping @Sendable () async throws -> Void) {
+        self.mutation = mutation
+    }
+
+    func refreshIfNeeded(
+        _: GitHubRotatingUserCredential,
+        at _: Date,
+        minimumValidity _: TimeInterval
+    ) async throws -> GitHubCredentialRefreshResult {
+        try await mutation()
+        return .current(refreshAt: Date(timeIntervalSince1970: 10000))
     }
 }
 

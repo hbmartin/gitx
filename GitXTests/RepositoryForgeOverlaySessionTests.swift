@@ -157,14 +157,24 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         let registry = ForgeCredentialCooldownRegistry()
         let credential = try credentialReference()
         let deadline = now.addingTimeInterval(60)
+        let changes = await registry.changes()
+        var changeIterator = changes.makeAsyncIterator()
         await registry.register(ForgeCredentialCooldown(credential: credential, deadline: deadline))
 
+        let changedCredential = await changeIterator.next()
         let activeDeadline = await registry.activeDeadline(for: credential, at: now)
         let deadlineBoundary = await registry.activeDeadline(for: credential, at: deadline)
         let expiredDeadline = await registry.activeDeadline(for: credential, at: deadline.addingTimeInterval(1))
+        let retainedDeadline = await registry.retainedDeadline(for: credential)
+        let waitingState = await registry.retainedState(for: credential, at: now)
+        let retryPendingState = await registry.retainedState(for: credential, at: deadline)
+        XCTAssertEqual(changedCredential, credential)
         XCTAssertEqual(activeDeadline, deadline)
         XCTAssertNil(deadlineBoundary)
         XCTAssertNil(expiredDeadline)
+        XCTAssertEqual(retainedDeadline, deadline)
+        XCTAssertEqual(waitingState, .waiting(until: deadline))
+        XCTAssertEqual(retryPendingState, .retryPending(deadline: deadline))
     }
 
     func testAuthenticatedSchedulerAdaptsToActiveOpenAndBoundActivity() async throws {

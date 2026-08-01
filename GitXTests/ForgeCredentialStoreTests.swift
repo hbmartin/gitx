@@ -14,9 +14,18 @@ final class ForgeCredentialStoreTests: XCTestCase {
         ]
 
         let response = SystemForgeSecurityItemClient().copyMatching(query)
+        let updateStatus = SystemForgeSecurityItemClient().update(
+            [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: uniqueValue,
+                kSecAttrAccount as String: uniqueValue,
+            ],
+            attributes: [kSecValueData as String: Data("replacement".utf8)]
+        )
 
         XCTAssertEqual(response.status, errSecItemNotFound)
         XCTAssertNil(response.result)
+        XCTAssertEqual(updateStatus, errSecItemNotFound)
     }
 
     func testPATStorageListsOnlySafeMetadataAndRedactsSecretSurfaces() async throws {
@@ -666,6 +675,104 @@ final class ForgeCredentialStoreTests: XCTestCase {
             XCTFail("decoded invalid secret material must keep its safe typed classification")
         } catch {
             XCTAssertEqual(error as? ForgeCredentialStoreError, .invalidSecretMaterial)
+        }
+    }
+
+    func testCredentialSnapshotsAndRotationOutcomesRemainRedactedAcrossEveryCase() async throws {
+        let keychain = InMemoryForgeCredentialKeychain()
+        let store = ForgeAccountStore(keychain: keychain)
+        let accountID = try makeAccountID("redacted-snapshot")
+        let account = try await store.addAccount(
+            accountID: accountID,
+            login: "octocat",
+            credentialID: ForgeCredentialID("app-credential"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: Date(timeIntervalSince1970: 100),
+            secrets: rotatingSecrets(access: "snapshot-secret", refresh: "refresh-secret", refreshExpiry: 200)
+        )
+        let optionalSnapshot = try await store.credentialSnapshot(for: accountID)
+        let snapshot = try XCTUnwrap(optionalSnapshot)
+
+        XCTAssertEqual(snapshot.description, "<redacted Forge Credential snapshot>")
+        XCTAssertEqual(snapshot.debugDescription, snapshot.description)
+        XCTAssertTrue(snapshot.customMirror.children.isEmpty)
+        XCTAssertFalse(String(describing: snapshot).contains("snapshot-secret"))
+        for outcome in [
+            ForgeCredentialRotationCASOutcome.rotated(snapshot),
+            .alreadyRotated(snapshot),
+            .stale,
+        ] {
+            XCTAssertEqual(outcome.description, "<redacted Forge Credential rotation outcome>")
+            XCTAssertEqual(outcome.debugDescription, outcome.description)
+            XCTAssertTrue(outcome.customMirror.children.isEmpty)
+            XCTAssertFalse(String(reflecting: outcome).contains("snapshot-secret"))
+        }
+
+        let missingID = try makeAccountID("missing-snapshot")
+        let missingReference = try ForgeCredentialReference(
+            accountID: missingID,
+            credentialID: ForgeCredentialID("missing"),
+            generation: ForgeCredentialGeneration(1)
+        )
+        guard case .stale = try await store.rotateCredential(
+            expectedReference: missingReference,
+            expectedRevision: 0,
+            expiresAt: nil,
+            secrets: ForgeCredentialSecretMaterial(accessToken: Data("replacement".utf8))
+        ) else {
+            return XCTFail("a removed or unknown account must make a refresh result stale")
+        }
+
+        let replacementReference = try ForgeCredentialReference(
+            accountID: accountID,
+            credentialID: ForgeCredentialID("externally-replaced"),
+            generation: ForgeCredentialGeneration(2)
+        )
+        let externallyReplaced = try ForgeStoredCredentialEnvelope(
+            account: ForgeAccount(
+                id: accountID,
+                login: account.login,
+                currentCredential: ForgeCredentialMetadata(
+                    reference: replacementReference,
+                    source: .forgeApplicationDeviceFlow,
+                    expiresAt: account.currentCredential.expiresAt
+                )
+            ),
+            secrets: rotatingSecrets(access: "external", refresh: "external-refresh", refreshExpiry: 300)
+        )
+        try keychain.setRaw(
+            JSONEncoder().encode(externallyReplaced),
+            for: ForgeAccountStore.keychainAccountKey(for: accountID)
+        )
+        guard case .stale = try await store.rotateCredential(
+            expectedReference: account.currentCredential.reference,
+            expectedRevision: snapshot.revision,
+            expiresAt: Date(timeIntervalSince1970: 150),
+            secrets: rotatingSecrets(access: "late", refresh: "late-refresh", refreshExpiry: 300)
+        ) else {
+            return XCTFail("an externally replaced Credential must reject an old refresh result")
+        }
+
+        let patID = try makeAccountID("wrong-rotation-source")
+        let pat = try await store.addPersonalAccessToken(
+            accountID: patID,
+            login: "pat-user",
+            credentialID: ForgeCredentialID("pat"),
+            kind: .classic,
+            token: Data("pat-token".utf8),
+            expiresAt: nil
+        )
+        let optionalPATSnapshot = try await store.credentialSnapshot(for: patID)
+        let patSnapshot = try XCTUnwrap(optionalPATSnapshot)
+        await XCTAssertThrowsErrorAsync(
+            try await store.rotateCredential(
+                expectedReference: pat.currentCredential.reference,
+                expectedRevision: patSnapshot.revision,
+                expiresAt: nil,
+                secrets: ForgeCredentialSecretMaterial(accessToken: Data("new-pat".utf8))
+            )
+        ) { error in
+            XCTAssertEqual(error as? ForgeCredentialStoreError, .credentialSourceMismatch)
         }
     }
 

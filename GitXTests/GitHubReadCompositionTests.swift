@@ -48,6 +48,19 @@ final class GitHubReadCompositionTests: XCTestCase {
             for: account.currentCredential.reference
         )
         XCTAssertNil(expiredAuthentication)
+        do {
+            let requestURL = try XCTUnwrap(URL(string: "https://api.github.com/repos/hbmartin/gitx"))
+            _ = try await expiredAuthority.authorizedRequest(
+                URLRequest(url: requestURL),
+                for: account.currentCredential.reference
+            )
+            XCTFail("expired credentials must fail before an authorized request is returned")
+        } catch {
+            XCTAssertEqual(
+                error as? ForgeGitHubReadCompositionError,
+                .githubDotComCredentialRequired
+            )
+        }
 
         let gitLabReference = try makeCredentialReference(
             kind: .gitLab,
@@ -63,6 +76,18 @@ final class GitHubReadCompositionTests: XCTestCase {
         do {
             _ = try await authority.credentialChange(for: gitLabReference)
             XCTFail("cross-forge invalidation must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? ForgeGitHubReadCompositionError,
+                .githubDotComCredentialRequired
+            )
+        }
+        do {
+            _ = try await authority.refreshCredentialIfNeeded(
+                for: gitLabReference,
+                at: Date(timeIntervalSince1970: 1000)
+            )
+            XCTFail("cross-forge refresh must fail closed")
         } catch {
             XCTAssertEqual(
                 error as? ForgeGitHubReadCompositionError,
