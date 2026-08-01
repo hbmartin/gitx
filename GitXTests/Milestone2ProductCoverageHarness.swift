@@ -1429,6 +1429,30 @@
                 in: checkoutWindow.contentView
             ) != nil
 
+            let syncWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
+            let syncController = HarnessWindowController(
+                repository: local.repository,
+                window: syncWindow
+            )
+            let sync = Milestone2UITestHarness.runProductProof(
+                for: syncController,
+                environment: ["GITX_M2_SCENARIO": "sync-fork"]
+            )
+            let syncReady = await eventually {
+                descendant(
+                    "GitX.M2.Harness.Ready.sync-fork",
+                    in: syncWindow.contentView
+                ) != nil
+            }
+            if let alert = syncWindow.attachedSheet {
+                syncWindow.endSheet(alert, returnCode: .cancel)
+            }
+
             let deepLinkWindow = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
                 styleMask: [.titled],
@@ -1484,6 +1508,7 @@
 
             retainedObjects.append(staging)
             retainedObjects.append(checkout)
+            retainedObjects.append(sync)
             retainedObjects.append(deepLink)
             retainedObjects.append(local)
             let marker = descendant(
@@ -1491,16 +1516,17 @@
                 in: controller.window?.contentView
             )
             NSLog(
-                "[M2ProductCoverage] launch marker=%d existing=%d internal=%d checkout=%d deepReady=%d branches=%d",
+                "[M2ProductCoverage] launch marker=%d existing=%d internal=%d checkout=%d sync=%d deepReady=%d branches=%d",
                 marker != nil,
                 existingDestination,
                 internalProof,
                 checkoutDestination,
+                syncReady,
                 deepLinkReady,
                 deepLinkBranches
             )
             return existingDestination && internalProof
-                && checkoutDestination && deepLinkReady && deepLinkBranches
+                && checkoutDestination && syncReady && deepLinkReady && deepLinkBranches
         }
 
         private static func descendant(_ identifier: String, in view: NSView?) -> NSView? {

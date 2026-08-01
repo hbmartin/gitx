@@ -857,10 +857,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repository?.readCurrentBranch()
         _sidebarController?.selectCurrentBranch()
         refreshLocalRepositoryContent()
-        NSLog(
-            "[GitX] Refreshed repository model after explicit Forge base checkout: %@",
-            repository?.headRef()?.description ?? "unknown"
-        )
+        NSLog("[GitX] Refreshed repository model after explicit Forge base checkout")
     }
 
     private func refreshLocalRepositoryContent() {

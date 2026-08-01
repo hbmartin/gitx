@@ -144,6 +144,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBMilestone3ProductCoverageHarness : NSObject
 + (BOOL)repositoryForgeViewStateProofWithRepository:(PBGitRepository *)repository;
 + (BOOL)collaborationCloseLifecycleProofWithRepository:(PBGitRepository *)repository;
++ (BOOL)refreshCompletionProofWithRepository:(PBGitRepository *)repository;
 @end
 
 @interface PBWindowSessionCoordinator : NSObject

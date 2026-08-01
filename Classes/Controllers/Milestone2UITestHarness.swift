@@ -145,6 +145,41 @@ import OSLog // swiftlint:disable:this unused_import
                 }
                 let unsupported = unsupportedPreparation && unsupportedEdit && unsupportedSync
 
+                let syncPlan = try ForgeSyncForkPlan(
+                    fork: fixture.preparation.head.repository,
+                    parent: fixture.preparation.repository,
+                    branch: fixture.preparation.base.name,
+                    localFetchRemoteName: "origin"
+                )
+                let syncService = Milestone2SyncForkService(
+                    expectedAccountID: fixture.preparation.accountID,
+                    expectedPlan: syncPlan
+                )
+                let syncOutcome = try await syncService.syncFork(
+                    accountID: fixture.preparation.accountID,
+                    plan: syncPlan
+                )
+                let rejectedSyncIntent = await throwsExpected {
+                    _ = try await syncService.syncFork(
+                        accountID: ForgeAccountID(
+                            forge: fixture.preparation.accountID.forge,
+                            value: "unexpected"
+                        ),
+                        plan: syncPlan
+                    )
+                }
+                let syncCapabilities = try await syncService.capabilities(
+                    accountID: fixture.preparation.accountID,
+                    repository: fixture.preparation.repository,
+                    operations: [.syncFork]
+                )
+                let syncAlert = RepositorySyncForkConfirmationPresenter.alert(plan: syncPlan)
+                let syncPresentation = syncAlert.messageText == "Sync Fork from Parent?"
+                    && syncAlert.informativeText.contains("origin/main")
+                    && syncAlert.informativeText.contains("checkout will not be changed")
+                    && syncAlert.buttons.map(\.title) == ["Sync Fork", "Cancel"]
+                    && syncAlert.buttons.first?.accessibilityIdentifier() == "GitX.SyncFork.Confirm"
+
                 let nativeService = try Milestone2NativePullRequestService(summary: summary)
                 let page = try await nativeService.loadItems(
                     kind: .pullRequests,
@@ -215,6 +250,10 @@ import OSLog // swiftlint:disable:this unused_import
                 return createdOutcome == .created(fixture.destination)
                     && existingOutcome == .existing(fixture.destination)
                     && rejectedIntent && unsupported && page.items.count == 1
+                    && syncOutcome.plan == syncPlan
+                    && syncOutcome.serverSummary == "GitHub synchronized the fork from its parent."
+                    && rejectedSyncIntent && syncCapabilities[.syncFork] == .verified(.knownAuthority)
+                    && syncPresentation
                     && details.details.item.destination == fixture.destination
                     && invalidLoads && markdown is ForgeMarkdownNativeView
                     && avatar is NSImageView && nativeMarkdown is ForgeMarkdownNativeView
@@ -612,77 +651,7 @@ import OSLog // swiftlint:disable:this unused_import
         }
     }
 
-    private struct Milestone2PullRequestService: RepositoryPullRequestMutationServing {
-        enum Outcome: Sendable {
-            case created
-            case existing
-
-            var stateName: String {
-                switch self {
-                case .created: "Created"
-                case .existing: "Existing"
-                }
-            }
-        }
-
-        let outcome: Outcome
-        let destination: ForgeDestination
-        let expectedAccountID: ForgeAccountID
-        let expectedForm: ForgePullRequestCreationForm
-
-        func capabilities(
-            accountID _: ForgeAccountID,
-            repository _: ForgeRepositoryIdentity,
-            operations: Set<ForgeOperation>
-        ) async throws -> [ForgeOperation: ForgeOperationCapability] {
-            Dictionary(uniqueKeysWithValues: operations.map { ($0, .verified(.knownAuthority)) })
-        }
-
-        func prepareCreation(
-            repository _: ForgeRepositoryIdentity,
-            localBranch _: ForgeRefName,
-            localHead _: ForgeCommitID
-        ) async throws -> RepositoryPullRequestCreationPreparation {
-            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
-        }
-
-        func createPullRequest(
-            accountID: ForgeAccountID,
-            form: ForgePullRequestCreationForm
-        ) async throws -> RepositoryPullRequestCreationOutcome {
-            guard accountID == expectedAccountID,
-                  form.repository == expectedForm.repository,
-                  form.base == expectedForm.base,
-                  form.head == expectedForm.head,
-                  form.title == expectedForm.title,
-                  form.bodyMarkdown == expectedForm.bodyMarkdown,
-                  form.isDraft == expectedForm.isDraft
-            else { throw Milestone2UITestHarnessError.unexpectedPullRequestIntent }
-            switch outcome {
-            case .created: return .created(destination)
-            case .existing: return .existing(destination)
-            }
-        }
-
-        func editPullRequest(
-            accountID _: ForgeAccountID,
-            edit _: ForgePullRequestEdit
-        ) async throws -> RepositoryPullRequestEditOutcome {
-            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
-        }
-
-        func syncFork(
-            accountID _: ForgeAccountID,
-            plan _: ForgeSyncForkPlan
-        ) async throws -> RepositorySyncForkOutcome {
-            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
-        }
-    }
-
-    private struct Milestone2SyncForkService: RepositoryPullRequestMutationServing {
-        let expectedAccountID: ForgeAccountID
-        let expectedPlan: ForgeSyncForkPlan
-
+    private nonisolated extension RepositoryPullRequestMutationServing {
         func capabilities(
             accountID _: ForgeAccountID,
             repository _: ForgeRepositoryIdentity,
@@ -712,6 +681,55 @@ import OSLog // swiftlint:disable:this unused_import
         ) async throws -> RepositoryPullRequestEditOutcome {
             throw RepositoryPullRequestServiceError.nativeCreationUnavailable
         }
+
+        func syncFork(
+            accountID _: ForgeAccountID,
+            plan _: ForgeSyncForkPlan
+        ) async throws -> RepositorySyncForkOutcome {
+            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
+        }
+    }
+
+    private struct Milestone2PullRequestService: RepositoryPullRequestMutationServing {
+        enum Outcome: Sendable {
+            case created
+            case existing
+
+            var stateName: String {
+                switch self {
+                case .created: "Created"
+                case .existing: "Existing"
+                }
+            }
+        }
+
+        let outcome: Outcome
+        let destination: ForgeDestination
+        let expectedAccountID: ForgeAccountID
+        let expectedForm: ForgePullRequestCreationForm
+
+        func createPullRequest(
+            accountID: ForgeAccountID,
+            form: ForgePullRequestCreationForm
+        ) async throws -> RepositoryPullRequestCreationOutcome {
+            guard accountID == expectedAccountID,
+                  form.repository == expectedForm.repository,
+                  form.base == expectedForm.base,
+                  form.head == expectedForm.head,
+                  form.title == expectedForm.title,
+                  form.bodyMarkdown == expectedForm.bodyMarkdown,
+                  form.isDraft == expectedForm.isDraft
+            else { throw Milestone2UITestHarnessError.unexpectedPullRequestIntent }
+            switch outcome {
+            case .created: return .created(destination)
+            case .existing: return .existing(destination)
+            }
+        }
+    }
+
+    private struct Milestone2SyncForkService: RepositoryPullRequestMutationServing {
+        let expectedAccountID: ForgeAccountID
+        let expectedPlan: ForgeSyncForkPlan
 
         func syncFork(
             accountID: ForgeAccountID,

@@ -868,6 +868,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic) BOOL interceptHook;
 @property (nonatomic) BOOL testHookExists;
 @property (nonatomic) NSUInteger reloadRefsCount;
+@property (nonatomic) NSUInteger readCurrentBranchCount;
+@property (nonatomic) BOOL interceptForgeRefresh;
 @property (nonatomic) BOOL returnsNilHeadRef;
 @end
 
@@ -892,7 +894,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (void)reloadRefs
 {
 	self.reloadRefsCount++;
-	[super reloadRefs];
+	if (!self.interceptForgeRefresh) [super reloadRefs];
+}
+- (void)readCurrentBranch
+{
+	self.readCurrentBranchCount++;
+	if (!self.interceptForgeRefresh) [super readCurrentBranch];
 }
 - (PBGitRevSpecifier *)headRef
 {
@@ -4116,6 +4123,18 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (void)testMilestone3ShippedCollaborationCloseDetachesReviewOverlay
 {
 	XCTAssertTrue([PBMilestone3ProductCoverageHarness collaborationCloseLifecycleProofWithRepository:self.repository]);
+}
+
+- (void)testMilestone3ShippedPostMergeRefreshCompletionReloadsRepositoryState
+{
+	NSUInteger reloadRefsCount = self.repository.reloadRefsCount;
+	NSUInteger readCurrentBranchCount = self.repository.readCurrentBranchCount;
+	self.repository.interceptForgeRefresh = YES;
+
+	XCTAssertTrue([PBMilestone3ProductCoverageHarness refreshCompletionProofWithRepository:self.repository]);
+
+	XCTAssertEqual(self.repository.reloadRefsCount, reloadRefsCount + 2);
+	XCTAssertEqual(self.repository.readCurrentBranchCount, readCurrentBranchCount + 1);
 }
 
 - (void)testMilestone3ShippedRepositoryForgeViewStatePersistsAcrossControllerRecreation

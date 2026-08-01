@@ -63,6 +63,22 @@ import OSLog // swiftlint:disable:this unused_import
                 harness.start()
                 return harness
             }
+        #else
+            /// App-hosted correctness tests exercise the same success callbacks
+            /// that the production review overlay installs after a merge.
+            static func runRefreshCompletionProductProof(
+                for windowController: PBGitWindowController
+            ) -> Bool {
+                guard windowController.repository != nil else { return false }
+                let harness = Milestone3UITestHarness(
+                    windowController: windowController,
+                    environment: [:]
+                )
+                harness.refreshAfterBaseFetchCompletion()
+                harness.refreshAfterBaseCheckoutCompletion()
+                withExtendedLifetime(harness) {}
+                return true
+            }
         #endif
 
         private func start() {
@@ -789,6 +805,15 @@ import OSLog // swiftlint:disable:this unused_import
                 controller.closeView()
 
                 return host.detachCount == 1 && !controller.hasReviewOverlayHostForTesting
+            }
+
+            @objc(refreshCompletionProofWithRepository:)
+            // Referenced through the generated Objective-C interface by WindowControllerTests.
+            // swiftlint:disable:next unused_declaration
+            static func refreshCompletionProof(repository: PBGitRepository) -> Bool {
+                let windowController = PBGitWindowController(window: NSWindow())
+                windowController.repository = repository
+                return Milestone3UITestHarness.runRefreshCompletionProductProof(for: windowController)
             }
         }
 

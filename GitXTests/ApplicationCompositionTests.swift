@@ -89,6 +89,40 @@ final class ApplicationCompositionTests: XCTestCase {
     }
 
     @MainActor
+    func testFollowSystemRestorePolicyUsesTheSystemDefaultWhenPreferenceIsAbsent() {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let cleanShutdownKey = "PBWindowSessionCleanShutdown"
+        let systemRestoreKey = "NSQuitAlwaysKeepsWindows"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        let previousCleanShutdown = standard.object(forKey: cleanShutdownKey)
+        let previousSystemRestore = standard.object(forKey: systemRestoreKey)
+        let previousRestorePolicy = PBApplicationSettings.restorePolicy
+        let originalWindows = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApplication.shared.windows where !originalWindows.contains(ObjectIdentifier(window)) {
+                window.close()
+            }
+            restore(previousSnapshot, forKey: snapshotKey, in: standard)
+            restore(previousCleanShutdown, forKey: cleanShutdownKey, in: standard)
+            restore(previousSystemRestore, forKey: systemRestoreKey, in: standard)
+            PBApplicationSettings.restorePolicy = previousRestorePolicy
+        }
+
+        XCTAssertNil(ProcessInfo.processInfo.environment["GITX_UITEST_REPO"])
+        XCTAssertTrue(NSDocumentController.shared.documents.isEmpty)
+        standard.removeObject(forKey: snapshotKey)
+        standard.set(true, forKey: cleanShutdownKey)
+        standard.removeObject(forKey: systemRestoreKey)
+        PBApplicationSettings.restorePolicy = .followSystem
+
+        PBWindowSessionCoordinator.shared.applicationDidFinishLaunching()
+
+        XCTAssertFalse(standard.bool(forKey: cleanShutdownKey))
+        XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
+    }
+
+    @MainActor
     func testUncleanSessionOffersRestoreAndCanDiscardSavedTopology() async throws {
         let standard = UserDefaults.standard
         let snapshotKey = "PBWindowSessionSnapshot"
