@@ -3,6 +3,15 @@ import Security
 import XCTest
 
 final class ForgeCredentialStoreTests: XCTestCase {
+    func testSystemSecurityKeychainListsMissingServiceWithoutErrSecParam() throws {
+        let uniqueService = "com.gitx.tests.missing.\(UUID().uuidString)"
+
+        XCTAssertEqual(
+            try SecurityForgeCredentialKeychain(service: uniqueService).allItems(),
+            []
+        )
+    }
+
     func testSystemSecurityClientForwardsReadOnlyGenericPasswordQuery() {
         let uniqueValue = "com.gitx.tests.missing.\(UUID().uuidString)"
         let query: [String: Any] = [
@@ -375,13 +384,32 @@ final class ForgeCredentialStoreTests: XCTestCase {
         XCTAssertEqual(try keychain.allItems(), [])
         client.enqueueCopy(status: errSecSuccess, result: [[
             kSecAttrAccount as String: "account",
-            kSecValueData as String: Data("envelope".utf8),
         ]])
+        client.enqueueCopy(status: errSecSuccess, result: Data("envelope".utf8))
         XCTAssertEqual(
             try keychain.allItems(),
             [ForgeKeychainItem(accountKey: "account", data: Data("envelope".utf8))]
         )
-        client.enqueueCopy(status: errSecSuccess, result: [[kSecAttrAccount as String: "missing-data"]])
+        let successfulListQueries = Array(client.copiedQueries.suffix(2))
+        XCTAssertEqual(successfulListQueries.count, 2)
+        XCTAssertEqual(successfulListQueries[0][kSecReturnAttributes as String] as? Bool, true)
+        XCTAssertNil(successfulListQueries[0][kSecReturnData as String])
+        XCTAssertEqual(
+            successfulListQueries[0][kSecMatchLimit as String] as? String,
+            kSecMatchLimitAll as String
+        )
+        XCTAssertEqual(successfulListQueries[1][kSecReturnData as String] as? Bool, true)
+        XCTAssertEqual(
+            successfulListQueries[1][kSecMatchLimit as String] as? String,
+            kSecMatchLimitOne as String
+        )
+
+        client.enqueueCopy(status: errSecSuccess, result: [[kSecAttrService as String: "missing-account"]])
+        XCTAssertThrowsError(try keychain.allItems()) {
+            XCTAssertEqual($0 as? ForgeKeychainError, .unexpectedStatus(operation: .list, status: errSecDecode))
+        }
+        client.enqueueCopy(status: errSecSuccess, result: [[kSecAttrAccount as String: "malformed-data"]])
+        client.enqueueCopy(status: errSecSuccess, result: "not-data")
         XCTAssertThrowsError(try keychain.allItems()) {
             XCTAssertEqual($0 as? ForgeKeychainError, .unexpectedStatus(operation: .list, status: errSecDecode))
         }
@@ -864,9 +892,14 @@ private final nonisolated class StubForgeSecurityItemClient: ForgeSecurityItemCa
     private var addStatuses: [OSStatus] = []
     private var deleteStatuses: [OSStatus] = []
     private var additions: [[String: Any]] = []
+    private var copies: [[String: Any]] = []
 
     var addedAttributes: [[String: Any]] {
         lock.withLock { additions }
+    }
+
+    var copiedQueries: [[String: Any]] {
+        lock.withLock { copies }
     }
 
     func enqueueCopy(status: OSStatus, result: Any? = nil) {
@@ -886,7 +919,10 @@ private final nonisolated class StubForgeSecurityItemClient: ForgeSecurityItemCa
     }
 
     func copyMatching(_ query: [String: Any]) -> (status: OSStatus, result: Any?) {
-        lock.withLock { copyResponses.removeFirst() }
+        lock.withLock {
+            copies.append(query)
+            return copyResponses.removeFirst()
+        }
     }
 
     func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {

@@ -127,7 +127,6 @@ final nonisolated class SecurityForgeCredentialKeychain: ForgeCredentialKeychain
     func allItems() throws -> [ForgeKeychainItem] {
         var query = Self.genericPasswordQuery(service: service, accountKey: nil)
         query[kSecReturnAttributes as String] = true
-        query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitAll
         let response = client.copyMatching(query)
         let status = response.status
@@ -139,9 +138,16 @@ final nonisolated class SecurityForgeCredentialKeychain: ForgeCredentialKeychain
             throw ForgeKeychainError.unexpectedStatus(operation: .list, status: errSecDecode)
         }
         let items = try dictionaries.map { dictionary -> ForgeKeychainItem in
-            guard let accountKey = dictionary[kSecAttrAccount as String] as? String,
-                  let data = dictionary[kSecValueData as String] as? Data
-            else {
+            guard let accountKey = dictionary[kSecAttrAccount as String] as? String else {
+                throw ForgeKeychainError.unexpectedStatus(operation: .list, status: errSecDecode)
+            }
+
+            var dataQuery = Self.genericPasswordQuery(service: service, accountKey: accountKey)
+            dataQuery[kSecReturnData as String] = true
+            dataQuery[kSecMatchLimit as String] = kSecMatchLimitOne
+            let dataResponse = client.copyMatching(dataQuery)
+            try requireSuccess(dataResponse.status, operation: .list)
+            guard let data = dataResponse.result as? Data else {
                 throw ForgeKeychainError.unexpectedStatus(operation: .list, status: errSecDecode)
             }
             return ForgeKeychainItem(accountKey: accountKey, data: data)
