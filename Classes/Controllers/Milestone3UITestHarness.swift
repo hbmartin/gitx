@@ -107,7 +107,15 @@ import OSLog // swiftlint:disable:this unused_import
                 )
                 let controller = RepositoryPullRequestReviewOverlayController(
                     session: session,
-                    router: Milestone3ProductionReviewRouter(stateHandler: stateHandler)
+                    router: Milestone3ProductionReviewRouter(stateHandler: stateHandler),
+                    onFetchBaseCompletion: { [weak self] in
+                        self?.windowController?.repository?.reloadRefs()
+                        self?.restoreProductionDestination()
+                    },
+                    onCheckOutBaseCompletion: { [weak self] in
+                        self?.windowController?.jumpToCheckedOutBranch(nil)
+                        self?.restoreProductionDestination()
+                    }
                 )
                 container.addChild(controller)
                 container.view = productionRoot(for: controller)

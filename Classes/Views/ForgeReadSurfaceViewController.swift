@@ -3953,6 +3953,12 @@ final class RepositoryForgeCollaborationController: PBViewController {
                         for: self?.windowController,
                         retry: retry
                     )
+                },
+                onFetchBaseCompletion: { [weak self] in
+                    self?.windowController?.refreshAfterForgeBaseFetch()
+                },
+                onCheckOutBaseCompletion: { [weak self] in
+                    self?.windowController?.refreshAfterForgeBaseCheckout()
                 }
             )
         } else {
@@ -4606,12 +4612,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
             NSSound.beep()
             return
         }
-        let alert = NSAlert()
-        alert.messageText = "Sync Fork from Parent?"
-        alert.informativeText = "GitHub will update \(branch.value) on the fork, then GitX will fetch \(binding.localRemoteName)/\(branch.value). Your checkout will not be changed."
-        alert.addButton(withTitle: "Sync Fork")
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons.first?.setAccessibilityIdentifier("GitX.SyncFork.Confirm")
+        let alert = RepositorySyncForkConfirmationPresenter.alert(plan: plan)
         windowController?.confirmDialog(alert, suppressionIdentifier: nil) { [weak self] in
             self?.windowController?.syncFork(accountID: account.id, plan: plan)
         }

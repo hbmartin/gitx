@@ -91,6 +91,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private let router: any RepositoryPullRequestReviewRouting
     private let markdownRouter: RepositoryPullRequestReviewMarkdownRouter
     private let authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)?
+    private let onFetchBaseCompletion: (() -> Void)?
+    private let onCheckOutBaseCompletion: (() -> Void)?
     private var repositoryDefaultRevision: ForgeRevision
     private let actionStack = NSStackView()
     private let overlayStack = NSStackView()
@@ -129,12 +131,16 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         session: RepositoryPullRequestReviewSession,
         router: any RepositoryPullRequestReviewRouting,
         defaultRevision: ForgeRevision? = nil,
-        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)? = nil
+        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)? = nil,
+        onFetchBaseCompletion: (() -> Void)? = nil,
+        onCheckOutBaseCompletion: (() -> Void)? = nil
     ) {
         self.session = session
         self.router = router
         repositoryDefaultRevision = defaultRevision ?? Self.fallbackDefaultRevision()
         self.authorizationRecoveryHandler = authorizationRecoveryHandler
+        self.onFetchBaseCompletion = onFetchBaseCompletion
+        self.onCheckOutBaseCompletion = onCheckOutBaseCompletion
         markdownRouter = RepositoryPullRequestReviewMarkdownRouter(router: router)
         super.init(nibName: nil, bundle: nil)
         session.onStateChange = { [weak self] _ in self?.render() }
@@ -500,11 +506,11 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         let fetch = makeButton(
             title: "Fetch Base",
             identifier: RepositoryPullRequestReviewAccessibility.fetchBase
-        ) { [weak self] in self?.perform { try await self?.session.fetchBase() } }
+        ) { [weak self] in self?.fetchBase() }
         let checkout = makeButton(
             title: "Check Out Base",
             identifier: RepositoryPullRequestReviewAccessibility.checkOutBase
-        ) { [weak self] in self?.perform { try await self?.session.checkOutBase() } }
+        ) { [weak self] in self?.checkOutBase() }
         let fresh = workspace.isMutationStateFresh
         fetch.isEnabled = fresh
         checkout.isEnabled = fresh
@@ -519,6 +525,22 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             row.addArrangedSubview(delete)
         }
         actionStack.addArrangedSubview(row)
+    }
+
+    private func fetchBase() {
+        perform { [weak self] in
+            guard let self else { return }
+            try await session.fetchBase()
+            onFetchBaseCompletion?()
+        }
+    }
+
+    private func checkOutBase() {
+        perform { [weak self] in
+            guard let self else { return }
+            try await session.checkOutBase()
+            onCheckOutBaseCompletion?()
+        }
     }
 
     private func addPostMergeDeletionFailure(
@@ -2083,6 +2105,8 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
     private let accountID: ForgeAccountID
     private let router: any RepositoryPullRequestReviewRouting
     private let authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)?
+    private let onFetchBaseCompletion: (() -> Void)?
+    private let onCheckOutBaseCompletion: (() -> Void)?
     private var repositoryDefaultRevision: ForgeRevision
     private var identity: RepositoryPullRequestReviewIdentity?
     private var controller: RepositoryPullRequestReviewOverlayController?
@@ -2117,12 +2141,16 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         accountID: ForgeAccountID,
         router: any RepositoryPullRequestReviewRouting,
         defaultRevision: ForgeRevision? = nil,
-        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)? = nil
+        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)? = nil,
+        onFetchBaseCompletion: (() -> Void)? = nil,
+        onCheckOutBaseCompletion: (() -> Void)? = nil
     ) {
         self.applicationSession = applicationSession
         self.accountID = accountID
         self.router = router
         self.authorizationRecoveryHandler = authorizationRecoveryHandler
+        self.onFetchBaseCompletion = onFetchBaseCompletion
+        self.onCheckOutBaseCompletion = onCheckOutBaseCompletion
         repositoryDefaultRevision = defaultRevision ?? Self.fallbackDefaultRevision()
         super.init()
     }
@@ -2211,7 +2239,9 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
             session: session,
             router: router,
             defaultRevision: repositoryDefaultRevision,
-            authorizationRecoveryHandler: authorizationRecoveryHandler
+            authorizationRecoveryHandler: authorizationRecoveryHandler,
+            onFetchBaseCompletion: onFetchBaseCompletion,
+            onCheckOutBaseCompletion: onCheckOutBaseCompletion
         )
         self.controller = controller
         controller.onWorkspacePresentationChange = { [weak self] in

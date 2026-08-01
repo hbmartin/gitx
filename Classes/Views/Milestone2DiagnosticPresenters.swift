@@ -94,7 +94,7 @@ nonisolated struct ForgeMutationControlPresentation: Equatable, Sendable {
 }
 
 /// Shared alert construction keeps diagnostic app-hosted screenshots aligned
-/// with the production Push and x-gitx presentations.
+/// with the production Push, Sync Fork, and x-gitx presentations.
 @MainActor
 enum RepositoryPushConfirmationPresenter {
     static func createPullRequestButton(initiallySelected: Bool) -> NSButton {
@@ -118,6 +118,19 @@ enum RepositoryPushConfirmationPresenter {
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Push alert - cancel button"))
         alert.accessoryView = accessoryView
         alert.showsSuppressionButton = true
+        return alert
+    }
+}
+
+@MainActor
+enum RepositorySyncForkConfirmationPresenter {
+    static func alert(plan: ForgeSyncForkPlan) -> NSAlert {
+        let alert = NSAlert()
+        alert.messageText = "Sync Fork from Parent?"
+        alert.informativeText = "GitHub will update \(plan.branch.value) on the fork, then GitX will fetch \(plan.localFetchRemoteName)/\(plan.branch.value). Your checkout will not be changed."
+        alert.addButton(withTitle: "Sync Fork")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.setAccessibilityIdentifier("GitX.SyncFork.Confirm")
         return alert
     }
 }

@@ -242,6 +242,10 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             "main"
         )
+        let baseBranchRows = app.outlines["RepositorySidebar"]
+            .descendants(matching: .outlineRow)
+            .containing(.staticText, identifier: "main")
+        try requireAnySelected(baseBranchRows, timeout: 15)
         retainDiagnosticScreenshot(named: "M3-PostMerge-02-Base-Checked-Out", of: app.windows.firstMatch, in: app)
     }
 
@@ -372,6 +376,26 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
     ) throws {
         guard element.waitForExistence(timeout: timeout) else {
             XCTFail("Expected UI element to exist: \(element)", file: file, line: line)
+            throw Milestone3UIError.elementUnavailable
+        }
+    }
+
+    private func requireAnySelected(
+        _ elements: XCUIElementQuery,
+        timeout: TimeInterval,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                elements.allElementsBoundByIndex.contains {
+                    $0.exists && $0.isSelected
+                }
+            },
+            object: elements
+        )
+        guard XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed else {
+            XCTFail("Expected a matching UI row to become selected: \(elements)", file: file, line: line)
             throw Milestone3UIError.elementUnavailable
         }
     }

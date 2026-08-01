@@ -847,6 +847,22 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         repositoryForgeOverlaySession?.requestManualRefresh()
     }
 
+    func refreshAfterForgeBaseFetch() {
+        repository?.reloadRefs()
+        NSLog("[GitX] Refreshed repository references after explicit Forge base fetch")
+    }
+
+    func refreshAfterForgeBaseCheckout() {
+        repository?.reloadRefs()
+        repository?.readCurrentBranch()
+        _sidebarController?.selectCurrentBranch()
+        refreshLocalRepositoryContent()
+        NSLog(
+            "[GitX] Refreshed repository model after explicit Forge base checkout: %@",
+            repository?.headRef()?.description ?? "unknown"
+        )
+    }
+
     private func refreshLocalRepositoryContent() {
         contentController?.refresh(self)
         repositoryLocalStatusLoader?.refresh()

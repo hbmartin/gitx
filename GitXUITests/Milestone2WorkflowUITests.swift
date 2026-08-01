@@ -234,6 +234,65 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testSyncForkConfirmsFetchesExactBoundBranchAndLeavesCheckoutUntouched() throws {
+        let fixture = try makeSyncForkFixture()
+        XCTAssertNotEqual(
+            try git(["rev-parse", "--verify", "refs/remotes/origin/main"], in: fixture.repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            fixture.expectedRemoteHead
+        )
+        let app = try launch(repository: fixture.repository, scenario: "sync-fork")
+
+        try requireExists(app.staticTexts["Sync Fork from Parent?"], timeout: 15)
+        try requireExists(
+            app.staticTexts[
+                "GitHub will update main on the fork, then GitX will fetch origin/main. Your checkout will not be changed."
+            ],
+            timeout: 5
+        )
+        let confirm = app.buttons["GitX.SyncFork.Confirm"]
+        try requireHittable(confirm, timeout: 5)
+        retainDiagnosticScreenshot(
+            named: "M2-11-Sync-Fork-Confirmation",
+            of: app.sheets.firstMatch,
+            in: app
+        )
+        try click(confirm, timeout: 5)
+
+        try requireExists(app.staticTexts["Fork Synchronized"], timeout: 20)
+        let resultDetails = app.sheets.textViews.firstMatch
+        try requireExists(resultDetails, timeout: 5)
+        XCTAssertEqual(
+            elementText(resultDetails),
+            "GitHub synchronized the fork from its parent. Fetched origin/main."
+        )
+        retainDiagnosticScreenshot(
+            named: "M2-12-Sync-Fork-Completed",
+            of: app.sheets.firstMatch,
+            in: app
+        )
+
+        XCTAssertEqual(
+            try git(["rev-parse", "--verify", "refs/remotes/origin/main"], in: fixture.repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            fixture.expectedRemoteHead
+        )
+        XCTAssertEqual(
+            try git(["rev-parse", "--verify", "HEAD"], in: fixture.repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            fixture.localHead
+        )
+        XCTAssertEqual(
+            try git(["branch", "--show-current"], in: fixture.repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            fixture.localBranch
+        )
+        XCTAssertEqual(
+            try git(["status", "--porcelain"], in: fixture.repository),
+            fixture.workingState
+        )
+    }
+
     private func launch(
         repository: URL,
         scenario: String,
@@ -339,6 +398,57 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             ofItemAtPath: sshCommand.path
         )
         return (repository, contributorRemote, sshCommand, expectedHead)
+    }
+
+    private func makeSyncForkFixture() throws -> (
+        repository: URL,
+        expectedRemoteHead: String,
+        localHead: String,
+        localBranch: String,
+        workingState: String
+    ) {
+        let remote = try makeDirectory(name: "sync-fork-origin.git")
+        _ = try git(["init", "--bare", "--quiet"], in: remote)
+        let repository = try makeWorkingRepository(name: "sync-fork-source")
+        _ = try git(["remote", "add", "origin", remote.path], in: repository)
+        _ = try git(["push", "--quiet", "--set-upstream", "origin", "main"], in: repository)
+        _ = try git(["symbolic-ref", "HEAD", "refs/heads/main"], in: remote)
+
+        try "local only\n".write(
+            to: repository.appendingPathComponent("local-only.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        _ = try git(["add", "local-only.txt"], in: repository)
+        _ = try git(["commit", "--quiet", "-m", "Local fork work"], in: repository)
+        try "uncommitted\n".write(
+            to: repository.appendingPathComponent("dirty.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let updaterParent = try makeDirectory(name: "sync-fork-updater")
+        let updater = updaterParent.appendingPathComponent("source", isDirectory: true)
+        _ = try git(["clone", "--quiet", remote.path, updater.path], in: updaterParent)
+        _ = try git(["config", "user.name", "GitX UI Tests"], in: updater)
+        _ = try git(["config", "user.email", "ui-tests@gitx.invalid"], in: updater)
+        try "server synchronized\n".write(
+            to: updater.appendingPathComponent("server.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        _ = try git(["add", "server.txt"], in: updater)
+        _ = try git(["commit", "--quiet", "-m", "Server-side fork synchronization"], in: updater)
+        _ = try git(["push", "--quiet", "origin", "main"], in: updater)
+
+        return try (
+            repository,
+            git(["rev-parse", "HEAD"], in: updater).trimmingCharacters(in: .whitespacesAndNewlines),
+            git(["rev-parse", "HEAD"], in: repository).trimmingCharacters(in: .whitespacesAndNewlines),
+            git(["branch", "--show-current"], in: repository)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            git(["status", "--porcelain"], in: repository)
+        )
     }
 
     private func makeStagingFixture() throws -> URL {

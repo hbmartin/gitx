@@ -17,6 +17,7 @@ import OSLog // swiftlint:disable:this unused_import
             case deepLink = "deep-link"
             case deepLinkNoCheckout = "deep-link-no-checkout"
             case stagingCreate = "staging-create"
+            case syncFork = "sync-fork"
         }
 
         private let windowController: PBGitWindowController
@@ -208,6 +209,7 @@ import OSLog // swiftlint:disable:this unused_import
                     Milestone2UITestHarnessError.unexpectedDestination.localizedDescription,
                     Milestone2UITestHarnessError.unexpectedCheckoutRemote("origin").localizedDescription,
                     Milestone2UITestHarnessError.unexpectedPullRequestIntent.localizedDescription,
+                    Milestone2UITestHarnessError.unexpectedSyncForkIntent.localizedDescription,
                     Milestone2UITestHarnessError.nativeDestinationUnavailable.localizedDescription,
                 ]
                 return createdOutcome == .created(fixture.destination)
@@ -258,6 +260,8 @@ import OSLog // swiftlint:disable:this unused_import
                     try startDeepLink(repository: repository, bindsRepository: false)
                 case .stagingCreate:
                     windowController.showUncommittedChanges(self)
+                case .syncFork:
+                    try startSyncFork(repository: repository)
                 }
                 markState("Ready.\(rawScenario)", label: "Milestone 2 UI harness ready for \(rawScenario)")
                 logger.notice("Started deterministic Milestone 2 UI journey \(rawScenario, privacy: .public)")
@@ -482,6 +486,49 @@ import OSLog // swiftlint:disable:this unused_import
             )
         }
 
+        private func startSyncFork(repository: PBGitRepository) throws {
+            let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+            let fork = try ForgeRepositoryIdentity(forge: forge, owner: "contributor", name: "gitx")
+            let parent = try ForgeRepositoryIdentity(forge: forge, owner: "gitx", name: "gitx")
+            let accountID = try ForgeAccountID(forge: forge, value: "milestone-2-sync-fork-ui-test")
+            let plan = try ForgeSyncForkPlan(
+                fork: fork,
+                parent: parent,
+                branch: ForgeRefName("main"),
+                localFetchRemoteName: "origin"
+            )
+            let service = Milestone2SyncForkService(
+                expectedAccountID: accountID,
+                expectedPlan: plan
+            )
+            let remoteActions = RepositoryRemoteActionCoordinator(
+                repository: repository,
+                windowController: windowController
+            )
+            let controller = RepositoryPullRequestUIController(
+                repository: repository,
+                windowController: windowController,
+                remoteActions: remoteActions,
+                service: service,
+                destinationOpening: { _ in false },
+                bindingResolving: {
+                    try? ForgeRepositoryBinding(
+                        localRemoteName: plan.localFetchRemoteName,
+                        primaryRepository: plan.fork,
+                        preferredAccount: accountID
+                    )
+                },
+                postPushBrowserFallback: { _ in }
+            )
+            pullRequestController = controller
+            windowController.pullRequestUIController = controller
+
+            let alert = RepositorySyncForkConfirmationPresenter.alert(plan: plan)
+            windowController.confirmDialog(alert, suppressionIdentifier: nil) { [weak windowController] in
+                windowController?.syncFork(accountID: accountID, plan: plan)
+            }
+        }
+
         private func startDeepLink(repository: PBGitRepository, bindsRepository: Bool) throws {
             guard let rawURL = environment["GITX_M2_DEEP_LINK"],
                   let url = URL(string: rawURL)
@@ -632,6 +679,54 @@ import OSLog // swiftlint:disable:this unused_import
         }
     }
 
+    private struct Milestone2SyncForkService: RepositoryPullRequestMutationServing {
+        let expectedAccountID: ForgeAccountID
+        let expectedPlan: ForgeSyncForkPlan
+
+        func capabilities(
+            accountID _: ForgeAccountID,
+            repository _: ForgeRepositoryIdentity,
+            operations: Set<ForgeOperation>
+        ) async throws -> [ForgeOperation: ForgeOperationCapability] {
+            Dictionary(uniqueKeysWithValues: operations.map { ($0, .verified(.knownAuthority)) })
+        }
+
+        func prepareCreation(
+            repository _: ForgeRepositoryIdentity,
+            localBranch _: ForgeRefName,
+            localHead _: ForgeCommitID
+        ) async throws -> RepositoryPullRequestCreationPreparation {
+            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
+        }
+
+        func createPullRequest(
+            accountID _: ForgeAccountID,
+            form _: ForgePullRequestCreationForm
+        ) async throws -> RepositoryPullRequestCreationOutcome {
+            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
+        }
+
+        func editPullRequest(
+            accountID _: ForgeAccountID,
+            edit _: ForgePullRequestEdit
+        ) async throws -> RepositoryPullRequestEditOutcome {
+            throw RepositoryPullRequestServiceError.nativeCreationUnavailable
+        }
+
+        func syncFork(
+            accountID: ForgeAccountID,
+            plan: ForgeSyncForkPlan
+        ) async throws -> RepositorySyncForkOutcome {
+            guard accountID == expectedAccountID, plan == expectedPlan else {
+                throw Milestone2UITestHarnessError.unexpectedSyncForkIntent
+            }
+            return RepositorySyncForkOutcome(
+                plan: plan,
+                serverSummary: "GitHub synchronized the fork from its parent."
+            )
+        }
+    }
+
     private struct Milestone2FailingChangesProvider: RepositoryPullRequestChangesProviding {
         func changes(
             repository _: ForgeRepositoryIdentity,
@@ -648,6 +743,7 @@ import OSLog // swiftlint:disable:this unused_import
         case unexpectedDestination
         case unexpectedCheckoutRemote(String)
         case unexpectedPullRequestIntent
+        case unexpectedSyncForkIntent
         case nativeDestinationUnavailable
 
         var errorDescription: String? {
@@ -662,6 +758,8 @@ import OSLog // swiftlint:disable:this unused_import
                 "The Pull Request checkout fixture used unexpected remote ‘\(remote)’ instead of ‘contributor’."
             case .unexpectedPullRequestIntent:
                 "The Pull Request journey did not preserve the exact approved account and form."
+            case .unexpectedSyncForkIntent:
+                "The Sync Fork journey did not preserve the exact approved account and plan."
             case .nativeDestinationUnavailable:
                 "The deterministic native Pull Request destination could not be mounted."
             }

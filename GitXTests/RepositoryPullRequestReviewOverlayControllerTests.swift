@@ -1071,6 +1071,52 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         controller.detach()
     }
 
+    func testSuccessfulPostMergeLocalActionsNotifyRepositoryModelRefreshHooks() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace(state: .merged)
+        let service = FakeReviewMutationService(workspaces: [workspace])
+        let local = FakeLocalReviewService(
+            candidates: [],
+            checkedOutHead: fixture.oldHead,
+            contents: ""
+        )
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            localService: local
+        )
+        var completions: [String] = []
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter(),
+            onFetchBaseCompletion: { completions.append("fetch") },
+            onCheckOutBaseCompletion: { completions.append("checkout") }
+        )
+        _ = controller.view
+        controller.start()
+        await service.waitForLoadCalls(1)
+
+        let fetch = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.fetchBase,
+            in: controller.view
+        ) as? NSButton)
+        fetch.performClick(nil)
+        await waitUntil("post-merge fetch completion") { completions == ["fetch"] }
+
+        let checkout = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.checkOutBase,
+            in: controller.view
+        ) as? NSButton)
+        checkout.performClick(nil)
+        await waitUntil("post-merge checkout completion") { completions == ["fetch", "checkout"] }
+
+        let fetches = await local.fetches()
+        let checkouts = await local.checkouts()
+        XCTAssertEqual(fetches, [workspace.base])
+        XCTAssertEqual(checkouts, [workspace.base])
+        controller.detach()
+    }
+
     func testRapidReplyAndInlineClicksDispatchOncePerDestination() async throws {
         let fixture = try ReviewAppFixture()
         let workspace = try fixture.workspace()
