@@ -571,6 +571,21 @@
                     token: Data("sidebar-alternate-token".utf8),
                     expiresAt: nil
                 )
+                _ = try madeServices.githubReadAdapterFactory.makeMutationAdapter(
+                    for: account.currentCredential.reference
+                )
+                var unsafeRequestRejected = false
+                if let unsafeURL = URL(string: "http://api.github.com/user") {
+                    do {
+                        _ = try await madeServices.githubReadAdapterFactory.authorizedRequest(
+                            URLRequest(url: unsafeURL),
+                            for: account.currentCredential.reference
+                        )
+                    } catch let error as ForgeGitHubReadCompositionError {
+                        unsafeRequestRejected = error == .githubDotComCredentialRequired
+                    }
+                }
+                let githubReadFactoryProof = unsafeRequestRejected
                 ApplicationComposition.setSharedComposition(ApplicationComposition(
                     userDefaults: defaults,
                     forgeServices: ForgeApplicationServiceLoader { madeServices },
@@ -704,7 +719,8 @@
                     boundCollaborationProof.collaborationCooldown,
                     boundCollaborationProof.toolbarCooldown
                         && publicFallbackSelected
-                        && settingsPersistenceProof,
+                        && settingsPersistenceProof
+                        && githubReadFactoryProof,
                 ]
                 let proof = conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
                     if condition.element {
@@ -1348,6 +1364,20 @@
                 return (false, false)
             }
             let settings = ApplicationComposition.shared.repositoryViewState(for: repository)
+            weak var detachedWindowController: PBGitWindowController?
+            let detachedToolbarController: RepositoryToolbarController
+            do {
+                let temporaryWindowController = PBGitWindowController()
+                detachedWindowController = temporaryWindowController
+                detachedToolbarController = RepositoryToolbarController(
+                    windowController: temporaryWindowController
+                )
+            }
+            let fallbackMenu = NSMenu(title: "Unavailable Forge links")
+            detachedToolbarController.menuNeedsUpdate(fallbackMenu)
+            let fallbackForgeLinkContextProof = detachedWindowController == nil
+                && !fallbackMenu.items.filter { !$0.isSeparatorItem }.isEmpty
+                && fallbackMenu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled }
             let toolbarController = RepositoryToolbarController(windowController: windowController)
             let toolbar = NSToolbar(identifier: "GitX.Repository.CredentialCooldownProof")
             guard let accountItem = toolbarController.toolbar(
@@ -1439,11 +1469,12 @@
                     RepositoryForgeAccountNotificationKey.login: currentAccount == account.id
                         ? account.login
                         : alternateAccount.login,
-                    RepositoryForgeAccountNotificationKey.isPublic: currentAccount == nil,
                     RepositoryForgeAccountNotificationKey.accounts: choices.map(\.notificationValue),
                 ]
                 if let currentAccount {
                     userInfo[RepositoryForgeAccountNotificationKey.accountID] = currentAccount
+                } else {
+                    userInfo[RepositoryForgeAccountNotificationKey.isPublic] = true
                 }
                 NotificationCenter.default.post(
                     name: .repositoryForgeAccountDidChange,
@@ -1645,7 +1676,8 @@
                     mismatchedSelectionRefused &&
                     successfulSelection &&
                     missingBindingRefused &&
-                    manageAccountsRouted
+                    manageAccountsRouted &&
+                    fallbackForgeLinkContextProof
             )
         }
 

@@ -481,9 +481,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         for item in RepositoryForgeLinkMenuPresenter.menuItems(context: context) {
             menu.addItem(item)
         }
-        logger.debug(
-            "Updated Forge link menu provider=\(context.providerName ?? "unresolved", privacy: .public) itemCount=\(menu.items.count, privacy: .public)"
-        )
+        let updateDescription = "Updated Forge link menu provider=\(context.providerName ?? "unresolved") "
+            + "itemCount=\(menu.items.count)"
+        logger.debug("\(updateDescription, privacy: .public)")
     }
 
     private func actionsItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
