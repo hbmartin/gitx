@@ -138,6 +138,9 @@ struct GitHubMutationMapper {
         case .read, .triage, nil: viewerCanMerge = false
         }
         var warnings: Set<ForgePullRequestMergeWarning> = []
+        if pullRequest.viewerCanUpdateBranch {
+            warnings.insert(.branchBehind)
+        }
         switch pullRequest.mergeable.value {
         case .conflicting: warnings.insert(.mergeConflictReported)
         case .unknown, nil: warnings.insert(.mergeabilityUnknown)

@@ -878,7 +878,7 @@ final class GitHubMutationAdapterTests: XCTestCase {
             pullRequest: ForgeItemNumber(7),
             authorization: authorization
         )
-        XCTAssertEqual(fresh.warnings, [.checksPending])
+        XCTAssertEqual(fresh.warnings, [.branchBehind, .checksPending])
         guard case let .available(confirmation) = ForgePullRequestMergePolicy.confirmationDecision(
             snapshot: fresh,
             method: .squash
@@ -911,7 +911,46 @@ final class GitHubMutationAdapterTests: XCTestCase {
             pullRequest: ForgeItemNumber(7),
             authorization: authorization
         )
-        XCTAssertEqual(failingSnapshot.warnings, [.checksFailing])
+        XCTAssertEqual(failingSnapshot.warnings, [.branchBehind, .checksFailing])
+    }
+
+    func testFreshMergeSnapshotMapsUpdateBranchEligibilityIntoBehindWarning() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let adapter = makeAdapter(authentication: authentication)
+        let authorization = try authorization(
+            authentication: authentication,
+            repository: repository,
+            operation: .updatePullRequestBranch
+        )
+
+        var current = fixtures.pullRequestPreflight()
+        try fixtures.updatePullRequest(in: &current) {
+            $0["viewerCanUpdateBranch"] = false
+        }
+        install(MutationResponseQueue([
+            .graphQL("GitHubPullRequestMutationPreflight", fixtures.pullRequestPreflight()),
+            .graphQL("GitHubPullRequestMutationPreflight", current),
+        ]))
+
+        let behind = try await adapter.freshMergeSnapshot(
+            accountID: authentication.account.id,
+            repository: repository,
+            pullRequest: ForgeItemNumber(7),
+            operation: .updatePullRequestBranch,
+            authorization: authorization
+        )
+        XCTAssertTrue(behind.warnings.contains(.branchBehind))
+
+        let upToDate = try await adapter.freshMergeSnapshot(
+            accountID: authentication.account.id,
+            repository: repository,
+            pullRequest: ForgeItemNumber(7),
+            operation: .updatePullRequestBranch,
+            authorization: authorization
+        )
+        XCTAssertFalse(upToDate.warnings.contains(.branchBehind))
     }
 
     func testFreshHeadDeletionSnapshotCarriesAllAuthoritativeServerSafetyFacts() async throws {

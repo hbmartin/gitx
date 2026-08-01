@@ -40,7 +40,7 @@
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLTransport.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLValueMapper.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationAdapter.swift": 0.9949,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationMapper.swift": 0.9959,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationMapper.swift": 0.996,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationRESTTransport.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationResult.swift": 0.9947,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationSessionGate.swift": 1.0,
