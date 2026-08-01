@@ -70,6 +70,7 @@
 @interface ApplicationController (GitXFeatureTests)
 - (NSArray *)feedParametersForUpdater:(nullable id)updater sendingSystemProfile:(BOOL)sendingSystemProfile;
 - (void)applicationDidBecomeActive:(nullable NSNotification *)notification;
+- (void)applicationWillTerminate:(nullable NSNotification *)notification;
 @end
 
 @interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
@@ -324,6 +325,34 @@
 	XCTAssertGreaterThan([controller feedParametersForUpdater:nil sendingSystemProfile:YES].count, (NSUInteger)0);
 	(void)[controller applicationShouldOpenUntitledFile:NSApp];
 	[controller applicationDidBecomeActive:nil];
+}
+
+- (void)testApplicationDelegateSuppressesWindowSessionCaptureForAppHostedTests
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	XCTAssertNotNil(NSProcessInfo.processInfo.environment[@"XCTestConfigurationFilePath"]);
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	NSString *snapshotKey = @"PBWindowSessionSnapshot";
+	NSString *cleanShutdownKey = @"PBWindowSessionCleanShutdown";
+	id previousSnapshot = [defaults objectForKey:snapshotKey];
+	id previousCleanShutdown = [defaults objectForKey:cleanShutdownKey];
+	NSArray *sentinelSnapshot = @[ @{ @"path" : @"/tmp/GitX-app-hosted-session-sentinel" } ];
+	@try {
+		[defaults setObject:sentinelSnapshot forKey:snapshotKey];
+		[defaults setBool:NO forKey:cleanShutdownKey];
+		[controller applicationWillTerminate:nil];
+		XCTAssertEqualObjects([defaults objectForKey:snapshotKey], sentinelSnapshot);
+		XCTAssertFalse([defaults boolForKey:cleanShutdownKey]);
+	} @finally {
+		if (previousSnapshot)
+			[defaults setObject:previousSnapshot forKey:snapshotKey];
+		else
+			[defaults removeObjectForKey:snapshotKey];
+		if (previousCleanShutdown)
+			[defaults setObject:previousCleanShutdown forKey:cleanShutdownKey];
+		else
+			[defaults removeObjectForKey:cleanShutdownKey];
+	}
 }
 
 - (void)testAutoFetchDefaultsClampInterval
