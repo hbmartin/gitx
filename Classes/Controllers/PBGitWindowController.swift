@@ -358,6 +358,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @objc(refreshPreferenceDidChange:)
     dynamic nonisolated func refreshPreferenceDidChange(_ notification: Notification?) {
         if Thread.isMainThread {
+            // swift6-safety-justification: The explicit main-thread check makes this synchronous selector hop safe.
             MainActor.assumeIsolated {
                 applyRefreshPreferences()
             }
