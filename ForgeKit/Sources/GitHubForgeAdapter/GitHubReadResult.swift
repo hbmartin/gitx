@@ -78,6 +78,28 @@ public struct GitHubSAMLMetadata: Equatable, Sendable, CustomStringConvertible,
     }
 }
 
+public struct GitHubInstallationMetadata: Equatable, Sendable, CustomStringConvertible,
+    CustomDebugStringConvertible, CustomReflectable
+{
+    public let configurationURL: URL?
+
+    public init(configurationURL: URL?) {
+        self.configurationURL = configurationURL
+    }
+
+    public var description: String {
+        "GitHub App installation metadata (URL redacted)"
+    }
+
+    public var debugDescription: String {
+        description
+    }
+
+    public var customMirror: Mirror {
+        Mirror(self, children: [:])
+    }
+}
+
 public struct GitHubResponseMetadata: Equatable, Sendable, CustomStringConvertible,
     CustomDebugStringConvertible, CustomReflectable
 {
@@ -85,17 +107,20 @@ public struct GitHubResponseMetadata: Equatable, Sendable, CustomStringConvertib
     public let requestID: String?
     public let rateLimit: GitHubRateLimitMetadata
     public let saml: GitHubSAMLMetadata?
+    public let installation: GitHubInstallationMetadata?
 
     public init(
         statusCode: Int,
         requestID: String? = nil,
         rateLimit: GitHubRateLimitMetadata,
-        saml: GitHubSAMLMetadata? = nil
+        saml: GitHubSAMLMetadata? = nil,
+        installation: GitHubInstallationMetadata? = nil
     ) {
         self.statusCode = statusCode
         self.requestID = requestID
         self.rateLimit = rateLimit
         self.saml = saml
+        self.installation = installation
     }
 
     public var description: String {
@@ -169,6 +194,7 @@ public enum GitHubReadError: Error, Equatable, LocalizedError, Sendable,
     case permissionDenied(GitHubResponseMetadata)
     case rateLimited(GitHubResponseMetadata)
     case samlAuthorizationRequired(GitHubResponseMetadata)
+    case installationConfigurationRequired(GitHubResponseMetadata)
     case graphQL([GitHubGraphQLProblem], GitHubResponseMetadata)
     case mapping(GitHubReadMappingFailure, [GitHubGraphQLProblem], GitHubResponseMetadata)
     case malformedResponse
@@ -185,6 +211,8 @@ public enum GitHubReadError: Error, Equatable, LocalizedError, Sendable,
         case .permissionDenied: "The Credential does not have access to this GitHub resource."
         case .rateLimited: "GitHub rate limited this Credential."
         case .samlAuthorizationRequired: "Organization SAML authorization is required."
+        case .installationConfigurationRequired:
+            "GitHub App repository access configuration is required."
         case .graphQL: "GitHub returned an error for this read."
         case .mapping: "GitHub returned data that could not be mapped safely."
         case .malformedResponse: "GitHub returned a malformed response."

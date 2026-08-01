@@ -562,7 +562,16 @@ final class RepositoryPullRequestUIController {
             } catch is CancellationError {
                 return
             } catch {
-                self?.windowController?.showErrorSheet(error)
+                guard let self else { return }
+                let offeredRecovery = self.presentAuthorizationRecovery(
+                    error,
+                    retry: { [weak self] in
+                        self?.syncFork(accountID: accountID, plan: plan)
+                    }
+                )
+                if !offeredRecovery {
+                    self.windowController?.showErrorSheet(error)
+                }
             }
         }
     }
@@ -622,7 +631,11 @@ final class RepositoryPullRequestUIController {
                 return
             } catch {
                 guard let self else { return }
-                if let fallback {
+                if self.presentAuthorizationRecovery(error, retry: { [weak self] in
+                    self?.prepare(branch: branch, completion: completion)
+                }) {
+                    self.logger.notice("Offered explicit authorization recovery for Pull Request preparation")
+                } else if let fallback {
                     fallback()
                 } else {
                     self.windowController?.showErrorSheet(error)
@@ -1012,6 +1025,17 @@ final class RepositoryPullRequestUIController {
                 return
             } catch {
                 guard let self, self.pullRequestOperation === operation else { return }
+                if self.presentAuthorizationRecovery(error, retry: { [weak self] in
+                    self?.submitCreate(
+                        accountID: accountID,
+                        form: form,
+                        preparation: preparation,
+                        operation: operation
+                    )
+                }) {
+                    self.logger.notice("Offered explicit authorization recovery for Pull Request creation")
+                    return
+                }
                 do {
                     try operation.flow.creationFailed()
                 } catch {
@@ -1056,8 +1080,33 @@ final class RepositoryPullRequestUIController {
                     infoText: "Refresh the Pull Request before applying your title or body edit. Your text remains in the editor draft."
                 )
             } catch {
-                self?.windowController?.showErrorSheet(error)
+                guard let self else { return }
+                let offeredRecovery = self.presentAuthorizationRecovery(
+                    error,
+                    retry: { [weak self] in
+                        self?.submitEdit(
+                            accountID: accountID,
+                            edit: edit,
+                            destination: destination,
+                            draftIdentity: draftIdentity
+                        )
+                    }
+                )
+                if !offeredRecovery {
+                    self.windowController?.showErrorSheet(error)
+                }
             }
         }
+    }
+
+    private func presentAuthorizationRecovery(
+        _ error: Error,
+        retry: @escaping @MainActor () -> Void
+    ) -> Bool {
+        GitHubAuthorizationRecoveryPresenter.present(
+            error: error,
+            for: windowController,
+            retry: retry
+        )
     }
 }

@@ -489,9 +489,8 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
             group.addChild(repositoryItem)
             forgeRepositoryItems.append(repositoryItem)
             guard presentation.isPrimary else { continue }
-            let surfaces: [ForgeCollaborationSurface] = collaborationController?.includesAttention == true
-                ? [.pullRequests, .issues, .attention]
-                : [.pullRequests, .issues]
+            let surfaces = collaborationController?.availableSidebarSurfaces
+                ?? [.pullRequests, .issues]
             for surface in surfaces {
                 let presentation = surface == .attention
                     ? RepositoryAttentionUnseenPresenter.present(count: unseenAttentionCount)
@@ -574,6 +573,12 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         populateList()
         if case let .surface(surface) = selectedDestination,
            let item = forgeSurfaceItems[surface]
+        {
+            expandItemAndParents(item)
+            select(item)
+        } else if case .surface = selectedDestination,
+                  let fallback = collaborationController?.availableSidebarSurfaces.first,
+                  let item = forgeSurfaceItems[fallback]
         {
             expandItemAndParents(item)
             select(item)

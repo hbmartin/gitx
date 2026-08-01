@@ -715,9 +715,23 @@ final class GitHubMutationAdapterTests: XCTestCase {
 
     func testCredentialSessionGateClearsOnlyAfterSuccessfulRetryFromCurrentCooldownGeneration() async throws {
         let credential = try makeAuthentication().credential.reference
+        let otherCredential = try ForgeCredentialReference(
+            accountID: credential.accountID,
+            credentialID: ForgeCredentialID("other-cooldown"),
+            generation: ForgeCredentialGeneration(1)
+        )
         let gate = GitHubMutationSessionGate()
         let firstDeadline = Date(timeIntervalSince1970: 100)
+        let initialState = await gate.retainedCooldownState(for: credential, at: firstDeadline)
+        XCTAssertEqual(initialState, .none)
         await gate.recordCooldown(for: credential, until: firstDeadline)
+        let waitingState = await gate.retainedCooldownState(
+            for: credential,
+            at: Date(timeIntervalSince1970: 99)
+        )
+        XCTAssertEqual(waitingState, .waiting(until: firstDeadline))
+        let otherState = await gate.retainedCooldownState(for: otherCredential, at: firstDeadline)
+        XCTAssertEqual(otherState, .none)
 
         guard case let .allowed(firstRetry) = await gate.admitRequest(
             for: credential,
@@ -731,6 +745,14 @@ final class GitHubMutationAdapterTests: XCTestCase {
             .available,
             "deadline expiry admits traffic without discarding retry state"
         )
+        let retainedDeadline = await gate.retainedCooldownDeadline(for: credential)
+        XCTAssertEqual(
+            retainedDeadline,
+            firstDeadline,
+            "account rebinding remains gated until the admitted retry succeeds"
+        )
+        let retryPendingState = await gate.retainedCooldownState(for: credential, at: firstDeadline)
+        XCTAssertEqual(retryPendingState, .retryPending(deadline: firstDeadline))
 
         let extendedDeadline = Date(timeIntervalSince1970: 200)
         await gate.recordCooldown(for: credential, until: extendedDeadline)
@@ -748,6 +770,11 @@ final class GitHubMutationAdapterTests: XCTestCase {
             .rateLimited(until: extendedDeadline),
             "an older in-flight success must not clear a newer throttle"
         )
+        let extendedState = await gate.retainedCooldownState(
+            for: credential,
+            at: Date(timeIntervalSince1970: 150)
+        )
+        XCTAssertEqual(extendedState, .waiting(until: extendedDeadline))
 
         guard case let .allowed(currentRetry) = await gate.admitRequest(
             for: credential,
@@ -756,6 +783,8 @@ final class GitHubMutationAdapterTests: XCTestCase {
             return XCTFail("the extended deadline should admit its own retry")
         }
         await gate.recordSuccessfulRequest(currentRetry)
+        let clearedDeadline = await gate.retainedCooldownDeadline(for: credential)
+        XCTAssertNil(clearedDeadline)
         let clearedEnvironment = await gate.environment(
             for: credential,
             at: Date(timeIntervalSince1970: 150)
@@ -765,6 +794,57 @@ final class GitHubMutationAdapterTests: XCTestCase {
             .available,
             "only a successful retry that observed the current cooldown resets it"
         )
+    }
+
+    func testCredentialSessionGatePublishesExactCredentialCooldownTransitions() async throws {
+        let credential = try makeAuthentication().credential.reference
+        let gate = GitHubMutationSessionGate()
+        let changes = await gate.cooldownChanges()
+        let received = Task { () -> [ForgeCredentialReference] in
+            var iterator = changes.makeAsyncIterator()
+            var values: [ForgeCredentialReference] = []
+            while values.count < 2, let value = await iterator.next() {
+                values.append(value)
+            }
+            return values
+        }
+
+        await gate.recordCooldown(
+            for: credential,
+            until: Date(timeIntervalSince1970: 100)
+        )
+        await gate.recordCooldown(for: credential, until: nil)
+
+        let values = await received.value
+        XCTAssertEqual(values, [credential, credential])
+    }
+
+    func testCredentialSessionGateTerminatesCancelledCooldownObserver() async throws {
+        let credential = try makeAuthentication().credential.reference
+        let gate = GitHubMutationSessionGate()
+        let cancelledChanges = await gate.cooldownChanges()
+        let cancelledObserver = Task { () -> ForgeCredentialReference? in
+            var iterator = cancelledChanges.makeAsyncIterator()
+            return await iterator.next()
+        }
+
+        await Task.yield()
+        cancelledObserver.cancel()
+        let cancelledValue = await cancelledObserver.value
+        XCTAssertNil(cancelledValue)
+
+        let activeChanges = await gate.cooldownChanges()
+        let activeObserver = Task { () -> ForgeCredentialReference? in
+            var iterator = activeChanges.makeAsyncIterator()
+            return await iterator.next()
+        }
+        await gate.recordCooldown(
+            for: credential,
+            until: Date(timeIntervalSince1970: 100)
+        )
+
+        let activeValue = await activeObserver.value
+        XCTAssertEqual(activeValue, credential)
     }
 
     func testFreshMergeSnapshotCarriesCheckWarningsAndMergeRefetchesConfirmation() async throws {

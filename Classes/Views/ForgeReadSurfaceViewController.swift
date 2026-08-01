@@ -42,7 +42,13 @@ protocol RepositoryPullRequestReviewOverlayHosting: AnyObject {
 
     func failClosedAfterRepositoryRefresh(_ message: String)
 
+    func updateDefaultRevision(_ revision: ForgeRevision)
+
     func detach()
+}
+
+extension RepositoryPullRequestReviewOverlayHosting {
+    func updateDefaultRevision(_: ForgeRevision) {}
 }
 
 @MainActor
@@ -52,7 +58,8 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
     private let avatarRenderer: any ForgeReadAvatarRendering
     private let destinationRouter: any ForgeReadDestinationRouting
     private let reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)?
-    private let defaultRevision: ForgeRevision
+    private let authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Void)?
+    private var defaultRevision: ForgeRevision
     private let viewStateStore: (any RepositoryForgeViewStateStoring)?
     private let listController: ForgeReadListViewController
     private let inspectorController: ForgeReadInspectorViewController
@@ -80,13 +87,15 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         viewStateStore: (any RepositoryForgeViewStateStoring)? = nil,
         editPullRequestControl: ForgeMutationControlPresentation? = nil,
         onEditPullRequest: ((ForgePullRequestEditableSnapshot, ForgeDestination) -> Void)? = nil,
-        onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)? = nil
+        onCheckoutPullRequest: ((ForgePullRequestSummary) -> Void)? = nil,
+        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Void)? = nil
     ) {
         self.service = service
         self.markdownRenderer = markdownRenderer
         self.avatarRenderer = avatarRenderer
         self.destinationRouter = destinationRouter
         self.reviewOverlayHost = reviewOverlayHost
+        self.authorizationRecoveryHandler = authorizationRecoveryHandler
         self.defaultRevision = defaultRevision
         self.viewStateStore = viewStateStore
         let initialViewState = viewStateStore?.forgeReadSurfaceViewState(for: kind).validated(for: kind)
@@ -196,6 +205,13 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
         reload(query: listController.query)
     }
 
+    func updateDefaultRevision(_ revision: ForgeRevision) {
+        guard defaultRevision != revision else { return }
+        defaultRevision = revision
+        inspectorController.updateDefaultRevision(revision)
+        reviewOverlayHost?.updateDefaultRevision(revision)
+    }
+
     // Exercised from the app-hosted test target, which SwiftLint analyzes separately.
     // swiftlint:disable:next unused_declaration
     func setVisibleColumns(_ columns: Set<ForgeReadSurfaceColumn>) {
@@ -286,10 +302,13 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
             } catch {
                 guard let self else { return }
                 if accumulator.fail(error.localizedDescription, for: request) {
-                    logger.error("Forge list refresh failed: \(error.localizedDescription, privacy: .public)")
+                    logger.error("Forge list refresh failed type=\(String(describing: type(of: error)), privacy: .public)")
                     renderList()
                     if !invalidatesSelection {
                         retainSelectedInspectorAfterRefreshFailure(error.localizedDescription)
+                    }
+                    authorizationRecoveryHandler?(error) { [weak self] in
+                        self?.reload(kind: request.kind, query: request.query)
                     }
                 }
             }
@@ -318,8 +337,11 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
             } catch {
                 guard let self else { return }
                 if accumulator.fail(error.localizedDescription, for: request) {
-                    logger.error("Forge pagination failed: \(error.localizedDescription, privacy: .public)")
+                    logger.error("Forge pagination failed type=\(String(describing: type(of: error)), privacy: .public)")
                     renderList()
+                    authorizationRecoveryHandler?(error) { [weak self] in
+                        self?.loadNextPage()
+                    }
                 }
             }
         }
@@ -404,13 +426,20 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
                 self?.logger.debug("Cancelled Forge inspector request")
             } catch {
                 guard let self, generation == detailsGeneration else { return }
-                logger.error("Forge inspector load failed: \(error.localizedDescription, privacy: .public)")
+                logger.error("Forge inspector load failed type=\(String(describing: type(of: error)), privacy: .public)")
                 if !retainStaleDetailsAfterRefreshFailure(
                     error.localizedDescription,
                     item: item,
                     preservingCurrentSnapshot: preservingCurrentSnapshot
                 ) {
                     inspectorController.showError(error.localizedDescription, item: item)
+                }
+                authorizationRecoveryHandler?(error) { [weak self] in
+                    self?.loadDetails(
+                        for: item,
+                        rowNumber: ForgeReadSurfaceRow(item: item).number,
+                        preservingCurrentSnapshot: true
+                    )
                 }
             }
         }
@@ -573,7 +602,10 @@ final class ForgeReadSurfaceViewController: NSSplitViewController {
             } catch {
                 guard let self, generation == detailsGeneration else { return }
                 inspectorController.showContinuationError(error.localizedDescription)
-                logger.error("Forge inspector continuation failed: \(error.localizedDescription, privacy: .public)")
+                logger.error("Forge inspector continuation failed type=\(String(describing: type(of: error)), privacy: .public)")
+                authorizationRecoveryHandler?(error) { [weak self] in
+                    self?.loadMoreDetails(continuation)
+                }
             }
         }
     }
@@ -1135,7 +1167,7 @@ final class ForgeReadInspectorViewController: NSViewController {
     private let markdownRenderer: any ForgeReadMarkdownRendering
     private let avatarRenderer: any ForgeReadAvatarRendering
     private let destinationRouter: any ForgeReadDestinationRouting
-    private let defaultRevision: ForgeRevision
+    private var defaultRevision: ForgeRevision
     private var pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)?
     private let reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)?
     private let contentStack = NSStackView()
@@ -1228,6 +1260,20 @@ final class ForgeReadInspectorViewController: NSViewController {
     func showRefreshError(_ message: String, freshnessMessage: String?) {
         refreshFailureMessage = message
         renderRefreshError(message, freshnessMessage: freshnessMessage)
+    }
+
+    func updateDefaultRevision(_ revision: ForgeRevision) {
+        guard defaultRevision != revision else { return }
+        defaultRevision = revision
+        guard let currentPresentation else { return }
+        let refreshFailureMessage = self.refreshFailureMessage
+        apply(currentPresentation)
+        if let refreshFailureMessage {
+            showRefreshError(
+                refreshFailureMessage,
+                freshnessMessage: currentPresentation.freshnessMessage
+            )
+        }
     }
 
     private func renderRefreshError(_ message: String, freshnessMessage: String?) {
@@ -1864,6 +1910,8 @@ enum RepositoryForgeAccountNotificationKey {
     static let isPublic = "isPublic"
     static let accountID = "accountID"
     static let accounts = "accounts"
+    static let accountRebindingEnabled = "accountRebindingEnabled"
+    static let accountRebindingCooldownDeadline = "accountRebindingCooldownDeadline"
 }
 
 @MainActor
@@ -2231,6 +2279,7 @@ protocol RepositoryAttentionServing: AnyObject {
     var account: ForgeAccount { get }
     var repositoryIdentity: ForgeRepositoryIdentity { get }
     var lastRefreshErrorDescription: String? { get }
+    var lastRefreshError: Error? { get }
 
     func entries(state: ForgeAttentionViewState) async throws -> [ForgeAttentionInboxEntry]
     func markOpen(_ itemID: ForgeAttentionItemID) async throws
@@ -2238,6 +2287,12 @@ protocol RepositoryAttentionServing: AnyObject {
     func markAllSeen(state: ForgeAttentionViewState) async throws
     func refreshNow() async
     func makeReadService(for repository: ForgeRepositoryIdentity) throws -> ForgeReadSurfaceServing
+}
+
+extension RepositoryAttentionServing {
+    var lastRefreshError: Error? {
+        nil
+    }
 }
 
 /// One repository-window session participates in the account-wide durable
@@ -2259,6 +2314,7 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
     private var didStart = false
     private var didEnrollOpenedRepository = false
     private(set) var lastRefreshErrorDescription: String?
+    private(set) var lastRefreshError: Error?
     var onOpenAttentionItem: ((ForgeAttentionItemID) -> Void)?
 
     init(
@@ -2378,11 +2434,13 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
         }
 
         if let failure = refreshFailure ?? publishFailure {
+            lastRefreshError = failure
             lastRefreshErrorDescription = failure.localizedDescription
             Self.logger.error(
                 "Manual Attention refresh failed type=\(String(describing: type(of: failure)), privacy: .public)"
             )
         } else {
+            lastRefreshError = nil
             lastRefreshErrorDescription = nil
         }
     }
@@ -2573,6 +2631,7 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
     private let session: any RepositoryAttentionServing
     private let destinationRouter: any ForgeReadDestinationRouting
     private let viewStateStore: (any RepositoryForgeViewStateStoring)?
+    private let authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Void)?
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(wrappingLabelWithString: "Loading Attention…")
     private let progress = NSProgressIndicator()
@@ -2602,11 +2661,13 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         destinationRouter: any ForgeReadDestinationRouting,
         defaultRevision: ForgeRevision,
         pullRequestChangesProvider: (any RepositoryPullRequestChangesProviding)? = nil,
-        viewStateStore: (any RepositoryForgeViewStateStoring)? = nil
+        viewStateStore: (any RepositoryForgeViewStateStoring)? = nil,
+        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Void)? = nil
     ) {
         self.session = session
         self.destinationRouter = destinationRouter
         self.viewStateStore = viewStateStore
+        self.authorizationRecoveryHandler = authorizationRecoveryHandler
         let storedState = viewStateStore?.forgeAttentionViewState
             ?? RepositoryForgeAttentionViewState(query: ApplicationSettings.attentionViewState)
         repositoryViewState = storedState
@@ -2644,6 +2705,10 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         fatalError("init(coder:) has not been implemented")
     }
 
+    func updateDefaultRevision(_ revision: ForgeRevision) {
+        inspectorController.updateDefaultRevision(revision)
+    }
+
     deinit {
         loadTask?.cancel()
         detailsTask?.cancel()
@@ -2661,6 +2726,11 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         loadTask = Task { [weak self] in
             guard let self else { return }
             await self.session.refreshNow()
+            if let error = self.session.lastRefreshError {
+                self.authorizationRecoveryHandler?(error) { [weak self] in
+                    self?.refresh()
+                }
+            }
             self.reload()
         }
     }
@@ -2972,12 +3042,15 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
                     self.statusLabel.isHidden = presentation.statusMessage == nil
                 }
             } catch {
-                Self.logger.error("Attention rows failed to load: \(error.localizedDescription, privacy: .public)")
+                Self.logger.error("Attention rows failed to load type=\(String(describing: type(of: error)), privacy: .public)")
                 self.rows = []
                 self.entries = []
                 self.tableView.reloadData()
                 self.statusLabel.stringValue = "Couldn’t load Attention. \(error.localizedDescription)"
                 self.statusLabel.isHidden = false
+                self.authorizationRecoveryHandler?(error) { [weak self] in
+                    self?.reload()
+                }
             }
             self.setLoading(false)
             self.updateActionState()
@@ -3019,6 +3092,9 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
             } catch {
                 guard self.currentRoute == route else { return }
                 self.inspectorController.showError(error.localizedDescription, item: route.item)
+                self.authorizationRecoveryHandler?(error) { [weak self] in
+                    self?.openAndInspect(row)
+                }
             }
         }
     }
@@ -3058,6 +3134,9 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
                 return
             } catch {
                 self.inspectorController.showContinuationError(error.localizedDescription)
+                self.authorizationRecoveryHandler?(error) { [weak self] in
+                    self?.loadMore(continuation)
+                }
             }
         }
     }
@@ -3300,6 +3379,12 @@ final class RepositoryForgeCollaborationController: PBViewController {
         .editPullRequest,
         .syncFork,
     ]
+    static let readCapabilityOperations: Set<ForgeOperation> = [
+        .readPullRequests,
+        .readIssues,
+    ]
+    static let collaborationCapabilityOperations = mutationCapabilityOperations
+        .union(readCapabilityOperations)
 
     private var forgeCoordinator: RepositoryForgeCoordinator!
     private var settings: RepositoryUISettings!
@@ -3316,6 +3401,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private let contentContainer = NSView()
     private var preparationTask: Task<Void, Never>?
     private var repositoryFactsTask: Task<Void, Never>?
+    private var credentialCooldownObservationTask: Task<Void, Never>?
+    private var credentialCooldownRefreshTask: Task<Void, Never>?
+    private var accountSelectionTask: Task<Void, Never>?
     private var services: ForgeApplicationServices?
     private var pullRequestMutationService: (any RepositoryPullRequestMutationServing)?
     private var accounts: [ForgeAccount] = []
@@ -3331,6 +3419,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private var nativeOpener: RepositoryForgeNativeDestinationOpener?
     private var destinationRouter: ForgeCentralDestinationRouter?
     private var repositoryFacts: ForgeRepositoryFacts?
+    private var readCapabilities: [ForgeOperation: ForgeOperationCapability]?
+    private var credentialCooldownState = GitHubCredentialCooldownState.none
     private var createPullRequestControl = ForgeMutationControlPresentation.hidden {
         didSet {
             windowController?.updateCreatePullRequestControl(createPullRequestControl)
@@ -3367,6 +3457,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
     isolated deinit {
         preparationTask?.cancel()
         repositoryFactsTask?.cancel()
+        credentialCooldownObservationTask?.cancel()
+        credentialCooldownRefreshTask?.cancel()
+        accountSelectionTask?.cancel()
         attentionSession?.stop()
         pullRequestReviewOverlayHost?.detach()
         NotificationCenter.default.removeObserver(self)
@@ -3490,6 +3583,19 @@ final class RepositoryForgeCollaborationController: PBViewController {
         return false
     }
 
+    var availableSidebarSurfaces: [ForgeCollaborationSurface] {
+        let isAuthenticated = if case .authenticated = accessResolution {
+            true
+        } else {
+            false
+        }
+        return ForgeCollaborationSurfaceAvailabilityPolicy.availableSurfaces(
+            readCapabilities: isAuthenticated ? readCapabilities : nil,
+            isAuthenticated: isAuthenticated,
+            attentionInstalled: attentionSession != nil
+        )
+    }
+
     var sidebarRepositories: [RepositoryForgeSidebarRepositoryPresentation] {
         guard let binding else { return [] }
         let fork: Bool?
@@ -3530,6 +3636,10 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     func show(_ surface: ForgeCollaborationSurface) {
+        guard availableSidebarSurfaces.contains(surface) else {
+            Self.logger.info("Ignored unavailable Forge collaboration surface")
+            return
+        }
         activeSurface = surface
         guard isViewLoaded else { return }
         renderActiveSurface()
@@ -3540,11 +3650,13 @@ final class RepositoryForgeCollaborationController: PBViewController {
         guard destination.repository == binding?.primaryRepository else { return false }
         switch destination {
         case .pullRequest:
+            guard availableSidebarSurfaces.contains(.pullRequests) else { return false }
             show(.pullRequests)
             windowController?.changeContentController(self)
             _ = readController?.open(destination: destination)
             return true
         case .issue:
+            guard availableSidebarSurfaces.contains(.issues) else { return false }
             show(.issues)
             windowController?.changeContentController(self)
             _ = readController?.open(destination: destination)
@@ -3557,6 +3669,10 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private func reloadAccess(resetPublicChoice: Bool) {
         preparationTask?.cancel()
         repositoryFactsTask?.cancel()
+        credentialCooldownObservationTask?.cancel()
+        credentialCooldownRefreshTask?.cancel()
+        accountSelectionTask?.cancel()
+        credentialCooldownState = .none
         attentionSession?.stop()
         attentionSession = nil
         attentionController = nil
@@ -3566,6 +3682,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
         destinationRouter = nil
         nativeOpener = nil
         repositoryFacts = nil
+        readCapabilities = nil
         pullRequestMutationService = nil
         createPullRequestControl = .hidden
         editPullRequestControl = .hidden
@@ -3605,6 +3722,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 self.services = services
                 self.accounts = accounts
                 self.applyAccess(binding: binding)
+                self.observeCredentialCooldowns(using: services)
             } catch is CancellationError {
                 return
             } catch {
@@ -3632,6 +3750,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
             explicitlyContinuesPublicly: explicitlyContinuesPublicly
         )
         accessResolution = resolution
+        credentialCooldownState = .none
         do {
             switch resolution {
             case let .authenticated(account):
@@ -3660,6 +3779,58 @@ final class RepositoryForgeCollaborationController: PBViewController {
         renderActiveSurface()
         publishAccessChange()
         loadRepositoryFacts(binding: binding, resolution: resolution)
+        if case .authenticated = resolution, let services {
+            scheduleCredentialCooldownRefresh(using: services)
+        }
+    }
+
+    private func observeCredentialCooldowns(using services: ForgeApplicationServices) {
+        credentialCooldownObservationTask?.cancel()
+        credentialCooldownObservationTask = Task { [weak self] in
+            let changes = await services.credentialCooldowns.changes()
+            guard let self, !Task.isCancelled else { return }
+            await self.refreshCredentialCooldownState(using: services)
+            for await changedCredential in changes {
+                guard !Task.isCancelled else { return }
+                guard case let .authenticated(account) = self.accessResolution,
+                      account.currentCredential.reference == changedCredential
+                else { continue }
+                await self.refreshCredentialCooldownState(using: services)
+            }
+        }
+    }
+
+    private func scheduleCredentialCooldownRefresh(using services: ForgeApplicationServices) {
+        credentialCooldownRefreshTask?.cancel()
+        credentialCooldownRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshCredentialCooldownState(using: services)
+        }
+    }
+
+    private func refreshCredentialCooldownState(
+        using services: ForgeApplicationServices
+    ) async {
+        guard case let .authenticated(account) = accessResolution else {
+            installCredentialCooldownState(.none)
+            return
+        }
+        let credential = account.currentCredential.reference
+        let state = await services.credentialCooldowns.retainedState(
+            for: credential,
+            at: Date()
+        )
+        guard case let .authenticated(currentAccount) = accessResolution,
+              currentAccount.currentCredential.reference == credential
+        else { return }
+        installCredentialCooldownState(state)
+    }
+
+    private func installCredentialCooldownState(_ state: GitHubCredentialCooldownState) {
+        guard credentialCooldownState != state else { return }
+        credentialCooldownState = state
+        updateAccountBar()
+        publishAccessChange()
     }
 
     private func installAuthenticated(account: ForgeAccount, binding: ForgeRepositoryBinding) throws {
@@ -3704,7 +3875,14 @@ final class RepositoryForgeCollaborationController: PBViewController {
             destinationRouter: destinationRouter,
             defaultRevision: defaultRevision(),
             pullRequestChangesProvider: RepositoryLocalPullRequestChangesProvider(repository: repository),
-            viewStateStore: settings
+            viewStateStore: settings,
+            authorizationRecoveryHandler: { [weak self] error, retry in
+                _ = GitHubAuthorizationRecoveryPresenter.present(
+                    error: error,
+                    for: self?.windowController,
+                    retry: retry
+                )
+            }
         )
         session.start()
         Self.logger.notice("Started exact-account GitHub collaboration session")
@@ -3761,12 +3939,21 @@ final class RepositoryForgeCollaborationController: PBViewController {
         nativeOpener = opener
         destinationRouter = router
         pullRequestReviewOverlayHost?.detach()
+        let initialDefaultRevision = defaultRevision()
         let reviewOverlayHost: RepositoryPullRequestReviewOverlayHost?
         if let reviewApplicationSession, let reviewAccountID {
             reviewOverlayHost = RepositoryPullRequestReviewOverlayHost(
                 applicationSession: reviewApplicationSession,
                 accountID: reviewAccountID,
-                router: router
+                router: router,
+                defaultRevision: initialDefaultRevision,
+                authorizationRecoveryHandler: { [weak self] error, retry in
+                    GitHubAuthorizationRecoveryPresenter.present(
+                        error: error,
+                        for: self?.windowController,
+                        retry: retry
+                    )
+                }
             )
         } else {
             reviewOverlayHost = nil
@@ -3775,7 +3962,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
         let kind: ForgeReadSurfaceKind = activeSurface == .issues ? .issues : .pullRequests
         readController = ForgeReadSurfaceViewController(
             kind: kind,
-            defaultRevision: defaultRevision(),
+            defaultRevision: initialDefaultRevision,
             service: service,
             markdownRenderer: ForgeReadNativeMarkdownRenderer(router: router),
             avatarRenderer: ForgeReadNativeAvatarRenderer(owner: avatarOwner),
@@ -3787,6 +3974,13 @@ final class RepositoryForgeCollaborationController: PBViewController {
             onEditPullRequest: onEditPullRequest,
             onCheckoutPullRequest: { [weak self] pullRequest in
                 self?.windowController?.checkoutPullRequest(pullRequest)
+            },
+            authorizationRecoveryHandler: { [weak self] error, retry in
+                _ = GitHubAuthorizationRecoveryPresenter.present(
+                    error: error,
+                    for: self?.windowController,
+                    retry: retry
+                )
             }
         )
     }
@@ -3799,8 +3993,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
         repositoryFactsTask = Task { [weak self, services, pullRequestMutationService] in
             do {
                 let facts: ForgeRepositoryFacts
-                var mutationCapabilities: [ForgeOperation: ForgeOperationCapability] = [:]
-                var mutationCapabilityError: Error?
+                var capabilities: [ForgeOperation: ForgeOperationCapability] = [:]
+                var capabilityError: Error?
                 switch resolution {
                 case let .authenticated(account):
                     guard let services else { return }
@@ -3811,13 +4005,13 @@ final class RepositoryForgeCollaborationController: PBViewController {
                     guard !Task.isCancelled else { return }
                     if let pullRequestMutationService {
                         do {
-                            mutationCapabilities = try await pullRequestMutationService.capabilities(
+                            capabilities = try await pullRequestMutationService.capabilities(
                                 accountID: account.id,
                                 repository: binding.primaryRepository,
-                                operations: Self.mutationCapabilityOperations
+                                operations: Self.collaborationCapabilityOperations
                             )
                         } catch {
-                            mutationCapabilityError = error
+                            capabilityError = error
                         }
                     }
                 case .publicAccess:
@@ -3834,13 +4028,19 @@ final class RepositoryForgeCollaborationController: PBViewController {
                       !Task.isCancelled
                 else { return }
                 self.repositoryFacts = facts
-                if let mutationCapabilityError {
+                if case let .available(branch) = facts.defaultBranch {
+                    let revision = ForgeRevision.branch(branch)
+                    self.readController?.updateDefaultRevision(revision)
+                    self.attentionController?.updateDefaultRevision(revision)
+                }
+                if let capabilityError {
                     self.applyMutationCapabilityError(
-                        mutationCapabilityError,
+                        capabilityError,
                         resolution: resolution
                     )
                 } else {
-                    self.applyMutationCapabilities(mutationCapabilities, resolution: resolution)
+                    self.applyReadCapabilities(capabilities, resolution: resolution)
+                    self.applyMutationCapabilities(capabilities, resolution: resolution)
                 }
                 self.updateSyncForkButton()
                 self.publishAccessChange()
@@ -3851,13 +4051,40 @@ final class RepositoryForgeCollaborationController: PBViewController {
                       self.binding == binding,
                       self.accessResolution == resolution
                 else { return }
-                if case .authenticated = resolution {
+                let offeredRecovery = GitHubAuthorizationRecoveryPresenter.present(
+                    error: error,
+                    for: self.windowController
+                ) { [weak self] in
+                    self?.loadRepositoryFacts(binding: binding, resolution: resolution)
+                }
+                if case .authenticated = resolution, !offeredRecovery {
                     self.applyMutationCapabilityError(error, resolution: resolution)
                     self.updateSyncForkButton()
                 }
                 Self.logger.info("Repository relationship metadata remains unavailable")
             }
         }
+    }
+
+    private func applyReadCapabilities(
+        _ capabilities: [ForgeOperation: ForgeOperationCapability],
+        resolution: ForgeCollaborationAccessResolution
+    ) {
+        guard case .authenticated = resolution else { return }
+        readCapabilities = capabilities
+        reconcileActiveSurface()
+    }
+
+    private func reconcileActiveSurface() {
+        let surfaces = availableSidebarSurfaces
+        guard !surfaces.contains(activeSurface) else { return }
+        guard let fallback = surfaces.first else {
+            renderActiveSurface()
+            return
+        }
+        activeSurface = fallback
+        Self.logger.notice("Fell back from an unavailable Forge collaboration surface")
+        renderActiveSurface()
     }
 
     private func applyMutationCapabilities(
@@ -3894,6 +4121,8 @@ final class RepositoryForgeCollaborationController: PBViewController {
         resolution: ForgeCollaborationAccessResolution
     ) {
         guard case .authenticated = resolution else { return }
+        readCapabilities = nil
+        reconcileActiveSurface()
         createPullRequestControl = .unavailable(
             error: error,
             action: "create a Pull Request"
@@ -3953,8 +4182,29 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 && !editPullRequestControl.isEnabled
                 && !syncForkControl.isEnabled
             let publishedPublicControl = windowController?.createPullRequestControl == createPullRequestControl
+            readCapabilities = [.readIssues: .unavailable(.missingPermission(.issues))]
+            let publicReadsRemainVisible = availableSidebarSurfaces == [.pullRequests, .issues]
 
             accessResolution = .authenticated(account)
+            applyReadCapabilities([
+                .readPullRequests: .verified(.knownAuthority),
+                .readIssues: .verified(.knownAuthority),
+            ], resolution: .authenticated(account))
+            show(.issues)
+            applyReadCapabilities([
+                .readPullRequests: .verified(.knownAuthority),
+                .readIssues: .unavailable(.missingPermission(.issues)),
+            ], resolution: .authenticated(account))
+            let unavailableIssueFallsBack = activeSurface == .pullRequests
+                && availableSidebarSurfaces == [.pullRequests]
+            show(.issues)
+            let unavailableShowIsIgnored = activeSurface == .pullRequests
+            let issueDestination = try ForgeDestination.issue(
+                binding.primaryRepository,
+                ForgeItemNumber(42)
+            )
+            let unavailableNativeRouteIsRejected = !openNative(issueDestination)
+
             applyMutationCapabilities([
                 .createPullRequest: .verified(.knownAuthority),
                 .editPullRequest: .verified(.knownAuthority),
@@ -3991,6 +4241,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
             let errorFailsClosed = !createPullRequestControl.isEnabled
                 && !editPullRequestControl.isEnabled
                 && !syncForkControl.isEnabled
+            let capabilityErrorPreservesReads = availableSidebarSurfaces == [.pullRequests, .issues]
             let publishedErrorControl = windowController?.createPullRequestControl == createPullRequestControl
             applyMutationCapabilities([
                 .createPullRequest: .verified(.knownAuthority),
@@ -3998,13 +4249,25 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 .syncFork: .verified(.knownAuthority),
             ], resolution: .publicAccess)
             return publicReadOnly && publishedPublicControl
+                && publicReadsRemainVisible && unavailableIssueFallsBack
+                && unavailableShowIsIgnored && unavailableNativeRouteIsRejected
                 && enabled && publishedEnabledControl && enabledFork
-                && missingFailsClosed && errorFailsClosed && publishedErrorControl
+                && missingFailsClosed && errorFailsClosed && capabilityErrorPreservesReads
+                && publishedErrorControl
         }
     #endif
 
     private func renderActiveSurface() {
         guard isViewLoaded else { return }
+        if activeSurface != .attention,
+           !availableSidebarSurfaces.contains(activeSurface)
+        {
+            renderGateway(
+                title: "GitHub Permission Required",
+                message: "The selected GitHub Credential cannot read Pull Requests or Issues for this repository."
+            )
+            return
+        }
         switch accessResolution {
         case .authenticated:
             if activeSurface == .attention, let attentionController {
@@ -4108,8 +4371,15 @@ final class RepositoryForgeCollaborationController: PBViewController {
         providerTitleLabel.stringValue = binding.map {
             Self.providerName($0.primaryRepository.forge.kind)
         } ?? "Forge"
+        let rebinding = RepositoryForgeAccountRebindingPresentation.present(
+            isEnabled: credentialCooldownState == .none,
+            cooldownDeadline: credentialCooldownDeadline,
+            now: Date()
+        )
         accountPopup.isHidden = !github || matching.isEmpty
-        accountPopup.isEnabled = github && !matching.isEmpty
+        accountPopup.isEnabled = github && !matching.isEmpty && rebinding.isEnabled
+        accountPopup.toolTip = rebinding.helpText
+        accountPopup.setAccessibilityHelp(rebinding.helpText)
         accountsButton.isHidden = !github
         accountsButton.isEnabled = github
         publicButton.isHidden = !github || accessResolution == .publicAccess
@@ -4153,6 +4423,17 @@ final class RepositoryForgeCollaborationController: PBViewController {
             }
     }
 
+    private var credentialCooldownDeadline: Date? {
+        switch credentialCooldownState {
+        case .none:
+            nil
+        case let .waiting(until):
+            until
+        case let .retryPending(deadline):
+            deadline
+        }
+    }
+
     private func updateSyncForkButton() {
         guard case .authenticated = accessResolution,
               case let .available(relationship) = repositoryFacts?.forkRelationship,
@@ -4186,10 +4467,16 @@ final class RepositoryForgeCollaborationController: PBViewController {
         let isPublic = accessResolution == .publicAccess
         var userInfo: [AnyHashable: Any] = [
             RepositoryForgeAccountNotificationKey.isPublic: isPublic,
+            RepositoryForgeAccountNotificationKey.accountRebindingEnabled:
+                credentialCooldownState == .none,
             RepositoryForgeAccountNotificationKey.accounts: matchingAccounts().map {
                 RepositoryForgeAccountChoice(id: $0.id, login: $0.login).notificationValue
             },
         ]
+        if let credentialCooldownDeadline {
+            userInfo[RepositoryForgeAccountNotificationKey.accountRebindingCooldownDeadline]
+                = credentialCooldownDeadline
+        }
         if let binding {
             userInfo[RepositoryForgeAccountNotificationKey.providerName] = Self.providerName(
                 binding.primaryRepository.forge.kind
@@ -4209,12 +4496,62 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     @objc private func accountChanged(_ sender: NSPopUpButton) {
-        guard let binding,
-              accounts.indices.contains(sender.indexOfSelectedItem)
-        else { return }
+        guard let binding, let services else { return }
         let matching = matchingAccounts()
         guard matching.indices.contains(sender.indexOfSelectedItem) else { return }
-        let account = matching[sender.indexOfSelectedItem]
+        let destinationAccount = matching[sender.indexOfSelectedItem]
+        guard case let .authenticated(currentAccount) = accessResolution else {
+            applyAccountSelection(destinationAccount, binding: binding)
+            return
+        }
+        let currentCredential = currentAccount.currentCredential.reference
+        accountSelectionTask?.cancel()
+        accountSelectionTask = Task { [weak self] in
+            do {
+                guard let envelope = try await services.accountStore.credential(for: currentAccount.id),
+                      envelope.account.currentCredential.reference == currentCredential
+                else {
+                    self?.reloadAccess(resetPublicChoice: false)
+                    return
+                }
+                let state = await services.credentialCooldowns.retainedState(
+                    for: currentCredential,
+                    at: Date()
+                )
+                guard !Task.isCancelled, let self else { return }
+                guard self.binding == binding,
+                      self.accessResolution == .authenticated(currentAccount),
+                      self.matchingAccounts().contains(where: { $0.id == destinationAccount.id }),
+                      let currentEnvelope = try await services.accountStore.credential(for: currentAccount.id),
+                      currentEnvelope.account.currentCredential.reference == currentCredential
+                else {
+                    self.restoreAccountPopupSelection()
+                    return
+                }
+                guard state == .none else {
+                    self.installCredentialCooldownState(state)
+                    self.restoreAccountPopupSelection()
+                    NSSound.beep()
+                    return
+                }
+                self.applyAccountSelection(destinationAccount, binding: binding)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self else { return }
+                self.restoreAccountPopupSelection()
+                self.windowController?.showErrorSheet(error)
+            }
+        }
+    }
+
+    #if DEBUG
+        func waitForAccountSelectionForProductProof() async {
+            await accountSelectionTask?.value
+        }
+    #endif
+
+    private func applyAccountSelection(_ account: ForgeAccount, binding: ForgeRepositoryBinding) {
         do {
             let updated = try ForgeRepositoryBinding(
                 localRemoteName: binding.localRemoteName,
@@ -4229,6 +4566,13 @@ final class RepositoryForgeCollaborationController: PBViewController {
         } catch {
             windowController?.showErrorSheet(error)
         }
+    }
+
+    private func restoreAccountPopupSelection() {
+        guard case let .authenticated(account) = accessResolution,
+              let index = matchingAccounts().firstIndex(where: { $0.id == account.id })
+        else { return }
+        accountPopup.selectItem(at: index)
     }
 
     @objc private func continuePublicly(_: Any?) {

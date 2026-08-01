@@ -76,6 +76,114 @@ nonisolated enum ForgeGitHubAppConfiguration {
     }
 }
 
+nonisolated struct GitHubAuthorizationRecoveryPresentation: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case saml
+        case installation
+    }
+
+    let kind: Kind
+    let title: String
+    let message: String
+    let browserActionTitle: String
+    let retryTitle: String
+    let retryMessage: String
+    let url: URL
+
+    static func make(error: Error) -> GitHubAuthorizationRecoveryPresentation? {
+        switch error {
+        case let GitHubReadError.samlAuthorizationRequired(metadata),
+             let GitHubMutationError.samlAuthorizationRequired(metadata):
+            metadata.saml?.authorizationURL.map(saml)
+        case let GitHubReadError.installationConfigurationRequired(metadata),
+             let GitHubMutationError.installationConfigurationRequired(metadata):
+            metadata.installation?.configurationURL.map(installation)
+        default:
+            nil
+        }
+    }
+
+    private static func saml(_ url: URL) -> GitHubAuthorizationRecoveryPresentation {
+        GitHubAuthorizationRecoveryPresentation(
+            kind: .saml,
+            title: "Organization Authorization Required",
+            message: "Authorize this Credential for the organization in your browser. Existing repository capabilities remain available if you cancel.",
+            browserActionTitle: "Authorize in Browser",
+            retryTitle: "Retry Organization Access?",
+            retryMessage: "After GitHub confirms authorization, retry the exact request once.",
+            url: url
+        )
+    }
+
+    private static func installation(_ url: URL) -> GitHubAuthorizationRecoveryPresentation {
+        GitHubAuthorizationRecoveryPresentation(
+            kind: .installation,
+            title: "Repository Access Required",
+            message: "Configure the GitHub App installation or repository selection in your browser. Existing repository capabilities remain available if you cancel.",
+            browserActionTitle: "Configure Repository Access",
+            retryTitle: "Retry Repository Access?",
+            retryMessage: "After GitHub confirms repository access, retry the exact request once.",
+            url: url
+        )
+    }
+}
+
+nonisolated enum GitHubAuthorizationRecoverySourcePolicy {
+    static func allowsRecovery(
+        for failure: GitHubRESTAuthorizationFailure,
+        credentialSource: ForgeCredentialSource
+    ) -> Bool {
+        switch failure {
+        case .samlAuthorizationRequired:
+            credentialSource == .classicPersonalAccessToken ||
+                credentialSource == .commandLineBroker
+        case .installationConfigurationRequired:
+            credentialSource == .forgeApplicationDeviceFlow
+        case .badCredentials, .authorizationDenied:
+            false
+        }
+    }
+}
+
+@MainActor
+enum GitHubAuthorizationRecoveryPresenter {
+    @discardableResult
+    static func present(
+        error: Error,
+        for windowController: PBGitWindowController?,
+        retry: @escaping @MainActor () -> Void
+    ) -> Bool {
+        guard let presentation = GitHubAuthorizationRecoveryPresentation.make(error: error),
+              let window = windowController?.window
+        else { return false }
+        let alert = NSAlert()
+        alert.messageText = presentation.title
+        alert.informativeText = presentation.message
+        alert.addButton(withTitle: presentation.browserActionTitle)
+        alert.addButton(withTitle: "Not Now")
+        alert.buttons.first?.setAccessibilityIdentifier("GitX.GitHubAuthorization.OpenBrowser")
+        alert.buttons.last?.setAccessibilityIdentifier("GitX.GitHubAuthorization.NotNow")
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            _ = NSWorkspace.shared.open(presentation.url)
+            DispatchQueue.main.async {
+                let retryAlert = NSAlert()
+                retryAlert.messageText = presentation.retryTitle
+                retryAlert.informativeText = presentation.retryMessage
+                retryAlert.addButton(withTitle: "Retry")
+                retryAlert.addButton(withTitle: "Not Now")
+                retryAlert.buttons.first?.setAccessibilityIdentifier("GitX.GitHubAuthorization.Retry")
+                retryAlert.buttons.last?.setAccessibilityIdentifier("GitX.GitHubAuthorization.RetryNotNow")
+                retryAlert.beginSheetModal(for: window) { retryResponse in
+                    guard retryResponse == .alertFirstButtonReturn else { return }
+                    retry()
+                }
+            }
+        }
+        return true
+    }
+}
+
 nonisolated struct ForgePersonalAccessTokenAcquisition: Sendable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable
 {
@@ -1024,6 +1132,12 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         source: ForgeCredentialSource,
         retry: @escaping @Sendable () async throws -> Value
     ) async throws -> Value? {
+        guard GitHubAuthorizationRecoverySourcePolicy.allowsRecovery(
+            for: failure,
+            credentialSource: source
+        ) else {
+            throw GitHubAuthenticationTransportError.authorizationFailure(failure)
+        }
         switch failure {
         case let .samlAuthorizationRequired(authorizeURL):
             let coordinator = GitHubSAMLRetryCoordinator()

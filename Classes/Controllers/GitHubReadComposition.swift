@@ -167,15 +167,18 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable
 {
     private let credentialAuthority: ForgeGitHubReadCredentialAuthority
+    private let installationConfigurationURL: URL?
     let sessionGate: GitHubMutationSessionGate
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "GitHubReadComposition")
 
     init(
         credentialAuthority: ForgeGitHubReadCredentialAuthority,
-        sessionGate: GitHubMutationSessionGate = GitHubMutationSessionGate()
+        sessionGate: GitHubMutationSessionGate = GitHubMutationSessionGate(),
+        installationConfigurationURL: URL? = ForgeGitHubAppConfiguration.bundled()?.newInstallationURL
     ) {
         self.credentialAuthority = credentialAuthority
         self.sessionGate = sessionGate
+        self.installationConfigurationURL = installationConfigurationURL
     }
 
     func makeAdapter(
@@ -191,7 +194,8 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
             expectedCredential: expectedCredential,
             credentialAuthority: credentialAuthority,
             sessionConfiguration: sessionConfiguration,
-            sessionGate: sessionGate
+            sessionGate: sessionGate,
+            installationConfigurationURL: installationConfigurationURL
         )
     }
 
@@ -209,7 +213,8 @@ final nonisolated class ForgeGitHubReadAdapterFactory: Sendable,
             expectedCredential: expectedCredential,
             credentialAuthority: credentialAuthority,
             sessionConfiguration: sessionConfiguration,
-            sessionGate: sessionGate ?? self.sessionGate
+            sessionGate: sessionGate ?? self.sessionGate,
+            installationConfigurationURL: installationConfigurationURL
         )
     }
 

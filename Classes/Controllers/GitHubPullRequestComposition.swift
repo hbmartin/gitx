@@ -90,6 +90,7 @@ actor ForgeGitHubMutationStateStore {
         switch error {
         case let .rateLimited(response),
              let .samlAuthorizationRequired(response),
+             let .installationConfigurationRequired(response),
              let .permissionDenied(response),
              let .authoritative(_, response):
             await record(response: response, credential: credential, now: now)
@@ -102,7 +103,7 @@ actor ForgeGitHubMutationStateStore {
         }
         guard let confirmation = authorization.explicitConfirmation else { return }
         switch error {
-        case .permissionDenied, .samlAuthorizationRequired, .capabilityUnavailable:
+        case .permissionDenied, .capabilityUnavailable:
             promotions.record(.authorizationDenied, for: confirmation)
         case .outcomeUnknown:
             promotions.record(.unknownOutcome, for: confirmation)
@@ -431,7 +432,7 @@ final nonisolated class ForgeGitHubPullRequestDependencyProvider:
             now: now()
         )
         switch error {
-        case .permissionDenied, .samlAuthorizationRequired, .capabilityUnavailable:
+        case .permissionDenied, .capabilityUnavailable:
             try? await services.accountStore.clearAuthorizationEvidence(for: context.credential)
             await services.githubMutationState.recordAuthoritativeDenial(
                 for: context.authorization.key
@@ -776,7 +777,7 @@ extension ForgeGitHubPullRequestDependencyProvider: ForgeGitHubPullRequestReview
             now: now()
         )
         switch error {
-        case .permissionDenied, .samlAuthorizationRequired, .capabilityUnavailable:
+        case .permissionDenied, .capabilityUnavailable:
             try? await services.accountStore.clearAuthorizationEvidence(for: context.credential)
             await services.githubMutationState.recordAuthoritativeDenial(
                 for: context.authorization.key

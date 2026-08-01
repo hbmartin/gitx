@@ -239,6 +239,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     private var forgeAccountID: ForgeAccountID?
     private var forgeAccountChoices: [RepositoryForgeAccountChoice] = []
     private var isPublicForgeAccess = false
+    private var isForgeAccountRebindingEnabled = true
+    private var forgeAccountRebindingCooldownDeadline: Date?
+    private var forgeAccountSelectionTask: Task<Void, Never>?
     private var insertedForgeAccountForPersistentFailure = false
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryToolbar")
 
@@ -263,6 +266,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     }
 
     deinit {
+        forgeAccountSelectionTask?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -589,6 +593,10 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         )
         isPublicForgeAccess = notification.userInfo?[RepositoryForgeAccountNotificationKey.isPublic] as? Bool
             ?? false
+        isForgeAccountRebindingEnabled = notification
+            .userInfo?[RepositoryForgeAccountNotificationKey.accountRebindingEnabled] as? Bool ?? true
+        forgeAccountRebindingCooldownDeadline = notification
+            .userInfo?[RepositoryForgeAccountNotificationKey.accountRebindingCooldownDeadline] as? Date
         applyForgeAccountPresentation()
         let providerName = forgeProviderName
         let isAuthenticated = forgeAccountLogin != nil
@@ -670,9 +678,15 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         views.item.toolTip = presentation.toolTip
         configureForgeAccountMenu(views.accountPopup, presentation: presentation)
         configureForgeAccountAvatar(in: views.avatarContainer, presentation: presentation)
-        views.accountPopup.toolTip = presentation.toolTip
+        let rebinding = RepositoryForgeAccountRebindingPresentation.present(
+            isEnabled: isForgeAccountRebindingEnabled,
+            cooldownDeadline: forgeAccountRebindingCooldownDeadline,
+            now: Date()
+        )
+        views.accountPopup.isEnabled = rebinding.isEnabled
+        views.accountPopup.toolTip = rebinding.isEnabled ? presentation.toolTip : rebinding.helpText
         views.accountPopup.setAccessibilityLabel(presentation.accessibilityLabel)
-        views.accountPopup.setAccessibilityHelp("Choose the account for this repository or manage accounts")
+        views.accountPopup.setAccessibilityHelp(rebinding.helpText)
         views.warningButton.isHidden = !presentation.showsPersistentFailure
         views.warningButton.isEnabled = presentation.showsPersistentFailure
         views.warningButton.toolTip = presentation.persistentFailureText.map { "\($0). Show Details" }
@@ -700,6 +714,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             item.target = self
             item.representedObject = choice.id
             item.state = choice.id == forgeAccountID ? .on : .off
+            item.isEnabled = isForgeAccountRebindingEnabled
             let identifier = "GitX.Toolbar.ForgeAccount.Choice.\(choice.id.value)"
             item.identifier = NSUserInterfaceItemIdentifier(identifier)
             item.setAccessibilityIdentifier(identifier)
@@ -751,18 +766,72 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             NSSound.beep()
             return
         }
-        do {
-            let updated = try RepositoryForgeAccountSelection.updating(
-                binding,
-                preferredAccount: accountID
-            )
-            ApplicationComposition.shared.repositoryViewState(for: repository).forgeRepositoryBinding = updated
-            NotificationCenter.default.post(name: .forgeAccountsDidChange, object: repository)
-            logger.notice("Changed the repository's contextual Forge account")
-        } catch {
-            windowController?.showErrorSheet(error)
+        let currentAccountID = forgeAccountID
+        forgeAccountSelectionTask?.cancel()
+        forgeAccountSelectionTask = Task { [weak self] in
+            do {
+                let services = try await ApplicationComposition.shared.forgeServices.services()
+                if let currentAccountID {
+                    guard let envelope = try await services.accountStore.credential(for: currentAccountID)
+                    else {
+                        NSSound.beep()
+                        return
+                    }
+                    let currentCredential = envelope.account.currentCredential.reference
+                    let state = await services.credentialCooldowns.retainedState(
+                        for: currentCredential,
+                        at: Date()
+                    )
+                    guard !Task.isCancelled, let self else { return }
+                    guard self.windowController?.repository === repository,
+                          self.forgeAccountID == currentAccountID,
+                          ApplicationComposition.shared.repositoryViewState(for: repository)
+                          .forgeRepositoryBinding == binding,
+                          self.forgeAccountChoices.contains(where: { $0.id == accountID }),
+                          let currentEnvelope = try await services.accountStore.credential(for: currentAccountID),
+                          currentEnvelope.account.currentCredential.reference == currentCredential
+                    else {
+                        NSSound.beep()
+                        return
+                    }
+                    guard state == .none else {
+                        self.isForgeAccountRebindingEnabled = false
+                        self.forgeAccountRebindingCooldownDeadline = switch state {
+                        case .none: nil
+                        case let .waiting(until): until
+                        case let .retryPending(deadline): deadline
+                        }
+                        self.applyForgeAccountPresentation()
+                        NSSound.beep()
+                        return
+                    }
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      self.windowController?.repository === repository,
+                      ApplicationComposition.shared.repositoryViewState(for: repository)
+                      .forgeRepositoryBinding == binding
+                else { return }
+                let updated = try RepositoryForgeAccountSelection.updating(
+                    binding,
+                    preferredAccount: accountID
+                )
+                ApplicationComposition.shared.repositoryViewState(for: repository).forgeRepositoryBinding = updated
+                NotificationCenter.default.post(name: .forgeAccountsDidChange, object: repository)
+                self.logger.notice("Changed the repository's contextual Forge account")
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.windowController?.showErrorSheet(error)
+            }
         }
     }
+
+    #if DEBUG
+        func waitForForgeAccountSelectionForProductProof() async {
+            await forgeAccountSelectionTask?.value
+        }
+    #endif
 
     @objc private func openForgeAccountsPreferences(_: Any?) {
         RepositoryForgeAccountsPreferencesRouting.prepare()

@@ -440,6 +440,113 @@ final class GitHubReadAdapterTests: XCTestCase {
         }
     }
 
+    func testGraphQLAuthorizationRecoveryHonorsCredentialSourceAndPreservesPartialData() async throws {
+        let repository = try makeRepository()
+        let installationURL = try XCTUnwrap(
+            URL(string: "https://github.com/apps/gitx-forge/installations/new")
+        )
+        let installationBody = try JSONSerialization.data(withJSONObject: [
+            "errors": [["message": "Resource not accessible by integration"]],
+        ])
+        let appAuthentication = try makeAuthentication(source: .forgeApplicationDeviceFlow)
+        let installationCapture = GitHubRequestCapture()
+        GitHubStubURLProtocol.setHandler { request in
+            _ = installationCapture.record(request)
+            return StubResponse(status: 200, headers: [:], body: installationBody)
+        }
+        do {
+            _ = try await makeAdapter(
+                authentication: appAuthentication,
+                installationConfigurationURL: installationURL
+            ).repositoryFacts(repository: repository)
+            XCTFail("Expected missing installation recovery")
+        } catch let GitHubReadError.installationConfigurationRequired(response) {
+            XCTAssertEqual(response.installation?.configurationURL, installationURL)
+        } catch {
+            XCTFail("Unexpected \(error)")
+        }
+        XCTAssertEqual(installationCapture.requests.count, 1, "Recovery never retries automatically")
+
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, headers: [:], body: installationBody)
+        }
+        do {
+            _ = try await makeAdapter().repositoryFacts(repository: repository)
+            XCTFail("Expected a GraphQL failure for a non-App Credential")
+        } catch let GitHubReadError.graphQL(_, response) {
+            XCTAssertNotNil(response.installation)
+            XCTAssertNil(response.installation?.configurationURL)
+        } catch {
+            XCTFail("Unexpected \(error)")
+        }
+
+        let samlBody = try JSONSerialization.data(withJSONObject: [
+            "errors": [[
+                "message": "Resource protected by organization SAML enforcement.",
+            ]],
+        ])
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, headers: [:], body: samlBody)
+        }
+        do {
+            _ = try await makeAdapter().repositoryFacts(repository: repository)
+            XCTFail("Expected SAML recovery")
+        } catch let GitHubReadError.samlAuthorizationRequired(response) {
+            XCTAssertNotNil(response.saml)
+            XCTAssertNil(response.saml?.authorizationURL)
+        } catch {
+            XCTFail("Unexpected \(error)")
+        }
+
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, headers: [:], body: samlBody)
+        }
+        do {
+            _ = try await makeAdapter(
+                authentication: appAuthentication,
+                installationConfigurationURL: installationURL
+            ).repositoryFacts(repository: repository)
+            XCTFail("Expected a GraphQL failure for App-token SAML metadata")
+        } catch let GitHubReadError.graphQL(_, response) {
+            XCTAssertNotNil(response.saml)
+        } catch {
+            XCTFail("Unexpected \(error)")
+        }
+
+        let partialBody = try JSONSerialization.data(withJSONObject: [
+            "data": ["repository": Self.repositoryFactsObject],
+            "errors": [[
+                "message": "Resource protected by organization SAML enforcement.",
+                "extensions": ["code": "FORBIDDEN"],
+            ]],
+        ])
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, headers: [:], body: partialBody)
+        }
+        let partial = try await makeAdapter().repositoryFacts(repository: repository)
+        XCTAssertEqual(partial.completeness, .partial)
+        XCTAssertNotNil(partial.response.saml)
+        XCTAssertEqual(partial.value.repository, repository)
+
+        let partialInstallationBody = try JSONSerialization.data(withJSONObject: [
+            "data": ["repository": Self.repositoryFactsObject],
+            "errors": [[
+                "message": "Resource not accessible by integration",
+                "extensions": ["code": "FORBIDDEN"],
+            ]],
+        ])
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, headers: [:], body: partialInstallationBody)
+        }
+        let partialInstallation = try await makeAdapter(
+            authentication: appAuthentication,
+            installationConfigurationURL: installationURL
+        ).repositoryFacts(repository: repository)
+        XCTAssertEqual(partialInstallation.completeness, .partial)
+        XCTAssertEqual(partialInstallation.response.installation?.configurationURL, installationURL)
+        XCTAssertEqual(partialInstallation.value.repository, repository)
+    }
+
     func testInputValidationStopsBeforeNetworkAndCoversAllErrorDescriptions() async throws {
         let repository = try makeRepository()
         let gitLab = try ForgeRepositoryIdentity(
@@ -479,6 +586,7 @@ final class GitHubReadAdapterTests: XCTestCase {
             .repositoryNotFound, .objectNotFound, .authenticationRequired,
             .permissionDenied(metadata(status: 403)), .rateLimited(metadata(status: 429)),
             .samlAuthorizationRequired(metadata(status: 403, saml: true)),
+            .installationConfigurationRequired(metadata(status: 403)),
             .graphQL([], metadata(status: 200)), .malformedResponse, .transportFailure,
         ]
         XCTAssertEqual(Set(errors.compactMap(\.errorDescription)).count, errors.count)
@@ -536,11 +644,15 @@ final class GitHubReadAdapterTests: XCTestCase {
             resource: "graphql"
         )
         let saml = GitHubSAMLMetadata(authorizationURL: URL(string: "https://github.com/orgs/acme/sso"))
+        let installation = GitHubInstallationMetadata(
+            configurationURL: URL(string: "https://github.com/apps/private-app/installations/new")
+        )
         let response = GitHubResponseMetadata(
             statusCode: 200,
             requestID: "request",
             rateLimit: rate,
-            saml: saml
+            saml: saml,
+            installation: installation
         )
         let problem = GitHubGraphQLProblem(message: "partial")
         let ownership = try GitHubReadOwnership(
@@ -561,10 +673,13 @@ final class GitHubReadAdapterTests: XCTestCase {
         XCTAssertFalse(String(reflecting: saml).contains("acme"))
         XCTAssertFalse(String(describing: response).contains("acme"))
         XCTAssertFalse(String(reflecting: response).contains("acme"))
+        XCTAssertFalse(String(describing: installation).contains("private-app"))
+        XCTAssertFalse(String(reflecting: installation).contains("private-app"))
         XCTAssertEqual(String(describing: problem), "GitHub GraphQL problem (server message redacted)")
         XCTAssertEqual(String(reflecting: problem), "GitHub GraphQL problem (server message redacted)")
         XCTAssertTrue(Mirror(reflecting: problem).children.isEmpty)
         XCTAssertTrue(Mirror(reflecting: saml).children.isEmpty)
+        XCTAssertTrue(Mirror(reflecting: installation).children.isEmpty)
         XCTAssertTrue(Mirror(reflecting: response).children.isEmpty)
         XCTAssertFalse(String(describing: authentication).contains("authentication-secret"))
         XCTAssertFalse(String(reflecting: authentication).contains("authentication-secret"))
@@ -759,6 +874,71 @@ final class GitHubReadAdapterTests: XCTestCase {
             XCTAssertEqual(response.statusCode, 200)
             XCTAssertEqual(response.rateLimit.remaining, 0)
         }
+    }
+
+    func testOfflineGateStopsAuthenticatedReadBeforeNetwork() async throws {
+        let capture = GitHubRequestCapture()
+        GitHubStubURLProtocol.setHandler { request in
+            _ = capture.record(request)
+            return StubResponse(status: 500, headers: [:], body: Data())
+        }
+        let authentication = try makeAuthentication()
+        let gate = GitHubMutationSessionGate()
+        await gate.setOffline(true)
+        let adapter = GitHubReadAdapter(
+            expectedCredential: authentication.credential.reference,
+            credentialAuthority: TestGitHubReadCredentialAuthority(authentication: authentication),
+            sessionConfiguration: stubConfiguration(),
+            sessionGate: gate
+        )
+
+        await XCTAssertThrowsGitHubError(.transportFailure) {
+            try await adapter.repositoryFacts(repository: self.makeRepository())
+        }
+        XCTAssertTrue(capture.requests.isEmpty)
+    }
+
+    func testSuccessfulReadThatReportsExhaustionRecordsCooldownWithoutRetry() async throws {
+        let capture = GitHubRequestCapture()
+        let resetAt = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down) + 120)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "data": ["repository": Self.repositoryFactsObject],
+        ])
+        GitHubStubURLProtocol.setHandler { request in
+            _ = capture.record(request)
+            return StubResponse(
+                status: 200,
+                headers: [
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": String(Int(resetAt.timeIntervalSince1970)),
+                ],
+                body: body
+            )
+        }
+        let authentication = try makeAuthentication()
+        let gate = GitHubMutationSessionGate()
+        let adapter = GitHubReadAdapter(
+            expectedCredential: authentication.credential.reference,
+            credentialAuthority: TestGitHubReadCredentialAuthority(authentication: authentication),
+            sessionConfiguration: stubConfiguration(),
+            sessionGate: gate
+        )
+        let repository = try makeRepository()
+
+        let result = try await adapter.repositoryFacts(repository: repository)
+        XCTAssertEqual(result.value.repository, repository)
+        let environment = await gate.environment(
+            for: authentication.credential.reference,
+            at: Date()
+        )
+        XCTAssertEqual(
+            environment,
+            .rateLimited(until: resetAt)
+        )
+        await XCTAssertThrowsRateLimit {
+            try await adapter.repositoryFacts(repository: repository)
+        }
+        XCTAssertEqual(capture.requests.count, 1, "Recovery never retries automatically")
     }
 
     func testAuthenticatedRateLimitPausesListDetailAttentionAndBackgroundReadsForCredential() async throws {
@@ -2090,6 +2270,7 @@ private extension GitHubReadAdapterTests {
     }
 
     func makeAuthentication(
+        source: ForgeCredentialSource = .classicPersonalAccessToken,
         generation: UInt64 = 1,
         currentGeneration: UInt64? = nil,
         accessToken: String = "secret-for-test"
@@ -2102,7 +2283,7 @@ private extension GitHubReadAdapterTests {
                 credentialID: ForgeCredentialID("github-test"),
                 generation: ForgeCredentialGeneration(generation)
             ),
-            source: .classicPersonalAccessToken
+            source: source
         )
         let current = try ForgeCredentialMetadata(
             reference: ForgeCredentialReference(
@@ -2110,7 +2291,7 @@ private extension GitHubReadAdapterTests {
                 credentialID: ForgeCredentialID("github-test"),
                 generation: ForgeCredentialGeneration(currentGeneration ?? generation)
             ),
-            source: .classicPersonalAccessToken
+            source: source
         )
         let account = try ForgeAccount(id: accountID, login: "octocat", currentCredential: current)
         return try GitHubReadAuthentication(
@@ -2122,10 +2303,18 @@ private extension GitHubReadAdapterTests {
 
     func makeAdapter() throws -> GitHubReadAdapter {
         let authentication = try makeAuthentication()
+        return makeAdapter(authentication: authentication)
+    }
+
+    func makeAdapter(
+        authentication: GitHubReadAuthentication,
+        installationConfigurationURL: URL? = nil
+    ) -> GitHubReadAdapter {
         return GitHubReadAdapter(
             expectedCredential: authentication.credential.reference,
             credentialAuthority: TestGitHubReadCredentialAuthority(authentication: authentication),
-            sessionConfiguration: stubConfiguration()
+            sessionConfiguration: stubConfiguration(),
+            installationConfigurationURL: installationConfigurationURL
         )
     }
 

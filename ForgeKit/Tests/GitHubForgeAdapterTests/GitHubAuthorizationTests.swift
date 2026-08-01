@@ -51,6 +51,7 @@ final class GitHubAuthorizationTests: XCTestCase {
             "https://github.com:444/orgs/acme/sso",
             "https://github.com/org/acme/sso",
             "https://github.com/orgs/acme/sso/extra",
+            "https://github.com/orgs/-acme/sso",
             "https://github.com/orgs/acme/sso#fragment",
         ] {
             XCTAssertEqual(
@@ -103,6 +104,8 @@ final class GitHubAuthorizationTests: XCTestCase {
             XCTUnwrap(URL(string: "https://user@github.com/settings/installations/123")),
             XCTUnwrap(URL(string: "https://github.com:444/settings/installations/123")),
             XCTUnwrap(URL(string: "https://github.com/settings/installations/not-a-number")),
+            XCTUnwrap(URL(string: "https://github.com/apps/GitX/installations/new")),
+            XCTUnwrap(URL(string: "https://github.com/apps/-gitx/installations/new")),
             XCTUnwrap(URL(string: "https://github.com/apps/gitx-forge/installations/new?q=1")),
             XCTUnwrap(URL(string: "https://github.com/apps/gitx-forge/installations/new#x")),
             XCTUnwrap(URL(string: "https://github.com/other/path")),
@@ -135,6 +138,125 @@ final class GitHubAuthorizationTests: XCTestCase {
                 installationConfigurationURL: validURLs[0]
             ),
             .authorizationDenied
+        )
+    }
+
+    func testGraphQLAuthorizationBodiesDetectSAMLAndMissingInstallation() throws {
+        let samlURL = try XCTUnwrap(
+            URL(string: "https://github.com/orgs/acme/sso?authorization_request=graphql")
+        )
+        XCTAssertEqual(
+            GitHubRESTAuthorizationParser.parse(
+                statusCode: 200,
+                headers: ["X-GitHub-SSO": "required; url=\(samlURL.absoluteString)"],
+                body: json([
+                    "errors": [[
+                        "message": "Resource protected by organization SAML enforcement.",
+                    ]],
+                ]),
+                installationConfigurationURL: nil
+            ),
+            .samlAuthorizationRequired(authorizeURL: samlURL)
+        )
+
+        let installationURL = try XCTUnwrap(
+            URL(string: "https://github.com/apps/gitx-forge/installations/new")
+        )
+        XCTAssertEqual(
+            GitHubRESTAuthorizationParser.parse(
+                statusCode: 200,
+                headers: [:],
+                body: json([
+                    "errors": [[
+                        "message": "Resource not accessible by integration",
+                    ]],
+                ]),
+                installationConfigurationURL: installationURL
+            ),
+            .installationConfigurationRequired(configurationURL: installationURL)
+        )
+
+        let bodyOnlySAML = GitHubRESTAuthorizationParser.responseMetadata(
+            statusCode: 200,
+            headers: [:],
+            body: json([
+                "errors": [[
+                    "message": "Resource protected by organization SAML enforcement.",
+                ]],
+            ]),
+            installationConfigurationURL: installationURL
+        )
+        XCTAssertNotNil(bodyOnlySAML.saml)
+        XCTAssertNil(bodyOnlySAML.saml?.authorizationURL)
+        XCTAssertNil(bodyOnlySAML.installation)
+
+        let protectedSAML = GitHubRESTAuthorizationParser.responseMetadata(
+            statusCode: 200,
+            headers: [:],
+            body: json(["errors": [["message": "SAML protected resource"]]]),
+            installationConfigurationURL: nil
+        )
+        XCTAssertNotNil(protectedSAML.saml)
+
+        let unrelated = GitHubRESTAuthorizationParser.responseMetadata(
+            statusCode: 200,
+            headers: ["X-GitHub-SSO": "required; url=\(samlURL.absoluteString)"],
+            body: json(["errors": [["message": "Unrelated GraphQL problem"]]]),
+            installationConfigurationURL: installationURL
+        )
+        XCTAssertNil(unrelated.saml)
+        XCTAssertNil(unrelated.installation)
+    }
+
+    func testAuthorizationRecoveryPolicyIsCredentialSourceSpecific() throws {
+        let saml = try GitHubSAMLMetadata(
+            authorizationURL: XCTUnwrap(URL(string: "https://github.com/orgs/acme/sso"))
+        )
+        let installation = try GitHubInstallationMetadata(
+            configurationURL: XCTUnwrap(
+                URL(string: "https://github.com/apps/gitx-forge/installations/new")
+            )
+        )
+        let response = GitHubResponseMetadata(
+            statusCode: 403,
+            rateLimit: GitHubRateLimitMetadata(
+                limit: nil,
+                remaining: nil,
+                used: nil,
+                resetAt: nil,
+                retryAt: nil,
+                resource: nil
+            ),
+            saml: saml,
+            installation: installation
+        )
+
+        XCTAssertEqual(
+            GitHubAuthorizationRecoveryPolicy.recovery(
+                from: response,
+                credentialSource: .classicPersonalAccessToken
+            ),
+            .saml(saml)
+        )
+        XCTAssertEqual(
+            GitHubAuthorizationRecoveryPolicy.recovery(
+                from: response,
+                credentialSource: .commandLineBroker
+            ),
+            .saml(saml)
+        )
+        XCTAssertEqual(
+            GitHubAuthorizationRecoveryPolicy.recovery(
+                from: response,
+                credentialSource: .forgeApplicationDeviceFlow
+            ),
+            .installation(installation)
+        )
+        XCTAssertNil(
+            GitHubAuthorizationRecoveryPolicy.recovery(
+                from: response,
+                credentialSource: .fineGrainedPersonalAccessToken
+            )
         )
     }
 
@@ -275,6 +397,13 @@ final class GitHubAuthorizationTests: XCTestCase {
         )
         XCTAssertNil(overLimit.remaining)
         XCTAssertNil(overLimit.used)
+
+        let usedWithoutLimit = GitHubRateLimitParser.parse(
+            statusCode: 200,
+            headers: ["X-RateLimit-Used": "3"],
+            receivedAt: now
+        )
+        XCTAssertEqual(usedWithoutLimit.used, 3)
 
         let overflow = GitHubRateLimitParser.parse(
             statusCode: 429,

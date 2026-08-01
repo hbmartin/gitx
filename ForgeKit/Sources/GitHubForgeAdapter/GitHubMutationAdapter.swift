@@ -10,6 +10,7 @@ public actor GitHubMutationAdapter {
     private let expectedCredential: ForgeCredentialReference
     private let credentialAuthority: any GitHubReadCredentialAuthority
     private let sessionConfiguration: URLSessionConfiguration
+    private let installationConfigurationURL: URL?
     private let restClient: any GitHubMutationHTTPClient
     private let sessionGate: GitHubMutationSessionGate
     private let store = ApolloStore(cache: InMemoryNormalizedCache())
@@ -24,12 +25,14 @@ public actor GitHubMutationAdapter {
         expectedCredential: ForgeCredentialReference,
         credentialAuthority: any GitHubReadCredentialAuthority,
         sessionConfiguration: URLSessionConfiguration = .ephemeral,
-        sessionGate: GitHubMutationSessionGate = .shared
+        sessionGate: GitHubMutationSessionGate = .shared,
+        installationConfigurationURL: URL? = nil
     ) {
         self.expectedCredential = expectedCredential
         self.credentialAuthority = credentialAuthority
         self.sessionConfiguration = sessionConfiguration
         self.sessionGate = sessionGate
+        self.installationConfigurationURL = installationConfigurationURL
         restClient = GitHubMutationURLSessionClient(configuration: sessionConfiguration)
         mapper = GitHubMutationMapper(forge: Self.gitHubForge)
         now = Date.init
@@ -41,13 +44,15 @@ public actor GitHubMutationAdapter {
         sessionConfiguration: URLSessionConfiguration = .ephemeral,
         restClient: any GitHubMutationHTTPClient,
         sessionGate: GitHubMutationSessionGate = GitHubMutationSessionGate(),
-        now: @escaping @Sendable () -> Date
+        now: @escaping @Sendable () -> Date,
+        installationConfigurationURL: URL? = nil
     ) {
         self.expectedCredential = expectedCredential
         self.credentialAuthority = credentialAuthority
         self.sessionConfiguration = sessionConfiguration
         self.restClient = restClient
         self.sessionGate = sessionGate
+        self.installationConfigurationURL = installationConfigurationURL
         mapper = GitHubMutationMapper(forge: Self.gitHubForge)
         self.now = now
     }
@@ -256,12 +261,21 @@ public actor GitHubMutationAdapter {
             }
             throw GitHubMutationError.outcomeUnknown(nil)
         } catch {
-            throw classifyNetworkFailure(error, mutationStarted: true, metadata: nil)
+            throw classifyNetworkFailure(
+                error,
+                mutationStarted: true,
+                metadata: nil,
+                credentialSource: authentication.credential.source
+            )
         }
         let metadata = responseMetadata(response)
         let responseIsCoolingDown = await recordCooldown(metadata)
         guard response.statusCode == 200 else {
-            let error = classifyRESTFailure(response, metadata: metadata)
+            let error = classifyRESTFailure(
+                response,
+                metadata: metadata,
+                credentialSource: authentication.credential.source
+            )
             if case .rateLimited = error {
                 await recordCooldown(metadata, assumeThrottled: true)
             }
@@ -836,7 +850,9 @@ private extension GitHubMutationAdapter {
         map: (Query.Data) throws -> Value
     ) async throws -> GitHubExecutedMutation<Value> where Query.ResponseFormat == SingleResponseFormat {
         let permit = try await admitRequest()
-        let metadataBox = GitHubResponseMetadataBox()
+        let metadataBox = GitHubResponseMetadataBox(
+            installationConfigurationURL: installationConfigurationURL
+        )
         let client = GitHubGraphQLTransportFactory.makeClient(
             accessToken: authentication.accessToken,
             sessionConfiguration: sessionConfiguration,
@@ -851,6 +867,12 @@ private extension GitHubMutationAdapter {
             }
             let responseIsCoolingDown = await recordCooldown(response)
             let problems = mutationProblems(graphQLResponse.errors)
+            if let authorizationError = authorizationError(
+                response: response,
+                credentialSource: authentication.credential.source
+            ) {
+                throw authorizationError
+            }
             if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
                 await recordCooldown(response, assumeThrottled: true)
                 throw GitHubMutationError.rateLimited(response)
@@ -881,7 +903,8 @@ private extension GitHubMutationAdapter {
             let classified = classifyNetworkFailure(
                 error,
                 mutationStarted: false,
-                metadata: metadata
+                metadata: metadata,
+                credentialSource: authentication.credential.source
             )
             if case .rateLimited = classified, let metadata {
                 await recordCooldown(metadata, assumeThrottled: true)
@@ -896,7 +919,9 @@ private extension GitHubMutationAdapter {
         map: (Mutation.Data) throws -> Value
     ) async throws -> GitHubExecutedMutation<Value> where Mutation.ResponseFormat == SingleResponseFormat {
         let permit = try await admitRequest()
-        let metadataBox = GitHubResponseMetadataBox()
+        let metadataBox = GitHubResponseMetadataBox(
+            installationConfigurationURL: installationConfigurationURL
+        )
         let client = GitHubGraphQLTransportFactory.makeClient(
             accessToken: authentication.accessToken,
             sessionConfiguration: sessionConfiguration,
@@ -911,6 +936,12 @@ private extension GitHubMutationAdapter {
             }
             let responseIsCoolingDown = await recordCooldown(response)
             let problems = mutationProblems(graphQLResponse.errors)
+            if let authorizationError = authorizationError(
+                response: response,
+                credentialSource: authentication.credential.source
+            ) {
+                throw authorizationError
+            }
             if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
                 await recordCooldown(response, assumeThrottled: true)
                 throw GitHubMutationError.rateLimited(response)
@@ -947,11 +978,9 @@ private extension GitHubMutationAdapter {
             let classified = classifyNetworkFailure(
                 error,
                 mutationStarted: true,
-                metadata: metadata
+                metadata: metadata,
+                credentialSource: authentication.credential.source
             )
-            if case .rateLimited = classified, let metadata {
-                await recordCooldown(metadata, assumeThrottled: true)
-            }
             throw classified
         }
     }
@@ -1160,8 +1189,17 @@ private extension GitHubMutationAdapter {
     func classifyNetworkFailure(
         _ error: Error,
         mutationStarted: Bool,
-        metadata: GitHubResponseMetadata?
+        metadata: GitHubResponseMetadata?,
+        credentialSource: ForgeCredentialSource
     ) -> GitHubMutationError {
+        if let metadata,
+           let authorizationError = authorizationError(
+               response: metadata,
+               credentialSource: credentialSource
+           )
+        {
+            return authorizationError
+        }
         if mutationStarted {
             logger.notice("phase=mutation transition=outcome_unknown reason=post_dispatch_transport")
             return .outcomeUnknown(metadata)
@@ -1170,9 +1208,6 @@ private extension GitHubMutationAdapter {
             return .offline
         }
         if let metadata {
-            if metadata.saml != nil {
-                return .samlAuthorizationRequired(metadata)
-            }
             switch metadata.statusCode {
             case 401: return .authenticationRequired
             case 403 where metadata.rateLimit.remaining == 0 || metadata.rateLimit.retryAt != nil:
@@ -1184,6 +1219,23 @@ private extension GitHubMutationAdapter {
             }
         }
         return .transportFailure
+    }
+
+    func authorizationError(
+        response: GitHubResponseMetadata,
+        credentialSource: ForgeCredentialSource
+    ) -> GitHubMutationError? {
+        switch GitHubAuthorizationRecoveryPolicy.recovery(
+            from: response,
+            credentialSource: credentialSource
+        ) {
+        case .saml:
+            .samlAuthorizationRequired(response)
+        case .installation:
+            .installationConfigurationRequired(response)
+        case nil:
+            nil
+        }
     }
 
     func isOffline(_ error: Error) -> Bool {
@@ -1205,34 +1257,33 @@ private extension GitHubMutationAdapter {
             headers: response.headers,
             receivedAt: now()
         )
-        let authorization = GitHubRESTAuthorizationParser.parse(
+        let authorization = GitHubRESTAuthorizationParser.responseMetadata(
             statusCode: response.statusCode,
             headers: response.headers,
             body: response.data,
-            installationConfigurationURL: nil
+            installationConfigurationURL: installationConfigurationURL
         )
-        let saml: GitHubSAMLMetadata?
-        if case let .samlAuthorizationRequired(url) = authorization {
-            saml = GitHubSAMLMetadata(authorizationURL: url)
-        } else {
-            saml = nil
-        }
         return GitHubResponseMetadata(
             statusCode: response.statusCode,
             requestID: response.headers.first {
                 $0.key.caseInsensitiveCompare("X-GitHub-Request-Id") == .orderedSame
             }?.value,
             rateLimit: rateLimit,
-            saml: saml
+            saml: authorization.saml,
+            installation: authorization.installation
         )
     }
 
     func classifyRESTFailure(
         _ response: GitHubMutationHTTPResponse,
-        metadata: GitHubResponseMetadata
+        metadata: GitHubResponseMetadata,
+        credentialSource: ForgeCredentialSource
     ) -> GitHubMutationError {
-        if metadata.saml != nil {
-            return .samlAuthorizationRequired(metadata)
+        if let authorizationError = authorizationError(
+            response: metadata,
+            credentialSource: credentialSource
+        ) {
+            return authorizationError
         }
         switch response.statusCode {
         case 401: return .authenticationRequired
@@ -1383,12 +1434,21 @@ public extension GitHubMutationAdapter {
             }
             throw GitHubMutationError.outcomeUnknown(nil)
         } catch {
-            throw classifyNetworkFailure(error, mutationStarted: true, metadata: nil)
+            throw classifyNetworkFailure(
+                error,
+                mutationStarted: true,
+                metadata: nil,
+                credentialSource: authentication.credential.source
+            )
         }
         let metadata = responseMetadata(response)
         let responseIsCoolingDown = await recordCooldown(metadata)
         guard response.statusCode == 201 else {
-            let error = classifyRESTFailure(response, metadata: metadata)
+            let error = classifyRESTFailure(
+                response,
+                metadata: metadata,
+                credentialSource: authentication.credential.source
+            )
             if case .rateLimited = error {
                 await recordCooldown(metadata, assumeThrottled: true)
             }

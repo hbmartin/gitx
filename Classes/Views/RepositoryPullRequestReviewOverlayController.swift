@@ -90,6 +90,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private let session: RepositoryPullRequestReviewSession
     private let router: any RepositoryPullRequestReviewRouting
     private let markdownRouter: RepositoryPullRequestReviewMarkdownRouter
+    private let authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)?
+    private var repositoryDefaultRevision: ForgeRevision
     private let actionStack = NSStackView()
     private let overlayStack = NSStackView()
     private weak var actionContentBox: RepositoryReviewContentBox?
@@ -125,10 +127,14 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
 
     init(
         session: RepositoryPullRequestReviewSession,
-        router: any RepositoryPullRequestReviewRouting
+        router: any RepositoryPullRequestReviewRouting,
+        defaultRevision: ForgeRevision? = nil,
+        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)? = nil
     ) {
         self.session = session
         self.router = router
+        repositoryDefaultRevision = defaultRevision ?? Self.fallbackDefaultRevision()
+        self.authorizationRecoveryHandler = authorizationRecoveryHandler
         markdownRouter = RepositoryPullRequestReviewMarkdownRouter(router: router)
         super.init(nibName: nil, bundle: nil)
         session.onStateChange = { [weak self] _ in self?.render() }
@@ -143,6 +149,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             self?.transientMessage = "The server outcome is unknown. Refreshing without retrying…"
             self?.render()
         }
+        session.onAuthorizationRecovery = authorizationRecoveryHandler
     }
 
     @available(*, unavailable)
@@ -171,6 +178,12 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         session.failClosedAfterRepositoryRefresh(message)
     }
 
+    func updateDefaultRevision(_ revision: ForgeRevision) {
+        guard repositoryDefaultRevision != revision else { return }
+        repositoryDefaultRevision = revision
+        render()
+    }
+
     func detach() {
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
@@ -186,6 +199,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         session.onResolutionChange = nil
         session.onMutationError = nil
         session.onOutcomeUnknown = nil
+        session.onAuthorizationRecovery = nil
         onWorkspacePresentationChange = nil
     }
 
@@ -735,10 +749,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             height: 64,
             context: ForgeMarkdownContext(
                 repository: workspace.identity.repository,
-                location: .file(
-                    revision: .commit(selectedDisplayedHead ?? workspace.displayedHead),
-                    path: anchor.path
-                )
+                location: .repository(defaultBranch: repositoryDefaultRevision)
             )
         )
         let inlineDraft = installInlineDraftEditor(editor.textView, anchor: anchor, workspace: workspace)
@@ -814,6 +825,11 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             } catch is CancellationError {
                 return
             } catch {
+                if authorizationRecoveryHandler?(error, { [weak self] in
+                    self?.publishReply(threadID: threadID, body: body)
+                }) == true {
+                    return
+                }
                 transientMessage = error.localizedDescription
             }
         }
@@ -824,37 +840,50 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         guard let workspace = session.workspace else { return }
         do {
             let context = try selectedReviewContext(anchor: anchor, workspace: workspace)
-            let destination = InlineWriteDestination(anchor: anchor, displayedHead: context.displayedHead)
-            guard inlineWritesInFlight.insert(destination).inserted else { return }
-            renderOverlay()
-            let task = Task { [weak self] in
-                guard let self else { return }
-                defer {
-                    inlineWritesInFlight.remove(destination)
-                    render()
-                }
-                do {
-                    let pending = try await session.prepareInlinePublication(
-                        context: context,
-                        anchor: anchor,
-                        bodyMarkdown: body
-                    )
-                    pendingReanchor = pending
-                    if pending == nil {
-                        clearSelection()
-                        transientMessage = "Inline review comment published immediately."
-                    }
-                } catch is CancellationError {
-                    return
-                } catch {
-                    transientMessage = error.localizedDescription
-                }
-            }
-            tasks.append(task)
+            publishInline(context: context, anchor: anchor, body: body)
         } catch {
             transientMessage = error.localizedDescription
             render()
         }
+    }
+
+    private func publishInline(
+        context: ForgeReviewContext,
+        anchor: ForgeReviewAnchor,
+        body: String
+    ) {
+        let destination = InlineWriteDestination(anchor: anchor, displayedHead: context.displayedHead)
+        guard inlineWritesInFlight.insert(destination).inserted else { return }
+        renderOverlay()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                inlineWritesInFlight.remove(destination)
+                render()
+            }
+            do {
+                let pending = try await session.prepareInlinePublication(
+                    context: context,
+                    anchor: anchor,
+                    bodyMarkdown: body
+                )
+                pendingReanchor = pending
+                if pending == nil {
+                    clearSelection()
+                    transientMessage = "Inline review comment published immediately."
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                if authorizationRecoveryHandler?(error, { [weak self] in
+                    self?.publishInline(context: context, anchor: anchor, body: body)
+                }) == true {
+                    return
+                }
+                transientMessage = error.localizedDescription
+            }
+        }
+        tasks.append(task)
     }
 
     private func confirmPendingReanchor(
@@ -991,7 +1020,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             height: 110,
             context: ForgeMarkdownContext(
                 repository: workspace.identity.repository,
-                location: .repository(defaultBranch: .commit(displayedHead))
+                location: .repository(defaultBranch: repositoryDefaultRevision)
             )
         )
         let draftCoordinator = RepositoryReviewDraftTextCoordinator(textView: editor.textView) {
@@ -1229,6 +1258,11 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             } catch is CancellationError {
                 return
             } catch {
+                if self?.authorizationRecoveryHandler?(error, { [weak self] in
+                    self?.perform(operation)
+                }) == true {
+                    return
+                }
                 self?.transientMessage = error.localizedDescription
                 self?.render()
             }
@@ -1401,20 +1435,20 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     }
 
     private func markdownContext(
-        for record: RepositoryPullRequestReviewThreadRecord,
+        for _: RepositoryPullRequestReviewThreadRecord,
         workspace: RepositoryPullRequestReviewWorkspace
     ) -> ForgeMarkdownContext {
-        let location: ForgeMarkdownLocation
-        let anchor: ForgeReviewAnchor? = switch record.presentation.thread.anchor {
-        case let .available(value): value
-        case .unavailable: nil
+        ForgeMarkdownContext(
+            repository: workspace.identity.repository,
+            location: .repository(defaultBranch: repositoryDefaultRevision)
+        )
+    }
+
+    private static func fallbackDefaultRevision() -> ForgeRevision {
+        guard let name = try? ForgeRefName("main") else {
+            preconditionFailure("The static default branch name must remain valid")
         }
-        if let anchor {
-            location = .file(revision: .commit(workspace.displayedHead), path: anchor.path)
-        } else {
-            location = .repository(defaultBranch: .commit(workspace.displayedHead))
-        }
-        return ForgeMarkdownContext(repository: workspace.identity.repository, location: location)
+        return .branch(name)
     }
 
     private func modalStack(identifier: String) -> NSStackView {
@@ -2048,6 +2082,8 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
     private let applicationSession: RepositoryPullRequestReviewApplicationSession
     private let accountID: ForgeAccountID
     private let router: any RepositoryPullRequestReviewRouting
+    private let authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)?
+    private var repositoryDefaultRevision: ForgeRevision
     private var identity: RepositoryPullRequestReviewIdentity?
     private var controller: RepositoryPullRequestReviewOverlayController?
     private weak var nativeDiffView: PBNativeContentView?
@@ -2079,11 +2115,15 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
     init(
         applicationSession: RepositoryPullRequestReviewApplicationSession,
         accountID: ForgeAccountID,
-        router: any RepositoryPullRequestReviewRouting
+        router: any RepositoryPullRequestReviewRouting,
+        defaultRevision: ForgeRevision? = nil,
+        authorizationRecoveryHandler: ((Error, @escaping @MainActor () -> Void) -> Bool)? = nil
     ) {
         self.applicationSession = applicationSession
         self.accountID = accountID
         self.router = router
+        self.authorizationRecoveryHandler = authorizationRecoveryHandler
+        repositoryDefaultRevision = defaultRevision ?? Self.fallbackDefaultRevision()
         super.init()
     }
 
@@ -2148,6 +2188,12 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         logger.error("Failed the active native review session closed after repository refresh failure")
     }
 
+    func updateDefaultRevision(_ revision: ForgeRevision) {
+        guard repositoryDefaultRevision != revision else { return }
+        repositoryDefaultRevision = revision
+        controller?.updateDefaultRevision(revision)
+    }
+
     private func activate(_ pullRequest: ForgePullRequestSummary) {
         guard let nextIdentity = try? RepositoryPullRequestReviewIdentity(
             accountID: accountID,
@@ -2161,13 +2207,25 @@ final class RepositoryPullRequestReviewOverlayHost: NSObject,
         detach()
         identity = nextIdentity
         let session = applicationSession.makeReviewSession(identity: nextIdentity)
-        let controller = RepositoryPullRequestReviewOverlayController(session: session, router: router)
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: router,
+            defaultRevision: repositoryDefaultRevision,
+            authorizationRecoveryHandler: authorizationRecoveryHandler
+        )
         self.controller = controller
         controller.onWorkspacePresentationChange = { [weak self] in
             self?.applyServerAnchorPlacements()
         }
         controller.start()
         logger.info("Started native review session for exact selected Pull Request")
+    }
+
+    private static func fallbackDefaultRevision() -> ForgeRevision {
+        guard let name = try? ForgeRefName("main") else {
+            preconditionFailure("The static default branch name must remain valid")
+        }
+        return .branch(name)
     }
 
     private func observeSelection(in nativeView: PBNativeContentView) {

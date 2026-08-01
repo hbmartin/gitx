@@ -5,12 +5,28 @@ import Foundation
 // response metadata captured across Apollo interceptor tasks.
 final class GitHubResponseMetadataBox: @unchecked Sendable {
     private let lock = NSLock()
+    private let installationConfigurationURL: URL?
     private var value: GitHubResponseMetadata?
 
-    func record(_ response: HTTPURLResponse) {
-        let parsed = GitHubHTTPMetadataParser.metadata(from: response, receivedAt: Date())
+    init(installationConfigurationURL: URL? = nil) {
+        self.installationConfigurationURL = installationConfigurationURL
+    }
+
+    func record(_ response: HTTPURLResponse, body: Data = Data()) {
+        let parsed = GitHubHTTPMetadataParser.metadata(
+            from: response,
+            body: body,
+            installationConfigurationURL: installationConfigurationURL,
+            receivedAt: Date()
+        )
         lock.withLock {
-            value = parsed
+            value = GitHubResponseMetadata(
+                statusCode: parsed.statusCode,
+                requestID: parsed.requestID,
+                rateLimit: parsed.rateLimit,
+                saml: parsed.saml ?? value?.saml,
+                installation: parsed.installation ?? value?.installation
+            )
         }
     }
 
@@ -28,7 +44,10 @@ private struct GitHubMetadataInterceptor: HTTPInterceptor {
     ) async throws -> HTTPResponse {
         let response = try await next(request)
         box.record(response.response)
-        return response
+        return await response.mapChunks { response, chunk in
+            box.record(response, body: chunk)
+            return chunk
+        }
     }
 }
 
@@ -68,7 +87,12 @@ enum GitHubGraphQLTransportFactory {
 }
 
 enum GitHubHTTPMetadataParser {
-    static func metadata(from response: HTTPURLResponse, receivedAt: Date) -> GitHubResponseMetadata {
+    static func metadata(
+        from response: HTTPURLResponse,
+        body: Data = Data(),
+        installationConfigurationURL: URL? = nil,
+        receivedAt: Date
+    ) -> GitHubResponseMetadata {
         let headers = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
             guard let name = entry.key as? String, let value = entry.value as? String else { return }
             result[name] = value
@@ -78,23 +102,18 @@ enum GitHubHTTPMetadataParser {
             headers: headers,
             receivedAt: receivedAt
         )
-        let authorizationFailure = GitHubRESTAuthorizationParser.parse(
+        let authorization = GitHubRESTAuthorizationParser.responseMetadata(
             statusCode: response.statusCode,
             headers: headers,
-            body: Data(),
-            installationConfigurationURL: nil
+            body: body,
+            installationConfigurationURL: installationConfigurationURL
         )
-        let saml: GitHubSAMLMetadata?
-        if case let .samlAuthorizationRequired(url) = authorizationFailure {
-            saml = GitHubSAMLMetadata(authorizationURL: url)
-        } else {
-            saml = nil
-        }
         return GitHubResponseMetadata(
             statusCode: response.statusCode,
             requestID: nonempty(response.value(forHTTPHeaderField: "X-GitHub-Request-Id")),
             rateLimit: rateLimit,
-            saml: saml
+            saml: authorization.saml,
+            installation: authorization.installation
         )
     }
 

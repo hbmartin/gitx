@@ -2,6 +2,71 @@ import ForgeKit
 import XCTest
 
 final class ForgeReadSurfaceModelsTests: XCTestCase {
+    func testCollaborationSurfaceAvailabilityPreservesReadsWithoutAuthoritativeCapabilities() {
+        XCTAssertEqual(
+            ForgeCollaborationSurfaceAvailabilityPolicy.availableSurfaces(
+                readCapabilities: [.readIssues: .unavailable(.missingPermission(.issues))],
+                isAuthenticated: false,
+                attentionInstalled: false
+            ),
+            [.pullRequests, .issues]
+        )
+        XCTAssertEqual(
+            ForgeCollaborationSurfaceAvailabilityPolicy.availableSurfaces(
+                readCapabilities: nil,
+                isAuthenticated: true,
+                attentionInstalled: true
+            ),
+            [.pullRequests, .issues, .attention]
+        )
+    }
+
+    func testCollaborationSurfaceAvailabilityHidesOnlyAuthoritativelyUnavailableReads() {
+        let capabilities: [ForgeOperation: ForgeOperationCapability] = [
+            .readPullRequests: .verified(.knownAuthority),
+            .readIssues: .unavailable(.missingPermission(.issues)),
+        ]
+
+        XCTAssertEqual(
+            ForgeCollaborationSurfaceAvailabilityPolicy.availableSurfaces(
+                readCapabilities: capabilities,
+                isAuthenticated: true,
+                attentionInstalled: true
+            ),
+            [.pullRequests, .attention]
+        )
+        XCTAssertEqual(
+            ForgeCollaborationSurfaceAvailabilityPolicy.availableSurfaces(
+                readCapabilities: [
+                    .readPullRequests: .unavailable(.repositoryAccessDenied),
+                    .readIssues: .verified(.knownAuthority),
+                ],
+                isAuthenticated: true,
+                attentionInstalled: false
+            ),
+            [.issues]
+        )
+    }
+
+    func testCollaborationSurfaceAvailabilityTreatsSparseAndVerifiedEvidenceAsVisible() {
+        XCTAssertEqual(
+            ForgeCollaborationSurfaceAvailabilityPolicy.availableSurfaces(
+                readCapabilities: [:],
+                isAuthenticated: true,
+                attentionInstalled: false
+            ),
+            [.pullRequests, .issues]
+        )
+        XCTAssertEqual(
+            ForgeCollaborationSurfaceAvailabilityPolicy.availableSurfaces(
+                readCapabilities: [.readIssues: .verified(.knownAuthority)],
+                isAuthenticated: true,
+                attentionInstalled: false
+            ),
+            [.pullRequests, .issues]
+        )
+    }
+
     func testQueryTrimsSearchAndAccumulatorPresentsLoadingEmptyAndTotals() throws {
         let query = ForgeReadSurfaceQuery(searchText: "  crash fix \n", stateFilter: .all)
         XCTAssertEqual(query.searchText, "crash fix")

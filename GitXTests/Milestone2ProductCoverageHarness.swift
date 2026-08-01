@@ -661,6 +661,16 @@
 
             return RepositoryForgeCollaborationController.mutationCapabilityOperations
                 == [.createPullRequest, .editPullRequest, .syncFork]
+                && RepositoryForgeCollaborationController.readCapabilityOperations
+                == [.readPullRequests, .readIssues]
+                && RepositoryForgeCollaborationController.collaborationCapabilityOperations
+                == [
+                    .readPullRequests,
+                    .readIssues,
+                    .createPullRequest,
+                    .editPullRequest,
+                    .syncFork,
+                ]
                 && checkingDisabled && publicDisabled && unavailableDisabled
                 && verifiedEnabled && directInvocationEnabled && unverifiedEnabled
                 && releasedControllerFailsClosed

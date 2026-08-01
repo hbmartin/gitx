@@ -1593,6 +1593,8 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
             RepositoryPullRequestReviewServiceError.authoritative(
                 problems.first?.authoritativeMessage ?? error.localizedDescription
             )
+        case .samlAuthorizationRequired, .installationConfigurationRequired:
+            error
         case .outcomeUnknown:
             RepositoryPullRequestReviewServiceError.outcomeUnknown
         case .stalePullRequest, .authorizationMismatch:

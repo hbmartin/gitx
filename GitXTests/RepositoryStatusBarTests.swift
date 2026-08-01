@@ -31,6 +31,41 @@ final class RepositoryStatusBarTests: XCTestCase {
         XCTAssertFalse(visibleStatusBar.showsPersistentFailure)
     }
 
+    func testContextualForgeAccountRebindingPresentationDistinguishesWaitingAndRetryPending() {
+        let waiting = RepositoryForgeAccountRebindingPresentation.present(
+            isEnabled: false,
+            cooldownDeadline: now.addingTimeInterval(60),
+            now: now
+        )
+        XCTAssertFalse(waiting.isEnabled)
+        XCTAssertEqual(
+            waiting.helpText,
+            "Account changes are paused until GitHub’s rate-limit window ends."
+        )
+
+        let retryPending = RepositoryForgeAccountRebindingPresentation.present(
+            isEnabled: false,
+            cooldownDeadline: now.addingTimeInterval(-1),
+            now: now
+        )
+        XCTAssertFalse(retryPending.isEnabled)
+        XCTAssertEqual(
+            retryPending.helpText,
+            "Account changes are paused until a successful GitHub retry completes."
+        )
+
+        let available = RepositoryForgeAccountRebindingPresentation.present(
+            isEnabled: true,
+            cooldownDeadline: now.addingTimeInterval(60),
+            now: now
+        )
+        XCTAssertTrue(available.isEnabled)
+        XCTAssertEqual(
+            available.helpText,
+            "Choose the account for this repository or manage accounts"
+        )
+    }
+
     func testContextualForgeAccountRoutesDeterministicallyToAccountsPreferences() {
         let defaults = UserDefaults.standard
         let key = RepositoryForgeAccountsPreferencesRouting.selectedPaneDefaultsKey

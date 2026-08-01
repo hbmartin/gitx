@@ -343,6 +343,21 @@ actor ForgeCredentialCooldownRegistry {
         }
     }
 
+    func retainedDeadline(for credential: ForgeCredentialReference) async -> Date? {
+        await sessionGate.retainedCooldownDeadline(for: credential)
+    }
+
+    func retainedState(
+        for credential: ForgeCredentialReference,
+        at date: Date
+    ) async -> GitHubCredentialCooldownState {
+        await sessionGate.retainedCooldownState(for: credential, at: date)
+    }
+
+    func changes() async -> AsyncStream<ForgeCredentialReference> {
+        await sessionGate.cooldownChanges()
+    }
+
     func register(_ cooldown: ForgeCredentialCooldown) async {
         await sessionGate.recordCooldown(for: cooldown.credential, until: cooldown.deadline)
     }

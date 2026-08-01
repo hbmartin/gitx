@@ -74,6 +74,41 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
         snapshot = await cooldownBudget.current()
         XCTAssertEqual(snapshot.remainingRequestCount, 11)
         XCTAssertNil(snapshot.cooldownDeadline)
+
+        await cooldownBudget.update(
+            reservation: firstReservation,
+            status: 200,
+            headers: ["x-ratelimit-remaining": "50"],
+            at: Date(timeIntervalSince1970: 1101)
+        )
+        let staleResponseSnapshot = await cooldownBudget.current()
+        XCTAssertEqual(
+            staleResponseSnapshot,
+            snapshot,
+            "a reservation from the prior rate window cannot mutate the current budget"
+        )
+
+        let retryOnlyBudget = GitHubAnonymousRESTBudget(initialRemainingRequestCount: 50)
+        let throttledReservation = try await retryOnlyBudget.reserve(reason: .repositoryOpened, at: now)
+        await retryOnlyBudget.update(
+            reservation: throttledReservation,
+            status: 429,
+            headers: ["retry-after": "30"],
+            at: now
+        )
+        let resumedReservation = try await retryOnlyBudget.reserve(
+            reason: .manual,
+            at: now.addingTimeInterval(30)
+        )
+        await retryOnlyBudget.update(
+            reservation: resumedReservation,
+            status: 200,
+            headers: ["x-ratelimit-remaining": "49"],
+            at: now.addingTimeInterval(30)
+        )
+        let resumedSnapshot = await retryOnlyBudget.current()
+        XCTAssertEqual(resumedSnapshot.remainingRequestCount, 48)
+        XCTAssertNil(resumedSnapshot.cooldownDeadline)
     }
 
     func testTwoAdapterReservationResponsesCannotRaiseBudgetOrClearActiveCooldownOutOfOrder() async throws {

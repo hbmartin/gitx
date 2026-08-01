@@ -1,11 +1,11 @@
 {
   "version": 1,
   "target": "ForgeKit handwritten sources",
-  "minimumLineCoverage": 0.9956,
+  "minimumLineCoverage": 0.9959,
   "files": {
     "ForgeKit/Sources/ForgeKit/ForgeAccount.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeAttention.swift": 1.0,
-    "ForgeKit/Sources/ForgeKit/ForgeAttentionInbox.swift": 0.9954,
+    "ForgeKit/Sources/ForgeKit/ForgeAttentionInbox.swift": 0.9955,
     "ForgeKit/Sources/ForgeKit/ForgeAvatarPolicy.swift": 0.993,
     "ForgeKit/Sources/ForgeKit/ForgeBinding.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeCachePolicy.swift": 1.0,
@@ -27,11 +27,11 @@
     "ForgeKit/Sources/ForgeKit/ForgeRemoteParser.swift": 0.982,
     "ForgeKit/Sources/ForgeKit/ForgeReviewMutationPolicy.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeRouting.swift": 0.9849,
-    "ForgeKit/Sources/ForgeKit/ForgeSQLitePersistence.swift": 0.9959,
+    "ForgeKit/Sources/ForgeKit/ForgeSQLitePersistence.swift": 0.9961,
     "ForgeKit/Sources/ForgeKit/ForgeStatusPresentation.swift": 1.0,
     "ForgeKit/Sources/ForgeKit/ForgeWebURLPolicy.swift": 0.9777,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubAnonymousRESTAdapter.swift": 0.9965,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubAttentionSnapshotFetcher.swift": 0.9803,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubAnonymousRESTAdapter.swift": 0.9967,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubAttentionSnapshotFetcher.swift": 0.9821,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthentication.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthenticationTransport.swift": 0.9971,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubAuthorization.swift": 1.0,
@@ -39,12 +39,12 @@
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLDocumentMapper.swift": 0.9975,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLTransport.swift": 1.0,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubGraphQLValueMapper.swift": 1.0,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationAdapter.swift": 0.994,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationAdapter.swift": 0.9949,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationMapper.swift": 0.9959,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationRESTTransport.swift": 1.0,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationResult.swift": 0.9946,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationResult.swift": 0.9947,
     "ForgeKit/Sources/GitHubForgeAdapter/GitHubMutationSessionGate.swift": 1.0,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadAdapter.swift": 0.9874,
-    "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadResult.swift": 0.9913
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadAdapter.swift": 0.991,
+    "ForgeKit/Sources/GitHubForgeAdapter/GitHubReadResult.swift": 0.9923
   }
 }

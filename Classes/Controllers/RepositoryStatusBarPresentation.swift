@@ -315,6 +315,34 @@ struct RepositoryForgeAccountControlPresentation: Equatable {
     }
 }
 
+struct RepositoryForgeAccountRebindingPresentation: Equatable, Sendable {
+    let isEnabled: Bool
+    let helpText: String
+
+    static func present(
+        isEnabled: Bool,
+        cooldownDeadline: Date?,
+        now: Date
+    ) -> RepositoryForgeAccountRebindingPresentation {
+        guard !isEnabled else {
+            return RepositoryForgeAccountRebindingPresentation(
+                isEnabled: true,
+                helpText: "Choose the account for this repository or manage accounts"
+            )
+        }
+        if let cooldownDeadline, now < cooldownDeadline {
+            return RepositoryForgeAccountRebindingPresentation(
+                isEnabled: false,
+                helpText: "Account changes are paused until GitHub’s rate-limit window ends."
+            )
+        }
+        return RepositoryForgeAccountRebindingPresentation(
+            isEnabled: false,
+            helpText: "Account changes are paused until a successful GitHub retry completes."
+        )
+    }
+}
+
 struct RepositoryForgeAccountChoice: Equatable, Sendable {
     private static let accountIDKey = "accountID"
     private static let loginKey = "login"

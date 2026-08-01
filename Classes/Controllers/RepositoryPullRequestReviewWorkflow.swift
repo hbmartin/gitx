@@ -1093,6 +1093,7 @@ final class RepositoryPullRequestReviewSession {
     var onResolutionChange: ((ForgeObjectID, ForgeReviewThreadResolutionState) -> Void)?
     var onMutationError: ((String) -> Void)?
     var onOutcomeUnknown: (() -> Void)?
+    var onAuthorizationRecovery: ((Error, @escaping @MainActor () -> Void) -> Bool)?
 
     let identity: RepositoryPullRequestReviewIdentity
     private let service: any RepositoryPullRequestReviewMutationServing
@@ -1843,6 +1844,9 @@ final class RepositoryPullRequestReviewSession {
                 if let reverted = try? current.applying(.failed) {
                     setResolutionState(reverted, threadID: threadID)
                 }
+                _ = onAuthorizationRecovery?(error) { [weak self] in
+                    self?.setResolution(threadID: threadID, mutation: mutation)
+                }
                 failMutation(error)
             }
         }
@@ -1937,6 +1941,9 @@ final class RepositoryPullRequestReviewSession {
         _ error: Error,
         preserving previousWorkspace: RepositoryPullRequestReviewWorkspace?
     ) {
+        _ = onAuthorizationRecovery?(error) { [weak self] in
+            self?.load()
+        }
         guard let previousWorkspace,
               let stale = try? previousWorkspace.markingMutationStateFresh(false)
         else {

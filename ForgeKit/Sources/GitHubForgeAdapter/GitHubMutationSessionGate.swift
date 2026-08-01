@@ -12,6 +12,12 @@ public enum GitHubCredentialRequestAdmission: Equatable, Sendable {
     case rateLimited(until: Date)
 }
 
+public enum GitHubCredentialCooldownState: Equatable, Sendable {
+    case none
+    case waiting(until: Date)
+    case retryPending(deadline: Date)
+}
+
 /// One concurrency-safe process gate shared by every authenticated read and
 /// mutation adapter. Cooldowns are keyed by the exact Credential generation,
 /// so repository/account rebinding cannot bypass a pause and another
@@ -26,6 +32,9 @@ public actor GitHubMutationSessionGate {
 
     private var isOffline = false
     private var cooldowns: [ForgeCredentialReference: Cooldown] = [:]
+    private var cooldownChangeContinuations: [
+        UUID: AsyncStream<ForgeCredentialReference>.Continuation
+    ] = [:]
     private var nextCooldownGeneration: UInt64 = 0
 
     public init() {}
@@ -39,7 +48,9 @@ public actor GitHubMutationSessionGate {
         until deadline: Date?
     ) {
         guard let deadline else {
-            cooldowns.removeValue(forKey: credential)
+            if cooldowns.removeValue(forKey: credential) != nil {
+                publishCooldownChange(for: credential)
+            }
             return
         }
         if let current = cooldowns[credential], current.deadline >= deadline {
@@ -50,6 +61,7 @@ public actor GitHubMutationSessionGate {
             deadline: deadline,
             generation: nextCooldownGeneration
         )
+        publishCooldownChange(for: credential)
     }
 
     /// Admits traffic after the server deadline but retains the cooldown until
@@ -80,6 +92,38 @@ public actor GitHubMutationSessionGate {
             return
         }
         cooldowns.removeValue(forKey: permit.credential)
+        publishCooldownChange(for: permit.credential)
+    }
+
+    /// Returns the server deadline for a cooldown that still awaits a
+    /// successful current-generation retry. The deadline may already have
+    /// elapsed: traffic is then admitted, but contextual account rebinding
+    /// must remain disabled until that retry succeeds.
+    public func retainedCooldownDeadline(
+        for credential: ForgeCredentialReference
+    ) -> Date? {
+        cooldowns[credential]?.deadline
+    }
+
+    public func retainedCooldownState(
+        for credential: ForgeCredentialReference,
+        at date: Date
+    ) -> GitHubCredentialCooldownState {
+        guard let cooldown = cooldowns[credential] else { return .none }
+        if date < cooldown.deadline {
+            return .waiting(until: cooldown.deadline)
+        }
+        return .retryPending(deadline: cooldown.deadline)
+    }
+
+    public func cooldownChanges() -> AsyncStream<ForgeCredentialReference> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            cooldownChangeContinuations[id] = continuation
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeCooldownChangeContinuation(id) }
+            }
+        }
     }
 
     public func environment(
@@ -96,5 +140,15 @@ public actor GitHubMutationSessionGate {
             return .available
         }
         return .rateLimited(until: cooldown.deadline)
+    }
+
+    private func publishCooldownChange(for credential: ForgeCredentialReference) {
+        for continuation in cooldownChangeContinuations.values {
+            continuation.yield(credential)
+        }
+    }
+
+    private func removeCooldownChangeContinuation(_ id: UUID) {
+        cooldownChangeContinuations.removeValue(forKey: id)
     }
 }

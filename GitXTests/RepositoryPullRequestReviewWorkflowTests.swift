@@ -1,4 +1,5 @@
 import ForgeKit
+import GitHubForgeAdapter
 import XCTest
 
 @MainActor
@@ -234,7 +235,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         }
 
         let initialFailureService = FakeReviewMutationService(workspaces: [])
-        await initialFailureService.failNextLoad(with: .offline)
+        await initialFailureService.failNextLoad(with: RepositoryPullRequestReviewServiceError.offline)
         let initialFailure = RepositoryPullRequestReviewSession(
             identity: fixture.identity,
             service: initialFailureService
@@ -249,6 +250,158 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await fulfillment(of: [failed])
         initialFailure.onStateChange = nil
         XCTAssertNil(initialFailure.workspace)
+    }
+
+    func testSAMLLoadRecoveryPreservesLastGoodStateAndRetriesOnlyWhenExplicitlyRequested() async throws {
+        let fixture = try ReviewAppFixture()
+        let initial = try fixture.workspace()
+        let replacement = try fixture.workspace()
+        let service = FakeReviewMutationService(workspaces: [initial, replacement])
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        try await load(session)
+        let expected = ReviewAuthorizationRecoveryTestFixture.samlError(at: fixture.now)
+        await service.failNextLoad(with: expected)
+        let offered = expectation(description: "SAML recovery offered")
+        var retryAction: (@MainActor () -> Void)?
+        var receivedError: GitHubMutationError?
+        session.onAuthorizationRecovery = { error, retry in
+            guard let presentation = GitHubAuthorizationRecoveryPresentation.make(error: error) else {
+                return false
+            }
+            XCTAssertEqual(presentation.kind, .saml)
+            receivedError = error as? GitHubMutationError
+            retryAction = retry
+            offered.fulfill()
+            return true
+        }
+
+        session.load()
+        await fulfillment(of: [offered])
+
+        XCTAssertEqual(receivedError, expected)
+        let loadCallsBeforeRetry = await service.loadCalls()
+        XCTAssertEqual(loadCallsBeforeRetry, 2, "Recovery must not retry automatically")
+        guard case let .stale(retained, _) = session.state else {
+            return XCTFail("Expected the last-good workspace to remain visibly stale")
+        }
+        XCTAssertEqual(retained.identity, initial.identity)
+        XCTAssertEqual(retained.mutationContext.allowedOperations, initial.mutationContext.allowedOperations)
+        XCTAssertNotNil(retryAction)
+
+        retryAction?()
+        await service.waitForLoadCalls(3)
+        try await waitForWorkspace(session, state: .open)
+
+        let loadCallsAfterRetry = await service.loadCalls()
+        XCTAssertEqual(loadCallsAfterRetry, 3)
+        XCTAssertTrue(session.workspace?.isMutationStateFresh == true)
+        session.onAuthorizationRecovery = nil
+    }
+
+    func testInstallationResolutionRecoveryRetriesTheExactMutationOnlyAfterConfirmation() async throws {
+        let fixture = try ReviewAppFixture()
+        let initial = try fixture.workspace()
+        let resolved = try fixture.workspace(threadIsResolved: true)
+        let service = FakeReviewMutationService(workspaces: [initial, resolved])
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        try await load(session)
+        let expected = ReviewAuthorizationRecoveryTestFixture.installationError(at: fixture.now)
+        await service.failNextResolution(with: expected)
+        let offered = expectation(description: "installation recovery offered")
+        var retryAction: (@MainActor () -> Void)?
+        var receivedError: GitHubMutationError?
+        session.onAuthorizationRecovery = { error, retry in
+            guard let presentation = GitHubAuthorizationRecoveryPresentation.make(error: error) else {
+                return false
+            }
+            XCTAssertEqual(presentation.kind, .installation)
+            receivedError = error as? GitHubMutationError
+            retryAction = retry
+            offered.fulfill()
+            return true
+        }
+
+        session.setResolution(threadID: fixture.threadID, mutation: .resolve, at: fixture.now)
+        await service.waitForResolutionFailureDelivered()
+        await fulfillment(of: [offered])
+
+        XCTAssertEqual(receivedError, expected)
+        let mutationsBeforeRetry = await service.resolutionMutations()
+        let loadCallsBeforeRetry = await service.loadCalls()
+        XCTAssertEqual(mutationsBeforeRetry, [.resolve])
+        XCTAssertEqual(loadCallsBeforeRetry, 1, "Recovery must not refresh or retry automatically")
+        XCTAssertEqual(
+            session.resolutionStates[fixture.threadID],
+            .confirmed(isResolved: false)
+        )
+
+        let reconciled = expectation(description: "retried resolution reconciled")
+        session.onStateChange = { state in
+            guard case let .loaded(workspace) = state,
+                  workspace.threads.first?.presentation.thread.isResolved == true
+            else { return }
+            reconciled.fulfill()
+        }
+        retryAction?()
+        await service.waitForResolutionCalls(2)
+        await fulfillment(of: [reconciled])
+
+        let mutationsAfterRetry = await service.resolutionMutations()
+        let loadCallsAfterRetry = await service.loadCalls()
+        XCTAssertEqual(mutationsAfterRetry, [.resolve, .resolve])
+        XCTAssertEqual(loadCallsAfterRetry, 2)
+        session.onStateChange = nil
+        session.onAuthorizationRecovery = nil
+    }
+
+    func testGenericAndUnknownResolutionFailuresNeverOfferRecoveryOrRetryMutation() async throws {
+        let fixture = try ReviewAppFixture()
+        let cases: [(RepositoryPullRequestReviewServiceError, Bool)] = [
+            (.authoritative("GitHub rejected the resolution"), false),
+            (.outcomeUnknown, true),
+        ]
+
+        for (failure, reconcilesUnknownOutcome) in cases {
+            let workspace = try fixture.workspace()
+            let service = FakeReviewMutationService(workspaces: [workspace, workspace])
+            let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+            try await load(session)
+            await service.failNextResolution(with: failure)
+            var recoveryPresentationCount = 0
+            session.onAuthorizationRecovery = { error, _ in
+                guard GitHubAuthorizationRecoveryPresentation.make(error: error) != nil else {
+                    return false
+                }
+                recoveryPresentationCount += 1
+                return true
+            }
+            let completed = expectation(description: "non-recoverable resolution completed")
+            if reconcilesUnknownOutcome {
+                session.onOutcomeUnknown = { completed.fulfill() }
+            } else {
+                session.onMutationError = { _ in completed.fulfill() }
+            }
+
+            session.setResolution(threadID: fixture.threadID, mutation: .resolve, at: fixture.now)
+            await service.waitForResolutionFailureDelivered()
+            await fulfillment(of: [completed])
+            if reconcilesUnknownOutcome {
+                await service.waitForLoadCalls(2)
+            }
+
+            let mutations = await service.resolutionMutations()
+            let loadCalls = await service.loadCalls()
+            XCTAssertEqual(recoveryPresentationCount, 0)
+            XCTAssertEqual(
+                mutations,
+                [.resolve],
+                "Neither generic failure nor unknown-outcome reconciliation may retry a mutation"
+            )
+            XCTAssertEqual(loadCalls, reconcilesUnknownOutcome ? 2 : 1)
+            session.onAuthorizationRecovery = nil
+            session.onMutationError = nil
+            session.onOutcomeUnknown = nil
+        }
     }
 
     func testRefreshPreservesLastGoodWorkspaceAsStaleUntilReplacementArrives() async throws {
@@ -302,7 +455,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         try await load(session)
         let confirmation = try await session.prepareMerge(method: .merge)
 
-        await service.failNextLoad(with: .offline)
+        await service.failNextLoad(with: RepositoryPullRequestReviewServiceError.offline)
         let stale = expectation(description: "workspace became stale")
         session.onStateChange = { state in
             if case let .stale(_, message) = state,
@@ -686,7 +839,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
             bodyMarkdown: "Preserve while stale"
         )
         let pending = try XCTUnwrap(pendingValue)
-        await service.failNextLoad(with: .offline)
+        await service.failNextLoad(with: RepositoryPullRequestReviewServiceError.offline)
         let stale = expectation(description: "refresh failure retained stale workspace")
         session.onStateChange = { state in
             if case let .stale(_, message) = state,
@@ -1118,7 +1271,9 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         session.expireResolutionUndo(threadID: fixture.threadID, at: fixture.now.addingTimeInterval(8))
         XCTAssertEqual(session.resolutionStates[fixture.threadID], .confirmed(isResolved: true))
 
-        await service.failNextResolution(with: .authoritative("Denied"))
+        await service.failNextResolution(
+            with: RepositoryPullRequestReviewServiceError.authoritative("Denied")
+        )
         session.setResolution(threadID: fixture.threadID, mutation: .unresolve, at: fixture.now)
         await service.waitForResolutionCalls(2)
         await service.waitForResolutionFailureDelivered()
@@ -1701,7 +1856,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         let service = FakeReviewMutationService(workspaces: [open, open])
         let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
         try await load(session)
-        await service.failNextLifecycle(with: .outcomeUnknown)
+        await service.failNextLifecycle(with: RepositoryPullRequestReviewServiceError.outcomeUnknown)
         let reconciliationStarted = expectation(description: "unknown lifecycle outcome reconciles")
         session.onOutcomeUnknown = { reconciliationStarted.fulfill() }
 
@@ -1915,6 +2070,43 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
     }
 }
 
+enum ReviewAuthorizationRecoveryTestFixture {
+    static func samlError(at date: Date) -> GitHubMutationError {
+        .samlAuthorizationRequired(metadata(
+            at: date,
+            saml: GitHubSAMLMetadata(
+                authorizationURL: URL(string: "https://github.com/orgs/hbmartin/sso")
+            )
+        ))
+    }
+
+    static func installationError(at date: Date) -> GitHubMutationError {
+        .installationConfigurationRequired(metadata(
+            at: date,
+            installation: GitHubInstallationMetadata(
+                configurationURL: URL(string: "https://github.com/apps/gitx/installations/new")
+            )
+        ))
+    }
+
+    private static func metadata(
+        at date: Date,
+        saml: GitHubSAMLMetadata? = nil,
+        installation: GitHubInstallationMetadata? = nil
+    ) -> GitHubResponseMetadata {
+        GitHubResponseMetadata(
+            statusCode: 403,
+            rateLimit: GitHubRateLimitParser.parse(
+                statusCode: 403,
+                headers: [:],
+                receivedAt: date
+            ),
+            saml: saml,
+            installation: installation
+        )
+    }
+}
+
 struct ReviewAppFixture: Sendable {
     let now = Date(timeIntervalSince1970: 1000)
     let repository: ForgeRepositoryIdentity
@@ -2001,7 +2193,8 @@ struct ReviewAppFixture: Sendable {
         isResolved: Bool = false,
         displayedHead: ForgeCommitID? = nil,
         exactOutdatedLocalAnchor: ForgeReviewAnchor? = nil,
-        suggestedChanges: [ForgeSuggestedChange]? = nil
+        suggestedChanges: [ForgeSuggestedChange]? = nil,
+        firstCommentBody: String = "Please revise"
     ) throws -> RepositoryPullRequestReviewThreadRecord {
         let commentIDs = try (1 ... 4).map {
             try ForgeObjectID(forge: repository.forge, value: "comment-\($0)")
@@ -2010,7 +2203,7 @@ struct ReviewAppFixture: Sendable {
             ForgeReviewComment(
                 repository: repository,
                 id: commentIDs[index],
-                bodyMarkdown: index == 0 ? "Please revise" : "Hidden",
+                bodyMarkdown: index == 0 ? firstCommentBody : "Hidden",
                 createdAt: now.addingTimeInterval(Double(index)),
                 updatedAt: now.addingTimeInterval(Double(index)),
                 author: .unavailable(.partialResponse)
@@ -2134,28 +2327,30 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     private var mutationWorkspace: RepositoryPullRequestReviewWorkspace?
     private var freshSnapshots: [ForgePullRequestMergeSnapshot]
     private var mergeError: RepositoryPullRequestReviewServiceError?
-    private var loadError: RepositoryPullRequestReviewServiceError?
+    private var loadError: (any Error & Sendable)?
     private var loadCallCount = 0
     private var shouldHoldNextLoad = false
     private var heldLoad: CheckedContinuation<Void, Never>?
     private var loadWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var inlineValues: [ForgeInlineReviewPublication] = []
+    private var inlineError: (any Error & Sendable)?
     private var shouldHoldNextInline = false
     private var heldInline: CheckedContinuation<Void, Never>?
     private var replyValues: [ForgeReviewThreadReplyPublication] = []
+    private var replyError: (any Error & Sendable)?
     private var shouldHoldNextReply = false
     private var heldReply: CheckedContinuation<Void, Never>?
     private var replyWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var formalValues: [ForgeFormalReviewSubmission] = []
     private var resolutionValues: [ForgeReviewThreadResolutionMutation] = []
-    private var resolutionError: RepositoryPullRequestReviewServiceError?
+    private var resolutionError: (any Error & Sendable)?
     private var shouldHoldNextResolution = false
     private var heldResolution: CheckedContinuation<Void, Error>?
     private var resolutionFailureCount = 0
     private var resolutionWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var resolutionFailureWaiters: [CheckedContinuation<Void, Never>] = []
     private var lifecycleValues: [ForgePullRequestLifecycleRequest] = []
-    private var lifecycleError: RepositoryPullRequestReviewServiceError?
+    private var lifecycleError: (any Error & Sendable)?
     private var lifecycleWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var mergeValues: [ForgePullRequestMergeRequest] = []
     private var mergeWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -2209,6 +2404,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
             shouldHoldNextInline = false
             await withCheckedContinuation { heldInline = $0 }
         }
+        if let inlineError {
+            self.inlineError = nil
+            throw inlineError
+        }
         return try resultWorkspace()
     }
 
@@ -2220,6 +2419,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
         if shouldHoldNextReply {
             shouldHoldNextReply = false
             await withCheckedContinuation { heldReply = $0 }
+        }
+        if let replyError {
+            self.replyError = nil
+            throw replyError
         }
         return try resultWorkspace()
     }
@@ -2396,15 +2599,23 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
         }
     }
 
-    func failNextResolution(with error: RepositoryPullRequestReviewServiceError) {
+    func failNextInline(with error: any Error & Sendable) {
+        inlineError = error
+    }
+
+    func failNextReply(with error: any Error & Sendable) {
+        replyError = error
+    }
+
+    func failNextResolution(with error: any Error & Sendable) {
         resolutionError = error
     }
 
-    func failNextLifecycle(with error: RepositoryPullRequestReviewServiceError) {
+    func failNextLifecycle(with error: any Error & Sendable) {
         lifecycleError = error
     }
 
-    func failNextLoad(with error: RepositoryPullRequestReviewServiceError) {
+    func failNextLoad(with error: any Error & Sendable) {
         loadError = error
     }
 

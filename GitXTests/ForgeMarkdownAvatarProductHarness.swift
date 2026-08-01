@@ -327,6 +327,18 @@
                     token: Data("sidebar-token".utf8),
                     expiresAt: nil
                 )
+                let alternateAccountID = try ForgeAccountID(
+                    forge: forge,
+                    value: "sidebar-attention-alternate-account"
+                )
+                let alternateAccount = try await madeServices.addAccountCoordinator.addPersonalAccessToken(
+                    accountID: alternateAccountID,
+                    login: "zz-alternate-user",
+                    credentialID: ForgeCredentialID("sidebar-attention-alternate-pat"),
+                    kind: .fineGrained,
+                    token: Data("sidebar-alternate-token".utf8),
+                    expiresAt: nil
+                )
                 ApplicationComposition.setSharedComposition(ApplicationComposition(
                     userDefaults: defaults,
                     forgeServices: ForgeApplicationServiceLoader { madeServices },
@@ -358,11 +370,13 @@
                 )
                 let windowController = PBGitWindowController()
                 windowController.repository = repository
-                let boundCollaborationBehavior = await exerciseBoundCollaboration(
+                let boundCollaborationProof = await exerciseBoundCollaboration(
                     repository: repository,
                     windowController: windowController,
                     identity: identity,
                     account: account,
+                    alternateAccount: alternateAccount,
+                    services: madeServices,
                     binding: binding
                 )
                 guard let madeSidebar = PBGitSidebarController(
@@ -438,7 +452,9 @@
                     emptyCell?.accessibilityLabel() == "Attention, No unseen Attention items",
                     sessionBehavior,
                     unboundCollaborationBehavior,
-                    boundCollaborationBehavior,
+                    boundCollaborationProof.baseline,
+                    boundCollaborationProof.collaborationCooldown,
+                    boundCollaborationProof.toolbarCooldown,
                 ]
                 let proof = conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
                     if condition.element {
@@ -900,20 +916,22 @@
             windowController: PBGitWindowController,
             identity: ForgeRepositoryIdentity,
             account: ForgeAccount,
+            alternateAccount: ForgeAccount,
+            services: ForgeApplicationServices,
             binding: ForgeRepositoryBinding
-        ) async -> Bool {
+        ) async -> (baseline: Bool, collaborationCooldown: Bool, toolbarCooldown: Bool) {
             guard let controller = RepositoryForgeCollaborationController(
                 repository: repository,
                 superController: windowController
             ) else {
-                return false
+                return (false, false, false)
             }
             let view = controller.view
             controller.prepare()
             controller.updateView()
             guard await waitForCollaborationStatus("Using @sidebar-user", in: view) else {
                 controller.closeView()
-                return false
+                return (false, false, false)
             }
 
             let authenticated = controller.currentAccountLogin == account.login && controller.includesAttention
@@ -986,8 +1004,18 @@
             _ = await waitForCollaborationStatus("Using @sidebar-user", in: view)
             NotificationCenter.default.post(name: .forgeAccountsDidChange, object: nil)
             _ = await waitForCollaborationStatus("Using @sidebar-user", in: view)
+            let cooldownProof = await exerciseCredentialCooldownAccountRebinding(
+                controller: controller,
+                view: view,
+                repository: repository,
+                windowController: windowController,
+                services: services,
+                account: account,
+                alternateAccount: alternateAccount,
+                binding: binding
+            )
             controller.closeView()
-            return authenticated &&
+            let baseline = authenticated &&
                 !sidebarRepositories.isEmpty &&
                 openedPullRequest &&
                 openedIssue &&
@@ -999,6 +1027,176 @@
                 anonymousAttentionGateway &&
                 browserOnly &&
                 browserButton
+            return (baseline, cooldownProof.collaboration, cooldownProof.toolbar)
+        }
+
+        private static func exerciseCredentialCooldownAccountRebinding(
+            controller: RepositoryForgeCollaborationController,
+            view: NSView,
+            repository: PBGitRepository,
+            windowController: PBGitWindowController,
+            services: ForgeApplicationServices,
+            account: ForgeAccount,
+            alternateAccount: ForgeAccount,
+            binding: ForgeRepositoryBinding
+        ) async -> (collaboration: Bool, toolbar: Bool) {
+            guard let collaborationPopup = descendant(
+                identifier: "ForgeCollaborationAccount",
+                in: view
+            ) as? NSPopUpButton else {
+                return (false, false)
+            }
+            let settings = ApplicationComposition.shared.repositoryViewState(for: repository)
+            let toolbarController = RepositoryToolbarController(windowController: windowController)
+            let toolbar = NSToolbar(identifier: "GitX.Repository.CredentialCooldownProof")
+            guard let accountItem = toolbarController.toolbar(
+                toolbar,
+                itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount"),
+                willBeInsertedIntoToolbar: true
+            ),
+                let accountStack = accountItem.view as? NSStackView,
+                let toolbarPopup = accountStack.arrangedSubviews.compactMap({ $0 as? NSPopUpButton }).first(where: {
+                    $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount"
+                })
+            else {
+                return (false, false)
+            }
+
+            let notificationCounter = HarnessNotificationCounter()
+            let notificationObserver = NotificationCenter.default.addObserver(
+                forName: .forgeAccountsDidChange,
+                object: repository,
+                queue: nil
+            ) { _ in
+                notificationCounter.increment()
+            }
+            defer { NotificationCenter.default.removeObserver(notificationObserver) }
+
+            controller.repositoryBindingDidChange()
+            let toolbarReceivedAccounts = await waitForCondition {
+                toolbarPopup.menu?.items.contains(where: {
+                    $0.accessibilityIdentifier()
+                        == "GitX.Toolbar.ForgeAccount.Choice.\(alternateAccount.id.value)"
+                }) == true
+            }
+            guard toolbarReceivedAccounts else { return (false, false) }
+
+            func collaborationSelectionIsRestored() -> Bool {
+                collaborationPopup.selectedItem?.representedObject as? String == account.id.value
+            }
+
+            func toolbarSelectionIsRestored() -> Bool {
+                let currentIdentifier = "GitX.Toolbar.ForgeAccount.Choice.\(account.id.value)"
+                let alternateIdentifier = "GitX.Toolbar.ForgeAccount.Choice.\(alternateAccount.id.value)"
+                return toolbarPopup.menu?.items.first(where: {
+                    $0.accessibilityIdentifier() == currentIdentifier
+                })?.state == .on && toolbarPopup.menu?.items.first(where: {
+                    $0.accessibilityIdentifier() == alternateIdentifier
+                })?.state == .off
+            }
+
+            func forceCollaborationSelection() async -> Bool {
+                guard let destinationIndex = collaborationPopup.itemArray.firstIndex(where: {
+                    $0.representedObject as? String == alternateAccount.id.value
+                }), let action = collaborationPopup.action else {
+                    return false
+                }
+                collaborationPopup.selectItem(at: destinationIndex)
+                let delivered = NSApp.sendAction(
+                    action,
+                    to: collaborationPopup.target,
+                    from: collaborationPopup
+                )
+                await controller.waitForAccountSelectionForProductProof()
+                return delivered &&
+                    settings.forgeRepositoryBinding == binding &&
+                    notificationCounter.value == 0 &&
+                    collaborationSelectionIsRestored()
+            }
+
+            func forceToolbarSelection() async -> Bool {
+                let identifier = "GitX.Toolbar.ForgeAccount.Choice.\(alternateAccount.id.value)"
+                guard let item = toolbarPopup.menu?.items.first(where: {
+                    $0.accessibilityIdentifier() == identifier
+                }), !item.isEnabled, let action = item.action else {
+                    return false
+                }
+                let delivered = NSApp.sendAction(action, to: item.target, from: item)
+                await toolbarController.waitForForgeAccountSelectionForProductProof()
+                return delivered &&
+                    settings.forgeRepositoryBinding == binding &&
+                    notificationCounter.value == 0 &&
+                    toolbarSelectionIsRestored()
+            }
+
+            let credential = account.currentCredential.reference
+            let sessionGate = services.githubMutationState.sessionGate
+            let waitingDeadline = Date().addingTimeInterval(60)
+            await sessionGate.recordCooldown(for: credential, until: waitingDeadline)
+            let waitingHelp = "Account changes are paused until GitHub’s rate-limit window ends."
+            let waitingControlsDisabled = await waitForCondition {
+                !collaborationPopup.isEnabled &&
+                    collaborationPopup.accessibilityHelp() == waitingHelp &&
+                    !toolbarPopup.isEnabled &&
+                    toolbarPopup.accessibilityHelp() == waitingHelp
+            }
+            let waitingState = await services.credentialCooldowns.retainedState(
+                for: credential,
+                at: Date()
+            )
+            let collaborationWaitingRefused = await forceCollaborationSelection()
+            let toolbarWaitingRefused = await forceToolbarSelection()
+
+            await sessionGate.recordCooldown(for: credential, until: nil)
+            let elapsedDeadline = Date().addingTimeInterval(-60)
+            await sessionGate.recordCooldown(for: credential, until: elapsedDeadline)
+            let retryPendingHelp = "Account changes are paused until a successful GitHub retry completes."
+            let retryPendingControlsDisabled = await waitForCondition {
+                !collaborationPopup.isEnabled &&
+                    collaborationPopup.accessibilityHelp() == retryPendingHelp &&
+                    !toolbarPopup.isEnabled &&
+                    toolbarPopup.accessibilityHelp() == retryPendingHelp
+            }
+            let retryPendingState = await services.credentialCooldowns.retainedState(
+                for: credential,
+                at: Date()
+            )
+            let collaborationRetryPendingRefused = await forceCollaborationSelection()
+            let toolbarRetryPendingRefused = await forceToolbarSelection()
+
+            var successfulRetryClearedState = false
+            if case let .allowed(permit) = await sessionGate.admitRequest(for: credential, at: Date()) {
+                await sessionGate.recordSuccessfulRequest(permit)
+                let clearedState = await services.credentialCooldowns.retainedState(
+                    for: credential,
+                    at: Date()
+                )
+                successfulRetryClearedState = clearedState == .none
+            }
+            if !successfulRetryClearedState {
+                await sessionGate.recordCooldown(for: credential, until: nil)
+            }
+            let controlsReenabled = await waitForCondition {
+                collaborationPopup.isEnabled &&
+                    toolbarPopup.isEnabled &&
+                    collaborationSelectionIsRestored() &&
+                    toolbarSelectionIsRestored()
+            }
+
+            let waitingStateMatched = waitingState == .waiting(until: waitingDeadline)
+            let retryPendingStateMatched = retryPendingState == .retryPending(deadline: elapsedDeadline)
+            let sharedStateBehavior = waitingControlsDisabled &&
+                retryPendingControlsDisabled &&
+                waitingStateMatched &&
+                retryPendingStateMatched &&
+                successfulRetryClearedState &&
+                controlsReenabled &&
+                settings.forgeRepositoryBinding == binding &&
+                notificationCounter.value == 0
+            return (
+                sharedStateBehavior && collaborationWaitingRefused && collaborationRetryPendingRefused,
+                sharedStateBehavior && toolbarWaitingRefused && toolbarRetryPendingRefused
+            )
         }
 
         private static func waitForCollaborationStatus(_ value: String, in view: NSView) async -> Bool {
@@ -1009,6 +1207,19 @@
                     in: view
                 ) as? NSTextField
                 if status?.stringValue == value {
+                    return true
+                }
+                try? await Task.sleep(nanoseconds: 10_000_000)
+            }
+            return false
+        }
+
+        private static func waitForCondition(
+            _ condition: @escaping @MainActor () -> Bool
+        ) async -> Bool {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            while ContinuousClock.now < deadline {
+                if condition() {
                     return true
                 }
                 try? await Task.sleep(nanoseconds: 10_000_000)
@@ -1243,6 +1454,24 @@
             func remove(accountKey: String) throws {
                 lock.lock()
                 storage.removeValue(forKey: accountKey)
+                lock.unlock()
+            }
+        }
+
+        // swift6-safety-justification: The lock serializes notification delivery from any posting thread.
+        private final nonisolated class HarnessNotificationCounter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var count = 0
+
+            var value: Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return count
+            }
+
+            func increment() {
+                lock.lock()
+                count += 1
                 lock.unlock()
             }
         }

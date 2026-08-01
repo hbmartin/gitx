@@ -295,6 +295,95 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         )
     }
 
+    func testRuntimeAuthorizationRecoveryPresentationAcceptsOnlyTypedSafeRetryableFailures() throws {
+        let samlURL = try XCTUnwrap(URL(string: "https://github.com/orgs/example/sso"))
+        let installationURL = try XCTUnwrap(
+            URL(string: "https://github.com/apps/gitx-test/installations/new")
+        )
+        let rateLimit = GitHubRateLimitParser.parse(
+            statusCode: 403,
+            headers: [:],
+            receivedAt: Date(timeIntervalSince1970: 1)
+        )
+        let samlMetadata = GitHubResponseMetadata(
+            statusCode: 403,
+            rateLimit: rateLimit,
+            saml: GitHubSAMLMetadata(authorizationURL: samlURL)
+        )
+        let installationMetadata = GitHubResponseMetadata(
+            statusCode: 403,
+            rateLimit: rateLimit,
+            installation: GitHubInstallationMetadata(configurationURL: installationURL)
+        )
+
+        let saml = try XCTUnwrap(GitHubAuthorizationRecoveryPresentation.make(
+            error: GitHubReadError.samlAuthorizationRequired(samlMetadata)
+        ))
+        XCTAssertEqual(saml.kind, .saml)
+        XCTAssertEqual(saml.browserActionTitle, "Authorize in Browser")
+        XCTAssertEqual(saml.url, samlURL)
+        let installation = try XCTUnwrap(GitHubAuthorizationRecoveryPresentation.make(
+            error: GitHubMutationError.installationConfigurationRequired(installationMetadata)
+        ))
+        XCTAssertEqual(installation.kind, .installation)
+        XCTAssertEqual(installation.browserActionTitle, "Configure Repository Access")
+        XCTAssertEqual(installation.url, installationURL)
+        XCTAssertNil(GitHubAuthorizationRecoveryPresentation.make(
+            error: GitHubMutationError.outcomeUnknown(nil)
+        ))
+        XCTAssertNil(GitHubAuthorizationRecoveryPresentation.make(
+            error: GitHubReadError.samlAuthorizationRequired(GitHubResponseMetadata(
+                statusCode: 403,
+                rateLimit: rateLimit,
+                saml: GitHubSAMLMetadata(authorizationURL: nil)
+            ))
+        ))
+    }
+
+    func testAuthorizationRecoverySourcePolicyMatchesCredentialAuthority() throws {
+        let samlURL = try XCTUnwrap(URL(string: "https://github.com/orgs/example/sso"))
+        let installationURL = try XCTUnwrap(
+            URL(string: "https://github.com/apps/gitx-test/installations/new")
+        )
+        let saml = GitHubRESTAuthorizationFailure.samlAuthorizationRequired(authorizeURL: samlURL)
+        let installation = GitHubRESTAuthorizationFailure.installationConfigurationRequired(
+            configurationURL: installationURL
+        )
+        let sources: [ForgeCredentialSource] = [
+            .forgeApplicationDeviceFlow,
+            .commandLineBroker,
+            .fineGrainedPersonalAccessToken,
+            .classicPersonalAccessToken,
+        ]
+
+        XCTAssertEqual(
+            sources.filter {
+                GitHubAuthorizationRecoverySourcePolicy.allowsRecovery(
+                    for: saml,
+                    credentialSource: $0
+                )
+            },
+            [.commandLineBroker, .classicPersonalAccessToken]
+        )
+        XCTAssertEqual(
+            sources.filter {
+                GitHubAuthorizationRecoverySourcePolicy.allowsRecovery(
+                    for: installation,
+                    credentialSource: $0
+                )
+            },
+            [.forgeApplicationDeviceFlow]
+        )
+        for failure in [GitHubRESTAuthorizationFailure.badCredentials, .authorizationDenied] {
+            XCTAssertTrue(sources.allSatisfy {
+                !GitHubAuthorizationRecoverySourcePolicy.allowsRecovery(
+                    for: failure,
+                    credentialSource: $0
+                )
+            })
+        }
+    }
+
     @MainActor
     func testAccountsPreferencesMakesFailuresAndModalCancellationsActionable() async throws {
         let alerts = ScopedAlertRunModalDriver()
@@ -604,37 +693,36 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         }
 
         let configurationURL = try XCTUnwrap(URL(string: "https://github.com/settings/installations/123"))
-        await client.setPersonalAccessTokenAuthorizationFailures([
-            .installationConfigurationRequired(configurationURL: configurationURL),
-        ])
-        let installationRecoveryBaseline = await client.callCount(for: .personalAccessToken)
+        let installationFailure = GitHubRESTAuthorizationFailure.installationConfigurationRequired(
+            configurationURL: configurationURL
+        )
+        await client.setPersonalAccessTokenAuthorizationFailures([installationFailure])
+        let fineGrainedInstallationBaseline = await client.callCount(for: .personalAccessToken)
         alerts.enqueue(.alertFirstButtonReturn) { alert in
             self.populatePersonalAccessToken(in: alert, token: "github_pat_install", label: "installation")
         }
         alerts.enqueue(.alertFirstButtonReturn)
-        alerts.enqueue(.alertFirstButtonReturn)
         alternatives.selectItem(at: 2)
         try NSApp.sendAction(XCTUnwrap(alternatives.action), to: alternatives.target, from: alternatives)
-        await waitUntil("installation recovery retry") {
-            await client.callCount(for: .personalAccessToken) == installationRecoveryBaseline + 2 &&
-                status.stringValue == "Personal access Credential added."
+        await waitUntil("fine-grained Credential rejects installation recovery") {
+            await client.callCount(for: .personalAccessToken) == fineGrainedInstallationBaseline + 1 &&
+                status.stringValue == installationFailure.description
         }
-        XCTAssertTrue(alerts.openedURLs.contains(configurationURL))
+        XCTAssertFalse(alerts.openedURLs.contains(configurationURL))
 
-        await client.setPersonalAccessTokenAuthorizationFailures([
-            .installationConfigurationRequired(configurationURL: configurationURL),
-        ])
-        let installationCancellationBaseline = await client.callCount(for: .personalAccessToken)
+        await client.setPersonalAccessTokenAuthorizationFailures([installationFailure])
+        let classicInstallationBaseline = await client.callCount(for: .personalAccessToken)
         alerts.enqueue(.alertFirstButtonReturn) { alert in
-            self.populatePersonalAccessToken(in: alert, token: "github_pat_cancel", label: "cancel")
+            self.populatePersonalAccessToken(in: alert, token: "ghp_install", label: "installation")
         }
-        alerts.enqueue(.alertSecondButtonReturn)
-        alternatives.selectItem(at: 2)
+        alerts.enqueue(.alertFirstButtonReturn)
+        alternatives.selectItem(at: 3)
         try NSApp.sendAction(XCTUnwrap(alternatives.action), to: alternatives.target, from: alternatives)
-        await waitUntil("installation recovery cancellation") {
-            await client.callCount(for: .personalAccessToken) == installationCancellationBaseline + 1 &&
-                alternatives.isEnabled
+        await waitUntil("classic Credential rejects installation recovery") {
+            await client.callCount(for: .personalAccessToken) == classicInstallationBaseline + 1 &&
+                status.stringValue == installationFailure.description
         }
+        XCTAssertFalse(alerts.openedURLs.contains(configurationURL))
 
         let samlURL = try XCTUnwrap(URL(string: "https://github.com/orgs/example/sso?authorization_request=test"))
         await client.setPersonalAccessTokenAuthorizationFailures([

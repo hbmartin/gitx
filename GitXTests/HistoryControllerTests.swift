@@ -470,6 +470,32 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNoThrow(try ForgeAvatarURL(XCTUnwrap(accountChoice.avatarURL)))
         XCTAssertNotNil(choice.action)
 
+        let cooldownDeadline = Date().addingTimeInterval(60)
+        NotificationCenter.default.post(
+            name: .repositoryForgeAccountDidChange,
+            object: repository,
+            userInfo: [
+                RepositoryForgeAccountNotificationKey.providerName: "GitHub",
+                RepositoryForgeAccountNotificationKey.login: "octocat",
+                RepositoryForgeAccountNotificationKey.isPublic: false,
+                RepositoryForgeAccountNotificationKey.accountID: otherAccountID,
+                RepositoryForgeAccountNotificationKey.accounts: [
+                    accountChoice.notificationValue,
+                    otherAccountChoice.notificationValue,
+                ],
+                RepositoryForgeAccountNotificationKey.accountRebindingEnabled: false,
+                RepositoryForgeAccountNotificationKey.accountRebindingCooldownDeadline: cooldownDeadline,
+            ]
+        )
+        XCTAssertFalse(accountPopup.isEnabled)
+        XCTAssertEqual(
+            accountPopup.accessibilityHelp(),
+            "Account changes are paused until GitHub’s rate-limit window ends."
+        )
+        XCTAssertFalse(try XCTUnwrap(accountPopup.menu?.items.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount.Choice.toolbar-account"
+        }).isEnabled)
+
         XCTAssertNil(toolbarController.toolbar(
             toolbar,
             itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.Unknown"),

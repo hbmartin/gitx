@@ -744,6 +744,39 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         }
     }
 
+    func testSQLiteRowRejectsMismatchedAndNonfiniteStorageClasses() {
+        XCTAssertThrowsError(try ForgeSQLiteRow(values: [.text("integer")]).integer(0))
+        XCTAssertThrowsError(try ForgeSQLiteRow(values: [.integer(1)]).double(0))
+        XCTAssertThrowsError(try ForgeSQLiteRow(values: [.double(.infinity)]).double(0))
+        XCTAssertThrowsError(try ForgeSQLiteRow(values: [.blob(Data())]).text(0))
+    }
+
+    func testRestorePreservesDurableRecordWithoutExpiration() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let record = try fixture.record(
+            .watchedRepository,
+            key: "watch-without-expiration",
+            payload: "watch",
+            activity: 1
+        )
+        XCTAssertNil(record.expiresAt)
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+
+        try await store.restore(ForgeSQLiteSalvage(
+            durableRecords: [record],
+            skippedRecordCount: 0
+        ))
+        let restored = try await store.durableRecord(
+            kind: record.kind,
+            accountID: record.accountID,
+            repository: record.repository,
+            key: record.key
+        )
+        XCTAssertEqual(restored, record)
+        await store.close()
+    }
+
     func testMalformedSQLiteStorageClassesFailClosedAndSalvageSkipsThem() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }

@@ -20,12 +20,14 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         let markdown = RecordingMarkdownRenderer()
         let avatars = RecordingAvatarRenderer()
         let router = RecordingDestinationRouter()
+        let reviewOverlayHost = RecordingReviewOverlayHost()
         let controller = try makeController(
             kind: .pullRequests,
             service: service,
             markdown: markdown,
             avatars: avatars,
-            router: router
+            router: router,
+            reviewOverlayHost: reviewOverlayHost
         )
         let window = makeWindow(controller)
 
@@ -54,6 +56,15 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertEqual(avatars.displayedLogins, ["ari"])
         let body = try XCTUnwrap(descendant(identifier: "ForgeInspectorBody", in: controller.view))
         XCTAssertEqual(body.accessibilityIdentifier(), "ForgeInspectorBody")
+
+        let fetchedDefaultBranch = try ForgeRevision.branch(ForgeRefName("trunk"))
+        controller.updateDefaultRevision(fetchedDefaultBranch)
+        let fetchedContext = try ForgeMarkdownContext(
+            repository: ReadFixture.repository(),
+            location: .repository(defaultBranch: fetchedDefaultBranch)
+        )
+        XCTAssertEqual(Array(markdown.renderedContexts.suffix(2)), [fetchedContext, fetchedContext])
+        XCTAssertEqual(reviewOverlayHost.defaultRevisions, [fetchedDefaultBranch])
 
         let browser = try XCTUnwrap(
             descendant(identifier: "ForgeInspectorOpenInBrowser", in: controller.view) as? NSButton
@@ -1340,9 +1351,10 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         let session = try FakeAttentionSession()
         let router = RecordingDestinationRouter()
+        let markdown = RecordingMarkdownRenderer()
         let controller = try ForgeAttentionViewController(
             session: session,
-            markdownRenderer: RecordingMarkdownRenderer(),
+            markdownRenderer: markdown,
             avatarRenderer: RecordingAvatarRenderer(),
             destinationRouter: router,
             defaultRevision: .branch(ForgeRefName("main")),
@@ -1383,6 +1395,14 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         inspectorMode.selectedSegment = 0
         try NSApp.sendAction(XCTUnwrap(inspectorMode.action), to: inspectorMode.target, from: inspectorMode)
         XCTAssertEqual(store.forgeAttentionViewState.inspectorMode, .overview)
+        let fetchedDefaultBranch = try ForgeRevision.branch(ForgeRefName("trunk"))
+        controller.updateDefaultRevision(fetchedDefaultBranch)
+        let fetchedContext = try ForgeMarkdownContext(
+            repository: ReadFixture.repository(),
+            location: .repository(defaultBranch: fetchedDefaultBranch)
+        )
+        XCTAssertFalse(markdown.renderedContexts.isEmpty)
+        XCTAssertTrue(markdown.renderedContexts.suffix(2).allSatisfy { $0 == fetchedContext })
 
         let timelineContinuation = try XCTUnwrap(
             descendant(identifier: "ForgeInspectorLoadMoreTimeline", in: controller.view) as? NSButton
@@ -1791,7 +1811,8 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         service: FakeReadService,
         markdown: RecordingMarkdownRenderer = RecordingMarkdownRenderer(),
         avatars: RecordingAvatarRenderer = RecordingAvatarRenderer(),
-        router: RecordingDestinationRouter = RecordingDestinationRouter()
+        router: RecordingDestinationRouter = RecordingDestinationRouter(),
+        reviewOverlayHost: (any RepositoryPullRequestReviewOverlayHosting)? = nil
     ) throws -> ForgeReadSurfaceViewController {
         try ForgeReadSurfaceViewController(
             kind: kind,
@@ -1799,7 +1820,8 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             service: service,
             markdownRenderer: markdown,
             avatarRenderer: avatars,
-            destinationRouter: router
+            destinationRouter: router,
+            reviewOverlayHost: reviewOverlayHost
         )
     }
 
@@ -2075,9 +2097,11 @@ private final class FakeAttentionSession: RepositoryAttentionServing {
 @MainActor
 private final class RecordingMarkdownRenderer: ForgeReadMarkdownRendering {
     private(set) var renderedMarkdown: [String] = []
+    private(set) var renderedContexts: [ForgeMarkdownContext] = []
 
-    func makeView(markdown: String, context _: ForgeMarkdownContext) -> NSView {
+    func makeView(markdown: String, context: ForgeMarkdownContext) -> NSView {
         renderedMarkdown.append(markdown)
+        renderedContexts.append(context)
         let label = NSTextField(wrappingLabelWithString: "Native Markdown")
         label.setAccessibilityLabel("Sanitized native Markdown")
         return label
@@ -2122,6 +2146,7 @@ private final class RecordingReviewOverlayHost: RepositoryPullRequestReviewOverl
     private(set) var installations: [Installation] = []
     private(set) var refreshCount = 0
     private(set) var repositoryRefreshFailures: [String] = []
+    private(set) var defaultRevisions: [ForgeRevision] = []
     private(set) var detachCount = 0
     private let actionArea = NSView()
 
@@ -2145,6 +2170,10 @@ private final class RecordingReviewOverlayHost: RepositoryPullRequestReviewOverl
 
     func failClosedAfterRepositoryRefresh(_ message: String) {
         repositoryRefreshFailures.append(message)
+    }
+
+    func updateDefaultRevision(_ revision: ForgeRevision) {
+        defaultRevisions.append(revision)
     }
 
     func detach() {

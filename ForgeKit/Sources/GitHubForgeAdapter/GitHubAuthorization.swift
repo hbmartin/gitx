@@ -48,23 +48,55 @@ public enum GitHubRESTAuthorizationParser {
         body: Data,
         installationConfigurationURL: URL?
     ) -> GitHubRESTAuthorizationFailure? {
-        guard statusCode == 401 || statusCode == 403 || statusCode == 404 else { return nil }
-        let headers = GitHubHTTPHeaders(headers)
-        if let sso = headers["x-github-sso"],
-           let authorizeURL = samlURL(from: sso)
-        {
+        let isAuthorizationStatus = statusCode == 401 || statusCode == 403 || statusCode == 404
+        guard isAuthorizationStatus || (200 ... 299).contains(statusCode) else { return nil }
+        let metadata = responseMetadata(
+            statusCode: statusCode,
+            headers: headers,
+            body: body,
+            installationConfigurationURL: installationConfigurationURL
+        )
+        if let authorizeURL = metadata.saml?.authorizationURL {
             return .samlAuthorizationRequired(authorizeURL: authorizeURL)
         }
         if statusCode == 401 {
             return .badCredentials
         }
-        if isMissingInstallationResponse(body),
-           let installationConfigurationURL,
-           isInstallationConfigurationURL(installationConfigurationURL)
-        {
-            return .installationConfigurationRequired(configurationURL: installationConfigurationURL)
+        if let configurationURL = metadata.installation?.configurationURL {
+            return .installationConfigurationRequired(configurationURL: configurationURL)
         }
+        guard isAuthorizationStatus else { return nil }
         return .authorizationDenied
+    }
+
+    static func responseMetadata(
+        statusCode: Int,
+        headers: [String: String],
+        body: Data,
+        installationConfigurationURL: URL?
+    ) -> GitHubAuthorizationResponseMetadata {
+        let headers = GitHubHTTPHeaders(headers)
+        let messages = authorizationMessages(in: body)
+        let isAuthorizationStatus = statusCode == 401 || statusCode == 403 || statusCode == 404
+        let mayContainGraphQLErrors = (200 ... 299).contains(statusCode)
+        guard isAuthorizationStatus || mayContainGraphQLErrors else {
+            return GitHubAuthorizationResponseMetadata(saml: nil, installation: nil)
+        }
+
+        let samlBodySignal = messages.contains(where: isSAMLResponse)
+        let authorizeURL = headers["x-github-sso"].flatMap { samlURL(from: $0) }
+        let saml = (samlBodySignal || (isAuthorizationStatus && authorizeURL != nil))
+            ? GitHubSAMLMetadata(authorizationURL: authorizeURL)
+            : nil
+
+        let installation = statusCode != 401 && messages.contains(where: isMissingInstallationResponse)
+            ? GitHubInstallationMetadata(
+                configurationURL: installationConfigurationURL.flatMap {
+                    isInstallationConfigurationURL($0) ? $0 : nil
+                }
+            )
+            : nil
+        return GitHubAuthorizationResponseMetadata(saml: saml, installation: installation)
     }
 
     private static func samlURL(from header: String) -> URL? {
@@ -87,6 +119,7 @@ public enum GitHubRESTAuthorizationParser {
             components.port == nil &&
             path.count == 3 &&
             path[0] == "orgs" &&
+            isGitHubPathIdentifier(path[1]) &&
             path[2] == "sso" &&
             components.fragment == nil
     }
@@ -111,22 +144,93 @@ public enum GitHubRESTAuthorizationParser {
         }
         if path.count == 5,
            path[0] == "organizations",
+           isGitHubPathIdentifier(path[1]),
            path[2] == "settings",
            path[3] == "installations",
            UInt64(path[4]) != nil
         {
             return true
         }
-        return path.count == 4 && path[0] == "apps" && path[2] == "installations" && path[3] == "new"
+        return path.count == 4 &&
+            path[0] == "apps" &&
+            isGitHubAppSlug(path[1]) &&
+            path[2] == "installations" &&
+            path[3] == "new"
     }
 
-    private static func isMissingInstallationResponse(_ body: Data) -> Bool {
-        struct Payload: Decodable { let message: String }
-        guard let payload = try? JSONDecoder().decode(Payload.self, from: body) else { return false }
-        let message = payload.message.lowercased()
+    private static func authorizationMessages(in body: Data) -> [String] {
+        struct Payload: Decodable {
+            struct Problem: Decodable { let message: String? }
+
+            let message: String?
+            let errors: [Problem]?
+        }
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: body) else { return [] }
+        return ([payload.message] + (payload.errors ?? []).map(\.message)).compactMap { $0 }
+    }
+
+    private static func isSAMLResponse(_ rawMessage: String) -> Bool {
+        let message = rawMessage.lowercased()
+        return message.contains("saml") &&
+            (message.contains("enforcement") ||
+                message.contains("sso") ||
+                message.contains("authorize") ||
+                message.contains("authorization") ||
+                message.contains("protected"))
+    }
+
+    private static func isMissingInstallationResponse(_ rawMessage: String) -> Bool {
+        let message = rawMessage.lowercased()
         return message.contains("resource not accessible by integration") ||
             message.contains("repository is not accessible by this app") ||
             message.contains("installation not found")
+    }
+
+    private static func isGitHubPathIdentifier(_ value: Substring) -> Bool {
+        guard let first = value.utf8.first,
+              let last = value.utf8.last,
+              first != 45,
+              last != 45,
+              !value.isEmpty
+        else { return false }
+        return value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 90) || ($0 >= 97 && $0 <= 122) || $0 == 45
+        }
+    }
+
+    private static func isGitHubAppSlug(_ value: Substring) -> Bool {
+        isGitHubPathIdentifier(value) && value.utf8.allSatisfy {
+            ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 122) || $0 == 45
+        }
+    }
+}
+
+struct GitHubAuthorizationResponseMetadata: Equatable, Sendable {
+    let saml: GitHubSAMLMetadata?
+    let installation: GitHubInstallationMetadata?
+}
+
+enum GitHubAuthorizationRecoveryPolicy {
+    enum Recovery: Equatable, Sendable {
+        case saml(GitHubSAMLMetadata)
+        case installation(GitHubInstallationMetadata)
+    }
+
+    static func recovery(
+        from response: GitHubResponseMetadata,
+        credentialSource: ForgeCredentialSource
+    ) -> Recovery? {
+        if let saml = response.saml,
+           credentialSource == .classicPersonalAccessToken || credentialSource == .commandLineBroker
+        {
+            return .saml(saml)
+        }
+        if let installation = response.installation,
+           credentialSource == .forgeApplicationDeviceFlow
+        {
+            return .installation(installation)
+        }
+        return nil
     }
 }
 

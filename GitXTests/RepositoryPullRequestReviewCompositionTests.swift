@@ -834,6 +834,43 @@ final class RepositoryPullRequestReviewCompositionTests: XCTestCase {
         }
     }
 
+    func testAuthorizationRecoveryErrorsRemainTypedAcrossReviewComposition() async throws {
+        let fixture = try ReviewCompositionFixture()
+        let cases = [
+            ReviewAuthorizationRecoveryTestFixture.samlError(at: fixture.now),
+            ReviewAuthorizationRecoveryTestFixture.installationError(at: fixture.now),
+        ]
+
+        for expected in cases {
+            let lifecycle = MutationLifecycleSpy()
+            let mutation = ReviewMutationAdapterStub(
+                fixture: fixture,
+                failures: [.resolveReviewThread: expected]
+            )
+            let harness = try ReviewCompositionHarness(
+                fixture: fixture,
+                mutation: mutation,
+                lifecycle: lifecycle
+            )
+            _ = try await harness.service.loadWorkspace(identity: fixture.identity)
+
+            await assertThrows(expected) {
+                try await harness.service.setReviewThreadResolution(
+                    identity: fixture.identity,
+                    threadID: fixture.threadID,
+                    mutation: .resolve
+                )
+            }
+
+            let mutationOperations = await mutation.mutationOperations()
+            let failureCount = await harness.dependencies.failureCount()
+            XCTAssertEqual(mutationOperations, [.resolveReviewThread])
+            XCTAssertEqual(failureCount, 1)
+            XCTAssertEqual(lifecycle.registeredMutations().count, 1)
+            XCTAssertEqual(lifecycle.finishedRegistrationIDs().count, 1)
+        }
+    }
+
     func testPostDispatchMutationOwnershipMismatchIsOutcomeUnknown() async throws {
         let fixture = try ReviewCompositionFixture()
         let mutation = ReviewMutationAdapterStub(

@@ -272,6 +272,79 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         controller.detach()
     }
 
+    func testReviewMarkdownUsesUpdatedRepositoryDefaultBranchInsteadOfDisplayedHeadOrAnchorPath() async throws {
+        let fixture = try ReviewAppFixture()
+        let thread = try fixture.threadRecord(firstCommentBody: "[Guide](docs/guide.md)")
+        let workspace = try replacingThreads(
+            in: fixture.workspace(),
+            with: [thread]
+        )
+        let service = FakeReviewMutationService(workspaces: [workspace])
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        let router = OverlayRecordingRouter()
+        let localBranch = try ForgeRefName("feature/local")
+        let fetchedDefaultBranch = try ForgeRefName("trunk")
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: router,
+            defaultRevision: .branch(localBranch)
+        )
+        _ = controller.view
+        _ = controller.reviewOverlayView
+        controller.start()
+        await service.waitForLoadCalls(1)
+        let replyID = RepositoryPullRequestReviewAccessibility.threadPrefix
+            + fixture.threadID.value + ".Reply"
+        await waitUntil("review Markdown rendered using the initial context") {
+            self.descendant(identifier: replyID, in: controller.reviewOverlayView) != nil
+        }
+
+        controller.updateDefaultRevision(.branch(fetchedDefaultBranch))
+
+        let comment = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.threadPrefix
+                + fixture.threadID.value + ".Comment.0.Markdown",
+            in: controller.reviewOverlayView
+        ) as? ForgeMarkdownNativeView)
+        let expectedURL = "https://github.com/hbmartin/gitx/blob/trunk/docs/guide.md"
+        try assertRoutesMarkdownLink(comment, through: router, to: expectedURL)
+        let relativeMarkdown = "[Guide](docs/guide.md)"
+        let replyPreview = try assertSanitizedPreview(
+            editorID: replyID,
+            in: controller.reviewOverlayView,
+            markdown: relativeMarkdown
+        )
+        try assertRoutesMarkdownLink(replyPreview, through: router, to: expectedURL)
+
+        controller.select(anchor: fixture.anchor, contextLines: ["let old = true"], isTruncated: false)
+        let inlinePreview = try assertSanitizedPreview(
+            editorID: RepositoryPullRequestReviewAccessibility.inlineBody,
+            in: controller.reviewOverlayView,
+            markdown: relativeMarkdown
+        )
+        try assertRoutesMarkdownLink(inlinePreview, through: router, to: expectedURL)
+
+        _ = try await session.loadFormalReviewDraft(displayedHead: fixture.oldHead)
+        let review = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.formalReview,
+            in: controller.view
+        ) as? NSButton)
+        review.performClick(nil)
+        await waitUntil("formal Markdown editor uses fetched default branch") {
+            (self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.formalReviewSubmit,
+                in: controller.view
+            ) as? NSButton)?.isEnabled == true
+        }
+        let formalPreview = try assertSanitizedPreview(
+            editorID: RepositoryPullRequestReviewAccessibility.formalReviewBody,
+            in: controller.view,
+            markdown: relativeMarkdown
+        )
+        try assertRoutesMarkdownLink(formalPreview, through: router, to: expectedURL)
+        controller.detach()
+    }
+
     func testInitiallyCollapsedThreadCanExpand() async throws {
         let fixture = try ReviewAppFixture()
         let workspace = try replacingThreadExpansion(
@@ -1051,6 +1124,191 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         controller.detach()
     }
 
+    func testReplySAMLRecoveryPreservesDraftAndRetriesExactMutationOnlyAfterConfirmation() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(workspaces: [workspace], mutationWorkspace: workspace)
+        let drafts = FakeReviewDraftStore()
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            drafts: drafts,
+            now: { fixture.now }
+        )
+        await service.failNextReply(with: ReviewAuthorizationRecoveryTestFixture.samlError(at: fixture.now))
+        let offered = expectation(description: "reply SAML recovery offered")
+        var retryAction: (@MainActor () -> Void)?
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter(),
+            authorizationRecoveryHandler: { error, retry in
+                guard GitHubAuthorizationRecoveryPresentation.make(error: error)?.kind == .saml else {
+                    return false
+                }
+                retryAction = retry
+                offered.fulfill()
+                return true
+            }
+        )
+        _ = controller.view
+        _ = controller.reviewOverlayView
+        controller.start()
+        await service.waitForLoadCalls(1)
+        let replyID = RepositoryPullRequestReviewAccessibility.threadPrefix
+            + fixture.threadID.value + ".Reply"
+        await waitUntil("reply recovery controls") {
+            self.descendant(identifier: replyID + ".Publish", in: controller.reviewOverlayView) != nil
+        }
+        let editor = try XCTUnwrap(descendant(
+            identifier: replyID,
+            in: controller.reviewOverlayView
+        ) as? NSTextView)
+        let body = "Preserve this exact reply"
+        editor.string = body
+        let publish = try XCTUnwrap(descendant(
+            identifier: replyID + ".Publish",
+            in: controller.reviewOverlayView
+        ) as? NSButton)
+
+        publish.performClick(nil)
+        await fulfillment(of: [offered])
+
+        let callsBeforeRetry = await service.replyPublications()
+        let savedBeforeRetry = await drafts.savedBodies()
+        let deletesBeforeRetry = await drafts.deleteCount()
+        XCTAssertEqual(callsBeforeRetry.map(\.bodyMarkdown), [body])
+        XCTAssertEqual(savedBeforeRetry, [body])
+        XCTAssertEqual(deletesBeforeRetry, 0)
+        XCTAssertTrue(session.workspace?.isMutationStateFresh == true)
+
+        retryAction?()
+        await service.waitForReplyCalls(2)
+        await drafts.waitForDeleteCalls(1)
+
+        let callsAfterRetry = await service.replyPublications()
+        XCTAssertEqual(callsAfterRetry.map(\.bodyMarkdown), [body, body])
+        XCTAssertEqual(callsAfterRetry.map(\.threadID), [fixture.threadID, fixture.threadID])
+        controller.detach()
+    }
+
+    func testInlineInstallationRecoveryRetriesCapturedContextAfterSelectionClears() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(workspaces: [workspace], mutationWorkspace: workspace)
+        let drafts = FakeReviewDraftStore()
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            drafts: drafts,
+            now: { fixture.now }
+        )
+        await service.failNextInline(
+            with: ReviewAuthorizationRecoveryTestFixture.installationError(at: fixture.now)
+        )
+        let offered = expectation(description: "inline installation recovery offered")
+        var retryAction: (@MainActor () -> Void)?
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter(),
+            authorizationRecoveryHandler: { error, retry in
+                guard GitHubAuthorizationRecoveryPresentation.make(error: error)?.kind == .installation else {
+                    return false
+                }
+                retryAction = retry
+                offered.fulfill()
+                return true
+            }
+        )
+        _ = controller.view
+        _ = controller.reviewOverlayView
+        controller.start()
+        await service.waitForLoadCalls(1)
+        controller.select(anchor: fixture.anchor, contextLines: ["let old = true"], isTruncated: false)
+        let editor = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.inlineBody,
+            in: controller.reviewOverlayView
+        ) as? NSTextView)
+        let body = "Preserve this exact inline comment"
+        editor.string = body
+        let publish = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.inlinePublish,
+            in: controller.reviewOverlayView
+        ) as? NSButton)
+
+        publish.performClick(nil)
+        await fulfillment(of: [offered])
+
+        let callsBeforeRetry = await service.inlinePublications()
+        let savedBeforeRetry = await drafts.savedBodies()
+        let deletesBeforeRetry = await drafts.deleteCount()
+        XCTAssertEqual(callsBeforeRetry.map(\.bodyMarkdown), [body])
+        XCTAssertEqual(savedBeforeRetry, [body])
+        XCTAssertEqual(deletesBeforeRetry, 0)
+        controller.clearSelection()
+
+        retryAction?()
+        await service.waitForInlineCalls(2)
+        await drafts.waitForDeleteCalls(1)
+
+        let callsAfterRetry = await service.inlinePublications()
+        XCTAssertEqual(callsAfterRetry.map(\.bodyMarkdown), [body, body])
+        XCTAssertEqual(callsAfterRetry.map(\.anchor), [fixture.anchor, fixture.anchor])
+        XCTAssertEqual(callsAfterRetry.map(\.displayedHead), [fixture.oldHead, fixture.oldHead])
+        controller.detach()
+    }
+
+    func testGenericAndUnknownLifecycleFailuresNeverOfferRecoveryOrRetryMutation() async throws {
+        let fixture = try ReviewAppFixture()
+        let cases: [(RepositoryPullRequestReviewServiceError, Bool)] = [
+            (.authoritative("GitHub rejected Close"), false),
+            (.outcomeUnknown, true),
+        ]
+
+        for (failure, reconcilesUnknownOutcome) in cases {
+            let workspace = try fixture.workspace()
+            let service = FakeReviewMutationService(workspaces: [workspace, workspace])
+            await service.failNextLifecycle(with: failure)
+            let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+            var recoveryPresentationCount = 0
+            let controller = RepositoryPullRequestReviewOverlayController(
+                session: session,
+                router: OverlayRecordingRouter(),
+                authorizationRecoveryHandler: { error, _ in
+                    guard GitHubAuthorizationRecoveryPresentation.make(error: error) != nil else {
+                        return false
+                    }
+                    recoveryPresentationCount += 1
+                    return true
+                }
+            )
+            _ = controller.view
+            controller.start()
+            await service.waitForLoadCalls(1)
+            let closeID = RepositoryPullRequestReviewAccessibility.lifecyclePrefix
+                + ForgePullRequestLifecycleAction.close.rawValue
+            await waitUntil("Close action") {
+                (self.descendant(identifier: closeID, in: controller.view) as? NSButton)?.isEnabled == true
+            }
+            let close = try XCTUnwrap(descendant(identifier: closeID, in: controller.view) as? NSButton)
+
+            close.performClick(nil)
+            await service.waitForLifecycleCalls(1)
+            if reconcilesUnknownOutcome {
+                await service.waitForLoadCalls(2)
+            }
+            await waitUntil("non-recoverable lifecycle error") {
+                self.allText(in: controller.view).contains(failure.localizedDescription)
+            }
+
+            let actions = await service.lifecycleActions()
+            let loadCalls = await service.loadCalls()
+            XCTAssertEqual(recoveryPresentationCount, 0)
+            XCTAssertEqual(actions, [.close], "No failure may automatically retry the mutation")
+            XCTAssertEqual(loadCalls, reconcilesUnknownOutcome ? 2 : 1)
+            controller.detach()
+        }
+    }
+
     func testHostReusesExactSessionMapsSelectionFailClosedAndPlacesDelayedAnchorsOnceStable() async throws {
         let fixture = try ReviewAppFixture()
         let workspace = try fixture.workspace()
@@ -1634,6 +1892,7 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
     private func assertSanitizedPreview(
         editorID: String,
         in root: NSView,
+        markdown: String = "**bold** ![secret](file:///etc/passwd) [PR](https://github.com/hbmartin/gitx/pull/7)",
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws -> ForgeMarkdownNativeView {
@@ -1642,7 +1901,7 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             file: file,
             line: line
         )
-        editor.string = "**bold** ![secret](file:///etc/passwd) [PR](https://github.com/hbmartin/gitx/pull/7)"
+        editor.string = markdown
         let control = try XCTUnwrap(
             descendant(identifier: editorID + ".WritePreview", in: root) as? NSSegmentedControl,
             file: file,
@@ -1661,9 +1920,11 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             file: file,
             line: line
         )
-        XCTAssertTrue(preview.textView.string.contains("bold"), file: file, line: line)
-        XCTAssertTrue(preview.textView.string.contains("▧ Image: secret"), file: file, line: line)
-        XCTAssertFalse(preview.textView.string.contains("file:///etc/passwd"), file: file, line: line)
+        if markdown.contains("**bold**") {
+            XCTAssertTrue(preview.textView.string.contains("bold"), file: file, line: line)
+            XCTAssertTrue(preview.textView.string.contains("▧ Image: secret"), file: file, line: line)
+            XCTAssertFalse(preview.textView.string.contains("file:///etc/passwd"), file: file, line: line)
+        }
         return preview
     }
 
@@ -1678,6 +1939,34 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             }
         }
         return links
+    }
+
+    private func assertRoutesMarkdownLink(
+        _ view: ForgeMarkdownNativeView,
+        through router: OverlayRecordingRouter,
+        to expectedURL: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let link = try XCTUnwrap(
+            linkURLs(in: view.textView.attributedString()).first,
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(view.activateLink(link), file: file, line: line)
+        guard case let .native(destination) = try XCTUnwrap(
+            router.markdownTargets.last,
+            file: file,
+            line: line
+        ) else {
+            return XCTFail("Expected a native Markdown destination", file: file, line: line)
+        }
+        XCTAssertEqual(
+            try ForgeDestinationURLCodec.url(for: destination).absoluteString,
+            expectedURL,
+            file: file,
+            line: line
+        )
     }
 
     private func descendants(in root: NSView) -> [NSView] {

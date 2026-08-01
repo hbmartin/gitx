@@ -71,6 +71,41 @@ enum ForgeCollaborationSurface: String, CaseIterable, Sendable {
     }
 }
 
+/// Keeps read destinations visible until GitHub supplies authoritative
+/// capability evidence. A missing dictionary entry is incomplete evidence,
+/// while an explicit unavailable capability is safe to remove from navigation.
+enum ForgeCollaborationSurfaceAvailabilityPolicy {
+    static func availableSurfaces(
+        readCapabilities: [ForgeOperation: ForgeOperationCapability]?,
+        isAuthenticated: Bool,
+        attentionInstalled: Bool
+    ) -> [ForgeCollaborationSurface] {
+        let effectiveCapabilities = isAuthenticated ? readCapabilities : nil
+        var surfaces: [ForgeCollaborationSurface] = []
+        if isReadAvailable(.readPullRequests, in: effectiveCapabilities) {
+            surfaces.append(.pullRequests)
+        }
+        if isReadAvailable(.readIssues, in: effectiveCapabilities) {
+            surfaces.append(.issues)
+        }
+        if isAuthenticated, attentionInstalled {
+            surfaces.append(.attention)
+        }
+        return surfaces
+    }
+
+    private static func isReadAvailable(
+        _ operation: ForgeOperation,
+        in capabilities: [ForgeOperation: ForgeOperationCapability]?
+    ) -> Bool {
+        guard let capability = capabilities?[operation] else { return true }
+        if case .unavailable = capability {
+            return false
+        }
+        return true
+    }
+}
+
 enum ForgeCollaborationAccessResolution: Equatable, Sendable {
     case authenticated(ForgeAccount)
     case requiresExplicitChoice(accounts: [ForgeAccount], preferredAccountUnavailable: Bool)

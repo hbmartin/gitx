@@ -55,6 +55,7 @@ public actor GitHubReadAdapter {
     private let credentialAuthority: (any GitHubReadCredentialAuthority)?
     private let sessionGate: GitHubMutationSessionGate
     private let sessionConfiguration: URLSessionConfiguration
+    private let installationConfigurationURL: URL?
     private let store = ApolloStore(cache: InMemoryNormalizedCache())
     private let mapper: GitHubGraphQLDocumentMapper
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "github-read")
@@ -66,6 +67,7 @@ public actor GitHubReadAdapter {
         credentialAuthority = nil
         sessionGate = GitHubMutationSessionGate()
         self.sessionConfiguration = sessionConfiguration
+        installationConfigurationURL = nil
         mapper = GitHubGraphQLDocumentMapper(forge: Self.gitHubForge)
     }
 
@@ -73,12 +75,14 @@ public actor GitHubReadAdapter {
         expectedCredential: ForgeCredentialReference,
         credentialAuthority: any GitHubReadCredentialAuthority,
         sessionConfiguration: URLSessionConfiguration = .default,
-        sessionGate: GitHubMutationSessionGate = GitHubMutationSessionGate()
+        sessionGate: GitHubMutationSessionGate = GitHubMutationSessionGate(),
+        installationConfigurationURL: URL? = nil
     ) {
         self.expectedCredential = expectedCredential
         self.credentialAuthority = credentialAuthority
         self.sessionGate = sessionGate
         self.sessionConfiguration = sessionConfiguration
+        self.installationConfigurationURL = installationConfigurationURL
         mapper = GitHubGraphQLDocumentMapper(forge: Self.gitHubForge)
     }
 
@@ -381,7 +385,9 @@ private extension GitHubReadAdapter {
         map: (Query.Data) throws -> GitHubMappedValue<Value>
     ) async throws -> GitHubReadResult<Value> where Query.ResponseFormat == SingleResponseFormat {
         let credential = authentication.credential
-        let metadataBox = GitHubResponseMetadataBox()
+        let metadataBox = GitHubResponseMetadataBox(
+            installationConfigurationURL: installationConfigurationURL
+        )
         let client = GitHubGraphQLTransportFactory.makeClient(
             accessToken: authentication.accessToken,
             sessionConfiguration: sessionConfiguration,
@@ -397,6 +403,12 @@ private extension GitHubReadAdapter {
                 await recordResponseMetadata(from: .rateLimited(response))
             }
             guard let data = graphQLResponse.data else {
+                if let authorizationError = authorizationError(
+                    response: response,
+                    credentialSource: credential.source
+                ) {
+                    throw authorizationError
+                }
                 if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
                     throw GitHubReadError.rateLimited(response)
                 }
@@ -438,17 +450,26 @@ private extension GitHubReadAdapter {
             throw error
         } catch {
             let metadata = metadataBox.take()
-            let classified = classifyTransportFailure(metadata: metadata)
+            let classified = classifyTransportFailure(
+                metadata: metadata,
+                credentialSource: credential.source
+            )
             await recordResponseMetadata(from: classified)
             logger.error("operation=\(Query.operationName, privacy: .public) failure=transport status=\(metadata?.statusCode ?? 0)")
             throw classified
         }
     }
 
-    func classifyTransportFailure(metadata: GitHubResponseMetadata?) -> GitHubReadError {
+    func classifyTransportFailure(
+        metadata: GitHubResponseMetadata?,
+        credentialSource: ForgeCredentialSource
+    ) -> GitHubReadError {
         guard let metadata else { return .transportFailure }
-        if metadata.saml != nil {
-            return .samlAuthorizationRequired(metadata)
+        if let authorizationError = authorizationError(
+            response: metadata,
+            credentialSource: credentialSource
+        ) {
+            return authorizationError
         }
         switch metadata.statusCode {
         case 200 ... 299: return .malformedResponse
@@ -458,6 +479,23 @@ private extension GitHubReadAdapter {
         case 403: return .permissionDenied(metadata)
         case 429: return .rateLimited(metadata)
         default: return .transportFailure
+        }
+    }
+
+    func authorizationError(
+        response: GitHubResponseMetadata,
+        credentialSource: ForgeCredentialSource
+    ) -> GitHubReadError? {
+        switch GitHubAuthorizationRecoveryPolicy.recovery(
+            from: response,
+            credentialSource: credentialSource
+        ) {
+        case .saml:
+            .samlAuthorizationRequired(response)
+        case .installation:
+            .installationConfigurationRequired(response)
+        case nil:
+            nil
         }
     }
 
@@ -540,6 +578,7 @@ private extension GitHubReadAdapter {
             assumesThrottle = true
         case let .permissionDenied(response),
              let .samlAuthorizationRequired(response),
+             let .installationConfigurationRequired(response),
              let .graphQL(_, response),
              let .mapping(_, _, response):
             metadata = response

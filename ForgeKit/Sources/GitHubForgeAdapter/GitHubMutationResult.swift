@@ -92,7 +92,8 @@ public enum GitHubMutationUIMapper {
                 )
             case .capabilityUnavailable:
                 return .capabilityUnavailable
-            case .permissionDenied, .samlAuthorizationRequired:
+            case .permissionDenied, .samlAuthorizationRequired,
+                 .installationConfigurationRequired:
                 return .permissionDenied
             case .authenticationRequired, .authorizationMismatch,
                  .explicitConfirmationRequired, .githubDotComRequired:
@@ -154,6 +155,7 @@ public enum GitHubMutationError: Error, Equatable, LocalizedError, Sendable,
     case cooldown(until: Date)
     case rateLimited(GitHubResponseMetadata)
     case samlAuthorizationRequired(GitHubResponseMetadata)
+    case installationConfigurationRequired(GitHubResponseMetadata)
     case permissionDenied(GitHubResponseMetadata)
     case authoritative([GitHubMutationProblem], GitHubResponseMetadata)
     case malformedResponse
@@ -186,6 +188,8 @@ public enum GitHubMutationError: Error, Equatable, LocalizedError, Sendable,
             "GitHub rate limited this Credential."
         case .samlAuthorizationRequired:
             "Organization SAML authorization is required."
+        case .installationConfigurationRequired:
+            "GitHub App repository access configuration is required."
         case .permissionDenied:
             "GitHub denied this operation."
         case let .authoritative(problems, _):
