@@ -1117,6 +1117,49 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         controller.detach()
     }
 
+    func testFailedPostMergeLocalActionsDoNotNotifyRepositoryModelRefreshHooks() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace(state: .merged)
+        let service = FakeReviewMutationService(workspaces: [workspace])
+        let local = FailingPostMergeLocalReviewService()
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            localService: local
+        )
+        var completions: [String] = []
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter(),
+            onFetchBaseCompletion: { completions.append("fetch") },
+            onCheckOutBaseCompletion: { completions.append("checkout") }
+        )
+        _ = controller.view
+        controller.start()
+        await service.waitForLoadCalls(1)
+
+        let fetch = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.fetchBase,
+            in: controller.view
+        ) as? NSButton)
+        fetch.performClick(nil)
+        await waitUntil("failed post-merge fetch") {
+            self.allText(in: controller.view).contains(FailingPostMergeLocalReviewService.fetchMessage)
+        }
+        XCTAssertTrue(completions.isEmpty)
+
+        let checkout = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.checkOutBase,
+            in: controller.view
+        ) as? NSButton)
+        checkout.performClick(nil)
+        await waitUntil("failed post-merge checkout") {
+            self.allText(in: controller.view).contains(FailingPostMergeLocalReviewService.checkoutMessage)
+        }
+        XCTAssertTrue(completions.isEmpty)
+        controller.detach()
+    }
+
     func testRapidReplyAndInlineClicksDispatchOncePerDestination() async throws {
         let fixture = try ReviewAppFixture()
         let workspace = try fixture.workspace()
@@ -2044,6 +2087,34 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+}
+
+private struct FailingPostMergeLocalReviewService: RepositoryPullRequestLocalReviewServing {
+    static let fetchMessage = "Post-merge fetch failed"
+    static let checkoutMessage = "Post-merge checkout failed"
+
+    func reanchorCandidates(
+        for _: ForgeReviewContext,
+        currentHead _: ForgeCommitID
+    ) async throws -> [ForgeReviewReanchorCandidate] {
+        throw RepositoryPullRequestReviewServiceError.unavailable
+    }
+
+    func checkedOutHead() async throws -> ForgeCommitID? {
+        throw RepositoryPullRequestReviewServiceError.unavailable
+    }
+
+    func applySuggestedChange(_: ForgeSuggestedChange) async throws {
+        throw RepositoryPullRequestReviewServiceError.unavailable
+    }
+
+    func fetchBase(_: ForgeBranchReference) async throws {
+        throw RepositoryPullRequestReviewServiceError.authoritative(Self.fetchMessage)
+    }
+
+    func checkOutBase(_: ForgeBranchReference) async throws {
+        throw RepositoryPullRequestReviewServiceError.authoritative(Self.checkoutMessage)
     }
 }
 

@@ -109,12 +109,10 @@ import OSLog // swiftlint:disable:this unused_import
                     session: session,
                     router: Milestone3ProductionReviewRouter(stateHandler: stateHandler),
                     onFetchBaseCompletion: { [weak self] in
-                        self?.windowController?.repository?.reloadRefs()
-                        self?.restoreProductionDestination()
+                        self?.refreshAfterBaseFetchCompletion()
                     },
                     onCheckOutBaseCompletion: { [weak self] in
-                        self?.windowController?.jumpToCheckedOutBranch(nil)
-                        self?.restoreProductionDestination()
+                        self?.refreshAfterBaseCheckoutCompletion()
                     }
                 )
                 container.addChild(controller)
@@ -162,6 +160,24 @@ import OSLog // swiftlint:disable:this unused_import
         private func restoreProductionDestination() {
             guard let windowController, let containerController else { return }
             windowController.changeContentController(containerController)
+        }
+
+        private func refreshAfterBaseFetchCompletion() {
+            #if GITX_APP_TARGET
+                windowController?.refreshAfterForgeBaseFetch()
+            #else
+                windowController?.repository?.reloadRefs()
+            #endif
+            restoreProductionDestination()
+        }
+
+        private func refreshAfterBaseCheckoutCompletion() {
+            #if GITX_APP_TARGET
+                windowController?.refreshAfterForgeBaseCheckout()
+            #else
+                windowController?.jumpToCheckedOutBranch(nil)
+            #endif
+            restoreProductionDestination()
         }
 
         private func installRepositoryObservations(_ repository: PBGitRepository) {
