@@ -1104,6 +1104,11 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         let accessory = NSStackView(views: [tokenRow, labelRow])
         accessory.orientation = .vertical
         accessory.spacing = 8
+        let accessorySize = accessory.fittingSize
+        accessory.setFrameSize(NSSize(
+            width: ceil(accessorySize.width),
+            height: ceil(accessorySize.height)
+        ))
         let alert = NSAlert()
         alert.messageText = kind == .fineGrained
             ? "Add Fine-Grained Personal Access Token"
@@ -1112,6 +1117,8 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         alert.accessoryView = accessory
         alert.addButton(withTitle: "Add Account")
         alert.addButton(withTitle: "Cancel")
+        alert.layout()
+        logger.debug("Sized personal access Credential alert to contain its complete fields")
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let tokenData = Data(token.stringValue.utf8)
         token.stringValue = ""

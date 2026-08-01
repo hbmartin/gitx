@@ -505,6 +505,7 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         await client.setFailure(.cli, enabled: false)
 
         alerts.enqueue(.alertSecondButtonReturn) { alert in
+            self.assertPersonalAccessTokenAlertLayout(alert)
             self.attachScreenshot(
                 of: alert.window.contentView,
                 named: "M1-Accounts-02-Personal-Access-Token-Entry"
@@ -1618,6 +1619,64 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         let labelField = fields.first { $0.placeholderString == "Optional label" }
         tokenField?.stringValue = token
         labelField?.stringValue = label
+    }
+
+    @MainActor
+    private func assertPersonalAccessTokenAlertLayout(
+        _ alert: NSAlert,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let accessory = alert.accessoryView else {
+            return XCTFail("Personal access token fields are unavailable", file: file, line: line)
+        }
+        let fittingSize = accessory.fittingSize
+        XCTAssertGreaterThanOrEqual(
+            accessory.bounds.width,
+            ceil(fittingSize.width),
+            "The accessory must materialize its complete fitting width",
+            file: file,
+            line: line
+        )
+        XCTAssertGreaterThanOrEqual(
+            accessory.bounds.height,
+            ceil(fittingSize.height),
+            "The accessory must materialize its complete fitting height",
+            file: file,
+            line: line
+        )
+        XCTAssertGreaterThanOrEqual(
+            alert.window.frame.width,
+            fittingSize.width + 32,
+            "The alert must contain the complete token and label fields without clipping",
+            file: file,
+            line: line
+        )
+        let fields = descendants(in: accessory).compactMap { $0 as? NSTextField }
+        for field in fields where field is NSSecureTextField || field.placeholderString == "Optional label" {
+            XCTAssertTrue(
+                accessory.bounds.contains(field.convert(field.bounds, to: accessory)),
+                "Every editable field must remain inside the accessory bounds",
+                file: file,
+                line: line
+            )
+        }
+        guard let contentView = alert.window.contentView,
+              let informativeText = descendants(in: contentView)
+              .compactMap({ $0 as? NSTextField })
+              .first(where: { $0.stringValue.hasPrefix("GitX validates the Credential") })
+        else {
+            return XCTFail("Personal access token explanation is unavailable", file: file, line: line)
+        }
+        let accessoryFrame = accessory.convert(accessory.bounds, to: contentView)
+        let informativeFrame = informativeText.convert(informativeText.bounds, to: contentView)
+        XCTAssertLessThanOrEqual(
+            accessoryFrame.maxY + 8,
+            informativeFrame.minY,
+            "The complete fields must remain below the explanatory text",
+            file: file,
+            line: line
+        )
     }
 
     @MainActor

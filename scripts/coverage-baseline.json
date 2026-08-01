@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8942,
+  "minimumLineCoverage": 0.8943,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4792,
@@ -13,7 +13,7 @@
     "Classes/Controllers/CommitTableInteractionCoordinator.swift": 0.9818,
     "Classes/Controllers/DBPrefsWindowController.m": 0.6538,
     "Classes/Controllers/ForgeAccountLifecycle.swift": 0.9851,
-    "Classes/Controllers/ForgeAccountsPreferences.swift": 0.9334,
+    "Classes/Controllers/ForgeAccountsPreferences.swift": 0.9338,
     "Classes/Controllers/ForgeApplicationRefreshCoordinator.swift": 0.8963,
     "Classes/Controllers/ForgeApplicationServices.swift": 0.9969,
     "Classes/Controllers/ForgeCredentialStore.swift": 0.9798,
