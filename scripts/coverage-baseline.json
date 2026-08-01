@@ -62,7 +62,7 @@
     "Classes/Controllers/RepositoryPullRequestMutationPreferenceStore.swift": 0.9492,
     "Classes/Controllers/RepositoryPullRequestReviewComposition.swift": 0.9013,
     "Classes/Controllers/RepositoryPullRequestReviewDiffSelection.swift": 0.9507,
-    "Classes/Controllers/RepositoryPullRequestReviewWorkflow.swift": 0.8938,
+    "Classes/Controllers/RepositoryPullRequestReviewWorkflow.swift": 0.8959,
     "Classes/Controllers/RepositoryPullRequestUIController.swift": 0.838,
     "Classes/Controllers/RepositoryPullRequestWorkflow.swift": 0.9545,
     "Classes/Controllers/RepositoryReferenceActionCoordinator.swift": 0.947,
