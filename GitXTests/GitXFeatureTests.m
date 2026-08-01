@@ -336,7 +336,7 @@
 	NSString *cleanShutdownKey = @"PBWindowSessionCleanShutdown";
 	id previousSnapshot = [defaults objectForKey:snapshotKey];
 	id previousCleanShutdown = [defaults objectForKey:cleanShutdownKey];
-	NSArray *sentinelSnapshot = @[ @{ @"path" : @"/tmp/GitX-app-hosted-session-sentinel" } ];
+	NSArray *sentinelSnapshot = @[ @{@"path" : @"/tmp/GitX-app-hosted-session-sentinel"} ];
 	@try {
 		[defaults setObject:sentinelSnapshot forKey:snapshotKey];
 		[defaults setBool:NO forKey:cleanShutdownKey];
