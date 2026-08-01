@@ -142,6 +142,21 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertNil(programmatic.repository)
     }
 
+    func testWindowControllerAcceptsPreferenceNotificationPostedOffMainThread() async {
+        let controller = PBGitWindowController(window: nil)
+        controller.windowDidLoad()
+        defer { NotificationCenter.default.removeObserver(controller) }
+
+        let posted = expectation(description: "Background defaults notification returned")
+        DispatchQueue.global(qos: .userInitiated).async {
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: UserDefaults.standard)
+            posted.fulfill()
+        }
+
+        await fulfillment(of: [posted], timeout: 2)
+        await Task.yield()
+    }
+
     func testCommitRenderInputFreezesPlainMetadataAndImageRevisions() {
         let input = PBCommitRenderInput(
             sha: "abcdef0123456789",

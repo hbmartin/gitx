@@ -356,7 +356,21 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc(refreshPreferenceDidChange:)
-    dynamic func refreshPreferenceDidChange(_ notification: Notification?) {
+    dynamic nonisolated func refreshPreferenceDidChange(_ notification: Notification?) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                applyRefreshPreferences()
+            }
+            return
+        }
+
+        NSLog("[GitX] Routing a background preference notification to the main actor")
+        DispatchQueue.main.async { [weak self] in
+            self?.applyRefreshPreferences()
+        }
+    }
+
+    private func applyRefreshPreferences() {
         ensureFocusRefreshCoordinator()
         focusRefreshCoordinator?.updatePreference(enabled: RepositoryRefreshPolicy.shouldRefreshAfterApplicationActivation())
         repositoryStatusBarController?.setVisible(ApplicationSettings.repositoryStatusBarVisible)

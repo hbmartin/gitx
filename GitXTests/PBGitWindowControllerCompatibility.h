@@ -147,6 +147,11 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)refreshCompletionProofWithRepository:(PBGitRepository *)repository;
 @end
 
+@interface PBWindowSessionLaunchPolicy : NSObject
++ (BOOL)shouldManageSessionForEnvironment:(NSDictionary<NSString *, NSString *> *)environment
+	NS_SWIFT_NAME(shouldManageSession(environment:));
+@end
+
 @interface PBWindowSessionCoordinator : NSObject
 @property (class, nonatomic, readonly, strong) PBWindowSessionCoordinator *shared;
 - (void)applicationDidFinishLaunching;

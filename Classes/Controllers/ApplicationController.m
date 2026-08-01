@@ -180,7 +180,12 @@
 	[self registerServices];
 	[[PBAutoFetchManager sharedManager] start];
 	started = YES;
-	[[PBWindowSessionCoordinator shared] applicationDidFinishLaunching];
+	NSDictionary *env = NSProcessInfo.processInfo.environment;
+	BOOL shouldManageWindowSession = [PBWindowSessionLaunchPolicy shouldManageSessionForEnvironment:env];
+	if (shouldManageWindowSession)
+		[[PBWindowSessionCoordinator shared] applicationDidFinishLaunching];
+	else
+		NSLog(@"[Testing] Suppressed automatic repository-window restoration for the app-hosted test process");
 	NSArray<NSString *> *arguments = NSProcessInfo.processInfo.arguments;
 	if ([arguments containsObject:@"--welcome"]) [[PBWelcomeWindowController shared] show];
 	if ([arguments containsObject:@"--clone"]) [self showCloneRepository:self];
@@ -188,7 +193,6 @@
 	// UI-test hook: open a repo path passed via environment variable so that
 	// XCUITests always get a document window without relying on recents or
 	// Launch Services registration.
-	NSDictionary *env = [[NSProcessInfo processInfo] environment];
 	NSString *uitestRepo = env[@"GITX_UITEST_REPO"];
 	if (uitestRepo.length > 0) {
 		NSURL *repoURL = [NSURL fileURLWithPath:uitestRepo];
@@ -218,7 +222,10 @@
 
 - (void)applicationWillTerminate:(NSNotification *)notification
 {
-	[[PBWindowSessionCoordinator shared] applicationWillTerminate];
+	if ([PBWindowSessionLaunchPolicy shouldManageSessionForEnvironment:NSProcessInfo.processInfo.environment])
+		[[PBWindowSessionCoordinator shared] applicationWillTerminate];
+	else
+		NSLog(@"[Testing] Suppressed repository-window capture for the app-hosted test process");
 }
 
 - (void)windowWillClose:sender

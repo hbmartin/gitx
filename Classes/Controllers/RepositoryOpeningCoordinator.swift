@@ -679,6 +679,14 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
     }
 }
 
+@objc(PBWindowSessionLaunchPolicy)
+final nonisolated class WindowSessionLaunchPolicy: NSObject {
+    @objc(shouldManageSessionForEnvironment:)
+    static func shouldManageSession(environment: [String: String]) -> Bool {
+        environment["XCTestConfigurationFilePath"] == nil
+    }
+}
+
 @objc(PBWindowSessionCoordinator)
 final class WindowSessionCoordinator: NSObject {
     @objc static let shared = WindowSessionCoordinator()

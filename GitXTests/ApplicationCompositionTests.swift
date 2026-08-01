@@ -29,6 +29,15 @@ final class ApplicationCompositionTests: XCTestCase {
         super.tearDown()
     }
 
+    func testWindowSessionLaunchPolicyIsolatesAppHostedTestsFromUserWindowState() {
+        XCTAssertTrue(PBWindowSessionLaunchPolicy.shouldManageSession(environment: [:]))
+        XCTAssertFalse(
+            PBWindowSessionLaunchPolicy.shouldManageSession(
+                environment: ["XCTestConfigurationFilePath": "/tmp/GitXTests.xctestconfiguration"]
+            )
+        )
+    }
+
     func testApplicationSettingsAndLegacyDefaultsUseInjectedPreferences() {
         PBApplicationSettings.diffContextLines = 99
         XCTAssertEqual(defaults.integer(forKey: "PBDiffContextLines"), 20)
