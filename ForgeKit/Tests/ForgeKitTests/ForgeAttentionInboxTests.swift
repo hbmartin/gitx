@@ -848,6 +848,92 @@ final class ForgeAttentionInboxTests: XCTestCase {
         XCTAssertEqual(requestedKeys.count, 2)
     }
 
+    func testCoordinatorManualRefreshAttemptsEveryWatchPersistsLaterSuccessAndThrowsFirstFailure() async throws {
+        let fixture = try Fixture()
+        let secondRepository = try TestSupport.repository(owner: "z-second")
+        let secondKey = try ForgeWatchedRepositoryKey(accountID: fixture.accountID, repository: secondRepository)
+        let secondWatch = ForgeWatchedRepository(
+            key: secondKey,
+            addedAt: fixture.date(0),
+            source: .preferences
+        )
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        try await persistence.save(fixture.watch)
+        try await persistence.save(secondWatch)
+        let fetcher = KeyedSnapshotFetcher(viewer: fixture.viewer, failing: fixture.watch.key)
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+
+        do {
+            _ = try await coordinator.refreshAllWatched(accountID: fixture.accountID)
+            XCTFail("Expected the first repository failure after every watch was attempted")
+        } catch KeyedSnapshotFetcher.Failure.expected {}
+
+        let requestedKeys = await fetcher.requestedKeys
+        XCTAssertEqual(requestedKeys, [fixture.watch.key, secondKey])
+        let persistedWatches = try await persistence.watchedRepositories(accountID: fixture.accountID)
+        XCTAssertNil(persistedWatches.first(where: { $0.key == fixture.watch.key })?.lastSuccessfulPollAt)
+        XCTAssertEqual(
+            persistedWatches.first(where: { $0.key == secondKey })?.lastSuccessfulPollAt,
+            fixture.date(0)
+        )
+    }
+
+    func testCoordinatorManualRefreshPropagatesCancellationWithoutAttemptingLaterWatches() async throws {
+        let fixture = try Fixture()
+        let secondRepository = try TestSupport.repository(owner: "z-second")
+        let secondKey = try ForgeWatchedRepositoryKey(accountID: fixture.accountID, repository: secondRepository)
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        try await persistence.save(fixture.watch)
+        try await persistence.save(ForgeWatchedRepository(
+            key: secondKey,
+            addedAt: fixture.date(0),
+            source: .preferences
+        ))
+        let fetcher = CancellingSnapshotFetcher()
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+
+        do {
+            _ = try await coordinator.refreshAllWatched(accountID: fixture.accountID)
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {} catch {
+            XCTFail("Expected CancellationError, received \(type(of: error))")
+        }
+
+        let requestedKeys = await fetcher.requestedKeys
+        XCTAssertEqual(requestedKeys, [fixture.watch.key])
+    }
+
+    func testCoordinatorManualRefreshReturnsEmptyWithoutFetchingWhenAccountHasNoWatches() async throws {
+        let fixture = try Fixture()
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        let fetcher = SnapshotFetcher(snapshots: [])
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+
+        let reconciliations = try await coordinator.refreshAllWatched(accountID: fixture.accountID)
+
+        XCTAssertTrue(reconciliations.isEmpty)
+        let requestCount = await fetcher.requestCount
+        XCTAssertEqual(requestCount, 0)
+    }
+
     func testCoordinatorSuppressesUnauthorizedTransitionsAndHandlesMissingOrManualTargets() async throws {
         let fixture = try Fixture()
         let establishedWatch = ForgeWatchedRepository(
@@ -1163,14 +1249,25 @@ private actor SnapshotFetcher: ForgeAttentionSnapshotFetching {
     }
 
     private var snapshots: [ForgeAttentionRepositorySnapshot]
+    private(set) var requestCount = 0
 
     init(snapshots: [ForgeAttentionRepositorySnapshot]) {
         self.snapshots = snapshots
     }
 
     func snapshot(for _: ForgeWatchedRepository) async throws -> ForgeAttentionRepositorySnapshot {
+        requestCount += 1
         guard !snapshots.isEmpty else { throw Failure.exhausted }
         return snapshots.removeFirst()
+    }
+}
+
+private actor CancellingSnapshotFetcher: ForgeAttentionSnapshotFetching {
+    private(set) var requestedKeys: [ForgeWatchedRepositoryKey] = []
+
+    func snapshot(for watch: ForgeWatchedRepository) async throws -> ForgeAttentionRepositorySnapshot {
+        requestedKeys.append(watch.key)
+        throw CancellationError()
     }
 }
 

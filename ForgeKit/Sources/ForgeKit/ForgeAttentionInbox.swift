@@ -984,6 +984,40 @@ public actor ForgeAttentionInboxCoordinator {
         guard let watch = watches.first(where: { $0.key == key }) else {
             throw ForgeAttentionInboxError.missingWatchedRepository
         }
+        return try await refreshWatchedRepository(watch)
+    }
+
+    /// Refreshes an account's entire watch set as one manual operation. A
+    /// provider failure for one repository does not prevent later watches
+    /// from being reconciled and persisted.
+    public func refreshAllWatched(accountID: ForgeAccountID) async throws -> [ForgeAttentionReconciliation] {
+        let watches = try await persistence.watchedRepositories(accountID: accountID)
+        var reconciliations: [ForgeAttentionReconciliation] = []
+        var firstFailure: (any Error)?
+        for watch in watches {
+            try Task.checkCancellation()
+            do {
+                try reconciliations.append(await refreshWatchedRepository(watch))
+            } catch let error as CancellationError {
+                throw error
+            } catch {
+                try Task.checkCancellation()
+                if firstFailure == nil {
+                    firstFailure = error
+                }
+            }
+        }
+        try Task.checkCancellation()
+        if let firstFailure {
+            throw firstFailure
+        }
+        return reconciliations
+    }
+
+    private func refreshWatchedRepository(
+        _ watch: ForgeWatchedRepository
+    ) async throws -> ForgeAttentionReconciliation {
+        let key = watch.key
         let existing = try await persistence.records(
             accountID: key.accountID,
             repository: key.repository,

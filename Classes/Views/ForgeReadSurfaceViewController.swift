@@ -2357,16 +2357,33 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
     }
 
     func refreshNow() async {
+        var refreshFailure: (any Error)?
         do {
-            _ = try await coordinator.refresh(watchedKey)
-            lastRefreshErrorDescription = nil
-            try await publishChange()
+            _ = try await coordinator.refreshAllWatched(accountID: account.id)
         } catch is CancellationError {
             return
         } catch {
-            lastRefreshErrorDescription = error.localizedDescription
-            Self.logger.error("Manual Attention refresh failed type=\(String(describing: type(of: error)), privacy: .public)")
-            NotificationCenter.default.post(name: .forgeAttentionInboxDidChange, object: repositoryObject)
+            refreshFailure = error
+        }
+
+        var publishFailure: (any Error)?
+        do {
+            try await publishChange()
+        } catch is CancellationError {
+            if refreshFailure == nil {
+                return
+            }
+        } catch {
+            publishFailure = error
+        }
+
+        if let failure = refreshFailure ?? publishFailure {
+            lastRefreshErrorDescription = failure.localizedDescription
+            Self.logger.error(
+                "Manual Attention refresh failed type=\(String(describing: type(of: failure)), privacy: .public)"
+            )
+        } else {
+            lastRefreshErrorDescription = nil
         }
     }
 
