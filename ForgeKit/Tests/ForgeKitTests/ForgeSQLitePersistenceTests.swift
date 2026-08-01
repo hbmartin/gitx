@@ -1103,13 +1103,16 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
             in: fixture.recoveryURL
         ))
 
-        _ = try recoveryCopy(from: fixture) {
+        let expiredCopy = try recoveryCopy(from: fixture) {
             _ = try ForgeSQLiteStore(configuration: fixture.configuration)
         }
+        let expiredSidecar = URL(fileURLWithPath: expiredCopy.url.path + "-wal")
+        try Data("private expired fragment".utf8).write(to: expiredSidecar)
         XCTAssertEqual(try ForgeSQLiteStore.recoveryCopies(
             in: fixture.recoveryURL,
             now: .distantFuture
         ), [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: expiredSidecar.path))
     }
 
     func testExpiredOrphanRecoverySidecarsAreRemoved() throws {
