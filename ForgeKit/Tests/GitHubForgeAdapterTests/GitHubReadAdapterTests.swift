@@ -1181,6 +1181,101 @@ final class GitHubReadAdapterTests: XCTestCase {
         }
     }
 
+    func testFilteredPullRequestTimelineDoesNotTrustTheUnfilteredConnectionCount() async throws {
+        let adapter = try makeAdapter()
+        let repository = try makeRepository()
+        let number = try ForgeItemNumber(7)
+
+        var details = Self.completePullRequestDetails
+        var timeline = Self.connection(
+            "PullRequestTimelineItemsConnection",
+            nodes: [Self.issueComment]
+        )
+        // GitHub counts omitted PullRequestCommit nodes even when itemTypes filters
+        // them out of the returned timeline page.
+        timeline["totalCount"] = 2
+        details["timelineItems"] = timeline
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "pullRequest": details,
+        ]])
+
+        let result = try await adapter.pullRequestDetails(
+            repository: repository,
+            number: number
+        )
+
+        XCTAssertEqual(result.completeness, .complete)
+        guard case let .available(mappedTimeline) = result.value.details.timeline else {
+            return XCTFail("Expected the filtered Pull Request timeline")
+        }
+        XCTAssertEqual(mappedTimeline.items.map(\.id.value), ["issue-comment"])
+        XCTAssertNil(mappedTimeline.nextCursor)
+        XCTAssertNil(mappedTimeline.totalCount)
+    }
+
+    func testFilteredIssueTimelineDoesNotTrustTheUnfilteredConnectionCount() async throws {
+        let adapter = try makeAdapter()
+        let repository = try makeRepository()
+        let number = try ForgeItemNumber(7)
+
+        var issue = Self.issue
+        var timeline = Self.connection(
+            "IssueTimelineItemsConnection",
+            nodes: [Self.issueComment]
+        )
+        timeline["totalCount"] = 2
+        issue.merge([
+            "body": "body",
+            "assignedActors": Self.emptyConnection("AssigneeConnection"),
+            "milestone": NSNull(),
+            "participants": Self.emptyConnection("UserConnection"),
+            "timelineItems": timeline,
+        ]) { _, new in new }
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "issue": issue,
+        ]])
+
+        let result = try await adapter.issueDetails(repository: repository, number: number)
+
+        XCTAssertEqual(result.completeness, .complete)
+        guard case let .available(mappedTimeline) = result.value.timeline else {
+            return XCTFail("Expected the filtered issue timeline")
+        }
+        XCTAssertEqual(mappedTimeline.items.map(\.id.value), ["issue-comment"])
+        XCTAssertNil(mappedTimeline.nextCursor)
+        XCTAssertNil(mappedTimeline.totalCount)
+    }
+
+    func testFilteredTimelinePreservesItsValidatedNextCursor() async throws {
+        let adapter = try makeAdapter()
+        let repository = try makeRepository()
+        let number = try ForgeItemNumber(7)
+
+        var details = Self.completePullRequestDetails
+        var timeline = Self.connection(
+            "PullRequestTimelineItemsConnection",
+            nodes: [Self.issueComment]
+        )
+        timeline["totalCount"] = 3
+        timeline["pageInfo"] = Self.pageInfo(hasNextPage: true, endCursor: "next-timeline")
+        details["timelineItems"] = timeline
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "pullRequest": details,
+        ]])
+
+        let result = try await adapter.pullRequestDetails(
+            repository: repository,
+            number: number
+        )
+
+        XCTAssertEqual(result.completeness, .partial)
+        guard case let .available(mappedTimeline) = result.value.details.timeline else {
+            return XCTFail("Expected the filtered Pull Request timeline")
+        }
+        XCTAssertEqual(mappedTimeline.nextCursor?.value, "next-timeline")
+        XCTAssertNil(mappedTimeline.totalCount)
+    }
+
     func testDetailConnectionsFailClosedAndMapEveryConcreteActorShape() async throws {
         let adapter = try makeAdapter()
         let repository = try makeRepository()

@@ -441,6 +441,19 @@ private extension GitHubGraphQLDocumentMapper {
         )
     }
 
+    func filteredTimelinePageMapping<Value: Codable & Hashable & Sendable>(
+        items: [Value],
+        pageInfo: GitHubAPI.GitHubPageInfo,
+        hasDroppedNodes: Bool
+    ) throws -> PageMapping<Value> {
+        let value = try ForgePage(
+            items: items,
+            nextCursor: nextCursor(pageInfo),
+            totalCount: nil
+        )
+        return PageMapping(value: value, isPartial: hasDroppedNodes)
+    }
+
     func connectionCountIsInconsistent(
         mappedCount: Int,
         totalCount: Int,
@@ -835,9 +848,8 @@ private extension GitHubGraphQLDocumentMapper {
         let mapped = try mapNodes(connection.nodes) {
             try pullRequestTimelineItem($0, repository: repository)
         }
-        let page = try pageMapping(
+        let page = try filteredTimelinePageMapping(
             items: mapped.values,
-            totalCount: connection.totalCount,
             pageInfo: connection.pageInfo.fragments.gitHubPageInfo,
             hasDroppedNodes: mapped.isPartial
         )
@@ -1346,9 +1358,8 @@ private extension GitHubGraphQLDocumentMapper {
         let mapped = try mapNodes(connection.nodes) {
             try issueTimelineItem($0, repository: repository)
         }
-        let page = try pageMapping(
+        let page = try filteredTimelinePageMapping(
             items: mapped.values,
-            totalCount: connection.totalCount,
             pageInfo: connection.pageInfo.fragments.gitHubPageInfo,
             hasDroppedNodes: mapped.isPartial
         )
