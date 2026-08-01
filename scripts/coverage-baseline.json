@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.895,
+  "minimumLineCoverage": 0.8951,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4963,
@@ -17,7 +17,7 @@
     "Classes/Controllers/ForgeApplicationRefreshCoordinator.swift": 0.8963,
     "Classes/Controllers/ForgeApplicationServices.swift": 0.9969,
     "Classes/Controllers/ForgeCredentialStore.swift": 0.9798,
-    "Classes/Controllers/ForgeDeepLinkApplicationRouter.swift": 0.7055,
+    "Classes/Controllers/ForgeDeepLinkApplicationRouter.swift": 0.7162,
     "Classes/Controllers/ForgeDestinationScriptCommand.swift": 0.9585,
     "Classes/Controllers/ForgeExternalLinkRouting.swift": 0.9548,
     "Classes/Controllers/ForgeMutationQuitCoordinator.swift": 0.8819,
@@ -84,7 +84,7 @@
     "Classes/NSSplitView+GitX.m": 0.85,
     "Classes/PBCLIProxy.m": 0.0,
     "Classes/PBChangedFile.m": 0.8636,
-    "Classes/PBCommitList.swift": 0.2428,
+    "Classes/PBCommitList.swift": 0.2785,
     "Classes/PBGraphCellInfo.m": 1.0,
     "Classes/PBMacros.m": 1.0,
     "Classes/PBNSURLPathUserDefaultsTransfomer.m": 0.3888,
