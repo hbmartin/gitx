@@ -711,20 +711,28 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
 
         let localRef = "refs/heads/\(base.name.value)"
         if let localCommit = try commit(at: localRef) {
-            guard localCommit == remoteCommit || localCommit == base.commit else {
-                throw RepositoryPullRequestReviewServiceError.stalePullRequest
+            if localCommit != base.commit, localCommit != remoteCommit {
+                guard try isAncestor(base.commit, of: localCommit),
+                      try isAncestor(localCommit, of: remoteCommit)
+                else {
+                    throw RepositoryPullRequestReviewServiceError.stalePullRequest
+                }
             }
             try validateCurrentBindingIfConfigured()
             _ = try runner.run(["checkout", base.name.value])
             if localCommit != remoteCommit {
                 try validateCurrentBindingIfConfigured()
-                _ = try runner.run(["merge", "--ff-only", remoteTrackingRef])
+                _ = try runner.run(["merge", "--ff-only", remoteCommit.value])
             }
         } else {
             try validateCurrentBindingIfConfigured()
+            _ = try runner.run(["branch", base.name.value, remoteCommit.value])
+            try validateCurrentBindingIfConfigured()
             _ = try runner.run([
-                "checkout", "--track", "-b", base.name.value, remoteTrackingRef,
+                "branch", "--set-upstream-to", remoteTrackingRef, base.name.value,
             ])
+            try validateCurrentBindingIfConfigured()
+            _ = try runner.run(["checkout", base.name.value])
         }
     }
 
