@@ -336,15 +336,20 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         }
     }
 
-    func testInspectorLoadsAndMergesTimelineContinuationThroughInjectedService() async throws {
+    func testInspectorLoadsAndMergesTimelineAndCheckContinuationsThroughInjectedService() async throws {
         let initialDetails = try ReadFixture.pullRequestDetails(
             timelineText: "First timeline page",
             timelineID: "timeline-first",
-            timelineCursor: ForgePageCursor("timeline-next")
+            timelineCursor: ForgePageCursor("timeline-next"),
+            checkCursor: ForgePageCursor("checks-next")
         )
         let continuedDetails = try ReadFixture.pullRequestDetails(
             timelineText: "Second timeline page",
             timelineID: "timeline-second"
+        )
+        let continuedChecks = try ReadFixture.pullRequestDetails(
+            timelineText: "Unchanged while loading checks",
+            timelineID: "timeline-checks"
         )
         let service = try FakeReadService(
             pages: [ForgeReadSurfacePage(
@@ -355,10 +360,16 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
                 details: .pullRequest(initialDetails),
                 fetchedAt: ReadFixture.date(2)
             ),
-            continuationDetails: [ForgeReadSurfaceDetailsSnapshot(
-                details: .pullRequest(continuedDetails),
-                fetchedAt: ReadFixture.date(3)
-            )]
+            continuationDetails: [
+                ForgeReadSurfaceDetailsSnapshot(
+                    details: .pullRequest(continuedDetails),
+                    fetchedAt: ReadFixture.date(3)
+                ),
+                ForgeReadSurfaceDetailsSnapshot(
+                    details: .pullRequest(continuedChecks),
+                    fetchedAt: ReadFixture.date(4)
+                ),
+            ]
         )
         let markdown = RecordingMarkdownRenderer()
         let controller = try makeController(kind: .pullRequests, service: service, markdown: markdown)
@@ -384,6 +395,17 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertTrue(markdown.renderedMarkdown.contains("First timeline page"))
         XCTAssertTrue(markdown.renderedMarkdown.contains("Second timeline page"))
         XCTAssertNil(descendant(identifier: "ForgeInspectorLoadMoreTimeline", in: controller.view))
+
+        let loadMoreChecks = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorLoadMoreChecks", in: controller.view) as? NSButton
+        )
+        loadMoreChecks.performClick(nil)
+        await service.waitForDetailsCall(count: 3)
+        await settleMainActor()
+
+        XCTAssertNil(service.detailsCalls.last?.timelineCursor)
+        XCTAssertEqual(service.detailsCalls.last?.checkCursor?.value, "checks-next")
+        XCTAssertNil(descendant(identifier: "ForgeInspectorLoadMoreChecks", in: controller.view))
     }
 
     func testSwitchingKindCancelsOldSurfaceStateAndLoadsNewKind() async throws {

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8941,
+  "minimumLineCoverage": 0.8942,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4792,
@@ -57,7 +57,7 @@
     "Classes/Controllers/RepositoryForgeCoordinator.swift": 0.9584,
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
     "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8799,
-    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7011,
+    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7021,
     "Classes/Controllers/RepositoryPullRequestGitOperations.swift": 0.9229,
     "Classes/Controllers/RepositoryPullRequestMutationPreferenceStore.swift": 0.9492,
     "Classes/Controllers/RepositoryPullRequestReviewComposition.swift": 0.9013,
@@ -109,7 +109,7 @@
     "Classes/Views/ForgeMarkdownNativeRenderer.swift": 0.9649,
     "Classes/Views/ForgePullRequestSheetController.swift": 0.9133,
     "Classes/Views/ForgeReadSurfaceModels.swift": 0.9521,
-    "Classes/Views/ForgeReadSurfaceViewController.swift": 0.8985,
+    "Classes/Views/ForgeReadSurfaceViewController.swift": 0.8991,
     "Classes/Views/ForgeRepositoryCloneSheetController.swift": 0.5761,
     "Classes/Views/GLFileView.m": 0.916,
     "Classes/Views/GitXTextView.m": 0.44,
