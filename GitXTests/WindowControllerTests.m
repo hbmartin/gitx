@@ -1679,6 +1679,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([recoveryAlert.informativeText containsString:@"Local Git remains fully available"]);
 	XCTAssertEqualObjects([recoveryAlert.buttons valueForKey:@"title"],
 						  (@[ @"Retry", @"Reset Forge Data…", @"Not Now", @"Reveal in Finder", @"Delete Now" ]));
+	[self attachScreenshotOfView:recoveryAlert.window.contentView
+						 name:@"M1-Recovery-01-Forge-Data-Unavailable"];
 	XCTAssertEqualObjects(revealedRecoveryCopyURL, recoveryCopyURL);
 	XCTAssertEqual(PBWindowWorkspaceRevealCount, (NSUInteger)0);
 	[controller presentForgeRecoveryStatusDetailsWithCopyURL:recoveryCopyURL];

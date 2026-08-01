@@ -65,10 +65,21 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
 
         try click(app.buttons["GitX.PullRequest.Review.FormalReview"], timeout: 5)
         try requireExists(element("GitX.PullRequest.Review.FormalReviewSheet", in: app), timeout: 5)
+        retainDiagnosticScreenshot(
+            named: "M3-Review-03-Formal-Review-Sheet",
+            of: app.sheets.firstMatch,
+            in: app
+        )
         try click(app.buttons["GitX.PullRequest.Review.FormalReviewSubmit"], timeout: 5)
         try requireGone(element("GitX.PullRequest.Review.FormalReviewSheet", in: app), timeout: 10)
 
         try click(app.buttons[activePrefix + ".Resolve"], timeout: 5)
+        try requireHittable(app.buttons[activePrefix + ".Undo"], timeout: 5)
+        retainDiagnosticScreenshot(
+            named: "M3-Review-04-Resolution-Undo-Available",
+            of: app.windows.firstMatch,
+            in: app
+        )
         try click(app.buttons[activePrefix + ".Undo"], timeout: 5)
         try requireHittable(app.buttons[activePrefix + ".Resolve"], timeout: 5)
         retainDiagnosticScreenshot(named: "M3-Review-02-Published-Reviewed-Undo", of: app.windows.firstMatch, in: app)
@@ -119,6 +130,12 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
         try click(app.buttons[lifecycle + "markReady"], timeout: 5)
         try requireDisabled(app.buttons[lifecycle + "markReady"], timeout: 10)
         try click(app.buttons[lifecycle + "updateBranch"], timeout: 5)
+        try requireExists(element(lifecycle + "updateBranch.Sheet", in: app), timeout: 5)
+        retainDiagnosticScreenshot(
+            named: "M3-Lifecycle-03-Update-Branch-Confirmation",
+            of: app.sheets.firstMatch,
+            in: app
+        )
         try click(app.buttons[lifecycle + "updateBranch.Confirm"], timeout: 5)
         try requireDisabled(app.buttons[lifecycle + "updateBranch"], timeout: 10)
         try click(app.buttons[lifecycle + "close"], timeout: 5)
@@ -136,6 +153,19 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
 
         let method = app.popUpButtons["GitX.PullRequest.Review.MergeMethod"]
         try requireHittable(method, timeout: 10)
+        method.click()
+        try click(app.menuItems["Rebase and Merge"], timeout: 5)
+        try click(app.buttons["GitX.PullRequest.Review.Merge"], timeout: 5)
+        try requireExists(element("GitX.PullRequest.Review.MergeSheet", in: app), timeout: 5)
+        try requireExists(app.staticTexts["GitX.PullRequest.Review.MergeSummary"], timeout: 5)
+        retainDiagnosticScreenshot(
+            named: "M3-Merge-04-Rebase-Read-Only-Summary",
+            of: app.sheets.firstMatch,
+            in: app
+        )
+        try click(app.buttons["GitX.PullRequest.Review.MergeCancel"], timeout: 5)
+        try requireGone(element("GitX.PullRequest.Review.MergeSheet", in: app), timeout: 10)
+
         method.click()
         try click(app.menuItems["Squash and Merge"], timeout: 5)
         retainDiagnosticScreenshot(named: "M3-Merge-01-Methods-And-Warning", of: app.windows.firstMatch, in: app)
@@ -161,10 +191,16 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
 
         try click(queue, timeout: 5)
         try requireLabel("Leave Merge Queue", for: queue, timeout: 10)
+        retainDiagnosticScreenshot(named: "M3-Queue-03-Queued-State", of: app.windows.firstMatch, in: app)
         try click(queue, timeout: 5)
         try requireHittable(app.buttons["GitX.PullRequest.Review.DeleteBranch"], timeout: 10)
         try click(app.buttons["GitX.PullRequest.Review.DeleteBranch"], timeout: 5)
         try requireExists(element("GitX.PullRequest.Review.DeleteBranch.Sheet", in: app), timeout: 5)
+        retainDiagnosticScreenshot(
+            named: "M3-Queue-04-Delete-Branch-Confirmation",
+            of: app.sheets.firstMatch,
+            in: app
+        )
         try click(app.buttons["GitX.PullRequest.Review.DeleteBranch.Confirm"], timeout: 5)
         try requireGone(element("GitX.PullRequest.Review.DeleteBranch.Sheet", in: app), timeout: 10)
         try requireGone(app.buttons["GitX.PullRequest.Review.DeleteBranch"], timeout: 10)

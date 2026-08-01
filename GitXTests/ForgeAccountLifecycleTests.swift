@@ -370,6 +370,11 @@ final class ForgeAccountLifecycleTests: XCTestCase {
             retry: { retryCount += 1 }
         ))
         let browserSheet = try XCTUnwrap(window.sheets.first)
+        let browserContentView = try XCTUnwrap(browserSheet.contentView)
+        attachScreenshot(
+            of: browserContentView,
+            named: "M1-Accounts-03-Typed-Authorization-Recovery"
+        )
         window.endSheet(browserSheet, returnCode: .alertFirstButtonReturn)
         await settleMainActor()
 
@@ -499,7 +504,12 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         XCTAssertEqual(alternatives.indexOfSelectedItem, 0)
         await client.setFailure(.cli, enabled: false)
 
-        alerts.enqueue(.alertSecondButtonReturn)
+        alerts.enqueue(.alertSecondButtonReturn) { alert in
+            self.attachScreenshot(
+                of: alert.window.contentView,
+                named: "M1-Accounts-02-Personal-Access-Token-Entry"
+            )
+        }
         alternatives.selectItem(at: 2)
         try NSApp.sendAction(XCTUnwrap(alternatives.action), to: alternatives.target, from: alternatives)
         var personalAccessTokenCalls = await client.callCount(for: .personalAccessToken)
@@ -589,7 +599,12 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         let signIn = try XCTUnwrap(
             descendant(identifier: "AddForgeAccountWithGitHubApp", in: view) as? NSButton
         )
-        alerts.enqueue(.alertSecondButtonReturn)
+        alerts.enqueue(.alertSecondButtonReturn) { alert in
+            self.attachScreenshot(
+                of: alert.window.contentView,
+                named: "M1-Accounts-01-Device-Authorization"
+            )
+        }
         signIn.performClick(nil)
         await waitUntil("cancelled device authorization") {
             await client.callCount(for: .beginDeviceFlow) == 1
@@ -1603,6 +1618,31 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         let labelField = fields.first { $0.placeholderString == "Optional label" }
         tokenField?.stringValue = token
         labelField?.stringValue = label
+    }
+
+    @MainActor
+    private func attachScreenshot(
+        of view: NSView?,
+        named name: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let view else {
+            XCTFail("Diagnostic screenshot view is unavailable", file: file, line: line)
+            return
+        }
+        view.layoutSubtreeIfNeeded()
+        guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            XCTFail("Diagnostic screenshot could not allocate a bitmap", file: file, line: line)
+            return
+        }
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(representation)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     @MainActor

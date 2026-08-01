@@ -375,6 +375,25 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotNil(tableCoordinator.tableView(historyController.commitList, rowViewForRow: 0))
     }
 
+    func testHistoryForgeColumnsDiagnosticScreenshot() throws {
+        let checkColumn = try XCTUnwrap(historyController.commitList.tableColumn(
+            withIdentifier: NSUserInterfaceItemIdentifier("ForgeCheckRollupColumn")
+        ))
+        let pullRequestColumn = try XCTUnwrap(historyController.commitList.tableColumn(
+            withIdentifier: NSUserInterfaceItemIdentifier("ForgePullRequestBadgeColumn")
+        ))
+        checkColumn.isHidden = false
+        pullRequestColumn.isHidden = false
+        historyController.commitList.reloadData()
+        pumpRunLoop()
+
+        let contentView = try XCTUnwrap(windowController.window?.contentView)
+        try attachScreenshot(
+            of: contentView,
+            named: "M1-History-01-Forge-Check-and-Pull-Request-Columns"
+        )
+    }
+
     func testCurrentBranchChangeClearsCommitSortDescriptors() {
         historyController.commitController.sortDescriptors = [
             NSSortDescriptor(key: "subject", ascending: true),
@@ -3130,6 +3149,18 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     private func pumpRunLoop(for interval: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(interval))
+    }
+
+    private func attachScreenshot(of view: NSView, named name: String) throws {
+        view.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(representation)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func menuItems(selector: String, argument: Any?) -> [NSMenuItem]? {

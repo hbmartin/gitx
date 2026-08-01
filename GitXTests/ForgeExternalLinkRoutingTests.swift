@@ -186,6 +186,11 @@ final class ForgeExternalLinkRoutingTests: XCTestCase {
         XCTAssertTrue(externalAlert.informativeText.contains(origin.origin.url.absoluteString))
         XCTAssertEqual(externalAlert.buttons.map(\.title), ["Open Link", "Cancel"])
         XCTAssertEqual(externalAlert.suppressionButton?.title, "Always Allow Links to This Host")
+        let externalAlertContentView = try XCTUnwrap(externalAlert.window.contentView)
+        try attachScreenshot(
+            of: externalAlertContentView,
+            named: "M1-Links-01-External-Origin-Confirmation"
+        )
 
         let mail = try ForgeMailLink(
             "mailto:dev@example.com?cc=review@example.com&bcc=audit@example.com"
@@ -209,6 +214,11 @@ final class ForgeExternalLinkRoutingTests: XCTestCase {
             XCTAssertTrue(mailAlert.informativeText.contains(detail), detail)
         }
         XCTAssertFalse(mailAlert.showsSuppressionButton, "Mail confirmation has no persistent bypass")
+        let mailAlertContentView = try XCTUnwrap(mailAlert.window.contentView)
+        try attachScreenshot(
+            of: mailAlertContentView,
+            named: "M1-Links-02-Mail-Confirmation"
+        )
 
         let pane = PBSettingsViewFactory.generalView(legacyView: NSView())
         pane.frame = NSRect(origin: .zero, size: pane.fittingSize)

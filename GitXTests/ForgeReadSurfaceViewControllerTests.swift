@@ -257,7 +257,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             )
         )
         let staleController = try makeController(kind: .issues, service: stale)
-        _ = makeWindow(staleController)
+        let staleWindow = makeWindow(staleController)
         staleController.viewDidAppear()
         await stale.waitForListCall()
         await settleMainActor()
@@ -267,6 +267,10 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertTrue(freshness.stringValue.contains("Stale data from"))
         XCTAssertTrue(freshness.stringValue.contains("Some fields are unavailable"))
         XCTAssertFalse(freshness.isHidden)
+        try attachScreenshot(
+            of: staleWindow,
+            named: "M1-Read-02-Stale-Partial-Issue-List"
+        )
     }
 
     func testInspectorFailureStillProvidesReadOnlyBrowserEscapeHatch() async throws {
@@ -614,7 +618,7 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         let router = RecordingDestinationRouter()
         let controller = try makeController(kind: .issues, service: service, router: router)
-        _ = makeWindow(controller)
+        let window = makeWindow(controller)
         controller.viewDidAppear()
         await service.waitForListCall()
         await settleMainActor()
@@ -630,6 +634,11 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
 
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         await service.waitForDetailsCall()
+        await settleMainActor()
+        try attachScreenshot(
+            of: window,
+            named: "M1-Read-01-Issue-List-and-Inspector"
+        )
         try NSApp.sendAction(XCTUnwrap(table.doubleAction), to: table.target, from: table)
         XCTAssertEqual(router.nativeDestinations, try [.issue(ReadFixture.repository(), issue.number)])
 
