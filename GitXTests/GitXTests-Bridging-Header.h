@@ -354,6 +354,8 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 	NS_SWIFT_NAME(windowRecoveryProof(completion:));
 + (void)applicationStartupFailureProofWithCompletion:(void (^)(uint64_t proof))completion
 	NS_SWIFT_NAME(applicationStartupFailureProof(completion:));
++ (void)collaborationLifecycleProofWithCompletion:(void (^)(uint64_t proof))completion
+	NS_SWIFT_NAME(collaborationLifecycleProof(completion:));
 @end
 
 @interface PBTerminalLauncher : NSObject

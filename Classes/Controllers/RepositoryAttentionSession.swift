@@ -125,8 +125,28 @@ actor ForgeAttentionNotificationDelivery: ForgeAttentionAlertDelivering {
     }
 }
 
+enum ForgeAttentionNotificationDelegateCompletionForwarding {
+    nonisolated static func forwardPresentation(
+        _ forwarding: (@escaping @Sendable (UNNotificationPresentationOptions) -> Void) -> Void?,
+        completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+    ) {
+        if forwarding(completionHandler) == nil {
+            completionHandler([])
+        }
+    }
+
+    nonisolated static func forwardResponse(
+        _ forwarding: (@escaping @Sendable () -> Void) -> Void?,
+        completionHandler: @escaping @Sendable () -> Void
+    ) {
+        if forwarding(completionHandler) == nil {
+            completionHandler()
+        }
+    }
+}
+
 @MainActor
-final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificationCenterDelegate {
+private final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = ForgeAttentionNotificationDelegateBridge()
 
     // UserNotifications calls these delegate methods outside MainActor. The delegate is
@@ -151,7 +171,7 @@ final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificati
             completionHandler([.banner, .sound])
             return
         }
-        Self.forwardPresentation(
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardPresentation(
             { handler in
                 previousDelegate?.userNotificationCenter?(
                     center,
@@ -184,7 +204,7 @@ final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificati
             }
             return
         }
-        Self.forwardResponse(
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardResponse(
             { handler in
                 previousDelegate?.userNotificationCenter?(
                     center,
@@ -194,24 +214,6 @@ final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificati
             },
             completionHandler: completionHandler
         )
-    }
-
-    nonisolated static func forwardPresentation(
-        _ forwarding: (@escaping @Sendable (UNNotificationPresentationOptions) -> Void) -> Void?,
-        completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
-    ) {
-        if forwarding(completionHandler) == nil {
-            completionHandler([])
-        }
-    }
-
-    nonisolated static func forwardResponse(
-        _ forwarding: (@escaping @Sendable () -> Void) -> Void?,
-        completionHandler: @escaping @Sendable () -> Void
-    ) {
-        if forwarding(completionHandler) == nil {
-            completionHandler()
-        }
     }
 }
 

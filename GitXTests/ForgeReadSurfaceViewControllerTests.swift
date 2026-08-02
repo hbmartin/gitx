@@ -1764,11 +1764,11 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
 
         let recorder = NotificationDelegateCompletionRecorder()
-        ForgeAttentionNotificationDelegateBridge.forwardPresentation(
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardPresentation(
             { _ in nil },
             completionHandler: recorder.recordPresentation
         )
-        ForgeAttentionNotificationDelegateBridge.forwardResponse(
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardResponse(
             { _ in nil },
             completionHandler: recorder.recordResponse
         )

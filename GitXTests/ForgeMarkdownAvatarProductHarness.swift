@@ -340,7 +340,7 @@
                 guard unclosedPrepared,
                       unclosedController?.observesCredentialCooldownsForProductProof == true
                 else { return 0 }
-                weak var releasedUnclosedController = unclosedController
+                weak let releasedUnclosedController = unclosedController
                 unclosedController = nil
                 let streamDoesNotRetainController = await waitForCondition {
                     releasedUnclosedController == nil
@@ -369,7 +369,7 @@
                     == closedGeneration
                     && closedController?.accessPreparationTaskForProductProof == nil
                     && closedController?.observesCredentialCooldownsForProductProof == false
-                weak var releasedClosedController = closedController
+                weak let releasedClosedController = closedController
                 closedController = nil
                 let closedControllerReleased = await waitForCondition {
                     releasedClosedController == nil
