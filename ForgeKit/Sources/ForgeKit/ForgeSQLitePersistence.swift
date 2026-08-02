@@ -228,7 +228,7 @@ public actor ForgeSQLiteStore {
         let connection = try activeConnection()
         if case .avatar = entry.record.key {
             try connection.transaction {
-                try upsertCacheEntry(entry, using: connection)
+                try Self.upsertCacheEntry(entry, using: connection)
                 try Self.associateAvatarOwner(
                     .anonymous,
                     recordKey: Self.cacheFields(entry.record.key).recordKey,
@@ -236,7 +236,7 @@ public actor ForgeSQLiteStore {
                 )
             }
         } else {
-            try upsertCacheEntry(entry, using: connection)
+            try Self.upsertCacheEntry(entry, using: connection)
         }
         Self.logger.debug("Stored Forge cache record")
     }
@@ -257,7 +257,7 @@ public actor ForgeSQLiteStore {
         let connection = try activeConnection()
         let recordKey = try Self.cacheFields(entry.record.key).recordKey
         try connection.transaction {
-            try upsertCacheEntry(entry, using: connection)
+            try Self.upsertCacheEntry(entry, using: connection)
             for owner in owners {
                 try Self.associateAvatarOwner(owner, recordKey: recordKey, using: connection)
             }
@@ -325,7 +325,7 @@ public actor ForgeSQLiteStore {
         return removed
     }
 
-    private func upsertCacheEntry(
+    private static func upsertCacheEntry(
         _ entry: ForgeSQLiteCacheEntry,
         using connection: ForgeSQLiteConnection
     ) throws {

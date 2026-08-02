@@ -101,7 +101,7 @@ jobs:
             -workspace GitX.xcworkspace \
             -scheme GitX \
             -destination "platform=macOS,arch=${{ matrix.abi }}" \
-            -only-testing:GitXUITests \
+            -testPlan GitXUI \
             ARCHS="${{ matrix.abi }}" \
             CODE_SIGN_IDENTITY="-" \
             GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo \

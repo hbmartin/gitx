@@ -48,6 +48,12 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertEqual(build_workflow.count("xcode: 26.2"), 1)
         self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 7)
 
+    def test_legacy_build_workflow_uses_shared_ui_test_plan(self) -> None:
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+
+        self.assertIn("-testPlan GitXUI", build_workflow)
+        self.assertNotIn("-only-testing:GitXUITests", build_workflow)
+
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         pinned_actions = {
