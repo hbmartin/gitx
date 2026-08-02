@@ -991,8 +991,8 @@ private extension GitHubMutationAdapter {
         repository: ForgeRepositoryIdentity,
         expectedNumber: ForgeItemNumber,
         operation: ForgeOperation,
-        validate: (GitHubPullRequestMutationValue) throws -> Void,
-        fragment: (Mutation.Data) -> GitHubAPI.GitHubPullRequestMutationSnapshot?
+        validate: @Sendable (GitHubPullRequestMutationValue) throws -> Void,
+        fragment: @Sendable (Mutation.Data) -> GitHubAPI.GitHubPullRequestMutationSnapshot?
     ) async throws -> GitHubMutationResult<GitHubPullRequestMutationValue>
         where Mutation.ResponseFormat == SingleResponseFormat
     {
