@@ -95,7 +95,7 @@ actor ForgeAttentionNotificationDelivery: ForgeAttentionAlertDelivering {
         }
     }
 
-    private static func title(_ category: ForgeAttentionAlertCategory) -> String {
+    nonisolated static func title(_ category: ForgeAttentionAlertCategory) -> String {
         switch category {
         case .reviewRequests: "Review Requested"
         case .mentionsAndReplies: "Mention or Reply"

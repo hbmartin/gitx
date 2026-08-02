@@ -72,22 +72,44 @@ nonisolated protocol ForgeSecurityItemCalling: Sendable {
 }
 
 nonisolated struct SystemForgeSecurityItemClient: ForgeSecurityItemCalling {
+    typealias CopyMatching = @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+    typealias Update = @Sendable (CFDictionary, CFDictionary) -> OSStatus
+    typealias Add = @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+    typealias Delete = @Sendable (CFDictionary) -> OSStatus
+
+    private let copyMatchingCall: CopyMatching
+    private let updateCall: Update
+    private let addCall: Add
+    private let deleteCall: Delete
+
+    init(
+        copyMatching: @escaping CopyMatching = SecItemCopyMatching,
+        update: @escaping Update = SecItemUpdate,
+        add: @escaping Add = SecItemAdd,
+        delete: @escaping Delete = SecItemDelete
+    ) {
+        copyMatchingCall = copyMatching
+        updateCall = update
+        addCall = add
+        deleteCall = delete
+    }
+
     func copyMatching(_ query: [String: Any]) -> (status: OSStatus, result: Any?) {
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = copyMatchingCall(query as CFDictionary, &result)
         return (status, result)
     }
 
     func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
-        SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        updateCall(query as CFDictionary, attributes as CFDictionary)
     }
 
     func add(_ attributes: [String: Any]) -> OSStatus {
-        SecItemAdd(attributes as CFDictionary, nil)
+        addCall(attributes as CFDictionary, nil)
     }
 
     func delete(_ query: [String: Any]) -> OSStatus {
-        SecItemDelete(query as CFDictionary)
+        deleteCall(query as CFDictionary)
     }
 }
 

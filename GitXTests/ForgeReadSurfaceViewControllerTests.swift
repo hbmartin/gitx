@@ -1745,6 +1745,13 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
     }
 
     func testAttentionNotificationActionsAndUnavailableDatabaseErrorRemainExplicit() {
+        XCTAssertEqual(ForgeAttentionNotificationDelivery.title(.reviewRequests), "Review Requested")
+        XCTAssertEqual(ForgeAttentionNotificationDelivery.title(.mentionsAndReplies), "Mention or Reply")
+        XCTAssertEqual(ForgeAttentionNotificationDelivery.title(.assignments), "Assignment")
+        XCTAssertEqual(
+            ForgeAttentionNotificationDelivery.title(.failedChecksOnAuthoredPullRequests),
+            "Pull Request Check Failed"
+        )
         XCTAssertEqual(
             ForgeAttentionNotificationDelivery.action(for: "PBForgeAttention.Open"),
             .open

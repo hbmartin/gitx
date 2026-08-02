@@ -37,6 +37,26 @@ final class ForgeCredentialStoreTests: XCTestCase {
         XCTAssertEqual(updateStatus, errSecItemNotFound)
     }
 
+    func testSecurityClientForwardsEveryOperationThroughInjectedSystemCalls() {
+        let returnedData = Data("credential".utf8)
+        let client = SystemForgeSecurityItemClient(
+            copyMatching: { _, result in
+                result?.pointee = returnedData as CFData
+                return 101
+            },
+            update: { _, _ in 102 },
+            add: { _, _ in 103 },
+            delete: { _ in 104 }
+        )
+
+        let response = client.copyMatching([kSecClass as String: kSecClassGenericPassword])
+        XCTAssertEqual(response.status, 101)
+        XCTAssertEqual(response.result as? Data, returnedData)
+        XCTAssertEqual(client.update([:], attributes: [:]), 102)
+        XCTAssertEqual(client.add([:]), 103)
+        XCTAssertEqual(client.delete([:]), 104)
+    }
+
     func testPATStorageListsOnlySafeMetadataAndRedactsSecretSurfaces() async throws {
         let keychain = InMemoryForgeCredentialKeychain()
         let store = ForgeAccountStore(keychain: keychain)
