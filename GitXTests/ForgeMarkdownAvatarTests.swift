@@ -936,6 +936,9 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
 
         let startupFailureProof = await PBForgeMarkdownAvatarProductHarness.applicationStartupFailureProof()
         XCTAssertEqual(startupFailureProof, 0b111)
+
+        let collaborationLifecycleProof = await PBForgeMarkdownAvatarProductHarness.collaborationLifecycleProof()
+        XCTAssertEqual(collaborationLifecycleProof, 0b111)
     }
 
     private func cell(_ text: String) -> ForgeMarkdownTableCell {
