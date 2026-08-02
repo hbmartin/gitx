@@ -37,6 +37,7 @@
 
 - (BOOL)isLoadGenerationCurrent:(NSUInteger)generation;
 - (void)performLoadStateOnMainThread:(dispatch_block_t)block;
+- (GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error;
 - (void)updateCommits:(NSArray<PBGitCommit *> *)revisions operation:(NSOperation *)operation generation:(NSUInteger)generation;
 - (void)addCommitsFromEnumerator:(GTEnumerator *)enumerator operation:(NSOperation *)operation generation:(NSUInteger)generation;
 - (void)finishLoadGeneration:(NSUInteger)generation completionBlock:(void (^)(void))completionBlock;
@@ -98,7 +99,7 @@
 		}
 
 		NSError *error = nil;
-		GTEnumerator *enu = [[GTEnumerator alloc] initWithRepository:repo error:&error];
+		GTEnumerator *enu = [strongSelf enumeratorForRepository:repo error:&error];
 		if (!enu) {
 			NSLog(@"[GitX] Failed to create the enumerator for revision load generation %lu: %@", (unsigned long)generation, error);
 			return;
@@ -114,6 +115,11 @@
 	}];
 
 	[self.operationQueue addOperation:parseOperation];
+}
+
+- (GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error
+{
+	return [[GTEnumerator alloc] initWithRepository:repository error:error];
 }
 
 

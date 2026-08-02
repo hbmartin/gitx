@@ -1,5 +1,6 @@
 #import <XCTest/XCTest.h>
 #import <ObjectiveGit/GTCommit.h>
+#import <ObjectiveGit/GTEnumerator.h>
 #import <ObjectiveGit/GTOID.h>
 #import <ObjectiveGit/GTRepository.h>
 #import "MAKVONotificationCenter.h"
@@ -61,10 +62,28 @@
 @end
 
 @interface PBGitRevList (GitXCoreTests)
+- (nullable GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error;
 - (void)updateCommits:(NSArray<PBGitCommit *> *)revisions
 			operation:(NSOperation *)operation
 		   generation:(NSUInteger)generation;
 - (BOOL)isLoadGenerationCurrent:(NSUInteger)generation;
+@end
+
+@interface PBGitRevListEnumeratorFailureStub : PBGitRevList
+@end
+
+@implementation PBGitRevListEnumeratorFailureStub
+
+- (nullable GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error
+{
+	if (error) {
+		*error = [NSError errorWithDomain:@"GitXTests.RevisionList"
+									 code:1
+								 userInfo:@{NSLocalizedDescriptionKey : @"forced enumerator failure"}];
+	}
+	return nil;
+}
+
 @end
 
 @interface PBWebHistoryController (GitXCoreTests)
@@ -698,6 +717,34 @@
 	operationQueue.suspended = NO;
 	[operationQueue waitUntilAllOperationsAreFinished];
 	[self waitForExpectations:@[ completion ] timeout:0.2];
+}
+
+- (void)testRevisionLoadCompletesEmptyWhenRepositoryIsUnavailable
+{
+	PBGitRevList *revisionList = [[PBGitRevList alloc] initWithRepository:nil
+																	  rev:[PBGitRevSpecifier allBranchesRevSpec]
+															  shouldGraph:NO];
+	XCTestExpectation *completion = [self expectationWithDescription:@"missing repository completes empty"];
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[completion fulfill];
+	}];
+
+	[self waitForExpectations:@[ completion ] timeout:2.0];
+	XCTAssertEqual(revisionList.commits.count, 0);
+}
+
+- (void)testRevisionLoadCompletesEmptyWhenEnumeratorCreationFails
+{
+	PBGitRevList *revisionList = [[PBGitRevListEnumeratorFailureStub alloc] initWithRepository:self.repository
+																						   rev:[PBGitRevSpecifier allBranchesRevSpec]
+																				   shouldGraph:NO];
+	XCTestExpectation *completion = [self expectationWithDescription:@"enumerator failure completes empty"];
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[completion fulfill];
+	}];
+
+	[self waitForExpectations:@[ completion ] timeout:2.0];
+	XCTAssertEqual(revisionList.commits.count, 0);
 }
 
 - (void)assertCommitsAreUniqueAndChildrenPrecedeParents:(NSArray<PBGitCommit *> *)commits
