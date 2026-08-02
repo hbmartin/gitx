@@ -649,6 +649,30 @@
 	[self waitForExpectations:@[ cancelled ] timeout:0.2];
 }
 
+- (void)testCancelledRevisionLoadDoesNotPublishOrComplete
+{
+	PBGitRevList *revisionList = [[PBGitRevList alloc] initWithRepository:self.repository
+														  rev:[PBGitRevSpecifier allBranchesRevSpec]
+												  shouldGraph:NO];
+	NSOperationQueue *operationQueue = [revisionList valueForKey:@"operationQueue"];
+	operationQueue.suspended = YES;
+	XCTestExpectation *completion = [self expectationWithDescription:@"cancelled load completion is suppressed"];
+	completion.inverted = YES;
+
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[completion fulfill];
+	}];
+	XCTAssertTrue(revisionList.isParsing);
+	[revisionList cancel];
+
+	operationQueue.suspended = NO;
+	[operationQueue waitUntilAllOperationsAreFinished];
+	[self waitForExpectations:@[ completion ] timeout:0.2];
+
+	XCTAssertNil(revisionList.commits);
+	XCTAssertFalse(revisionList.isParsing);
+}
+
 - (void)assertCommitsAreUniqueAndChildrenPrecedeParents:(NSArray<PBGitCommit *> *)commits
 {
 	NSMutableDictionary<NSString *, NSNumber *> *indexesBySHA = [NSMutableDictionary dictionaryWithCapacity:commits.count];
