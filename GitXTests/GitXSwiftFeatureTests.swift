@@ -315,6 +315,35 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(window.title, "Repository — Fetching updates")
     }
 
+    func testRepositoryToolbarDefaultOrderKeepsNavigationBeforeRemoteOperations() {
+        let windowController = PBGitWindowController(window: nil)
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+
+        XCTAssertEqual(
+            toolbarController.toolbarDefaultItemIdentifiers(toolbar).map { $0.rawValue },
+            [
+                "GitX.Toolbar.Commit",
+                NSToolbarItem.Identifier.flexibleSpace.rawValue,
+                "GitX.Toolbar.Actions",
+                "GitX.Toolbar.ForgeAccount",
+                "GitX.Toolbar.Attention",
+                "GitX.Toolbar.Jump",
+                "GitX.Toolbar.ViewRemote",
+                "GitX.Toolbar.AddRemote",
+                "GitX.Toolbar.Fetch",
+                "GitX.Toolbar.Pull",
+                "GitX.Toolbar.Push",
+                "GitX.Toolbar.NewPullRequest",
+                NSToolbarItem.Identifier.flexibleSpace.rawValue,
+                "GitX.Toolbar.Reveal",
+                "GitX.Toolbar.Terminal",
+                "GitX.Toolbar.RefreshStatus",
+                "GitX.Toolbar.RepositorySettings",
+            ]
+        )
+    }
+
     func testRepositoryToolbarPaletteStatusItemDoesNotReplaceInsertedStatusViews() throws {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),

@@ -1,10 +1,63 @@
 import AppKit
 import ForgeKit
+@testable import GitHubForgeAdapter
 import UserNotifications
 import XCTest
 
 @MainActor
 final class ForgeReadSurfaceViewControllerTests: XCTestCase {
+    func testAnonymousReadSurfaceMapsPullRequestsIssuesAndLocalSearch() async throws {
+        let client = AnonymousReadHTTPClient(responses: [
+            .success(AnonymousReadFixture.response(json: AnonymousReadFixture.pullRequestsJSON)),
+            .success(AnonymousReadFixture.response(json: AnonymousReadFixture.issuesJSON)),
+            .success(AnonymousReadFixture.response(json: AnonymousReadFixture.pullRequestsJSON)),
+        ])
+        let fetchedAt = ReadFixture.date(50)
+        let adapter = GitHubAnonymousRESTAdapter(
+            client: client,
+            budget: GitHubAnonymousRESTBudget(),
+            now: { fetchedAt }
+        )
+        let repository = try ReadFixture.repository()
+        let service = ForgeGitHubAnonymousReadSurfaceService(
+            repository: repository,
+            adapter: adapter
+        )
+
+        let pullRequests = try await service.loadItems(
+            kind: .pullRequests,
+            query: ForgeReadSurfaceQuery(stateFilter: .all),
+            after: nil
+        )
+        let issues = try await service.loadItems(
+            kind: .issues,
+            query: ForgeReadSurfaceQuery(stateFilter: .open),
+            after: nil
+        )
+        let search = try await service.loadItems(
+            kind: .pullRequests,
+            query: ForgeReadSurfaceQuery(searchText: "anonymous pull", stateFilter: .open),
+            after: nil
+        )
+
+        let pullRequestDestination = try ForgeDestination.pullRequest(repository, ForgeItemNumber(7))
+        let issueDestination = try ForgeDestination.issue(repository, ForgeItemNumber(8))
+        XCTAssertEqual(pullRequests.items.map(\.destination), [pullRequestDestination])
+        XCTAssertEqual(issues.items.map(\.destination), [issueDestination])
+        XCTAssertEqual(search.items.map(\.destination), [pullRequestDestination])
+        XCTAssertEqual(pullRequests.fetchedAt, fetchedAt)
+        XCTAssertTrue(pullRequests.isPartial)
+        XCTAssertTrue(issues.isPartial)
+        XCTAssertTrue(search.isPartial)
+        let requests = await client.requests()
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests.map { $0.url?.path }, [
+            "/repos/hbmartin/gitx/pulls",
+            "/repos/hbmartin/gitx/issues",
+            "/repos/hbmartin/gitx/pulls",
+        ])
+    }
+
     func testReviewOverlayHostMayIgnoreDefaultRevisionUpdates() throws {
         let host = DefaultRevisionIgnoringReviewOverlayHost()
 
@@ -2309,6 +2362,74 @@ private final class InMemoryRepositoryForgeViewStateStore: RepositoryForgeViewSt
         for kind: ForgeReadSurfaceKind
     ) {
         readStates[kind] = state
+    }
+}
+
+private actor AnonymousReadHTTPClient: GitHubAnonymousRESTHTTPClient {
+    private var responses: [Result<GitHubAnonymousRESTHTTPResponse, Error>]
+    private var recordedRequests: [URLRequest] = []
+
+    init(responses: [Result<GitHubAnonymousRESTHTTPResponse, Error>]) {
+        self.responses = responses
+    }
+
+    func execute(_ request: URLRequest) async throws -> GitHubAnonymousRESTHTTPResponse {
+        recordedRequests.append(request)
+        guard !responses.isEmpty else {
+            throw NSError(domain: "AnonymousReadHTTPClient", code: 1)
+        }
+        return try responses.removeFirst().get()
+    }
+
+    func requests() -> [URLRequest] {
+        recordedRequests
+    }
+}
+
+private enum AnonymousReadFixture {
+    static let pullRequestsJSON = #"""
+    [{
+      "number": 7,
+      "state": "open",
+      "draft": false,
+      "title": "Anonymous pull",
+      "body": null,
+      "user": {"id": 7, "login": "octocat", "type": "User"},
+      "head": {"ref": "feature", "sha": "abcdef1", "repo": {"full_name": "hbmartin/gitx"}},
+      "base": {"ref": "main", "sha": "abcdef2", "repo": {"full_name": "hbmartin/gitx"}},
+      "created_at": "2026-07-28T12:00:00Z",
+      "updated_at": "2026-07-29T12:00:00Z",
+      "closed_at": null,
+      "merged_at": null,
+      "labels": [],
+      "assignees": [],
+      "milestone": null,
+      "mergeable": null
+    }]
+    """#
+
+    static let issuesJSON = #"""
+    [{
+      "number": 8,
+      "state": "open",
+      "title": "Anonymous issue",
+      "body": null,
+      "user": {"id": 8, "login": "octocat", "type": "User"},
+      "created_at": "2026-07-28T12:00:00Z",
+      "updated_at": "2026-07-29T12:00:00Z",
+      "closed_at": null,
+      "labels": [],
+      "assignees": [],
+      "milestone": null
+    }]
+    """#
+
+    static func response(json: String) -> GitHubAnonymousRESTHTTPResponse {
+        GitHubAnonymousRESTHTTPResponse(
+            statusCode: 200,
+            headers: [:],
+            data: Data(json.utf8)
+        )
     }
 }
 

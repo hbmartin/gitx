@@ -218,6 +218,12 @@ final class ForgeReadSurfaceModelsTests: XCTestCase {
         XCTAssertEqual(issueRow.author, "Deleted user")
         XCTAssertEqual(issueRow.labels, [])
         XCTAssertTrue(issueRow.accessibilityLabel.contains("No labels"))
+
+        let loginOnlyIssue = try Fixture.issue(
+            number: 13,
+            author: .available(.actor(Fixture.actor(login: "login-only", name: nil)))
+        )
+        XCTAssertEqual(ForgeReadSurfaceRow(item: .issue(loginOnlyIssue)).author, "login-only")
     }
 
     func testPullRequestInspectorPresentsAllReadOnlySectionsAndChronologicalTimeline() throws {

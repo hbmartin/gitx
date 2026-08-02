@@ -914,6 +914,7 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 - (void)updateWithForgePersistentFailureText:(nullable NSString *)persistentFailureText
 	statusBarVisible:(BOOL)statusBarVisible
 	NS_SWIFT_NAME(updateForgeDiagnostic(persistentFailureText:statusBarVisible:));
+- (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar;
 - (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar
 			  itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier
 		  willBeInsertedIntoToolbar:(BOOL)flag;

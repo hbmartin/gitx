@@ -90,13 +90,17 @@ jobs:
         if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: brew install exiftool imagemagick
       - name: Checkout fixed repo snapshot for screenshots
-        if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
           git clone --no-checkout "$GITHUB_WORKSPACE" /tmp/gitx-screenshot-repo
           git -C /tmp/gitx-screenshot-repo checkout 52ff1051d0c8e5cf3ee5
       - name: Run tests
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
+          screenshot_repo_setting=()
+          if [[ -d /tmp/gitx-screenshot-repo ]]; then
+            screenshot_repo_setting=(GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo)
+          fi
           xcodebuild test \
             -workspace GitX.xcworkspace \
             -scheme GitX \
@@ -104,7 +108,7 @@ jobs:
             -testPlan GitXUI \
             ARCHS="${{ matrix.abi }}" \
             CODE_SIGN_IDENTITY="-" \
-            GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo \
+            "${screenshot_repo_setting[@]}" \
             -resultBundlePath TestResults-${{ matrix.abi }}.xcresult
       - name: Extract screenshots from test results
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}

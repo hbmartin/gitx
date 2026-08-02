@@ -1819,9 +1819,35 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let historyItem = NSMenuItem(title: "History", action: NSSelectorFromString("showHistoryView:"), keyEquivalent: "")
         _ = stub.validateMenuItem(historyItem)
 
-        let webController = historyController.value(forKey: "webHistoryController") as? NSObject
-        webController?.perform(NSSelectorFromString("refreshDisplayedContent"))
+        let webController = try XCTUnwrap(
+            historyController.value(forKey: "webHistoryController") as? PBWebHistoryController
+        )
+        webController.refreshDisplayedContent()
         pumpRunLoop()
+
+        webController.setValue(nil, forKey: "historyController")
+        _ = webController.beginContentGeneration()
+        let undecorated = webController.sections(
+            [[PBNativeSectionTextKey: "diff"]],
+            applyingDiffLayout: 0
+        )
+        XCTAssertEqual(undecorated.first?[PBNativeSectionSuppressionPatternsKey] as? [String], [])
+
+        webController.setValue(historyController, forKey: "historyController")
+        try fixture.git([
+            "config",
+            "gitx.diffSuppressionPatterns",
+            " ^generated/ \n# note\n\n.*\\.lock$ ",
+        ])
+        _ = webController.beginContentGeneration()
+        let configured = webController.sections(
+            [[PBNativeSectionTextKey: "diff"]],
+            applyingDiffLayout: 1
+        )
+        XCTAssertEqual(
+            configured.first?[PBNativeSectionSuppressionPatternsKey] as? [String],
+            ["^generated/", #".*\.lock$"#]
+        )
     }
 
     func testStagingPaneFileActions() throws {

@@ -75,7 +75,9 @@ final class ForgeApplicationCompositionTests: XCTestCase {
     func testDefaultRefreshCoordinatorDiscoversAuthenticatedBoundRepository() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ForgeBoundRefreshComposition-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: root)
+        }
         let defaults = try makeDefaults()
         let keychain = CompositionKeychain()
         let accountStore = ForgeAccountStore(keychain: keychain)
@@ -95,9 +97,21 @@ final class ForgeApplicationCompositionTests: XCTestCase {
             primaryRepository: repository,
             preferredAccount: accountID
         )
+        let publicRepository = try ForgeRepositoryIdentity(
+            forge: forge,
+            owner: "hbmartin",
+            name: "public-gitx"
+        )
+        let publicBinding = try ForgeRepositoryBinding(
+            localRemoteName: "public",
+            primaryRepository: publicRepository
+        )
         try defaults.set([
             "bound-repository": [
                 ForgeRepositoryBindingAccountCleaner.forgeBindingKey: JSONEncoder().encode(binding),
+            ],
+            "public-repository": [
+                ForgeRepositoryBindingAccountCleaner.forgeBindingKey: JSONEncoder().encode(publicBinding),
             ],
         ], forKey: ForgeRepositoryBindingAccountCleaner.repositorySettingsKey)
 
@@ -107,6 +121,10 @@ final class ForgeApplicationCompositionTests: XCTestCase {
             keychain: keychain,
             cliRunner: CompositionRunner()
         )
+        addTeardownBlock {
+            await services.refreshCoordinator?.invalidate()
+            await services.database?.close()
+        }
         let coordinator = try XCTUnwrap(services.refreshCoordinator)
         let target = try ForgeRefreshTarget(
             authentication: .credential(account.currentCredential.reference),

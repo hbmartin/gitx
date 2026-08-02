@@ -16,6 +16,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)scrollPageUp;
 - (void)scrollPageDown;
 - (void)refreshDisplayedContent;
+- (NSUInteger)beginContentGeneration;
+- (NSArray<NSDictionary<NSString *, id> *> *)sections:(NSArray<NSDictionary<NSString *, id> *> *)sections
+										  applyingDiffLayout:(NSInteger)layout;
 
 @end
 
