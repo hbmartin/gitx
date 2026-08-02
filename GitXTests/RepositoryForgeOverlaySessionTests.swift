@@ -329,10 +329,11 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
             authentication: .credential(credential),
             repository: repository
         )
+        let bindingProvider = MutableForgeBindingProviderDouble(bindings: [binding])
         let clock = ForgeRefreshClockDouble()
         let recorder = ForgeApplicationRefreshRecorder()
         let coordinator = ForgeApplicationRefreshCoordinator(
-            bindingProvider: ForgeBindingProviderDouble(bindings: [binding]),
+            bindingProvider: bindingProvider,
             resolveTarget: { candidate in candidate == binding ? target : nil },
             backgroundRefresh: { refreshedTarget, refreshedBinding, reason in
                 await recorder.recordBackground(
@@ -381,6 +382,12 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         try await waitForBackgroundRefreshCount(2, recorder: recorder)
         let restored = await recorder.backgroundRefreshes()
         XCTAssertEqual(restored.map(\.reason), [.scheduledOverlay, .networkRestored])
+
+        bindingProvider.replaceBindings([])
+        await coordinator.synchronizeBoundRepositories()
+        let removedInterval = await coordinator.interval(for: target)
+        XCTAssertNil(removedInterval)
+        try await waitForNoClockIntervals(clock: clock)
         await coordinator.invalidate()
     }
 
@@ -1116,6 +1123,17 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         XCTFail("Timed out waiting for Forge refresh interval \(interval)")
     }
 
+    private func waitForNoClockIntervals(clock: ForgeRefreshClockDouble) async throws {
+        let deadline = ContinuousClock.now + .seconds(1)
+        repeat {
+            if await clock.activeIntervals().isEmpty {
+                return
+            }
+            await Task.yield()
+        } while ContinuousClock.now < deadline
+        XCTFail("Timed out waiting for Forge refresh intervals to cancel")
+    }
+
     private func waitForClientRefreshCount(
         _ count: Int,
         recorder: ForgeApplicationRefreshRecorder
@@ -1652,11 +1670,25 @@ private final class OverlayNetworkMonitorDouble: RepositoryForgeNetworkMonitorin
     }
 }
 
-private struct ForgeBindingProviderDouble: ForgeRepositoryBindingProviding {
-    let bindings: [ForgeRepositoryBinding]
+// swift6-safety-justification: The lock serializes every read and mutation of the fixture's bindings.
+private final nonisolated class MutableForgeBindingProviderDouble: ForgeRepositoryBindingProviding, @unchecked Sendable {
+    private let lock = NSLock()
+    private var bindings: [ForgeRepositoryBinding]
+
+    init(bindings: [ForgeRepositoryBinding]) {
+        self.bindings = bindings
+    }
 
     func forgeRepositoryBindings() -> [ForgeRepositoryBinding] {
-        bindings
+        lock.lock()
+        defer { lock.unlock() }
+        return bindings
+    }
+
+    func replaceBindings(_ bindings: [ForgeRepositoryBinding]) {
+        lock.lock()
+        self.bindings = bindings
+        lock.unlock()
     }
 }
 

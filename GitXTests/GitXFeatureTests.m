@@ -3,6 +3,7 @@
 #import <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <UserNotifications/UserNotifications.h>
 
 #import "GitXApplicationLocator.h"
 #import "PBGitDefaults.h"
@@ -21,6 +22,29 @@
 #import "NSAppearance+PBDarkMode.h"
 #import "ApplicationController.h"
 #import "PBSourceViewBadge.h"
+
+static NSUInteger PBAutoFetchAuthorizationRequestCount;
+
+static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacement)
+{
+	method_exchangeImplementations(class_getInstanceMethod(cls, original), class_getInstanceMethod(cls, replacement));
+}
+
+@interface UNUserNotificationCenter (GitXFeatureTests)
+- (void)pb_feature_requestAuthorizationWithOptions:(__unused UNAuthorizationOptions)options
+								 completionHandler:(void (^)(BOOL granted, NSError *_Nullable error))completionHandler;
+@end
+
+@implementation UNUserNotificationCenter (GitXFeatureTests)
+
+- (void)pb_feature_requestAuthorizationWithOptions:(__unused UNAuthorizationOptions)options
+								 completionHandler:(void (^)(BOOL granted, NSError *_Nullable error))completionHandler
+{
+	PBAutoFetchAuthorizationRequestCount++;
+	completionHandler(YES, nil);
+}
+
+@end
 
 @interface PBSourceViewBadge (GitXFeatureTests)
 
@@ -232,6 +256,7 @@
 
 @interface PBAutoFetchManager (GitXFeatureTests)
 + (NSTimeInterval)retryDelayForFailureCount:(NSUInteger)failureCount;
+- (void)ensureNotificationAuthorization;
 - (void)timerFired:(NSTimer *)timer;
 @end
 
@@ -377,6 +402,26 @@
 
 	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1);
 	XCTAssertFalse(manager.lastEvaluationWasImmediate);
+}
+
+- (void)testAutoFetchNotificationAuthorizationRunsCompletionOnce
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	PBAutoFetchAuthorizationRequestCount = 0;
+	PBFeatureSwapInstanceMethods(
+		UNUserNotificationCenter.class,
+		@selector(requestAuthorizationWithOptions:completionHandler:),
+		@selector(pb_feature_requestAuthorizationWithOptions:completionHandler:));
+	@try {
+		[manager ensureNotificationAuthorization];
+		[manager ensureNotificationAuthorization];
+		XCTAssertEqual(PBAutoFetchAuthorizationRequestCount, (NSUInteger)1);
+	} @finally {
+		PBFeatureSwapInstanceMethods(
+			UNUserNotificationCenter.class,
+			@selector(requestAuthorizationWithOptions:completionHandler:),
+			@selector(pb_feature_requestAuthorizationWithOptions:completionHandler:));
+	}
 }
 
 - (void)testJumpToCheckedOutBranchReloadsAndReadsHead

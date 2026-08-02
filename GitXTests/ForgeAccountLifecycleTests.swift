@@ -1392,6 +1392,71 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         XCTAssertEqual(removedAccounts, [])
     }
 
+    func testAccountsServiceChecksGitHubAppCredentialRefreshAndRetainsAccountsAfterFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ForgeAccountsRefreshTests-\(UUID().uuidString)", isDirectory: true)
+        let defaults = try makeDefaults()
+        let baseServices = try await ForgeApplicationServiceFactory.make(
+            forgeDirectory: directory,
+            bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+            keychain: LifecycleKeychain(),
+            cliRunner: StubForgeCLICommandRunner(results: [])
+        )
+        addTeardownBlock {
+            await baseServices.refreshCoordinator?.invalidate()
+            await baseServices.database?.close()
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let date = Date(timeIntervalSince1970: 4_000_000)
+        let account = try await baseServices.accountStore.addAccount(
+            accountID: makeAccountID("accounts-refresh-failure"),
+            login: "refresh-user",
+            credentialID: ForgeCredentialID("github-app-refresh"),
+            source: .forgeApplicationDeviceFlow,
+            expiresAt: date.addingTimeInterval(60),
+            secrets: ForgeCredentialSecretMaterial(
+                accessToken: Data("expiring-access".utf8),
+                refreshToken: Data("refresh-token".utf8),
+                refreshTokenExpiresAt: date.addingTimeInterval(3600)
+            )
+        )
+        let configuration = try GitHubAppDeviceFlowConfiguration(
+            clientID: "Iv1ABC123",
+            applicationSlug: "gitx-test"
+        )
+        let refresher = FailingAccountsCredentialRefresher()
+        let refreshCoordinator = ForgeAccountCredentialRefreshCoordinator(
+            accountStore: baseServices.accountStore,
+            configuration: configuration,
+            refresherFactory: { _ in refresher }
+        )
+        let authority = ForgeGitHubReadCredentialAuthority(
+            accountStore: baseServices.accountStore,
+            credentialRefreshCoordinator: refreshCoordinator,
+            now: { date }
+        )
+        let services = ForgeApplicationServices(
+            dataAvailability: baseServices.dataAvailability,
+            accountStore: baseServices.accountStore,
+            addAccountCoordinator: baseServices.addAccountCoordinator,
+            removalCoordinator: baseServices.removalCoordinator,
+            githubReadAdapterFactory: ForgeGitHubReadAdapterFactory(credentialAuthority: authority),
+            githubAnonymousRESTBudget: baseServices.githubAnonymousRESTBudget,
+            deferredAccountCleanup: baseServices.deferredAccountCleanup,
+            recoveryCoordinator: baseServices.recoveryCoordinator
+        )
+        let service = ForgeAccountsService(
+            services: services,
+            configuration: configuration
+        )
+
+        let accounts = try await service.accounts(refreshingExpiringCredentialsAt: date)
+
+        XCTAssertEqual(accounts, [account])
+        let refreshCallCount = await refresher.callCount()
+        XCTAssertEqual(refreshCallCount, 1)
+    }
+
     func testBindingProviderDiscoversValidPersistedBindingsOnceInStableOrder() throws {
         let defaults = try makeDefaults()
         let provider = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)
@@ -2205,6 +2270,23 @@ private actor MutatingCurrentCredentialRefresher: ForgeGitHubCredentialRefreshin
     ) async throws -> GitHubCredentialRefreshResult {
         try await mutation()
         return .current(refreshAt: Date(timeIntervalSince1970: 10000))
+    }
+}
+
+private actor FailingAccountsCredentialRefresher: ForgeGitHubCredentialRefreshing {
+    private var recordedCallCount = 0
+
+    func refreshIfNeeded(
+        _: GitHubRotatingUserCredential,
+        at _: Date,
+        minimumValidity _: TimeInterval
+    ) async throws -> GitHubCredentialRefreshResult {
+        recordedCallCount += 1
+        throw ForgeAccountsError.deviceFlowFailed
+    }
+
+    func callCount() -> Int {
+        recordedCallCount
     }
 }
 

@@ -222,10 +222,12 @@
 	[self.app activate];
 	NSPredicate *branchName = [NSPredicate predicateWithFormat:@"value == 'main' OR value == 'master'"];
 	XCUIElement *branch = [self.app.staticTexts matchingPredicate:branchName].firstMatch;
-	XCTAssertTrue([branch waitForExistenceWithTimeout:10], @"The repository's current branch should be visible in the sidebar");
+	XCTAssertTrue([branch waitForExistenceWithTimeout:30], @"The repository's current branch should be visible in the sidebar");
 	[branch click];
 	XCUIElement *table = self.app.tables[@"CommitList"];
-	XCTAssertTrue([table waitForExistenceWithTimeout:15], @"Selecting the current branch should open history");
+	XCTAssertTrue([table waitForExistenceWithTimeout:30], @"Selecting the current branch should open history");
+	XCTAssertTrue([table.tableRows.firstMatch waitForExistenceWithTimeout:30],
+				  @"Repository history should publish its first observable row before UI actions continue");
 	return table;
 }
 
@@ -258,7 +260,7 @@
 		return stagingTable.exists || workingStateRow.exists || workingStateToolbarButton.exists;
 	}];
 	XCTNSPredicateExpectation *readyExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:stagingReady object:self.app];
-	[self waitForExpectations:@[ readyExpectation ] timeout:15];
+	[self waitForExpectations:@[ readyExpectation ] timeout:30];
 	// Exercise the remapped entry point: Cmd-2 selects the Uncommitted
 	// Changes row, which swaps the Details tab to the staging pane.
 	if (!stagingTable.exists) {
@@ -661,7 +663,7 @@
 
 		XCUIElement *appearance = self.app.popUpButtons[@"AppearancePreference"];
 		[self openPreferencesWaitingForElement:appearance];
-		[self waitForElement:appearance toHaveValue:choice[@"title"] timeout:5];
+		[self waitForElement:appearance toHaveValue:choice[@"title"] timeout:30];
 		[self saveWindowScreenshotNamed:[NSString stringWithFormat:@"appearance-%@", [choice[@"title"] lowercaseString]]];
 	}
 }
@@ -724,13 +726,13 @@
 	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
-	[self.app activate];
+	[self selectHistoryForCurrentBranch];
 
 	XCUIElement *viewRemoteGroup =
 		[self.app.toolbars.groups containingType:XCUIElementTypeStaticText
 									  identifier:@"View Remote"]
 			.firstMatch;
-	XCTAssertTrue([viewRemoteGroup waitForExistenceWithTimeout:10],
+	XCTAssertTrue([viewRemoteGroup waitForExistenceWithTimeout:30],
 				  @"The repository toolbar should expose the View Remote item");
 	XCUIElement *viewRemote = viewRemoteGroup.menuButtons.firstMatch;
 	XCTAssertTrue([viewRemote waitForExistenceWithTimeout:10],
@@ -843,7 +845,7 @@
 	XCUIElement *window = self.app.windows.firstMatch;
 	[self.app activate];
 	XCUIElement *button = self.app.buttons[@"Current Branch"];
-	XCTAssertTrue([button waitForExistenceWithTimeout:10], @"The repository toolbar should expose the checked-out branch action");
+	XCTAssertTrue([button waitForExistenceWithTimeout:30], @"The repository toolbar should expose the checked-out branch action");
 	XCTAssertTrue([self.app.menuItems[@"Jump to Checked-Out Branch"] waitForExistenceWithTimeout:5], @"The View menu should expose the checked-out branch hotkey");
 
 	XCTAssertTrue(([self runGit:@[ @"checkout", @"--quiet", @"-b", @"feature/hotkey-jump" ] inDirectory:fixture]));

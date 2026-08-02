@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8952,
+  "minimumLineCoverage": 0.8955,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4963,
@@ -13,8 +13,8 @@
     "Classes/Controllers/CommitTableInteractionCoordinator.swift": 0.9818,
     "Classes/Controllers/DBPrefsWindowController.m": 0.6538,
     "Classes/Controllers/ForgeAccountLifecycle.swift": 0.9851,
-    "Classes/Controllers/ForgeAccountsPreferences.swift": 0.9419,
-    "Classes/Controllers/ForgeApplicationRefreshCoordinator.swift": 0.9024,
+    "Classes/Controllers/ForgeAccountsPreferences.swift": 0.9452,
+    "Classes/Controllers/ForgeApplicationRefreshCoordinator.swift": 0.9176,
     "Classes/Controllers/ForgeApplicationServices.swift": 0.9969,
     "Classes/Controllers/ForgeCredentialStore.swift": 0.9798,
     "Classes/Controllers/ForgeDeepLinkApplicationRouter.swift": 0.7162,
@@ -109,7 +109,7 @@
     "Classes/Views/ForgeMarkdownNativeRenderer.swift": 0.9649,
     "Classes/Views/ForgePullRequestSheetController.swift": 0.9133,
     "Classes/Views/ForgeReadSurfaceModels.swift": 0.9521,
-    "Classes/Views/ForgeReadSurfaceViewController.swift": 0.8993,
+    "Classes/Views/ForgeReadSurfaceViewController.swift": 0.9008,
     "Classes/Views/ForgeRepositoryCloneSheetController.swift": 0.5761,
     "Classes/Views/GLFileView.m": 0.916,
     "Classes/Views/GitXTextView.m": 0.44,
