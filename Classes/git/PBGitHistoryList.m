@@ -254,8 +254,10 @@
 	if (currentRevList == parser)
 		return;
 
-	if (currentRevList)
+	if (currentRevList) {
+		[currentRevList cancel];
 		[currentRevList removeObserver:self keyPath:@"commits"];
+	}
 
 	currentRevList = parser;
 

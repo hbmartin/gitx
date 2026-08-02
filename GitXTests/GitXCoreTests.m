@@ -652,8 +652,8 @@
 - (void)testCancelledRevisionLoadDoesNotPublishOrComplete
 {
 	PBGitRevList *revisionList = [[PBGitRevList alloc] initWithRepository:self.repository
-														  rev:[PBGitRevSpecifier allBranchesRevSpec]
-												  shouldGraph:NO];
+																	  rev:[PBGitRevSpecifier allBranchesRevSpec]
+															  shouldGraph:NO];
 	NSOperationQueue *operationQueue = [revisionList valueForKey:@"operationQueue"];
 	operationQueue.suspended = YES;
 	XCTestExpectation *completion = [self expectationWithDescription:@"cancelled load completion is suppressed"];
@@ -671,6 +671,33 @@
 
 	XCTAssertNil(revisionList.commits);
 	XCTAssertFalse(revisionList.isParsing);
+}
+
+- (void)testReleasedRevisionListDrainsPendingLoadSafely
+{
+	__weak PBGitRevList *weakRevisionList = nil;
+	NSOperationQueue *operationQueue = nil;
+	XCTestExpectation *completion = [self expectationWithDescription:@"released revision list does not complete"];
+	completion.inverted = YES;
+
+	@autoreleasepool {
+		PBGitRevList *revisionList = [[PBGitRevList alloc] initWithRepository:self.repository
+																		  rev:[PBGitRevSpecifier allBranchesRevSpec]
+																  shouldGraph:NO];
+		weakRevisionList = revisionList;
+		operationQueue = [revisionList valueForKey:@"operationQueue"];
+		operationQueue.suspended = YES;
+		[revisionList loadRevisionsWithCompletionBlock:^{
+			[completion fulfill];
+		}];
+		XCTAssertTrue(revisionList.isParsing);
+		revisionList = nil;
+	}
+
+	XCTAssertNil(weakRevisionList);
+	operationQueue.suspended = NO;
+	[operationQueue waitUntilAllOperationsAreFinished];
+	[self waitForExpectations:@[ completion ] timeout:0.2];
 }
 
 - (void)assertCommitsAreUniqueAndChildrenPrecedeParents:(NSArray<PBGitCommit *> *)commits
