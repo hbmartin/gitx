@@ -1346,6 +1346,15 @@ final class ForgeAccountLifecycleTests: XCTestCase {
             name: "gitx"
         )
         let watchKey = try ForgeWatchedRepositoryKey(accountID: added.id, repository: repository)
+        let secondaryRepository = try ForgeRepositoryIdentity(
+            forge: added.id.forge,
+            owner: "aardvark",
+            name: "notes"
+        )
+        let secondaryWatchKey = try ForgeWatchedRepositoryKey(
+            accountID: added.id,
+            repository: secondaryRepository
+        )
         let classicRepository = try ForgeRepositoryIdentity(
             forge: classic.id.forge,
             owner: "alpha",
@@ -1362,6 +1371,11 @@ final class ForgeAccountLifecycleTests: XCTestCase {
             source: .repositoryOpened
         ))
         try await persistence.save(ForgeWatchedRepository(
+            key: secondaryWatchKey,
+            addedAt: date,
+            source: .preferences
+        ))
+        try await persistence.save(ForgeWatchedRepository(
             key: classicWatchKey,
             addedAt: date,
             source: .preferences,
@@ -1370,16 +1384,17 @@ final class ForgeAccountLifecycleTests: XCTestCase {
             lastSuccessfulPollAt: date
         ))
         var watches = try await service.attentionWatches()
-        XCTAssertEqual(watches.map(\.accountLogin), ["classic-user", "service-user"])
-        XCTAssertEqual(watches.map(\.repositoryName), ["alpha/project", "hbmartin/gitx"])
-        XCTAssertEqual(watches.map(\.includesBotReplies), [true, false])
+        XCTAssertEqual(watches.map(\.accountLogin), ["classic-user", "service-user", "service-user"])
+        XCTAssertEqual(watches.map(\.repositoryName), ["alpha/project", "aardvark/notes", "hbmartin/gitx"])
+        XCTAssertEqual(watches.map(\.includesBotReplies), [true, false, false])
 
         try await service.setAttentionBotReplies(true, for: watchKey)
         watches = try await service.attentionWatches()
         XCTAssertTrue(try XCTUnwrap(watches.first { $0.key == watchKey }).includesBotReplies)
         try await service.removeAttentionWatch(classicWatchKey)
         watches = try await service.attentionWatches()
-        XCTAssertEqual(watches.map(\.key), [watchKey])
+        XCTAssertEqual(watches.map(\.key), [secondaryWatchKey, watchKey])
+        try await service.removeAttentionWatch(secondaryWatchKey)
         try await service.removeAttentionWatch(watchKey)
         await XCTAssertThrowsErrorAsync(try await service.setAttentionBotReplies(true, for: watchKey)) { error in
             XCTAssertEqual(error as? ForgeAttentionInboxError, .missingWatchedRepository)
