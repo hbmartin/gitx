@@ -9,8 +9,12 @@
 #import <Cocoa/Cocoa.h>
 #import "PBSourceViewItem.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBSourceViewGitRemoteBranchItem : PBSourceViewItem
 
 + (instancetype)remoteBranchItemWithRevSpec:(PBGitRevSpecifier *)revSpecifier;
 
 @end
+
+NS_ASSUME_NONNULL_END

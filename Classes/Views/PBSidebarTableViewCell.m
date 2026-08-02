@@ -7,7 +7,6 @@
 
 #import "PBSidebarTableViewCell.h"
 #import "PBSourceViewBadge.h"
-#import "PBGitSidebarController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 

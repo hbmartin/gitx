@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 
 // SwiftLint analyze misclassifies this import; Logger requires it at compile time.
 // swiftlint:disable:next unused_import
@@ -33,6 +34,7 @@ final nonisolated class DiffCommandOptions: NSObject { // swiftlint:disable:this
 private final class SettingsPaneView: NSView {
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "Settings")
     private let stack = NSStackView()
+    private var fittedHeightConstraint: NSLayoutConstraint?
 
     init(title: String, detail: String? = nil) {
         super.init(frame: NSRect(x: 0, y: 0, width: 760, height: 430))
@@ -42,9 +44,11 @@ private final class SettingsPaneView: NSView {
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        let fittedHeightConstraint = heightAnchor.constraint(equalToConstant: 430)
+        self.fittedHeightConstraint = fittedHeightConstraint
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: 760),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 430),
+            fittedHeightConstraint,
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -28),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 24),
@@ -120,9 +124,11 @@ private final class SettingsPaneView: NSView {
 
     private func resizeToFit() {
         layoutSubtreeIfNeeded()
+        stack.layoutSubtreeIfNeeded()
         var size = frame.size
         size.width = max(760, stack.fittingSize.width + 56)
         size.height = max(430, stack.fittingSize.height + 48)
+        fittedHeightConstraint?.constant = size.height
         setFrameSize(size)
     }
 
@@ -155,6 +161,16 @@ private final class SettingsPaneView: NSView {
     @objc func branchSortChanged(_ sender: NSPopUpButton) {
         ApplicationSettings.branchSort = BranchSortMode(rawValue: sender.selectedTag()) ?? .alphabetical
         NotificationCenter.default.post(name: .branchSidebarSettingsDidChange, object: nil)
+    }
+
+    @objc func loadAvatarsChanged(_ sender: NSButton) {
+        ApplicationSettings.loadAvatars = sender.state == .on
+        logger.info("Structured avatar loading preference changed")
+    }
+
+    @objc func repositoryStatusBarVisibilityChanged(_ sender: NSButton) {
+        ApplicationSettings.repositoryStatusBarVisible = sender.state == .on
+        logger.info("Repository status bar preference changed visible=\(sender.state == .on, privacy: .public)")
     }
 
     @objc func applicationIconChanged(_ sender: NSButton) {
@@ -244,9 +260,163 @@ private final class SettingsPaneView: NSView {
     }
 }
 
+@MainActor
+private final class ForgeTrustedOriginsPreferencesView: NSView {
+    private final class RemoveButton: NSButton {
+        let origin: ForgeTrustedExternalOrigin
+
+        init(origin: ForgeTrustedExternalOrigin) {
+            self.origin = origin
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+    }
+
+    private let store: ForgeTrustedExternalOriginStore
+    private let rows = NSStackView()
+
+    init(store: ForgeTrustedExternalOriginStore) {
+        self.store = store
+        super.init(frame: NSRect(x: 0, y: 0, width: 690, height: 150))
+        configureView()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(originsChanged(_:)),
+            name: .forgeTrustedExternalOriginsDidChange,
+            object: store
+        )
+        reloadRows()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func configureView() {
+        translatesAutoresizingMaskIntoConstraints = false
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityIdentifier("ForgeTrustedExternalOrigins")
+        setAccessibilityLabel("Trusted external link origins")
+
+        let title = NSTextField(labelWithString: "Trusted external link origins")
+        title.font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        let detail = NSTextField(wrappingLabelWithString:
+            "Cross-origin HTTPS links listed here may open without another confirmation. "
+                + "Trust is exact and never applies to subdomains or alternate ports.")
+        detail.textColor = .secondaryLabelColor
+        detail.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        detail.maximumNumberOfLines = 2
+
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 5
+        rows.edgeInsets = NSEdgeInsets(top: 5, left: 7, bottom: 5, right: 7)
+        rows.translatesAutoresizingMaskIntoConstraints = false
+
+        let document = NSView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(rows)
+        let scrollView = NSScrollView()
+        scrollView.borderType = .bezelBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.documentView = document
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [title, detail, scrollView])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 690),
+            heightAnchor.constraint(equalToConstant: 150),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scrollView.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            document.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            document.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            document.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            rows.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            rows.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            rows.topAnchor.constraint(equalTo: document.topAnchor),
+            rows.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+    }
+
+    @objc private func originsChanged(_: Notification) {
+        reloadRows()
+    }
+
+    @objc private func removeOrigin(_ sender: RemoveButton) {
+        store.remove(sender.origin)
+    }
+
+    private func reloadRows() {
+        for view in rows.arrangedSubviews.reversed() {
+            rows.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        let origins = store.sortedOrigins()
+        guard !origins.isEmpty else {
+            let empty = NSTextField(labelWithString: "No external origins are trusted.")
+            empty.textColor = .secondaryLabelColor
+            empty.setAccessibilityIdentifier("ForgeTrustedExternalOriginsEmpty")
+            rows.addArrangedSubview(empty)
+            return
+        }
+        for origin in origins {
+            let originString = origin.origin.url.absoluteString
+            let label = NSTextField(labelWithString: originString)
+            label.lineBreakMode = .byTruncatingMiddle
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let remove = RemoveButton(origin: origin)
+            remove.title = "Remove"
+            remove.bezelStyle = .rounded
+            remove.controlSize = .small
+            remove.target = self
+            remove.action = #selector(removeOrigin(_:))
+            remove.setAccessibilityIdentifier("RemoveForgeTrustedExternalOrigin")
+            remove.setAccessibilityLabel("Remove trusted origin \(originString)")
+            let row = NSStackView(views: [label, NSView(), remove])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 8
+            row.translatesAutoresizingMaskIntoConstraints = false
+            rows.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rows.widthAnchor, constant: -14).isActive = true
+        }
+    }
+}
+
 /// Objective-C callers are not visible to SwiftLint's analyzer.
 @objc(PBSettingsViewFactory)
 final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_declaration
+    @objc static func accountsView() -> NSView {
+        ForgeAccountsPreferencesView {
+            let services = try await ApplicationComposition.shared.forgeServices.accountManagementServices()
+            return ForgeAccountsService(
+                services: services,
+                configuration: ForgeGitHubAppConfiguration.bundled()
+            )
+        }
+    }
+
     @objc(generalViewWithLegacyView:)
     // swiftlint:disable:next unused_declaration
     static func generalView(legacyView: NSView) -> NSView {
@@ -279,6 +449,25 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         branchSort.target = view
         branchSort.action = #selector(SettingsPaneView.branchSortChanged(_:))
         view.addRow("Branch order:", control: branchSort)
+        let loadAvatars = view.addCheckbox(
+            "Load Avatars",
+            state: ApplicationSettings.loadAvatars,
+            action: #selector(SettingsPaneView.loadAvatarsChanged(_:))
+        )
+        loadAvatars.setAccessibilityIdentifier("LoadForgeAvatars")
+        loadAvatars.setAccessibilityLabel("Load structured GitHub avatars")
+        loadAvatars.toolTip = "Uses a credential-free connection only to GitHub's approved avatar host."
+        let statusBar = view.addCheckbox(
+            "Show repository status bar",
+            state: ApplicationSettings.repositoryStatusBarVisible,
+            action: #selector(SettingsPaneView.repositoryStatusBarVisibilityChanged(_:))
+        )
+        statusBar.setAccessibilityIdentifier("Settings.RepositoryStatusBarVisible")
+        statusBar.setAccessibilityLabel("Show repository status bar")
+        view.addSeparator()
+        view.addCustom(ForgeTrustedOriginsPreferencesView(
+            store: ApplicationComposition.shared.forgeExternalLinkPreferences
+        ))
         view.addSeparator()
         let legacySize = legacyView.frame.size
         legacyView.translatesAutoresizingMaskIntoConstraints = false
@@ -528,4 +717,7 @@ extension Notification.Name {
     )
     nonisolated static let historyTraversalSettingsDidChange = Notification.Name("PBHistoryTraversalSettingsDidChangeNotification")
     nonisolated static let historyTreeSettingsDidChange = Notification.Name("PBHistoryTreeSettingsDidChangeNotification")
+    nonisolated static let forgeAvatarLoadingDidChange = Notification.Name(
+        ApplicationSettings.forgeAvatarLoadingDidChangeNotificationName
+    )
 }

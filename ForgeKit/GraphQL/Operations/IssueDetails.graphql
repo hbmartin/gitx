@@ -1,0 +1,167 @@
+query GitHubIssueDetails(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $timelineFirst: Int!
+  $timelineAfter: String
+) {
+  repository(owner: $owner, name: $name) {
+    id
+    issue(number: $number) {
+      ...GitHubIssueSummary
+      body
+      assignedActors(first: 100) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          ...GitHubAssignee
+        }
+      }
+      milestone {
+        ...GitHubMilestone
+      }
+      participants(first: 100) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          ...GitHubActor
+        }
+      }
+      timelineItems(
+        first: $timelineFirst
+        after: $timelineAfter
+        itemTypes: [
+          ISSUE_COMMENT
+          CLOSED_EVENT
+          REOPENED_EVENT
+          ASSIGNED_EVENT
+          UNASSIGNED_EVENT
+          LABELED_EVENT
+          UNLABELED_EVENT
+          MILESTONED_EVENT
+          DEMILESTONED_EVENT
+          RENAMED_TITLE_EVENT
+          CROSS_REFERENCED_EVENT
+        ]
+      ) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          ... on IssueComment {
+            ...GitHubIssueComment
+          }
+          ... on ClosedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on ReopenedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on AssignedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            assignee {
+              ...GitHubAssignee
+            }
+          }
+          ... on UnassignedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            assignee {
+              ...GitHubAssignee
+            }
+          }
+          ... on LabeledEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            label {
+              ...GitHubLabel
+            }
+          }
+          ... on UnlabeledEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            label {
+              ...GitHubLabel
+            }
+          }
+          ... on MilestonedEvent {
+            id
+            createdAt
+            milestoneTitle
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on DemilestonedEvent {
+            id
+            createdAt
+            milestoneTitle
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on RenamedTitleEvent {
+            id
+            createdAt
+            previousTitle
+            currentTitle
+            actor {
+              ...GitHubActor
+            }
+          }
+          ... on CrossReferencedEvent {
+            id
+            createdAt
+            actor {
+              ...GitHubActor
+            }
+            source {
+              ... on PullRequest {
+                number
+                pullRequestState: state
+                title
+                repository {
+                  ...GitHubRepositoryIdentity
+                }
+              }
+              ... on Issue {
+                number
+                issueState: state
+                title
+                repository {
+                  ...GitHubRepositoryIdentity
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

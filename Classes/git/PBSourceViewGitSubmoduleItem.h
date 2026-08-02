@@ -9,6 +9,9 @@
 #import <Foundation/Foundation.h>
 #import "PBSourceViewItem.h"
 
+@class GTSubmodule;
+
+NS_ASSUME_NONNULL_BEGIN
 
 @interface PBSourceViewGitSubmoduleItem : PBSourceViewItem
 
@@ -18,3 +21,5 @@
 @property (nonatomic, readonly) NSURL *path;
 
 @end
+
+NS_ASSUME_NONNULL_END

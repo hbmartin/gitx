@@ -1,0 +1,21 @@
+query GitHubPullRequestReviewThreadComments($id: ID!, $first: Int!, $after: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      id
+      pullRequest {
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+      comments(first: $first, after: $after) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          ...GitHubReviewComment
+        }
+      }
+    }
+  }
+}

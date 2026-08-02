@@ -26,7 +26,7 @@ jobs:
           persist-credentials: false
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Enforce the core dependency boundary
         run: python3 scripts/check_gitxcore_boundary.py
       - name: Run hostless core tests
@@ -49,6 +49,36 @@ jobs:
           name: GitXCore-coverage
           path: ${{ runner.temp }}/GitXCoreBuild/**/codecov/GitXCore.json
 
+  forgekit:
+    name: ForgeKit hostless tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: "26.6"
+      - name: Run hostless ForgeKit tests
+        run: |
+          swift test \
+            --package-path ForgeKit \
+            --scratch-path "$RUNNER_TEMP/ForgeKitBuild" \
+            --build-system swiftbuild \
+            --enable-code-coverage
+      - name: Enforce ForgeKit coverage floors
+        run: |
+          python3 scripts/check_forgekit_coverage.py \
+            --swiftpm-scratch-path "$RUNNER_TEMP/ForgeKitBuild" \
+            --combined-output "$RUNNER_TEMP/ForgeKitCombinedCoverage.json"
+      - name: Upload ForgeKit coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ForgeKit-coverage
+          path: ${{ runner.temp }}/ForgeKitCombinedCoverage.json
+
   static:
     name: static verification
     runs-on: macos-26
@@ -59,18 +89,35 @@ jobs:
           persist-credentials: false
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Restore pinned Swift tool cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.mint
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.2-mint-${{ hashFiles('Mintfile') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-mint-${{ hashFiles('Mintfile') }}
       - name: Install pinned Swift tools and workflow linters
         run: |
           brew install mint shellcheck actionlint
           mint bootstrap
+      - name: Install pinned Apollo iOS codegen CLI
+        run: |
+          mkdir -p "$RUNNER_TEMP/apollo-ios-cli-2.3.0"
+          curl \
+            --fail \
+            --location \
+            --silent \
+            --show-error \
+            https://github.com/apollographql/apollo-ios/releases/download/2.3.0/apollo-ios-cli.tar.gz \
+            --output "$RUNNER_TEMP/apollo-ios-cli-2.3.0.tar.gz"
+          echo "99ab549c51f802e76bcae751afd02dca2b2c02934b437dc885251e1c08bc65c2  $RUNNER_TEMP/apollo-ios-cli-2.3.0.tar.gz" \
+            | shasum -a 256 --check
+          tar \
+            -xzf "$RUNNER_TEMP/apollo-ios-cli-2.3.0.tar.gz" \
+            -C "$RUNNER_TEMP/apollo-ios-cli-2.3.0"
+          test "$("$RUNNER_TEMP/apollo-ios-cli-2.3.0/apollo-ios-cli" --version)" = "2.3.0"
       - name: Run static checks
         env:
+          APOLLO_IOS_CLI: ${{ runner.temp }}/apollo-ios-cli-2.3.0/apollo-ios-cli
           BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: scripts/verify_static.sh "$BASE_REF"
 
@@ -81,16 +128,17 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Restore pinned Swift tool cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.mint
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.2-mint-${{ hashFiles('Mintfile') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-mint-${{ hashFiles('Mintfile') }}
       - name: Install pinned Swift tools
         run: |
           brew install mint
@@ -132,11 +180,13 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git
@@ -173,11 +223,13 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git
@@ -206,11 +258,13 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git

@@ -31,35 +31,58 @@ class PinnedToolsTests(unittest.TestCase):
         project = (ROOT / "GitX.xcodeproj" / "project.pbxproj").read_text()
 
         self.assertNotIn("SWIFT_VERSION = 5.0", project)
-        self.assertEqual(project.count("SWIFT_VERSION = 6.0"), 4)
-        self.assertEqual(project.count("SWIFT_STRICT_CONCURRENCY = complete"), 4)
-        self.assertEqual(project.count("SWIFT_TREAT_WARNINGS_AS_ERRORS = YES"), 4)
-        self.assertEqual(project.count("SWIFT_APPROACHABLE_CONCURRENCY = YES"), 4)
+        self.assertEqual(project.count("SWIFT_VERSION = 6.0"), 6)
+        self.assertEqual(project.count("SWIFT_STRICT_CONCURRENCY = complete"), 6)
+        self.assertEqual(project.count("SWIFT_TREAT_WARNINGS_AS_ERRORS = YES"), 6)
+        self.assertEqual(project.count("SWIFT_APPROACHABLE_CONCURRENCY = YES"), 6)
         self.assertEqual(project.count("SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor"), 2)
         self.assertEqual(project.count("-enable-actor-data-race-checks"), 2)
         self.assertEqual(project.count("-Wno-error=incomplete-umbrella"), 4)
         self.assertEqual(project.count("-Wno-error=quoted-include-in-framework-header"), 4)
 
-    def test_ci_pins_the_swift_6_2_toolchain(self) -> None:
+    def test_ci_pins_the_swift_6_3_toolchain_and_documents_the_xcode_floor(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        readme = (ROOT / "README.markdown").read_text()
+        migration = (ROOT / "docs" / "swift6_migration.md").read_text()
 
-        self.assertNotIn("26.3", build_workflow + verify_workflow)
-        self.assertEqual(build_workflow.count("xcode: 26.2"), 1)
-        self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 6)
+        self.assertNotIn("26.2", build_workflow + verify_workflow)
+        self.assertEqual(build_workflow.count("xcode: 26.6"), 1)
+        self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 7)
+        self.assertIn("Xcode 26.6 or newer is required", readme)
+        self.assertIn("CI is pinned to Xcode 26.6", migration)
+
+    def test_legacy_build_workflow_uses_shared_ui_test_plan(self) -> None:
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+
+        self.assertIn("-testPlan GitXUI", build_workflow)
+        self.assertNotIn("-only-testing:GitXUITests", build_workflow)
+
+    def test_legacy_screenshot_fixture_only_overrides_ui_fixture_when_comparison_enabled(self) -> None:
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+        checkout_step = build_workflow.split(
+            "      - name: Checkout fixed repo snapshot for screenshots\n", maxsplit=1
+        )[1].split("      - name: Run tests\n", maxsplit=1)[0]
+        test_step = build_workflow.split("      - name: Run tests\n", maxsplit=1)[1].split(
+            "      - name: Extract screenshots from test results\n", maxsplit=1
+        )[0]
+
+        self.assertIn("if: ${{ env.variableSet != ''", checkout_step)
+        self.assertIn("if [[ -d /tmp/gitx-screenshot-repo ]]; then", test_step)
+        self.assertIn('"${screenshot_repo_setting[@]}"', test_step)
 
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         pinned_actions = {
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 6,
-            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 6,
+            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 7,
+            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 7,
             "actions/cache@caa296126883cff596d87d8935842f9db880ef25": 2,
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 5,
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 6,
         }
 
         for action, expected_count in pinned_actions.items():
             self.assertEqual(verify_workflow.count(action), expected_count)
-        self.assertEqual(verify_workflow.count("persist-credentials: false"), 6)
+        self.assertEqual(verify_workflow.count("persist-credentials: false"), 7)
         for mutable_tag in [
             "actions/checkout@v7",
             "maxim-lobanov/setup-xcode@v1",
@@ -82,6 +105,67 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn("runs-on: [self-hosted, macOS, ARM64]", performance_job)
         self.assertIn("-testPlan GitXPerformance", performance_job)
 
+    def test_app_build_jobs_fetch_tags_for_version_generation(self) -> None:
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        for job, following_job in (
+            ("ui", "sanitizers"),
+            ("sanitizers", "performance"),
+        ):
+            job_text = verify_workflow.split(
+                f"\n  {job}:\n", maxsplit=1
+            )[1].split(f"\n  {following_job}:\n", maxsplit=1)[0]
+            self.assertIn("fetch-depth: 0", job_text)
+            self.assertIn("fetch-tags: true", job_text)
+
+        performance_job = verify_workflow.split("\n  performance:\n", maxsplit=1)[1]
+        self.assertIn("fetch-depth: 0", performance_job)
+        self.assertIn("fetch-tags: true", performance_job)
+
+        unit_job = verify_workflow.split(
+            "\n  unit-and-analyze:\n", maxsplit=1
+        )[1].split("\n  ui:\n", maxsplit=1)[0]
+        self.assertIn("fetch-depth: 0", unit_job)
+        self.assertIn("fetch-tags: true", unit_job)
+
+        build_job = build_workflow.split(
+            "\n  build-gitx:\n", maxsplit=1
+        )[1].split("\n  release:\n", maxsplit=1)[0]
+        self.assertIn("fetch-depth: 0", build_job)
+        self.assertIn("fetch-tags: true", build_job)
+
+    def test_forgekit_hostless_ci_runs_tests_and_coverage_gate(self) -> None:
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        forgekit_job = verify_workflow.split(
+            "\n  forgekit:\n", maxsplit=1
+        )[1].split("\n  static:\n", maxsplit=1)[0]
+
+        self.assertIn('--package-path ForgeKit', forgekit_job)
+        self.assertIn('--build-system swiftbuild', forgekit_job)
+        self.assertIn('--enable-code-coverage', forgekit_job)
+        self.assertIn('--swiftpm-scratch-path "$RUNNER_TEMP/ForgeKitBuild"', forgekit_job)
+        self.assertIn('--combined-output "$RUNNER_TEMP/ForgeKitCombinedCoverage.json"', forgekit_job)
+        self.assertIn('fetch-depth: 0', forgekit_job)
+
+    def test_static_ci_pins_apollo_cli_for_offline_codegen(self) -> None:
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        static_job = verify_workflow.split(
+            "\n  static:\n", maxsplit=1
+        )[1].split("\n  unit-and-analyze:\n", maxsplit=1)[0]
+
+        self.assertIn(
+            "https://github.com/apollographql/apollo-ios/releases/download/"
+            "2.3.0/apollo-ios-cli.tar.gz",
+            static_job,
+        )
+        self.assertIn(
+            "99ab549c51f802e76bcae751afd02dca2b2c02934b437dc885251e1c08bc65c2",
+            static_job,
+        )
+        self.assertIn('apollo-ios-cli" --version)" = "2.3.0"', static_job)
+        self.assertIn("APOLLO_IOS_CLI:", static_job)
+        self.assertIn("scripts/verify_static.sh", static_job)
+
     def test_performance_suite_rejects_pull_requests_on_self_hosted_runner(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         performance_job = verify_workflow.split("\n  performance:\n", maxsplit=1)[1]
@@ -92,6 +176,26 @@ class PinnedToolsTests(unittest.TestCase):
         )
 
         self.assertNotIn("github.event_name == 'pull_request'", condition)
+
+    def test_milestone_2_mutation_harness_is_debug_only(self) -> None:
+        window_controller = (
+            ROOT / "Classes" / "Controllers" / "PBGitWindowController.swift"
+        ).read_text()
+        pull_request_controller = (
+            ROOT / "Classes" / "Controllers" / "RepositoryPullRequestUIController.swift"
+        ).read_text()
+        harness = (
+            ROOT / "Classes" / "Controllers" / "Milestone2UITestHarness.swift"
+        ).read_text()
+
+        self.assertIn("#if DEBUG\n        private var milestone2UITestHarness", window_controller)
+        self.assertIn(
+            '#if DEBUG\n            guard ProcessInfo.processInfo.environment["GITX_M2_UITEST"]',
+            window_controller,
+        )
+        self.assertIn("#if DEBUG\n        /// Environment-gated UI-test entrypoint", pull_request_controller)
+        self.assertIn("#if DEBUG\n    /// Deterministic launch-only journeys", harness)
+        self.assertTrue(harness.rstrip().endswith("#endif"))
 
 
 if __name__ == "__main__":

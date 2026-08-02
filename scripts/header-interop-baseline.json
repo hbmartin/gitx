@@ -29,7 +29,6 @@
     "Classes/Util/GitXCommitCopier.h",
     "Classes/Util/NSApplication+GitXScripting.h",
     "Classes/Util/NSFileHandleExt.h",
-    "Classes/Util/NSOutlineViewExt.h",
     "Classes/Util/NSString_Truncate.h",
     "Classes/Util/ObjectiveGit+PBCategories.h",
     "Classes/Util/PBEasyFS.h",
@@ -49,14 +48,6 @@
     "Classes/git/PBGitLane.h",
     "Classes/git/PBGitRevList.h",
     "Classes/git/PBGitTree.h",
-    "Classes/git/PBGitXProtocol.h",
-    "Classes/git/PBSourceViewFolderItem.h",
-    "Classes/git/PBSourceViewGitBranchItem.h",
-    "Classes/git/PBSourceViewGitRemoteBranchItem.h",
-    "Classes/git/PBSourceViewGitRemoteItem.h",
-    "Classes/git/PBSourceViewGitStashItem.h",
-    "Classes/git/PBSourceViewGitSubmoduleItem.h",
-    "Classes/git/PBSourceViewGitTagItem.h",
-    "Classes/git/PBSourceViewOtherRevItem.h"
+    "Classes/git/PBGitXProtocol.h"
   ]
 }

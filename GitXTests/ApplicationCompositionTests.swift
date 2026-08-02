@@ -1,3 +1,4 @@
+import ForgeKit
 import XCTest
 
 final class ApplicationCompositionTests: XCTestCase {
@@ -12,7 +13,10 @@ final class ApplicationCompositionTests: XCTestCase {
         defaults = UserDefaults(suiteName: suiteName)
         defaults.removePersistentDomain(forName: suiteName)
         PBApplicationComposition.setShared(
-            PBApplicationComposition(userDefaults: defaults)
+            PBApplicationComposition(
+                userDefaults: defaults,
+                automaticallyStartsForgeServices: false
+            )
         )
     }
 
@@ -23,6 +27,15 @@ final class ApplicationCompositionTests: XCTestCase {
         suiteName = nil
         originalComposition = nil
         super.tearDown()
+    }
+
+    func testWindowSessionLaunchPolicyIsolatesAppHostedTestsFromUserWindowState() {
+        XCTAssertTrue(PBWindowSessionLaunchPolicy.shouldManageSession(environment: [:]))
+        XCTAssertFalse(
+            PBWindowSessionLaunchPolicy.shouldManageSession(
+                environment: ["XCTestConfigurationFilePath": "/tmp/GitXTests.xctestconfiguration"]
+            )
+        )
     }
 
     func testApplicationSettingsAndLegacyDefaultsUseInjectedPreferences() {
@@ -37,6 +50,145 @@ final class ApplicationCompositionTests: XCTestCase {
 
         defaults.set(2, forKey: "PBHistorySearchMode")
         XCTAssertEqual(PBGitDefaults.historySearchMode(), 2)
+    }
+
+    func testAvatarDefaultsDoNotReenterSharedCompositionInitialization() {
+        defaults.set(false, forKey: "PBLoadForgeAvatars")
+
+        let composition = PBApplicationComposition(
+            userDefaults: defaults,
+            automaticallyStartsForgeServices: false
+        )
+        let firstShared = PBApplicationComposition.shared()
+        let secondShared = PBApplicationComposition.shared()
+
+        XCTAssertTrue(firstShared === secondShared)
+        XCTAssertFalse(composition.applicationPreferences.bool(forKey: "PBLoadForgeAvatars"))
+    }
+
+    @MainActor
+    func testAlwaysRestorePolicyAttemptsSavedSessionAndMarksCurrentRunUnclean() {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let cleanShutdownKey = "PBWindowSessionCleanShutdown"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        let previousCleanShutdown = standard.object(forKey: cleanShutdownKey)
+        let previousRestorePolicy = PBApplicationSettings.restorePolicy
+        let originalWindows = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApplication.shared.windows where !originalWindows.contains(ObjectIdentifier(window)) {
+                window.close()
+            }
+            restore(previousSnapshot, forKey: snapshotKey, in: standard)
+            restore(previousCleanShutdown, forKey: cleanShutdownKey, in: standard)
+            PBApplicationSettings.restorePolicy = previousRestorePolicy
+        }
+
+        XCTAssertNil(ProcessInfo.processInfo.environment["GITX_UITEST_REPO"])
+        let documentsAreEmpty = NSDocumentController.shared.documents.isEmpty
+        XCTAssertTrue(documentsAreEmpty)
+        standard.removeObject(forKey: snapshotKey)
+        standard.set(true, forKey: cleanShutdownKey)
+        PBApplicationSettings.restorePolicy = .always
+
+        PBWindowSessionCoordinator.shared.applicationDidFinishLaunching()
+
+        XCTAssertFalse(standard.bool(forKey: cleanShutdownKey))
+        XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
+    }
+
+    @MainActor
+    func testFollowSystemRestorePolicyUsesTheSystemDefaultWhenPreferenceIsAbsent() {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let cleanShutdownKey = "PBWindowSessionCleanShutdown"
+        let systemRestoreKey = "NSQuitAlwaysKeepsWindows"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        let previousCleanShutdown = standard.object(forKey: cleanShutdownKey)
+        let previousSystemRestore = standard.object(forKey: systemRestoreKey)
+        let previousRestorePolicy = PBApplicationSettings.restorePolicy
+        let originalWindows = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApplication.shared.windows where !originalWindows.contains(ObjectIdentifier(window)) {
+                window.close()
+            }
+            restore(previousSnapshot, forKey: snapshotKey, in: standard)
+            restore(previousCleanShutdown, forKey: cleanShutdownKey, in: standard)
+            restore(previousSystemRestore, forKey: systemRestoreKey, in: standard)
+            PBApplicationSettings.restorePolicy = previousRestorePolicy
+        }
+
+        XCTAssertNil(ProcessInfo.processInfo.environment["GITX_UITEST_REPO"])
+        XCTAssertTrue(NSDocumentController.shared.documents.isEmpty)
+        standard.removeObject(forKey: snapshotKey)
+        standard.set(true, forKey: cleanShutdownKey)
+        standard.removeObject(forKey: systemRestoreKey)
+        PBApplicationSettings.restorePolicy = .followSystem
+
+        PBWindowSessionCoordinator.shared.applicationDidFinishLaunching()
+
+        XCTAssertFalse(standard.bool(forKey: cleanShutdownKey))
+        XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
+    }
+
+    @MainActor
+    func testUncleanSessionOffersRestoreAndCanDiscardSavedTopology() async throws {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let cleanShutdownKey = "PBWindowSessionCleanShutdown"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        let previousCleanShutdown = standard.object(forKey: cleanShutdownKey)
+        let originalWindows = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+        defer {
+            for window in NSApplication.shared.windows where !originalWindows.contains(ObjectIdentifier(window)) {
+                window.close()
+            }
+            restore(previousSnapshot, forKey: snapshotKey, in: standard)
+            restore(previousCleanShutdown, forKey: cleanShutdownKey, in: standard)
+        }
+
+        if let existingWelcome = NSApplication.shared.windows.first(where: { $0.title == "Welcome to GitX" }),
+           let existingSheet = existingWelcome.attachedSheet
+        {
+            existingWelcome.endSheet(
+                existingSheet,
+                returnCode: NSApplication.ModalResponse.alertSecondButtonReturn
+            )
+            let dismissalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while existingWelcome.attachedSheet != nil, ContinuousClock.now < dismissalDeadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
+        XCTAssertNil(ProcessInfo.processInfo.environment["GITX_UITEST_REPO"])
+        XCTAssertTrue(NSDocumentController.shared.documents.isEmpty)
+        standard.set([["path": "/tmp/GitX-unrestored-session"]], forKey: snapshotKey)
+        standard.set(false, forKey: cleanShutdownKey)
+
+        PBWindowSessionCoordinator.shared.applicationDidFinishLaunching()
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !NSApplication.shared.windows.contains(where: {
+            $0.title == "Welcome to GitX" && $0.attachedSheet != nil
+        }),
+            ContinuousClock.now < deadline
+        {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let welcome = try XCTUnwrap(NSApplication.shared.windows.first { $0.title == "Welcome to GitX" })
+        let restoreSheet = try XCTUnwrap(welcome.attachedSheet)
+        let promptIsVisible = descendantText(in: restoreSheet.contentView)
+            .contains("Restore Windows from the Previous Session?")
+        XCTAssertTrue(promptIsVisible)
+        welcome.endSheet(restoreSheet, returnCode: NSApplication.ModalResponse.alertSecondButtonReturn)
+        let dismissalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while welcome.attachedSheet != nil, ContinuousClock.now < dismissalDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertNil(standard.object(forKey: snapshotKey))
+        XCTAssertNil(welcome.attachedSheet)
+        XCTAssertFalse(standard.bool(forKey: cleanShutdownKey))
     }
 
     func testLegacyGeneralDefaultsExcludeCommitGuidesAndForwardRemainingToggles() {
@@ -117,5 +269,94 @@ final class ApplicationCompositionTests: XCTestCase {
 
         defaults.set(99, forKey: "PBApplicationIconStyle")
         XCTAssertEqual(PBApplicationSettings.applicationIconStyle, .plusEyes)
+    }
+
+    func testRepositoryStatusBarDefaultsVisibleAndPersistsApplicationWideChoice() {
+        XCTAssertNil(defaults.object(forKey: "PBRepositoryStatusBarVisible"))
+        XCTAssertTrue(PBApplicationSettings.repositoryStatusBarVisible)
+
+        PBApplicationSettings.repositoryStatusBarVisible = false
+        XCTAssertFalse(defaults.bool(forKey: "PBRepositoryStatusBarVisible"))
+        XCTAssertFalse(PBApplicationSettings.repositoryStatusBarVisible)
+
+        PBApplicationSettings.repositoryStatusBarVisible = true
+        XCTAssertTrue(defaults.bool(forKey: "PBRepositoryStatusBarVisible"))
+        XCTAssertTrue(PBApplicationSettings.repositoryStatusBarVisible)
+    }
+
+    private func restore(_ value: Any?, forKey key: String, in defaults: UserDefaults) {
+        if let value {
+            defaults.set(value, forKey: key)
+        } else {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    @MainActor
+    private func descendantText(in view: NSView?) -> [String] {
+        guard let view else { return [] }
+        let ownText = (view as? NSTextField).map { [$0.stringValue] } ?? []
+        return ownText + view.subviews.flatMap { descendantText(in: $0) }
+    }
+
+    func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {
+        XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .balanced)
+        XCTAssertTrue(PBApplicationSettings.attentionAlertCategories.isEmpty)
+        XCTAssertTrue(PBApplicationSettings.attentionIncludesFailedChecksOnAuthoredPullRequests)
+        XCTAssertFalse(PBApplicationSettings.attentionIncludesFailedChecksAwaitingReview)
+        XCTAssertEqual(PBApplicationSettings.attentionViewState, .defaultValue)
+
+        PBApplicationSettings.attentionPollingPreset = .conservative
+        PBApplicationSettings.attentionAlertCategories = [.assignments, .mentionsAndReplies]
+        PBApplicationSettings.attentionIncludesFailedChecksOnAuthoredPullRequests = false
+        PBApplicationSettings.attentionIncludesFailedChecksAwaitingReview = true
+        let state = ForgeAttentionViewState(
+            scope: .all,
+            visibility: .active,
+            sortOrder: .oldestFirst,
+            kinds: [.assignment, .mention],
+            columns: [.repository, .title]
+        )
+        PBApplicationSettings.attentionViewState = state
+
+        XCTAssertEqual(defaults.string(forKey: "PBForgeAttentionPollingPreset"), "conservative")
+        XCTAssertEqual(
+            defaults.stringArray(forKey: "PBForgeAttentionAlertCategories"),
+            ["assignments", "mentionsAndReplies"]
+        )
+        XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .conservative)
+        XCTAssertEqual(PBApplicationSettings.attentionAlertCategories, [.assignments, .mentionsAndReplies])
+        XCTAssertFalse(PBApplicationSettings.attentionPolicy.includesFailedChecksOnAuthoredPullRequests)
+        XCTAssertTrue(PBApplicationSettings.attentionPolicy.includesFailedChecksAwaitingReview)
+        XCTAssertEqual(PBApplicationSettings.attentionViewState, state)
+
+        defaults.set("future-preset", forKey: "PBForgeAttentionPollingPreset")
+        defaults.set(["mentionsAndReplies", "future-category"], forKey: "PBForgeAttentionAlertCategories")
+        defaults.set(Data([0x00]), forKey: "PBForgeAttentionViewState")
+        XCTAssertEqual(PBApplicationSettings.attentionPollingPreset, .balanced)
+        XCTAssertEqual(PBApplicationSettings.attentionAlertCategories, [.mentionsAndReplies])
+        XCTAssertEqual(PBApplicationSettings.attentionViewState, .defaultValue)
+    }
+
+    func testSwiftAttentionSettingsNormalizeCategoriesAndRejectMalformedViewState() {
+        ApplicationSettings.attentionAlertCategories = [.reviewRequests, .assignments]
+        XCTAssertEqual(
+            defaults.stringArray(forKey: "PBForgeAttentionAlertCategories"),
+            ["assignments", "reviewRequests"]
+        )
+        XCTAssertEqual(ApplicationSettings.attentionAlertCategories, [.assignments, .reviewRequests])
+
+        let state = ForgeAttentionViewState(
+            scope: .currentRepository,
+            visibility: .all,
+            sortOrder: .newestFirst,
+            kinds: [.reviewRequest],
+            columns: [.title]
+        )
+        ApplicationSettings.attentionViewState = state
+        XCTAssertEqual(ApplicationSettings.attentionViewState, state)
+
+        defaults.set(Data("not-json".utf8), forKey: "PBForgeAttentionViewState")
+        XCTAssertEqual(ApplicationSettings.attentionViewState, .defaultValue)
     }
 }

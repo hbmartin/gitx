@@ -32,7 +32,15 @@ class SwiftConcurrencyEscapeTests(unittest.TestCase):
             self.assertEqual(checker.scan([source]), [])
 
     def test_repository_has_no_undocumented_escapes(self) -> None:
-        self.assertEqual(checker.scan([ROOT / "Classes", ROOT / "GitXTests"]), [])
+        self.assertIn(
+            ROOT / "ForgeKit" / "Sources" / "ForgeKit",
+            checker.DEFAULT_PATHS,
+        )
+        self.assertIn(
+            ROOT / "ForgeKit" / "Sources" / "GitHubForgeAdapter",
+            checker.DEFAULT_PATHS,
+        )
+        self.assertEqual(checker.scan(checker.DEFAULT_PATHS), [])
 
 
 if __name__ == "__main__":

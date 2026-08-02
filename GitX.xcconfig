@@ -8,4 +8,9 @@ ARCHS = arm64
 //   xcodebuild ... GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo
 GITX_SCREENSHOT_REPO = $(SRCROOT)
 
+// Public GitHub App device-flow identifiers. Local developers may provide
+// these values from Dev.xcconfig; this file never contains a private key.
+GITX_GITHUB_APP_CLIENT_ID =
+GITX_GITHUB_APP_SLUG =
+
 #include? "Dev.xcconfig"

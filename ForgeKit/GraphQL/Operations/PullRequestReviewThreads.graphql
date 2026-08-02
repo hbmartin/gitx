@@ -1,0 +1,43 @@
+query GitHubPullRequestReviewThreads(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $first: Int!
+  $after: String
+  $commentFirst: Int!
+) {
+  repository(owner: $owner, name: $name) {
+    id
+    pullRequest(number: $number) {
+      id
+      reviewThreads(first: $first, after: $after) {
+        totalCount
+        pageInfo {
+          ...GitHubPageInfo
+        }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          subjectType
+          diffSide
+          startLine
+          line
+          startDiffSide
+          originalStartLine
+          originalLine
+          comments(first: $commentFirst) {
+            totalCount
+            pageInfo {
+              ...GitHubPageInfo
+            }
+            nodes {
+              ...GitHubReviewComment
+            }
+          }
+        }
+      }
+    }
+  }
+}

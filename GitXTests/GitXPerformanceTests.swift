@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 import XCTest
 
 /// Scheduled microbenchmarks for deterministic parsing and presentation policy.
@@ -16,6 +17,18 @@ final class GitXPerformanceTests: XCTestCase {
     private func elapsed(_ work: () -> Void) -> TimeInterval {
         let start = ProcessInfo.processInfo.systemUptime
         work()
+        return ProcessInfo.processInfo.systemUptime - start
+    }
+
+    private func elapsedThrowing(_ work: () throws -> Void) rethrows -> TimeInterval {
+        let start = ProcessInfo.processInfo.systemUptime
+        try work()
+        return ProcessInfo.processInfo.systemUptime - start
+    }
+
+    private func elapsedAsync(_ work: () async throws -> Void) async rethrows -> TimeInterval {
+        let start = ProcessInfo.processInfo.systemUptime
+        try await work()
         return ProcessInfo.processInfo.systemUptime - start
     }
 
@@ -39,6 +52,74 @@ final class GitXPerformanceTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func representativeAvatarPayload() throws -> ForgeAvatarPayload {
+        let side = 512
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: side,
+            pixelsHigh: side,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        NSGradient(starting: .systemBlue, ending: .systemPurple)?.draw(
+            in: NSRect(x: 0, y: 0, width: side, height: side),
+            angle: 35
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        return ForgeAvatarPayload(data: data, mediaType: .png)
+    }
+
+    private func pushFlowFixture() throws -> (
+        intent: ForgePushPullRequestIntent,
+        destination: ForgeDestination
+    ) {
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let repository = try ForgeRepositoryIdentity(forge: forge, owner: "gitx", name: "gitx")
+        let contributor = try ForgeRepositoryIdentity(
+            forge: forge,
+            owner: "contributor",
+            name: "gitx"
+        )
+        let accountID = try ForgeAccountID(forge: forge, value: "performance")
+        let baseCommit = try ForgeCommitID(String(repeating: "1", count: 40))
+        let headCommit = try ForgeCommitID(String(repeating: "2", count: 40))
+        let preparation = try RepositoryPullRequestCreationPreparation(
+            accountID: accountID,
+            repository: repository,
+            base: ForgeBranchReference(
+                repository: repository,
+                name: ForgeRefName("main"),
+                commit: baseCommit
+            ),
+            head: ForgeBranchReference(
+                repository: contributor,
+                name: ForgeRefName("feature/performance"),
+                commit: headCommit
+            ),
+            branchAlreadyPushed: false,
+            commitsOldestFirst: [ForgePullRequestCommitSummary(
+                id: headCommit,
+                subject: "Performance fixture"
+            )]
+        )
+        let form = try preparation.initialForms().forms[0]
+        return try (
+            ForgePushPullRequestIntent(
+                form: form,
+                draftIdentity: RepositoryPullRequestDraftPolicy.identity(preparation: preparation)
+            ),
+            .pullRequest(repository, ForgeItemNumber(42))
+        )
     }
 
     private func diffFixture(fileCount: Int, minimumByteCount: Int) -> DiffFixture {
@@ -104,6 +185,93 @@ final class GitXPerformanceTests: XCTestCase {
         task.timeout = 30
         try task.launch()
         return task.standardOutputString() ?? ""
+    }
+
+    func testRepositoryStatusBarOverlayApplicationStaysWithinMainThreadBudget() throws {
+        let records = [
+            "# branch.oid 0123456789abcdef",
+            "# branch.head main",
+            "# branch.ab +12 -3",
+        ] + (0 ..< 500).map { index in
+            "1 MM N... 100644 100644 100644 a b Sources/File-\(index).swift"
+        }
+        let data = Data((records.joined(separator: "\0") + "\0").utf8)
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let forgeInput = try ForgeRepositoryStatusInput(
+            repository: ForgeRepositoryIdentity(
+                forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")),
+                owner: "hbmartin",
+                name: "gitx"
+            ),
+            access: .account(login: "octocat"),
+            freshness: .current(fetchedAt: now.addingTimeInterval(-300)),
+            diagnostic: .none
+        )
+        let statusBar = RepositoryStatusBarView(
+            frame: NSRect(x: 0, y: 0, width: 890, height: 29)
+        )
+        let samples = (0 ..< 200).map { _ in
+            elapsed {
+                let snapshot = RepositoryPorcelainStatusParser.parse(data, operation: .rebase)!
+                let local = RepositoryLocalStatusPresenter.present(snapshot, activityText: nil, isBusy: false)
+                let forge = ForgeRepositoryStatusPresenter.present(forgeInput, now: now)
+                statusBar.apply(local: local)
+                statusBar.apply(forge: forge)
+                statusBar.layoutSubtreeIfNeeded()
+            }
+        }
+        attachMeasurements("repository-status-overlay-application", samples: samples)
+        XCTAssertLessThan(percentile95(samples), 0.016)
+    }
+
+    func testHistoryCachedBadgeRenderingAndMainThreadApplicationMeetBudgets() throws {
+        let repository = try ForgeRepositoryIdentity(
+            forge: ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com")),
+            owner: "hbmartin",
+            name: "gitx"
+        )
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let states = try (0 ..< 200).map { index in
+            let identifier = String(repeating: "0", count: 36) + String(format: "%04x", index)
+            let overlay = try ForgeHistoryOverlay(
+                repository: repository,
+                commit: ForgeCommitID(identifier),
+                checkRollup: .available(index.isMultiple(of: 2) ? .succeeded : .running),
+                pullRequests: .available(ForgePage(items: [], totalCount: 0))
+            )
+            return RepositoryForgeOverlayValueState.value(RepositoryForgeOverlaySnapshot(
+                value: overlay,
+                fetchedAt: now,
+                isPartial: false,
+                isStale: false
+            ))
+        }
+        var presentations: [HistoryForgeBadgePresentation] = []
+        let renderingSamples = (0 ..< 100).map { _ in
+            elapsed {
+                presentations = states.map(HistoryForgeBadgePresenter.present)
+            }
+        }
+        attachMeasurements("history-cached-badge-rendering", samples: renderingSamples)
+        XCTAssertEqual(presentations.count, 200)
+        XCTAssertLessThan(percentile95(renderingSamples), 0.050)
+
+        let visiblePresentations = Array(presentations.prefix(40))
+        let cells = visiblePresentations.map { _ in
+            (NSTextField(labelWithString: ""), NSTextField(labelWithString: ""))
+        }
+        let applicationSamples = (0 ..< 200).map { _ in
+            elapsed {
+                for (index, presentation) in visiblePresentations.enumerated() {
+                    cells[index].0.stringValue = presentation.checkText
+                    cells[index].0.setAccessibilityLabel(presentation.checkAccessibilityLabel)
+                    cells[index].1.stringValue = presentation.pullRequestText
+                    cells[index].1.setAccessibilityLabel(presentation.pullRequestAccessibilityLabel)
+                }
+            }
+        }
+        attachMeasurements("history-visible-overlay-main-thread-application", samples: applicationSamples)
+        XCTAssertLessThan(percentile95(applicationSamples), 0.016)
     }
 
     private func makeRepresentativeRepository() throws -> URL {
@@ -272,9 +440,69 @@ final class GitXPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(classifiedCount, 0)
     }
 
+    func testPushPullRequestDecisionWorkloadMeetsCachedFeedbackBudget() throws {
+        let fixture = try pushFlowFixture()
+        var terminalState = RepositoryPullRequestPushFlow()
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 20 {
+            try samples.append(elapsedThrowing {
+                for _ in 0 ..< 1000 {
+                    var flow = RepositoryPullRequestPushFlow()
+                    try flow.beginNewPullRequest(
+                        branchAlreadyPushed: false,
+                        intent: fixture.intent
+                    )
+                    try flow.pushBegan(createPullRequestSelected: true)
+                    try flow.pushSucceeded()
+                    try flow.createSheetCancelled()
+                    try flow.beginNewPullRequest(
+                        branchAlreadyPushed: true,
+                        intent: fixture.intent
+                    )
+                    try flow.creationSucceeded(fixture.destination)
+                    terminalState = flow
+                }
+            })
+        }
+
+        attachMeasurements("Push-to-Pull-Request decisions (1,000 journeys)", samples: samples)
+        XCTAssertEqual(terminalState.state, .completed(fixture.destination))
+        XCTAssertLessThanOrEqual(
+            percentile95(samples),
+            PBPerformanceBudgets.cachedWorkingStateFeedbackSeconds
+        )
+    }
+
+    func testPushPullRequestFormUpdateMeetsMainThreadBudget() {
+        let checkbox = RepositoryPushConfirmationPresenter.createPullRequestButton(
+            initiallySelected: true
+        )
+        let alert = RepositoryPushConfirmationPresenter.alert(
+            description: "Push branch 'feature/performance' to default remote",
+            accessoryView: checkbox
+        )
+        let contentView = alert.window.contentView
+        contentView?.layoutSubtreeIfNeeded()
+        var samples: [TimeInterval] = []
+        for index in 0 ..< 40 {
+            samples.append(elapsed {
+                checkbox.state = index.isMultiple(of: 2) ? .on : .off
+                checkbox.sizeToFit()
+                contentView?.needsLayout = true
+                contentView?.layoutSubtreeIfNeeded()
+            })
+        }
+
+        attachMeasurements("Push Pull Request checkbox/form update", samples: samples)
+        XCTAssertLessThanOrEqual(
+            percentile95(samples),
+            PBPerformanceBudgets.mainThreadBlockSeconds
+        )
+    }
+
     func testSourceLanguageClassificationPerformance() {
         let paths = [
-            "Classes/Controllers/PBGitWindowController.m",
+            "Classes/Controllers/PBGitWindowController.swift",
             "Classes/Views/PBHighlighting.swift",
             "Resources/source.css",
             "Dockerfile",
@@ -539,5 +767,136 @@ final class GitXPerformanceTests: XCTestCase {
         XCTAssertEqual(fixture.fileCount, PBPerformanceBudgets.stressChangedFileCount)
         XCTAssertGreaterThanOrEqual(fixture.byteCount, PBPerformanceBudgets.stressDiffByteCount)
         XCTAssertTrue(result?.attributedString.string.contains(fixture.marker) == true)
+    }
+
+    func testRepresentativeForgeMarkdownRenderingMeetsMainThreadBudget() {
+        var blocks: [ForgeMarkdownBlock] = [
+            .heading(
+                level: 1,
+                identifier: ForgeMarkdownHeadingID(rawValue: "review-summary"),
+                content: [.text("Review summary")]
+            ),
+        ]
+        for index in 0 ..< 60 {
+            blocks.append(.paragraph([
+                .text("Comment \(index) keeps "),
+                .strong([.text("structured Markdown")]),
+                .text(" readable, with "),
+                .imagePlaceholder(altText: "inert diagram \(index)"),
+            ]))
+            blocks.append(.unorderedList([
+                ForgeMarkdownListItem(
+                    taskState: index.isMultiple(of: 2) ? .checked : .unchecked,
+                    blocks: [.paragraph([.text("Review item \(index)")])]
+                ),
+            ]))
+        }
+        let document = ForgeMarkdownDocument(blocks: blocks)
+        let renderer = ForgeMarkdownNativeRenderer()
+        let view = ForgeMarkdownNativeView(document: document, renderer: renderer)
+        view.frame = NSRect(x: 0, y: 0, width: 720, height: 540)
+        view.layoutSubtreeIfNeeded()
+        let applyAndLayout = {
+            view.display(document, renderer: renderer)
+            view.layoutSubtreeIfNeeded()
+            if let textContainer = view.textView.textContainer {
+                view.textView.layoutManager?.ensureLayout(for: textContainer)
+            }
+        }
+        let cold = elapsed {
+            applyAndLayout()
+        }
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 20 {
+            samples.append(elapsed {
+                applyAndLayout()
+            })
+        }
+
+        attachMeasurements(
+            "Representative native Forge Markdown render, text storage, and layout application",
+            cold: cold,
+            samples: samples
+        )
+        XCTAssertTrue(view.textView.string.contains("inert diagram 59"))
+        XCTAssertLessThanOrEqual(percentile95(samples), 0.016)
+    }
+
+    func testRepresentativeAvatarMemoryCacheHitsMeetAffectedViewBudget() async throws {
+        let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/9001")
+        let payload = ForgeAvatarPayload(
+            data: Data(repeating: 0xA5, count: 4 * 1024),
+            mediaType: .png
+        )
+        let transport = PerformanceAvatarTransport(payload: payload)
+        let loader = ForgeAvatarLoader(
+            transport: transport,
+            cacheByteLimit: Int(ForgePolicyConstants.avatarCacheByteLimit)
+        )
+        _ = try await loader.load(avatarURL)
+
+        var latest: ForgeAvatarPayload?
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 200 {
+            try samples.append(await elapsedAsync {
+                latest = try await loader.load(avatarURL)
+            })
+        }
+
+        attachMeasurements("Representative structured-avatar memory-cache hits", samples: samples)
+        let fetchCount = await transport.fetchCount
+        XCTAssertEqual(latest, payload)
+        XCTAssertEqual(fetchCount, 1)
+        XCTAssertLessThanOrEqual(percentile95(samples), 0.016)
+    }
+
+    func testRepresentativeAvatarDecodeRunsOffMainAndMeetsAffectedViewBudgets() async throws {
+        let payload = try representativeAvatarPayload()
+        let decoder = ForgeAvatarImageDecoder()
+        var latest: ForgeAvatarDecodedImage?
+        let cold = try await elapsedAsync {
+            latest = try await decoder.decodeOffMain(payload)
+        }
+        var decodeSamples: [TimeInterval] = []
+        for _ in 0 ..< 20 {
+            try decodeSamples.append(await elapsedAsync {
+                latest = try await decoder.decodeOffMain(payload)
+            })
+        }
+        attachMeasurements(
+            "Representative 512-pixel structured-avatar background decode",
+            cold: cold,
+            samples: decodeSamples
+        )
+        let decoded = try XCTUnwrap(latest)
+        XCTAssertFalse(decoded.wasDecodedOnMainThread)
+        XCTAssertEqual(decoded.size, NSSize(width: 512, height: 512))
+        XCTAssertLessThanOrEqual(percentile95(decodeSamples), 0.050)
+
+        var assignmentSamples: [TimeInterval] = []
+        for _ in 0 ..< 200 {
+            assignmentSamples.append(elapsed {
+                _ = decoded.makeImage()
+            })
+        }
+        attachMeasurements(
+            "Representative structured-avatar main-actor image assignment",
+            samples: assignmentSamples
+        )
+        XCTAssertLessThanOrEqual(percentile95(assignmentSamples), 0.016)
+    }
+}
+
+private actor PerformanceAvatarTransport: ForgeAvatarTransport {
+    let payload: ForgeAvatarPayload
+    private(set) var fetchCount = 0
+
+    init(payload: ForgeAvatarPayload) {
+        self.payload = payload
+    }
+
+    func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
+        fetchCount += 1
+        return payload
     }
 }

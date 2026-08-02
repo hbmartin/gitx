@@ -1,5 +1,12 @@
 import OSLog // swiftlint:disable:this unused_import
 
+typealias RepositoryRemoteProgressStarting = (
+    _ title: String,
+    _ description: String,
+    _ operation: @escaping @Sendable () throws -> Void,
+    _ completion: @escaping (NSError?) -> Void
+) -> Bool
+
 /// The legacy progress sheet deliberately invokes its execution handler on a
 /// global queue. Keep the Objective-C repository and refish arguments together
 /// behind one audited Sendable boundary instead of actor-isolating that handler.
@@ -39,17 +46,37 @@ private final nonisolated class RemoteOperationTarget: @unchecked Sendable {
 // Objective-C actions call this through GitX-Swift.h.
 // swiftlint:disable unused_declaration
 @objc(PBRepositoryRemoteActionCoordinator)
-final class RepositoryRemoteActionCoordinator: NSObject {
+@MainActor
+final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionCoordinating {
+    private enum SuccessfulOperation: String {
+        case fetch
+        case pull
+        case push
+    }
+
     // Progress operations run after the initiating window action returns, so the
     // repository must remain alive until the progress sheet completes.
     private let repository: PBGitRepository
     private weak var windowController: PBGitWindowController?
+    private let progressStarting: RepositoryRemoteProgressStarting?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryRemoteActionCoordinator")
 
     @objc(initWithRepository:windowController:)
     init(repository: PBGitRepository, windowController: PBGitWindowController) {
         self.repository = repository
         self.windowController = windowController
+        progressStarting = nil
+        super.init()
+    }
+
+    init(
+        repository: PBGitRepository,
+        windowController: PBGitWindowController,
+        progressStarting: @escaping RepositoryRemoteProgressStarting
+    ) {
+        self.repository = repository
+        self.windowController = windowController
+        self.progressStarting = progressStarting
         super.init()
     }
 
@@ -107,9 +134,12 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                 guard let self else { return }
                 if let error {
                     self.windowController?.showErrorSheet(error)
-                } else if let repositoryURL = self.repository.workingDirectoryURL() {
-                    PBAutoFetchManager.shared().recordManualFetchSucceeded(forRepositoryURL: repositoryURL)
+                } else {
+                    if let repositoryURL = self.repository.workingDirectoryURL() {
+                        PBAutoFetchManager.shared().recordManualFetchSucceeded(forRepositoryURL: repositoryURL)
+                    }
                     self.logger.debug("Fetch workflow completed")
+                    self.reportSuccess(.fetch)
                 }
             }
         )
@@ -142,6 +172,7 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                     self?.windowController?.showErrorSheet(error)
                 } else {
                     self?.logger.debug("Pull workflow completed")
+                    self?.reportSuccess(.pull)
                 }
             }
         )
@@ -149,20 +180,70 @@ final class RepositoryRemoteActionCoordinator: NSObject {
 
     @objc(performPushForBranch:remote:requiresConfirmation:)
     func performPush(branch: PBGitRef?, remote: PBGitRef?, requiresConfirmation: Bool) {
+        performPush(
+            branch: branch,
+            remote: remote,
+            requiresConfirmation: requiresConfirmation,
+            pullRequestOption: nil,
+            completion: nil
+        )
+    }
+
+    func performPush(
+        branch: PBGitRef?,
+        remote: PBGitRef?,
+        requiresConfirmation: Bool,
+        pullRequestOption: RepositoryPullRequestPushOption?,
+        pullRequestOffer: RepositoryPullRequestPushOffer? = nil,
+        suppressesPostPushBrowserSuggestion: Bool = false,
+        completion: ((RepositoryPushEvent) -> Void)?
+    ) {
+        let offeredInitialSelection = pullRequestOption?.initiallySelected ?? pullRequestOffer?.initiallySelected
         guard branch != nil || remote != nil,
               branch == nil || branch?.isBranch == true || branch?.isRemoteBranch == true || branch?.isTag == true,
               remote == nil || remote?.isRemote == true
         else {
             logger.debug("Rejected invalid push context")
+            let selected = offeredInitialSelection == true
+            RepositoryPushProgressStartPolicy.rejectedEvents(
+                createPullRequestSelected: selected
+            ).forEach { completion?($0) }
             return
         }
 
         let description = pushDescription(branch: branch, remote: remote, capitalized: true)
+        let createPullRequestButton: NSButton? = offeredInitialSelection.map { initiallySelected in
+            RepositoryPushConfirmationPresenter.createPullRequestButton(
+                initiallySelected: initiallySelected
+            )
+        }
+        if let pullRequestOffer, let createPullRequestButton {
+            let initiallySelected = pullRequestOffer.initiallySelected
+            pullRequestOffer.onPresentationChange = { [weak createPullRequestButton] presentation in
+                guard let createPullRequestButton else { return }
+                let wasEnabled = createPullRequestButton.isEnabled
+                createPullRequestButton.isEnabled = presentation.isEnabled
+                createPullRequestButton.toolTip = presentation.helpText
+                createPullRequestButton.setAccessibilityHelp(presentation.helpText)
+                if presentation.isEnabled, !wasEnabled {
+                    createPullRequestButton.state = initiallySelected ? .on : .off
+                } else if !presentation.isEnabled {
+                    createPullRequestButton.state = .off
+                }
+            }
+        }
         let beginPush = { [weak self] in
             guard let self else { return }
+            let nativeCreationWasAvailable = pullRequestOption != nil ||
+                pullRequestOffer?.presentation.isEnabled == true
+            let createPullRequestSelected = nativeCreationWasAvailable &&
+                (createPullRequestButton?.state == .on ||
+                    (!requiresConfirmation && offeredInitialSelection == true))
+            pullRequestOffer?.onPresentationChange = nil
+            completion?(.began(createPullRequestSelected: createPullRequestSelected))
             self.logger.debug("Starting push workflow")
             let operationTarget = RemoteOperationTarget(repository: self.repository, branch: branch, remote: remote)
-            self.runProgress(
+            let didStart = self.runProgress(
                 title: "Pushing remote…",
                 description: self.pushDescription(branch: branch, remote: remote, capitalized: false),
                 operation: {
@@ -171,33 +252,55 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                 completion: { [weak self] error in
                     if let error {
                         self?.windowController?.showErrorSheet(error)
+                        completion?(.failed)
                     } else {
                         self?.logger.debug("Push workflow completed")
                         if let self {
-                            RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
-                                output: operationTarget.pushOutput,
-                                repository: self.repository,
-                                remote: remote,
-                                presenting: self.windowController?.window
-                            )
+                            self.reportSuccess(.push)
+                            if RepositoryPostPushBrowserSuggestionPolicy.shouldOpen(
+                                nativeCreationWasAvailable: nativeCreationWasAvailable,
+                                explicitlySuppressed: suppressesPostPushBrowserSuggestion
+                            ) {
+                                RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
+                                    output: operationTarget.pushOutput,
+                                    repository: self.repository,
+                                    remote: remote,
+                                    presenting: self.windowController?.window
+                                )
+                                self.logger.debug(
+                                    "Retained validated post-push browser fallback because native creation was unavailable"
+                                )
+                            } else {
+                                self.logger.debug(
+                                    "Suppressed post-push browser suggestion for API-capable repository; create selected=\(createPullRequestSelected, privacy: .public)"
+                                )
+                            }
+                            completion?(.succeeded)
                         }
                     }
                 }
             )
+            if let terminalEvent = RepositoryPushProgressStartPolicy.terminalEvent(didStart: didStart) {
+                completion?(terminalEvent)
+            }
         }
 
         guard requiresConfirmation, let windowController else {
             beginPush()
             return
         }
-        let lowerDescription = "p" + description.dropFirst()
-        let alert = NSAlert()
-        alert.messageText = description
-        alert.informativeText = "Are you sure you want to \(lowerDescription)?"
-        alert.addButton(withTitle: NSLocalizedString("Push", comment: "Push alert - default button"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Push alert - cancel button"))
-        alert.showsSuppressionButton = true
-        windowController.confirmDialog(alert, suppressionIdentifier: "Confirm Push", forAction: beginPush)
+        let alert = RepositoryPushConfirmationPresenter.alert(
+            description: description,
+            accessoryView: createPullRequestButton
+        )
+        windowController.confirmDialog(
+            alert,
+            suppressionIdentifier: "Confirm Push",
+            onCancel: {
+                completion?(.cancelled)
+            },
+            forAction: beginPush
+        )
     }
 
     private func pushDescription(branch: PBGitRef?, remote: PBGitRef?, capitalized: Bool) -> String {
@@ -211,13 +314,26 @@ final class RepositoryRemoteActionCoordinator: NSObject {
         return "\(verb) updates to remote \(remote?.remoteName ?? "")"
     }
 
+    private func reportSuccess(_ operation: SuccessfulOperation) {
+        NotificationCenter.default.post(
+            name: .repositoryRemoteOperationDidSucceed,
+            object: repository,
+            userInfo: ["operation": operation.rawValue]
+        )
+        logger.debug("Published successful remote operation kind=\(operation.rawValue, privacy: .public)")
+    }
+
+    @discardableResult
     private func runProgress(
         title: String,
         description: String,
         operation: @escaping @Sendable () throws -> Void,
         completion: @escaping (NSError?) -> Void
-    ) {
-        guard let windowController else { return }
+    ) -> Bool {
+        guard let windowController else { return false }
+        if let progressStarting {
+            return progressStarting(title, description, operation, completion)
+        }
         let progressSheet = PBRemoteProgressSheet(
             title: title,
             description: description,
@@ -236,6 +352,7 @@ final class RepositoryRemoteActionCoordinator: NSObject {
                 completion(error as NSError?)
             }
         )
+        return true
     }
 }
 

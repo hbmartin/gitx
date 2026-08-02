@@ -58,12 +58,29 @@
 	<string>${PRODUCT_NAME}</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>GitX Read-Only Forge Links</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>x-gitx</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>0.13</string>
 	<key>CFBundleVersion</key>
 	<string>0.13</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>GitXGitHubAppClientID</key>
+	<string>$(GITX_GITHUB_APP_CLIENT_ID)</string>
+	<key>GitXGitHubAppSlug</key>
+	<string>$(GITX_GITHUB_APP_SLUG)</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>GitX needs authorization in order to open your Terminal application.</string>
 	<key>NSAppleScriptEnabled</key>

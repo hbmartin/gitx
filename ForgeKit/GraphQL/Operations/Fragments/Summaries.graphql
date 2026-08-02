@@ -1,0 +1,59 @@
+fragment GitHubPullRequestSummary on PullRequest {
+  id
+  number
+  pullRequestState: state
+  isDraft
+  title
+  createdAt
+  updatedAt
+  closedAt
+  mergedAt
+  author {
+    ...GitHubActor
+  }
+  headRefName
+  headRefOid
+  headRepository {
+    ...GitHubRepositoryIdentity
+  }
+  baseRefName
+  baseRefOid
+  baseRepository {
+    ...GitHubRepositoryIdentity
+  }
+  labels(first: 100) {
+    totalCount
+    pageInfo {
+      ...GitHubPageInfo
+    }
+    nodes {
+      ...GitHubLabel
+    }
+  }
+  statusCheckRollup {
+    state
+  }
+  reviewDecision
+}
+
+fragment GitHubIssueSummary on Issue {
+  id
+  number
+  issueState: state
+  title
+  createdAt
+  updatedAt
+  closedAt
+  author {
+    ...GitHubActor
+  }
+  labels(first: 100) {
+    totalCount
+    pageInfo {
+      ...GitHubPageInfo
+    }
+    nodes {
+      ...GitHubLabel
+    }
+  }
+}

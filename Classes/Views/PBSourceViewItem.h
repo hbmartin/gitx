@@ -23,24 +23,24 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)init NS_UNAVAILABLE;
 
-- (void)addChild:(PBSourceViewItem *)child;
+- (void)addChild:(nullable PBSourceViewItem *)child;
 - (void)removeChild:(nullable PBSourceViewItem *)child;
 
 // This adds the ref to the path, which should match the item's title,
 // so "refs/heads/pu/pb/sidebar" would have the path [@"pu", @"pb", @"sidebare"]
 // to the 'local' branch thing
-- (void)addRev:(PBGitRevSpecifier *)revSpecifier toPath:(NSArray *)path;
+- (void)addRev:(PBGitRevSpecifier *)revSpecifier toPath:(NSArray<NSString *> *)path;
 - (nullable PBSourceViewItem *)findRev:(PBGitRevSpecifier *)rev;
 
 - (nullable PBGitRef *)ref;
 
 @property (copy) NSString *title;
-@property (readonly) NSArray *sortedChildren;
+@property (readonly) NSArray<PBSourceViewItem *> *sortedChildren;
 @property (getter=isGroupItem) BOOL groupItem;
 @property (getter=isUncollapsible) BOOL uncollapsible;
 @property (getter=isExpanded) BOOL expanded;
-@property PBGitRevSpecifier *revSpecifier;
-@property (weak) PBSourceViewItem *parent;
+@property (nullable) PBGitRevSpecifier *revSpecifier;
+@property (nullable, weak) PBSourceViewItem *parent;
 @property (readonly) NSString *iconName;
 @property (nullable, readonly) NSImage *icon;
 

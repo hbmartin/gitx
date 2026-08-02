@@ -20,7 +20,8 @@
   "testTargets" : [
     {
       "selectedTests" : [
-        "GitXPerformanceTests"
+        "GitXPerformanceTests",
+        "RepositoryPullRequestReviewPerformanceTests"
       ],
       "target" : {
         "containerPath" : "container:GitX.xcodeproj",

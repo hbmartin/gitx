@@ -1,0 +1,32 @@
+{
+  "schemaNamespace": "GitHubAPI",
+  "input": {
+    "operationSearchPaths": [
+      "GraphQL/Operations/**/*.graphql"
+    ],
+    "schemaSearchPaths": [
+      "GraphQL/schema.graphqls"
+    ]
+  },
+  "output": {
+    "testMocks": {
+      "none": {}
+    },
+    "schemaTypes": {
+      "path": "Sources/GitHubForgeAdapter/Generated",
+      "moduleType": {
+        "embeddedInTarget": {
+          "name": "GitHubForgeAdapter"
+        }
+      }
+    },
+    "operations": {
+      "inSchemaModule": {}
+    }
+  },
+  "options": {
+    "schemaDocumentation": "exclude",
+    "warningsOnDeprecatedUsage": "include",
+    "pruneGeneratedFiles": true
+  }
+}

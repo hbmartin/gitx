@@ -39,7 +39,9 @@ while IFS= read -r file; do
 		Classes/*.m|Classes/*.mm|GitXTests/*.m|GitXUITests/*.m)
             objc_files+=("$file")
             ;;
-		Classes/*.swift|GitXTests/*.swift|GitXCore/*.swift)
+		ForgeKit/Sources/GitHubForgeAdapter/Generated/*.swift)
+			;;
+		Classes/*.swift|GitXTests/*.swift|GitXUITests/*.swift|GitXCore/*.swift|ForgeKit/*.swift)
             swift_files+=("$file")
             ;;
     esac
@@ -54,6 +56,10 @@ fi
 scripts/run_pinned_tool.sh swiftlint lint --strict --config .swiftlint.yml --baseline .swiftlint-baseline.json
 
 python3 scripts/check_gitxcore_boundary.py
+python3 scripts/check_forgekit_boundary.py
+python3 scripts/check_forgekit_exports.py
+python3 scripts/check_forge_codegen_drift.py
+python3 scripts/check_avatar_boundary.py
 python3 scripts/check_header_interop.py "$merge_base"
 python3 scripts/check_swift_concurrency_escapes.py
 

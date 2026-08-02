@@ -1,10 +1,16 @@
 included:
   - Classes
   - GitXTests
+  - GitXUITests
+  - GitXCore
+  - ForgeKit
 
 excluded:
   - External
   - build
+  - GitXCore/.build
+  - ForgeKit/.build
+  - ForgeKit/Sources/GitHubForgeAdapter/Generated
 
 only_rules:
   - duplicate_imports

@@ -12,6 +12,11 @@
 
 #define MaxScrollViewHeight 125.0f
 
+void PBShowGitXErrorSheet(NSError *error, NSWindowController *windowController)
+{
+	[PBGitXMessageSheet beginSheetWithError:error windowController:(PBGitWindowController *)windowController];
+}
+
 
 @interface PBGitXMessageSheet ()
 

@@ -39,6 +39,7 @@ final class ApplicationIconController: NSObject {
     }
 
     @objc static func applySelectedIcon() {
+        ForgeDeepLinkApplicationRouter.shared.installIfNeeded()
         let style = ApplicationSettings.applicationIconStyle
         NSApp.applicationIconImage = image(for: style)
         logger.info("Applied Dock icon style \(style.displayName, privacy: .public)")

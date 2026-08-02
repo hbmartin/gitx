@@ -21,6 +21,13 @@ enum GitXPrintingErrorHandling {
 };
 typedef enum GitXPrintingErrorHandling GitXPrintingErrorHandling;
 
+enum GitXForgeRevisionKind {
+	GitXForgeRevisionKindBranchRevision = 'FrBr' /* A branch name. */,
+	GitXForgeRevisionKindTagRevision = 'FrTg' /* A tag name. */,
+	GitXForgeRevisionKindCommitRevision = 'FrCm' /* A commit identifier. */
+};
+typedef enum GitXForgeRevisionKind GitXForgeRevisionKind;
+
 @protocol GitXGenericMethods
 
 - (void) closeSaving:(GitXSaveOptions)saving savingIn:(NSURL *)savingIn;  // Close a document.
@@ -57,6 +64,13 @@ typedef enum GitXPrintingErrorHandling GitXPrintingErrorHandling;
 - (void) performDiffIn:(NSURL *)x withOptions:(NSArray<NSString *> *)withOptions;  // Perform a diff operation in a repository.
 - (void) createRepository:(NSURL *)x;  // Create a git repository at the given filesystem URL.
 - (void) cloneRepository:(NSString *)x to:(NSURL *)to isBare:(BOOL)isBare;  // Clone a repository.
+- (NSString *) forgeRepositoryURLForDocument:(GitXDocument *)forDocument;  // Return the native Forge repository URL without opening it.
+- (NSString *) forgeBranchURLForDocument:(GitXDocument *)forDocument branch:(NSString *)branch;  // Return the native Forge branch URL without opening it.
+- (NSString *) forgeCommitURLForDocument:(GitXDocument *)forDocument commit:(NSString *)commit;  // Return the native Forge commit URL without opening it.
+- (NSString *) forgeFileURLForDocument:(GitXDocument *)forDocument atRevision:(NSString *)atRevision revisionKind:(GitXForgeRevisionKind)revisionKind path:(NSString *)path startLine:(NSInteger)startLine endLine:(NSInteger)endLine;  // Return the native Forge file or line-range URL without opening it.
+- (NSString *) forgeCompareURLForDocument:(GitXDocument *)forDocument baseRevision:(NSString *)baseRevision baseRevisionKind:(GitXForgeRevisionKind)baseRevisionKind headRevision:(NSString *)headRevision headRevisionKind:(GitXForgeRevisionKind)headRevisionKind;  // Return the native Forge compare URL without opening it.
+- (NSString *) forgePullRequestURLForDocument:(GitXDocument *)forDocument number:(NSInteger)number;  // Return the native Forge Pull Request URL without opening it.
+- (NSString *) forgeIssueURLForDocument:(GitXDocument *)forDocument number:(NSInteger)number;  // Return the native Forge Issue URL without opening it.
 
 @end
 

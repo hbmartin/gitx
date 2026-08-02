@@ -92,6 +92,12 @@
                                     <action selector="showCloneRepository:" target="-1" id="958"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Clone GitHub Repository…" id="F0F2-Clone-GitHub">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="showForgeCloneRepositories:" target="-1" id="F0F2-Clone-GitHub-Action"/>
+                                </connections>
+                            </menuItem>
                             <menuItem title="Open Recent" id="124">
                                 <menu key="submenu" title="Open Recent" systemMenu="recentDocuments" id="125">
                                     <items>
@@ -381,6 +387,37 @@
                                     <action selector="showRepositorySettings:" target="-1" id="codex-repository-settings-action"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="View Repository" identifier="GitX.Repository.ForgeLinks.Repository" id="codex-forge-view-repository">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="viewForgeRepository:" target="-1" id="codex-forge-view-repository-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="View Checked-Out Revision" identifier="GitX.Repository.ForgeLinks.CheckedOutRevision" id="codex-forge-view-checked-out">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="viewForgeCheckedOutRevision:" target="-1" id="codex-forge-view-checked-out-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="View Selected Commit" identifier="GitX.Repository.ForgeLinks.SelectedCommit" id="codex-forge-view-selected">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="viewForgeSelectedCommit:" target="-1" id="codex-forge-view-selected-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Compare Selected Commits" identifier="GitX.Repository.ForgeLinks.CompareSelectedCommits" id="codex-forge-view-compare">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="viewForgeSelectedComparison:" target="-1" id="codex-forge-view-compare-action"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem isSeparatorItem="YES" id="codex-forge-destination-separator"/>
+                            <menuItem title="Pull Request or Issue…" identifier="GitX.Repository.ForgeLinks.PullRequestOrIssue" id="codex-forge-view-numbered">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="showForgePullRequestOrIssue:" target="-1" id="codex-forge-view-numbered-action"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="codex-repository-settings-separator"/>
                             <menuItem title="Create Tag…" keyEquivalent="t" id="949">
                                 <connections>
@@ -560,6 +597,12 @@ DQ
                             <menuItem title="Customize Toolbar…" id="340">
                                 <connections>
                                     <action selector="runToolbarCustomizationPalette:" target="-1" id="343"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Show Status Bar" identifier="GitX.View.ShowRepositoryStatusBar" id="codex-show-repository-status-bar">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="toggleRepositoryStatusBar:" target="-1" id="codex-toggle-repository-status-bar-action"/>
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="847">

@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 import XCTest
 
 @MainActor
@@ -12,7 +13,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
-    private final class HistoryWindowController: PBGitWindowController {
+    /// AppKit creates KVO notifying subclasses while presenting sheets. The
+    /// Objective-C test base keeps the compatibility mirror and runtime Swift
+    /// superclass layouts separated, while this name keeps KVO identity stable.
+    @objc(PBHistoryWindowControllerTestDouble)
+    private final class HistoryWindowController: PBHistoryWindowControllerTestBase {
         private var fixedRepository: PBGitRepository!
         private(set) var shownErrors: [NSError] = []
         private(set) var confirmationCount = 0
@@ -40,7 +45,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             fatalError("init(coder:) has not been implemented")
         }
 
-        override var repository: PBGitRepository {
+        override var repository: PBGitRepository? {
             get { fixedRepository }
             set { fixedRepository = newValue }
         }
@@ -49,12 +54,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             shownErrors.append(error as NSError)
         }
 
-        override func open(_ fileURLs: [URL]) {
-            openedURLs = fileURLs
+        override func open(_ fileURLs: [URL]?) {
+            openedURLs = fileURLs ?? []
         }
 
-        override func revealURLs(inFinder fileURLs: [URL]) {
-            revealedURLs = fileURLs
+        override func revealURLs(inFinder fileURLs: [URL]?) {
+            revealedURLs = fileURLs ?? []
         }
 
         private(set) var shownMessages: [(message: String, info: String)] = []
@@ -68,10 +73,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         override func showCommitHookFailedSheet(
             _ messageText: String,
             infoText: String,
-            retryHandler: @escaping () -> Void
+            retryHandler: (() -> Void)?
         ) {
             shownMessages.append((messageText, infoText))
-            hookFailureRetryHandlers.append(retryHandler)
+            if let retryHandler {
+                hookFailureRetryHandlers.append(retryHandler)
+            }
         }
 
         override func performPush(
@@ -137,6 +144,18 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
             NSRect(x: 0, y: 0, width: 300, height: 20)
+        }
+    }
+
+    private final class CommitListDataSource: NSObject, NSTableViewDataSource {
+        let rowCount: Int
+
+        init(rowCount: Int) {
+            self.rowCount = rowCount
+        }
+
+        func numberOfRows(in tableView: NSTableView) -> Int {
+            rowCount
         }
     }
 
@@ -361,7 +380,209 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         waitForHistory()
         historyController.updateView()
         XCTAssertEqual(historyController.status?.isEmpty, false)
+        XCTAssertEqual(
+            tableCoordinator.numberOfRows(in: historyController.commitList),
+            (historyController.commitController.arrangedObjects as? [Any])?.count
+        )
         XCTAssertNotNil(tableCoordinator.tableView(historyController.commitList, rowViewForRow: 0))
+    }
+
+    func testHistoryForgeColumnsDiagnosticScreenshot() throws {
+        let checkColumn = try XCTUnwrap(historyController.commitList.tableColumn(
+            withIdentifier: NSUserInterfaceItemIdentifier("ForgeCheckRollupColumn")
+        ))
+        let pullRequestColumn = try XCTUnwrap(historyController.commitList.tableColumn(
+            withIdentifier: NSUserInterfaceItemIdentifier("ForgePullRequestBadgeColumn")
+        ))
+        checkColumn.isHidden = false
+        pullRequestColumn.isHidden = false
+        historyController.commitList.reloadData()
+        pumpRunLoop()
+
+        let contentView = try XCTUnwrap(windowController.window?.contentView)
+        try attachScreenshot(
+            of: contentView,
+            named: "M1-History-01-Forge-Check-and-Pull-Request-Columns"
+        )
+    }
+
+    func testCurrentBranchChangeClearsCommitSortDescriptors() {
+        historyController.commitController.sortDescriptors = [
+            NSSortDescriptor(key: "subject", ascending: true),
+        ]
+        XCTAssertFalse(historyController.commitController.sortDescriptors.isEmpty)
+
+        repository.currentBranch = PBGitRevSpecifier(parameters: ["HEAD~0"])
+
+        XCTAssertTrue(historyController.commitController.sortDescriptors.isEmpty)
+    }
+
+    func testRepositoryToolbarCreatesBranchAndTagItemsAndRejectsUnknownItems() throws {
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+
+        let branchItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.CreateBranch"),
+            willBeInsertedIntoToolbar: false
+        ))
+        XCTAssertEqual(branchItem.label, "New Branch")
+        XCTAssertEqual(branchItem.action, #selector(PBGitWindowController.createBranch(_:)))
+
+        let tagItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.CreateTag"),
+            willBeInsertedIntoToolbar: false
+        ))
+        XCTAssertEqual(tagItem.label, "New Tag")
+        XCTAssertEqual(tagItem.action, #selector(PBGitWindowController.createTag(_:)))
+
+        let attentionItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.Attention"),
+            willBeInsertedIntoToolbar: true
+        ))
+        NotificationCenter.default.post(
+            name: .repositoryAttentionUnseenDidChange,
+            object: repository,
+            userInfo: nil
+        )
+        let attentionContainer = try XCTUnwrap(attentionItem.view)
+        let attentionButton = try XCTUnwrap(attentionContainer.subviews.compactMap { $0 as? NSButton }.first)
+        let attentionBadge = try XCTUnwrap(attentionContainer.subviews.compactMap { $0 as? NSTextField }.first)
+        XCTAssertEqual(attentionButton.accessibilityLabel(), "Attention Inbox, No unseen Attention items")
+        XCTAssertTrue(attentionBadge.isHidden)
+
+        let accountItem = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.ForgeAccount"),
+            willBeInsertedIntoToolbar: true
+        ))
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let accountID = try ForgeAccountID(forge: forge, value: "toolbar-account")
+        let otherAccountID = try ForgeAccountID(forge: forge, value: "toolbar-other-account")
+        let accountChoice = RepositoryForgeAccountChoice(id: accountID, login: "hbmartin")
+        let otherAccountChoice = RepositoryForgeAccountChoice(id: otherAccountID, login: "octocat")
+        NotificationCenter.default.post(
+            name: .repositoryForgeAccountDidChange,
+            object: repository,
+            userInfo: [
+                RepositoryForgeAccountNotificationKey.providerName: "GitHub",
+                RepositoryForgeAccountNotificationKey.login: "octocat",
+                RepositoryForgeAccountNotificationKey.isPublic: false,
+                RepositoryForgeAccountNotificationKey.accountID: otherAccountID,
+                RepositoryForgeAccountNotificationKey.accounts: [
+                    accountChoice.notificationValue,
+                    otherAccountChoice.notificationValue,
+                ],
+            ]
+        )
+        let accountStack = try XCTUnwrap(accountItem.view as? NSStackView)
+        let accountPopup = try XCTUnwrap(accountStack.arrangedSubviews.compactMap { $0 as? NSPopUpButton }.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount"
+        })
+        XCTAssertEqual(accountPopup.item(at: 0)?.title, "@octocat")
+        XCTAssertEqual(accountPopup.accessibilityLabel(), "GitHub account, octocat")
+        let choice = try XCTUnwrap(accountPopup.menu?.items.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount.Choice.toolbar-account"
+        })
+        XCTAssertEqual(choice.state, .off)
+        XCTAssertEqual(choice.representedObject as? ForgeAccountID, accountID)
+        let manage = try XCTUnwrap(accountPopup.menu?.items.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount.Manage"
+        })
+        XCTAssertEqual(manage.action, NSSelectorFromString("openForgeAccountsPreferences:"))
+        let toolbarAvatar = try XCTUnwrap(accountStack.arrangedSubviews.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccountAvatarContainer"
+        }?.subviews.first)
+        XCTAssertEqual(toolbarAvatar.accessibilityIdentifier(), "GitX.Toolbar.ForgeAccountAvatar")
+        XCTAssertEqual(toolbarAvatar.accessibilityLabel(), "octocat, initials O")
+        XCTAssertEqual(accountChoice.avatarURL?.host, "avatars.githubusercontent.com")
+        XCTAssertNoThrow(try ForgeAvatarURL(XCTUnwrap(accountChoice.avatarURL)))
+        XCTAssertNotNil(choice.action)
+
+        let cooldownDeadline = Date().addingTimeInterval(60)
+        NotificationCenter.default.post(
+            name: .repositoryForgeAccountDidChange,
+            object: repository,
+            userInfo: [
+                RepositoryForgeAccountNotificationKey.providerName: "GitHub",
+                RepositoryForgeAccountNotificationKey.login: "octocat",
+                RepositoryForgeAccountNotificationKey.isPublic: false,
+                RepositoryForgeAccountNotificationKey.accountID: otherAccountID,
+                RepositoryForgeAccountNotificationKey.accounts: [
+                    accountChoice.notificationValue,
+                    otherAccountChoice.notificationValue,
+                ],
+                RepositoryForgeAccountNotificationKey.accountRebindingEnabled: false,
+                RepositoryForgeAccountNotificationKey.accountRebindingCooldownDeadline: cooldownDeadline,
+            ]
+        )
+        XCTAssertFalse(accountPopup.isEnabled)
+        XCTAssertEqual(
+            accountPopup.accessibilityHelp(),
+            "Account changes are paused until GitHub’s rate-limit window ends."
+        )
+        XCTAssertFalse(try XCTUnwrap(accountPopup.menu?.items.first {
+            $0.accessibilityIdentifier() == "GitX.Toolbar.ForgeAccount.Choice.toolbar-account"
+        }).isEnabled)
+
+        XCTAssertNil(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.Unknown"),
+            willBeInsertedIntoToolbar: false
+        ))
+    }
+
+    func testControllerWithoutCurrentBranchReloadsHeadDuringNibAwakening() throws {
+        let coldRepository = try PBGitRepository(url: URL(fileURLWithPath: fixture.path))
+        XCTAssertNil(coldRepository.currentBranch)
+        let coldWindowController = HistoryWindowController(repository: coldRepository)
+        let coldHistoryController = try XCTUnwrap(
+            PBGitHistoryController(
+                repository: coldRepository,
+                superController: coldWindowController
+            )
+        )
+        defer {
+            XCTAssertTrue(waitForCondition(timeout: 10) {
+                coldRepository.revisionList?.isUpdating != true
+            })
+            coldHistoryController.closeView()
+            coldRepository.revisionList?.cleanup()
+            coldWindowController.window?.orderOut(nil)
+            coldWindowController.window?.close()
+        }
+
+        _ = coldHistoryController.view
+
+        XCTAssertEqual(coldRepository.currentBranch?.simpleRef(), "refs/heads/main")
+    }
+
+    func testPendingUncommittedSelectionForcesDetailsForNewAndRefreshedWorkingState() throws {
+        XCTAssertNil(historyController.commitController.value(forKey: "pinnedObject"))
+        historyController.selectedCommitDetailsIndex = 1
+        try fixture.write("pending selection\n", to: "pending-selection.txt")
+
+        waitForIndexUpdate {
+            historyController.selectUncommittedChanges()
+        }
+
+        let workingState = try XCTUnwrap(
+            historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
+        )
+        XCTAssertEqual(historyController.selectedCommitDetailsIndex, 0)
+        XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === workingState)
+
+        let regularCommit = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.setSelectedObjects([regularCommit])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.setValue(true, forKey: "pendingUncommittedSelection")
+
+        historyController.updateUncommittedChanges()
+
+        XCTAssertEqual(historyController.selectedCommitDetailsIndex, 0)
+        XCTAssertTrue(historyController.commitController.selectedObjects.first as AnyObject === workingState)
     }
 
     func testSelectionReconciliationWorkingStateStatusAndTreeRestoration() throws {
@@ -530,6 +751,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         try fixture.git(["clean", "-fd"])
         refreshIndex()
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            repository.index.indexChanges.isEmpty
+        })
         historyController.updateUncommittedChanges()
         XCTAssertNil(historyController.commitController.value(forKey: "pinnedObject"))
         XCTAssertFalse(historyController.commitController.selectedObjects.isEmpty)
@@ -646,6 +870,50 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         scroll(historyController, selector, 0)
     }
 
+    func testCommitListAdjustScrollUsesDeterministicRowGeometry() throws {
+        let commitListClass = try XCTUnwrap(NSClassFromString("GitX.PBCommitList") as? NSTableView.Type)
+        let commitList = commitListClass.init(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        let dataSource = CommitListDataSource(rowCount: 5)
+        commitList.dataSource = dataSource
+        commitList.rowHeight = 20
+        commitList.intercellSpacing = .zero
+        commitList.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SubjectColumn")))
+        commitList.reloadData()
+        commitList.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
+
+        let selectedRect = commitList.rect(ofRow: 2)
+        XCTAssertGreaterThan(selectedRect.origin.y, 0)
+        let lowerProposedRect = NSRect(
+            x: 0,
+            y: selectedRect.origin.y - 1,
+            width: 300,
+            height: 100
+        )
+        commitList.setValue(false, forKey: "useAdjustScroll")
+        XCTAssertEqual(commitList.adjustScroll(lowerProposedRect), lowerProposedRect)
+
+        commitList.setValue(true, forKey: "useAdjustScroll")
+        let rowHeight = Int(commitList.rowHeight)
+        let lowerRemainder = Int(lowerProposedRect.origin.y) % rowHeight
+        let adjustedLowerRect = commitList.adjustScroll(lowerProposedRect)
+        XCTAssertEqual(
+            adjustedLowerRect.origin.y,
+            lowerProposedRect.origin.y + CGFloat(rowHeight - lowerRemainder)
+        )
+        XCTAssertGreaterThan(adjustedLowerRect.origin.y, lowerProposedRect.origin.y)
+
+        let upperProposedRect = NSRect(
+            x: 0,
+            y: selectedRect.origin.y + CGFloat(rowHeight) + 1,
+            width: 300,
+            height: 100
+        )
+        let upperRemainder = Int(upperProposedRect.origin.y) % rowHeight
+        let adjustedUpperRect = commitList.adjustScroll(upperProposedRect)
+        XCTAssertEqual(adjustedUpperRect.origin.y, upperProposedRect.origin.y - CGFloat(upperRemainder))
+        XCTAssertLessThan(adjustedUpperRect.origin.y, upperProposedRect.origin.y)
+    }
+
     func testApplicationDelegateCoversActivationAndFileOpens() throws {
         // These app-delegate paths only run when the host application is
         // activated or receives file-open events, which never happens
@@ -710,11 +978,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let settings = PBRepositoryUISettings(repository: repository)
         settings.pushAfterCommit = true
         settings.hideContainedBranches = true
+        settings.historyRepositoryFactsInspectorVisible = true
         settings.sidebarVisibility = ["Stage": false]
-
         let reloaded = PBRepositoryUISettings(repository: repository)
         XCTAssertTrue(reloaded.pushAfterCommit)
         XCTAssertTrue(reloaded.hideContainedBranches)
+        XCTAssertTrue(reloaded.historyRepositoryFactsInspectorVisible)
         XCTAssertFalse(reloaded.isSidebarGroupVisible("Stage"))
         XCTAssertTrue(reloaded.isSidebarGroupVisible("Remotes"))
     }
@@ -1068,7 +1337,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         pane.perform(NSSelectorFromString("commit:"), with: nil)
         wait(for: [committed], timeout: 20)
-        pumpRunLoop()
+        refreshIndex()
         XCTAssertNotEqual(try fixture.git(["rev-parse", "HEAD"]), initialHead)
         XCTAssertEqual(fileList.stagedFileCount, 0)
     }
@@ -1241,7 +1510,22 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 to: pasteboard
             )
         )
-        coordinator.toggleStaging(for: fileList.unstagedTable)
+        let unstageInfo = DraggingInfoFake(pasteboard: pasteboard)
+        waitForIndexUpdate {
+            XCTAssertTrue(coordinator.acceptDrop(unstageInfo, in: fileList.unstagedTable))
+        }
+        XCTAssertEqual(fileList.stagedFileCount, 1, "the dragged staged file lands in the unstaged list")
+
+        waitForIndexUpdate {
+            coordinator.toggleStaging(for: fileList.unstagedTable)
+        }
+        let remainingStagedFiles = staged.arrangedObjects as? [PBChangedFile] ?? []
+        staged.setSelectedObjects(remainingStagedFiles)
+        fileList.stagedTable.selectRowIndexes(
+            IndexSet(integersIn: 0 ..< remainingStagedFiles.count),
+            byExtendingSelection: false
+        )
+        pumpRunLoop()
         waitForIndexUpdate { coordinator.didDoubleClick(fileList.stagedTable) }
         XCTAssertEqual(fileList.stagedFileCount, 0, "double-clicking staged rows unstages them")
     }
@@ -1535,9 +1819,35 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let historyItem = NSMenuItem(title: "History", action: NSSelectorFromString("showHistoryView:"), keyEquivalent: "")
         _ = stub.validateMenuItem(historyItem)
 
-        let webController = historyController.value(forKey: "webHistoryController") as? NSObject
-        webController?.perform(NSSelectorFromString("refreshDisplayedContent"))
+        let webController = try XCTUnwrap(
+            historyController.value(forKey: "webHistoryController") as? PBWebHistoryController
+        )
+        webController.refreshDisplayedContent()
         pumpRunLoop()
+
+        webController.setValue(nil, forKey: "historyController")
+        _ = webController.beginContentGeneration()
+        let undecorated = webController.sections(
+            [[PBNativeSectionTextKey: "diff"]],
+            applyingDiffLayout: 0
+        )
+        XCTAssertEqual(undecorated.first?[PBNativeSectionSuppressionPatternsKey] as? [String], [])
+
+        webController.setValue(historyController, forKey: "historyController")
+        try fixture.git([
+            "config",
+            "gitx.diffSuppressionPatterns",
+            " ^generated/ \n# note\n\n.*\\.lock$ ",
+        ])
+        _ = webController.beginContentGeneration()
+        let configured = webController.sections(
+            [[PBNativeSectionTextKey: "diff"]],
+            applyingDiffLayout: 1
+        )
+        XCTAssertEqual(
+            configured.first?[PBNativeSectionSuppressionPatternsKey] as? [String],
+            ["^generated/", #".*\.lock$"#]
+        )
     }
 
     func testStagingPaneFileActions() throws {
@@ -1729,7 +2039,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         fileList.unstagedFilesController.setSelectedObjects([untracked])
         XCTAssertTrue(waitForCondition {
-            pane.diffPaneController.contentView.textView.string.contains("Hunk 1 : Line 1")
+            let rendered = pane.diffPaneController.contentView.textView.string
+            return rendered.contains("Hunk 1 : Line 1")
+                && rendered.contains("\u{00A0}Stage hunk\u{00A0}")
+                && rendered.contains("│ +brand new")
         })
         let renderedUntracked = pane.diffPaneController.contentView.textView.string
         XCTAssertTrue(
@@ -1881,16 +2194,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.selectedCommits = [featureCommit]
         let singlePaths = historyController.menuItems(forPaths: [" nested/tracked.txt "])
         XCTAssertEqual(singlePaths.count, 5)
-        XCTAssertTrue(singlePaths.allSatisfy { ($0 as! NSMenuItem).representedObject != nil })
-        let featurePathItems = try XCTUnwrap(singlePaths as? [NSMenuItem])
-        let featureDiff = try XCTUnwrap(featurePathItems.first { $0.action == NSSelectorFromString("diffFilesAction:") })
-        let featureCheckout = try XCTUnwrap(featurePathItems.first { $0.action == NSSelectorFromString("checkoutFiles:") })
+        XCTAssertTrue(singlePaths.allSatisfy { $0.representedObject != nil })
+        let featureDiff = try XCTUnwrap(singlePaths.first { $0.action == NSSelectorFromString("diffFilesAction:") })
+        let featureCheckout = try XCTUnwrap(singlePaths.first { $0.action == NSSelectorFromString("checkoutFiles:") })
         XCTAssertTrue(featureDiff.isEnabled)
         XCTAssertTrue(featureCheckout.isEnabled)
         XCTAssertEqual(featureDiff.representedObject as? [String], ["nested/tracked.txt"])
 
         historyController.selectedCommits = [headCommit]
-        let headPathItems = try XCTUnwrap(historyController.menuItems(forPaths: ["nested/tracked.txt"]) as? [NSMenuItem])
+        let headPathItems = historyController.menuItems(forPaths: ["nested/tracked.txt"])
         let headDiff = try XCTUnwrap(headPathItems.first { $0.title.hasPrefix("Diff file") })
         let headCheckout = try XCTUnwrap(headPathItems.first { $0.action == NSSelectorFromString("checkoutFiles:") })
         XCTAssertFalse(headDiff.isEnabled)
@@ -1898,7 +2210,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(headCheckout.isEnabled)
 
         let multiplePaths = historyController.menuItems(forPaths: ["one", "two"])
-        XCTAssertTrue(try XCTUnwrap((multiplePaths[0] as? NSMenuItem)?.title.contains("files")))
+        XCTAssertTrue(multiplePaths[0].title.contains("files"))
         let sender = NSMenuItem()
         sender.representedObject = ["nested/tracked.txt"]
         historyController.perform(NSSelectorFromString("showCommitsFromTree:"), with: sender)
@@ -2184,7 +2496,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     func testPathMenuDisablesCommitActionsWithoutSelection() throws {
         historyController.selectedCommits = []
 
-        let items = try XCTUnwrap(historyController.menuItems(forPaths: ["nested/tracked.txt"]) as? [NSMenuItem])
+        let items = historyController.menuItems(forPaths: ["nested/tracked.txt"])
         let diff = try XCTUnwrap(items.first { $0.title.hasPrefix("Diff file") })
         let checkout = try XCTUnwrap(items.first { $0.title == "Checkout file" })
         let history = try XCTUnwrap(items.first { $0.title == "Show history of file" })
@@ -2537,6 +2849,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             try XCTUnwrap(windowController as? HistoryWindowController).confirmationCount,
             0
         )
+    }
+
+    func testBranchMoveRejectsDetachedRepositoryWindow() throws {
+        let drag = try branchDragFixture()
+        let historyWindowController = try XCTUnwrap(windowController as? HistoryWindowController)
+        historyWindowController.repository = nil
+
+        XCTAssertFalse(tableCoordinator.tableView(
+            drag.table,
+            acceptDrop: DraggingInfoFake(pasteboard: drag.pasteboard),
+            row: drag.destinationRow,
+            dropOperation: .on
+        ))
+        XCTAssertEqual(historyWindowController.confirmationCount, 0)
     }
 
     func testBranchMoveRejectsCopyOnlyMalformedLegacyAndWorkingStateDrops() throws {
@@ -2905,6 +3231,18 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     private func pumpRunLoop(for interval: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(interval))
+    }
+
+    private func attachScreenshot(of view: NSView, named name: String) throws {
+        view.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(representation)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func menuItems(selector: String, argument: Any?) -> [NSMenuItem]? {

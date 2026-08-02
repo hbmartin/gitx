@@ -1,0 +1,109 @@
+fragment GitHubPageInfo on PageInfo {
+  hasPreviousPage
+  startCursor
+  hasNextPage
+  endCursor
+}
+
+fragment GitHubActor on Actor {
+  login
+  avatarUrl(size: 64)
+  ... on Node {
+    id
+  }
+  ... on User {
+    name
+  }
+  ... on Organization {
+    name
+  }
+}
+
+fragment GitHubAssignee on Assignee {
+  ... on Actor {
+    ...GitHubActor
+  }
+  ... on Mannequin {
+    mannequinID: id
+    mannequinLogin: login
+    mannequinAvatarURL: avatarUrl(size: 64)
+  }
+}
+
+fragment GitHubRequestedReviewer on RequestedReviewer {
+  ... on Actor {
+    ...GitHubActor
+  }
+  ... on Mannequin {
+    mannequinID: id
+    mannequinLogin: login
+    mannequinAvatarURL: avatarUrl(size: 64)
+  }
+  ... on Team {
+    teamID: id
+    teamName: name
+    teamSlug: slug
+    teamAvatarURL: avatarUrl
+  }
+}
+
+fragment GitHubRepositoryIdentity on Repository {
+  id
+  name
+  nameWithOwner
+  owner {
+    login
+  }
+}
+
+fragment GitHubLabel on Label {
+  id
+  name
+  description
+  color
+}
+
+fragment GitHubMilestone on Milestone {
+  id
+  number
+  title
+  description
+  state
+  dueOn
+}
+
+fragment GitHubIssueComment on IssueComment {
+  id
+  body
+  createdAt
+  updatedAt
+  author {
+    ...GitHubActor
+  }
+}
+
+fragment GitHubReviewComment on PullRequestReviewComment {
+  id
+  body
+  createdAt
+  updatedAt
+  isMinimized
+  minimizedReason
+  diffHunk
+  reactionGroups {
+    content
+    viewerHasReacted
+    reactors(first: 1) {
+      totalCount
+      pageInfo {
+        ...GitHubPageInfo
+      }
+    }
+  }
+  author {
+    ...GitHubActor
+  }
+  replyTo {
+    id
+  }
+}

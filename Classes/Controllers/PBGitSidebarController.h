@@ -1,33 +1,19 @@
 //
-//  PBGitSidebar.h
+//  PBGitSidebarController.h
 //  GitX
 //
-//  Created by Pieter de Bie on 9/8/09.
-//  Copyright 2009 __MyCompanyName__. All rights reserved.
+//  Objective-C compatibility surface for the Swift sidebar controller.
 //
 
-#import <Cocoa/Cocoa.h>
-#import "PBViewController.h"
-#import "PBHistorySearchMode.h"
+#import "GitX-Swift.h"
 
 @class PBSourceViewItem;
-@class PBGitHistoryController;
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface PBGitSidebarController : PBViewController <NSMenuDelegate>
+@interface PBGitSidebarController (GitXTypedItems)
 
-- (void)selectCurrentBranch;
-
-- (NSMenu *)menuForRow:(NSInteger)row;
-- (void)menuNeedsUpdate:(NSMenu *)menu;
-
-- (IBAction)fetchPullPushAction:(id)sender;
-
-@property (readonly) NSMutableArray *items;
-@property (readonly) PBSourceViewItem *remotes;
-@property (readonly) NSOutlineView *sourceView;
-@property (readonly) NSView *sourceListControlsView;
+@property (readonly) NSMutableArray<PBSourceViewItem *> *items;
 
 @end
 

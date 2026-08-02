@@ -1,0 +1,134 @@
+query GitHubAttentionCandidates(
+  $query: String!
+  $first: Int!
+  $after: String
+  $activityLast: Int!
+  $reviewThreadFirst: Int!
+) {
+  viewer {
+    ...GitHubActor
+  }
+  search(query: $query, type: ISSUE, first: $first, after: $after) {
+    totalCount: issueCount
+    pageInfo {
+      ...GitHubPageInfo
+    }
+    nodes {
+      ... on PullRequest {
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+        ...GitHubPullRequestSummary
+        body
+        assignedActors(first: 100) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ...GitHubAssignee
+          }
+        }
+        participants(first: 100) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ...GitHubActor
+          }
+        }
+        reviewRequests(first: 100) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            id
+            requestedReviewer {
+              ...GitHubRequestedReviewer
+            }
+          }
+        }
+        comments(last: $activityLast) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ...GitHubIssueComment
+          }
+        }
+        latestReviews(first: 100) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            id
+            body
+            state
+            submittedAt
+            author {
+              ...GitHubActor
+            }
+          }
+        }
+        reviewThreads(first: $reviewThreadFirst) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            id
+            isResolved
+            isOutdated
+            comments(last: $activityLast) {
+              totalCount
+              pageInfo {
+                ...GitHubPageInfo
+              }
+              nodes {
+                ...GitHubReviewComment
+              }
+            }
+          }
+        }
+      }
+      ... on Issue {
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+        ...GitHubIssueSummary
+        body
+        assignedActors(first: 100) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ...GitHubAssignee
+          }
+        }
+        participants(first: 100) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ...GitHubActor
+          }
+        }
+        comments(last: $activityLast) {
+          totalCount
+          pageInfo {
+            ...GitHubPageInfo
+          }
+          nodes {
+            ...GitHubIssueComment
+          }
+        }
+      }
+    }
+  }
+}

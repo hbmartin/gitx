@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - xcode: 26.2
+          - xcode: 26.6
             runner: macos-26
             abi: arm64
     steps:
@@ -32,6 +32,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
@@ -89,21 +90,25 @@ jobs:
         if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: brew install exiftool imagemagick
       - name: Checkout fixed repo snapshot for screenshots
-        if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
+        if: ${{ env.variableSet != '' && matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
           git clone --no-checkout "$GITHUB_WORKSPACE" /tmp/gitx-screenshot-repo
           git -C /tmp/gitx-screenshot-repo checkout 52ff1051d0c8e5cf3ee5
       - name: Run tests
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
+          screenshot_repo_setting=()
+          if [[ -d /tmp/gitx-screenshot-repo ]]; then
+            screenshot_repo_setting=(GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo)
+          fi
           xcodebuild test \
             -workspace GitX.xcworkspace \
             -scheme GitX \
             -destination "platform=macOS,arch=${{ matrix.abi }}" \
-            -only-testing:GitXUITests \
+            -testPlan GitXUI \
             ARCHS="${{ matrix.abi }}" \
             CODE_SIGN_IDENTITY="-" \
-            GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo \
+            "${screenshot_repo_setting[@]}" \
             -resultBundlePath TestResults-${{ matrix.abi }}.xcresult
       - name: Extract screenshots from test results
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}

@@ -1,3 +1,4 @@
+import ForgeKit
 import Foundation
 import GitXCore
 
@@ -6,9 +7,14 @@ import GitXCore
 import OSLog
 
 @objc(PBRepositoryUISettings)
-final nonisolated class RepositoryUISettings: NSObject {
+// swift6-safety-justification: the shared lock serializes every preferences access; remaining state is immutable.
+final nonisolated class RepositoryUISettings: NSObject, @unchecked Sendable, RepositoryForgeViewStateStoring {
     private static let defaultsKey = "PBRepositoryUISettings"
-    private static let preferencesLock = NSLock()
+    private static let forgeRepositoryBindingKey = "forgeRepositoryBinding"
+    private static let forgePullRequestsViewStateKey = "forgePullRequestsViewState"
+    private static let forgeIssuesViewStateKey = "forgeIssuesViewState"
+    private static let forgeAttentionViewStateKey = "forgeAttentionViewState"
+    private static let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryViewState")
     private let repositoryKey: String
 
     @objc(initWithRepository:)
@@ -27,6 +33,10 @@ final nonisolated class RepositoryUISettings: NSObject {
         super.init()
     }
 
+    var repositoryViewStateIdentifier: String {
+        repositoryKey
+    }
+
     private let preferences: ApplicationPreferences
 
     @objc var hideContainedBranches: Bool {
@@ -37,6 +47,11 @@ final nonisolated class RepositoryUISettings: NSObject {
     @objc var pushAfterCommit: Bool {
         get { value(for: "pushAfterCommit") as? Bool ?? false }
         set { setValue(newValue, for: "pushAfterCommit") }
+    }
+
+    @objc var historyRepositoryFactsInspectorVisible: Bool {
+        get { value(for: "historyRepositoryFactsInspectorVisible") as? Bool ?? false }
+        set { setValue(newValue, for: "historyRepositoryFactsInspectorVisible") }
     }
 
     @objc var sidebarVisibility: [String: Bool] {
@@ -56,19 +71,120 @@ final nonisolated class RepositoryUISettings: NSObject {
         sidebarVisibility[group] ?? true
     }
 
+    var forgeRepositoryBinding: ForgeRepositoryBinding? {
+        get {
+            guard let data = value(for: Self.forgeRepositoryBindingKey) as? Data else {
+                return nil
+            }
+            do {
+                return try JSONDecoder().decode(ForgeRepositoryBinding.self, from: data)
+            } catch {
+                Self.logger.error("Ignored an invalid persisted Forge Repository Binding")
+                return nil
+            }
+        }
+        set {
+            guard let newValue else {
+                removeValue(for: Self.forgeRepositoryBindingKey)
+                Self.logger.info("Removed the Forge Repository Binding from repository view state")
+                return
+            }
+            do {
+                let data = try JSONEncoder().encode(newValue)
+                setValue(data, for: Self.forgeRepositoryBindingKey)
+                Self.logger.info(
+                    "Saved a Forge Repository Binding provider=\(newValue.primaryRepository.forge.kind.rawValue, privacy: .public)"
+                )
+            } catch {
+                Self.logger.error("Could not encode the Forge Repository Binding")
+            }
+        }
+    }
+
+    func forgeReadSurfaceViewState(for kind: ForgeReadSurfaceKind) -> RepositoryForgeReadSurfaceViewState {
+        let key = switch kind {
+        case .pullRequests: Self.forgePullRequestsViewStateKey
+        case .issues: Self.forgeIssuesViewStateKey
+        }
+        let state: RepositoryForgeReadSurfaceViewState = decodedValue(
+            for: key,
+            fallback: .defaultValue
+        )
+        return state.validated(for: kind)
+    }
+
+    func setForgeReadSurfaceViewState(
+        _ state: RepositoryForgeReadSurfaceViewState,
+        for kind: ForgeReadSurfaceKind
+    ) {
+        let key = switch kind {
+        case .pullRequests: Self.forgePullRequestsViewStateKey
+        case .issues: Self.forgeIssuesViewStateKey
+        }
+        setEncodedValue(state.validated(for: kind), for: key)
+        Self.logger.debug("Saved \(kind.rawValue, privacy: .public) list and inspector view state")
+    }
+
+    var forgeAttentionViewState: RepositoryForgeAttentionViewState {
+        get {
+            let state: RepositoryForgeAttentionViewState = decodedValue(
+                for: Self.forgeAttentionViewStateKey,
+                fallback: .defaultValue
+            )
+            return RepositoryForgeAttentionViewState(
+                query: state.query,
+                selectedItemID: state.selectedItemID,
+                inspectorLayout: state.inspectorLayout,
+                inspectorMode: state.inspectorMode
+            )
+        }
+        set {
+            setEncodedValue(newValue, for: Self.forgeAttentionViewStateKey)
+            Self.logger.debug("Saved Attention list and inspector view state")
+        }
+    }
+
+    private func decodedValue<Value: Decodable>(for key: String, fallback: Value) -> Value {
+        guard let data = value(for: key) as? Data else { return fallback }
+        do {
+            return try JSONDecoder().decode(Value.self, from: data)
+        } catch {
+            Self.logger.error("Ignored invalid persisted repository view state for \(key, privacy: .public)")
+            return fallback
+        }
+    }
+
+    private func setEncodedValue<Value: Encodable>(_ value: Value, for key: String) {
+        do {
+            try setValue(JSONEncoder().encode(value), for: key)
+        } catch {
+            Self.logger.error("Could not encode repository view state for \(key, privacy: .public)")
+        }
+    }
+
     private func value(for key: String) -> Any? {
-        Self.preferencesLock.lock()
-        defer { Self.preferencesLock.unlock() }
+        RepositoryViewStatePreferencesSynchronization.lock.lock()
+        defer { RepositoryViewStatePreferencesSynchronization.lock.unlock() }
         let all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         return (all[repositoryKey] as? [String: Any])?[key]
     }
 
     private func setValue(_ value: Any, for key: String) {
-        Self.preferencesLock.lock()
-        defer { Self.preferencesLock.unlock() }
+        RepositoryViewStatePreferencesSynchronization.lock.lock()
+        defer { RepositoryViewStatePreferencesSynchronization.lock.unlock() }
         var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
         var repository = all[repositoryKey] as? [String: Any] ?? [:]
         repository[key] = value
+        all[repositoryKey] = repository
+        preferences.set(all, forKey: Self.defaultsKey)
+    }
+
+    private func removeValue(for key: String) {
+        RepositoryViewStatePreferencesSynchronization.lock.lock()
+        defer { RepositoryViewStatePreferencesSynchronization.lock.unlock() }
+        var all = preferences.dictionary(forKey: Self.defaultsKey) ?? [:]
+        var repository = all[repositoryKey] as? [String: Any] ?? [:]
+        repository.removeValue(forKey: key)
         all[repositoryKey] = repository
         preferences.set(all, forKey: Self.defaultsKey)
     }

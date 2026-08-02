@@ -22,10 +22,12 @@ private struct HistoryBranchDragPayload: Codable {
 // SwiftLint's analyzer cannot see these entry points through GitX-Swift.h.
 // swiftlint:disable unused_declaration
 @objc(PBHistoryTableInteractionCoordinator)
+@MainActor
 final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, NSTableViewDataSource {
     private weak var owner: PBGitHistoryController?
     private weak var commitList: PBCommitList?
     private let stateCoordinator: HistoryStateCoordinator
+    private var forgeOverlayCoordinator: HistoryForgeOverlayCoordinator?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "HistoryBranchDrag")
 
     @objc var hasWorkingState = false
@@ -35,6 +37,21 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         self.owner = owner
         self.commitList = commitList
         self.stateCoordinator = stateCoordinator
+        super.init()
+        if let session = owner.windowController?.repositoryForgeOverlaySession,
+           let repository = owner.repository
+        {
+            let settings = ApplicationComposition.shared.repositoryViewState(for: repository)
+            forgeOverlayCoordinator = HistoryForgeOverlayCoordinator(
+                owner: owner,
+                commitList: commitList,
+                session: session,
+                factsInspectorInitiallyExpanded: settings.historyRepositoryFactsInspectorVisible,
+                factsInspectorVisibilityDidChange: { [weak settings] isExpanded in
+                    settings?.historyRepositoryFactsInspectorVisible = isExpanded
+                }
+            )
+        }
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -143,12 +160,17 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         alert.addButton(withTitle: "Move")
         alert.addButton(withTitle: "Cancel")
 
-        guard let windowController = owner.windowController else { return false }
+        guard let windowController = owner.windowController,
+              let repository = windowController.repository
+        else {
+            logger.debug("Rejected branch move because the repository window is detached")
+            return false
+        }
         NSLog("[GitX] History reference move confirmation requested")
         windowController.confirmDialog(alert, suppressionIdentifier: kDialogAcceptDroppedRef) { [weak windowController] in
             guard let windowController else { return }
             do {
-                try RepositoryMutationService(repository: windowController.repository).updateReference(
+                try RepositoryMutationService(repository: repository).updateReference(
                     ref,
                     toPointAt: dropCommit,
                     expectedOldOID: oldCommit.sha

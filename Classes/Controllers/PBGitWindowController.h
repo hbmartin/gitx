@@ -1,116 +1,22 @@
 //
-//  PBDetailController.h
+//  PBGitWindowController.h
 //  GitX
 //
-//  Created by Pieter de Bie on 16-06-08.
-//  Copyright 2008 __MyCompanyName__. All rights reserved.
+//  Objective-C compatibility surface for the Swift window controller.
 //
 
-#import <Cocoa/Cocoa.h>
-#import "PBHistorySearchMode.h"
+#import "GitX-Swift.h"
 
-@class PBViewController;
-@class PBGitSidebarController;
-@class PBGitHistoryController;
-@class PBGitRepository;
-@class RJModalRepoSheet;
-@class PBGitRef;
-@class PBGitCommit;
 @class PBGitRepositoryDocument;
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface PBGitWindowController : NSWindowController <NSWindowDelegate, NSMenuItemValidation>
+/** Preserves the narrower Objective-C document type exposed before the Swift conversion. */
+@interface PBGitWindowController (PBGitRepositoryDocumentCompatibility)
 
-@property (nonatomic, strong) PBGitRepository *repository;
 /* This is assign because that's what NSWindowController says :-S */
-@property (assign) PBGitRepositoryDocument *document;
-@property (readonly, nullable) PBGitHistoryController *historyViewController;
-@property (readonly, nullable) PBGitSidebarController *sidebarViewController;
+@property (assign, nullable) PBGitRepositoryDocument *document;
 
-- (instancetype)init;
-
-- (void)changeContentController:(PBViewController *)controller;
-- (BOOL)isUncommittedChangesSelected;
-
-- (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText retryHandler:(void (^)(void))retryHandler;
-
-- (void)showMessageSheet:(NSString *)messageText infoText:(NSString *)infoText;
-- (void)showErrorSheet:(NSError *)error;
-
-
-- (void)openURLs:(NSArray<NSURL *> *)fileURLs;
-- (void)revealURLsInFinder:(NSArray<NSURL *> *)fileURLs;
-
-- (IBAction)showUncommittedChanges:(id)sender;
-- (IBAction)showHistoryView:(id)sender;
-- (IBAction)toggleAmendCommit:(id)sender;
-- (IBAction)openFiles:(id)sender;
-- (IBAction)revealInFinder:(id)sender;
-- (IBAction)openInTerminal:(id)sender;
-- (IBAction)refresh:(id)sender;
-- (IBAction)jumpToCheckedOutBranch:(id)sender;
-- (IBAction)showRepositorySettings:(id)sender;
-- (IBAction)viewRemote:(id)sender;
-- (IBAction)toolbarFetch:(id)sender;
-- (IBAction)toolbarPull:(id)sender;
-- (IBAction)toolbarPush:(id)sender;
-
-- (IBAction)checkout:(id)sender;
-- (IBAction)createBranch:(id)sender;
-- (IBAction)createTag:(id)sender;
-- (IBAction)merge:(id)sender;
-- (IBAction)deleteRef:(id)sender;
-- (IBAction)rebase:(id)sender;
-- (IBAction)rebaseHeadBranch:(id)sender;
-- (IBAction)cherryPick:(id)sender;
-- (IBAction)resetSoft:(id)sender;
-
-- (IBAction)showAddRemoteSheet:(id)sender GITX_DEPRECATED;
-- (IBAction)addRemote:(id)sender;
-- (IBAction)fetchRemote:(id)sender;
-- (IBAction)fetchAllRemotes:(id)sender;
-
-- (IBAction)pullRemote:(id)sender;
-- (IBAction)pullRebaseRemote:(id)sender;
-- (IBAction)pullDefaultRemote:(id)sender;
-- (IBAction)pullRebaseDefaultRemote:(id)sender;
-
-- (IBAction)pushUpdatesToRemote:(id)sender;
-- (IBAction)pushDefaultRemoteForRef:(id)sender;
-- (IBAction)pushToRemote:(id)sender;
-
-- (IBAction)stashSave:(id)sender;
-- (IBAction)stashSaveWithKeepIndex:(id)sender;
-- (IBAction)stashPop:(id)sender;
-- (IBAction)stashApply:(id)sender;
-- (IBAction)stashDrop:(id)sender;
-
-- (IBAction)diffWithHEAD:(id)sender;
-- (IBAction)stashViewDiff:(id)sender;
-- (IBAction)showTagInfoSheet:(id)sender;
-
-- (void)setHistorySearch:(NSString *)searchString mode:(PBHistorySearchMode)mode;
-
-- (void)performFetchForRef:(nullable PBGitRef *)ref;
-- (void)performPullForBranch:(PBGitRef *)branchRef remote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase;
-- (void)performPushForBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef;
-- (void)performPushForBranch:(nullable PBGitRef *)branchRef
-					toRemote:(nullable PBGitRef *)remoteRef
-		requiresConfirmation:(BOOL)requiresConfirmation;
-
-@end
-
-@interface PBGitWindowController (PBDialog)
-/**
- * Ask the user to confirm an action.
- *
- * @param alert The alert to show.
- * @param identifier The user default to check to suppress the alert completely.
- * @param actionBlock The action to perform.
- * @return YES if the action was performed, NO if the user cancelled.
- */
-- (BOOL)confirmDialog:(NSAlert *)alert suppressionIdentifier:(nullable NSString *)identifier forAction:(void (^)(void))actionBlock;
 @end
 
 NS_ASSUME_NONNULL_END

@@ -58,8 +58,8 @@
 		4A5D76E314A9A9CC00DF6C68 /* OpenRecentController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D762B14A9A9CC00DF6C68 /* OpenRecentController.m */; };
 		4A5D76E414A9A9CC00DF6C68 /* PBDiffWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D762D14A9A9CC00DF6C68 /* PBDiffWindowController.m */; };
 		4A5D76E614A9A9CC00DF6C68 /* PBGitHistoryController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763114A9A9CC00DF6C68 /* PBGitHistoryController.m */; };
-		4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */; };
-		4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.m */; };
+		4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.swift */; };
+		4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */; };
 		4A5D76EA14A9A9CC00DF6C68 /* PBHistorySearchController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763914A9A9CC00DF6C68 /* PBHistorySearchController.m */; };
 		4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763B14A9A9CC00DF6C68 /* PBPrefsWindowController.m */; };
 		4A5D76ED14A9A9CC00DF6C68 /* PBRepositoryDocumentController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D763F14A9A9CC00DF6C68 /* PBRepositoryDocumentController.m */; };
@@ -67,7 +67,7 @@
 		4A5D76EF14A9A9CC00DF6C68 /* PBViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764314A9A9CC00DF6C68 /* PBViewController.m */; };
 		4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764714A9A9CC00DF6C68 /* PBWebController.m */; };
 		4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764914A9A9CC00DF6C68 /* PBWebDiffController.m */; };
-		4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.m */; };
+		4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.swift */; };
 		4A5D76F414A9A9CC00DF6C68 /* PBGitBinary.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D764F14A9A9CC00DF6C68 /* PBGitBinary.m */; };
 		4A5D76F514A9A9CC00DF6C68 /* PBGitCommit.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D765114A9A9CC00DF6C68 /* PBGitCommit.m */; };
 		4A5D76F714A9A9CC00DF6C68 /* PBGitDefaults.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D765514A9A9CC00DF6C68 /* PBGitDefaults.m */; };
@@ -221,6 +221,39 @@
 		C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAF000000000000000012 /* NativeContentModelsTests.swift */; };
 		C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAE000000000000000011 /* NativeContentRenderer.swift */; };
 		C0DEAE000000000000000002 /* NativeContentRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAE000000000000000012 /* NativeContentRendererTests.swift */; };
+		C0DAA1000000000000000001 /* ForgeMarkdownNativeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA1000000000000000011 /* ForgeMarkdownNativeRenderer.swift */; };
+		C0DAA1000000000000000002 /* ForgeMarkdownNativeRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA1000000000000000011 /* ForgeMarkdownNativeRenderer.swift */; };
+		C0DAA2000000000000000001 /* ForgeAvatarLoading.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA2000000000000000011 /* ForgeAvatarLoading.swift */; };
+		C0DAA2000000000000000002 /* ForgeAvatarLoading.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA2000000000000000011 /* ForgeAvatarLoading.swift */; };
+		C0DAA3000000000000000001 /* ForgeMarkdownAvatarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA3000000000000000011 /* ForgeMarkdownAvatarTests.swift */; };
+		C0DAA4000000000000000001 /* ForgeMarkdownAvatarTestShims.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA4000000000000000011 /* ForgeMarkdownAvatarTestShims.swift */; };
+		C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */; };
+		F0F400000000000000000001 /* Milestone2ProductCoverageHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */; };
+		F0F400000000000000000002 /* Milestone2CompositionCoverageHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */; };
+		D3A400000000000000000001 /* Milestone2CompositionCoverageHarnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A400000000000000000101 /* Milestone2CompositionCoverageHarnessTests.swift */; };
+		F0F500000000000000000001 /* RepositoryPullRequestReviewDiffSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000101 /* RepositoryPullRequestReviewDiffSelection.swift */; };
+		F0F500000000000000000002 /* RepositoryPullRequestReviewWorkflow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000102 /* RepositoryPullRequestReviewWorkflow.swift */; };
+		F0F500000000000000000003 /* RepositoryPullRequestReviewDiffSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000101 /* RepositoryPullRequestReviewDiffSelection.swift */; };
+		F0F500000000000000000004 /* RepositoryPullRequestReviewWorkflow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000102 /* RepositoryPullRequestReviewWorkflow.swift */; };
+		F0F500000000000000000005 /* RepositoryPullRequestReviewDiffSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000201 /* RepositoryPullRequestReviewDiffSelectionTests.swift */; };
+		F0F500000000000000000006 /* RepositoryPullRequestReviewWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000202 /* RepositoryPullRequestReviewWorkflowTests.swift */; };
+		F0F500000000000000000007 /* RepositoryPullRequestReviewComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000103 /* RepositoryPullRequestReviewComposition.swift */; };
+		F0F500000000000000000008 /* RepositoryPullRequestReviewComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000103 /* RepositoryPullRequestReviewComposition.swift */; };
+		F0F500000000000000000009 /* RepositoryPullRequestMutationPreferenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000104 /* RepositoryPullRequestMutationPreferenceStore.swift */; };
+		F0F50000000000000000000A /* RepositoryPullRequestMutationPreferenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000104 /* RepositoryPullRequestMutationPreferenceStore.swift */; };
+		F0F50000000000000000000B /* RepositoryPullRequestMutationPreferenceStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000203 /* RepositoryPullRequestMutationPreferenceStoreTests.swift */; };
+		F0F50000000000000000000C /* RepositoryPullRequestReviewCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000204 /* RepositoryPullRequestReviewCompositionTests.swift */; };
+		F0F50000000000000000000D /* RepositoryPullRequestLocalReviewServiceProductionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F500000000000000000205 /* RepositoryPullRequestLocalReviewServiceProductionTests.swift */; };
+		D3A300000000000000000001 /* RepositoryPullRequestReviewOverlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000101 /* RepositoryPullRequestReviewOverlayController.swift */; };
+		D3A300000000000000000002 /* RepositoryPullRequestReviewOverlayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000101 /* RepositoryPullRequestReviewOverlayController.swift */; };
+		D3A300000000000000000003 /* RepositoryPullRequestReviewOverlayControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000102 /* RepositoryPullRequestReviewOverlayControllerTests.swift */; };
+		D3A300000000000000000004 /* Milestone3UITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000103 /* Milestone3UITestHarness.swift */; };
+		D3A300000000000000000005 /* Milestone3DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */; };
+		D3A300000000000000000006 /* Milestone3DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */; };
+		D3A300000000000000000007 /* Milestone3WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */; };
+		D3A300000000000000000008 /* RepositoryPullRequestReviewPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000106 /* RepositoryPullRequestReviewPerformanceTests.swift */; };
+		D3A300000000000000000009 /* Milestone3DiagnosticPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000107 /* Milestone3DiagnosticPresenterTests.swift */; };
+		D3A30000000000000000000A /* Milestone3UITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000103 /* Milestone3UITestHarness.swift */; };
 		C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE45200000000000000011 /* NativeContentTypography.swift */; };
 		C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000011 /* CommitControllerPolicies.swift */; };
 		C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */; };
@@ -247,7 +280,7 @@
 		C0DED0000000000000000004 /* RepositoryReferenceActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000014 /* RepositoryReferenceActionCoordinator.swift */; };
 		C0DED0000000000000000005 /* RepositoryStashActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */; };
 		C0DED0000000000000000006 /* WorkspaceActionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */; };
-		C0DED0000000000000000007 /* PBGitWindowController+Dialogs.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */; };
+		C0DED0000000000000000007 /* PBGitWindowController+Dialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DED0000000000000000017 /* PBGitWindowController+Dialogs.swift */; };
 		C0DEC1000000000000000001 /* ApplicationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC1000000000000000011 /* ApplicationSettings.swift */; };
 		C0D1C0A00000000000000001 /* ApplicationIcon.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1C0A00000000000000011 /* ApplicationIcon.swift */; };
 		C0DEC2000000000000000001 /* RepositoryToolbarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC2000000000000000011 /* RepositoryToolbarController.swift */; };
@@ -255,17 +288,82 @@
 		C0DEC4000000000000000001 /* RepositoryOpeningCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */; };
 		C0DEC5000000000000000001 /* CommitPatchExportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */; };
 		C0DEC6000000000000000001 /* HistoryTreePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC6000000000000000011 /* HistoryTreePresentation.swift */; };
-		C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.m */; };
+		C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.swift */; };
+		C0DF30000000000000000001 /* RepositoryForgeLinkUseCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF30000000000000000011 /* RepositoryForgeLinkUseCase.swift */; };
 		C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */; };
 		C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */; };
 		C0D0C0A00000000000000001 /* GitXCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0D0C0A00000000000000018 /* GitXCore */; };
+		F0A000000000000000000001 /* ForgeKit in Frameworks */ = {isa = PBXBuildFile; productRef = F0A000000000000000000018 /* ForgeKit */; };
 		C0D0C0A00000000000000002 /* ApplicationComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000011 /* ApplicationComposition.swift */; };
 		C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */; };
 		C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */; };
 		C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000014 /* TerminalIntegration.swift */; };
 		C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */; };
 		C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */; };
+		C0DF00000000000000000001 /* RepositoryForgeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */; };
+		C0DF10000000000000000001 /* ForgeDestinationScriptCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */; };
+		C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF20000000000000000011 /* ForgeScriptingTests.swift */; };
+		C0D5B0000000000000000001 /* RepositoryStatusBarPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5B0000000000000000011 /* RepositoryStatusBarPresentation.swift */; };
+		C0D5B0000000000000000002 /* RepositoryStatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5B0000000000000000012 /* RepositoryStatusBarController.swift */; };
+		C0D5B0000000000000000003 /* RepositoryStatusBarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5B0000000000000000013 /* RepositoryStatusBarTests.swift */; };
+		C0D5B0000000000000000004 /* RepositoryStatusBarPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5B0000000000000000011 /* RepositoryStatusBarPresentation.swift */; };
+		C0D5B0000000000000000005 /* RepositoryStatusBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5B0000000000000000012 /* RepositoryStatusBarController.swift */; };
+		C0D5C0000000000000000001 /* RepositoryForgeOverlaySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5C0000000000000000011 /* RepositoryForgeOverlaySession.swift */; };
+		C0D5C0000000000000000002 /* RepositoryForgeOverlaySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5C0000000000000000011 /* RepositoryForgeOverlaySession.swift */; };
+		C0D5C0000000000000000003 /* RepositoryForgeOverlaySessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5C0000000000000000012 /* RepositoryForgeOverlaySessionTests.swift */; };
+		C0D5E0000000000000000001 /* ForgeApplicationRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5E0000000000000000011 /* ForgeApplicationRefreshCoordinator.swift */; };
+		C0D5E0000000000000000002 /* ForgeApplicationRefreshCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5E0000000000000000011 /* ForgeApplicationRefreshCoordinator.swift */; };
+		C0D5D0000000000000000001 /* HistoryForgeOverlayPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5D0000000000000000011 /* HistoryForgeOverlayPresentation.swift */; };
+		C0D5D0000000000000000002 /* HistoryForgeOverlayPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5D0000000000000000011 /* HistoryForgeOverlayPresentation.swift */; };
+		C0D5D0000000000000000003 /* HistoryForgeOverlayPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */; };
 		C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */; };
+		F0B100000000000000000001 /* ForgeCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */; };
+		F0B100000000000000000002 /* ForgeCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000012 /* ForgeCredentialStore.swift */; };
+		F0B100000000000000000003 /* ForgeAccountLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000013 /* ForgeAccountLifecycle.swift */; };
+		F0B100000000000000000004 /* ForgeApplicationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000014 /* ForgeApplicationServices.swift */; };
+		F0B100000000000000000005 /* ForgeAccountLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000015 /* ForgeAccountLifecycleTests.swift */; };
+		F0B100000000000000000006 /* ForgeApplicationCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */; };
+		F0B100000000000000000007 /* ForgeCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000012 /* ForgeCredentialStore.swift */; };
+		F0B100000000000000000008 /* ForgeAccountLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000013 /* ForgeAccountLifecycle.swift */; };
+		F0B100000000000000000009 /* ForgeApplicationServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000014 /* ForgeApplicationServices.swift */; };
+		F0C100000000000000000001 /* ForgeReadSurfaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */; };
+		F0C100000000000000000002 /* ForgeReadSurfaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */; };
+		F0C100000000000000000003 /* ForgeReadSurfaceModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */; };
+		F0C100000000000000000004 /* ForgeReadSurfaceViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */; };
+		F0C100000000000000000005 /* ForgeReadSurfaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */; };
+		F0C100000000000000000006 /* ForgeReadSurfaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */; };
+		F0D100000000000000000001 /* ForgeExternalLinkRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */; };
+		F0D100000000000000000002 /* ForgeExternalLinkRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */; };
+		F0D100000000000000000003 /* ForgeExternalLinkRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */; };
+		F0E100000000000000000001 /* ForgeAccountsPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0E100000000000000000011 /* ForgeAccountsPreferences.swift */; };
+		F0E100000000000000000002 /* ForgeAccountsPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0E100000000000000000011 /* ForgeAccountsPreferences.swift */; };
+		F0F200000000000000000001 /* RepositoryPullRequestWorkflow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */; };
+		F0F200000000000000000002 /* RepositoryPullRequestGitOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000102 /* RepositoryPullRequestGitOperations.swift */; };
+		F0F200000000000000000003 /* RepositoryPullRequestUIController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000103 /* RepositoryPullRequestUIController.swift */; };
+		F0F200000000000000000004 /* ForgeDeepLinkApplicationRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000104 /* ForgeDeepLinkApplicationRouter.swift */; };
+		F0F200000000000000000005 /* ForgePullRequestSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000105 /* ForgePullRequestSheetController.swift */; };
+		F0F200000000000000000006 /* ForgeRepositoryCloneSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */; };
+		F0F200000000000000000007 /* GitHubPullRequestComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000107 /* GitHubPullRequestComposition.swift */; };
+		F0F200000000000000000008 /* Milestone2UITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000108 /* Milestone2UITestHarness.swift */; };
+		F0F200000000000000000009 /* Milestone2DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */; };
+		F0F200000000000000000011 /* RepositoryPullRequestWorkflow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */; };
+		F0F200000000000000000012 /* RepositoryPullRequestGitOperations.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000102 /* RepositoryPullRequestGitOperations.swift */; };
+		F0F200000000000000000015 /* ForgePullRequestSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000105 /* ForgePullRequestSheetController.swift */; };
+		F0F200000000000000000016 /* ForgeRepositoryCloneSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */; };
+		F0F200000000000000000017 /* RepositoryPullRequestWorkflowAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000201 /* RepositoryPullRequestWorkflowAppTests.swift */; };
+		F0F200000000000000000018 /* GitHubPullRequestComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000107 /* GitHubPullRequestComposition.swift */; };
+		F0F200000000000000000019 /* Milestone2WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */; };
+		F0F200000000000000000020 /* Milestone2DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */; };
+		F0F200000000000000000021 /* RepositoryPullRequestUIController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F200000000000000000103 /* RepositoryPullRequestUIController.swift */; };
+		F0F300000000000000000001 /* ForgeMutationQuitCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */; };
+		F0F300000000000000000002 /* ForgeUnknownMutationOutcomeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */; };
+		F0F300000000000000000003 /* ForgeMutationQuitCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */; };
+		F0F300000000000000000004 /* ForgeUnknownMutationOutcomeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */; };
+		F0F300000000000000000005 /* ForgeMutationQuitCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */; };
+		F0B200000000000000000001 /* GitHubForgeAdapter in Frameworks */ = {isa = PBXBuildFile; productRef = F0B200000000000000000018 /* GitHubForgeAdapter */; };
+		F0B200000000000000000003 /* GitHubReadComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000011 /* GitHubReadComposition.swift */; };
+		F0B200000000000000000004 /* GitHubReadComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000011 /* GitHubReadComposition.swift */; };
+		F0B200000000000000000005 /* GitHubReadCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000012 /* GitHubReadCompositionTests.swift */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE81000000000000000002 /* GitBinaryTests.swift */; };
@@ -556,13 +654,14 @@
 		C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitHistoryController+UI.m"; sourceTree = "<group>"; };
 		C0DEC5000000000000000011 /* CommitPatchExportCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitPatchExportCoordinator.swift; sourceTree = "<group>"; };
 		C0DEC6000000000000000011 /* HistoryTreePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryTreePresentation.swift; sourceTree = "<group>"; };
-		C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitWindowController+ToolbarActions.m"; sourceTree = "<group>"; };
+		C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitWindowController+ToolbarActions.swift"; sourceTree = "<group>"; };
+		C0DF30000000000000000011 /* RepositoryForgeLinkUseCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeLinkUseCase.swift; sourceTree = "<group>"; };
 		C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitMessageEditCoordinator.swift; sourceTree = "<group>"; };
 		C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeDiffSectionSettings.swift; sourceTree = "<group>"; };
 		4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarController.h; sourceTree = "<group>"; };
-		4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitSidebarController.m; sourceTree = "<group>"; };
+		4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PBGitSidebarController.swift; sourceTree = "<group>"; };
 		4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitWindowController.h; sourceTree = "<group>"; };
-		4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = PBGitWindowController.m; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
+		4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; lineEnding = 0; path = PBGitWindowController.swift; sourceTree = "<group>"; };
 		4A5D763814A9A9CC00DF6C68 /* PBHistorySearchController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBHistorySearchController.h; sourceTree = "<group>"; };
 		4A5D763914A9A9CC00DF6C68 /* PBHistorySearchController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBHistorySearchController.m; sourceTree = "<group>"; };
 		4A5D763A14A9A9CC00DF6C68 /* PBPrefsWindowController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBPrefsWindowController.h; sourceTree = "<group>"; };
@@ -578,7 +677,7 @@
 		4A5D764814A9A9CC00DF6C68 /* PBWebDiffController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBWebDiffController.h; sourceTree = "<group>"; };
 		4A5D764914A9A9CC00DF6C68 /* PBWebDiffController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBWebDiffController.m; sourceTree = "<group>"; };
 		4A5D764A14A9A9CC00DF6C68 /* PBWebHistoryController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; lineEnding = 0; path = PBWebHistoryController.h; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objcpp; };
-		4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = PBWebHistoryController.m; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
+		4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; lineEnding = 0; path = PBWebHistoryController.swift; sourceTree = "<group>"; };
 		4A5D764E14A9A9CC00DF6C68 /* PBGitBinary.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitBinary.h; sourceTree = "<group>"; };
 		4A5D764F14A9A9CC00DF6C68 /* PBGitBinary.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitBinary.m; sourceTree = "<group>"; };
 		4A5D765014A9A9CC00DF6C68 /* PBGitCommit.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; lineEnding = 0; path = PBGitCommit.h; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objcpp; };
@@ -833,6 +932,11 @@
 		C0DEAF000000000000000012 /* NativeContentModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentModelsTests.swift; sourceTree = "<group>"; };
 		C0DEAE000000000000000011 /* NativeContentRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentRenderer.swift; sourceTree = "<group>"; };
 		C0DEAE000000000000000012 /* NativeContentRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentRendererTests.swift; sourceTree = "<group>"; };
+		C0DAA1000000000000000011 /* ForgeMarkdownNativeRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMarkdownNativeRenderer.swift; sourceTree = "<group>"; };
+		C0DAA2000000000000000011 /* ForgeAvatarLoading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAvatarLoading.swift; sourceTree = "<group>"; };
+		C0DAA3000000000000000011 /* ForgeMarkdownAvatarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMarkdownAvatarTests.swift; sourceTree = "<group>"; };
+		C0DAA4000000000000000011 /* ForgeMarkdownAvatarTestShims.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMarkdownAvatarTestShims.swift; sourceTree = "<group>"; };
+		C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMarkdownAvatarProductHarness.swift; sourceTree = "<group>"; };
 		C0DE45200000000000000011 /* NativeContentTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeContentTypography.swift; sourceTree = "<group>"; };
 		C0DECF000000000000000011 /* CommitControllerPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitControllerPolicies.swift; sourceTree = "<group>"; };
 		C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitControllerPoliciesTests.swift; sourceTree = "<group>"; };
@@ -848,13 +952,16 @@
 		C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingListViewModelTests.swift; sourceTree = "<group>"; };
 		C0DEA0000000000000000002 /* HistoryControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryControllerTests.swift; sourceTree = "<group>"; };
 		C0DEC0000000000000000002 /* WindowControllerTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WindowControllerTests.m; sourceTree = "<group>"; };
+		C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitWindowControllerCompatibility.h; sourceTree = "<group>"; };
+		C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBGitSidebarControllerCompatibility.h; sourceTree = "<group>"; };
+		C0DEC0000000000000000005 /* PBWebHistoryControllerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBWebHistoryControllerCompatibility.h; sourceTree = "<group>"; };
 		C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryActionContextResolver.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryFocusRefreshCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRemoteActionCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000014 /* RepositoryReferenceActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryReferenceActionCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryStashActionCoordinator.swift; sourceTree = "<group>"; };
 		C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceActionCoordinator.swift; sourceTree = "<group>"; };
-		C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = "PBGitWindowController+Dialogs.m"; sourceTree = "<group>"; };
+		C0DED0000000000000000017 /* PBGitWindowController+Dialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PBGitWindowController+Dialogs.swift"; sourceTree = "<group>"; };
 		C0DEC1000000000000000011 /* ApplicationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationSettings.swift; sourceTree = "<group>"; };
 		C0D1C0A00000000000000011 /* ApplicationIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationIcon.swift; sourceTree = "<group>"; };
 		C0DEC2000000000000000011 /* RepositoryToolbarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryToolbarController.swift; sourceTree = "<group>"; };
@@ -865,7 +972,66 @@
 		C0D0C0A00000000000000014 /* TerminalIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegration.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsStore.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPresentationPolicies.swift; sourceTree = "<group>"; };
+		C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeCoordinator.swift; sourceTree = "<group>"; };
+		C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeDestinationScriptCommand.swift; sourceTree = "<group>"; };
+		C0DF20000000000000000011 /* ForgeScriptingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeScriptingTests.swift; sourceTree = "<group>"; };
+		C0D5B0000000000000000011 /* RepositoryStatusBarPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryStatusBarPresentation.swift; sourceTree = "<group>"; };
+		C0D5B0000000000000000012 /* RepositoryStatusBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryStatusBarController.swift; sourceTree = "<group>"; };
+		C0D5B0000000000000000013 /* RepositoryStatusBarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryStatusBarTests.swift; sourceTree = "<group>"; };
+		C0D5C0000000000000000011 /* RepositoryForgeOverlaySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeOverlaySession.swift; sourceTree = "<group>"; };
+		C0D5C0000000000000000012 /* RepositoryForgeOverlaySessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeOverlaySessionTests.swift; sourceTree = "<group>"; };
+		C0D5E0000000000000000011 /* ForgeApplicationRefreshCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationRefreshCoordinator.swift; sourceTree = "<group>"; };
+		C0D5D0000000000000000011 /* HistoryForgeOverlayPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryForgeOverlayPresentation.swift; sourceTree = "<group>"; };
+		C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryForgeOverlayPresentationTests.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationCompositionTests.swift; sourceTree = "<group>"; };
+		F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeCredentialStoreTests.swift; sourceTree = "<group>"; };
+		F0B100000000000000000012 /* ForgeCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeCredentialStore.swift; sourceTree = "<group>"; };
+		F0B100000000000000000013 /* ForgeAccountLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountLifecycle.swift; sourceTree = "<group>"; };
+		F0B100000000000000000014 /* ForgeApplicationServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationServices.swift; sourceTree = "<group>"; };
+		F0B100000000000000000015 /* ForgeAccountLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountLifecycleTests.swift; sourceTree = "<group>"; };
+		F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationCompositionTests.swift; sourceTree = "<group>"; };
+		F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceModels.swift; sourceTree = "<group>"; };
+		F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceViewController.swift; sourceTree = "<group>"; };
+		F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceModelsTests.swift; sourceTree = "<group>"; };
+		F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceViewControllerTests.swift; sourceTree = "<group>"; };
+		F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeExternalLinkRouting.swift; sourceTree = "<group>"; };
+		F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeExternalLinkRoutingTests.swift; sourceTree = "<group>"; };
+		F0E100000000000000000011 /* ForgeAccountsPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountsPreferences.swift; sourceTree = "<group>"; };
+		F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestWorkflow.swift; sourceTree = "<group>"; };
+		F0F200000000000000000102 /* RepositoryPullRequestGitOperations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestGitOperations.swift; sourceTree = "<group>"; };
+		F0F200000000000000000103 /* RepositoryPullRequestUIController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestUIController.swift; sourceTree = "<group>"; };
+		F0F200000000000000000104 /* ForgeDeepLinkApplicationRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeDeepLinkApplicationRouter.swift; sourceTree = "<group>"; };
+		F0F200000000000000000105 /* ForgePullRequestSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgePullRequestSheetController.swift; sourceTree = "<group>"; };
+		F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeRepositoryCloneSheetController.swift; sourceTree = "<group>"; };
+		F0F200000000000000000107 /* GitHubPullRequestComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubPullRequestComposition.swift; sourceTree = "<group>"; };
+		F0F200000000000000000108 /* Milestone2UITestHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2UITestHarness.swift; sourceTree = "<group>"; };
+		F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2DiagnosticPresenters.swift; sourceTree = "<group>"; };
+		F0F200000000000000000201 /* RepositoryPullRequestWorkflowAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestWorkflowAppTests.swift; sourceTree = "<group>"; };
+		F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2WorkflowUITests.swift; sourceTree = "<group>"; };
+		F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMutationQuitCoordinator.swift; sourceTree = "<group>"; };
+		F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeUnknownMutationOutcomeStore.swift; sourceTree = "<group>"; };
+		F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeMutationQuitCoordinatorTests.swift; sourceTree = "<group>"; };
+		F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2ProductCoverageHarness.swift; sourceTree = "<group>"; };
+		F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2CompositionCoverageHarness.swift; sourceTree = "<group>"; };
+		D3A400000000000000000101 /* Milestone2CompositionCoverageHarnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone2CompositionCoverageHarnessTests.swift; sourceTree = "<group>"; };
+		F0F500000000000000000101 /* RepositoryPullRequestReviewDiffSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewDiffSelection.swift; sourceTree = "<group>"; };
+		F0F500000000000000000102 /* RepositoryPullRequestReviewWorkflow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewWorkflow.swift; sourceTree = "<group>"; };
+		F0F500000000000000000201 /* RepositoryPullRequestReviewDiffSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewDiffSelectionTests.swift; sourceTree = "<group>"; };
+		F0F500000000000000000202 /* RepositoryPullRequestReviewWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewWorkflowTests.swift; sourceTree = "<group>"; };
+		F0F500000000000000000103 /* RepositoryPullRequestReviewComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewComposition.swift; sourceTree = "<group>"; };
+		F0F500000000000000000104 /* RepositoryPullRequestMutationPreferenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestMutationPreferenceStore.swift; sourceTree = "<group>"; };
+		F0F500000000000000000203 /* RepositoryPullRequestMutationPreferenceStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestMutationPreferenceStoreTests.swift; sourceTree = "<group>"; };
+		F0F500000000000000000204 /* RepositoryPullRequestReviewCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewCompositionTests.swift; sourceTree = "<group>"; };
+		F0F500000000000000000205 /* RepositoryPullRequestLocalReviewServiceProductionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestLocalReviewServiceProductionTests.swift; sourceTree = "<group>"; };
+		D3A300000000000000000101 /* RepositoryPullRequestReviewOverlayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewOverlayController.swift; sourceTree = "<group>"; };
+		D3A300000000000000000102 /* RepositoryPullRequestReviewOverlayControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewOverlayControllerTests.swift; sourceTree = "<group>"; };
+		D3A300000000000000000103 /* Milestone3UITestHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone3UITestHarness.swift; sourceTree = "<group>"; };
+		D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone3DiagnosticPresenters.swift; sourceTree = "<group>"; };
+		D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone3WorkflowUITests.swift; sourceTree = "<group>"; };
+		D3A300000000000000000106 /* RepositoryPullRequestReviewPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPullRequestReviewPerformanceTests.swift; sourceTree = "<group>"; };
+		D3A300000000000000000107 /* Milestone3DiagnosticPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Milestone3DiagnosticPresenterTests.swift; sourceTree = "<group>"; };
+		F0B200000000000000000011 /* GitHubReadComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadComposition.swift; sourceTree = "<group>"; };
+		F0B200000000000000000012 /* GitHubReadCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubReadCompositionTests.swift; sourceTree = "<group>"; };
 		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
@@ -894,6 +1060,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F0A000000000000000000001 /* ForgeKit in Frameworks */,
+				F0B200000000000000000001 /* GitHubForgeAdapter in Frameworks */,
 				C0D0C0A00000000000000001 /* GitXCore in Frameworks */,
 				C0DE1000000000000000001A /* UserNotifications.framework in Frameworks */,
 				C0DE10000000000000000016 /* HighlightKit in Frameworks */,
@@ -1163,15 +1331,28 @@
 				4A5D762614A9A9CC00DF6C68 /* ApplicationController.h */,
 				4A5D762714A9A9CC00DF6C68 /* ApplicationController.m */,
 				C0D0C0A00000000000000011 /* ApplicationComposition.swift */,
+				F0B100000000000000000012 /* ForgeCredentialStore.swift */,
+				F0B100000000000000000013 /* ForgeAccountLifecycle.swift */,
+				F0B100000000000000000014 /* ForgeApplicationServices.swift */,
+				C0D5E0000000000000000011 /* ForgeApplicationRefreshCoordinator.swift */,
+				F0B200000000000000000011 /* GitHubReadComposition.swift */,
+				F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */,
+				F0E100000000000000000011 /* ForgeAccountsPreferences.swift */,
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
 				C0DEC1000000000000000011 /* ApplicationSettings.swift */,
 				C0D1C0A00000000000000011 /* ApplicationIcon.swift */,
 				C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */,
 				C0D0C0A00000000000000014 /* TerminalIntegration.swift */,
 				C0DEC2000000000000000011 /* RepositoryToolbarController.swift */,
+				C0D5B0000000000000000011 /* RepositoryStatusBarPresentation.swift */,
+				C0D5B0000000000000000012 /* RepositoryStatusBarController.swift */,
+				C0D5C0000000000000000011 /* RepositoryForgeOverlaySession.swift */,
 				C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */,
 				C0DEC3000000000000000011 /* RepositorySettingsController.swift */,
 				C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */,
+				C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */,
+				C0DF30000000000000000011 /* RepositoryForgeLinkUseCase.swift */,
+				C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */,
 				C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */,
 				4A5D762814A9A9CC00DF6C68 /* DBPrefsWindowController.h */,
 				4A5D762914A9A9CC00DF6C68 /* DBPrefsWindowController.m */,
@@ -1195,19 +1376,33 @@
 				C0DEC6000000000000000011 /* HistoryTreePresentation.swift */,
 				C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */,
 				C0DEB0000000000000000013 /* HistoryTableInteractionCoordinator.swift */,
+				C0D5D0000000000000000011 /* HistoryForgeOverlayPresentation.swift */,
 				C0DEB0000000000000000014 /* PBGitHistoryController+UI.m */,
 				4A5D763414A9A9CC00DF6C68 /* PBGitSidebarController.h */,
-				4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.m */,
+				4A5D763514A9A9CC00DF6C68 /* PBGitSidebarController.swift */,
 				4A5D763614A9A9CC00DF6C68 /* PBGitWindowController.h */,
-				4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.m */,
-				C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.m */,
+				4A5D763714A9A9CC00DF6C68 /* PBGitWindowController.swift */,
+				C0DEC7000000000000000011 /* PBGitWindowController+ToolbarActions.swift */,
+				F0F200000000000000000104 /* ForgeDeepLinkApplicationRouter.swift */,
+				F0F200000000000000000107 /* GitHubPullRequestComposition.swift */,
+				F0F300000000000000000101 /* ForgeMutationQuitCoordinator.swift */,
+				F0F300000000000000000102 /* ForgeUnknownMutationOutcomeStore.swift */,
+				F0F200000000000000000108 /* Milestone2UITestHarness.swift */,
+				D3A300000000000000000103 /* Milestone3UITestHarness.swift */,
+				F0F200000000000000000102 /* RepositoryPullRequestGitOperations.swift */,
+				F0F200000000000000000103 /* RepositoryPullRequestUIController.swift */,
+				F0F200000000000000000101 /* RepositoryPullRequestWorkflow.swift */,
+				F0F500000000000000000101 /* RepositoryPullRequestReviewDiffSelection.swift */,
+				F0F500000000000000000102 /* RepositoryPullRequestReviewWorkflow.swift */,
+				F0F500000000000000000103 /* RepositoryPullRequestReviewComposition.swift */,
+				F0F500000000000000000104 /* RepositoryPullRequestMutationPreferenceStore.swift */,
 				C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */,
 				C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */,
 				C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */,
 				C0DED0000000000000000014 /* RepositoryReferenceActionCoordinator.swift */,
 				C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */,
 				C0DED0000000000000000016 /* WorkspaceActionCoordinator.swift */,
-				C0DED0000000000000000017 /* PBGitWindowController+Dialogs.m */,
+				C0DED0000000000000000017 /* PBGitWindowController+Dialogs.swift */,
 				4A5D763814A9A9CC00DF6C68 /* PBHistorySearchController.h */,
 				4A5D763914A9A9CC00DF6C68 /* PBHistorySearchController.m */,
 				6C5244021E00C33F0051DE20 /* PBHistorySearchMode.h */,
@@ -1225,7 +1420,7 @@
 				4A5D764814A9A9CC00DF6C68 /* PBWebDiffController.h */,
 				4A5D764914A9A9CC00DF6C68 /* PBWebDiffController.m */,
 				4A5D764A14A9A9CC00DF6C68 /* PBWebHistoryController.h */,
-				4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.m */,
+				4A5D764B14A9A9CC00DF6C68 /* PBWebHistoryController.swift */,
 				4D3FB3E5198AEAAF000B4A58 /* PBGitRepositoryDocument.h */,
 				4D3FB3E6198AEAAF000B4A58 /* PBGitRepositoryDocument.m */,
 				6C4855D81D57E4FA0027A7B4 /* PBOpenShallowRepositoryErrorRecoveryAttempter.h */,
@@ -1358,9 +1553,18 @@
 				C0DE10000000000000000004 /* PBNativeContentView.m */,
 				C0DEAF000000000000000011 /* NativeContentModels.swift */,
 				C0DEAE000000000000000011 /* NativeContentRenderer.swift */,
+				C0DAA1000000000000000011 /* ForgeMarkdownNativeRenderer.swift */,
+				C0DAA2000000000000000011 /* ForgeAvatarLoading.swift */,
 				C0DE57A600000000000000B6 /* StagingFileCellView.swift */,
 				C0DE45200000000000000011 /* NativeContentTypography.swift */,
 				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
+				F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */,
+				F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */,
+				F0F200000000000000000105 /* ForgePullRequestSheetController.swift */,
+				F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */,
+				F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */,
+				D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */,
+				D3A300000000000000000101 /* RepositoryPullRequestReviewOverlayController.swift */,
 				C01400000000000000000013 /* CommitProgressSheetController.swift */,
 				BF42F1431E025411004769FF /* GitXTextView.h */,
 				BF42F1321E025403004769FF /* GitXTextView.m */,
@@ -1458,10 +1662,14 @@
 			isa = PBXGroup;
 			children = (
 				C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */,
+				C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */,
+				C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */,
+				C0DEC0000000000000000005 /* PBWebHistoryControllerCompatibility.h */,
 				C0DE30000000000000000002 /* GitXCoreTests.m */,
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
 				C0DE90000000000000000017 /* RepositoryServiceTests.swift */,
+				C0DF20000000000000000011 /* ForgeScriptingTests.swift */,
 				C05900000000000000000012 /* RepositoryIgnoreTestSupport.h */,
 				C05900000000000000000011 /* RepositoryIgnoreTestSupport.m */,
 				C0DEE0000000000000000012 /* IndexSnapshotTests.swift */,
@@ -1471,6 +1679,12 @@
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
 				C0DEAF000000000000000012 /* NativeContentModelsTests.swift */,
 				C0DEAE000000000000000012 /* NativeContentRendererTests.swift */,
+				C0DAA3000000000000000011 /* ForgeMarkdownAvatarTests.swift */,
+				C0DAA4000000000000000011 /* ForgeMarkdownAvatarTestShims.swift */,
+				C0DAA5000000000000000011 /* ForgeMarkdownAvatarProductHarness.swift */,
+				F0F400000000000000000101 /* Milestone2ProductCoverageHarness.swift */,
+				F0F400000000000000000102 /* Milestone2CompositionCoverageHarness.swift */,
+				D3A400000000000000000101 /* Milestone2CompositionCoverageHarnessTests.swift */,
 				C0DECF000000000000000012 /* CommitControllerPoliciesTests.swift */,
 				C0DECE000000000000000012 /* CommitMenuPresenterTests.swift */,
 				C0DEA0000000000000000002 /* HistoryControllerTests.swift */,
@@ -1483,6 +1697,26 @@
 				C01400000000000000000014 /* CommitProgressSheetControllerTests.swift */,
 				C0DE50000000000000000002 /* GitXPerformanceTests.swift */,
 				C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */,
+				F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */,
+				F0B100000000000000000015 /* ForgeAccountLifecycleTests.swift */,
+				F0B100000000000000000016 /* ForgeApplicationCompositionTests.swift */,
+				F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */,
+				F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */,
+				F0B200000000000000000012 /* GitHubReadCompositionTests.swift */,
+				F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */,
+				F0F200000000000000000201 /* RepositoryPullRequestWorkflowAppTests.swift */,
+				F0F300000000000000000201 /* ForgeMutationQuitCoordinatorTests.swift */,
+				F0F500000000000000000201 /* RepositoryPullRequestReviewDiffSelectionTests.swift */,
+				F0F500000000000000000202 /* RepositoryPullRequestReviewWorkflowTests.swift */,
+				F0F500000000000000000203 /* RepositoryPullRequestMutationPreferenceStoreTests.swift */,
+				F0F500000000000000000204 /* RepositoryPullRequestReviewCompositionTests.swift */,
+				F0F500000000000000000205 /* RepositoryPullRequestLocalReviewServiceProductionTests.swift */,
+				D3A300000000000000000102 /* RepositoryPullRequestReviewOverlayControllerTests.swift */,
+				D3A300000000000000000106 /* RepositoryPullRequestReviewPerformanceTests.swift */,
+				D3A300000000000000000107 /* Milestone3DiagnosticPresenterTests.swift */,
+				C0D5B0000000000000000013 /* RepositoryStatusBarTests.swift */,
+				C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */,
+				C0D5C0000000000000000012 /* RepositoryForgeOverlaySessionTests.swift */,
 			);
 			path = GitXTests;
 			sourceTree = "<group>";
@@ -1491,6 +1725,8 @@
 			isa = PBXGroup;
 			children = (
 				CC0000020000002 /* GitXScreenshotTests.m */,
+				F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */,
+				D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */,
 			);
 			path = GitXUITests;
 			sourceTree = "<group>";
@@ -1535,6 +1771,8 @@
 			);
 			name = GitX;
 			packageProductDependencies = (
+				F0A000000000000000000018 /* ForgeKit */,
+				F0B200000000000000000018 /* GitHubForgeAdapter */,
 				C0D0C0A00000000000000018 /* GitXCore */,
 				C0DE10000000000000000018 /* HighlightKit */,
 			);
@@ -1616,6 +1854,7 @@
 			);
 			mainGroup = 29B97314FDCFA39411CA2CEA /* GitTest */;
 			packageReferences = (
+				F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */,
 				C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */,
 				C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */,
 			);
@@ -1890,7 +2129,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "#!/bin/bash\n\n# This script automatically sets the version and short version string of\n# an Xcode project from the Git repository containing the project.\n#\n# To use this script in Xcode, add the script's path to a \"Run Script\" build\n# phase for your application target.\n\nset -o errexit\nset -o nounset\n\n# Alternatively, we could use Xcode's copy of the Git binary,\n# but old Xcodes don't have this.\nGIT=$(xcrun -find git)\n\n# Run Script build phases that operate on product files of the target that defines them should use the value of this build setting [TARGET_BUILD_DIR]. But Run Script build phases that operate on product files of other targets should use “BUILT_PRODUCTS_DIR” instead.\nINFO_PLIST=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\n\n# Build version (closest-tag-or-branch \"-\" commits-since-tag \"-\" short-hash dirty-flag)\nBUILD_VERSION=$(git describe --tags --always --dirty=-dirty)-$(git rev-parse --abbrev-ref HEAD)\n\n# Use the latest tag for short version (expected tag format \"vn[.n[.n]]\")\n# or if there are no tags, we make up version 0.0.<commit count>\nLATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null)\nLATEST_TAG=${LATEST_TAG##v} # Remove the \"v\" from the front of the tag\nARCHITECTURE=$(uname -p)\nSHORT_VERSION=\"$LATEST_TAG\"\n\nMASTER_COMMIT_COUNT=$(git rev-list --count HEAD)\nBRANCH_COMMIT_COUNT=0\nBUNDLE_VERSION=\"$SHORT_VERSION\".\"$MASTER_COMMIT_COUNT [$ARCHITECTURE]\"\n\n# For debugging:\necho \"BUILD VERSION: $BUILD_VERSION\"\necho \"SHORT VERSION: $SHORT_VERSION\"\necho \"BUNDLE_VERSION: $BUNDLE_VERSION\"\n\n/usr/libexec/PlistBuddy -c \"Add :CFBundleBuildVersion string $BUILD_VERSION\" \"$INFO_PLIST\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Set :CFBundleBuildVersion $BUILD_VERSION\" \"$INFO_PLIST\"\n/usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString $BUILD_VERSION\" \"$INFO_PLIST\"\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUNDLE_VERSION\" \"$INFO_PLIST\"\n";
+			shellScript = "\"${SRCROOT}/scripts/set_build_version.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1929,6 +2168,13 @@
 				C0DEE0000000000000000008 /* IndexRefreshCoordinator.swift in Sources */,
 				C0DEAF000000000000000001 /* NativeContentModels.swift in Sources */,
 				C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */,
+				C0DAA1000000000000000001 /* ForgeMarkdownNativeRenderer.swift in Sources */,
+				C0DAA2000000000000000001 /* ForgeAvatarLoading.swift in Sources */,
+				F0C100000000000000000001 /* ForgeReadSurfaceModels.swift in Sources */,
+				F0C100000000000000000002 /* ForgeReadSurfaceViewController.swift in Sources */,
+				C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */,
+				F0F400000000000000000001 /* Milestone2ProductCoverageHarness.swift in Sources */,
+				F0F400000000000000000002 /* Milestone2CompositionCoverageHarness.swift in Sources */,
 				C0DE45200000000000000001 /* NativeContentTypography.swift in Sources */,
 				C0DECF000000000000000001 /* CommitControllerPolicies.swift in Sources */,
 				C0DECE000000000000000001 /* CommitMenuPresenter.swift in Sources */,
@@ -1949,23 +2195,55 @@
 				C0DED0000000000000000004 /* RepositoryReferenceActionCoordinator.swift in Sources */,
 				C0DED0000000000000000005 /* RepositoryStashActionCoordinator.swift in Sources */,
 				C0DED0000000000000000006 /* WorkspaceActionCoordinator.swift in Sources */,
-				C0DED0000000000000000007 /* PBGitWindowController+Dialogs.m in Sources */,
+				C0DED0000000000000000007 /* PBGitWindowController+Dialogs.swift in Sources */,
 				C0DEC1000000000000000001 /* ApplicationSettings.swift in Sources */,
 				C0D1C0A00000000000000001 /* ApplicationIcon.swift in Sources */,
 				C0DEC2000000000000000001 /* RepositoryToolbarController.swift in Sources */,
+				C0D5B0000000000000000001 /* RepositoryStatusBarPresentation.swift in Sources */,
+				C0D5B0000000000000000002 /* RepositoryStatusBarController.swift in Sources */,
+				C0D5C0000000000000000001 /* RepositoryForgeOverlaySession.swift in Sources */,
+				C0D5E0000000000000000001 /* ForgeApplicationRefreshCoordinator.swift in Sources */,
+				C0D5D0000000000000000001 /* HistoryForgeOverlayPresentation.swift in Sources */,
 				C0DEC3000000000000000001 /* RepositorySettingsController.swift in Sources */,
 				C0DEC4000000000000000001 /* RepositoryOpeningCoordinator.swift in Sources */,
 				C0DEC5000000000000000001 /* CommitPatchExportCoordinator.swift in Sources */,
 				C0DEC6000000000000000001 /* HistoryTreePresentation.swift in Sources */,
-				C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.m in Sources */,
+				C0DEC7000000000000000001 /* PBGitWindowController+ToolbarActions.swift in Sources */,
+				C0DF30000000000000000001 /* RepositoryForgeLinkUseCase.swift in Sources */,
 				C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */,
 				C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */,
 				C0D0C0A00000000000000002 /* ApplicationComposition.swift in Sources */,
+				F0B100000000000000000002 /* ForgeCredentialStore.swift in Sources */,
+				F0B100000000000000000003 /* ForgeAccountLifecycle.swift in Sources */,
+				F0B100000000000000000004 /* ForgeApplicationServices.swift in Sources */,
+				F0B200000000000000000003 /* GitHubReadComposition.swift in Sources */,
+				F0D100000000000000000001 /* ForgeExternalLinkRouting.swift in Sources */,
+				F0E100000000000000000001 /* ForgeAccountsPreferences.swift in Sources */,
+				F0F200000000000000000001 /* RepositoryPullRequestWorkflow.swift in Sources */,
+				F0F200000000000000000002 /* RepositoryPullRequestGitOperations.swift in Sources */,
+				F0F200000000000000000003 /* RepositoryPullRequestUIController.swift in Sources */,
+				F0F200000000000000000004 /* ForgeDeepLinkApplicationRouter.swift in Sources */,
+				F0F200000000000000000005 /* ForgePullRequestSheetController.swift in Sources */,
+				F0F200000000000000000006 /* ForgeRepositoryCloneSheetController.swift in Sources */,
+				F0F200000000000000000007 /* GitHubPullRequestComposition.swift in Sources */,
+				F0F300000000000000000001 /* ForgeMutationQuitCoordinator.swift in Sources */,
+				F0F300000000000000000002 /* ForgeUnknownMutationOutcomeStore.swift in Sources */,
+				F0F200000000000000000008 /* Milestone2UITestHarness.swift in Sources */,
+				F0F200000000000000000009 /* Milestone2DiagnosticPresenters.swift in Sources */,
+				F0F500000000000000000001 /* RepositoryPullRequestReviewDiffSelection.swift in Sources */,
+				F0F500000000000000000002 /* RepositoryPullRequestReviewWorkflow.swift in Sources */,
+				F0F500000000000000000007 /* RepositoryPullRequestReviewComposition.swift in Sources */,
+				F0F500000000000000000009 /* RepositoryPullRequestMutationPreferenceStore.swift in Sources */,
+				D3A300000000000000000001 /* RepositoryPullRequestReviewOverlayController.swift in Sources */,
+				D3A300000000000000000004 /* Milestone3UITestHarness.swift in Sources */,
+				D3A300000000000000000005 /* Milestone3DiagnosticPresenters.swift in Sources */,
 				C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */,
 				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
 				C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */,
 				C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */,
+				C0DF00000000000000000001 /* RepositoryForgeCoordinator.swift in Sources */,
+				C0DF10000000000000000001 /* ForgeDestinationScriptCommand.swift in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
 				C0DE10000000000000000014 /* PBWorkingTree.m in Sources */,
@@ -1976,10 +2254,10 @@
 				4A5D76E314A9A9CC00DF6C68 /* OpenRecentController.m in Sources */,
 				4A5D76E414A9A9CC00DF6C68 /* PBDiffWindowController.m in Sources */,
 				4A5D76E614A9A9CC00DF6C68 /* PBGitHistoryController.m in Sources */,
-				4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.m in Sources */,
+				4A5D76E814A9A9CC00DF6C68 /* PBGitSidebarController.swift in Sources */,
 				508E268D1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m in Sources */,
 				4DECFBB21E662962004C3A6F /* ObjectiveGit+PBCategories.m in Sources */,
-				4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.m in Sources */,
+				4A5D76E914A9A9CC00DF6C68 /* PBGitWindowController.swift in Sources */,
 				4A5D76EA14A9A9CC00DF6C68 /* PBHistorySearchController.m in Sources */,
 				4A5D76EB14A9A9CC00DF6C68 /* PBPrefsWindowController.m in Sources */,
 				6C4855C81D57DCFC0027A7B4 /* PBTerminalUtil.m in Sources */,
@@ -1988,7 +2266,7 @@
 				4A5D76EF14A9A9CC00DF6C68 /* PBViewController.m in Sources */,
 				4A5D76F114A9A9CC00DF6C68 /* PBWebController.m in Sources */,
 				4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */,
-				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.m in Sources */,
+				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.swift in Sources */,
 				4A5D76F414A9A9CC00DF6C68 /* PBGitBinary.m in Sources */,
 				6C25810B1C2720E60080A89A /* GitXCommitCopier.m in Sources */,
 				4A5D76F514A9A9CC00DF6C68 /* PBGitCommit.m in Sources */,
@@ -2083,6 +2361,7 @@
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
+				C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */,
 				C05900000000000000000001 /* RepositoryIgnoreTestSupport.m in Sources */,
 				C0DEE0000000000000000002 /* IndexSnapshotTests.swift in Sources */,
 				C0DEE0000000000000000005 /* IndexMutationServiceTests.swift in Sources */,
@@ -2091,6 +2370,11 @@
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
 				C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */,
 				C0DEAE000000000000000002 /* NativeContentRendererTests.swift in Sources */,
+				C0DAA3000000000000000001 /* ForgeMarkdownAvatarTests.swift in Sources */,
+				C0DAA1000000000000000002 /* ForgeMarkdownNativeRenderer.swift in Sources */,
+				C0DAA2000000000000000002 /* ForgeAvatarLoading.swift in Sources */,
+				C0DAA4000000000000000001 /* ForgeMarkdownAvatarTestShims.swift in Sources */,
+				D3A400000000000000000001 /* Milestone2CompositionCoverageHarnessTests.swift in Sources */,
 				C0DECF000000000000000002 /* CommitControllerPoliciesTests.swift in Sources */,
 				C0DECE000000000000000002 /* CommitMenuPresenterTests.swift in Sources */,
 				C0DEA0000000000000000001 /* HistoryControllerTests.swift in Sources */,
@@ -2104,6 +2388,55 @@
 				C01400000000000000000004 /* CommitProgressSheetControllerTests.swift in Sources */,
 				C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */,
 				C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */,
+				F0B100000000000000000001 /* ForgeCredentialStoreTests.swift in Sources */,
+				F0B100000000000000000005 /* ForgeAccountLifecycleTests.swift in Sources */,
+				F0B100000000000000000006 /* ForgeApplicationCompositionTests.swift in Sources */,
+				F0C100000000000000000003 /* ForgeReadSurfaceModelsTests.swift in Sources */,
+				F0C100000000000000000004 /* ForgeReadSurfaceViewControllerTests.swift in Sources */,
+				F0C100000000000000000005 /* ForgeReadSurfaceModels.swift in Sources */,
+				F0C100000000000000000006 /* ForgeReadSurfaceViewController.swift in Sources */,
+				F0B200000000000000000005 /* GitHubReadCompositionTests.swift in Sources */,
+				F0B100000000000000000007 /* ForgeCredentialStore.swift in Sources */,
+				F0B100000000000000000008 /* ForgeAccountLifecycle.swift in Sources */,
+				F0B100000000000000000009 /* ForgeApplicationServices.swift in Sources */,
+				F0B200000000000000000004 /* GitHubReadComposition.swift in Sources */,
+				F0D100000000000000000002 /* ForgeExternalLinkRouting.swift in Sources */,
+				F0D100000000000000000003 /* ForgeExternalLinkRoutingTests.swift in Sources */,
+				F0F200000000000000000011 /* RepositoryPullRequestWorkflow.swift in Sources */,
+				F0F200000000000000000012 /* RepositoryPullRequestGitOperations.swift in Sources */,
+				F0F200000000000000000015 /* ForgePullRequestSheetController.swift in Sources */,
+				F0F200000000000000000016 /* ForgeRepositoryCloneSheetController.swift in Sources */,
+				F0F200000000000000000017 /* RepositoryPullRequestWorkflowAppTests.swift in Sources */,
+				F0F200000000000000000018 /* GitHubPullRequestComposition.swift in Sources */,
+				F0F200000000000000000020 /* Milestone2DiagnosticPresenters.swift in Sources */,
+				F0F200000000000000000021 /* RepositoryPullRequestUIController.swift in Sources */,
+				F0F300000000000000000003 /* ForgeMutationQuitCoordinator.swift in Sources */,
+				F0F300000000000000000004 /* ForgeUnknownMutationOutcomeStore.swift in Sources */,
+				F0F300000000000000000005 /* ForgeMutationQuitCoordinatorTests.swift in Sources */,
+				F0F500000000000000000003 /* RepositoryPullRequestReviewDiffSelection.swift in Sources */,
+				F0F500000000000000000004 /* RepositoryPullRequestReviewWorkflow.swift in Sources */,
+				F0F500000000000000000005 /* RepositoryPullRequestReviewDiffSelectionTests.swift in Sources */,
+				F0F500000000000000000006 /* RepositoryPullRequestReviewWorkflowTests.swift in Sources */,
+				F0F500000000000000000008 /* RepositoryPullRequestReviewComposition.swift in Sources */,
+				F0F50000000000000000000A /* RepositoryPullRequestMutationPreferenceStore.swift in Sources */,
+				F0F50000000000000000000B /* RepositoryPullRequestMutationPreferenceStoreTests.swift in Sources */,
+				F0F50000000000000000000C /* RepositoryPullRequestReviewCompositionTests.swift in Sources */,
+				F0F50000000000000000000D /* RepositoryPullRequestLocalReviewServiceProductionTests.swift in Sources */,
+				D3A300000000000000000002 /* RepositoryPullRequestReviewOverlayController.swift in Sources */,
+				D3A300000000000000000003 /* RepositoryPullRequestReviewOverlayControllerTests.swift in Sources */,
+				D3A300000000000000000006 /* Milestone3DiagnosticPresenters.swift in Sources */,
+				D3A300000000000000000008 /* RepositoryPullRequestReviewPerformanceTests.swift in Sources */,
+				D3A300000000000000000009 /* Milestone3DiagnosticPresenterTests.swift in Sources */,
+				D3A30000000000000000000A /* Milestone3UITestHarness.swift in Sources */,
+				C0D5B0000000000000000003 /* RepositoryStatusBarTests.swift in Sources */,
+				C0D5D0000000000000000003 /* HistoryForgeOverlayPresentationTests.swift in Sources */,
+				C0D5C0000000000000000003 /* RepositoryForgeOverlaySessionTests.swift in Sources */,
+				C0D5B0000000000000000004 /* RepositoryStatusBarPresentation.swift in Sources */,
+				C0D5B0000000000000000005 /* RepositoryStatusBarController.swift in Sources */,
+				C0D5C0000000000000000002 /* RepositoryForgeOverlaySession.swift in Sources */,
+				C0D5E0000000000000000002 /* ForgeApplicationRefreshCoordinator.swift in Sources */,
+				C0D5D0000000000000000002 /* HistoryForgeOverlayPresentation.swift in Sources */,
+				F0E100000000000000000002 /* ForgeAccountsPreferences.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2112,6 +2445,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				CC0000010000001 /* GitXScreenshotTests.m in Sources */,
+				F0F200000000000000000019 /* Milestone2WorkflowUITests.swift in Sources */,
+				D3A300000000000000000007 /* Milestone3WorkflowUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2268,6 +2603,7 @@
 				PRODUCT_NAME = GitX;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG GITX_APP_TARGET";
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_OBJC_BRIDGING_HEADER = "Classes/GitX-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
@@ -2307,6 +2643,7 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_INSTALLED_PRODUCT = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = GITX_APP_TARGET;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_OBJC_BRIDGING_HEADER = "Classes/GitX-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
@@ -2551,6 +2888,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXUITests;
 				PRODUCT_NAME = GitXUITests;
 				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = GitX;
 			};
 			name = Debug;
@@ -2564,6 +2905,10 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXUITests;
 				PRODUCT_NAME = GitXUITests;
 				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = GitX;
 			};
 			name = Release;
@@ -2637,6 +2982,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ForgeKit;
+		};
 		C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = GitXCore;
@@ -2655,6 +3004,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		F0A000000000000000000018 /* ForgeKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */;
+			productName = ForgeKit;
+		};
+		F0B200000000000000000018 /* GitHubForgeAdapter */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */;
+			productName = GitHubForgeAdapter;
+		};
 		C0D0C0A00000000000000018 /* GitXCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */;

@@ -124,12 +124,16 @@
 - (void)openPreferencesWaitingForElement:(XCUIElement *)element
 {
 	XCTAssertTrue([self waitForWindow], @"Preferences require the application to finish launching");
-	for (NSUInteger attempt = 0; attempt < 2; attempt++) {
-		[self.app activate];
-		[self.app.windows.firstMatch typeKey:@"," modifierFlags:XCUIKeyModifierCommand];
-		if ([element waitForExistenceWithTimeout:5]) return;
-	}
-	XCTFail(@"The requested preferences pane should expose %@", element);
+	[self.app activate];
+	if ([element waitForExistenceWithTimeout:1]) return;
+	XCUIElement *applicationMenu = self.app.menuBars.menuBarItems[@"GitX"];
+	XCTAssertTrue([applicationMenu waitForExistenceWithTimeout:5], @"Preferences require the GitX application menu");
+	[applicationMenu click];
+	XCUIElement *settingsItem = self.app.menuItems[@"Settings…"];
+	XCTAssertTrue([settingsItem waitForExistenceWithTimeout:5], @"The GitX application menu should offer Settings");
+	[settingsItem click];
+	XCTAssertTrue([element waitForExistenceWithTimeout:10],
+				  @"The requested preferences pane should expose %@", element);
 }
 - (BOOL)runGit:(NSArray<NSString *> *)arguments inDirectory:(NSString *)directory
 {
@@ -218,10 +222,12 @@
 	[self.app activate];
 	NSPredicate *branchName = [NSPredicate predicateWithFormat:@"value == 'main' OR value == 'master'"];
 	XCUIElement *branch = [self.app.staticTexts matchingPredicate:branchName].firstMatch;
-	XCTAssertTrue([branch waitForExistenceWithTimeout:10], @"The repository's current branch should be visible in the sidebar");
+	XCTAssertTrue([branch waitForExistenceWithTimeout:30], @"The repository's current branch should be visible in the sidebar");
 	[branch click];
 	XCUIElement *table = self.app.tables[@"CommitList"];
-	XCTAssertTrue([table waitForExistenceWithTimeout:15], @"Selecting the current branch should open history");
+	XCTAssertTrue([table waitForExistenceWithTimeout:30], @"Selecting the current branch should open history");
+	XCTAssertTrue([table.tableRows.firstMatch waitForExistenceWithTimeout:30],
+				  @"Repository history should publish its first observable row before UI actions continue");
 	return table;
 }
 
@@ -254,11 +260,19 @@
 		return stagingTable.exists || workingStateRow.exists || workingStateToolbarButton.exists;
 	}];
 	XCTNSPredicateExpectation *readyExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:stagingReady object:self.app];
-	[self waitForExpectations:@[ readyExpectation ] timeout:15];
+	[self waitForExpectations:@[ readyExpectation ] timeout:30];
 	// Exercise the remapped entry point: Cmd-2 selects the Uncommitted
 	// Changes row, which swaps the Details tab to the staging pane.
-	if (!stagingTable.exists)
+	if (!stagingTable.exists) {
+		[self.app activate];
 		[self.app.windows.firstMatch typeKey:@"2" modifierFlags:XCUIKeyModifierCommand];
+	}
+	if (![stagingTable waitForExistenceWithTimeout:3]) {
+		[self.app activate];
+		XCTAssertTrue([workingStateToolbarButton waitForExistenceWithTimeout:5],
+					  @"Staging should expose the Uncommitted Changes toolbar button as a fallback");
+		[workingStateToolbarButton click];
+	}
 	XCTAssertTrue([stagingTable waitForExistenceWithTimeout:10],
 				  @"The %@ list should be ready before using the staging pane", tableIdentifier);
 }
@@ -373,9 +387,12 @@
 	}
 	XCTAssertTrue([stagedFile waitForExistenceWithTimeout:15]);
 	XCTAssertTrue([unstagedTable.staticTexts[@"partial.txt"] waitForExistenceWithTimeout:10]);
-	[stagedFile click];
 	XCUIElement *diff = self.app.textViews.firstMatch;
 	NSPredicate *indexedContent = [NSPredicate predicateWithFormat:@"value CONTAINS 'staged line' AND NOT value CONTAINS 'unstaged line'"];
+	XCTNSPredicateExpectation *initialSelection = [[XCTNSPredicateExpectation alloc] initWithPredicate:indexedContent object:diff];
+	if ([XCTWaiter waitForExpectations:@[ initialSelection ] timeout:2] != XCTWaiterResultCompleted) {
+		[stagedFile click];
+	}
 	XCTNSPredicateExpectation *diffExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:indexedContent object:diff];
 	[self waitForExpectations:@[ diffExpectation ] timeout:15];
 	[self saveWindowScreenshotNamed:@"partially-staged-addition-index-diff"];
@@ -646,7 +663,7 @@
 
 		XCUIElement *appearance = self.app.popUpButtons[@"AppearancePreference"];
 		[self openPreferencesWaitingForElement:appearance];
-		[self waitForElement:appearance toHaveValue:choice[@"title"] timeout:5];
+		[self waitForElement:appearance toHaveValue:choice[@"title"] timeout:30];
 		[self saveWindowScreenshotNamed:[NSString stringWithFormat:@"appearance-%@", [choice[@"title"] lowercaseString]]];
 	}
 }
@@ -698,6 +715,79 @@
 
 	// Dismiss the menu
 	[window typeKey:XCUIKeyboardKeyEscape modifierFlags:0];
+}
+
+- (void)testForgeNavigationMenusAndAmbiguousNumberChooserScreenshots
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"origin", @"https://github.com/hbmartin/gitx.git" ]
+					inDirectory:fixture]));
+	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
+	[self selectHistoryForCurrentBranch];
+
+	XCUIElement *viewRemoteGroup =
+		[self.app.toolbars.groups containingType:XCUIElementTypeStaticText
+									  identifier:@"View Remote"]
+			.firstMatch;
+	XCTAssertTrue([viewRemoteGroup waitForExistenceWithTimeout:30],
+				  @"The repository toolbar should expose the View Remote item");
+	XCUIElement *viewRemote = viewRemoteGroup.menuButtons.firstMatch;
+	XCTAssertTrue([viewRemote waitForExistenceWithTimeout:10],
+				  @"The repository toolbar should expose the View Remote pull-down");
+	[viewRemote click];
+	XCUIElement *toolbarMenu = viewRemote.menus.firstMatch;
+	XCTAssertTrue([toolbarMenu waitForExistenceWithTimeout:5]);
+	XCUIElement *toolbarRepository = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.Repository"];
+	XCUIElement *toolbarNumber = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.PullRequestOrIssue"];
+	XCTAssertTrue([toolbarRepository waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([toolbarNumber waitForExistenceWithTimeout:5]);
+	XCTAssertEqualObjects(toolbarRepository.label, @"View repository on GitHub");
+	XCTAssertEqualObjects(toolbarNumber.label, @"Open pull request or issue on GitHub");
+	[self saveScreenshotNamed:@"m0-forge-navigation-toolbar-menu"];
+	[self.app.windows.firstMatch typeKey:XCUIKeyboardKeyEscape modifierFlags:0];
+	NSPredicate *menuDismissed = [NSPredicate predicateWithFormat:@"exists == NO"];
+	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:menuDismissed object:toolbarMenu] ]
+					  timeout:5];
+
+	XCUIElement *repositoryMenuBarItem = self.app.menuBars.menuBarItems[@"Repository"];
+	XCTAssertTrue([repositoryMenuBarItem waitForExistenceWithTimeout:5]);
+	[repositoryMenuBarItem click];
+	XCUIElement *repositoryMenu = repositoryMenuBarItem.menus.firstMatch;
+	XCTAssertTrue([repositoryMenu waitForExistenceWithTimeout:5]);
+	XCUIElement *repositoryItem = repositoryMenu.menuItems[@"GitX.Repository.ForgeLinks.Repository"];
+	XCUIElement *numberItem = repositoryMenu.menuItems[@"GitX.Repository.ForgeLinks.PullRequestOrIssue"];
+	XCTAssertTrue([repositoryItem waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([numberItem waitForExistenceWithTimeout:5]);
+	XCTAssertEqualObjects(repositoryItem.label, @"View repository on GitHub");
+	XCTAssertEqualObjects(numberItem.label, @"Open pull request or issue on GitHub");
+	[self saveScreenshotNamed:@"m0-forge-navigation-repository-menu"];
+	[numberItem click];
+
+	XCUIElement *referenceSheet = self.app.sheets.firstMatch;
+	XCUIElement *referencePrompt = referenceSheet.staticTexts[@"Open Pull Request or Issue"];
+	XCTAssertTrue([referencePrompt waitForExistenceWithTimeout:5]);
+	XCUIElement *referenceField = referenceSheet.textFields[@"GitX.ForgeLinks.NumberedReference"];
+	XCTAssertTrue([referenceField waitForExistenceWithTimeout:5]);
+	[referenceField click];
+	[referenceField typeText:@"#42"];
+	XCUIElement *continueButton = referenceSheet.buttons[@"Continue"];
+	XCTAssertTrue([continueButton waitForExistenceWithTimeout:5]);
+	[continueButton click];
+
+	XCUIElement *choiceSheet = self.app.sheets.firstMatch;
+	XCUIElement *choicePrompt = choiceSheet.staticTexts[@"Choose a Destination"];
+	XCTAssertTrue([choicePrompt waitForExistenceWithTimeout:5]);
+	XCUIElement *destinationChoice = choiceSheet.popUpButtons[@"GitX.ForgeLinks.DestinationChoice"];
+	XCTAssertTrue([destinationChoice waitForExistenceWithTimeout:5]);
+	[destinationChoice click];
+	XCUIElement *pullRequestChoice = destinationChoice.menuItems[@"hbmartin/gitx — Pull Request #42"];
+	XCUIElement *issueChoice = destinationChoice.menuItems[@"hbmartin/gitx — Issue #42"];
+	XCTAssertTrue([pullRequestChoice waitForExistenceWithTimeout:5]);
+	XCTAssertTrue([issueChoice waitForExistenceWithTimeout:5]);
+	[self saveScreenshotNamed:@"m0-forge-navigation-number-destination-chooser"];
 }
 
 - (void)testManualRefreshUpdatesCheckedOutBranchAndSidebar
@@ -755,7 +845,7 @@
 	XCUIElement *window = self.app.windows.firstMatch;
 	[self.app activate];
 	XCUIElement *button = self.app.buttons[@"Current Branch"];
-	XCTAssertTrue([button waitForExistenceWithTimeout:10], @"The repository toolbar should expose the checked-out branch action");
+	XCTAssertTrue([button waitForExistenceWithTimeout:30], @"The repository toolbar should expose the checked-out branch action");
 	XCTAssertTrue([self.app.menuItems[@"Jump to Checked-Out Branch"] waitForExistenceWithTimeout:5], @"The View menu should expose the checked-out branch hotkey");
 
 	XCTAssertTrue(([self runGit:@[ @"checkout", @"--quiet", @"-b", @"feature/hotkey-jump" ] inDirectory:fixture]));

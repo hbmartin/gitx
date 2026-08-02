@@ -3,6 +3,42 @@ import XCTest
 
 @MainActor
 final class GitXSwiftFeatureTests: XCTestCase {
+    private final class ForgeWindowControllerFixture: PBGitWindowController {
+        private var fixedRepository: PBGitRepository?
+        private(set) var shownErrors: [NSError] = []
+        private(set) var shownMessages: [(message: String, info: String)] = []
+        var onError: ((NSError) -> Void)?
+
+        init(repository: PBGitRepository) {
+            fixedRepository = repository
+            super.init(window: nil)
+        }
+
+        override init(window: NSWindow?) {
+            super.init(window: window)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override var repository: PBGitRepository? {
+            get { fixedRepository }
+            set { fixedRepository = newValue }
+        }
+
+        override func showErrorSheet(_ error: Error) {
+            let error = error as NSError
+            shownErrors.append(error)
+            onError?(error)
+        }
+
+        override func showMessageSheet(_ messageText: String, infoText: String) {
+            shownMessages.append((messageText, infoText))
+        }
+    }
+
     private final class TreeFixture: NSObject {
         @objc dynamic let fullPath: String
         @objc dynamic let path: String
@@ -26,6 +62,99 @@ final class GitXSwiftFeatureTests: XCTestCase {
                 defaults.removeObject(forKey: key)
             }
         }
+    }
+
+    private func preserveEnvironmentVariable(_ key: String) -> () -> Void {
+        let originalValue = ProcessInfo.processInfo.environment[key]
+        return {
+            if let originalValue {
+                _ = setenv(key, originalValue, 1)
+            } else {
+                _ = unsetenv(key)
+            }
+        }
+    }
+
+    func testAttentionUnseenPresenterKeepsToolbarSidebarAndAccessibilityInSync() {
+        let empty = RepositoryAttentionUnseenPresenter.present(count: -1)
+        XCTAssertEqual(empty.count, 0)
+        XCTAssertNil(empty.badgeText)
+        XCTAssertEqual(empty.toolbarLabel, "Attention")
+        XCTAssertTrue(empty.toolbarAccessibilityLabel.contains("No unseen"))
+
+        let visible = RepositoryAttentionUnseenPresenter.present(count: 7)
+        XCTAssertEqual(visible.badgeText, "7")
+        XCTAssertEqual(visible.sidebarBadgeText, "7")
+        XCTAssertEqual(visible.toolbarLabel, "Attention (7)")
+        XCTAssertTrue(visible.toolbarToolTip.contains("7 unseen Attention items"))
+        XCTAssertTrue(visible.sidebarAccessibilityLabel.contains("7 unseen Attention items"))
+
+        let capped = RepositoryAttentionUnseenPresenter.present(count: 125)
+        XCTAssertEqual(capped.badgeText, "99+")
+        XCTAssertEqual(capped.toolbarLabel, "Attention (99+)")
+        XCTAssertTrue(capped.toolbarAccessibilityLabel.contains("125 unseen Attention items"))
+    }
+
+    func testBasicHistorySearchPolicyCompatibilityPlan() {
+        let plan = PBHistorySearchPolicy.plan(query: " subject ", mode: PBHistorySearchMode.basic.rawValue)
+
+        XCTAssertEqual(plan.kind, .basic)
+        XCTAssertEqual(plan.query, " subject ")
+        XCTAssertTrue(plan.arguments.isEmpty)
+    }
+
+    func testWindowControllerObjectiveCCompatibilitySurfaceBeforeConversion() {
+        let controller = PBGitWindowController()
+
+        XCTAssertEqual(NSStringFromClass(type(of: controller)), "PBGitWindowController")
+        XCTAssertEqual(controller.windowNibName, "RepositoryWindow")
+        XCTAssertNil(controller.document)
+        XCTAssertNil(controller.repository)
+        controller.repository = nil
+        XCTAssertNil(controller.repository)
+
+        let selectors = [
+            "changeContentController:",
+            "showCommitHookFailedSheet:infoText:retryHandler:",
+            "showMessageSheet:infoText:",
+            "showErrorSheet:",
+            "confirmDialog:suppressionIdentifier:forAction:",
+            "confirmDialog:suppressionIdentifier:onCancel:forAction:",
+            "showUncommittedChanges:",
+            "showHistoryView:",
+            "refresh:",
+            "viewRemote:",
+            "toolbarFetch:",
+            "toolbarPull:",
+            "toolbarPush:",
+        ].map(NSSelectorFromString)
+        for selector in selectors {
+            XCTAssertTrue(controller.responds(to: selector), "Missing Objective-C selector \(selector)")
+        }
+
+        controller.changeContentController(nil)
+        controller.open(nil)
+        controller.revealURLs(inFinder: nil)
+
+        let programmatic = PBGitWindowController(window: nil)
+        XCTAssertNil(programmatic.window)
+        XCTAssertNil(programmatic.document)
+        XCTAssertNil(programmatic.repository)
+    }
+
+    func testWindowControllerAcceptsPreferenceNotificationPostedOffMainThread() async {
+        let controller = PBGitWindowController(window: nil)
+        controller.windowDidLoad()
+        defer { NotificationCenter.default.removeObserver(controller) }
+
+        let posted = expectation(description: "Background defaults notification returned")
+        DispatchQueue.global(qos: .userInitiated).async {
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: UserDefaults.standard)
+            posted.fulfill()
+        }
+
+        await fulfillment(of: [posted], timeout: 2)
+        await Task.yield()
     }
 
     func testCommitRenderInputFreezesPlainMetadataAndImageRevisions() {
@@ -159,6 +288,11 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let windowController = PBGitWindowController(window: window)
         let toolbarController = PBRepositoryToolbarController(windowController: windowController)
         let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+        toolbarController.update(
+            withStatus: "Preparing fetch",
+            busy: true,
+            baseWindowTitle: "Repository"
+        )
         let item = try XCTUnwrap(toolbarController.toolbar(
             toolbar,
             itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.RefreshStatus"),
@@ -179,6 +313,35 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(label.stringValue, "Fetching updates")
         XCTAssertFalse(spinner.isHidden)
         XCTAssertEqual(window.title, "Repository — Fetching updates")
+    }
+
+    func testRepositoryToolbarDefaultOrderKeepsNavigationBeforeRemoteOperations() {
+        let windowController = PBGitWindowController(window: nil)
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+
+        XCTAssertEqual(
+            toolbarController.toolbarDefaultItemIdentifiers(toolbar).map { $0.rawValue },
+            [
+                "GitX.Toolbar.Commit",
+                NSToolbarItem.Identifier.flexibleSpace.rawValue,
+                "GitX.Toolbar.Actions",
+                "GitX.Toolbar.ForgeAccount",
+                "GitX.Toolbar.Attention",
+                "GitX.Toolbar.Jump",
+                "GitX.Toolbar.ViewRemote",
+                "GitX.Toolbar.AddRemote",
+                "GitX.Toolbar.Fetch",
+                "GitX.Toolbar.Pull",
+                "GitX.Toolbar.Push",
+                "GitX.Toolbar.NewPullRequest",
+                NSToolbarItem.Identifier.flexibleSpace.rawValue,
+                "GitX.Toolbar.Reveal",
+                "GitX.Toolbar.Terminal",
+                "GitX.Toolbar.RefreshStatus",
+                "GitX.Toolbar.RepositorySettings",
+            ]
+        )
     }
 
     func testRepositoryToolbarPaletteStatusItemDoesNotReplaceInsertedStatusViews() throws {
@@ -230,6 +393,139 @@ final class GitXSwiftFeatureTests: XCTestCase {
         attachment.name = "Active repository status after toolbar palette request"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    func testViewRemoteToolbarItemIsContextualPullDownWithPreservedPrimaryAction() throws {
+        let windowController = PBGitWindowController(window: nil)
+        let toolbarController = PBRepositoryToolbarController(windowController: windowController)
+        let toolbar = NSToolbar(identifier: "GitX.Repository.HistoryToolbar")
+
+        let item = try XCTUnwrap(toolbarController.toolbar(
+            toolbar,
+            itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.ViewRemote"),
+            willBeInsertedIntoToolbar: true
+        ) as? NSMenuToolbarItem)
+
+        XCTAssertEqual(item.itemIdentifier.rawValue, "GitX.Toolbar.ViewRemote")
+        XCTAssertEqual(item.label, "View Remote")
+        XCTAssertEqual(item.paletteLabel, "View Remote")
+        XCTAssertEqual(item.action, NSSelectorFromString("viewRemote:"))
+        XCTAssertTrue(item.target === windowController)
+        XCTAssertNotNil(item.image)
+        XCTAssertEqual(item.menu.identifier?.rawValue, "GitX.Toolbar.ViewRemote.Menu")
+        XCTAssertTrue(item.menu.delegate === toolbarController)
+        XCTAssertEqual(
+            item.menu.items.compactMap(\.action).map(NSStringFromSelector),
+            ["viewForgeRepository:", "showForgePullRequestOrIssue:"]
+        )
+        XCTAssertTrue(item.menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.target == nil })
+    }
+
+    func testForgeMenuValidationAndOrphanToolbarFallback() throws {
+        let windowController = PBGitWindowController(window: nil)
+        let menuItem = NSMenuItem(
+            title: "Stale",
+            action: NSSelectorFromString("viewForgeRepository:"),
+            keyEquivalent: ""
+        )
+
+        XCTAssertFalse(windowController.validateMenuItem(menuItem))
+        XCTAssertEqual(menuItem.title, "View Repository")
+        XCTAssertFalse(menuItem.isEnabled)
+
+        var toolbarController: PBRepositoryToolbarController?
+        weak var releasedWindowController: PBGitWindowController?
+        autoreleasepool {
+            let transientWindowController = PBGitWindowController(window: nil)
+            releasedWindowController = transientWindowController
+            toolbarController = PBRepositoryToolbarController(windowController: transientWindowController)
+        }
+        XCTAssertNil(releasedWindowController)
+
+        let menu = NSMenu(title: "View Remote")
+        try XCTUnwrap(toolbarController).menuNeedsUpdate(menu)
+        XCTAssertEqual(
+            menu.items.filter { !$0.isSeparatorItem }.map(\.title),
+            ["View Repository", "Pull Request or Issue…"]
+        )
+        XCTAssertTrue(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
+    }
+
+    func testForgeLinkPresenterUsesProviderFamilyAndOneSelectedCommit() {
+        for provider in ["GitHub", "GitLab", "Bitbucket"] {
+            let items = PBRepositoryForgeLinkMenuPresenter.menuItems(
+                forProviderName: provider,
+                forgeAvailable: true,
+                currentBranchName: "feature/forge-links",
+                checkedOutCommitIdentifier: nil,
+                selectedCommitIdentifiers: ["0123456789abcdef"]
+            )
+            let actionable = items.filter { !$0.isSeparatorItem }
+
+            XCTAssertEqual(actionable.map(\.title), [
+                "View Repository on \(provider)",
+                "View Checked-Out Branch “feature/forge-links” on \(provider)",
+                "View Selected Commit on \(provider)",
+                "Pull Request or Issue…",
+            ])
+            XCTAssertEqual(actionable.map { $0.identifier?.rawValue }, [
+                "GitX.Repository.ForgeLinks.Repository",
+                "GitX.Repository.ForgeLinks.CheckedOutRevision",
+                "GitX.Repository.ForgeLinks.SelectedCommit",
+                "GitX.Repository.ForgeLinks.PullRequestOrIssue",
+            ])
+            XCTAssertTrue(actionable.allSatisfy(\.isEnabled))
+            XCTAssertFalse(actionable.contains { $0.action == NSSelectorFromString("viewForgeSelectedComparison:") })
+        }
+    }
+
+    func testForgeLinkPresenterShowsDetachedCommitAndExactlyTwoCommitComparison() {
+        let items = PBRepositoryForgeLinkMenuPresenter.menuItems(
+            forProviderName: "GitHub",
+            forgeAvailable: true,
+            currentBranchName: nil,
+            checkedOutCommitIdentifier: "fedcba9876543210",
+            selectedCommitIdentifiers: ["aaaaaaaa", "bbbbbbbb"]
+        ).filter { !$0.isSeparatorItem }
+
+        XCTAssertEqual(items.map(\.title), [
+            "View Repository on GitHub",
+            "View Checked-Out Commit on GitHub",
+            "Compare Selected Commits on GitHub",
+            "Pull Request or Issue…",
+        ])
+        XCTAssertFalse(items.contains { $0.action == NSSelectorFromString("viewForgeSelectedCommit:") })
+        XCTAssertEqual(
+            items.first { $0.action == NSSelectorFromString("viewForgeSelectedComparison:") }?.identifier?.rawValue,
+            "GitX.Repository.ForgeLinks.CompareSelectedCommits"
+        )
+    }
+
+    func testForgeLinkPresenterHidesUnavailableContextRowsAndDisablesDestinations() {
+        let items = PBRepositoryForgeLinkMenuPresenter.menuItems(
+            forProviderName: nil,
+            forgeAvailable: false,
+            currentBranchName: nil,
+            checkedOutCommitIdentifier: nil,
+            selectedCommitIdentifiers: []
+        ).filter { !$0.isSeparatorItem }
+
+        XCTAssertEqual(items.map(\.title), ["View Repository", "Pull Request or Issue…"])
+        XCTAssertTrue(items.allSatisfy { !$0.isEnabled })
+    }
+
+    func testWindowControllerExposesForgeLinkResponderChainActions() {
+        let controller = PBGitWindowController(window: nil)
+
+        for selectorName in [
+            "viewForgeRepository:",
+            "viewForgeCheckedOutRevision:",
+            "viewForgeSelectedCommit:",
+            "viewForgeSelectedComparison:",
+            "showForgePullRequestOrIssue:",
+        ] {
+            XCTAssertTrue(controller.responds(to: NSSelectorFromString(selectorName)), selectorName)
+        }
     }
 
     private func largeDiff(
@@ -333,6 +629,79 @@ final class GitXSwiftFeatureTests: XCTestCase {
             XCTAssertEqual(repository.headRef()?.ref()?.branchName, "main")
             XCTAssertTrue(repository.revisionExists("HEAD"))
             XCTAssertFalse(repository.hasRemotes())
+        }
+    }
+
+    func testWindowControllerOpensOnlyLocallyResolvableForgeRevisionsAndComparisons() throws {
+        try withTemporaryDirectory { repositoryURL in
+            try runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL)
+            try runGit(["config", "user.name", "GitX Test"], in: repositoryURL)
+            try runGit(["config", "user.email", "gitx-tests@example.invalid"], in: repositoryURL)
+            let trackedFile = repositoryURL.appendingPathComponent("tracked.txt")
+            try "first\n".write(to: trackedFile, atomically: true, encoding: .utf8)
+            try runGit(["add", "--all"], in: repositoryURL)
+            try runGit(["commit", "--quiet", "-m", "first"], in: repositoryURL)
+            try "second\n".write(to: trackedFile, atomically: true, encoding: .utf8)
+            try runGit(["commit", "--quiet", "--all", "-m", "second"], in: repositoryURL)
+
+            let repository = try PBGitRepository(url: repositoryURL)
+            let controller = ForgeWindowControllerFixture(repository: repository)
+            let existingWindows = Set(NSApplication.shared.windows.map(ObjectIdentifier.init))
+            defer {
+                NSApplication.shared.windows
+                    .filter { !existingWindows.contains(ObjectIdentifier($0)) }
+                    .forEach { $0.close() }
+            }
+
+            XCTAssertFalse(controller.openForgeRevision("refs/heads/does-not-exist"))
+            XCTAssertTrue(controller.openForgeRevision("HEAD"))
+            XCTAssertFalse(controller.openForgeComparison(base: "does-not-exist", head: "HEAD"))
+            XCTAssertTrue(controller.openForgeComparison(base: "HEAD^", head: "HEAD"))
+        }
+    }
+
+    func testWindowlessConfirmationOverloadCancelsWithoutActing() {
+        let controller = PBGitWindowController(window: nil)
+        var cancellationCount = 0
+        var actionCount = 0
+
+        let didAct = controller.confirmDialog(
+            NSAlert(),
+            suppressionIdentifier: nil,
+            onCancel: { cancellationCount += 1 },
+            forAction: { actionCount += 1 }
+        )
+
+        XCTAssertFalse(didAct)
+        XCTAssertEqual(cancellationCount, 1)
+        XCTAssertEqual(actionCount, 0)
+    }
+
+    func testMilestone2UITestModeSuppressesRepositoryForgeOverlaySession() throws {
+        let restoreEnvironment = preserveEnvironmentVariable("GITX_M2_UITEST")
+        defer { restoreEnvironment() }
+        _ = setenv("GITX_M2_UITEST", "1", 1)
+
+        try withTemporaryDirectory { repositoryURL in
+            try runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL)
+            try runGit(["config", "user.name", "GitX Test"], in: repositoryURL)
+            try runGit(["config", "user.email", "gitx-tests@example.invalid"], in: repositoryURL)
+            try "tracked\n".write(
+                to: repositoryURL.appendingPathComponent("tracked.txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+            try runGit(["add", "--all"], in: repositoryURL)
+            try runGit(["commit", "--quiet", "-m", "initial"], in: repositoryURL)
+
+            let controller = try ForgeWindowControllerFixture(repository: PBGitRepository(url: repositoryURL))
+            controller.windowDidLoad()
+
+            XCTAssertEqual(
+                controller.value(forKey: "hasRepositoryForgeOverlaySessionForDiagnostics") as? Bool,
+                false
+            )
+            NotificationCenter.default.removeObserver(controller)
         }
     }
 
@@ -1083,6 +1452,12 @@ final class GitXSwiftFeatureTests: XCTestCase {
             ),
             presenting: parentWindow
         )
+        XCTAssertNotNil(parentWindow.attachedSheet)
+        dismissAttachedSheet(from: parentWindow)
+        launcher.completeApplicationLaunch(error: nil, presenting: nil)
+
+        PBApplicationSettings.customTerminalExecutable = "relative/path"
+        launcher.open(directory: directory, presenting: parentWindow)
         XCTAssertNotNil(parentWindow.attachedSheet)
         dismissAttachedSheet(from: parentWindow)
     }

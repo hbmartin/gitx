@@ -1,4 +1,5 @@
 import AppKit
+import ForgeKit
 import GitXCore
 
 @objc(PBOpenDisposition)
@@ -67,6 +68,8 @@ final nonisolated class ApplicationSettings: NSObject {
         "PBDiffTextTypographyDidChangeNotification"
     @objc static let nativeContentAppearanceDidChangeNotificationName =
         "PBNativeContentAppearanceDidChangeNotification"
+    @objc static let forgeAvatarLoadingDidChangeNotificationName =
+        "PBForgeAvatarLoadingDidChangeNotification"
 
     private enum Key {
         static let openDisposition = "PBOpenDisposition"
@@ -94,6 +97,15 @@ final nonisolated class ApplicationSettings: NSObject {
         static let applicationIconStyle = ApplicationPreferenceKey.applicationIconStyle.rawValue
         static let stagingListLayout = "PBStagingFileListLayout"
         static let stagingFileSort = "PBStagingFileSortOrder"
+        static let loadAvatars = "PBLoadForgeAvatars"
+        static let repositoryStatusBarVisible = "PBRepositoryStatusBarVisible"
+        static let attentionPollingPreset = "PBForgeAttentionPollingPreset"
+        static let attentionAlertCategories = "PBForgeAttentionAlertCategories"
+        static let attentionViewState = "PBForgeAttentionViewState"
+        static let attentionIncludesFailedChecksOnAuthoredPullRequests =
+            "PBForgeAttentionIncludesFailedChecksOnAuthoredPullRequests"
+        static let attentionIncludesFailedChecksAwaitingReview =
+            "PBForgeAttentionIncludesFailedChecksAwaitingReview"
     }
 
     private static var defaults: UserDefaults {
@@ -260,6 +272,119 @@ final nonisolated class ApplicationSettings: NSObject {
     @objc static var stagingFileSortOrder: StagingFileSortOrder {
         get { enumValue(Key.stagingFileSort, fallback: .path) }
         set { defaults.set(newValue.rawValue, forKey: Key.stagingFileSort) }
+    }
+
+    @objc static var loadAvatars: Bool {
+        get {
+            loadAvatars(in: defaults)
+        }
+        set {
+            guard newValue != loadAvatars else { return }
+            defaults.set(newValue, forKey: Key.loadAvatars)
+            ForgeAvatarLoadingPreferenceCoordinator.shared.submit(newValue)
+        }
+    }
+
+    @objc static var repositoryStatusBarVisible: Bool {
+        get {
+            guard defaults.object(forKey: Key.repositoryStatusBarVisible) != nil else { return true }
+            return defaults.bool(forKey: Key.repositoryStatusBarVisible)
+        }
+        set { defaults.set(newValue, forKey: Key.repositoryStatusBarVisible) }
+    }
+
+    static func loadAvatars(in defaults: UserDefaults) -> Bool {
+        guard defaults.object(forKey: Key.loadAvatars) != nil else { return true }
+        return defaults.bool(forKey: Key.loadAvatars)
+    }
+
+    static var attentionPollingPreset: ForgeAttentionPollingPreset {
+        get {
+            ForgeAttentionPollingPreset(rawValue: attentionPollingPresetRawValue) ?? .defaultValue
+        }
+        set {
+            attentionPollingPresetRawValue = newValue.rawValue
+        }
+    }
+
+    @objc static var attentionPollingPresetRawValue: String {
+        get { defaults.string(forKey: Key.attentionPollingPreset) ?? ForgeAttentionPollingPreset.defaultValue.rawValue }
+        set {
+            guard newValue != attentionPollingPresetRawValue else { return }
+            defaults.set(newValue, forKey: Key.attentionPollingPreset)
+            NotificationCenter.default.post(name: .forgeAttentionPreferencesDidChange, object: nil)
+        }
+    }
+
+    static var attentionAlertCategories: Set<ForgeAttentionAlertCategory> {
+        get {
+            Set(attentionAlertCategoryRawValues.compactMap(ForgeAttentionAlertCategory.init(rawValue:)))
+        }
+        set {
+            attentionAlertCategoryRawValues = newValue.map(\.rawValue).sorted()
+        }
+    }
+
+    @objc static var attentionAlertCategoryRawValues: [String] {
+        get { defaults.stringArray(forKey: Key.attentionAlertCategories) ?? [] }
+        set {
+            guard newValue != attentionAlertCategoryRawValues else { return }
+            defaults.set(newValue, forKey: Key.attentionAlertCategories)
+            NotificationCenter.default.post(name: .forgeAttentionPreferencesDidChange, object: nil)
+        }
+    }
+
+    @objc static var attentionIncludesFailedChecksOnAuthoredPullRequests: Bool {
+        get {
+            guard defaults.object(forKey: Key.attentionIncludesFailedChecksOnAuthoredPullRequests) != nil else {
+                return true
+            }
+            return defaults.bool(forKey: Key.attentionIncludesFailedChecksOnAuthoredPullRequests)
+        }
+        set {
+            guard newValue != attentionIncludesFailedChecksOnAuthoredPullRequests else { return }
+            defaults.set(newValue, forKey: Key.attentionIncludesFailedChecksOnAuthoredPullRequests)
+            NotificationCenter.default.post(name: .forgeAttentionPreferencesDidChange, object: nil)
+        }
+    }
+
+    @objc static var attentionIncludesFailedChecksAwaitingReview: Bool {
+        get {
+            guard defaults.object(forKey: Key.attentionIncludesFailedChecksAwaitingReview) != nil else {
+                return false
+            }
+            return defaults.bool(forKey: Key.attentionIncludesFailedChecksAwaitingReview)
+        }
+        set {
+            guard newValue != attentionIncludesFailedChecksAwaitingReview else { return }
+            defaults.set(newValue, forKey: Key.attentionIncludesFailedChecksAwaitingReview)
+            NotificationCenter.default.post(name: .forgeAttentionPreferencesDidChange, object: nil)
+        }
+    }
+
+    static var attentionPolicy: ForgeAttentionPolicy {
+        ForgeAttentionPolicy(
+            includesFailedChecksOnAuthoredPullRequests: attentionIncludesFailedChecksOnAuthoredPullRequests,
+            includesFailedChecksAwaitingReview: attentionIncludesFailedChecksAwaitingReview
+        )
+    }
+
+    static var attentionViewState: ForgeAttentionViewState {
+        get {
+            guard let data = attentionViewStateData,
+                  let state = try? JSONDecoder().decode(ForgeAttentionViewState.self, from: data)
+            else { return .defaultValue }
+            return state
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            attentionViewStateData = data
+        }
+    }
+
+    @objc static var attentionViewStateData: Data? {
+        get { defaults.data(forKey: Key.attentionViewState) }
+        set { defaults.set(newValue, forKey: Key.attentionViewState) }
     }
 
     private static func enumValue<Value: RawRepresentable>(

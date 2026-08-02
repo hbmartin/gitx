@@ -1,0 +1,78 @@
+mutation GitHubPublishInlineReview($input: AddPullRequestReviewThreadInput!) {
+  addPullRequestReviewThread(input: $input) {
+    thread {
+      id
+      isResolved
+      isOutdated
+      pullRequest {
+        number
+        headRefOid
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+}
+
+mutation GitHubReplyToReviewThread($input: AddPullRequestReviewThreadReplyInput!) {
+  addPullRequestReviewThreadReply(input: $input) {
+    comment {
+      id
+      pullRequest {
+        number
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+}
+
+mutation GitHubSubmitFormalReview($input: AddPullRequestReviewInput!) {
+  addPullRequestReview(input: $input) {
+    pullRequestReview {
+      id
+      state
+      commit {
+        oid
+      }
+      pullRequest {
+        number
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+}
+
+mutation GitHubResolveReviewThread($input: ResolveReviewThreadInput!) {
+  resolveReviewThread(input: $input) {
+    thread {
+      id
+      isResolved
+      pullRequest {
+        number
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+}
+
+mutation GitHubUnresolveReviewThread($input: UnresolveReviewThreadInput!) {
+  unresolveReviewThread(input: $input) {
+    thread {
+      id
+      isResolved
+      pullRequest {
+        number
+        repository {
+          ...GitHubRepositoryIdentity
+        }
+      }
+    }
+  }
+}

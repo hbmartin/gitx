@@ -3,6 +3,7 @@
 #import <XCTest/XCTest.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <stdatomic.h>
 
 #import "PBMacros.h"
 #import "PBAutoFetchManager.h"
@@ -24,10 +25,10 @@
 #import "PBGitRepositoryDocument.h"
 #import "PBGitRepositoryWatcher.h"
 #import "PBGitRevSpecifier.h"
-#import "PBGitSidebarController.h"
+#import "PBGitSidebarControllerCompatibility.h"
 #import "PBGitStash.h"
 #import "PBGitTree.h"
-#import "PBGitWindowController.h"
+#import "PBGitWindowControllerCompatibility.h"
 #import "PBGitXMessageSheet.h"
 #import "PBError.h"
 #import "PBFileChangesTableView.h"
@@ -37,10 +38,15 @@
 #import "PBSourceViewBadge.h"
 #import "PBSourceViewItem.h"
 #import "PBSourceViewItems.h"
+#import "PBSidebarList.h"
+#import "PBSidebarTableViewCell.h"
 #import "PBTask.h"
 #import "PBTerminalUtil.h"
 #import "PBPrefsWindowController.h"
 #import "PBViewController.h"
+
+@implementation PBHistoryWindowControllerTestBase
+@end
 
 @interface PBRepositoryToolbarController : NSObject
 - (instancetype)initWithWindowController:(PBGitWindowController *)windowController;
@@ -49,6 +55,7 @@
 - (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar;
 - (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar;
 - (nullable NSToolbarItem *)toolbar:(NSToolbar *)toolbar itemForItemIdentifier:(NSToolbarItemIdentifier)itemIdentifier willBeInsertedIntoToolbar:(BOOL)flag;
+- (void)attentionUnseenDidChange:(NSNotification *)notification;
 @end
 
 @interface PBRepositorySettingsStore : NSObject
@@ -81,13 +88,42 @@
 
 @interface PBGitSidebarController (WindowControllerTests)
 - (void)reloadSidebarAfterReferencesChange;
+- (void)reloadSidebarPresentation;
+- (void)synchronizeConfiguredRemotes;
+- (void)repositorySettingsDidChange:(NSNotification *)notification;
+- (nullable PBSourceViewItem *)selectedItem;
 - (nullable PBSourceViewItem *)itemForRev:(PBGitRevSpecifier *)rev;
+- (nullable PBSourceViewItem *)addRevSpec:(PBGitRevSpecifier *)rev;
 - (void)removeRevSpec:(PBGitRevSpecifier *)rev;
+- (void)openSubmoduleFromMenuItem:(NSMenuItem *)menuItem;
+- (void)openSubmoduleAtURL:(NSURL *)submoduleURL;
 - (void)doubleClicked:(id)sender;
 - (void)toggleBranchSort:(id)sender;
+- (void)outlineViewSelectionDidChange:(NSNotification *)notification;
+- (nullable NSView *)outlineView:(NSOutlineView *)outlineView
+			  viewForTableColumn:(nullable NSTableColumn *)tableColumn
+							item:(PBSourceViewItem *)item;
+- (nullable NSTableRowView *)outlineView:(NSOutlineView *)outlineView rowViewForItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView isGroupItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldSelectItem:(id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView shouldShowOutlineCellForItem:(id)item;
 - (BOOL)outlineView:(NSOutlineView *)outlineView
 	shouldEditTableColumn:(nullable NSTableColumn *)tableColumn
 					 item:(id)item;
+- (nullable id)outlineView:(NSOutlineView *)outlineView child:(NSInteger)index ofItem:(nullable id)item;
+- (BOOL)outlineView:(NSOutlineView *)outlineView isItemExpandable:(id)item;
+- (NSInteger)outlineView:(NSOutlineView *)outlineView numberOfChildrenOfItem:(nullable id)item;
+- (nullable id)outlineView:(NSOutlineView *)outlineView
+	objectValueForTableColumn:(nullable NSTableColumn *)tableColumn
+					   byItem:(id)item;
+- (void)expandCollapseItem:(NSNotification *)notification;
+- (void)updateActionMenu;
+- (void)updateRemoteControls;
+- (void)addMenuItemsForRef:(nullable PBGitRef *)ref toMenu:(NSMenu *)menu;
+- (void)addMenuItemsForSubmodule:(nullable PBSourceViewGitSubmoduleItem *)submodule toMenu:(NSMenu *)menu;
+- (void)showForgeAttention:(nullable id)sender;
+- (void)attentionUnseenDidChange:(NSNotification *)notification;
+- (void)forgeAccessDidChange:(NSNotification *)notification;
 @end
 
 @interface PBCommitMessageTransformer : NSObject
@@ -104,8 +140,13 @@
 
 @interface PBRepositoryRemoteURLCoordinator : NSObject
 + (instancetype)shared;
+- (void)handleSuccessfulPushOutput:(NSString *)output
+						repository:(PBGitRepository *)repository
+							remote:(nullable PBGitRef *)remote
+				  presentingWindow:(nullable NSWindow *)window;
 - (nullable NSURL *)firstHTTPURLInOutput:(NSString *)output;
 - (nullable NSURL *)webURLForRemoteURL:(NSString *)remoteURL branch:(NSString *)branch sha:(NSString *)sha;
+- (void)viewRemoteForRepository:(PBGitRepository *)repository presentingWindow:(nullable NSWindow *)window;
 @end
 
 @interface PBHistoryTreePresentation : NSObject
@@ -126,10 +167,13 @@
 @end
 
 @interface PBApplicationSettings : NSObject
+@property (class) BOOL repositoryStatusBarVisible;
 + (BOOL)changedFilesOnly;
 + (void)setChangedFilesOnly:(BOOL)value;
 + (NSInteger)changedFilesSort;
 + (void)setChangedFilesSort:(NSInteger)value;
++ (NSInteger)branchSort;
++ (void)setBranchSort:(NSInteger)value;
 + (NSInteger)diffLayout;
 @end
 
@@ -142,6 +186,7 @@
 
 @interface PBWindowRepositoryWithoutGitURLs : PBGitRepository
 @property (nonatomic, copy, nullable) NSString *testCommonGitDirectoryOutput;
+@property (nonatomic) BOOL testCommonGitDirectoryLookupFails;
 @property (nonatomic, strong, nullable) NSURL *testGitURL;
 @property (nonatomic, strong, nullable) NSURL *testWorkingDirectoryURL;
 @end
@@ -160,6 +205,8 @@
 @interface PBRepositoryUISettings : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 @property (nonatomic) BOOL pushAfterCommit;
+@property (nonatomic) BOOL hideContainedBranches;
+@property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *sidebarVisibility;
 @end
 
 @interface PBSourceViewBadge (WindowControllerTests)
@@ -233,6 +280,11 @@
 - (nullable NSString *)outputOfTaskWithArguments:(nullable NSArray<NSString *> *)arguments
 										   error:(NSError *_Nullable *_Nullable)error
 {
+	if (self.testCommonGitDirectoryLookupFails) {
+		if (error)
+			*error = [NSError errorWithDomain:@"PBWindowRepositoryWithoutGitURLs" code:1 userInfo:nil];
+		return nil;
+	}
 	return self.testCommonGitDirectoryOutput ?: @"";
 }
 
@@ -268,6 +320,20 @@
 
 @end
 
+@interface PBWindowRemoteWithoutNameRef : PBGitRef
+@end
+
+@implementation PBWindowRemoteWithoutNameRef
+- (BOOL)isRemote
+{
+	return YES;
+}
+- (NSString *)remoteName
+{
+	return nil;
+}
+@end
+
 @interface RepositoryUISettingsTests : XCTestCase
 @end
 
@@ -283,6 +349,41 @@
 	settings.pushAfterCommit = YES;
 	NSURL *commonDirectory = [repository.testGitURL URLByAppendingPathComponent:@".git/common" isDirectory:YES];
 	NSString *repositoryKey = commonDirectory.standardizedURL.URLByResolvingSymlinksInPath.path;
+	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
+	XCTAssertEqualObjects(allSettings[repositoryKey][@"pushAfterCommit"], @YES);
+	if (originalSettings)
+		[NSUserDefaults.standardUserDefaults setObject:originalSettings forKey:@"PBRepositoryUISettings"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRepositoryUISettings"];
+}
+
+- (void)testRepositoryUISettingsFallsBackToRootForRelativeCommonDirectoryWithoutRepositoryURLs
+{
+	id originalSettings = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRepositoryUISettings"];
+	PBWindowRepositoryWithoutGitURLs *repository = [PBWindowRepositoryWithoutGitURLs new];
+	repository.testCommonGitDirectoryOutput = @".git/common";
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:repository];
+
+	settings.pushAfterCommit = YES;
+	NSString *repositoryKey = [NSURL fileURLWithPath:@"/.git/common" isDirectory:YES].standardizedURL.URLByResolvingSymlinksInPath.path;
+	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
+	XCTAssertEqualObjects(allSettings[repositoryKey][@"pushAfterCommit"], @YES);
+	if (originalSettings)
+		[NSUserDefaults.standardUserDefaults setObject:originalSettings forKey:@"PBRepositoryUISettings"];
+	else
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBRepositoryUISettings"];
+}
+
+- (void)testRepositoryUISettingsFallsBackToWorkingDirectoryWhenCommonDirectoryLookupFails
+{
+	id originalSettings = [NSUserDefaults.standardUserDefaults objectForKey:@"PBRepositoryUISettings"];
+	PBWindowRepositoryWithoutGitURLs *repository = [PBWindowRepositoryWithoutGitURLs new];
+	repository.testCommonGitDirectoryLookupFails = YES;
+	repository.testWorkingDirectoryURL = [NSURL fileURLWithPath:@"/tmp/GitXFailedCommonDirectory" isDirectory:YES];
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:repository];
+
+	settings.pushAfterCommit = YES;
+	NSString *repositoryKey = repository.testWorkingDirectoryURL.standardizedURL.URLByResolvingSymlinksInPath.path;
 	NSDictionary *allSettings = [NSUserDefaults.standardUserDefaults dictionaryForKey:@"PBRepositoryUISettings"];
 	XCTAssertEqualObjects(allSettings[repositoryKey][@"pushAfterCommit"], @YES);
 	if (originalSettings)
@@ -308,6 +409,19 @@
 - (IBAction)toolbarPull:(id)sender;
 - (IBAction)toolbarPush:(id)sender;
 - (IBAction)viewRemote:(id)sender;
+- (IBAction)viewForgeRepository:(id)sender;
+- (IBAction)viewForgeCheckedOutRevision:(id)sender;
+- (IBAction)viewForgeSelectedCommit:(id)sender;
+- (IBAction)viewForgeSelectedComparison:(id)sender;
+- (IBAction)showForgePullRequestOrIssue:(id)sender;
+- (IBAction)toggleRepositoryStatusBar:(nullable id)sender;
+- (void)showForgeStatusDetails:(nullable id)sender;
+- (void)presentForgeRecoveryStatusDetailsWithCopyURL:(NSURL *)copyURL;
+- (void)presentForgeRecoveryStatusDetailsWithCopyURL:(NSURL *)copyURL
+									   revealHandler:(void (^)(NSURL *copyURL))revealHandler;
+- (void)presentForgeRecoveryStatusDetailsWithCopyURLs:(NSArray<NSURL *> *)copyURLs
+										revealHandler:(void (^)(NSURL *copyURL))revealHandler;
+- (NSUInteger)repositoryForgeOverlaySessionIdentityForTesting;
 @end
 
 static NSModalResponse PBWindowAlertResponse;
@@ -322,6 +436,7 @@ static NSModalResponse PBWindowCreateTagResponse;
 static NSModalResponse PBWindowHookResponse;
 static NSUInteger PBWindowWorkspaceOpenCount;
 static NSUInteger PBWindowWorkspaceRevealCount;
+static NSMutableArray<NSURL *> *PBWindowWorkspaceOpenedURLs;
 static NSUInteger PBWindowDocumentOpenCount;
 static NSMutableArray<NSURL *> *PBWindowDocumentOpenedURLs;
 static NSMutableDictionary<NSString *, NSError *> *PBWindowDocumentOpenErrorsByPath;
@@ -343,7 +458,7 @@ static NSString *PBWindowLastMessage;
 static NSString *PBWindowLastInfo;
 static NSString *PBWindowLastTerminalCommand;
 static NSURL *PBWindowLastTerminalDirectory;
-static BOOL PBWindowUseSnapshotTaskFake;
+static atomic_bool PBWindowUseSnapshotTaskFake;
 static NSData *PBWindowSnapshotData;
 static NSError *PBWindowSnapshotError;
 static BOOL PBWindowTrashSucceeds;
@@ -393,7 +508,7 @@ static void PBWindowPerformPull(PBGitWindowController *controller, PBGitRef *bra
 	PBTask *task = [self pb_window_taskWithLaunchPath:launchPath arguments:arguments inDirectory:directory];
 	NSString *command = arguments.firstObject;
 	BOOL isSnapshotCommand = [command isEqualToString:@"for-each-ref"] || [command isEqualToString:@"remote"] || [command isEqualToString:@"status"];
-	if (PBWindowUseSnapshotTaskFake && isSnapshotCommand) {
+	if (atomic_load_explicit(&PBWindowUseSnapshotTaskFake, memory_order_relaxed) && isSnapshotCommand) {
 		object_setClass(task, PBWindowSnapshotTask.class);
 	}
 	return task;
@@ -589,15 +704,24 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @end
 
 @interface NSWorkspace (WindowControllerTests)
+- (BOOL)pb_window_openURL:(NSURL *)url;
 - (void)pb_window_openURL:(NSURL *)url configuration:(NSWorkspaceOpenConfiguration *)configuration completionHandler:(void (^)(NSRunningApplication *_Nullable app, NSError *_Nullable error))completionHandler;
 - (void)pb_window_activateFileViewerSelectingURLs:(NSArray<NSURL *> *)fileURLs;
 @end
 
 @implementation NSWorkspace (WindowControllerTests)
 
+- (BOOL)pb_window_openURL:(NSURL *)url
+{
+	PBWindowWorkspaceOpenCount++;
+	[PBWindowWorkspaceOpenedURLs addObject:url];
+	return YES;
+}
+
 - (void)pb_window_openURL:(NSURL *)url configuration:(NSWorkspaceOpenConfiguration *)configuration completionHandler:(void (^)(NSRunningApplication *_Nullable app, NSError *_Nullable error))completionHandler
 {
 	PBWindowWorkspaceOpenCount++;
+	[PBWindowWorkspaceOpenedURLs addObject:url];
 	completionHandler(nil, nil);
 }
 
@@ -733,7 +857,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic, strong) NSMutableArray<NSString *> *operations;
 @property (nonatomic, copy, nullable) NSString *failingOperation;
 @property (nonatomic, strong) NSError *testError;
-@property (nonatomic, copy) NSArray<NSString *> *testRemotes;
+@property (nonatomic, copy, nullable) NSArray<NSString *> *testRemotes;
+@property (nonatomic) BOOL hidesProjectName;
 @property (nonatomic, strong, nullable) PBGitRef *trackingRef;
 @property (nonatomic, strong, nullable) PBWindowSubmodule *testSubmodule;
 @property (nonatomic, copy, nullable) NSURL *testWorkingDirectoryURL;
@@ -743,6 +868,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic) BOOL interceptHook;
 @property (nonatomic) BOOL testHookExists;
 @property (nonatomic) NSUInteger reloadRefsCount;
+@property (nonatomic) NSUInteger readCurrentBranchCount;
+@property (nonatomic) BOOL interceptForgeRefresh;
+@property (nonatomic) BOOL returnsNilHeadRef;
 @end
 
 @implementation PBWindowRepositorySpy
@@ -766,11 +894,24 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 - (void)reloadRefs
 {
 	self.reloadRefsCount++;
-	[super reloadRefs];
+	if (!self.interceptForgeRefresh) [super reloadRefs];
+}
+- (void)readCurrentBranch
+{
+	self.readCurrentBranchCount++;
+	if (!self.interceptForgeRefresh) [super readCurrentBranch];
+}
+- (PBGitRevSpecifier *)headRef
+{
+	return self.returnsNilHeadRef ? nil : [super headRef];
 }
 - (NSArray<NSString *> *)remotes
 {
 	return self.testRemotes;
+}
+- (NSString *)projectName
+{
+	return self.hidesProjectName ? nil : super.projectName;
 }
 - (PBGitRef *)remoteRefForBranch:(PBGitRef *)branch error:(NSError **)error
 {
@@ -878,13 +1019,78 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 }
 @end
 
+@interface PBWindowCommitStub : PBGitCommit
+@property (nonatomic, copy) NSString *testSHA;
+- (instancetype)initWithSHA:(NSString *)SHA;
+@end
+
+@implementation PBWindowCommitStub
+- (instancetype)initWithSHA:(NSString *)SHA
+{
+	self = [super init];
+	if (!self) return nil;
+	_testSHA = [SHA copy];
+	return self;
+}
+- (NSString *)SHA
+{
+	return self.testSHA;
+}
+@end
+
 @interface PBWindowOutlineView : NSOutlineView
 @property (nonatomic, strong, nullable) id testItem;
+@property (nonatomic, strong, nullable) NSTableRowView *testRowView;
+@property (nonatomic) NSInteger testItemRow;
+@property (nonatomic) NSUInteger deselectAllCount;
+@property (nonatomic) NSUInteger selectRowsCount;
 @end
 @implementation PBWindowOutlineView
 - (id)itemAtRow:(NSInteger)row
 {
 	return self.testItem;
+}
+- (NSInteger)rowForItem:(id)item
+{
+	return self.testItemRow;
+}
+- (NSTableRowView *)rowViewAtRow:(NSInteger)row makeIfNecessary:(BOOL)makeIfNecessary
+{
+	return self.testRowView;
+}
+- (void)deselectAll:(nullable id)sender
+{
+	self.deselectAllCount++;
+	[super deselectAll:sender];
+}
+- (void)selectRowIndexes:(NSIndexSet *)indexes byExtendingSelection:(BOOL)extend
+{
+	self.selectRowsCount++;
+	[super selectRowIndexes:indexes byExtendingSelection:extend];
+}
+@end
+
+@interface PBWindowHistoryMenuSpy : PBGitHistoryController
+@property (nonatomic, copy) NSArray<NSMenuItem *> *testMenuItems;
+@end
+
+@implementation PBWindowHistoryMenuSpy
+- (NSArray<NSMenuItem *> *)menuItemsForRef:(PBGitRef *)ref
+{
+	NSMutableArray<NSMenuItem *> *items = [NSMutableArray arrayWithCapacity:self.testMenuItems.count];
+	for (NSMenuItem *item in self.testMenuItems) [items addObject:item.copy];
+	return items;
+}
+@end
+
+@interface PBWindowAddRemoteResponder : NSResponder
+@property (nonatomic) NSUInteger addRemoteCount;
+@end
+
+@implementation PBWindowAddRemoteResponder
+- (void)addRemote:(id)sender
+{
+	self.addRemoteCount++;
 }
 @end
 
@@ -957,6 +1163,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 @interface PBWindowControllerSpy : PBGitWindowController
 @property (nonatomic, strong) PBWindowRepositorySpy *fixedRepository;
+@property (nonatomic, strong, nullable) PBGitRef *forcedSelectedRef;
 @property (nonatomic, strong) NSMutableArray<NSError *> *shownErrors;
 @property (nonatomic, strong) NSMutableArray<NSAlert *> *confirmations;
 @property (nonatomic) BOOL shouldConfirm;
@@ -974,6 +1181,9 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 @property (nonatomic, copy, nullable) NSArray<NSURL *> *revealedURLs;
 @property (nonatomic) NSUInteger refreshCount;
 @property (nonatomic) NSUInteger synchronizeCount;
+@property (nonatomic) BOOL interceptContentChange;
+@property (nonatomic) NSUInteger contentChangeCount;
+@property (nonatomic, strong, nullable) PBViewController *lastContentController;
 @end
 
 @implementation PBWindowControllerSpy
@@ -996,6 +1206,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 {
 	return self.fixedRepository;
 }
+- (PBGitRef *)selectedRef
+{
+	return self.forcedSelectedRef ?: super.selectedRef;
+}
 - (void)showErrorSheet:(NSError *)error
 {
 	if (self.useRealErrorPresentation) return [super showErrorSheet:error];
@@ -1006,6 +1220,25 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	if (self.useRealConfirmation) return [super confirmDialog:alert suppressionIdentifier:identifier forAction:actionBlock];
 	[self.confirmations addObject:alert];
 	if (self.shouldConfirm) actionBlock();
+	return self.shouldConfirm;
+}
+- (BOOL)confirmDialog:(NSAlert *)alert
+	suppressionIdentifier:(NSString *)identifier
+				 onCancel:(void (^)(void))cancelBlock
+				forAction:(void (^)(void))actionBlock
+{
+	if (self.useRealConfirmation) {
+		return [super confirmDialog:alert
+			  suppressionIdentifier:identifier
+						   onCancel:cancelBlock
+						  forAction:actionBlock];
+	}
+	[self.confirmations addObject:alert];
+	if (self.shouldConfirm) {
+		actionBlock();
+	} else {
+		cancelBlock();
+	}
 	return self.shouldConfirm;
 }
 - (void)performFetchForRef:(PBGitRef *)ref
@@ -1057,6 +1290,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 {
 	self.synchronizeCount++;
 }
+- (void)changeContentController:(nullable PBViewController *)newContentController
+{
+	if (!self.interceptContentChange) return [super changeContentController:newContentController];
+	self.contentChangeCount++;
+	self.lastContentController = newContentController;
+}
 
 @end
 
@@ -1084,6 +1323,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSwapClassMethods(PBCreateTagSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
 	PBSwapInstanceMethods(NSAlert.class, @selector(beginSheetModalForWindow:completionHandler:), @selector(pb_window_beginSheetModalForWindow:completionHandler:));
 	PBSwapInstanceMethods(NSAlert.class, @selector(runModal), @selector(pb_window_runModal));
+	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:), @selector(pb_window_openURL:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:configuration:completionHandler:), @selector(pb_window_openURL:configuration:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(activateFileViewerSelectingURLs:), @selector(pb_window_activateFileViewerSelectingURLs:));
 	PBSwapInstanceMethods(NSDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
@@ -1114,6 +1354,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSwapInstanceMethods(NSDocumentController.class, @selector(openDocumentWithContentsOfURL:display:completionHandler:), @selector(pb_window_openDocumentWithContentsOfURL:display:completionHandler:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(activateFileViewerSelectingURLs:), @selector(pb_window_activateFileViewerSelectingURLs:));
 	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:configuration:completionHandler:), @selector(pb_window_openURL:configuration:completionHandler:));
+	PBSwapInstanceMethods(NSWorkspace.class, @selector(openURL:), @selector(pb_window_openURL:));
 	PBSwapInstanceMethods(NSAlert.class, @selector(runModal), @selector(pb_window_runModal));
 	PBSwapInstanceMethods(NSAlert.class, @selector(beginSheetModalForWindow:completionHandler:), @selector(pb_window_beginSheetModalForWindow:completionHandler:));
 	PBSwapClassMethods(PBCreateTagSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
@@ -1189,6 +1430,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowHookResponse = NSModalResponseCancel;
 	PBWindowWorkspaceOpenCount = 0;
 	PBWindowWorkspaceRevealCount = 0;
+	PBWindowWorkspaceOpenedURLs = [NSMutableArray array];
 	PBWindowDocumentOpenCount = 0;
 	PBWindowDocumentOpenedURLs = [NSMutableArray array];
 	PBWindowDocumentOpenErrorsByPath = [NSMutableDictionary dictionary];
@@ -1205,7 +1447,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowLastInfo = nil;
 	PBWindowLastTerminalCommand = nil;
 	PBWindowLastTerminalDirectory = nil;
-	PBWindowUseSnapshotTaskFake = NO;
+	atomic_store_explicit(&PBWindowUseSnapshotTaskFake, false, memory_order_relaxed);
 	PBWindowSnapshotData = nil;
 	PBWindowSnapshotError = nil;
 	PBWindowTrashSucceeds = YES;
@@ -1237,13 +1479,14 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowAddRemoteTestSheet = nil;
 	PBWindowCreateBranchTestSheet = nil;
 	PBWindowCreateTagTestSheet = nil;
-	PBWindowUseSnapshotTaskFake = NO;
+	atomic_store_explicit(&PBWindowUseSnapshotTaskFake, false, memory_order_relaxed);
 	PBWindowSnapshotData = nil;
 	PBWindowSnapshotError = nil;
 	PBWindowDocumentOpenedURLs = nil;
 	PBWindowDocumentOpenErrorsByPath = nil;
 	PBWindowPresentedAlerts = nil;
 	PBWindowAlertPresentationHook = nil;
+	PBWindowWorkspaceOpenedURLs = nil;
 	[NSFileManager.defaultManager removeItemAtURL:self.repositoryURL error:NULL];
 	[NSFileManager.defaultManager removeItemAtURL:self.remoteURL error:NULL];
 	[PBGitDefaults resetAllDialogWarnings];
@@ -1256,6 +1499,19 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSString *output = [PBTask outputForCommand:@"/usr/bin/git" arguments:arguments inDirectory:directory.path error:&error];
 	XCTAssertNotNil(output, @"git %@ failed: %@", arguments, error);
 	return output ?: @"";
+}
+
+- (void)configureForgeRemotes:(NSDictionary<NSString *, NSString *> *)remotes
+{
+	NSArray<NSString *> *existing = [[self git:@[ @"remote" ] directory:self.repositoryURL]
+		componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+	for (NSString *name in remotes) {
+		if ([existing containsObject:name])
+			[self git:@[ @"remote", @"set-url", name, remotes[name] ] directory:self.repositoryURL];
+		else
+			[self git:@[ @"remote", @"add", name, remotes[name] ] directory:self.repositoryURL];
+	}
+	self.repository.testRemotes = [remotes.allKeys sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
 }
 
 - (NSMenuItem *)menuItemWithObject:(nullable id)object
@@ -1359,6 +1615,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testRealNibLifecycleContentSwitchingStatusAndValidation
 {
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
 	PBGitRepositoryDocument *document = [[PBGitRepositoryDocument alloc] init];
 	[document setValue:self.repository forKey:@"_repository"];
 	PBGitWindowController *controller = [[PBGitWindowController alloc] init];
@@ -1370,6 +1627,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBGitHistoryController *history = [controller valueForKey:@"_historyViewController"];
 	XCTAssertNotNil(sidebar);
 	XCTAssertNotNil(history);
+	NSClipView *historyClipView = history.commitList.enclosingScrollView.contentView;
+	XCTAssertNotNil(historyClipView);
+	XCTAssertTrue(historyClipView.postsBoundsChangedNotifications);
+	[[NSNotificationCenter defaultCenter] postNotificationName:NSViewBoundsDidChangeNotification
+														object:historyClipView];
+	[self pumpRunLoopFor:0.02];
 	[sidebar reloadSidebarAfterReferencesChange];
 	XCTAssertEqualObjects(window.representedURL, self.repository.workingDirectoryURL);
 	XCTAssertEqualObjects([controller valueForKeyPath:@"jumpToCheckedOutBranchButton.accessibilityIdentifier"], @"JumpToCheckedOutBranchButton");
@@ -1381,6 +1644,83 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertTrue([controller validateMenuItem:historyItem]);
 	XCTAssertEqual(historyItem.state, NSControlStateValueOn);
 	XCTAssertTrue([controller validateMenuItem:[[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Other", nil) action:@selector(copy:) keyEquivalent:@""]]);
+	NSMenuItem *statusBarItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Repository Status Bar", nil)
+														   action:@selector(toggleRepositoryStatusBar:)
+													keyEquivalent:@""];
+	BOOL originalStatusBarVisibility = PBApplicationSettings.repositoryStatusBarVisible;
+	XCTAssertTrue([controller validateMenuItem:statusBarItem]);
+	XCTAssertEqual(statusBarItem.state,
+				   originalStatusBarVisibility ? NSControlStateValueOn : NSControlStateValueOff);
+	[controller toggleRepositoryStatusBar:self];
+	XCTAssertNotEqual(PBApplicationSettings.repositoryStatusBarVisible, originalStatusBarVisibility);
+	[controller toggleRepositoryStatusBar:self];
+	XCTAssertEqual(PBApplicationSettings.repositoryStatusBarVisible, originalStatusBarVisibility);
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBRepositoryRemoteOperationDidSucceedNotification"
+														object:self.repository
+													  userInfo:@{@"operation" : @"fetch"}];
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBRepositoryRemoteOperationDidSucceedNotification"
+														object:self.repository
+													  userInfo:@{@"operation" : @"push"}];
+	NSUInteger forgeSessionBeforeAvailabilityChange = [controller repositoryForgeOverlaySessionIdentityForTesting];
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBForgeApplicationAvailabilityDidChangeNotification"
+														object:nil];
+	NSUInteger forgeSessionAfterAvailabilityChange = [controller repositoryForgeOverlaySessionIdentityForTesting];
+	XCTAssertNotEqual(forgeSessionBeforeAvailabilityChange, forgeSessionAfterAvailabilityChange);
+	[controller showForgeStatusDetails:self];
+	XCTAssertEqualObjects(PBWindowPresentedAlerts.lastObject.messageText, @"Sign In Required");
+	NSURL *recoveryCopyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+														stringByAppendingPathComponent:[NSString stringWithFormat:@"Forge-recovery-%@.sqlite3", NSUUID.UUID.UUIDString]]];
+	XCTAssertTrue([[NSData dataWithBytes:"recovery" length:8] writeToURL:recoveryCopyURL atomically:YES]);
+	[self addTeardownBlock:^{
+		[[NSFileManager defaultManager] removeItemAtURL:recoveryCopyURL error:nil];
+	}];
+	__block NSURL *revealedRecoveryCopyURL = nil;
+	PBWindowAlertResponse = NSAlertFirstButtonReturn + 3;
+	[controller presentForgeRecoveryStatusDetailsWithCopyURL:recoveryCopyURL
+											   revealHandler:^(NSURL *copyURL) {
+												   revealedRecoveryCopyURL = copyURL;
+											   }];
+	NSAlert *recoveryAlert = PBWindowPresentedAlerts.lastObject;
+	XCTAssertEqualObjects(recoveryAlert.messageText, @"Forge Data Unavailable");
+	XCTAssertTrue([recoveryAlert.informativeText containsString:recoveryCopyURL.lastPathComponent]);
+	XCTAssertTrue([recoveryAlert.informativeText containsString:@"Local Git remains fully available"]);
+	XCTAssertEqualObjects([recoveryAlert.buttons valueForKey:@"title"],
+						  (@[ @"Retry", @"Reset Forge Data…", @"Not Now", @"Reveal in Finder", @"Delete Now" ]));
+	[self attachScreenshotOfView:recoveryAlert.window.contentView
+							name:@"M1-Recovery-01-Forge-Data-Unavailable"];
+	XCTAssertEqualObjects(revealedRecoveryCopyURL, recoveryCopyURL);
+	XCTAssertEqual(PBWindowWorkspaceRevealCount, (NSUInteger)0);
+	[controller presentForgeRecoveryStatusDetailsWithCopyURL:recoveryCopyURL];
+	XCTAssertEqual(PBWindowWorkspaceRevealCount, (NSUInteger)1);
+	NSURL *secondRecoveryCopyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+															  stringByAppendingPathComponent:[NSString stringWithFormat:@"Forge-recovery-%@.sqlite3", NSUUID.UUID.UUIDString]]];
+	XCTAssertTrue([[NSData dataWithBytes:"second" length:6] writeToURL:secondRecoveryCopyURL atomically:YES]);
+	[self addTeardownBlock:^{
+		[[NSFileManager defaultManager] removeItemAtURL:secondRecoveryCopyURL error:nil];
+	}];
+	PBWindowAlertResponse = NSAlertFirstButtonReturn + 3;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		NSPopUpButton *copySelector = (NSPopUpButton *)alert.accessoryView;
+		XCTAssertTrue([copySelector isKindOfClass:NSPopUpButton.class]);
+		XCTAssertEqual(copySelector.numberOfItems, (NSInteger)2);
+		[copySelector selectItemAtIndex:1];
+	};
+	[controller presentForgeRecoveryStatusDetailsWithCopyURLs:@[ recoveryCopyURL, secondRecoveryCopyURL ]
+												revealHandler:^(NSURL *copyURL) {
+													revealedRecoveryCopyURL = copyURL;
+												}];
+	PBWindowAlertPresentationHook = nil;
+	XCTAssertEqualObjects(revealedRecoveryCopyURL, secondRecoveryCopyURL);
+	revealedRecoveryCopyURL = nil;
+	NSURL *staleRecoveryCopyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory()
+															 stringByAppendingPathComponent:[NSString stringWithFormat:@"Forge-recovery-stale-%@.sqlite3", NSUUID.UUID.UUIDString]]];
+	[controller presentForgeRecoveryStatusDetailsWithCopyURL:staleRecoveryCopyURL
+											   revealHandler:^(NSURL *copyURL) {
+												   revealedRecoveryCopyURL = copyURL;
+											   }];
+	XCTAssertNil(revealedRecoveryCopyURL);
+	XCTAssertTrue([PBWindowPresentedAlerts.lastObject.informativeText containsString:@"No retained recovery copies"]);
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
 
 	[controller changeContentController:history];
 	history.status = @"History ready";
@@ -1532,6 +1872,12 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	self.repository.trackingRef = nil;
 	XCTAssertFalse([self.controller validateMenuItem:plainFetch remoteTitle:@"Fetch “%@”" plainTitle:@"Fetch"]);
 	XCTAssertEqualObjects(plainFetch.title, @"Fetch");
+	PBWindowRemoteWithoutNameRef *unnamedRemote = [[PBWindowRemoteWithoutNameRef alloc] initWithString:@"refs/remotes/origin/main"];
+	self.controller.forcedSelectedRef = unnamedRemote;
+	NSMenuItem *unnamedRemoteFetch = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+	XCTAssertTrue([self.controller validateMenuItem:unnamedRemoteFetch remoteTitle:@"Fetch “%@”" plainTitle:@"Fetch"]);
+	XCTAssertEqualObjects(unnamedRemoteFetch.title, @"Fetch “(null)”");
+	self.controller.forcedSelectedRef = nil;
 	self.repository.trackingRef = self.remoteBranchRef;
 
 	PBSourceViewItem *remoteItem = [PBSourceViewItem itemWithTitle:@"origin"];
@@ -1622,8 +1968,15 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(self.controller.lastBranch.ref, self.branchRef.ref);
 	XCTAssertEqualObjects(self.controller.lastRemote.ref, self.remoteBranchRef.ref);
 
+	sender.selectedSegment = -1;
+	[sidebar fetchPullPushAction:sender];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.pullRouteCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)1);
+
 	PBSourceViewItem *remoteBranchItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.remoteBranchRef]];
 	outline.testItem = remoteBranchItem;
+	sender.selectedSegment = 3;
 	[sidebar fetchPullPushAction:sender];
 	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)2);
 	XCTAssertNil(self.controller.lastBranch);
@@ -1654,6 +2007,547 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	self.repository.failingOperation = nil;
 }
 
+- (void)testSidebarRealNibLifecycleOutlineDataCellsExpansionAndLifetime
+{
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	NSView *sidebarView = sidebar.view;
+	NSOutlineView *outline = sidebar.sourceView;
+	NSView *controlsView = sidebar.sourceListControlsView;
+	NSPopUpButton *actionButton = [sidebar valueForKey:@"actionButton"];
+	NSSegmentedControl *remoteControls = [sidebar valueForKey:@"remoteControls"];
+
+	XCTAssertNotNil(sidebarView);
+	XCTAssertTrue([outline isKindOfClass:PBSidebarList.class]);
+	XCTAssertEqual(outline.delegate, sidebar);
+	XCTAssertEqual(outline.dataSource, sidebar);
+	XCTAssertEqual(outline.target, sidebar);
+	XCTAssertEqual(outline.doubleAction, @selector(doubleClicked:));
+	XCTAssertEqualObjects(outline.accessibilityIdentifier, @"RepositorySidebar");
+	XCTAssertNotNil(outline.menu);
+	XCTAssertNotNil(controlsView);
+	XCTAssertNotNil(actionButton);
+	XCTAssertEqual(actionButton.menu.delegate, sidebar);
+	XCTAssertNotNil(remoteControls);
+	XCTAssertEqual(remoteControls.segmentCount, (NSInteger)4);
+	XCTAssertEqual(remoteControls.target, sidebar);
+	XCTAssertEqual(remoteControls.action, @selector(fetchPullPushAction:));
+
+	XCTAssertEqual([sidebar outlineView:outline numberOfChildrenOfItem:nil], (NSInteger)sidebar.items.count);
+	PBSourceViewItem *project = [sidebar outlineView:outline child:0 ofItem:nil];
+	PBSourceViewItem *branches = [sidebar outlineView:outline child:1 ofItem:nil];
+	XCTAssertEqualObjects(project.title, self.repository.projectName.uppercaseString);
+	XCTAssertEqualObjects(branches.title, @"BRANCHES");
+	XCTAssertTrue([sidebar outlineView:outline isGroupItem:project]);
+	XCTAssertTrue([sidebar outlineView:outline isGroupItem:branches]);
+	XCTAssertFalse([sidebar outlineView:outline isGroupItem:NSObject.new]);
+	XCTAssertFalse([sidebar outlineView:outline shouldSelectItem:project]);
+	XCTAssertTrue([sidebar outlineView:outline shouldSelectItem:NSObject.new]);
+	XCTAssertFalse([sidebar outlineView:outline shouldShowOutlineCellForItem:project]);
+	XCTAssertTrue([sidebar outlineView:outline shouldShowOutlineCellForItem:branches]);
+	XCTAssertTrue([sidebar outlineView:outline shouldShowOutlineCellForItem:NSObject.new]);
+	XCTAssertTrue([sidebar outlineView:outline isItemExpandable:branches]);
+	XCTAssertGreaterThanOrEqual([sidebar outlineView:outline numberOfChildrenOfItem:branches], (NSInteger)2);
+	PBSourceViewItem *firstBranch = [sidebar outlineView:outline child:0 ofItem:branches];
+	XCTAssertEqualObjects([sidebar outlineView:outline objectValueForTableColumn:outline.tableColumns.firstObject byItem:firstBranch], firstBranch.title);
+	XCTAssertTrue([sidebar outlineView:outline shouldSelectItem:firstBranch]);
+
+	NSTableCellView *branchHeader = (NSTableCellView *)[sidebar outlineView:outline
+														 viewForTableColumn:outline.tableColumns.firstObject
+																	   item:branches];
+	XCTAssertEqualObjects(branchHeader.identifier, @"PBBranchesHeaderCellIdentifier");
+	XCTAssertEqualObjects(branchHeader.textField.stringValue, @"BRANCHES");
+	NSButton *sortButton = nil;
+	for (NSView *subview in branchHeader.subviews) {
+		if ([subview.identifier isEqualToString:@"BranchSortToggle"]) sortButton = (NSButton *)subview;
+	}
+	XCTAssertNotNil(sortButton);
+	XCTAssertEqual(sortButton.target, sidebar);
+	XCTAssertEqual(sortButton.action, @selector(toggleBranchSort:));
+	XCTAssertNotNil(sortButton.image);
+	XCTAssertGreaterThan(sortButton.toolTip.length, (NSUInteger)0);
+
+	PBGitRevSpecifier *mainRevision = [[PBGitRevSpecifier alloc] initWithRef:self.branchRef];
+	PBSourceViewItem *mainItem = [sidebar itemForRev:mainRevision];
+	XCTAssertNotNil(mainItem);
+	PBSidebarTableViewCell *mainCell = (PBSidebarTableViewCell *)[sidebar outlineView:outline
+																   viewForTableColumn:outline.tableColumns.firstObject
+																				 item:mainItem];
+	XCTAssertTrue([mainCell isKindOfClass:PBSidebarTableViewCell.class]);
+	XCTAssertEqualObjects(mainCell.textField.stringValue, mainItem.title);
+	XCTAssertEqualObjects(mainCell.imageView.image, mainItem.icon);
+	XCTAssertTrue(mainCell.isCheckedOut);
+	PBGitRevSpecifier *tagRevision = [[PBGitRevSpecifier alloc] initWithRef:self.tagRef];
+	PBSourceViewItem *tagItem = [sidebar itemForRev:tagRevision];
+	PBSidebarTableViewCell *tagCell = (PBSidebarTableViewCell *)[sidebar outlineView:outline
+																  viewForTableColumn:outline.tableColumns.firstObject
+																				item:tagItem];
+	XCTAssertFalse(tagCell.isCheckedOut);
+
+	[sidebar expandCollapseItem:[NSNotification notificationWithName:NSOutlineViewItemWillCollapseNotification
+															  object:outline
+															userInfo:@{@"NSObject" : branches}]];
+	XCTAssertFalse(branches.expanded);
+	[sidebar expandCollapseItem:[NSNotification notificationWithName:NSOutlineViewItemWillExpandNotification
+															  object:outline
+															userInfo:@{@"NSObject" : branches}]];
+	XCTAssertTrue(branches.expanded);
+	[sidebar expandCollapseItem:[NSNotification notificationWithName:NSOutlineViewItemWillCollapseNotification
+															  object:outline
+															userInfo:@{@"NSObject" : @"not an item"}]];
+	XCTAssertTrue(branches.expanded);
+
+	PBWindowOutlineView *rowOutline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	rowOutline.testItem = mainItem;
+	rowOutline.testItemRow = 0;
+	rowOutline.testRowView = [NSTableRowView new];
+	PBGitSidebarController *rowSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository superController:self.controller];
+	[rowSidebar setValue:rowOutline forKey:@"sourceView"];
+	XCTAssertEqual([rowSidebar outlineView:rowOutline rowViewForItem:mainItem], rowOutline.testRowView);
+	rowOutline.testRowView = nil;
+	XCTAssertNotNil([rowSidebar outlineView:rowOutline rowViewForItem:mainItem]);
+	[rowSidebar setValue:nil forKey:@"sourceView"];
+	XCTAssertNotNil([rowSidebar outlineView:rowOutline rowViewForItem:mainItem]);
+
+	[sidebar closeView];
+	__weak PBGitSidebarController *weakSidebar = nil;
+	@autoreleasepool {
+		PBGitSidebarController *temporarySidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																					  superController:self.controller];
+		(void)temporarySidebar.view;
+		[temporarySidebar closeView];
+		weakSidebar = temporarySidebar;
+		temporarySidebar = nil;
+	}
+	XCTAssertNil(weakSidebar);
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"PBBranchSidebarSettingsDidChangeNotification" object:nil];
+}
+
+- (void)testSidebarPresentsGitHubCollaborationAndRoutesNativeSurfaces
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+	PBGitSidebarController *presentationOnlySidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																						 superController:self.controller];
+	[presentationOnlySidebar synchronizeConfiguredRemotes];
+	[presentationOnlySidebar reloadSidebarPresentation];
+	PBSourceViewItem *fallbackForgeGroup = [presentationOnlySidebar valueForKey:@"forgeGroup"];
+	XCTAssertEqual(fallbackForgeGroup.sortedChildren.count, (NSUInteger)1);
+	XCTAssertTrue([fallbackForgeGroup.sortedChildren.firstObject.title containsString:@"hbmartin/gitx"]);
+	[presentationOnlySidebar showForgeAttention:self];
+
+	self.controller.interceptContentChange = YES;
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	NSOutlineView *outline = sidebar.sourceView;
+	[self pumpRunLoopFor:0.2];
+
+	PBSourceViewItem *forgeGroup = [sidebar valueForKey:@"forgeGroup"];
+	XCTAssertNotNil(forgeGroup);
+	XCTAssertEqualObjects(forgeGroup.title, @"GITHUB");
+	XCTAssertTrue([sidebar.items containsObject:forgeGroup]);
+	XCTAssertEqual(forgeGroup.sortedChildren.count, (NSUInteger)1);
+	PBSourceViewItem *repositoryItem = forgeGroup.sortedChildren.firstObject;
+	XCTAssertTrue([repositoryItem.title containsString:@"hbmartin/gitx"]);
+	XCTAssertTrue([repositoryItem.title containsString:@"Primary"]);
+	XCTAssertNotNil(repositoryItem.icon);
+	XCTAssertEqualObjects([repositoryItem.sortedChildren valueForKey:@"title"], (@[ @"Issues", @"Pull Requests" ]));
+	XCTAssertEqualObjects([sidebar visibleChildrenForItem:forgeGroup], (@[ repositoryItem ]));
+	NSArray<PBSourceViewItem *> *visibleSurfaces = [sidebar visibleChildrenForItem:repositoryItem];
+	XCTAssertEqualObjects([visibleSurfaces valueForKey:@"title"], (@[ @"Pull Requests", @"Issues" ]));
+	XCTAssertFalse([sidebar outlineView:outline shouldSelectItem:repositoryItem]);
+	XCTAssertTrue([sidebar outlineView:outline shouldSelectItem:visibleSurfaces.firstObject]);
+
+	for (PBSourceViewItem *surfaceItem in repositoryItem.sortedChildren) {
+		XCTAssertNotNil(surfaceItem.icon);
+		NSTableCellView *cell = (NSTableCellView *)[sidebar outlineView:outline
+													 viewForTableColumn:outline.tableColumns.firstObject
+																   item:surfaceItem];
+		XCTAssertEqualObjects(cell.accessibilityIdentifier, @"RepositoryForgeSidebarItem");
+		XCTAssertEqualObjects(cell.accessibilityLabel, surfaceItem.title);
+	}
+
+	PBSourceViewItem *pullRequests = [repositoryItem.sortedChildren filteredArrayUsingPredicate:
+																		[NSPredicate predicateWithFormat:@"title == %@", @"Pull Requests"]]
+										 .firstObject;
+	NSInteger pullRequestsRow = [outline rowForItem:pullRequests];
+	XCTAssertGreaterThanOrEqual(pullRequestsRow, (NSInteger)0);
+	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)pullRequestsRow]
+		 byExtendingSelection:NO];
+	[sidebar outlineViewSelectionDidChange:
+				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification
+											   object:outline]];
+	XCTAssertGreaterThanOrEqual(self.controller.contentChangeCount, (NSUInteger)1);
+	XCTAssertNotNil(self.controller.lastContentController);
+	XCTAssertEqualObjects(self.controller.lastContentController.view.accessibilityIdentifier,
+						  @"RepositoryForgeCollaboration");
+
+	PBSourceViewItem *issues = [repositoryItem.sortedChildren filteredArrayUsingPredicate:
+																  [NSPredicate predicateWithFormat:@"title == %@", @"Issues"]]
+								   .firstObject;
+	NSInteger issuesRow = [outline rowForItem:issues];
+	XCTAssertGreaterThanOrEqual(issuesRow, (NSInteger)0);
+	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)issuesRow]
+		 byExtendingSelection:NO];
+	[sidebar outlineViewSelectionDidChange:
+				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification
+											   object:outline]];
+	[sidebar reloadSidebarPresentation];
+	XCTAssertEqualObjects([sidebar selectedItem].title, @"Issues");
+	[sidebar forgeAccessDidChange:
+				 [NSNotification notificationWithName:@"PBRepositoryForgeAccountDidChangeNotification"
+											   object:self.repository]];
+	XCTAssertEqualObjects([sidebar selectedItem].title, @"Issues");
+	NSUInteger routedSurfaceCount = self.controller.contentChangeCount;
+	[sidebar showForgeAttention:self];
+	XCTAssertGreaterThan(self.controller.contentChangeCount, routedSurfaceCount);
+	[sidebar attentionUnseenDidChange:
+				 [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
+											   object:self.repository
+											 userInfo:@{@"count" : @7}]];
+	[sidebar attentionUnseenDidChange:
+				 [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
+											   object:self.repository]];
+	[sidebar closeView];
+}
+
+- (void)testSidebarRequiresAndPersistsAnExplicitPrimaryGitHubRepository
+{
+	[self configureForgeRemotes:@{
+		@"origin" : @"https://github.com/hbmartin/gitx.git",
+		@"upstream" : @"git@github.com:gitx/gitx.git",
+	}];
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	NSOutlineView *outline = sidebar.sourceView;
+	PBSourceViewItem *forgeGroup = [sidebar valueForKey:@"forgeGroup"];
+	PBSourceViewItem *choice = forgeGroup.sortedChildren.firstObject;
+	XCTAssertEqualObjects(choice.title, @"Choose Primary Repository…");
+	XCTAssertNotNil(choice.icon);
+	XCTAssertTrue([sidebar outlineView:outline shouldSelectItem:choice]);
+	NSInteger row = [outline rowForItem:choice];
+	XCTAssertGreaterThanOrEqual(row, (NSInteger)0);
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:(NSUInteger)row]
+		 byExtendingSelection:NO];
+
+	[sidebar outlineViewSelectionDidChange:
+				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification
+											   object:outline]];
+	XCTAssertEqualObjects([[sidebar valueForKey:@"forgeGroup"] sortedChildren].firstObject.title,
+						  @"Choose Primary Repository…");
+
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Choose Primary Repository"])
+			[(NSPopUpButton *)alert.accessoryView selectItemWithTitle:NSLocalizedString(@"GitHub — gitx/gitx (upstream)", nil)];
+	};
+	[sidebar outlineViewSelectionDidChange:
+				 [NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification
+											   object:outline]];
+
+	PBSourceViewItem *selectedForgeGroup = [sidebar valueForKey:@"forgeGroup"];
+	XCTAssertEqual(selectedForgeGroup.sortedChildren.count, (NSUInteger)2);
+	XCTAssertTrue([selectedForgeGroup.sortedChildren.firstObject.title containsString:@"gitx/gitx"]);
+	XCTAssertFalse([selectedForgeGroup.sortedChildren.firstObject.title containsString:@"Choose Primary"]);
+	[sidebar closeView];
+
+	PBGitSidebarController *reloadedSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																				 superController:self.controller];
+	(void)reloadedSidebar.view;
+	PBSourceViewItem *reloadedForgeGroup = [reloadedSidebar valueForKey:@"forgeGroup"];
+	XCTAssertEqual(reloadedForgeGroup.sortedChildren.count, (NSUInteger)2);
+	XCTAssertTrue([reloadedForgeGroup.sortedChildren.firstObject.title containsString:@"gitx/gitx"]);
+	XCTAssertFalse([reloadedForgeGroup.sortedChildren.firstObject.title containsString:@"Choose Primary"]);
+	[reloadedSidebar closeView];
+}
+
+- (void)testSidebarRefreshFollowsHeadPreservesExplicitSelectionAndHonorsVisibility
+{
+	NSUInteger reloadCount = self.repository.reloadRefsCount;
+	self.repository.currentBranch = nil;
+	PBGitSidebarController *unloadedSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																				 superController:self.controller];
+	[unloadedSidebar selectCurrentBranch];
+	XCTAssertGreaterThan(self.repository.reloadRefsCount, reloadCount);
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/main");
+
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	PBGitRevSpecifier *viewedBeforeUnavailableHead = self.repository.currentBranch;
+	[sidebar setValue:nil forKey:@"lastKnownHeadRef"];
+	self.repository.returnsNilHeadRef = YES;
+	[sidebar reloadSidebarAfterReferencesChange];
+	self.repository.returnsNilHeadRef = NO;
+	XCTAssertEqualObjects(self.repository.currentBranch, viewedBeforeUnavailableHead);
+	PBRepositoryUISettings *settings = [[PBRepositoryUISettings alloc] initWithRepository:self.repository];
+	[sidebar setValue:nil forKey:@"branchPresentation"];
+	[sidebar reloadSidebarPresentation];
+	XCTAssertNotNil([sidebar valueForKey:@"branchPresentation"]);
+	PBGitRevSpecifier *mainRevision = [[PBGitRevSpecifier alloc] initWithRef:self.branchRef];
+	PBGitRevSpecifier *featureRevision = [[PBGitRevSpecifier alloc] initWithRef:[self.repository refForName:@"feature"]];
+	PBGitRevSpecifier *tagRevision = [[PBGitRevSpecifier alloc] initWithRef:self.tagRef];
+	[sidebar setValue:nil forKey:@"branchPresentation"];
+	PBGitRevSpecifier *fallbackRevision = [[PBGitRevSpecifier alloc]
+		initWithRef:[PBGitRef refFromString:@"refs/heads/coverage-fallback"]];
+	XCTAssertNotNil([sidebar addRevSpec:fallbackRevision]);
+	PBSourceViewItem *branches = [sidebar valueForKey:@"branches"];
+	XCTAssertGreaterThan([sidebar visibleChildrenForItem:branches].count, (NSUInteger)0);
+	[sidebar reloadSidebarPresentation];
+	branches = [sidebar valueForKey:@"branches"];
+	NSInteger previousBranchSort = PBApplicationSettings.branchSort;
+	@try {
+		PBApplicationSettings.branchSort = 1;
+		PBSourceViewItem *zuluWithoutReference = [PBSourceViewItem itemWithTitle:@"Zulu without reference"];
+		PBSourceViewItem *alphaWithoutReference = [PBSourceViewItem itemWithTitle:@"Alpha without reference"];
+		[branches addChild:zuluWithoutReference];
+		[branches addChild:alphaWithoutReference];
+		NSArray<PBSourceViewItem *> *recentItems = [sidebar visibleChildrenForItem:branches];
+		XCTAssertLessThan([recentItems indexOfObject:alphaWithoutReference], [recentItems indexOfObject:zuluWithoutReference]);
+	} @finally {
+		PBApplicationSettings.branchSort = previousBranchSort;
+	}
+
+	NSArray<NSString *> *initialRemoteNames = [sidebar.remotes.sortedChildren valueForKey:@"title"];
+	XCTAssertTrue([initialRemoteNames containsObject:@"origin"]);
+	XCTAssertTrue([initialRemoteNames containsObject:@"backup"]);
+	self.repository.testRemotes = @[ @"origin" ];
+	[sidebar reloadSidebarAfterReferencesChange];
+	NSArray<NSString *> *updatedRemoteNames = [sidebar.remotes.sortedChildren valueForKey:@"title"];
+	XCTAssertTrue([updatedRemoteNames containsObject:@"origin"]);
+	XCTAssertFalse([updatedRemoteNames containsObject:@"backup"]);
+	[sidebar.remotes addChild:[PBSourceViewGitRemoteItem remoteItemWithTitle:@"stale"]];
+	[sidebar synchronizeConfiguredRemotes];
+	XCTAssertFalse([[sidebar.remotes.sortedChildren valueForKey:@"title"] containsObject:@"stale"]);
+
+	settings.hideContainedBranches = YES;
+	[sidebar reloadSidebarPresentation];
+	XCTAssertNotNil([sidebar itemForRev:mainRevision]);
+	XCTAssertNil([sidebar itemForRev:featureRevision]);
+	settings.hideContainedBranches = NO;
+
+	settings.sidebarVisibility = @{
+		@"Remotes" : @NO,
+		@"Tags" : @NO,
+		@"Stashes" : @NO,
+		@"Submodules" : @NO,
+		@"Other" : @NO,
+	};
+	[sidebar repositorySettingsDidChange:[NSNotification notificationWithName:@"PBRepositorySettingsDidChangeNotification"
+																	   object:self.repository]];
+	XCTAssertEqual(sidebar.items.count, (NSUInteger)2);
+	XCTAssertEqualObjects([sidebar.items valueForKey:@"title"], (@[ self.repository.projectName.uppercaseString, @"BRANCHES" ]));
+	XCTAssertFalse([sidebar.items containsObject:sidebar.remotes]);
+	settings.sidebarVisibility = @{
+		@"Remotes" : @YES,
+		@"Tags" : @YES,
+		@"Stashes" : @YES,
+		@"Submodules" : @YES,
+		@"Other" : @YES,
+	};
+	[sidebar reloadSidebarPresentation];
+	XCTAssertTrue([sidebar.items containsObject:sidebar.remotes]);
+
+	self.repository.hidesProjectName = YES;
+	self.repository.testRemotes = nil;
+	PBGitSidebarController *nullableMetadataSidebar = [[PBGitSidebarController alloc]
+		initWithRepository:self.repository
+		   superController:self.controller];
+	(void)nullableMetadataSidebar.view;
+	XCTAssertEqualObjects([nullableMetadataSidebar.items.firstObject title], @"");
+	XCTAssertEqualObjects([nullableMetadataSidebar.remotes.sortedChildren valueForKey:@"title"], (@[ @"origin" ]));
+	[nullableMetadataSidebar closeView];
+	self.repository.hidesProjectName = NO;
+	self.repository.testRemotes = @[ @"origin", @"backup" ];
+
+	self.repository.currentBranch = mainRevision;
+	[self git:@[ @"checkout", @"--quiet", @"feature" ] directory:self.repositoryURL];
+	[self.repository reloadRefs];
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/feature");
+	[sidebar setValue:nil forKey:@"lastKnownHeadRef"];
+	[sidebar reloadSidebarAfterReferencesChange];
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/feature");
+	XCTAssertEqualObjects([[sidebar selectedItem] revSpecifier].simpleRef, @"refs/heads/feature");
+
+	self.repository.currentBranch = tagRevision;
+	[self git:@[ @"checkout", @"--quiet", @"main" ] directory:self.repositoryURL];
+	[self.repository reloadRefs];
+	XCTAssertEqualObjects(self.repository.headRef.simpleRef, @"refs/heads/main");
+	[sidebar reloadSidebarAfterReferencesChange];
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, tagRevision.simpleRef);
+	[sidebar reloadSidebarPresentation];
+	XCTAssertEqualObjects([[sidebar selectedItem] revSpecifier], tagRevision);
+
+	PBGitSidebarController *hiddenRowSidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																				  superController:self.controller];
+	PBWindowOutlineView *hiddenRowOutline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	hiddenRowOutline.testItemRow = -1;
+	[hiddenRowSidebar setValue:hiddenRowOutline forKey:@"sourceView"];
+	[hiddenRowSidebar.items addObject:[PBSourceViewItem itemWithRevSpec:tagRevision]];
+	[hiddenRowSidebar selectCurrentBranch];
+	XCTAssertEqual(hiddenRowOutline.deselectAllCount, (NSUInteger)0,
+				   @"A temporarily hidden current item must preserve the prior outline selection");
+	XCTAssertEqual(hiddenRowOutline.selectRowsCount, (NSUInteger)0);
+
+	self.repository.currentBranch = mainRevision;
+	XCTestExpectation *backgroundObservation = [self expectationWithDescription:@"Background repository observation reaches the main actor"];
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		self.repository.currentBranch = tagRevision;
+		[backgroundObservation fulfill];
+	});
+	[self waitForExpectations:@[ backgroundObservation ] timeout:1.0];
+	NSDate *selectionDeadline = [NSDate dateWithTimeIntervalSinceNow:1.0];
+	while (![[[sidebar selectedItem] revSpecifier] isEqual:tagRevision] && selectionDeadline.timeIntervalSinceNow > 0)
+		[self pumpRunLoopFor:0.01];
+	XCTAssertEqualObjects([[sidebar selectedItem] revSpecifier], tagRevision);
+
+	[hiddenRowSidebar closeView];
+	[sidebar closeView];
+}
+
+- (void)testSidebarSelectionMenusAndRemoteControlBoundaries
+{
+	PBWindowOutlineView *outline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 200)];
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	PBSourceViewItem *remotes = [PBSourceViewItem groupItemWithTitle:@"Remotes"];
+	NSPopUpButton *actionButton = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 40, 24) pullsDown:YES];
+	NSSegmentedControl *remoteControls = [[NSSegmentedControl alloc] initWithFrame:NSMakeRect(0, 0, 160, 24)];
+	remoteControls.segmentCount = 4;
+	[sidebar setValue:outline forKey:@"sourceView"];
+	[sidebar setValue:remotes forKey:@"remotes"];
+	[sidebar setValue:actionButton forKey:@"actionButton"];
+	[sidebar setValue:remoteControls forKey:@"remoteControls"];
+
+	PBWindowHistoryMenuSpy *history = [[PBWindowHistoryMenuSpy alloc] initWithRepository:self.repository superController:self.controller];
+	NSMenuItem *characterizedItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Characterized Reference Action", nil)
+															   action:nil
+														keyEquivalent:@""];
+	history.testMenuItems = @[ characterizedItem ];
+	[self.controller setValue:history forKey:@"_historyViewController"];
+	self.controller.interceptContentChange = YES;
+	self.controller.interceptRemoteRouting = YES;
+
+	PBGitRef *featureRef = [self.repository refForName:@"feature"];
+	PBSourceViewItem *branchItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:featureRef]];
+	outline.testItem = branchItem;
+	[sidebar outlineViewSelectionDidChange:[NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification object:outline]];
+	XCTAssertEqualObjects(self.repository.currentBranch.simpleRef, @"refs/heads/feature");
+	XCTAssertEqual(self.controller.contentChangeCount, (NSUInteger)1);
+	XCTAssertEqual(self.controller.lastContentController, history);
+	XCTAssertTrue(actionButton.enabled);
+	XCTAssertTrue([remoteControls isEnabledForSegment:1]);
+	XCTAssertTrue([remoteControls isEnabledForSegment:2]);
+	XCTAssertTrue([remoteControls isEnabledForSegment:3]);
+
+	[sidebar menuNeedsUpdate:actionButton.menu];
+	XCTAssertEqual(actionButton.menu.numberOfItems, (NSInteger)2);
+	XCTAssertNotNil(actionButton.menu.itemArray.firstObject.image);
+	XCTAssertEqualObjects(actionButton.menu.itemArray.lastObject.title, characterizedItem.title);
+	NSMenu *externalMenu = [NSMenu new];
+	[sidebar menuNeedsUpdate:externalMenu];
+	XCTAssertEqual(externalMenu.numberOfItems, (NSInteger)1);
+	XCTAssertEqualObjects(externalMenu.itemArray.firstObject.title, characterizedItem.title);
+	NSMenu *rowMenu = [sidebar menuForRow:0];
+	XCTAssertFalse(rowMenu.autoenablesItems);
+	XCTAssertEqual(rowMenu.numberOfItems, (NSInteger)1);
+
+	outline.testItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.tagRef]];
+	[sidebar outlineViewSelectionDidChange:[NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification object:outline]];
+	XCTAssertTrue(actionButton.enabled);
+	XCTAssertFalse([remoteControls isEnabledForSegment:1]);
+	XCTAssertFalse([remoteControls isEnabledForSegment:2]);
+	XCTAssertFalse([remoteControls isEnabledForSegment:3]);
+	XCTAssertEqual(self.controller.contentChangeCount, (NSUInteger)2);
+
+	outline.testItem = remotes;
+	[sidebar outlineViewSelectionDidChange:[NSNotification notificationWithName:NSOutlineViewSelectionDidChangeNotification object:outline]];
+	XCTAssertFalse(actionButton.enabled);
+	XCTAssertFalse([remoteControls isEnabledForSegment:1]);
+	XCTAssertEqual(self.controller.contentChangeCount, (NSUInteger)2);
+	NSMenu *emptyMenu = [sidebar menuForRow:-1];
+	XCTAssertEqual(emptyMenu.numberOfItems, (NSInteger)0);
+
+	NSMenu *nilBoundaryMenu = [NSMenu new];
+	[sidebar addMenuItemsForRef:nil toMenu:nilBoundaryMenu];
+	[sidebar addMenuItemsForSubmodule:nil toMenu:nilBoundaryMenu];
+	XCTAssertEqual(nilBoundaryMenu.numberOfItems, (NSInteger)0);
+
+	PBWindowAddRemoteResponder *responder = [PBWindowAddRemoteResponder new];
+	sidebar.nextResponder = responder;
+	remoteControls.selectedSegment = 0;
+	[sidebar fetchPullPushAction:remoteControls];
+	XCTAssertEqual(responder.addRemoteCount, (NSUInteger)1);
+	[sidebar fetchPullPushAction:nil];
+	XCTAssertEqual(responder.addRemoteCount, (NSUInteger)2);
+	remoteControls.selectedSegment = 1;
+	[sidebar fetchPullPushAction:remoteControls];
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)0);
+}
+
+- (void)testSidebarSubmoduleMenusOpeningErrorsAndDoubleClickBoundaries
+{
+	NSURL *submoduleURL = [self.repositoryURL URLByAppendingPathComponent:@"CharacterizedSubmodule" isDirectory:YES];
+	[NSFileManager.defaultManager createDirectoryAtURL:submoduleURL withIntermediateDirectories:YES attributes:nil error:NULL];
+	[self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] directory:submoduleURL];
+	PBWindowSubmodule *submodule = [PBWindowSubmodule new];
+	submodule.name = @"CharacterizedSubmodule";
+	submodule.path = @"CharacterizedSubmodule";
+	submodule.parentRepository = self.repository.gtRepo;
+	self.repository.submodules = [NSMutableArray arrayWithObject:(GTSubmodule *)submodule];
+
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	PBSourceViewItem *submodules = [sidebar valueForKey:@"submodules"];
+	XCTAssertTrue([sidebar.items containsObject:submodules]);
+	XCTAssertEqual(submodules.sortedChildren.count, (NSUInteger)1);
+	PBSourceViewGitSubmoduleItem *submoduleItem = (PBSourceViewGitSubmoduleItem *)submodules.sortedChildren.firstObject;
+	XCTAssertEqualObjects(submoduleItem.title, @"CharacterizedSubmodule");
+	XCTAssertEqualObjects(submoduleItem.path.URLByResolvingSymlinksInPath, submoduleURL.URLByResolvingSymlinksInPath);
+	NSInteger row = [sidebar.sourceView rowForItem:submoduleItem];
+	XCTAssertGreaterThanOrEqual(row, (NSInteger)0);
+	NSMenu *menu = [sidebar menuForRow:row];
+	XCTAssertEqual(menu.numberOfItems, (NSInteger)1);
+	NSMenuItem *openItem = menu.itemArray.firstObject;
+	XCTAssertEqual(openItem.target, sidebar);
+	XCTAssertEqual(openItem.action, @selector(openSubmoduleFromMenuItem:));
+	XCTAssertEqualObjects(openItem.representedObject, submoduleItem.path);
+
+	[sidebar openSubmoduleFromMenuItem:openItem];
+	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)1);
+	XCTAssertEqualObjects(PBWindowDocumentOpenedURLs.lastObject.URLByResolvingSymlinksInPath, submoduleURL.URLByResolvingSymlinksInPath);
+	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)0);
+	PBWindowDocumentOpenErrorsByPath[PBWindowResolvedPath(submoduleURL)] = self.repository.testError;
+	[sidebar openSubmoduleFromMenuItem:openItem];
+	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)2);
+	XCTAssertEqualObjects(self.controller.shownErrors.lastObject, self.repository.testError);
+
+	PBWindowOutlineView *outline = [[PBWindowOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	outline.testItem = submoduleItem;
+	[sidebar setValue:outline forKey:@"sourceView"];
+	PBWindowDocumentOpenErrorsByPath[PBWindowResolvedPath(submoduleURL)] = nil;
+	[sidebar doubleClicked:self];
+	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)3);
+
+	NSPopUpButton *actionButton = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0, 0, 40, 24) pullsDown:YES];
+	[sidebar setValue:actionButton forKey:@"actionButton"];
+	[sidebar menuNeedsUpdate:actionButton.menu];
+	XCTAssertEqual(actionButton.menu.numberOfItems, (NSInteger)2);
+	XCTAssertEqualObjects(actionButton.menu.itemArray.lastObject.title, @"Open Submodule");
+
+	NSUInteger operationCount = self.repository.operations.count;
+	outline.testItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.tagRef]];
+	[sidebar doubleClicked:self];
+	XCTAssertEqual(self.repository.operations.count, operationCount);
+	NSURL *invalidURL = [self.repositoryURL URLByAppendingPathComponent:@"MissingSubmodule" isDirectory:YES];
+	[sidebar openSubmoduleAtURL:invalidURL];
+	XCTAssertGreaterThanOrEqual(self.controller.shownErrors.count, (NSUInteger)2);
+	[sidebar closeView];
+}
+
 - (void)testRemoteProgressWorkflowsSuccessFailureAndRouting
 {
 	[self.controller performFetchForRef:nil];
@@ -1669,7 +2563,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self.controller performPullForBranch:self.branchRef remote:self.remoteRef rebase:NO];
 	XCTAssertTrue([PBWindowLastProgressDescription containsString:@"origin"]);
 	PBWindowPerformPull(self.controller, nil, self.branchRef, NO);
-	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF BEGINSWITH 'pull'"]].count, (NSUInteger)4);
+	[self.controller performPullForBranch:self.branchRef remote:self.branchRef rebase:NO];
+	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF BEGINSWITH 'pull'"]].count, (NSUInteger)5);
 	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'pullRebase'"]].count, (NSUInteger)1);
 
 	[self.controller performPushForBranch:self.branchRef toRemote:self.remoteRef requiresConfirmation:NO];
@@ -1729,6 +2624,17 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	[self waitForExpectations:@[ PBWindowProgressExpectation ] timeout:5.0];
 
 	XCTAssertEqual([self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'push'"]].count, (NSUInteger)1);
+}
+
+- (void)testOrdinaryPushStartsLocallyWithoutAwaitingGitHubPreflight
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+	NSUInteger before = [self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'push'"]].count;
+
+	[self.controller performPushForBranch:self.branchRef toRemote:self.remoteRef requiresConfirmation:NO];
+
+	NSUInteger after = [self.repository.operations filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"SELF == 'push'"]].count;
+	XCTAssertEqual(after, before + 1, @"Ordinary local push must begin before asynchronous GitHub preparation yields");
 }
 
 - (void)testRemoteAddAndMenuValidationMatrices
@@ -1898,6 +2804,8 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBGitRepositoryDocument *document = [[PBGitRepositoryDocument alloc] init];
 	[document setValue:self.repository forKey:@"_repository"];
 	directController.document = document;
+	[directController openURLs:nil];
+	[directController revealURLsInFinder:nil];
 	[directController openURLs:@[]];
 	[directController revealURLsInFinder:@[]];
 	[directController openURLs:@[ [self.repository.workingDirectoryURL URLByAppendingPathComponent:@"tracked.txt"] ]];
@@ -2374,45 +3282,64 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testPreferencesWindowCharacterizesExistingToolbarAndSizing
 {
-	PBPrefsWindowController *preferences = [[PBPrefsWindowController alloc] initWithWindowNibName:@"Preferences"];
-	[preferences showWindow:nil];
-	NSArray<NSToolbarItemIdentifier> *identifiers = [preferences toolbarAllowedItemIdentifiers:preferences.window.toolbar];
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id previousViewIdentifier = [defaults objectForKey:@"PBGitXPreferenceViewIdentifier"];
+	[defaults setObject:@"General" forKey:@"PBGitXPreferenceViewIdentifier"];
+	PBPrefsWindowController *preferences = nil;
+	@try {
+		preferences = [[PBPrefsWindowController alloc] initWithWindowNibName:@"Preferences"];
+		[preferences showWindow:nil];
+		NSArray<NSToolbarItemIdentifier> *identifiers = [preferences toolbarAllowedItemIdentifiers:preferences.window.toolbar];
 
-	XCTAssertEqual(identifiers.count, (NSUInteger)8);
-	XCTAssertEqualObjects(identifiers, (@[ @"General", @"Dock Icon", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
-	XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
-	XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
-	XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
-	XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 860.0);
-	NSPopUpButton *appearancePopup = [preferences valueForKey:@"appearancePopup"];
-	XCTAssertEqualObjects([appearancePopup.itemArray valueForKey:@"title"],
-						  (@[ @"Automatic (System)", @"Light", @"Dark" ]));
-	NSView *generalPrefsView = [preferences valueForKey:@"generalPrefsView"];
-	NSMutableArray<NSView *> *pendingViews = [NSMutableArray arrayWithObject:preferences.window.contentView];
-	BOOL foundCommitGuideControl = NO;
-	NSButton *repositoryWatcherControl = nil;
-	while (pendingViews.count > 0) {
-		NSView *view = pendingViews.firstObject;
-		[pendingViews removeObjectAtIndex:0];
-		if ([view isKindOfClass:NSButton.class] &&
-			[((NSButton *)view).title isEqualToString:@"Show column guides in commit message"]) {
-			foundCommitGuideControl = YES;
+		XCTAssertEqual(identifiers.count, (NSUInteger)9);
+		XCTAssertEqualObjects(identifiers, (@[ @"General", @"Accounts", @"Dock Icon", @"Windows", @"Diff & Text", @"Terminal", @"Integration", @"History & Fetch", @"Updates" ]));
+		XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
+		XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
+		XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
+		XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 860.0);
+		NSPopUpButton *appearancePopup = [preferences valueForKey:@"appearancePopup"];
+		XCTAssertEqualObjects([appearancePopup.itemArray valueForKey:@"title"],
+							  (@[ @"Automatic (System)", @"Light", @"Dark" ]));
+		NSView *generalPrefsView = [preferences valueForKey:@"generalPrefsView"];
+		NSMutableArray<NSView *> *pendingViews = [NSMutableArray arrayWithObject:preferences.window.contentView];
+		BOOL foundCommitGuideControl = NO;
+		NSButton *repositoryWatcherControl = nil;
+		NSButton *repositoryStatusBarControl = nil;
+		while (pendingViews.count > 0) {
+			NSView *view = pendingViews.firstObject;
+			[pendingViews removeObjectAtIndex:0];
+			if ([view isKindOfClass:NSButton.class] &&
+				[((NSButton *)view).title isEqualToString:@"Show column guides in commit message"]) {
+				foundCommitGuideControl = YES;
+			}
+			if ([view isKindOfClass:NSButton.class] &&
+				[((NSButton *)view).title isEqualToString:@"Watch for changes in repositories"]) {
+				repositoryWatcherControl = (NSButton *)view;
+			}
+			if ([view isKindOfClass:NSButton.class] &&
+				[((NSButton *)view).title isEqualToString:@"Show repository status bar"]) {
+				repositoryStatusBarControl = (NSButton *)view;
+			}
+			[pendingViews addObjectsFromArray:view.subviews];
 		}
-		if ([view isKindOfClass:NSButton.class] &&
-			[((NSButton *)view).title isEqualToString:@"Watch for changes in repositories"]) {
-			repositoryWatcherControl = (NSButton *)view;
-		}
-		[pendingViews addObjectsFromArray:view.subviews];
+		XCTAssertFalse(foundCommitGuideControl);
+		XCTAssertNotNil(repositoryWatcherControl);
+		XCTAssertTrue([repositoryWatcherControl isDescendantOf:preferences.window.contentView]);
+		NSRect watcherFrame = [repositoryWatcherControl convertRect:repositoryWatcherControl.bounds
+															 toView:preferences.window.contentView];
+		XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, watcherFrame));
+		XCTAssertNotNil(repositoryStatusBarControl);
+		NSRect statusBarFrame = [repositoryStatusBarControl convertRect:repositoryStatusBarControl.bounds
+																 toView:preferences.window.contentView];
+		XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, statusBarFrame));
+		XCTAssertEqual(generalPrefsView.frame.size.height, 258.0);
+	} @finally {
+		[preferences close];
+		if (previousViewIdentifier)
+			[defaults setObject:previousViewIdentifier forKey:@"PBGitXPreferenceViewIdentifier"];
+		else
+			[defaults removeObjectForKey:@"PBGitXPreferenceViewIdentifier"];
 	}
-	XCTAssertFalse(foundCommitGuideControl);
-	XCTAssertNotNil(repositoryWatcherControl);
-	XCTAssertTrue([repositoryWatcherControl isDescendantOf:preferences.window.contentView]);
-	NSRect watcherFrame = [repositoryWatcherControl convertRect:repositoryWatcherControl.bounds
-														 toView:preferences.window.contentView];
-	XCTAssertTrue(NSIntersectsRect(preferences.window.contentView.bounds, watcherFrame));
-	XCTAssertEqual(generalPrefsView.frame.size.height, 258.0);
-
-	[preferences close];
 }
 
 - (void)testRepositoryToolbarInstallsSingleHistoryConfiguration
@@ -2445,6 +3372,34 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects(commitItem.label, @"Uncommitted Changes");
 	XCTAssertEqual(commitItem.action, @selector(showUncommittedChanges:));
 	XCTAssertEqual(commitItem.target, self.controller);
+	NSToolbarItem *attentionItem = [toolbarController toolbar:historyToolbar
+										itemForItemIdentifier:@"GitX.Toolbar.Attention"
+									willBeInsertedIntoToolbar:YES];
+	XCTAssertEqualObjects(attentionItem.label, @"Attention");
+	NSTextField *attentionBadge = nil;
+	NSButton *attentionButton = nil;
+	for (NSView *view in attentionItem.view.subviews) {
+		if ([view.accessibilityIdentifier isEqualToString:@"GitX.Toolbar.Attention.Badge"])
+			attentionBadge = (NSTextField *)view;
+		if ([view.accessibilityIdentifier isEqualToString:@"GitX.Toolbar.Attention"])
+			attentionButton = (NSButton *)view;
+	}
+	XCTAssertNotNil(attentionBadge);
+	XCTAssertNotNil(attentionButton);
+	XCTAssertTrue(attentionBadge.hidden);
+	[toolbarController attentionUnseenDidChange:
+						   [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
+														 object:NSObject.new
+													   userInfo:@{@"count" : @99}]];
+	XCTAssertTrue(attentionBadge.hidden);
+	[toolbarController attentionUnseenDidChange:
+						   [NSNotification notificationWithName:@"PBRepositoryAttentionUnseenDidChangeNotification"
+														 object:self.repository
+													   userInfo:@{@"count" : @7}]];
+	XCTAssertEqualObjects(attentionItem.label, @"Attention (7)");
+	XCTAssertEqualObjects(attentionBadge.stringValue, @"7");
+	XCTAssertFalse(attentionBadge.hidden);
+	XCTAssertTrue([attentionButton.accessibilityLabel containsString:@"7 unseen"]);
 
 	[toolbarController updateWithStatus:@"Loading commits" busy:YES baseWindowTitle:@"Repository"];
 	XCTAssertEqualObjects(self.controller.window.title, @"Repository — Loading commits");
@@ -2480,13 +3435,296 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	XCTAssertEqualObjects([coordinator firstHTTPURLInOutput:@"remote: Open https://github.com/acme/repo/pull/7 to review."].absoluteString,
 						  @"https://github.com/acme/repo/pull/7");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"git@github.com:acme/repo.git" branch:@"feature/settings" sha:@"abc"].absoluteString,
-						  @"https://github.com/acme/repo/tree/feature/settings");
+						  @"https://github.com/acme/repo/tree/feature%2Fsettings");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"deploy@example.com:team/repo.git" branch:@"main" sha:@"abc"].absoluteString,
 						  @"https://example.com/team/repo/tree/main");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"ssh://git@gitlab.example/acme/repo.git" branch:@"main" sha:@"abc"].absoluteString,
 						  @"https://gitlab.example/acme/repo/-/tree/main");
 	XCTAssertEqualObjects([coordinator webURLForRemoteURL:@"https://bitbucket.org/acme/repo.git" branch:@"" sha:@"abc123"].absoluteString,
 						  @"https://bitbucket.org/acme/repo/src/abc123");
+}
+
+- (void)testViewingRemoteUsesTheLegacyCoordinatorWithAnAutomaticForgeBinding
+{
+	[self git:@[ @"remote", @"set-url", @"origin", @"https://github.com/acme/widgets.git" ] directory:self.repositoryURL];
+
+	[PBRepositoryRemoteURLCoordinator.shared viewRemoteForRepository:self.repository presentingWindow:nil];
+
+	XCTAssertEqual(PBWindowWorkspaceOpenCount, (NSUInteger)1);
+}
+
+- (void)testSuccessfulPushURLUsesRepositorySettingsAndMatchingRemoteHost
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/acme/widgets.git"}];
+	PBRepositorySettingsStore *settings = [[PBRepositorySettingsStore alloc] initWithRepository:self.repository];
+	NSError *error = nil;
+	XCTAssertTrue([settings setBool:YES forKey:@"gitx.autoOpenPushedURL" error:&error], @"%@", error);
+	XCTAssertTrue([settings setBool:YES forKey:@"gitx.requirePushedURLHostMatch" error:&error], @"%@", error);
+	NSUInteger openCount = PBWindowWorkspaceOpenedURLs.count;
+
+	[PBRepositoryRemoteURLCoordinator.shared
+		handleSuccessfulPushOutput:@"remote: Open https://gitlab.example/acme/widgets/merge_requests/42 to review."
+						repository:self.repository
+							remote:self.remoteBranchRef
+				  presentingWindow:nil];
+	[self pumpRunLoopFor:0.05];
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+
+	[PBRepositoryRemoteURLCoordinator.shared
+		handleSuccessfulPushOutput:@"remote: Open https://github.com/acme/widgets/pull/42 to review."
+						repository:self.repository
+							remote:self.remoteBranchRef
+				  presentingWindow:nil];
+	[self pumpRunLoopFor:0.05];
+
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount + 1);
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/acme/widgets/pull/42");
+}
+
+- (void)testViewingRemoteHonorsRepositoryCustomURLTemplate
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/acme/widgets.git"}];
+	PBRepositorySettingsStore *settings = [[PBRepositorySettingsStore alloc] initWithRepository:self.repository];
+	NSError *error = nil;
+	XCTAssertTrue([settings setString:@"{remoteURL}/compare/{branch}"
+							   forKey:@"gitx.webURLTemplate"
+								error:&error],
+				  @"%@", error);
+
+	[PBRepositoryRemoteURLCoordinator.shared viewRemoteForRepository:self.repository presentingWindow:nil];
+
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/acme/widgets/compare/main");
+}
+
+- (void)testForgeActionsOpenRepositoryCheckedOutRevisionSelectedCommitAndComparison
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+
+	[self.controller viewForgeRepository:self];
+	[self.controller viewForgeCheckedOutRevision:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs, (@[
+							  [NSURL URLWithString:@"https://github.com/hbmartin/gitx"],
+							  [NSURL URLWithString:@"https://github.com/hbmartin/gitx/tree/main"],
+						  ]));
+
+	NSString *detachedSHA = self.repository.headOID.SHA;
+	[self git:@[ @"checkout", @"--quiet", @"--detach", detachedSHA ] directory:self.repositoryURL];
+	[self.repository readCurrentBranch];
+	[self.controller viewForgeCheckedOutRevision:self];
+	NSString *detachedURL = [NSString stringWithFormat:@"https://github.com/hbmartin/gitx/commit/%@", detachedSHA];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString, detachedURL);
+
+	PBWindowCommitStub *head = [[PBWindowCommitStub alloc] initWithSHA:@"1111111111111111111111111111111111111111"];
+	PBWindowCommitStub *base = [[PBWindowCommitStub alloc] initWithSHA:@"2222222222222222222222222222222222222222"];
+	PBWindowHistorySpy *history = [[PBWindowHistorySpy alloc] initWithRepository:self.repository superController:self.controller];
+	[self.controller setValue:history forKey:@"_historyViewController"];
+	history.selectedCommits = @[ head ];
+	[self.controller viewForgeSelectedCommit:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/hbmartin/gitx/commit/1111111111111111111111111111111111111111");
+
+	history.selectedCommits = @[ head, base ];
+	[self.controller viewForgeSelectedComparison:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/hbmartin/gitx/compare/2222222222222222222222222222222222222222...1111111111111111111111111111111111111111");
+
+	NSUInteger openCount = PBWindowWorkspaceOpenedURLs.count;
+	history.selectedCommits = @[];
+	[self.controller viewForgeSelectedCommit:self];
+	[self.controller viewForgeSelectedComparison:self];
+	history.selectedCommits = @[ head, base, head ];
+	[self.controller viewForgeSelectedCommit:self];
+	[self.controller viewForgeSelectedComparison:self];
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+
+	history.selectedCommits = @[ [[PBWindowCommitStub alloc] initWithSHA:@"not a commit"] ];
+	[self.controller viewForgeSelectedCommit:self];
+	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)1);
+	XCTAssertEqualObjects(self.controller.shownErrors.lastObject.domain, @"com.gitx.forge.scripting");
+	XCTAssertEqual(self.controller.shownErrors.lastObject.code, (NSInteger)18003);
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+
+	NSString *emptyName = [NSString stringWithFormat:@"GitXForgeUnborn-%@", NSUUID.UUID.UUIDString];
+	NSURL *emptyURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:emptyName]
+								 isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:emptyURL
+										 withIntermediateDirectories:YES
+														  attributes:nil
+															   error:NULL]);
+	@try {
+		[self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] directory:emptyURL];
+		NSError *emptyError = nil;
+		PBWindowRepositorySpy *emptyRepository = [[PBWindowRepositorySpy alloc] initWithURL:emptyURL error:&emptyError];
+		XCTAssertNotNil(emptyRepository, @"%@", emptyError);
+		emptyRepository.testRemotes = @[];
+		[emptyRepository readCurrentBranch];
+		PBWindowControllerSpy *emptyController = [[PBWindowControllerSpy alloc] initWithRepository:emptyRepository];
+		[emptyController viewForgeCheckedOutRevision:self];
+		XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+		[emptyController.window orderOut:nil];
+		[emptyController.window close];
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:emptyURL error:NULL];
+	}
+}
+
+- (void)testForgeBindingChooserSupportsNilWindowCancelWindowSelectionAndDurableRetry
+{
+	[self configureForgeRemotes:@{
+		@"origin" : @"https://github.com/hbmartin/gitx.git",
+		@"upstream" : @"git@github.com:gitx/gitx.git",
+	}];
+
+	NSWindow *window = self.controller.window;
+	[self.controller setWindow:nil];
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	[self.controller viewForgeRepository:self];
+	XCTAssertEqual(PBWindowAlertAppModalCount, (NSUInteger)1);
+	XCTAssertEqual(PBWindowAlertSheetCount, (NSUInteger)0);
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, (NSUInteger)0);
+	NSAlert *cancelAlert = PBWindowPresentedAlerts.lastObject;
+	XCTAssertEqualObjects(cancelAlert.messageText, @"Choose Primary Repository");
+	XCTAssertEqualObjects([cancelAlert.buttons valueForKey:@"title"], (@[ @"Use Repository", @"Cancel" ]));
+	NSPopUpButton *cancelPopup = (NSPopUpButton *)cancelAlert.accessoryView;
+	XCTAssertTrue([cancelPopup isKindOfClass:NSPopUpButton.class]);
+	XCTAssertEqualObjects(cancelPopup.accessibilityIdentifier, @"GitX.ForgeLinks.RepositoryChoice");
+	XCTAssertEqualObjects(cancelPopup.accessibilityLabel, @"Primary repository");
+	XCTAssertEqual(cancelPopup.itemTitles.count, (NSUInteger)2);
+
+	[self.controller setWindow:window];
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if (![alert.messageText isEqualToString:@"Choose Primary Repository"]) return;
+		NSPopUpButton *popup = (NSPopUpButton *)alert.accessoryView;
+		[popup selectItemWithTitle:NSLocalizedString(@"GitHub — gitx/gitx (upstream)", nil)];
+	};
+	[self.controller viewForgeRepository:self];
+	XCTAssertEqual(PBWindowAlertSheetCount, (NSUInteger)1);
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString, @"https://github.com/gitx/gitx");
+
+	NSUInteger alertCount = PBWindowPresentedAlerts.count;
+	PBWindowControllerSpy *reloadedController = [[PBWindowControllerSpy alloc] initWithRepository:self.repository];
+	[reloadedController viewForgeRepository:self];
+	XCTAssertEqual(PBWindowPresentedAlerts.count, alertCount);
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString, @"https://github.com/gitx/gitx");
+	[reloadedController.window orderOut:nil];
+	[reloadedController.window close];
+}
+
+- (void)testForgeNumberPromptAndDestinationChooserAcceptAndCancelEveryVisiblePath
+{
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, (NSUInteger)0);
+	NSAlert *numberAlert = PBWindowPresentedAlerts.lastObject;
+	XCTAssertEqualObjects(numberAlert.messageText, @"Open Pull Request or Issue");
+	XCTAssertEqualObjects([numberAlert.buttons valueForKey:@"title"], (@[ @"Continue", @"Cancel" ]));
+	NSTextField *field = (NSTextField *)numberAlert.accessoryView;
+	XCTAssertTrue([field isKindOfClass:NSTextField.class]);
+	XCTAssertEqualObjects(field.placeholderString, @"#123");
+	XCTAssertEqualObjects(field.accessibilityIdentifier, @"GitX.ForgeLinks.NumberedReference");
+	XCTAssertEqualObjects(field.accessibilityLabel, @"Pull Request or Issue reference");
+
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#42", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose a Destination"])
+			[(NSPopUpButton *)alert.accessoryView selectItemAtIndex:0];
+	};
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/hbmartin/gitx/pull/42");
+	NSAlert *destinationAlert = PBWindowPresentedAlerts.lastObject;
+	XCTAssertEqualObjects(destinationAlert.messageText, @"Choose a Destination");
+	XCTAssertEqualObjects([destinationAlert.buttons valueForKey:@"title"], (@[ @"Open", @"Cancel" ]));
+	NSPopUpButton *destinationPopup = (NSPopUpButton *)destinationAlert.accessoryView;
+	XCTAssertEqualObjects(destinationPopup.itemTitles, (@[
+							  @"hbmartin/gitx — Pull Request #42",
+							  @"hbmartin/gitx — Issue #42",
+						  ]));
+	XCTAssertEqualObjects(destinationPopup.accessibilityIdentifier, @"GitX.ForgeLinks.DestinationChoice");
+	XCTAssertEqualObjects(destinationPopup.accessibilityLabel, @"Pull Request or Issue destination");
+
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#42", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose a Destination"])
+			[(NSPopUpButton *)alert.accessoryView selectItemAtIndex:1];
+	};
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/hbmartin/gitx/issues/42");
+
+	NSUInteger openCount = PBWindowWorkspaceOpenedURLs.count;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#42", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose a Destination"])
+			PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	};
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, openCount);
+}
+
+- (void)testForgeNumberPromptChoosesAmbiguousBindingThenRetriesIntoDestinationChoice
+{
+	[self configureForgeRemotes:@{
+		@"origin" : @"https://github.com/hbmartin/gitx.git",
+		@"upstream" : @"git@github.com:gitx/gitx.git",
+	}];
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#42", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose Primary Repository"])
+			[(NSPopUpButton *)alert.accessoryView selectItemWithTitle:NSLocalizedString(@"GitHub — gitx/gitx (upstream)", nil)];
+		else if ([alert.messageText isEqualToString:@"Choose a Destination"])
+			[(NSPopUpButton *)alert.accessoryView selectItemAtIndex:1];
+	};
+
+	[self.controller showForgePullRequestOrIssue:self];
+
+	XCTAssertEqualObjects([PBWindowPresentedAlerts valueForKey:@"messageText"], (@[
+							  @"Open Pull Request or Issue",
+							  @"Choose Primary Repository",
+							  @"Choose a Destination",
+						  ]));
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs.lastObject.absoluteString,
+						  @"https://github.com/gitx/gitx/issues/42");
+}
+
+- (void)testForgeMalformedNumberAndUnavailableRepositorySurfaceDeterministicErrors
+{
+	self.repository.testRemotes = @[];
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"#9", nil)];
+	};
+	[self.controller viewForgeRepository:self];
+	XCTAssertEqual(self.controller.shownErrors.lastObject.code, (NSInteger)18001);
+	[self.controller showForgePullRequestOrIssue:self];
+	XCTAssertEqual(self.controller.shownErrors.count, (NSUInteger)2);
+	XCTAssertEqual(self.controller.shownErrors.lastObject.code, (NSInteger)18001);
+
+	[self configureForgeRemotes:@{@"origin" : @"https://github.com/hbmartin/gitx.git"}];
+	PBWindowControllerSpy *malformedController = [[PBWindowControllerSpy alloc] initWithRepository:self.repository];
+	PBWindowAlertPresentationHook = ^(NSAlert *alert) {
+		if ([alert.messageText isEqualToString:@"Open Pull Request or Issue"])
+			[(NSTextField *)alert.accessoryView setStringValue:NSLocalizedString(@"42", nil)];
+	};
+	[malformedController showForgePullRequestOrIssue:self];
+	XCTAssertEqual(malformedController.shownErrors.count, (NSUInteger)1);
+	XCTAssertEqualObjects(malformedController.shownErrors.lastObject.domain, @"com.gitx.forge.scripting");
+	XCTAssertEqual(malformedController.shownErrors.lastObject.code, (NSInteger)18003);
+	XCTAssertEqual(PBWindowWorkspaceOpenedURLs.count, (NSUInteger)0);
+	[malformedController.window orderOut:nil];
+	[malformedController.window close];
 }
 
 - (void)testFileHistoryEntriesParseStructuredGitLogOutput
@@ -2797,6 +4035,41 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 									   }]);
 	XCTAssertEqual(actionCount, (NSUInteger)2);
 
+	__block NSUInteger cancellableActionCount = 0;
+	__block NSUInteger cancelCount = 0;
+	PBWindowAlertResponse = NSAlertSecondButtonReturn;
+	XCTAssertFalse([self.controller confirmDialog:alert
+		suppressionIdentifier:nil
+		onCancel:^{
+			cancelCount++;
+		}
+		forAction:^{
+			cancellableActionCount++;
+		}]);
+	XCTAssertEqual(cancelCount, (NSUInteger)1);
+	XCTAssertEqual(cancellableActionCount, (NSUInteger)0);
+	PBWindowAlertResponse = NSAlertFirstButtonReturn;
+	XCTAssertTrue([self.controller confirmDialog:alert
+		suppressionIdentifier:nil
+		onCancel:^{
+			cancelCount++;
+		}
+		forAction:^{
+			cancellableActionCount++;
+		}]);
+	XCTAssertEqual(cancelCount, (NSUInteger)1);
+	XCTAssertEqual(cancellableActionCount, (NSUInteger)1);
+	XCTAssertTrue([self.controller confirmDialog:alert
+		suppressionIdentifier:@"Test Dialog"
+		onCancel:^{
+			cancelCount++;
+		}
+		forAction:^{
+			cancellableActionCount++;
+		}]);
+	XCTAssertEqual(cancelCount, (NSUInteger)1);
+	XCTAssertEqual(cancellableActionCount, (NSUInteger)2);
+
 	PBWindowAlertResponse = NSAlertSecondButtonReturn;
 	[self.controller showRepositorySettings:self];
 	PBWindowAlertResponse = NSAlertFirstButtonReturn;
@@ -2805,34 +4078,96 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testFocusRefreshSnapshotsPreferenceGenerationAndCancellation
 {
-	PBWindowUseSnapshotTaskFake = YES;
+	atomic_store_explicit(&PBWindowUseSnapshotTaskFake, true, memory_order_relaxed);
 	PBWindowSnapshotData = [@"snapshot-a" dataUsingEncoding:NSUTF8StringEncoding];
 	[NSUserDefaults.standardUserDefaults setObject:@YES forKey:@"PBRefreshOnApplicationFocus"];
 	[self.controller refreshPreferenceDidChange:nil];
 	[self pumpRunLoopFor:0.1];
-	NSUInteger baseline = self.controller.refreshCount;
+	NSUInteger baseline = self.controller.synchronizeCount;
 	[self.controller applicationDidBecomeActive:[NSNotification notificationWithName:NSApplicationDidBecomeActiveNotification object:NSApp]];
 	[self pumpRunLoopFor:0.1];
-	XCTAssertEqual(self.controller.refreshCount, baseline);
+	XCTAssertEqual(self.controller.synchronizeCount, baseline);
 
 	PBWindowSnapshotData = [@"snapshot-b" dataUsingEncoding:NSUTF8StringEncoding];
 	[self.controller refreshIfRepositoryChangedSinceLastActivation];
 	[self pumpRunLoopFor:0.1];
-	XCTAssertGreaterThan(self.controller.refreshCount, baseline);
+	XCTAssertGreaterThan(self.controller.synchronizeCount, baseline);
 
-	NSUInteger changedCount = self.controller.refreshCount;
+	NSUInteger changedCount = self.controller.synchronizeCount;
 	PBWindowSnapshotData = [@"snapshot-c" dataUsingEncoding:NSUTF8StringEncoding];
 	[self.controller refreshIfRepositoryChangedSinceLastActivation];
 	[NSUserDefaults.standardUserDefaults setObject:@NO forKey:@"PBRefreshOnApplicationFocus"];
 	[self.controller refreshPreferenceDidChange:nil];
 	[self pumpRunLoopFor:0.1];
-	XCTAssertEqual(self.controller.refreshCount, changedCount);
+	XCTAssertEqual(self.controller.synchronizeCount, changedCount);
 
 	PBWindowSnapshotError = self.repository.testError;
 	[NSUserDefaults.standardUserDefaults setObject:@YES forKey:@"PBRefreshOnApplicationFocus"];
 	[self.controller refreshPreferenceDidChange:nil];
 	[self pumpRunLoopFor:0.1];
-	XCTAssertGreaterThan(self.controller.refreshCount, changedCount);
+	XCTAssertGreaterThan(self.controller.synchronizeCount, changedCount);
+}
+
+- (void)testMilestone2ShippedProductCoverageProofs
+{
+	XCTAssertEqual([PBMilestone2ProductCoverageHarness synchronousProof], (uint64_t)0b11111);
+
+	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 2 app-target proof"];
+	[PBMilestone2ProductCoverageHarness asyncProofWithCompletion:^(uint64_t proof) {
+		XCTAssertEqual(proof, (uint64_t)0b11111);
+		[expectation fulfill];
+	}];
+	[self waitForExpectations:@[ expectation ] timeout:30.0];
+}
+
+- (void)testMilestone3ShippedCollaborationCloseDetachesReviewOverlay
+{
+	XCTAssertTrue([PBMilestone3ProductCoverageHarness collaborationCloseLifecycleProofWithRepository:self.repository]);
+}
+
+- (void)testMilestone3ShippedPostMergeRefreshCompletionReloadsRepositoryState
+{
+	NSUInteger reloadRefsCount = self.repository.reloadRefsCount;
+	NSUInteger readCurrentBranchCount = self.repository.readCurrentBranchCount;
+	self.repository.interceptForgeRefresh = YES;
+
+	XCTAssertTrue([PBMilestone3ProductCoverageHarness refreshCompletionProofWithRepository:self.repository]);
+
+	XCTAssertEqual(self.repository.reloadRefsCount, reloadRefsCount + 2);
+	XCTAssertEqual(self.repository.readCurrentBranchCount, readCurrentBranchCount + 1);
+}
+
+- (void)testMilestone3ShippedRepositoryForgeViewStatePersistsAcrossControllerRecreation
+{
+	XCTAssertTrue([PBMilestone3ProductCoverageHarness repositoryForgeViewStateProofWithRepository:self.repository]);
+}
+
+- (void)testMilestone2ShippedCompositionCoverageProofs
+{
+	XCTAssertEqual([PBMilestone2CompositionCoverageHarness synchronousProof], (uint64_t)0b111);
+	XCTAssertTrue([PBMilestone2CompositionCoverageHarness reviewApplicationProofWithRepository:self.repository]);
+}
+
+- (void)testMilestone3ShippedRemoteReviewServiceRejectsChangedRepositoryBinding
+{
+	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 3 remote binding proof"];
+	[PBMilestone2CompositionCoverageHarness reviewApplicationRemoteBindingProofWithRepository:self.repository
+																			completionHandler:^(uint64_t proof) {
+																				XCTAssertEqual(proof, (uint64_t)1);
+																				[expectation fulfill];
+																			}];
+	[self waitForExpectations:@[ expectation ] timeout:30.0];
+}
+
+- (void)testMilestone3ShippedLocalReviewServiceRejectsChangedRepositoryBinding
+{
+	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 3 local binding proof"];
+	[PBMilestone2CompositionCoverageHarness reviewApplicationLocalBindingProofWithRepository:self.repository
+																		   completionHandler:^(uint64_t proof) {
+																			   XCTAssertEqual(proof, (uint64_t)1);
+																			   [expectation fulfill];
+																		   }];
+	[self waitForExpectations:@[ expectation ] timeout:30.0];
 }
 
 @end
