@@ -60,13 +60,27 @@ private struct GitHubInterceptorProvider: InterceptorProvider {
 }
 
 enum GitHubGraphQLTransportFactory {
+    static func isolatedConfiguration(
+        from configuration: URLSessionConfiguration
+    ) -> URLSessionConfiguration {
+        let isolated = configuration.copy() as! URLSessionConfiguration
+        isolated.httpCookieStorage = nil
+        isolated.httpShouldSetCookies = false
+        isolated.urlCredentialStorage = nil
+        isolated.urlCache = nil
+        isolated.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        return isolated
+    }
+
     static func makeClient(
         accessToken: GitHubSecret,
         sessionConfiguration: URLSessionConfiguration,
         metadataBox: GitHubResponseMetadataBox,
         store: ApolloStore
     ) -> ApolloClient {
-        let session = URLSession(configuration: sessionConfiguration)
+        let session = URLSession(
+            configuration: isolatedConfiguration(from: sessionConfiguration)
+        )
         var headers = [
             "Accept": "application/vnd.github+json",
             "User-Agent": "GitX-ForgeKit",

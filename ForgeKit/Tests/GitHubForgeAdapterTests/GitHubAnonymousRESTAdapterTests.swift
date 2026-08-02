@@ -308,7 +308,7 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
             return XCTFail("Expected head")
         }
         XCTAssertEqual(head.name.value, "feature/one")
-        XCTAssertEqual(head.repository.owner, "contributor")
+        XCTAssertEqual(head.repository?.owner, "contributor")
 
         let second = try await adapter.pullRequests(
             repository: repository,
@@ -609,7 +609,15 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
         task.cancel()
         session.invalidateAndCancel()
 
-        _ = GitHubAnonymousRESTAdapter(budget: GitHubAnonymousRESTBudget())
+        let publicAdapter = GitHubAnonymousRESTAdapter(budget: GitHubAnonymousRESTBudget())
+        await XCTAssertThrowsErrorAsync(
+            try await publicAdapter.repositoryFacts(
+                repository: repository,
+                reason: .scheduledOverlay
+            )
+        ) { error in
+            XCTAssertEqual(error as? GitHubAnonymousRESTError, .explicitRequestRequired)
+        }
         XCTAssertGreaterThan(GitHubAnonymousRESTAdapter.currentDate().timeIntervalSince1970, 0)
     }
 
@@ -622,6 +630,9 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
         var head = try XCTUnwrap(pull["head"] as? [String: Any])
         head.removeValue(forKey: "repo")
         pull["head"] = head
+        var base = try XCTUnwrap(pull["base"] as? [String: Any])
+        base.removeValue(forKey: "repo")
+        pull["base"] = base
         var fallbackLabel = label()
         fallbackLabel.removeValue(forKey: "node_id")
         pull["labels"] = [fallbackLabel]
@@ -657,7 +668,10 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
         }
         XCTAssertEqual(author.id.value, "rest-user:1")
         XCTAssertEqual(author.kind, .unknown)
-        XCTAssertEqual(pullResult.value.details.summary.head.value?.repository, repository)
+        XCTAssertNil(pullResult.value.details.summary.head.value?.repository)
+        XCTAssertEqual(pullResult.value.details.summary.head.value?.name.value, "feature")
+        XCTAssertEqual(pullResult.value.details.summary.head.value?.commit.value, "abcdef1234567890")
+        XCTAssertEqual(pullResult.value.details.summary.base.value?.repository, repository)
         XCTAssertEqual(pullResult.value.details.summary.labels.value?.first?.id.value, "rest-label:2")
         XCTAssertEqual(pullResult.value.details.milestone.value.flatMap { $0 }?.id.value, "rest-milestone:3")
         XCTAssertEqual(pullResult.value.details.milestone.value.flatMap { $0 }?.state, .closed)

@@ -711,10 +711,8 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
 
         let localRef = "refs/heads/\(base.name.value)"
         if let localCommit = try commit(at: localRef) {
-            if localCommit != base.commit, localCommit != remoteCommit {
-                guard try isAncestor(base.commit, of: localCommit),
-                      try isAncestor(localCommit, of: remoteCommit)
-                else {
+            if localCommit != remoteCommit, localCommit != base.commit {
+                guard try isAncestor(localCommit, of: remoteCommit) else {
                     throw RepositoryPullRequestReviewServiceError.stalePullRequest
                 }
             }
@@ -1202,7 +1200,8 @@ final class RepositoryPullRequestReviewSession {
         }
     }
 
-    func load() {
+    @discardableResult
+    func load() -> Task<Void, Never> {
         let previousWorkspace = workspace
         task?.cancel()
         loadGeneration = loadGeneration == .max ? 1 : loadGeneration + 1
@@ -1215,7 +1214,7 @@ final class RepositoryPullRequestReviewSession {
             state = .loading
         }
         logger.info("Loading native Pull Request review workspace")
-        task = Task { [weak self, service, identity] in
+        let loadTask = Task { [weak self, service, identity] in
             do {
                 let workspace = try await service.loadWorkspace(identity: identity)
                 guard let self, generation == loadGeneration else { return }
@@ -1229,6 +1228,8 @@ final class RepositoryPullRequestReviewSession {
                 failLoad(error, preserving: previousWorkspace)
             }
         }
+        task = loadTask
+        return loadTask
     }
 
     func failClosedAfterRepositoryRefresh(_ message: String) {
@@ -1680,10 +1681,12 @@ final class RepositoryPullRequestReviewSession {
                 repository: identity.repository,
                 method: confirmation.method
             )
-            await preferences.recordSuccessfulDeleteBranchChoice(
-                repository: identity.repository,
-                selected: deleteHeadBranchChoice
-            )
+            if workspace.canOfferHeadBranchDeletionAfterMerge {
+                await preferences.recordSuccessfulDeleteBranchChoice(
+                    repository: identity.repository,
+                    selected: deleteHeadBranchChoice
+                )
+            }
             logger.notice("Merged Pull Request method=\(confirmation.method.rawValue, privacy: .public)")
         } catch {
             reconcileIfUnknown(error)
@@ -1926,7 +1929,15 @@ final class RepositoryPullRequestReviewSession {
             }
             resolutionStates[thread.id] = .confirmed(isResolved: thread.isResolved)
         }
-        state = .loaded(workspace)
+        if workspace.isMutationStateFresh {
+            state = .loaded(workspace)
+        } else {
+            state = .stale(
+                workspace,
+                message: RepositoryPullRequestReviewServiceError.stalePullRequest.localizedDescription
+            )
+            logger.error("Installed non-fresh authoritative state as explicitly stale")
+        }
     }
 
     private func validate(_ workspace: RepositoryPullRequestReviewWorkspace) throws {

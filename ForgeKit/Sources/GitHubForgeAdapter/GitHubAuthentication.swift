@@ -71,7 +71,7 @@ public struct GitHubSecret: Equatable, Sendable, CustomStringConvertible,
 
     public init(_ value: String) throws {
         let bytes = Array(value.utf8)
-        guard !bytes.isEmpty, !bytes.contains(where: { $0 < 0x21 || $0 == 0x7F }) else {
+        guard Self.isValid(bytes) else {
             throw GitHubAuthenticationError.invalidSecret
         }
         self.bytes = bytes
@@ -81,7 +81,7 @@ public struct GitHubSecret: Equatable, Sendable, CustomStringConvertible,
     /// the caller to materialize credential data as an ordinary `String`.
     public init(utf8Bytes value: Data) throws {
         let bytes = Array(value)
-        guard !bytes.isEmpty, bytes.allSatisfy({ $0 >= 0x21 && $0 <= 0x7E }) else {
+        guard Self.isValid(bytes) else {
             throw GitHubAuthenticationError.invalidSecret
         }
         self.bytes = bytes
@@ -107,6 +107,10 @@ public struct GitHubSecret: Equatable, Sendable, CustomStringConvertible,
 
     fileprivate var formValue: String {
         String(decoding: bytes, as: UTF8.self)
+    }
+
+    private static func isValid(_ bytes: [UInt8]) -> Bool {
+        !bytes.isEmpty && bytes.allSatisfy { $0 >= 0x21 && $0 <= 0x7E }
     }
 }
 

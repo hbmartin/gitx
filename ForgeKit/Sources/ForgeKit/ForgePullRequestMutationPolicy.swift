@@ -58,7 +58,7 @@ public struct ForgePullRequestMutationContext: Hashable, Sendable {
     public let number: ForgeItemNumber
     public let state: ForgePullRequestState
     public let isDraft: Bool
-    public let head: ForgeBranchReference
+    public let head: ForgePullRequestHead
     public let base: ForgeBranchReference
     public let updatedAt: Date
     public let allowedOperations: Set<ForgeOperation>
@@ -76,8 +76,34 @@ public struct ForgePullRequestMutationContext: Hashable, Sendable {
         allowedOperations: Set<ForgeOperation>,
         environment: ForgeMutationEnvironment = .available
     ) throws {
+        try self.init(
+            accountID: accountID,
+            repository: repository,
+            number: number,
+            state: state,
+            isDraft: isDraft,
+            head: ForgePullRequestHead(reference: head),
+            base: base,
+            updatedAt: updatedAt,
+            allowedOperations: allowedOperations,
+            environment: environment
+        )
+    }
+
+    public init(
+        accountID: ForgeAccountID,
+        repository: ForgeRepositoryIdentity,
+        number: ForgeItemNumber,
+        state: ForgePullRequestState,
+        isDraft: Bool,
+        head: ForgePullRequestHead,
+        base: ForgeBranchReference,
+        updatedAt: Date,
+        allowedOperations: Set<ForgeOperation>,
+        environment: ForgeMutationEnvironment = .available
+    ) throws {
         guard accountID.forge == repository.forge,
-              head.repository.forge == repository.forge
+              head.repository?.forge == nil || head.repository?.forge == repository.forge
         else {
             throw ForgePullRequestMutationError.mismatchedForge
         }
@@ -155,7 +181,9 @@ public enum ForgePullRequestLifecyclePolicy {
             }
         case .updateBranch:
             guard context.state == .open else { return .unavailable(.pullRequestNotOpen) }
-            guard canUpdateBranch else { return .unavailable(.updateBranchUnavailable) }
+            guard canUpdateBranch, context.head.reference != nil else {
+                return .unavailable(.updateBranchUnavailable)
+            }
         }
         return .available(ForgePullRequestLifecycleRequest(context: context, action: action))
     }
@@ -208,7 +236,7 @@ public struct ForgePullRequestMergeConfirmation: Hashable, Sendable {
     public let accountID: ForgeAccountID
     public let repository: ForgeRepositoryIdentity
     public let number: ForgeItemNumber
-    public let headReference: ForgeBranchReference
+    public let headReference: ForgePullRequestHead
     public let baseReference: ForgeBranchReference
     public let head: ForgeCommitID
     public let base: ForgeCommitID
@@ -245,7 +273,7 @@ public struct ForgePullRequestMergeConfirmation: Hashable, Sendable {
 public struct ForgePullRequestRebaseSummary: Hashable, Sendable {
     public let repository: ForgeRepositoryIdentity
     public let number: ForgeItemNumber
-    public let head: ForgeBranchReference
+    public let head: ForgePullRequestHead
     public let base: ForgeBranchReference
 }
 
@@ -432,6 +460,9 @@ public enum ForgeHeadBranchDeletionPolicy {
         }
         guard context.state == .merged, !mergeWasQueued else {
             return .unavailable(.branchDeletionUnavailable)
+        }
+        guard context.head.repository == context.repository else {
+            return .unavailable(.forkHeadBranch)
         }
         guard snapshot.isSameRepository else { return .unavailable(.forkHeadBranch) }
         guard !snapshot.isDefaultBranch else { return .unavailable(.defaultBranch) }

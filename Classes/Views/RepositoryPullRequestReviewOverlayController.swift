@@ -64,6 +64,36 @@ nonisolated enum RepositoryPullRequestRebaseSummaryPresenter {
     private static func repositoryName(_ repository: ForgeRepositoryIdentity) -> String {
         "\(repository.owner)/\(repository.name)"
     }
+
+    private static func repositoryName(_ repository: ForgeRepositoryIdentity?) -> String {
+        repository.map(repositoryName) ?? "Unavailable source"
+    }
+}
+
+@MainActor
+private final class RepositoryReviewTaskRegistry {
+    private var tasks: [UUID: Task<Void, Never>] = [:]
+
+    deinit {
+        tasks.values.forEach { $0.cancel() }
+    }
+
+    var count: Int {
+        tasks.count
+    }
+
+    func start(_ operation: @escaping @MainActor () async -> Void) {
+        let identifier = UUID()
+        tasks[identifier] = Task { [weak self] in
+            await operation()
+            self?.tasks.removeValue(forKey: identifier)
+        }
+    }
+
+    func cancelAll() {
+        tasks.values.forEach { $0.cancel() }
+        tasks.removeAll()
+    }
 }
 
 /// Native Snow-Leopard-inspired action and review-thread presentation. The
@@ -99,8 +129,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private weak var actionContentBox: RepositoryReviewContentBox?
     private weak var overlayContentBox: RepositoryReviewContentBox?
     private(set) lazy var reviewOverlayView: NSView = makeOverlayRoot()
-    private var tasks: [Task<Void, Never>] = []
-    private var actionPresentationTasks: [Task<Void, Never>] = []
+    private let tasks = RepositoryReviewTaskRegistry()
+    private let actionPresentationTasks = RepositoryReviewTaskRegistry()
     /// Explicit overrides are required because the server presenter may start
     /// either expanded or collapsed. A Set could not represent collapsing an
     /// initially-expanded thread.
@@ -114,18 +144,24 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private var replyWritesInFlight: Set<ForgeObjectID> = []
     private var inlineWritesInFlight: Set<InlineWriteDestination> = []
     private var suggestionInFlight: ForgeSuggestedChange?
+    private var destructiveConfirmationInFlight = false
     private var transientMessage: String?
     private var postMergeDeletionFailure: String?
     private var modalPanel: NSPanel?
     private var embeddedModalView: NSView?
     private var overlayDraftCoordinators: [RepositoryReviewDraftTextCoordinator] = []
-    private var overlayDraftLoadTasks: [Task<Void, Never>] = []
+    private let overlayDraftLoadTasks = RepositoryReviewTaskRegistry()
     private var threadDraftCoordinators: [RepositoryReviewDraftTextCoordinator] = []
-    private var threadDraftLoadTasks: [Task<Void, Never>] = []
+    private let threadDraftLoadTasks = RepositoryReviewTaskRegistry()
     private var modalDraftCoordinator: RepositoryReviewDraftTextCoordinator?
     private var resolutionControlRows: [ForgeObjectID: ResolutionControlRow] = [:]
     private var rendersThreadsInline = false
     var onWorkspacePresentationChange: (() -> Void)?
+
+    var trackedTaskCountForProductProof: Int {
+        tasks.count + actionPresentationTasks.count
+            + overlayDraftLoadTasks.count + threadDraftLoadTasks.count
+    }
 
     init(
         session: RepositoryPullRequestReviewSession,
@@ -163,10 +199,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
-    deinit {
-        tasks.forEach { $0.cancel() }
-    }
-
     override func loadView() {
         configure(stack: actionStack, identifier: RepositoryPullRequestReviewAccessibility.actionRoot)
         let box = makeSnowLeopardBox(containing: actionStack)
@@ -191,12 +223,9 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     }
 
     func detach() {
-        tasks.forEach { $0.cancel() }
-        tasks.removeAll()
-        actionPresentationTasks.forEach { $0.cancel() }
-        actionPresentationTasks.removeAll()
-        overlayDraftLoadTasks.forEach { $0.cancel() }
-        overlayDraftLoadTasks.removeAll()
+        tasks.cancelAll()
+        actionPresentationTasks.cancelAll()
+        overlayDraftLoadTasks.cancelAll()
         overlayDraftCoordinators.forEach { $0.detach() }
         overlayDraftCoordinators.removeAll()
         resetThreadPresentation()
@@ -246,8 +275,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
 
     private func renderActionArea() {
         defer { actionContentBox?.invalidateIntrinsicContentSize() }
-        actionPresentationTasks.forEach { $0.cancel() }
-        actionPresentationTasks.removeAll()
+        actionPresentationTasks.cancelAll()
         // A newly installed authoritative workspace invalidates every open
         // confirmation. Tear it down before rebuilding so a mutation that
         // renders re-entrantly cannot leave a stale modal reference behind.
@@ -283,8 +311,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
 
     private func renderOverlay() {
         defer { overlayContentBox?.invalidateIntrinsicContentSize() }
-        overlayDraftLoadTasks.forEach { $0.cancel() }
-        overlayDraftLoadTasks.removeAll()
+        overlayDraftLoadTasks.cancelAll()
         overlayDraftCoordinators.forEach { $0.detach() }
         overlayDraftCoordinators.removeAll()
         clear(overlayStack)
@@ -343,8 +370,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     }
 
     private func resetThreadPresentation() {
-        threadDraftLoadTasks.forEach { $0.cancel() }
-        threadDraftLoadTasks.removeAll()
+        threadDraftLoadTasks.cancelAll()
         threadDraftCoordinators.forEach { $0.detach() }
         threadDraftCoordinators.removeAll()
         resolutionControlRows.removeAll()
@@ -488,7 +514,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         row.addArrangedSubview(queue)
         actionStack.addArrangedSubview(row)
 
-        let preferredTask = Task { [weak self, weak method] in
+        actionPresentationTasks.start { [weak self, weak method] in
             guard let preferred = await self?.session.preferredMergeMethod(),
                   !Task.isCancelled,
                   method?.hasUserSelected == false,
@@ -498,7 +524,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             else { return }
             method?.selectItem(at: index)
         }
-        actionPresentationTasks.append(preferredTask)
     }
 
     private func addPostMergeActions(_ workspace: RepositoryPullRequestReviewWorkspace) {
@@ -836,7 +861,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private func publishReply(threadID: ForgeObjectID, body: String) {
         guard replyWritesInFlight.insert(threadID).inserted else { return }
         renderThreadPresentation()
-        let task = Task { [weak self] in
+        tasks.start { [weak self] in
             guard let self else { return }
             defer {
                 replyWritesInFlight.remove(threadID)
@@ -855,7 +880,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 transientMessage = error.localizedDescription
             }
         }
-        tasks.append(task)
     }
 
     private func publishInline(anchor: ForgeReviewAnchor, body: String) {
@@ -877,7 +901,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         let destination = InlineWriteDestination(anchor: anchor, displayedHead: context.displayedHead)
         guard inlineWritesInFlight.insert(destination).inserted else { return }
         renderOverlay()
-        let task = Task { [weak self] in
+        tasks.start { [weak self] in
             guard let self else { return }
             defer {
                 inlineWritesInFlight.remove(destination)
@@ -905,7 +929,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 transientMessage = error.localizedDescription
             }
         }
-        tasks.append(task)
     }
 
     private func confirmPendingReanchor(
@@ -952,7 +975,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             try await session.saveReplyDraft(threadID: threadID, bodyMarkdown: body)
         }
         threadDraftCoordinators.append(coordinator)
-        let task = Task { [weak session = session, weak coordinator] in
+        threadDraftLoadTasks.start { [weak session = session, weak coordinator] in
             do {
                 let body = try await session?.loadReplyDraft(threadID: threadID) ?? ""
                 guard !Task.isCancelled else { return }
@@ -962,7 +985,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 // the current server workspace or discard entered text.
             }
         }
-        threadDraftLoadTasks.append(task)
         return coordinator
     }
 
@@ -982,7 +1004,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             )
         }
         overlayDraftCoordinators.append(coordinator)
-        let task = Task { [weak session = session, weak coordinator] in
+        overlayDraftLoadTasks.start { [weak session = session, weak coordinator] in
             do {
                 let body = try await session?.loadInlineDraft(context: context, anchor: anchor) ?? ""
                 guard !Task.isCancelled else { return }
@@ -992,7 +1014,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 // storage is temporarily unavailable.
             }
         }
-        overlayDraftLoadTasks.append(task)
         return (coordinator, context)
     }
 
@@ -1098,7 +1119,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         panelStack.addArrangedSubview(row)
         presentModal(panelStack, title: "Pull Request Review")
         modalDraftCoordinator = draftCoordinator
-        let task = Task {
+        tasks.start {
             [weak self, weak discard, weak draftCoordinator, weak textView = editor.textView, weak submit] in
             do {
                 let draft = try await self?.session.loadFormalReviewDraft(displayedHead: displayedHead) ?? ""
@@ -1112,7 +1133,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 self?.renderActionArea()
             }
         }
-        tasks.append(task)
     }
 
     private func prepareMerge(_ method: ForgePullRequestMergeMethod) {
@@ -1196,16 +1216,20 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         delete.setAccessibilityIdentifier(RepositoryPullRequestReviewAccessibility.mergeDeleteBranch)
         panelStack.addArrangedSubview(delete)
         let row = wrappingButtonRow()
-        row.addArrangedSubview(makeButton(
+        let cancelButton = makeButton(
             title: "Cancel",
             identifier: RepositoryPullRequestReviewAccessibility.mergeCancel
-        ) { [weak self] in self?.closeModal() })
-        row.addArrangedSubview(makeButton(
+        ) { [weak self] in self?.closeModal() }
+        row.addArrangedSubview(cancelButton)
+        weak var weakConfirmButton: NSButton?
+        let confirmButton = makeButton(
             title: "Confirm Merge",
             identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm
         ) { [weak self, weak title, weak textView = message.textView, weak delete] in
-            self?.perform {
-                guard let self else { return }
+            guard let self, let confirmButton = weakConfirmButton else { return }
+            self.performDestructiveConfirmation(
+                buttons: [confirmButton, cancelButton]
+            ) {
                 let completion = try await self.session.confirmMerge(
                     confirmation,
                     title: confirmation.method == .rebase ? nil : title?.stringValue,
@@ -1223,10 +1247,12 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 self.closeModal()
                 self.render()
             }
-        })
+        }
+        weakConfirmButton = confirmButton
+        row.addArrangedSubview(confirmButton)
         panelStack.addArrangedSubview(row)
         presentModal(panelStack, title: "Confirm Merge")
-        let task = Task { [weak self, weak delete] in
+        tasks.start { [weak self, weak delete] in
             let remembered = await self?.session.rememberedDeleteBranchChoice() ?? false
             guard !Task.isCancelled,
                   delete?.isEnabled == true,
@@ -1234,7 +1260,6 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             else { return }
             delete?.state = remembered ? .on : .off
         }
-        tasks.append(task)
     }
 
     private func confirmDeleteHeadBranch() {
@@ -1245,16 +1270,23 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             color: .systemOrange
         ))
         let row = wrappingButtonRow()
-        row.addArrangedSubview(makeButton(title: "Cancel", identifier: "GitX.PullRequest.Review.DeleteBranch.Cancel") {
+        let cancelButton = makeButton(title: "Cancel", identifier: "GitX.PullRequest.Review.DeleteBranch.Cancel") {
             [weak self] in self?.closeModal()
-        })
-        row.addArrangedSubview(makeButton(title: "Delete Branch", identifier: "GitX.PullRequest.Review.DeleteBranch.Confirm") {
+        }
+        row.addArrangedSubview(cancelButton)
+        weak var weakDeleteButton: NSButton?
+        let deleteButton = makeButton(title: "Delete Branch", identifier: "GitX.PullRequest.Review.DeleteBranch.Confirm") {
             [weak self] in
-            self?.perform {
-                try await self?.session.deleteHeadBranch()
-                self?.closeModal()
+            guard let self, let deleteButton = weakDeleteButton else { return }
+            self.performDestructiveConfirmation(
+                buttons: [deleteButton, cancelButton]
+            ) {
+                try await self.session.deleteHeadBranch()
+                self.closeModal()
             }
-        })
+        }
+        weakDeleteButton = deleteButton
+        row.addArrangedSubview(deleteButton)
         panelStack.addArrangedSubview(row)
         presentModal(panelStack, title: "Delete Head Branch")
     }
@@ -1274,7 +1306,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     }
 
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {
-        let task = Task { [weak self] in
+        tasks.start { [weak self] in
             do {
                 try await operation()
             } catch is CancellationError {
@@ -1289,7 +1321,29 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                 self?.render()
             }
         }
-        tasks.append(task)
+    }
+
+    private func performDestructiveConfirmation(
+        buttons: [NSButton],
+        operation: @escaping @MainActor () async throws -> Void
+    ) {
+        guard !destructiveConfirmationInFlight else { return }
+        destructiveConfirmationInFlight = true
+        buttons.forEach { $0.isEnabled = false }
+        perform { [weak self] in
+            guard let self else { return }
+            // The authorization-recovery path may invoke this same operation
+            // again, so re-establish the guard before every dispatch.
+            destructiveConfirmationInFlight = true
+            buttons.forEach { $0.isEnabled = false }
+            defer {
+                destructiveConfirmationInFlight = false
+                if modalPanel != nil || embeddedModalView != nil {
+                    buttons.forEach { $0.isEnabled = true }
+                }
+            }
+            try await operation()
+        }
     }
 
     // MARK: - AppKit helpers

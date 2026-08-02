@@ -704,7 +704,7 @@ struct ForgeReadSurfaceRow: Equatable, Sendable {
         case let .issue(summary):
             number = "#\(summary.number.rawValue)"
             title = summary.title
-            state = summary.state == .open ? "Open" : "Closed"
+            state = Self.issueState(summary.state)
             author = Self.authorName(summary.author)
             updatedAt = summary.updatedAt
             labels = Self.labelNames(summary.labels)
@@ -721,6 +721,15 @@ struct ForgeReadSurfaceRow: Equatable, Sendable {
         case .open: return "Open"
         case .closed: return "Closed"
         case .merged: return "Merged"
+        case .unknown: return "Unknown"
+        }
+    }
+
+    private static func issueState(_ state: ForgeIssueState) -> String {
+        switch state {
+        case .open: "Open"
+        case .closed: "Closed"
+        case .unknown: "Unknown"
         }
     }
 
@@ -1085,7 +1094,7 @@ enum ForgeReadInspectorPresenter {
         return ForgeReadInspectorPresentation(
             item: .issue(summary),
             title: summary.title,
-            subtitle: "Issue #\(summary.number.rawValue) • \(summary.state == .open ? "Open" : "Closed")",
+            subtitle: "Issue #\(summary.number.rawValue) • \(issueState(summary.state))",
             author: actor(summary.author),
             metadata: metadata,
             bodyMarkdown: body.value,
@@ -1125,7 +1134,7 @@ enum ForgeReadInspectorPresenter {
     }
 
     private static func branchesMetadata(
-        head: ForgeReadSection<ForgeBranchReference>,
+        head: ForgeReadSection<ForgePullRequestHead>,
         base: ForgeReadSection<ForgeBranchReference>
     ) -> ForgeReadInspectorMetadata {
         switch (head, base) {
@@ -1311,6 +1320,15 @@ enum ForgeReadInspectorPresenter {
         case .open: return "Open"
         case .closed: return "Closed"
         case .merged: return "Merged"
+        case .unknown: return "Unknown"
+        }
+    }
+
+    private static func issueState(_ state: ForgeIssueState) -> String {
+        switch state {
+        case .open: "Open"
+        case .closed: "Closed"
+        case .unknown: "Unknown"
         }
     }
 

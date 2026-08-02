@@ -1228,11 +1228,11 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
             isDraft: false,
             title: "Pull request \(number)",
             author: .unavailable(.notRequested),
-            head: .available(ForgeBranchReference(
+            head: .available(ForgePullRequestHead(reference: ForgeBranchReference(
                 repository: repository,
                 name: ForgeRefName("topic-\(number)"),
                 commit: commit
-            )),
+            ))),
             base: .available(ForgeBranchReference(
                 repository: repository,
                 name: ForgeRefName("main"),

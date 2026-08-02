@@ -485,18 +485,7 @@ actor ForgeAccountsService: ForgeAccountsClient {
     ) async throws {
         guard let database = services.database else { return }
         let persistence = ForgeSQLiteAttentionPersistence(store: database)
-        let watches = try await persistence.watchedRepositories(accountID: key.accountID)
-        guard let current = watches.first(where: { $0.key == key }) else {
-            throw ForgeAttentionInboxError.missingWatchedRepository
-        }
-        try await persistence.save(ForgeWatchedRepository(
-            key: current.key,
-            addedAt: current.addedAt,
-            source: current.source,
-            includesBotReplies: enabled,
-            baselineEstablishedAt: current.baselineEstablishedAt,
-            lastSuccessfulPollAt: current.lastSuccessfulPollAt
-        ))
+        try await persistence.setIncludesBotReplies(enabled, for: key)
         await Self.notifyAttentionChanged()
         logger.notice("Updated per-repository Attention bot-reply policy")
     }

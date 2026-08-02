@@ -147,6 +147,13 @@ final class RepositoryForgeCoordinator: NSObject {
 
     private let repository: PBGitRepository
     private let settings: RepositoryUISettings
+    private let remoteDescriptorCache: RepositoryForgeRemoteDescriptorCache
+    private let remoteCacheKey: String
+    private let remoteConfigurationRevision: () -> String
+    private let remoteConfigurationDependencies: () -> [String]
+    private let remoteDependencyRevision: (String) -> String
+    private let remoteNames: () -> [String]?
+    private let remoteURL: (String) -> String?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryForge")
 
     @objc(initWithRepository:)
@@ -160,6 +167,36 @@ final class RepositoryForgeCoordinator: NSObject {
     init(repository: PBGitRepository, settings: RepositoryUISettings) {
         self.repository = repository
         self.settings = settings
+        remoteDescriptorCache = .shared
+        remoteCacheKey = Self.remoteCacheKey(for: repository)
+        remoteConfigurationRevision = { Self.remoteConfigurationRevision(for: repository) }
+        remoteConfigurationDependencies = { Self.remoteConfigurationDependencies(for: repository) }
+        remoteDependencyRevision = Self.configurationFileRevision
+        remoteNames = { repository.remotes() }
+        remoteURL = { name in Self.remoteURL(for: name, repository: repository) }
+        super.init()
+    }
+
+    init(
+        repository: PBGitRepository,
+        settings: RepositoryUISettings,
+        remoteDescriptorCache: RepositoryForgeRemoteDescriptorCache,
+        remoteCacheKey: String,
+        remoteConfigurationRevision: @escaping () -> String,
+        remoteConfigurationDependencies: @escaping () -> [String] = { [] },
+        remoteDependencyRevision: @escaping (String) -> String = { _ in "" },
+        remoteNames: @escaping () -> [String]?,
+        remoteURL: @escaping (String) -> String?
+    ) {
+        self.repository = repository
+        self.settings = settings
+        self.remoteDescriptorCache = remoteDescriptorCache
+        self.remoteCacheKey = remoteCacheKey
+        self.remoteConfigurationRevision = remoteConfigurationRevision
+        self.remoteConfigurationDependencies = remoteConfigurationDependencies
+        self.remoteDependencyRevision = remoteDependencyRevision
+        self.remoteNames = remoteNames
+        self.remoteURL = remoteURL
         super.init()
     }
 
@@ -374,19 +411,31 @@ final class RepositoryForgeCoordinator: NSObject {
     }
 
     private func remoteCandidates() -> [RepositoryForgeBindingCandidate] {
-        let names = (repository.remotes() ?? []).sorted {
-            $0.localizedStandardCompare($1) == .orderedAscending
+        let revision = remoteConfigurationRevision()
+        let load = RepositoryForgeRemoteDescriptorLoader(cache: remoteDescriptorCache).load(
+            cacheKey: remoteCacheKey,
+            revision: revision,
+            remoteNames: remoteNames,
+            remoteURL: remoteURL,
+            dependencyPaths: remoteConfigurationDependencies,
+            dependencyRevision: remoteDependencyRevision
+        )
+        if load.reusedCache {
+            logger.debug("Reused cached Forge remote descriptors count=\(load.descriptors.count, privacy: .public)")
+        } else {
+            logger.debug(
+                "Loaded Forge remote descriptors count=\(load.descriptors.count, privacy: .public) cacheable=\(load.isCacheable, privacy: .public)"
+            )
         }
         var candidates: [RepositoryForgeBindingCandidate] = []
         var rejectedCount = 0
-        for name in names {
-            guard let remoteURL = remoteURL(for: name),
-                  let parsed = try? ForgeRemoteParser.parse(remoteURL),
+        for descriptor in load.descriptors {
+            guard let parsed = try? ForgeRemoteParser.parse(descriptor.url),
                   let candidate = try? ForgeRepositoryCandidate(
-                      remoteName: name,
+                      remoteName: descriptor.name,
                       repository: parsed.repository,
                       confidence: .high,
-                      relationship: name.caseInsensitiveCompare("upstream") == .orderedSame
+                      relationship: descriptor.name.caseInsensitiveCompare("upstream") == .orderedSame
                           ? .upstream
                           : .unknown
                   )
@@ -396,7 +445,7 @@ final class RepositoryForgeCoordinator: NSObject {
             }
             candidates.append(RepositoryForgeBindingCandidate(
                 candidate: candidate,
-                originalRemoteURL: remoteURL
+                originalRemoteURL: descriptor.url
             ))
         }
         logger.debug(
@@ -405,10 +454,102 @@ final class RepositoryForgeCoordinator: NSObject {
         return candidates
     }
 
-    private func remoteURL(for name: String) -> String? {
+    private static func remoteURL(for name: String, repository: PBGitRepository) -> String? {
         let output = try? repository.outputOfTask(withArguments: ["remote", "get-url", name])
         let value = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : value
+    }
+
+    static func remoteCacheKey(for repository: PBGitRepository) -> String {
+        if let gitURL = repository.gitURL() {
+            return gitURL.standardizedFileURL.resolvingSymlinksInPath().path
+        }
+        if let workingDirectoryURL = repository.workingDirectoryURL() {
+            return workingDirectoryURL.standardizedFileURL.resolvingSymlinksInPath().path
+        }
+        return "repository-object-\(ObjectIdentifier(repository))"
+    }
+
+    private static func remoteConfigurationRevision(for repository: PBGitRepository) -> String {
+        guard let gitURL = repository.gitURL()?.standardizedFileURL else { return "missing-git-directory" }
+        let commonDirectoryMarker = gitURL.appendingPathComponent("commondir", isDirectory: false)
+        var configurationURLs = [
+            gitURL.appendingPathComponent("config", isDirectory: false),
+            gitURL.appendingPathComponent("config.worktree", isDirectory: false),
+            commonDirectoryMarker,
+            gitURL.appendingPathComponent("HEAD", isDirectory: false),
+        ]
+        if let rawCommonDirectory = try? String(contentsOf: commonDirectoryMarker, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !rawCommonDirectory.isEmpty
+        {
+            let commonDirectory: URL = if NSString(string: rawCommonDirectory).isAbsolutePath {
+                URL(fileURLWithPath: rawCommonDirectory, isDirectory: true)
+            } else {
+                gitURL.appendingPathComponent(rawCommonDirectory, isDirectory: true)
+            }
+            configurationURLs.append(commonDirectory.appendingPathComponent("config", isDirectory: false))
+            configurationURLs.append(commonDirectory.appendingPathComponent("config.worktree", isDirectory: false))
+            configurationURLs.append(commonDirectory.appendingPathComponent("HEAD", isDirectory: false))
+        }
+
+        return Set(configurationURLs.map { $0.standardizedFileURL.resolvingSymlinksInPath().path })
+            .sorted()
+            .map(configurationFileRevision)
+            .joined(separator: "|")
+    }
+
+    private static func remoteConfigurationDependencies(for repository: PBGitRepository) -> [String] {
+        var paths = [
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".gitconfig", isDirectory: false).path,
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".config/git/config", isDirectory: false).path,
+            "/etc/gitconfig",
+        ]
+        guard let output = try? repository.outputOfTask(
+            withArguments: ["config", "--show-origin", "--null", "--list"]
+        ) else { return paths }
+        let fields = output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
+        var index = 0
+        while index + 1 < fields.count {
+            let origin = fields[index]
+            let setting = fields[index + 1]
+            index += 2
+            guard origin.hasPrefix("file:") else { continue }
+            let originPath = String(origin.dropFirst("file:".count))
+            paths.append(originPath)
+            guard let newline = setting.firstIndex(of: "\n") else { continue }
+            let name = setting[..<newline].lowercased()
+            guard name == "include.path" || (name.hasPrefix("includeif.") && name.hasSuffix(".path")) else {
+                continue
+            }
+            let rawPath = String(setting[setting.index(after: newline)...])
+            guard !rawPath.isEmpty else { continue }
+            let expandedPath = NSString(string: rawPath).expandingTildeInPath
+            if NSString(string: expandedPath).isAbsolutePath {
+                paths.append(expandedPath)
+            } else {
+                paths.append(
+                    URL(fileURLWithPath: originPath)
+                        .deletingLastPathComponent()
+                        .appendingPathComponent(expandedPath)
+                        .standardizedFileURL.path
+                )
+            }
+        }
+        return Array(Set(paths)).sorted()
+    }
+
+    private static func configurationFileRevision(_ path: String) -> String {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
+            return "\(path):missing"
+        }
+        let modificationBits = (attributes[.modificationDate] as? Date)?
+            .timeIntervalSinceReferenceDate.bitPattern ?? 0
+        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        let fileNumber = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+        return "\(path):\(modificationBits):\(size):\(fileNumber)"
     }
 
     private func route(

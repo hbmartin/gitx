@@ -274,11 +274,12 @@ public enum ForgeDuplicatePullRequestPolicy {
                 guard summary.repository == key.repository,
                       summary.state == .open,
                       case let .available(base) = summary.base,
-                      case let .available(head) = summary.head
+                      case let .available(head) = summary.head,
+                      let headRepository = head.repository
                 else { return false }
                 return base.repository == key.baseRepository
                     && base.name == key.base
-                    && head.repository == key.headRepository
+                    && headRepository == key.headRepository
                     && head.name == key.head
             }
             .sorted {
@@ -586,7 +587,9 @@ public enum ForgePullRequestCheckoutPolicy {
         headRemoteURL: URL
     ) throws -> ForgePullRequestCheckoutPlan {
         guard workingState.isClean else { throw ForgePullRequestWorkflowError.unsafeWorkingState }
-        guard case let .available(head) = pullRequest.head else {
+        guard case let .available(headValue) = pullRequest.head,
+              let head = headValue.reference
+        else {
             throw ForgePullRequestWorkflowError.headReferenceUnavailable
         }
         let remote: ForgeGitRemote

@@ -595,11 +595,11 @@ final class ForgePullRequestWorkflowTests: XCTestCase {
             isDraft: false,
             title: "GitLab Pull Request",
             author: .unavailable(.notRequested),
-            head: .available(ForgeBranchReference(
+            head: .available(ForgePullRequestHead(reference: ForgeBranchReference(
                 repository: gitLabFork,
                 name: ForgeRefName("feature"),
                 commit: fixture.headCommit
-            )),
+            ))),
             base: .unavailable(.notRequested),
             createdAt: Date(timeIntervalSince1970: 1),
             updatedAt: Date(timeIntervalSince1970: 2),
@@ -831,10 +831,10 @@ private struct Fixture {
         state: ForgePullRequestState = .open,
         updatedAt: Date = Date(timeIntervalSince1970: 20),
         base: ForgeReadSection<ForgeBranchReference>? = nil,
-        head: ForgeReadSection<ForgeBranchReference>? = nil
+        head: ForgeReadSection<ForgePullRequestHead>? = nil
     ) throws -> ForgePullRequestSummary {
         let baseValue = base ?? .available(self.base)
-        let headValue = head ?? .available(self.head)
+        let headValue = head ?? .available(ForgePullRequestHead(reference: self.head))
         return try ForgePullRequestSummary(
             repository: repository,
             number: ForgeItemNumber(number),

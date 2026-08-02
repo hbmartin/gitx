@@ -1,5 +1,6 @@
 @testable import ForgeKit
 import Foundation
+import SQLite3
 import XCTest
 
 final class ForgeAttentionInboxTests: XCTestCase {
@@ -130,8 +131,10 @@ final class ForgeAttentionInboxTests: XCTestCase {
                 .mismatchedSubject,
                 .missingWatchedRepository,
                 .corruptPersistenceRecord,
+                .duplicateAttentionRecord,
+                .staleRefreshGeneration,
             ].compactMap(\.errorDescription).count,
-            5
+            7
         )
         let fixture = try Fixture()
         let encoded = try JSONEncoder().encode(fixture.watch)
@@ -205,6 +208,52 @@ final class ForgeAttentionInboxTests: XCTestCase {
         )) {
             XCTAssertEqual($0 as? ForgeAttentionInboxError, .mismatchedViewerForge)
         }
+    }
+
+    func testReconciliationRejectsDuplicateDurableRecordIdentitiesWithoutTrapping() throws {
+        let fixture = try Fixture()
+        let duplicate = try fixture.record(kind: .mention, subject: "duplicate", at: 10)
+        let conflicting = try ForgeAttentionRecord(
+            item: duplicate.item,
+            sourceIdentifier: ForgeAttentionSubjectID("conflicting-source"),
+            sourceOccurredAt: fixture.date(11)
+        )
+        let snapshot = ForgeAttentionRepositorySnapshot(
+            watchedRepositoryKey: fixture.watch.key,
+            viewer: fixture.viewer,
+            candidates: [],
+            fetchedAt: fixture.date(20),
+            completeness: .complete
+        )
+
+        for records in [[duplicate, duplicate], [duplicate, conflicting]] {
+            XCTAssertThrowsError(try ForgeAttentionReconciler.reconcile(
+                snapshot,
+                watchedRepository: fixture.watch,
+                existingRecords: records
+            )) {
+                XCTAssertEqual($0 as? ForgeAttentionInboxError, .duplicateAttentionRecord)
+            }
+        }
+    }
+
+    func testAuthoredFailedCheckDoesNotTreatTeamReviewRequestAsViewerRequest() throws {
+        let fixture = try Fixture()
+        let team = try ForgeTeam(
+            id: ForgeObjectID(forge: fixture.repository.forge, value: "team-only"),
+            name: "Review Team",
+            slug: "review-team"
+        )
+        let candidate = try fixture.pullRequestCandidate(
+            requestedReviewers: [.team(team)],
+            checkRollup: .failed,
+            author: fixture.viewer
+        )
+
+        let result = try reconcile(fixture: fixture, candidate: candidate, watch: fixture.watch, at: 20)
+
+        XCTAssertEqual(result.records.map(\.item.id.kind), [.failedCheck])
+        XCTAssertTrue(result.records.allSatisfy(\.item.authoredPullRequestFailedCheck))
     }
 
     func testReconciliationCoversProviderPartialActorsTeamsTiesAndStableSorting() throws {
@@ -848,6 +897,457 @@ final class ForgeAttentionInboxTests: XCTestCase {
         XCTAssertEqual(requestedKeys.count, 2)
     }
 
+    func testInFlightRefreshPreservesSeenStateWrittenThroughAnotherCoordinator() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let store = try ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        let refreshPersistence = ForgeSQLiteAttentionPersistence(store: store)
+        let mutationPersistence = ForgeSQLiteAttentionPersistence(store: store)
+        let establishedWatch = ForgeWatchedRepository(
+            key: fixture.watch.key,
+            addedAt: fixture.watch.addedAt,
+            source: fixture.watch.source,
+            baselineEstablishedAt: fixture.date(1),
+            lastSuccessfulPollAt: fixture.date(1)
+        )
+        try await refreshPersistence.save(establishedWatch)
+        let candidate = try fixture.issueCandidate(assignees: [fixture.viewer])
+        let baseline = try ForgeAttentionReconciler.reconcile(
+            ForgeAttentionRepositorySnapshot(
+                watchedRepositoryKey: fixture.watch.key,
+                viewer: fixture.viewer,
+                candidates: [candidate],
+                fetchedAt: fixture.date(20),
+                completeness: .complete
+            ),
+            watchedRepository: establishedWatch,
+            existingRecords: []
+        )
+        try await refreshPersistence.persist(baseline)
+        let itemID = try XCTUnwrap(baseline.records.first?.item.id)
+        let fetcher = GatedSnapshotFetcher(snapshot: ForgeAttentionRepositorySnapshot(
+            watchedRepositoryKey: fixture.watch.key,
+            viewer: fixture.viewer,
+            candidates: [candidate],
+            fetchedAt: fixture.date(50),
+            completeness: .complete
+        ))
+        let refreshCoordinator = ForgeAttentionInboxCoordinator(
+            persistence: refreshPersistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+        let mutationCoordinator = ForgeAttentionInboxCoordinator(
+            persistence: mutationPersistence,
+            fetcher: SnapshotFetcher(snapshots: []),
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+
+        let refresh = Task { try await refreshCoordinator.refresh(fixture.watch.key) }
+        defer {
+            refresh.cancel()
+            Task { await fetcher.release() }
+        }
+        try await fetcher.waitUntilRequested()
+        _ = try await mutationCoordinator.handle(action: .markSeen, itemID: itemID, at: fixture.date(40))
+        await fetcher.release()
+        let reconciliation = try await refresh.value
+
+        let stored = try await mutationPersistence.record(itemID)
+        XCTAssertEqual(stored?.item.seenState, .seen(at: fixture.date(40)))
+        XCTAssertEqual(reconciliation.records.first?.item.seenState, .seen(at: fixture.date(40)))
+    }
+
+    func testInFlightRefreshCannotResurrectWatchRemovedThroughAnotherPersistenceInstance() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let store = try ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        let refreshPersistence = ForgeSQLiteAttentionPersistence(store: store)
+        let preferencesPersistence = ForgeSQLiteAttentionPersistence(store: store)
+        try await refreshPersistence.save(fixture.watch)
+        let fetcher = GatedSnapshotFetcher(snapshot: ForgeAttentionRepositorySnapshot(
+            watchedRepositoryKey: fixture.watch.key,
+            viewer: fixture.viewer,
+            candidates: [],
+            fetchedAt: fixture.date(20),
+            completeness: .complete
+        ))
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: refreshPersistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+
+        let refresh = Task { try await coordinator.refresh(fixture.watch.key) }
+        defer {
+            refresh.cancel()
+            Task { await fetcher.release() }
+        }
+        try await fetcher.waitUntilRequested()
+        try await preferencesPersistence.removeWatchedRepository(fixture.watch.key)
+        await fetcher.release()
+        do {
+            _ = try await refresh.value
+            XCTFail("An unwatched repository must reject its in-flight refresh")
+        } catch {
+            XCTAssertEqual(error as? ForgeAttentionInboxError, .missingWatchedRepository)
+        }
+
+        let watches = try await refreshPersistence.watchedRepositories(accountID: fixture.accountID)
+        let records = try await refreshPersistence.records(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            at: fixture.date(21)
+        )
+        XCTAssertTrue(watches.isEmpty)
+        XCTAssertTrue(records.isEmpty)
+    }
+
+    func testInFlightRefreshPreservesBotReplyPolicyWrittenThroughAnotherPersistenceInstance() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let store = try ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        let refreshPersistence = ForgeSQLiteAttentionPersistence(store: store)
+        let preferencesPersistence = ForgeSQLiteAttentionPersistence(store: store)
+        try await refreshPersistence.save(fixture.watch)
+        let fetcher = GatedSnapshotFetcher(snapshot: ForgeAttentionRepositorySnapshot(
+            watchedRepositoryKey: fixture.watch.key,
+            viewer: fixture.viewer,
+            candidates: [],
+            fetchedAt: fixture.date(20),
+            completeness: .complete
+        ))
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: refreshPersistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+
+        let refresh = Task { try await coordinator.refresh(fixture.watch.key) }
+        defer {
+            refresh.cancel()
+            Task { await fetcher.release() }
+        }
+        try await fetcher.waitUntilRequested()
+        let updated = try await preferencesPersistence.setIncludesBotReplies(true, for: fixture.watch.key)
+        XCTAssertTrue(updated.includesBotReplies)
+        await fetcher.release()
+        _ = try await refresh.value
+
+        let storedWatch = try await refreshPersistence.watchedRepositories(accountID: fixture.accountID).first
+        XCTAssertTrue(try XCTUnwrap(storedWatch).includesBotReplies)
+        XCTAssertEqual(storedWatch?.lastSuccessfulPollAt, fixture.date(20))
+    }
+
+    func testBotReplyPolicyMutationCannotResurrectRemovedWatch() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let store = try ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        let persistence = ForgeSQLiteAttentionPersistence(store: store)
+        try await persistence.save(fixture.watch)
+
+        try await ForgeSQLiteAttentionPersistence(store: store).removeWatchedRepository(fixture.watch.key)
+        do {
+            _ = try await persistence.setIncludesBotReplies(true, for: fixture.watch.key)
+            XCTFail("A removed watch must not be recreated by a stale preferences mutation")
+        } catch {
+            XCTAssertEqual(error as? ForgeAttentionInboxError, .missingWatchedRepository)
+        }
+        let remainingWatches = try await persistence.watchedRepositories(accountID: fixture.accountID)
+        XCTAssertTrue(remainingWatches.isEmpty)
+    }
+
+    func testPublicPersistKeepsEstablishedBaselineMonotonic() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        )
+        try await persistence.save(fixture.watch)
+        let complete = try ForgeAttentionReconciler.reconcile(
+            ForgeAttentionRepositorySnapshot(
+                watchedRepositoryKey: fixture.watch.key,
+                viewer: fixture.viewer,
+                candidates: [],
+                fetchedAt: fixture.date(20),
+                completeness: .complete
+            ),
+            watchedRepository: fixture.watch,
+            existingRecords: []
+        )
+        let stalePartial = try ForgeAttentionReconciler.reconcile(
+            ForgeAttentionRepositorySnapshot(
+                watchedRepositoryKey: fixture.watch.key,
+                viewer: fixture.viewer,
+                candidates: [],
+                fetchedAt: fixture.date(30),
+                completeness: .partial(unavailableSections: [.timeline])
+            ),
+            watchedRepository: fixture.watch,
+            existingRecords: []
+        )
+
+        try await persistence.persist(complete)
+        try await persistence.persist(stalePartial)
+
+        let storedWatches = try await persistence.watchedRepositories(accountID: fixture.accountID)
+        let storedWatch = try XCTUnwrap(storedWatches.first)
+        XCTAssertEqual(storedWatch.baselineEstablishedAt, fixture.date(20))
+        XCTAssertEqual(storedWatch.lastSuccessfulPollAt, fixture.date(30))
+    }
+
+    func testPublicPersistRejectsMissingWatchAndStaleGeneration() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        )
+        let reconciliation = try ForgeAttentionReconciler.reconcile(
+            ForgeAttentionRepositorySnapshot(
+                watchedRepositoryKey: fixture.watch.key,
+                viewer: fixture.viewer,
+                candidates: [],
+                fetchedAt: fixture.date(20),
+                completeness: .complete
+            ),
+            watchedRepository: fixture.watch,
+            existingRecords: []
+        )
+
+        do {
+            try await persistence.persist(reconciliation)
+            XCTFail("Persisting cannot recreate a missing watch")
+        } catch {
+            XCTAssertEqual(error as? ForgeAttentionInboxError, .missingWatchedRepository)
+        }
+
+        try await persistence.save(fixture.watch.recordingSuccessfulPoll(
+            at: fixture.date(30),
+            establishesBaseline: true
+        ))
+        do {
+            try await persistence.persist(reconciliation)
+            XCTFail("An older public reconciliation must not overwrite a newer generation")
+        } catch {
+            XCTAssertEqual(error as? ForgeAttentionInboxError, .staleRefreshGeneration)
+        }
+    }
+
+    func testPersistenceSortsTiedTransitionsBySubjectAcrossReadsAndReconciliation() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        )
+        let zulu = try fixture.record(kind: .mention, subject: "zulu", at: 10)
+        let alpha = try fixture.record(kind: .reply, subject: "alpha", at: 10)
+        try await persistence.save(fixture.watch)
+        try await persistence.save([zulu, alpha])
+
+        let loaded = try await persistence.records(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            at: fixture.date(11)
+        )
+        XCTAssertEqual(loaded.map(\.item.id.subjectID.value), ["alpha", "zulu"])
+
+        let reconciled = try await persistence.reconcileAndPersist(
+            ForgeAttentionRepositorySnapshot(
+                watchedRepositoryKey: fixture.watch.key,
+                viewer: fixture.viewer,
+                candidates: [],
+                fetchedAt: fixture.date(20),
+                completeness: .partial(unavailableSections: [.timeline])
+            ),
+            policy: .defaultValue
+        )
+        XCTAssertEqual(reconciled.records.map(\.item.id.subjectID.value), ["alpha", "zulu"])
+    }
+
+    func testOlderCrossCoordinatorRefreshCannotOverwriteNewerCommittedGeneration() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let store = try ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        let persistence = ForgeSQLiteAttentionPersistence(store: store)
+        try await persistence.save(fixture.watch)
+        let olderFetcher = GatedSnapshotFetcher(snapshot: ForgeAttentionRepositorySnapshot(
+            watchedRepositoryKey: fixture.watch.key,
+            viewer: fixture.viewer,
+            candidates: [],
+            fetchedAt: fixture.date(20),
+            completeness: .complete
+        ))
+        let olderCoordinator = ForgeAttentionInboxCoordinator(
+            persistence: ForgeSQLiteAttentionPersistence(store: store),
+            fetcher: olderFetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+        let newerCoordinator = ForgeAttentionInboxCoordinator(
+            persistence: ForgeSQLiteAttentionPersistence(store: store),
+            fetcher: SnapshotFetcher(snapshots: [ForgeAttentionRepositorySnapshot(
+                watchedRepositoryKey: fixture.watch.key,
+                viewer: fixture.viewer,
+                candidates: [],
+                fetchedAt: fixture.date(30),
+                completeness: .complete
+            )]),
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false)
+        )
+
+        let olderRefresh = Task { try await olderCoordinator.refresh(fixture.watch.key) }
+        defer {
+            olderRefresh.cancel()
+            Task { await olderFetcher.release() }
+        }
+        try await olderFetcher.waitUntilRequested()
+        _ = try await newerCoordinator.refresh(fixture.watch.key)
+        await olderFetcher.release()
+        do {
+            _ = try await olderRefresh.value
+            XCTFail("An older cross-coordinator generation must not commit after a newer one")
+        } catch {
+            XCTAssertEqual(error as? ForgeAttentionInboxError, .staleRefreshGeneration)
+        }
+
+        let storedWatch = try await persistence.watchedRepositories(accountID: fixture.accountID).first
+        XCTAssertEqual(storedWatch?.lastSuccessfulPollAt, fixture.date(30))
+        do {
+            _ = try await persistence.reconcileAndPersist(
+                ForgeAttentionRepositorySnapshot(
+                    watchedRepositoryKey: fixture.watch.key,
+                    viewer: fixture.viewer,
+                    candidates: [],
+                    fetchedAt: fixture.date(30),
+                    completeness: .complete
+                ),
+                policy: ForgeAttentionPolicy()
+            )
+            XCTFail("An equal refresh generation must not overwrite the committed result")
+        } catch {
+            XCTAssertEqual(error as? ForgeAttentionInboxError, .staleRefreshGeneration)
+        }
+    }
+
+    func testReconciliationRollsBackBaselineWhenDurableRecordWriteFails() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let store = try ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        let persistence = ForgeSQLiteAttentionPersistence(store: store)
+        try await persistence.save(fixture.watch)
+        let candidate = try fixture.issueCandidate(assignees: [fixture.viewer])
+        let snapshot = ForgeAttentionRepositorySnapshot(
+            watchedRepositoryKey: fixture.watch.key,
+            viewer: fixture.viewer,
+            candidates: [candidate],
+            fetchedAt: fixture.date(20),
+            completeness: .complete
+        )
+        let reconciliation = try ForgeAttentionReconciler.reconcile(
+            snapshot,
+            watchedRepository: fixture.watch,
+            existingRecords: []
+        )
+        try executeSQLite(
+            """
+            CREATE TRIGGER fail_attention_record
+            BEFORE INSERT ON forge_durable_records
+            WHEN NEW.kind = 3
+            BEGIN
+                SELECT RAISE(ABORT, 'forced attention record failure');
+            END
+            """,
+            at: sqliteFixture.configuration.databaseURL
+        )
+
+        await XCTAssertThrowsErrorAsync {
+            try await persistence.persist(reconciliation)
+        }
+        let watchAfterFailure = try await persistence.watchedRepositories(accountID: fixture.accountID).first
+        let recordsAfterFailure = try await persistence.records(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            at: fixture.date(21)
+        )
+        XCTAssertNil(watchAfterFailure?.baselineEstablishedAt)
+        XCTAssertNil(watchAfterFailure?.lastSuccessfulPollAt)
+        XCTAssertTrue(recordsAfterFailure.isEmpty)
+
+        try executeSQLite("DROP TRIGGER fail_attention_record", at: sqliteFixture.configuration.databaseURL)
+        let alerts = AlertDelivery(authorization: .authorized, requestResult: true)
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: SnapshotFetcher(snapshots: [ForgeAttentionRepositorySnapshot(
+                watchedRepositoryKey: fixture.watch.key,
+                viewer: fixture.viewer,
+                candidates: [candidate],
+                fetchedAt: fixture.date(30),
+                completeness: .complete
+            )]),
+            alertDelivery: alerts,
+            enabledAlertCategories: [.assignments]
+        )
+        _ = try await coordinator.refresh(fixture.watch.key)
+        let delivered = await alerts.delivered
+        XCTAssertTrue(delivered.isEmpty, "A rolled-back first baseline must not become a notification storm")
+    }
+
+    func testReconciliationRollsBackWatchAndRecordsWhenCacheWriteFails() async throws {
+        let fixture = try Fixture()
+        let sqliteFixture = try SQLiteFixture()
+        defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
+        let store = try ForgeSQLiteStore(configuration: sqliteFixture.configuration)
+        let persistence = ForgeSQLiteAttentionPersistence(store: store)
+        try await persistence.save(fixture.watch)
+        let candidate = try fixture.issueCandidate(assignees: [fixture.viewer])
+        let reconciliation = try ForgeAttentionReconciler.reconcile(
+            ForgeAttentionRepositorySnapshot(
+                watchedRepositoryKey: fixture.watch.key,
+                viewer: fixture.viewer,
+                candidates: [candidate],
+                fetchedAt: fixture.date(20),
+                completeness: .complete
+            ),
+            watchedRepository: fixture.watch,
+            existingRecords: []
+        )
+        try executeSQLite(
+            """
+            CREATE TRIGGER fail_attention_cache
+            BEFORE INSERT ON forge_cache_entries
+            BEGIN
+                SELECT RAISE(ABORT, 'forced attention cache failure');
+            END
+            """,
+            at: sqliteFixture.configuration.databaseURL
+        )
+
+        await XCTAssertThrowsErrorAsync {
+            try await persistence.persist(reconciliation)
+        }
+        let watchAfterFailure = try await persistence.watchedRepositories(accountID: fixture.accountID).first
+        let recordsAfterFailure = try await persistence.records(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            at: fixture.date(21)
+        )
+        XCTAssertNil(watchAfterFailure?.baselineEstablishedAt)
+        XCTAssertNil(watchAfterFailure?.lastSuccessfulPollAt)
+        XCTAssertTrue(recordsAfterFailure.isEmpty)
+        XCTAssertEqual(
+            try sqliteScalar("SELECT COUNT(*) FROM forge_cache_entries", at: sqliteFixture.configuration.databaseURL),
+            0
+        )
+    }
+
     func testCoordinatorManualRefreshAttemptsEveryWatchPersistsLaterSuccessAndThrowsFirstFailure() async throws {
         let fixture = try Fixture()
         let secondRepository = try TestSupport.repository(owner: "z-second")
@@ -1262,6 +1762,47 @@ private actor SnapshotFetcher: ForgeAttentionSnapshotFetching {
     }
 }
 
+private actor GatedSnapshotFetcher: ForgeAttentionSnapshotFetching {
+    private enum Failure: Error {
+        case requestTimedOut
+    }
+
+    private let value: ForgeAttentionRepositorySnapshot
+    private var requested = false
+    private var released = false
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    init(snapshot: ForgeAttentionRepositorySnapshot) {
+        value = snapshot
+    }
+
+    func snapshot(for _: ForgeWatchedRepository) async throws -> ForgeAttentionRepositorySnapshot {
+        requested = true
+        if !released {
+            await withCheckedContinuation { releaseWaiter = $0 }
+        }
+        return value
+    }
+
+    func waitUntilRequested() async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while !requested {
+            guard clock.now < deadline else {
+                release()
+                throw Failure.requestTimedOut
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    func release() {
+        released = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
 private actor CancellingSnapshotFetcher: ForgeAttentionSnapshotFetching {
     private(set) var requestedKeys: [ForgeWatchedRepositoryKey] = []
 
@@ -1335,4 +1876,42 @@ private func XCTAssertThrowsErrorAsync(
         try await expression()
         XCTFail("Expected an error", file: file, line: line)
     } catch {}
+}
+
+private func executeSQLite(_ sql: String, at url: URL) throws {
+    var database: OpaquePointer?
+    guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+        throw SQLiteTestError.open
+    }
+    defer { sqlite3_close(database) }
+    var message: UnsafeMutablePointer<CChar>?
+    let result = sqlite3_exec(database, sql, nil, nil, &message)
+    defer { sqlite3_free(message) }
+    guard result == SQLITE_OK else {
+        throw SQLiteTestError.execute(message.map { String(cString: $0) } ?? "SQLite error \(result)")
+    }
+}
+
+private func sqliteScalar(_ sql: String, at url: URL) throws -> Int64 {
+    var database: OpaquePointer?
+    guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+        throw SQLiteTestError.open
+    }
+    defer { sqlite3_close(database) }
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+        throw SQLiteTestError.prepare
+    }
+    defer { sqlite3_finalize(statement) }
+    guard sqlite3_step(statement) == SQLITE_ROW else {
+        throw SQLiteTestError.step
+    }
+    return sqlite3_column_int64(statement, 0)
+}
+
+private enum SQLiteTestError: Error {
+    case open
+    case execute(String)
+    case prepare
+    case step
 }

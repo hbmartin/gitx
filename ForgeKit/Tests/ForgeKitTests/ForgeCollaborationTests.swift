@@ -142,7 +142,7 @@ final class ForgeCollaborationTests: XCTestCase {
         ) {
             XCTAssertEqual($0 as? ForgeCollaborationModelError, .mismatchedForge)
         }
-        XCTAssertEqual(Set(ForgeMilestoneState.allCases), [.open, .closed])
+        XCTAssertEqual(Set(ForgeMilestoneState.allCases), [.open, .closed, .unknown])
     }
 
     func testRepositoryFactsPreservePartialFieldsAndValidateForkOrigin() throws {
@@ -255,8 +255,8 @@ final class ForgeCollaborationTests: XCTestCase {
         XCTAssertEqual(try roundTrip(requestedTeam), requestedTeam)
         XCTAssertEqual(Set(ForgeReviewRollup.allCases), [.approved, .changesRequested, .reviewRequired, .noDecision])
         XCTAssertEqual(Set(ForgeMergeability.allCases), [.mergeable, .conflicting, .unknown])
-        XCTAssertEqual(Set(ForgePullRequestState.allCases), [.open, .closed, .merged])
-        XCTAssertEqual(Set(ForgeIssueState.allCases), [.open, .closed])
+        XCTAssertEqual(Set(ForgePullRequestState.allCases), [.open, .closed, .merged, .unknown])
+        XCTAssertEqual(Set(ForgeIssueState.allCases), [.open, .closed, .unknown])
     }
 
     func testTimelineEverySupportedEventRoundTrips() throws {
@@ -683,7 +683,7 @@ final class ForgeCollaborationTests: XCTestCase {
         repository: ForgeRepositoryIdentity,
         headRepository: ForgeRepositoryIdentity? = nil,
         author: ForgeReadSection<ForgeAuthor>? = nil,
-        head: ForgeReadSection<ForgeBranchReference>? = nil,
+        head: ForgeReadSection<ForgePullRequestHead>? = nil,
         base: ForgeReadSection<ForgeBranchReference>? = nil,
         labels: ForgeReadSection<[ForgeLabel]>? = nil
     ) throws -> ForgePullRequestSummary {
@@ -694,7 +694,9 @@ final class ForgeCollaborationTests: XCTestCase {
             isDraft: false,
             title: "Improve collaboration",
             author: author ?? .available(.actor(makeActor(repository: repository))),
-            head: head ?? .available(makeBranch(repository: headRepository ?? repository)),
+            head: head ?? .available(ForgePullRequestHead(
+                reference: makeBranch(repository: headRepository ?? repository)
+            )),
             base: base ?? .available(makeBranch(repository: repository)),
             createdAt: timestamp,
             updatedAt: timestamp.addingTimeInterval(10),

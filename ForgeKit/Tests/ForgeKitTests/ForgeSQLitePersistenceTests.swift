@@ -4,6 +4,54 @@ import SQLite3
 import XCTest
 
 final class ForgeSQLitePersistenceTests: XCTestCase {
+    func testBatchCacheReadUpdatesOneHundredRowsAtomically() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let keys = try (0 ..< 100).map {
+            try fixture.snapshotKey(.account(fixture.firstAccount), identity: "batch-\($0)")
+        }
+        for (index, key) in keys.enumerated() {
+            try await store.putCacheEntry(fixture.entry(
+                key,
+                payload: String(index),
+                fetched: 1,
+                accessed: 1
+            ))
+        }
+        try RawSQLite.execute(
+            """
+            CREATE TRIGGER fail_mid_batch_cache_access
+            BEFORE UPDATE OF accessed_at ON forge_cache_entries
+            WHEN OLD.payload = X'3530'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced mid-batch access failure');
+            END
+            """,
+            at: fixture.databaseURL
+        )
+
+        await XCTAssertThrowsErrorAsync {
+            _ = try await store.cacheEntries(for: keys, accessedAt: fixture.date(2))
+        }
+        XCTAssertEqual(
+            try RawSQLite.scalar(
+                "SELECT COUNT(*) FROM forge_cache_entries WHERE accessed_at = 1700000001",
+                at: fixture.databaseURL
+            ),
+            100,
+            "A failed list load must roll back every earlier LRU update in the same batch"
+        )
+
+        try RawSQLite.execute("DROP TRIGGER fail_mid_batch_cache_access", at: fixture.databaseURL)
+        let loaded = try await store.cacheEntries(for: keys, accessedAt: fixture.date(2))
+        XCTAssertEqual(loaded.compactMap { $0 }.count, 100)
+        XCTAssertTrue(loaded.compactMap { $0 }.allSatisfy {
+            $0.record.lastAccessedAt == fixture.date(2)
+        })
+        await store.close()
+    }
+
     func testCachePartitionsStayExactAndReadsUpdateGlobalLRU() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -546,6 +594,54 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         await store?.close()
     }
 
+    func testDeleteDurableRecordsScopesBulkRemovalByKindAccountAndRepository() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = try ForgeSQLiteStore(configuration: fixture.configuration)
+        let firstAttention = try fixture.record(.attention, key: "first", payload: "one", activity: 1)
+        let secondAttention = try fixture.record(.attention, key: "second", payload: "two", activity: 2)
+        let retainedDraft = try fixture.record(.draft, key: "draft", payload: "draft", activity: 3)
+        let retainedAccountAttention = try fixture.record(
+            .attention,
+            account: fixture.secondAccount,
+            key: "other-account",
+            payload: "other",
+            activity: 4
+        )
+        for record in [firstAttention, secondAttention, retainedDraft, retainedAccountAttention] {
+            try await store.saveDurableRecord(record)
+        }
+
+        let removed = try await store.deleteDurableRecords(
+            kind: .attention,
+            accountID: fixture.firstAccount,
+            repository: fixture.repository
+        )
+
+        let removedAccountAttention = try await store.durableRecords(
+            kind: .attention,
+            accountID: fixture.firstAccount,
+            repository: fixture.repository
+        )
+        let storedDraft = try await store.durableRecord(
+            kind: .draft,
+            accountID: fixture.firstAccount,
+            repository: fixture.repository,
+            key: retainedDraft.key
+        )
+        let storedOtherAccountAttention = try await store.durableRecord(
+            kind: .attention,
+            accountID: fixture.secondAccount,
+            repository: fixture.repository,
+            key: retainedAccountAttention.key
+        )
+        XCTAssertEqual(removed, 2)
+        XCTAssertTrue(removedAccountAttention.isEmpty)
+        XCTAssertEqual(storedDraft, retainedDraft)
+        XCTAssertEqual(storedOtherAccountAttention, retainedAccountAttention)
+        await store.close()
+    }
+
     func testCanonicalDraftIdentityPersistsByExactAccountDestinationAndDisplayedHead() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -866,6 +962,22 @@ final class ForgeSQLitePersistenceTests: XCTestCase {
         XCTAssertThrowsError(try connection.verifyIntegrity([
             ForgeSQLiteRow(values: [.text("not ok")]),
         ]))
+    }
+
+    func testSQLiteConnectionDeinitClosesHandleAndReleasesExclusiveTransaction() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let databaseURL = fixture.root.appendingPathComponent("deinit.sqlite3")
+        var first: ForgeSQLiteConnection? = try ForgeSQLiteConnection(url: databaseURL)
+        try first?.execute("CREATE TABLE values_table(value INTEGER)")
+        try first?.execute("BEGIN EXCLUSIVE")
+
+        first = nil
+
+        let replacement = try ForgeSQLiteConnection(url: databaseURL)
+        XCTAssertNoThrow(try replacement.execute("BEGIN IMMEDIATE"))
+        XCTAssertNoThrow(try replacement.execute("COMMIT"))
+        replacement.close()
     }
 
     func testMigrationFailureRollsBackAndCopiesDatabaseInsteadOfResetting() throws {

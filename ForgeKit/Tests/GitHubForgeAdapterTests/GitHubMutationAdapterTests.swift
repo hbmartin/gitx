@@ -211,6 +211,193 @@ final class GitHubMutationAdapterTests: XCTestCase {
         }
     }
 
+    func testDeletedHeadRepositoryPreservesSafePullRequestMutationsAndBlocksHeadUpdates() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let adapter = makeAdapter(authentication: authentication)
+
+        func withoutHeadRepository(_ value: [String: Any]) throws -> [String: Any] {
+            var result = value
+            try fixtures.updatePullRequest(in: &result) {
+                $0["headRepository"] = NSNull()
+            }
+            return result
+        }
+
+        var editResponse = try withoutHeadRepository(fixtures.mutation("GitHubEditPullRequest"))
+        try fixtures.updatePullRequest(in: &editResponse) {
+            $0["title"] = "Edited after fork deletion"
+            $0["body"] = "The PR node remains editable."
+            $0["updatedAt"] = "2026-07-29T12:31:00Z"
+        }
+        try install(MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                withoutHeadRepository(fixtures.pullRequestPreflight())
+            ),
+            .graphQL("GitHubEditPullRequest", editResponse),
+        ]))
+        let edit = try ForgePullRequestEdit(
+            snapshot: editableSnapshot(repository: repository),
+            title: "Edited after fork deletion",
+            bodyMarkdown: "The PR node remains editable."
+        )
+        let edited = try await adapter.editPullRequest(
+            accountID: authentication.account.id,
+            edit: edit,
+            authorization: authorization(
+                authentication: authentication,
+                repository: repository,
+                operation: .editPullRequest
+            )
+        )
+        XCTAssertNil(edited.value.head.repository)
+        XCTAssertEqual(edited.value.head.name.value, "feature/github-mutations")
+        XCTAssertEqual(edited.value.head.commit.value, "abcdef12")
+
+        var closeResponse = try withoutHeadRepository(fixtures.mutation("GitHubClosePullRequest"))
+        try fixtures.updatePullRequest(in: &closeResponse) { $0["state"] = "CLOSED" }
+        try install(MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                withoutHeadRepository(fixtures.pullRequestPreflight())
+            ),
+            .graphQL("GitHubClosePullRequest", closeResponse),
+        ]))
+        let closeRequest = try lifecycleRequest(
+            accountID: authentication.account.id,
+            repository: repository,
+            action: .close,
+            state: .open,
+            isDraft: false
+        )
+        let closed = try await adapter.performLifecycle(
+            closeRequest,
+            authorization: authorization(
+                authentication: authentication,
+                repository: repository,
+                operation: .closePullRequest
+            )
+        )
+        XCTAssertEqual(closed.value.state, .closed)
+        XCTAssertNil(closed.value.head.reference)
+
+        var mergeResponse = try withoutHeadRepository(fixtures.mutation("GitHubMergePullRequest"))
+        try fixtures.updatePullRequest(in: &mergeResponse) {
+            $0["state"] = "MERGED"
+            $0["mergedAt"] = "2026-07-29T12:45:00Z"
+        }
+        let deletedHeadPreflight = try withoutHeadRepository(fixtures.pullRequestPreflight())
+        install(MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                deletedHeadPreflight
+            ),
+            .graphQL("GitHubPullRequestMutationPreflight", deletedHeadPreflight),
+            .graphQL("GitHubMergePullRequest", mergeResponse),
+        ]))
+        let mergeAuthorization = try authorization(
+            authentication: authentication,
+            repository: repository,
+            operation: .mergePullRequest
+        )
+        let freshMerge = try await adapter.freshMergeSnapshot(
+            accountID: authentication.account.id,
+            repository: repository,
+            pullRequest: ForgeItemNumber(7),
+            authorization: mergeAuthorization
+        )
+        XCTAssertNil(freshMerge.context.head.repository)
+        guard case let .available(confirmation) = ForgePullRequestMergePolicy.confirmationDecision(
+            snapshot: freshMerge,
+            method: .squash
+        ) else {
+            return XCTFail("Expected a deleted-head merge confirmation")
+        }
+        XCTAssertNil(confirmation.headReference.repository)
+        let merged = try await adapter.mergePullRequest(
+            ForgePullRequestMergeRequest(confirmation: confirmation),
+            authorization: mergeAuthorization
+        )
+        XCTAssertEqual(merged.value.state, .merged)
+        XCTAssertNil(merged.value.head.repository)
+
+        let enterRequest = try queueRequest(
+            accountID: authentication.account.id,
+            repository: repository,
+            action: .enter,
+            queued: false
+        )
+        try install(MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                withoutHeadRepository(fixtures.pullRequestPreflight())
+            ),
+            .graphQL("GitHubEnterMergeQueue", fixtures.mutation("GitHubEnterMergeQueue")),
+        ]))
+        let entered = try await adapter.changeMergeQueue(
+            enterRequest,
+            authorization: authorization(
+                authentication: authentication,
+                repository: repository,
+                operation: .enterMergeQueue
+            )
+        )
+        XCTAssertEqual(entered.value.action, .enter)
+
+        var formalResponse = fixtures.mutation("GitHubSubmitFormalReview")
+        try fixtures.updateFormalReview(in: &formalResponse) { $0["state"] = "COMMENTED" }
+        try install(MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                withoutHeadRepository(fixtures.pullRequestPreflight())
+            ),
+            .graphQL("GitHubSubmitFormalReview", formalResponse),
+        ]))
+        let submission = try ForgeFormalReviewSubmission(
+            accountID: authentication.account.id,
+            repository: repository,
+            pullRequest: ForgeItemNumber(7),
+            displayedHead: ForgeCommitID("abcdef12"),
+            kind: .comment,
+            bodyMarkdown: "The deleted source repository does not erase this review."
+        )
+        let reviewed = try await adapter.submitFormalReview(
+            submission,
+            authorization: authorization(
+                authentication: authentication,
+                repository: repository,
+                operation: .submitCommentReview
+            )
+        )
+        XCTAssertEqual(reviewed.value.displayedHead, try ForgeCommitID("abcdef12"))
+
+        let updateRequest = try lifecycleRequest(
+            accountID: authentication.account.id,
+            repository: repository,
+            action: .updateBranch,
+            state: .open,
+            isDraft: false
+        )
+        try install(MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                withoutHeadRepository(fixtures.pullRequestPreflight())
+            ),
+        ]))
+        await XCTAssertThrowsMutationError(.capabilityUnavailable) {
+            try await adapter.performLifecycle(
+                updateRequest,
+                authorization: self.authorization(
+                    authentication: authentication,
+                    repository: repository,
+                    operation: .updatePullRequestBranch
+                )
+            )
+        }
+    }
+
     func testImmediateReviewReplyFormalReviewAndResolutionMutationsStayHeadAndThreadBound() async throws {
         let fixtures = try MutationFixtures()
         let authentication = try makeAuthentication()
@@ -1418,6 +1605,7 @@ final class GitHubMutationAdapterTests: XCTestCase {
             .cooldown(until: Date(timeIntervalSince1970: 1_775_000_000)),
             .rateLimited(metadata),
             .samlAuthorizationRequired(metadata),
+            .installationConfigurationRequired(metadata),
             .permissionDenied(metadata),
             .authoritative([], metadata),
             .authoritative([problem], metadata),
@@ -2941,17 +3129,19 @@ final class GitHubMutationAdapterTests: XCTestCase {
             .graphQL("GitHubPullRequestCreationPreflight", fixtures.creationPreflight()),
             .graphQL("GitHubCreatePullRequest", unknownState),
         ]))
-        await XCTAssertThrowsUnknownOutcome {
-            try await adapter.createPullRequest(
-                accountID: authentication.account.id,
-                form: self.creationForm(repository: repository),
-                authorization: self.authorization(
-                    authentication: authentication,
-                    repository: repository,
-                    operation: .createPullRequest
-                )
+        let unknownStateResult = try await adapter.createPullRequest(
+            accountID: authentication.account.id,
+            form: creationForm(repository: repository),
+            authorization: authorization(
+                authentication: authentication,
+                repository: repository,
+                operation: .createPullRequest
             )
+        )
+        guard case let .created(unknownStateSnapshot) = unknownStateResult.value else {
+            return XCTFail("Expected created Pull Request with an unknown future state")
         }
+        XCTAssertEqual(unknownStateSnapshot.state, .unknown)
 
         var fractional = fixtures.mutation("GitHubCreatePullRequest")
         try fixtures.updatePullRequest(in: &fractional) {
@@ -3027,6 +3217,299 @@ final class GitHubMutationAdapterTests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testGraphQLMutationHTTPThrottlesRecordCooldownBeforeUnknownOutcomeFallback() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let form = try creationForm(repository: repository)
+        let authorization = try authorization(
+            authentication: authentication,
+            repository: repository,
+            operation: .createPullRequest
+        )
+
+        for (status, headers) in [
+            (403, ["Content-Type": "application/json", "Retry-After": "3600"]),
+            (429, ["Content-Type": "application/json"]),
+        ] {
+            let gate = GitHubMutationSessionGate()
+            install(MutationResponseQueue([
+                .graphQL("GitHubPullRequestCreationPreflight", fixtures.creationPreflight()),
+                .graphQLPayload(
+                    "GitHubCreatePullRequest",
+                    ["message": "throttled"],
+                    statusCode: status,
+                    headers: headers
+                ),
+            ]))
+
+            do {
+                _ = try await makeAdapter(
+                    authentication: authentication,
+                    sessionGate: gate
+                ).createPullRequest(
+                    accountID: authentication.account.id,
+                    form: form,
+                    authorization: authorization
+                )
+                XCTFail("Expected mutation throttle for HTTP \(status)")
+            } catch let error as GitHubMutationError {
+                guard case .rateLimited = error else {
+                    return XCTFail("Unexpected \(error) for HTTP \(status)")
+                }
+            }
+            guard case .rateLimited = await gate.environment(
+                for: authentication.credential.reference,
+                at: Date()
+            ) else {
+                return XCTFail("Expected exact Credential cooldown for HTTP \(status)")
+            }
+        }
+
+        for status in [408, 503] {
+            let gate = GitHubMutationSessionGate()
+            install(MutationResponseQueue([
+                .graphQL("GitHubPullRequestCreationPreflight", fixtures.creationPreflight()),
+                .graphQLPayload(
+                    "GitHubCreatePullRequest",
+                    ["message": "ambiguous"],
+                    statusCode: status,
+                    headers: ["Content-Type": "application/json"]
+                ),
+            ]))
+
+            await XCTAssertThrowsUnknownOutcome {
+                try await self.makeAdapter(
+                    authentication: authentication,
+                    sessionGate: gate
+                ).createPullRequest(
+                    accountID: authentication.account.id,
+                    form: form,
+                    authorization: authorization
+                )
+            }
+            let environment = await gate.environment(
+                for: authentication.credential.reference,
+                at: Date()
+            )
+            XCTAssertEqual(environment, .available)
+        }
+    }
+
+    func testHeadBranchDeletionRejectsDeletedForksBeforeBranchLookup() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let adapter = makeAdapter(authentication: authentication)
+        var deletedFork = fixtures.pullRequestPreflight(state: .merged)
+        try fixtures.updatePullRequest(in: &deletedFork) {
+            $0["headRepository"] = NSNull()
+        }
+        let authorization = try authorization(
+            authentication: authentication,
+            repository: repository,
+            operation: .deleteHeadBranch
+        )
+
+        install(MutationResponseQueue([
+            .graphQL("GitHubPullRequestMutationPreflight", deletedFork),
+        ]))
+        await XCTAssertThrowsMutationError(.capabilityUnavailable) {
+            try await adapter.freshHeadBranchDeletionSnapshot(
+                accountID: authentication.account.id,
+                repository: repository,
+                pullRequest: ForgeItemNumber(7),
+                branch: ForgeRefName("feature/github-mutations"),
+                expectedHead: ForgeCommitID("abcdef12"),
+                hasCheckedOutSafetyConflict: false,
+                authorization: authorization
+            )
+        }
+
+        install(MutationResponseQueue([
+            .graphQL("GitHubPullRequestMutationPreflight", deletedFork),
+        ]))
+        await XCTAssertThrowsMutationError(.capabilityUnavailable) {
+            try await adapter.deleteHeadBranch(
+                self.headBranchDeletionRequest(
+                    accountID: authentication.account.id,
+                    repository: repository
+                ),
+                authorization: authorization
+            )
+        }
+    }
+
+    func testUpdateBranchTreatsDeletedResponseHeadAsUnknownOutcome() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let request = try lifecycleRequest(
+            accountID: authentication.account.id,
+            repository: repository,
+            action: .updateBranch,
+            state: .open,
+            isDraft: false
+        )
+        var deletedForkResponse = fixtures.mutation("GitHubUpdatePullRequestBranch")
+        try fixtures.updatePullRequest(in: &deletedForkResponse) {
+            $0["headRepository"] = NSNull()
+        }
+        install(MutationResponseQueue([
+            .graphQL("GitHubPullRequestMutationPreflight", fixtures.pullRequestPreflight()),
+            .graphQL("GitHubUpdatePullRequestBranch", deletedForkResponse),
+        ]))
+
+        await XCTAssertThrowsUnknownOutcome {
+            try await self.makeAdapter(authentication: authentication).performLifecycle(
+                request,
+                authorization: self.authorization(
+                    authentication: authentication,
+                    repository: repository,
+                    operation: .updatePullRequestBranch
+                )
+            )
+        }
+    }
+
+    func testHeadBranchDeletionMapsReadPermissionAsNotDeletable() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        var readOnlyBranch = fixtures.headBranchPreflight()
+        var repositoryPayload = try XCTUnwrap(readOnlyBranch["repository"] as? [String: Any])
+        repositoryPayload["viewerPermission"] = "READ"
+        readOnlyBranch["repository"] = repositoryPayload
+        install(MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                fixtures.pullRequestPreflight(state: .merged)
+            ),
+            .graphQL("GitHubHeadBranchDeletionPreflight", readOnlyBranch),
+        ]))
+
+        let snapshot = try await makeAdapter(authentication: authentication)
+            .freshHeadBranchDeletionSnapshot(
+                accountID: authentication.account.id,
+                repository: repository,
+                pullRequest: ForgeItemNumber(7),
+                branch: ForgeRefName("feature/github-mutations"),
+                expectedHead: ForgeCommitID("abcdef12"),
+                hasCheckedOutSafetyConflict: false,
+                authorization: authorization(
+                    authentication: authentication,
+                    repository: repository,
+                    operation: .deleteHeadBranch
+                )
+            )
+
+        XCTAssertFalse(snapshot.viewerCanDelete)
+    }
+
+    func testCreationPreflightTreatsMissingNodesAsAnEmptyPage() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        var emptyPage = fixtures.creationPreflight()
+        var repositoryPayload = try XCTUnwrap(emptyPage["repository"] as? [String: Any])
+        var pullRequests = try XCTUnwrap(repositoryPayload["pullRequests"] as? [String: Any])
+        pullRequests["nodes"] = NSNull()
+        repositoryPayload["pullRequests"] = pullRequests
+        emptyPage["repository"] = repositoryPayload
+        install(MutationResponseQueue([
+            .graphQL("GitHubPullRequestCreationPreflight", emptyPage),
+            .graphQL("GitHubCreatePullRequest", fixtures.mutation("GitHubCreatePullRequest")),
+        ]))
+
+        let result = try await makeAdapter(authentication: authentication).createPullRequest(
+            accountID: authentication.account.id,
+            form: creationForm(repository: repository),
+            authorization: authorization(
+                authentication: authentication,
+                repository: repository,
+                operation: .createPullRequest
+            )
+        )
+
+        guard case .created = result.value else {
+            return XCTFail("Expected an empty duplicate page to allow creation")
+        }
+    }
+
+    func testMergeQueueRejectsClosedPullRequestAfterQueueStateValidation() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let request = try queueRequest(
+            accountID: authentication.account.id,
+            repository: repository,
+            action: .enter,
+            queued: false
+        )
+        install(MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                fixtures.pullRequestPreflight(state: .closed)
+            ),
+        ]))
+
+        await XCTAssertThrowsMutationError(.stalePullRequest) {
+            try await self.makeAdapter(authentication: authentication).changeMergeQueue(
+                request,
+                authorization: self.authorization(
+                    authentication: authentication,
+                    repository: repository,
+                    operation: .enterMergeQueue
+                )
+            )
+        }
+    }
+
+    func testMutationValueCompatibilityInitializerPreservesBranchReference() throws {
+        let repository = try makeRepository()
+        let head = try ForgeBranchReference(
+            repository: repository,
+            name: ForgeRefName("feature/github-mutations"),
+            commit: ForgeCommitID("abcdef12")
+        )
+        let base = try ForgeBranchReference(
+            repository: repository,
+            name: ForgeRefName("master"),
+            commit: ForgeCommitID("12345678")
+        )
+        let createdAt = Date(timeIntervalSince1970: 1_775_000_000)
+        let updatedAt = createdAt.addingTimeInterval(60)
+        let value = try GitHubPullRequestMutationValue(
+            id: ForgeObjectID(forge: repository.forge, value: "pr-node"),
+            repository: repository,
+            number: ForgeItemNumber(7),
+            state: .open,
+            isDraft: false,
+            title: "Mutation adapter",
+            bodyMarkdown: "Provider-neutral body",
+            head: head,
+            base: base,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            closedAt: nil,
+            mergedAt: nil
+        )
+
+        XCTAssertEqual(value.id.value, "pr-node")
+        XCTAssertEqual(value.repository, repository)
+        XCTAssertEqual(value.number.rawValue, 7)
+        XCTAssertEqual(value.state, .open)
+        XCTAssertFalse(value.isDraft)
+        XCTAssertEqual(value.title, "Mutation adapter")
+        XCTAssertEqual(value.bodyMarkdown, "Provider-neutral body")
+        XCTAssertEqual(value.head.reference, head)
+        XCTAssertEqual(value.base, base)
+        XCTAssertEqual(value.createdAt, createdAt)
+        XCTAssertEqual(value.updatedAt, updatedAt)
+        XCTAssertNil(value.closedAt)
+        XCTAssertNil(value.mergedAt)
     }
 }
 

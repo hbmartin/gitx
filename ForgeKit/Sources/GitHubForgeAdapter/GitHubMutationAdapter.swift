@@ -360,6 +360,9 @@ public extension GitHubMutationAdapter {
             number: pullRequest,
             authentication: authentication
         )
+        guard pullRequestPreflight.snapshot.head.repository == repository else {
+            throw GitHubMutationError.capabilityUnavailable
+        }
         let branchPreflight = try await headBranchPreflight(
             repository: repository,
             branch: branch,
@@ -396,21 +399,7 @@ public extension GitHubMutationAdapter {
             number: request.number,
             authentication: authentication
         )
-        guard preflight.snapshot.head.commit == request.expectedHead else {
-            throw GitHubMutationError.stalePullRequest
-        }
-        let context = try mutationContext(
-            preflight: preflight,
-            accountID: request.accountID,
-            allowedOperation: operation
-        )
-        guard case let .available(validated) = ForgePullRequestLifecyclePolicy.decision(
-            context: context,
-            action: request.action,
-            canUpdateBranch: preflight.viewerCanUpdateBranch
-        ), validated == request else {
-            throw GitHubMutationError.stalePullRequest
-        }
+        try validateLifecycle(request, preflight: preflight)
         switch request.action {
         case .markReady:
             let mutation = GitHubAPI.GitHubMarkPullRequestReadyMutation(input: .init(
@@ -495,7 +484,10 @@ public extension GitHubMutationAdapter {
                 repository: request.repository,
                 expectedNumber: request.number,
                 operation: operation
-            ) { _ in
+            ) { snapshot in
+                guard snapshot.head.reference != nil else {
+                    throw GitHubMutationError.outcomeUnknown(nil)
+                }
             } fragment: {
                 $0.updatePullRequestBranch?.pullRequest?.fragments.gitHubPullRequestMutationSnapshot
             }
@@ -518,19 +510,7 @@ public extension GitHubMutationAdapter {
             number: confirmation.number,
             authentication: authentication
         )
-        let snapshot = try mergeSnapshot(
-            preflight: preflight,
-            accountID: confirmation.accountID,
-            allowedOperation: .mergePullRequest
-        )
-        do {
-            _ = try ForgePullRequestMergePolicy.validate(
-                confirmation: confirmation,
-                fresh: snapshot
-            )
-        } catch {
-            throw GitHubMutationError.stalePullRequest
-        }
+        try validateMergeConfirmation(confirmation, preflight: preflight)
         let method: GitHubAPI.PullRequestMergeMethod = switch confirmation.method {
         case .merge: .merge
         case .squash: .squash
@@ -577,18 +557,8 @@ public extension GitHubMutationAdapter {
         guard preflight.snapshot.head.commit == request.expectedHead else {
             throw GitHubMutationError.stalePullRequest
         }
-        let snapshot = try mergeSnapshot(
-            preflight: preflight,
-            accountID: request.accountID,
-            allowedOperation: operation
-        )
-        guard case let .available(validated) = ForgePullRequestMergeQueuePolicy.decision(
-            snapshot: snapshot,
-            action: request.action
-        ), validated == request else {
-            throw GitHubMutationError.stalePullRequest
-        }
-        switch request.action {
+        let validatedAction = try validateMergeQueue(request, preflight: preflight)
+        switch validatedAction {
         case .enter:
             let mutation = GitHubAPI.GitHubEnterMergeQueueMutation(input: .init(
                 expectedHeadOid: .some(request.expectedHead.value),
@@ -622,10 +592,7 @@ public extension GitHubMutationAdapter {
                 repository: request.repository,
                 operation: operation
             )
-        case .leave:
-            guard let entryID = preflight.mergeQueueEntryID else {
-                throw GitHubMutationError.stalePullRequest
-            }
+        case let .leave(entryID):
             // GitHub's dequeuePullRequest input is the Pull Request node ID,
             // not the merge-queue-entry ID returned by the preflight.
             let mutation = GitHubAPI.GitHubLeaveMergeQueueMutation(input: .init(
@@ -677,6 +644,9 @@ public extension GitHubMutationAdapter {
             number: request.pullRequest,
             authentication: authentication
         )
+        guard pullRequestPreflight.snapshot.head.repository == request.repository else {
+            throw GitHubMutationError.capabilityUnavailable
+        }
         let preflight = try await headBranchPreflight(
             repository: request.repository,
             branch: request.branch,
@@ -724,6 +694,11 @@ public extension GitHubMutationAdapter {
 private struct GitHubExecutedMutation<Value: Sendable>: Sendable {
     let value: Value
     let response: GitHubResponseMetadata
+}
+
+private enum GitHubValidatedMergeQueueAction {
+    case enter
+    case leave(entryID: ForgeObjectID)
 }
 
 private extension GitHubMutationAdapter {
@@ -981,6 +956,9 @@ private extension GitHubMutationAdapter {
                 metadata: metadata,
                 credentialSource: authentication.credential.source
             )
+            if case .rateLimited = classified, let metadata {
+                await recordCooldown(metadata, assumeThrottled: true)
+            }
             throw classified
         }
     }
@@ -1048,6 +1026,75 @@ private extension GitHubMutationAdapter {
             updatedAt: preflight.snapshot.updatedAt,
             allowedOperations: [allowedOperation]
         )
+    }
+
+    func validateLifecycle(
+        _ request: ForgePullRequestLifecycleRequest,
+        preflight: GitHubPullRequestMutationPreflight
+    ) throws {
+        guard preflight.snapshot.head.commit == request.expectedHead else {
+            throw GitHubMutationError.stalePullRequest
+        }
+        let context = try mutationContext(
+            preflight: preflight,
+            accountID: request.accountID,
+            allowedOperation: request.action.operation
+        )
+        guard case let .available(validated) = ForgePullRequestLifecyclePolicy.decision(
+            context: context,
+            action: request.action,
+            canUpdateBranch: preflight.viewerCanUpdateBranch
+        ), validated == request else {
+            if request.action == .updateBranch, context.head.reference == nil {
+                throw GitHubMutationError.capabilityUnavailable
+            }
+            throw GitHubMutationError.stalePullRequest
+        }
+    }
+
+    func validateMergeConfirmation(
+        _ confirmation: ForgePullRequestMergeConfirmation,
+        preflight: GitHubPullRequestMutationPreflight
+    ) throws {
+        let snapshot = try mergeSnapshot(
+            preflight: preflight,
+            accountID: confirmation.accountID,
+            allowedOperation: .mergePullRequest
+        )
+        do {
+            _ = try ForgePullRequestMergePolicy.validate(
+                confirmation: confirmation,
+                fresh: snapshot
+            )
+        } catch {
+            throw GitHubMutationError.stalePullRequest
+        }
+    }
+
+    func validateMergeQueue(
+        _ request: ForgePullRequestMergeQueueRequest,
+        preflight: GitHubPullRequestMutationPreflight
+    ) throws -> GitHubValidatedMergeQueueAction {
+        let validatedAction: GitHubValidatedMergeQueueAction = switch (
+            request.action,
+            preflight.mergeQueueEntryID
+        ) {
+        case (.enter, nil): .enter
+        case let (.leave, entryID?): .leave(entryID: entryID)
+        default: throw GitHubMutationError.stalePullRequest
+        }
+        let snapshot = try mergeSnapshot(
+            preflight: preflight,
+            accountID: request.accountID,
+            allowedOperation: request.action.operation
+        )
+        guard case let .available(validated) = ForgePullRequestMergeQueuePolicy.decision(
+            snapshot: snapshot,
+            action: request.action
+        ), validated == request else {
+            throw GitHubMutationError.stalePullRequest
+        }
+        return validatedAction
     }
 
     func mergeSnapshot(
@@ -1199,6 +1246,16 @@ private extension GitHubMutationAdapter {
            )
         {
             return authorizationError
+        }
+        if let metadata {
+            switch metadata.statusCode {
+            case 403 where metadata.rateLimit.remaining == 0 || metadata.rateLimit.retryAt != nil:
+                return .rateLimited(metadata)
+            case 429:
+                return .rateLimited(metadata)
+            default:
+                break
+            }
         }
         if mutationStarted {
             logger.notice("phase=mutation transition=outcome_unknown reason=post_dispatch_transport")

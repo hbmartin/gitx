@@ -14,13 +14,179 @@
         private static var retainedObjects: [AnyObject] = []
 
         @objc static func synchronousProof() -> UInt64 {
-            guard let fixture = try? HarnessPullRequestFixture() else { return 0 }
+            let fixture: HarnessPullRequestFixture
+            do {
+                fixture = try HarnessPullRequestFixture()
+            } catch {
+                NSLog("[M2ProductCoverage] synchronous setup failed: %@", error.localizedDescription)
+                return 0
+            }
             return bitProof([
-                (try? workflowProof(fixture)) == true,
-                (try? gitOperationProof(fixture)) == true,
-                (try? sheetProof(fixture)) == true,
-                (try? remoteActionProof(fixture)) == true,
-                (try? deepLinkProof(fixture)) == true,
+                loggedProof("workflow") { try workflowProof(fixture) },
+                loggedProof("git-operation") { try gitOperationProof(fixture) },
+                loggedProof("sheet") { try sheetProof(fixture) },
+                loggedProof("remote-action") { try remoteActionProof(fixture) },
+                loggedProof("deep-link") { try deepLinkProof(fixture) },
+            ])
+        }
+
+        /// Exercises the shipped coordinator's injected remote-discovery seam.
+        /// Keeping this bridge in the DEBUG product avoids compiling a second
+        /// copy of the internal coordinator into the XCTest bundle.
+        @objc(repositoryForgeCoordinatorCacheProofWithRepository:)
+        static func repositoryForgeCoordinatorCacheProof(repository: PBGitRepository) -> UInt64 {
+            let settings = RepositoryUISettings(repository: repository)
+            let cache = RepositoryForgeRemoteDescriptorCache()
+            var dependencyRevision = "dependency-v1"
+            var remoteNameLoads = 0
+            var remoteURLLoads = 0
+            let coordinator = RepositoryForgeCoordinator(
+                repository: repository,
+                settings: settings,
+                remoteDescriptorCache: cache,
+                remoteCacheKey: "coverage-\(UUID().uuidString)",
+                remoteConfigurationRevision: { "config-v1" },
+                remoteConfigurationDependencies: { ["included.config"] },
+                remoteDependencyRevision: { _ in dependencyRevision },
+                remoteNames: {
+                    remoteNameLoads += 1
+                    return ["origin"]
+                },
+                remoteURL: { _ in
+                    remoteURLLoads += 1
+                    return "https://github.com/acme/widgets.git"
+                }
+            )
+
+            let first = coordinator.sidebarCandidates()
+            let second = coordinator.sidebarCandidates()
+            let reusedCache = first.map(\.remoteName) == ["origin"]
+                && second.map(\.remoteName) == ["origin"]
+                && remoteNameLoads == 1
+                && remoteURLLoads == 1
+
+            dependencyRevision = "dependency-v2"
+            let third = coordinator.sidebarCandidates()
+            let dependencyInvalidatedCache = third.map(\.remoteName) == ["origin"]
+                && remoteNameLoads == 2
+                && remoteURLLoads == 2
+
+            let defaultedCoordinator = RepositoryForgeCoordinator(
+                repository: repository,
+                settings: settings,
+                remoteDescriptorCache: RepositoryForgeRemoteDescriptorCache(),
+                remoteCacheKey: "coverage-defaults-\(UUID().uuidString)",
+                remoteConfigurationRevision: { "config-v1" },
+                remoteConfigurationDependencies: { ["included.config"] },
+                remoteNames: { ["origin"] },
+                remoteURL: { _ in "https://github.com/acme/widgets.git" }
+            )
+            let defaultDependencies = defaultedCoordinator.sidebarCandidates().map(\.remoteName) == ["origin"]
+
+            let directRoute: Bool
+            switch coordinator.resolve(.repository) {
+            case let .route(route):
+                directRoute = route.browserURL.absoluteString == "https://github.com/acme/widgets"
+            default:
+                directRoute = false
+            }
+
+            let pullRequestRoute: Bool
+            switch coordinator.resolveNumberReference("#12", availableKinds: [.pullRequest]) {
+            case let .route(route):
+                pullRequestRoute = route.browserURL.absoluteString == "https://github.com/acme/widgets/pull/12"
+            default:
+                pullRequestRoute = false
+            }
+
+            let ambiguousNumber: Bool
+            switch coordinator.resolveNumberReference("#12") {
+            case let .requiresDestinationChoice(choices):
+                ambiguousNumber = choices.count == 2
+            default:
+                ambiguousNumber = false
+            }
+
+            let unavailableDestination: Bool
+            switch coordinator.resolveNumberReference("#12", availableKinds: []) {
+            case let .failure(error):
+                unavailableDestination = error.code == RepositoryForgeScriptingErrorCode.noAvailableDestination.rawValue
+                    && error.localizedDescription == "No matching Forge destination is available."
+            default:
+                unavailableDestination = false
+            }
+
+            let ambiguousRepository = HarnessForgePathRepository()
+            ambiguousRepository.overriddenGitURL = URL(
+                fileURLWithPath: "/tmp/gitx-forge-ambiguous/.git",
+                isDirectory: true
+            )
+            let ambiguousCoordinator = RepositoryForgeCoordinator(
+                repository: ambiguousRepository,
+                settings: RepositoryUISettings(repository: ambiguousRepository),
+                remoteDescriptorCache: RepositoryForgeRemoteDescriptorCache(),
+                remoteCacheKey: "coverage-ambiguous-\(UUID().uuidString)",
+                remoteConfigurationRevision: { "config-v1" },
+                remoteNames: { ["origin", "upstream"] },
+                remoteURL: { name in
+                    name == "origin"
+                        ? "https://github.com/person/widgets.git"
+                        : "https://github.com/organization/widgets.git"
+                }
+            )
+            let bindingChoice: Bool
+            switch ambiguousCoordinator.resolveNumberReference("#12") {
+            case let .requiresBindingChoice(candidates):
+                bindingChoice = candidates.count == 2
+            default:
+                bindingChoice = false
+            }
+
+            let unavailableRepository = HarnessForgePathRepository()
+            unavailableRepository.overriddenGitURL = URL(
+                fileURLWithPath: "/tmp/gitx-forge-unavailable/.git",
+                isDirectory: true
+            )
+            let unavailableCoordinator = RepositoryForgeCoordinator(
+                repository: unavailableRepository,
+                settings: RepositoryUISettings(repository: unavailableRepository),
+                remoteDescriptorCache: RepositoryForgeRemoteDescriptorCache(),
+                remoteCacheKey: "coverage-unavailable-\(UUID().uuidString)",
+                remoteConfigurationRevision: { "config-v1" },
+                remoteNames: { [] },
+                remoteURL: { _ in nil }
+            )
+            let missingBinding: Bool
+            switch unavailableCoordinator.resolveNumberReference("#12") {
+            case let .failure(error):
+                missingBinding = error.code == RepositoryForgeScriptingErrorCode.noForgeRepository.rawValue
+            default:
+                missingBinding = false
+            }
+
+            let workingDirectoryRepository = HarnessForgePathRepository()
+            workingDirectoryRepository.overriddenWorkingDirectoryURL = URL(
+                fileURLWithPath: "/tmp/gitx-forge-cache-key",
+                isDirectory: true
+            )
+            let workingDirectoryCacheKey = RepositoryForgeCoordinator.remoteCacheKey(
+                for: workingDirectoryRepository
+            ) == "/tmp/gitx-forge-cache-key"
+            let objectRepository = PBGitRepository()
+            let objectCacheKey = RepositoryForgeCoordinator.remoteCacheKey(for: objectRepository)
+                .hasPrefix("repository-object-")
+
+            return bitProof([
+                reusedCache,
+                dependencyInvalidatedCache,
+                defaultDependencies,
+                unavailableDestination,
+                directRoute,
+                pullRequestRoute,
+                ambiguousNumber,
+                bindingChoice,
+                missingBinding,
+                workingDirectoryCacheKey && objectCacheKey,
             ])
         }
 
@@ -28,12 +194,16 @@
         // swiftlint:disable:next unused_declaration
         static func asyncProof(completion: @escaping (UInt64) -> Void) {
             Task { @MainActor in
-                guard let fixture = try? HarnessPullRequestFixture() else {
+                let fixture: HarnessPullRequestFixture
+                do {
+                    fixture = try HarnessPullRequestFixture()
+                } catch {
+                    NSLog("[M2ProductCoverage] asynchronous setup failed: %@", error.localizedDescription)
                     completion(0)
                     return
                 }
-                let composition = (try? await compositionProof(fixture)) == true
-                let localGit = (try? await localGitProof(fixture)) == true
+                let composition = await loggedProof("composition") { try await compositionProof(fixture) }
+                let localGit = await loggedProof("local-git") { try await localGitProof(fixture) }
                 let ui = await loggedProof("ui") { try await uiControllerProof(fixture) }
                 let quit = await loggedProof("quit") { try await mutationQuitProof(fixture) }
                 let launchHarness = await loggedProof("launch") {
@@ -1632,6 +1802,23 @@
 
         private static func loggedProof(
             _ name: String,
+            operation: () throws -> Bool
+        ) -> Bool {
+            do {
+                return try operation()
+            } catch {
+                NSLog(
+                    "[M2ProductCoverage] %@ proof threw %@: %@",
+                    name,
+                    String(describing: type(of: error)),
+                    error.localizedDescription
+                )
+                return false
+            }
+        }
+
+        private static func loggedProof(
+            _ name: String,
             operation: () async throws -> Bool
         ) async -> Bool {
             do {
@@ -1772,7 +1959,7 @@
                 isDraft: false,
                 title: "Updated title",
                 author: .unavailable(.notRequested),
-                head: .available(head),
+                head: .available(ForgePullRequestHead(reference: head)),
                 base: .available(base),
                 createdAt: Date(timeIntervalSince1970: 1),
                 updatedAt: Date(timeIntervalSince1970: 11),
@@ -2220,6 +2407,19 @@
 
         func delete(identity _: ForgeDraftIdentity) async throws {
             deleteCount += 1
+        }
+    }
+
+    private final nonisolated class HarnessForgePathRepository: PBGitRepository {
+        var overriddenGitURL: URL?
+        var overriddenWorkingDirectoryURL: URL?
+
+        override func gitURL() -> URL? {
+            overriddenGitURL
+        }
+
+        override func workingDirectoryURL() -> URL? {
+            overriddenWorkingDirectoryURL
         }
     }
 

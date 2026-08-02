@@ -1626,7 +1626,25 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBGitSidebarController *sidebar = [controller valueForKey:@"_sidebarController"];
 	PBGitHistoryController *history = [controller valueForKey:@"_historyViewController"];
 	XCTAssertNotNil(sidebar);
+	XCTAssertEqual(controller.sidebarViewController, sidebar);
 	XCTAssertNotNil(history);
+	PBRepositoryToolbarController *productionToolbarController =
+		[[PBRepositoryToolbarController alloc] initWithWindowController:controller];
+	NSToolbarItem *productionAttentionItem =
+		[productionToolbarController toolbar:window.toolbar
+					   itemForItemIdentifier:@"GitX.Toolbar.Attention"
+				   willBeInsertedIntoToolbar:YES];
+	NSButton *productionAttentionButton = nil;
+	for (NSView *view in productionAttentionItem.view.subviews) {
+		if ([view.accessibilityIdentifier isEqualToString:@"GitX.Toolbar.Attention"])
+			productionAttentionButton = (NSButton *)view;
+	}
+	XCTAssertEqual(productionAttentionButton.target, sidebar);
+	NSMenuToolbarItem *productionActionsItem = (NSMenuToolbarItem *)
+		[productionToolbarController toolbar:window.toolbar
+					   itemForItemIdentifier:@"GitX.Toolbar.Actions"
+				   willBeInsertedIntoToolbar:YES];
+	XCTAssertEqual(productionActionsItem.menu.delegate, sidebar);
 	NSClipView *historyClipView = history.commitList.enclosingScrollView.contentView;
 	XCTAssertNotNil(historyClipView);
 	XCTAssertTrue(historyClipView.postsBoundsChangedNotifications);
@@ -1859,7 +1877,7 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSourceViewItem *branchItem = [PBSourceViewItem itemWithRevSpec:[[PBGitRevSpecifier alloc] initWithRef:self.branchRef]];
 	outline.testItem = branchItem;
 	[self.controller setValue:sidebar forKey:@"_sidebarController"];
-	[self.controller setValue:sidebar forKey:@"_sidebarViewController"];
+	XCTAssertEqual(self.controller.sidebarViewController, sidebar);
 	self.controller.window.contentView = outline;
 	((PBWindowTestWindow *)self.controller.window).testFirstResponder = outline;
 	XCTAssertEqualObjects([self.controller selectedRef].ref, self.branchRef.ref);
@@ -2489,14 +2507,32 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testSidebarSubmoduleMenusOpeningErrorsAndDoubleClickBoundaries
 {
+	NSURL *submoduleSourceURL = [self.repositoryURL.URLByDeletingLastPathComponent
+		URLByAppendingPathComponent:[NSString stringWithFormat:@"GitXWindowSubmodule-%@", NSUUID.UUID.UUIDString]
+						isDirectory:YES];
+	[NSFileManager.defaultManager createDirectoryAtURL:submoduleSourceURL
+						   withIntermediateDirectories:YES
+											attributes:nil
+												 error:NULL];
+	[self addTeardownBlock:^{
+		[NSFileManager.defaultManager removeItemAtURL:submoduleSourceURL error:NULL];
+	}];
+	[self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] directory:submoduleSourceURL];
+	[self git:@[ @"config", @"user.name", @"GitX Tests" ] directory:submoduleSourceURL];
+	[self git:@[ @"config", @"user.email", @"gitx-tests@example.invalid" ] directory:submoduleSourceURL];
+	[@"submodule\n" writeToURL:[submoduleSourceURL URLByAppendingPathComponent:@"README.md"]
+					atomically:YES
+					  encoding:NSUTF8StringEncoding
+						 error:NULL];
+	[self git:@[ @"add", @"--all" ] directory:submoduleSourceURL];
+	[self git:@[ @"commit", @"--quiet", @"-m", @"initial" ] directory:submoduleSourceURL];
+	[self git:@[
+		@"-c", @"protocol.file.allow=always", @"submodule", @"add", @"--quiet",
+		submoduleSourceURL.path, @"CharacterizedSubmodule"
+	]
+		directory:self.repositoryURL];
+	[self.repository reloadRefs];
 	NSURL *submoduleURL = [self.repositoryURL URLByAppendingPathComponent:@"CharacterizedSubmodule" isDirectory:YES];
-	[NSFileManager.defaultManager createDirectoryAtURL:submoduleURL withIntermediateDirectories:YES attributes:nil error:NULL];
-	[self git:@[ @"init", @"--quiet", @"--initial-branch=main" ] directory:submoduleURL];
-	PBWindowSubmodule *submodule = [PBWindowSubmodule new];
-	submodule.name = @"CharacterizedSubmodule";
-	submodule.path = @"CharacterizedSubmodule";
-	submodule.parentRepository = self.repository.gtRepo;
-	self.repository.submodules = [NSMutableArray arrayWithObject:(GTSubmodule *)submodule];
 
 	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
 																		 superController:self.controller];
@@ -2545,6 +2581,18 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	NSURL *invalidURL = [self.repositoryURL URLByAppendingPathComponent:@"MissingSubmodule" isDirectory:YES];
 	[sidebar openSubmoduleAtURL:invalidURL];
 	XCTAssertGreaterThanOrEqual(self.controller.shownErrors.count, (NSUInteger)2);
+	[sidebar closeView];
+}
+
+- (void)testSidebarIgnoresInvalidSubmoduleObjects
+{
+	self.repository.submodules = (NSMutableArray<GTSubmodule *> *)(id)[NSMutableArray arrayWithObject:@"not-a-submodule"];
+	PBGitSidebarController *sidebar = [[PBGitSidebarController alloc] initWithRepository:self.repository
+																		 superController:self.controller];
+	(void)sidebar.view;
+	PBSourceViewItem *submodules = [sidebar valueForKey:@"submodules"];
+
+	XCTAssertEqual(submodules.sortedChildren.count, (NSUInteger)0);
 	[sidebar closeView];
 }
 
@@ -4110,14 +4158,38 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testMilestone2ShippedProductCoverageProofs
 {
-	XCTAssertEqual([PBMilestone2ProductCoverageHarness synchronousProof], (uint64_t)0b11111);
+	uint64_t synchronousProof = [PBMilestone2ProductCoverageHarness synchronousProof];
+	XCTAssertEqual(synchronousProof & (1ULL << 0), (1ULL << 0), @"Workflow proof failed");
+	XCTAssertEqual(synchronousProof & (1ULL << 1), (1ULL << 1), @"Git-operation proof failed");
+	XCTAssertEqual(synchronousProof & (1ULL << 2), (1ULL << 2), @"Sheet proof failed");
+	XCTAssertEqual(synchronousProof & (1ULL << 3), (1ULL << 3), @"Remote-action proof failed");
+	XCTAssertEqual(synchronousProof & (1ULL << 4), (1ULL << 4), @"Deep-link proof failed");
 
 	XCTestExpectation *expectation = [self expectationWithDescription:@"Milestone 2 app-target proof"];
 	[PBMilestone2ProductCoverageHarness asyncProofWithCompletion:^(uint64_t proof) {
-		XCTAssertEqual(proof, (uint64_t)0b11111);
+		XCTAssertEqual(proof & (1ULL << 0), (1ULL << 0), @"Composition proof failed");
+		XCTAssertEqual(proof & (1ULL << 1), (1ULL << 1), @"Local-Git proof failed");
+		XCTAssertEqual(proof & (1ULL << 2), (1ULL << 2), @"UI-controller proof failed");
+		XCTAssertEqual(proof & (1ULL << 3), (1ULL << 3), @"Quit-coordinator proof failed");
+		XCTAssertEqual(proof & (1ULL << 4), (1ULL << 4), @"Launch-harness proof failed");
 		[expectation fulfill];
 	}];
 	[self waitForExpectations:@[ expectation ] timeout:30.0];
+}
+
+- (void)testMilestone2ShippedRepositoryForgeCoordinatorCacheProof
+{
+	uint64_t proof = [PBMilestone2ProductCoverageHarness repositoryForgeCoordinatorCacheProofWithRepository:self.repository];
+	XCTAssertEqual(proof & (1ULL << 0), (1ULL << 0), @"Remote descriptors were not reused");
+	XCTAssertEqual(proof & (1ULL << 1), (1ULL << 1), @"Dependency revision did not invalidate the cache");
+	XCTAssertEqual(proof & (1ULL << 2), (1ULL << 2), @"Default dependency closures did not load candidates");
+	XCTAssertEqual(proof & (1ULL << 3), (1ULL << 3), @"Unavailable numbered destination was not actionable");
+	XCTAssertEqual(proof & (1ULL << 4), (1ULL << 4), @"Direct repository resolution did not route");
+	XCTAssertEqual(proof & (1ULL << 5), (1ULL << 5), @"Explicit Pull Request resolution did not route");
+	XCTAssertEqual(proof & (1ULL << 6), (1ULL << 6), @"Ambiguous numbered destination did not require a choice");
+	XCTAssertEqual(proof & (1ULL << 7), (1ULL << 7), @"Ambiguous repositories did not require a binding choice");
+	XCTAssertEqual(proof & (1ULL << 8), (1ULL << 8), @"Missing binding did not report a stable error");
+	XCTAssertEqual(proof & (1ULL << 9), (1ULL << 9), @"Remote cache key fallbacks were not stable");
 }
 
 - (void)testMilestone3ShippedCollaborationCloseDetachesReviewOverlay
@@ -4144,7 +4216,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 - (void)testMilestone2ShippedCompositionCoverageProofs
 {
-	XCTAssertEqual([PBMilestone2CompositionCoverageHarness synchronousProof], (uint64_t)0b111);
+	uint64_t proof = [PBMilestone2CompositionCoverageHarness synchronousProof];
+	XCTAssertEqual(proof & (1ULL << 0), (1ULL << 0), @"Error-description composition proof failed");
+	XCTAssertEqual(proof & (1ULL << 1), (1ULL << 1), @"Authorization composition proof failed");
+	XCTAssertEqual(proof & (1ULL << 2), (1ULL << 2), @"Classic-scope composition proof failed");
 	XCTAssertTrue([PBMilestone2CompositionCoverageHarness reviewApplicationProofWithRepository:self.repository]);
 }
 

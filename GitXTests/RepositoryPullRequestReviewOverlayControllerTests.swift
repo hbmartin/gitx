@@ -105,6 +105,46 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         controller.detach()
     }
 
+    func testCompletedOverlayTasksSelfPruneAcrossRenderingDraftsAndActions() async throws {
+        let fixture = try ReviewAppFixture()
+        let workspace = try fixture.workspace()
+        let service = FakeReviewMutationService(workspaces: [workspace], mutationWorkspace: workspace)
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: session,
+            router: OverlayRecordingRouter()
+        )
+        _ = controller.view
+        _ = controller.reviewOverlayView
+
+        controller.start()
+        await service.waitForLoadCalls(1)
+        let closeIdentifier = RepositoryPullRequestReviewAccessibility.lifecyclePrefix
+            + ForgePullRequestLifecycleAction.close.rawValue
+        await waitUntil("loaded review actions") {
+            self.descendant(identifier: closeIdentifier, in: controller.view) != nil
+        }
+        await waitUntil("initial presentation tasks to self-prune") {
+            controller.trackedTaskCountForProductProof == 0
+        }
+
+        controller.select(anchor: fixture.anchor, contextLines: ["let old = true"], isTruncated: false)
+        XCTAssertGreaterThan(controller.trackedTaskCountForProductProof, 0)
+        await waitUntil("draft presentation task to self-prune") {
+            controller.trackedTaskCountForProductProof == 0
+        }
+
+        let close = try XCTUnwrap(descendant(identifier: closeIdentifier, in: controller.view) as? NSButton)
+        close.performClick(nil)
+        await service.waitForLifecycleCalls(1)
+        await waitUntil("completed action task to self-prune") {
+            controller.trackedTaskCountForProductProof == 0
+        }
+
+        controller.detach()
+        XCTAssertEqual(controller.trackedTaskCountForProductProof, 0)
+    }
+
     func testReviewThreadScrollDocumentExpandsAndCanRevealSuggestedChange() async throws {
         let fixture = try ReviewAppFixture()
         let workspace = try fixture.workspace()
@@ -992,6 +1032,124 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             in: controller.view
         ))
         controller.detach()
+    }
+
+    func testDestructiveConfirmationButtonsDisableAndDispatchOnlyOnceWhilePending() async throws {
+        let fixture = try ReviewAppFixture()
+        let open = try fixture.workspace(deletion: true)
+        let merged = try fixture.workspace(state: .merged, deletion: true)
+        let mergeService = FakeReviewMutationService(
+            workspaces: [open],
+            mutationWorkspace: merged,
+            freshMergeSnapshots: [open.mergeSnapshot, open.mergeSnapshot]
+        )
+        await mergeService.holdNextMerge()
+        let mergeController = RepositoryPullRequestReviewOverlayController(
+            session: RepositoryPullRequestReviewSession(identity: fixture.identity, service: mergeService),
+            router: OverlayRecordingRouter()
+        )
+        _ = mergeController.view
+        mergeController.start()
+        await mergeService.waitForLoadCalls(1)
+        let mergeAction = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.merge,
+            in: mergeController.view
+        ) as? NSButton)
+        mergeAction.performClick(nil)
+        await waitUntil("merge confirmation") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+                in: mergeController.view
+            ) != nil
+        }
+        let mergeConfirm = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+            in: mergeController.view
+        ) as? NSButton)
+        let mergeCancel = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeCancel,
+            in: mergeController.view
+        ) as? NSButton)
+
+        mergeConfirm.performClick(nil)
+        mergeConfirm.performClick(nil)
+        XCTAssertFalse(mergeConfirm.isEnabled)
+        XCTAssertFalse(mergeCancel.isEnabled)
+        mergeCancel.performClick(nil)
+        XCTAssertNotNil(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+            in: mergeController.view
+        ))
+        await mergeService.waitForMergeCalls(1)
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        let heldMergeRequests = await mergeService.mergeRequests()
+        XCTAssertEqual(heldMergeRequests.count, 1)
+        await mergeService.releaseHeldMerge()
+        await waitUntil("merge confirmation closes") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+                in: mergeController.view
+            ) == nil
+        }
+        mergeController.detach()
+
+        let deletionService = FakeReviewMutationService(
+            workspaces: [merged],
+            mutationWorkspace: merged
+        )
+        await deletionService.holdNextDeletion()
+        let deletionController = RepositoryPullRequestReviewOverlayController(
+            session: RepositoryPullRequestReviewSession(identity: fixture.identity, service: deletionService),
+            router: OverlayRecordingRouter()
+        )
+        _ = deletionController.view
+        deletionController.start()
+        await deletionService.waitForLoadCalls(1)
+        let deleteAction = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch,
+            in: deletionController.view
+        ) as? NSButton)
+        deleteAction.performClick(nil)
+        await waitUntil("delete confirmation") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.deleteBranch + ".Confirm",
+                in: deletionController.view
+            ) != nil
+        }
+        let deleteConfirm = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch + ".Confirm",
+            in: deletionController.view
+        ) as? NSButton)
+        let deleteCancel = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch + ".Cancel",
+            in: deletionController.view
+        ) as? NSButton)
+
+        deleteConfirm.performClick(nil)
+        deleteConfirm.performClick(nil)
+        XCTAssertFalse(deleteConfirm.isEnabled)
+        XCTAssertFalse(deleteCancel.isEnabled)
+        deleteCancel.performClick(nil)
+        XCTAssertNotNil(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch + ".Confirm",
+            in: deletionController.view
+        ))
+        await deletionService.waitForDeletionCalls(1)
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        let heldDeletionRequests = await deletionService.deletionRequests()
+        XCTAssertEqual(heldDeletionRequests.count, 1)
+        await deletionService.releaseHeldDeletion()
+        await waitUntil("delete confirmation closes") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.deleteBranch + ".Confirm",
+                in: deletionController.view
+            ) == nil
+        }
+        deletionController.detach()
     }
 
     func testMergeDeletionFailurePreservesMergeAndOffersBrowserAndSuccessfulRetry() async throws {
@@ -1935,7 +2093,7 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
             isDraft: false,
             title: "Native review",
             author: .unavailable(.notRequested),
-            head: .available(fixture.head),
+            head: .available(ForgePullRequestHead(reference: fixture.head)),
             base: .available(fixture.base),
             createdAt: fixture.now,
             updatedAt: fixture.now,

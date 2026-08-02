@@ -221,6 +221,8 @@ public enum GitHubMutationError: Error, Equatable, LocalizedError, Sendable,
     }
 }
 
+public typealias GitHubPullRequestMutationHead = ForgePullRequestHead
+
 public struct GitHubPullRequestMutationValue: Hashable, Sendable {
     public let id: ForgeObjectID
     public let repository: ForgeRepositoryIdentity
@@ -229,7 +231,7 @@ public struct GitHubPullRequestMutationValue: Hashable, Sendable {
     public let isDraft: Bool
     public let title: String
     public let bodyMarkdown: String
-    public let head: ForgeBranchReference
+    public let head: GitHubPullRequestMutationHead
     public let base: ForgeBranchReference
     public let createdAt: Date
     public let updatedAt: Date
@@ -245,6 +247,36 @@ public struct GitHubPullRequestMutationValue: Hashable, Sendable {
         title: String,
         bodyMarkdown: String,
         head: ForgeBranchReference,
+        base: ForgeBranchReference,
+        createdAt: Date,
+        updatedAt: Date,
+        closedAt: Date?,
+        mergedAt: Date?
+    ) {
+        self.id = id
+        self.repository = repository
+        self.number = number
+        self.state = state
+        self.isDraft = isDraft
+        self.title = title
+        self.bodyMarkdown = bodyMarkdown
+        self.head = GitHubPullRequestMutationHead(reference: head)
+        self.base = base
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.closedAt = closedAt
+        self.mergedAt = mergedAt
+    }
+
+    public init(
+        id: ForgeObjectID,
+        repository: ForgeRepositoryIdentity,
+        number: ForgeItemNumber,
+        state: ForgePullRequestState,
+        isDraft: Bool,
+        title: String,
+        bodyMarkdown: String,
+        head: GitHubPullRequestMutationHead,
         base: ForgeBranchReference,
         createdAt: Date,
         updatedAt: Date,

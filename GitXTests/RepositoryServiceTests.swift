@@ -347,6 +347,135 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         }
     }
 
+    func testRemoteDescriptorLoaderCachesSubprocessResultsUntilConfigurationRevisionChanges() {
+        let cache = RepositoryForgeRemoteDescriptorCache()
+        let loader = RepositoryForgeRemoteDescriptorLoader(cache: cache)
+        var revision = "config-v1"
+        var remoteNameLoads = 0
+        var remoteURLLoads = 0
+        let key = "cache-test-\(UUID().uuidString)"
+        func load() -> RepositoryForgeRemoteDescriptorLoad {
+            loader.load(
+                cacheKey: key,
+                revision: revision,
+                remoteNames: {
+                    remoteNameLoads += 1
+                    return ["origin", "upstream"]
+                },
+                remoteURL: { name in
+                    remoteURLLoads += 1
+                    return name == "origin"
+                        ? "https://github.com/person/widgets.git"
+                        : "https://github.com/organization/widgets.git"
+                }
+            )
+        }
+
+        XCTAssertFalse(load().reusedCache)
+        XCTAssertTrue(load().reusedCache)
+        XCTAssertEqual(remoteNameLoads, 1)
+        XCTAssertEqual(remoteURLLoads, 2)
+
+        revision = "config-v2"
+        XCTAssertFalse(load().reusedCache)
+        XCTAssertEqual(remoteNameLoads, 2)
+        XCTAssertEqual(remoteURLLoads, 4)
+    }
+
+    func testTransientRemoteURLFailureIsNotNegativeCached() {
+        let cache = RepositoryForgeRemoteDescriptorCache()
+        let loader = RepositoryForgeRemoteDescriptorLoader(cache: cache)
+        var remoteURLLoads = 0
+        let key = "failure-cache-test-\(UUID().uuidString)"
+        func load() -> RepositoryForgeRemoteDescriptorLoad {
+            loader.load(
+                cacheKey: key,
+                revision: "unchanged",
+                remoteNames: { ["origin"] },
+                remoteURL: { _ in
+                    remoteURLLoads += 1
+                    return remoteURLLoads == 1 ? nil : "https://github.com/acme/widgets.git"
+                }
+            )
+        }
+
+        XCTAssertFalse(load().isCacheable)
+        XCTAssertTrue(load().isCacheable)
+        XCTAssertEqual(remoteURLLoads, 2)
+    }
+
+    func testLinkedWorktreeConfigurationRevisionIncludesRelativeCommonDirectory() throws {
+        try addRemote("origin", url: "https://github.com/acme/widgets.git")
+        let linkedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitXRepositoryForgeLinked-\(UUID().uuidString)", isDirectory: true)
+        try runGit(["worktree", "add", "--quiet", "-b", "linked", linkedURL.path])
+        defer {
+            try? runGit(["worktree", "remove", "--force", linkedURL.path])
+            try? FileManager.default.removeItem(at: linkedURL)
+        }
+        let linkedRepository = try PBGitRepository(url: linkedURL)
+        let linkedGitURL = try XCTUnwrap(linkedRepository.gitURL())
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: linkedGitURL.appendingPathComponent("commondir").path
+            )
+        )
+
+        let resolution = PBRepositoryForgeCoordinator(repository: linkedRepository).resolveBinding()
+        XCTAssertEqual(resolution.kind, .automatic)
+        XCTAssertEqual(resolution.repositoryURL?.absoluteString, "https://github.com/acme/widgets")
+    }
+
+    func testIncludedGitConfigurationChangeInvalidatesUnavailableRemoteDescriptorCache() throws {
+        let includedConfigurationURL = repositoryURL
+            .appendingPathComponent(".git", isDirectory: true)
+            .appendingPathComponent("forge-remotes.inc", isDirectory: false)
+        try """
+        [remote "origin"]
+            url = http://example.com/acme/widgets.git
+        """.write(to: includedConfigurationURL, atomically: true, encoding: .utf8)
+        try runGit(["config", "--local", "include.path", includedConfigurationURL.lastPathComponent])
+        let coordinator = PBRepositoryForgeCoordinator(repository: repository)
+
+        XCTAssertEqual(coordinator.resolveBinding().kind, .unavailable)
+        XCTAssertEqual(coordinator.resolveBinding().kind, .unavailable)
+
+        try """
+        [remote "origin"]
+            url = https://github.com/acme/widgets.git
+        """.write(to: includedConfigurationURL, atomically: true, encoding: .utf8)
+        let updated = coordinator.resolveBinding()
+        XCTAssertEqual(updated.kind, .automatic)
+        XCTAssertEqual(updated.providerName, "GitHub")
+        XCTAssertEqual(updated.repositoryURL?.absoluteString, "https://github.com/acme/widgets")
+    }
+
+    func testBranchConditionalGitConfigurationInvalidatesRemoteDescriptorCache() throws {
+        let gitDirectoryURL = repositoryURL.appendingPathComponent(".git", isDirectory: true)
+        let mainConfigurationURL = gitDirectoryURL.appendingPathComponent("main-remotes.inc")
+        let githubConfigurationURL = gitDirectoryURL.appendingPathComponent("github-remotes.inc")
+        try """
+        [remote "origin"]
+            url = http://example.com/acme/widgets.git
+        """.write(to: mainConfigurationURL, atomically: true, encoding: .utf8)
+        try """
+        [remote "origin"]
+            url = https://github.com/acme/widgets.git
+        """.write(to: githubConfigurationURL, atomically: true, encoding: .utf8)
+        try runGit(["config", "--local", "includeIf.onbranch:main.path", mainConfigurationURL.path])
+        try runGit(["config", "--local", "includeIf.onbranch:github.path", githubConfigurationURL.path])
+        let coordinator = PBRepositoryForgeCoordinator(repository: repository)
+
+        XCTAssertEqual(coordinator.resolveBinding().kind, .unavailable)
+        XCTAssertEqual(coordinator.resolveBinding().kind, .unavailable)
+
+        try runGit(["checkout", "--quiet", "-b", "github"])
+        let updated = coordinator.resolveBinding()
+        XCTAssertEqual(updated.kind, .automatic)
+        XCTAssertEqual(updated.providerName, "GitHub")
+        XCTAssertEqual(updated.repositoryURL?.absoluteString, "https://github.com/acme/widgets")
+    }
+
     @MainActor
     func testRevisionFacadeCoversTagAndCommitKinds() throws {
         try addRemote("origin", url: "https://github.com/acme/widgets.git")

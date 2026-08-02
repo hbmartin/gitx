@@ -504,15 +504,9 @@ public actor GitHubAnonymousRESTAdapter {
         for component in ["repos", repository.owner, repository.name] + path {
             url.appendPathComponent(component)
         }
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        components?.queryItems = query.isEmpty ? nil : query
-        guard let requestURL = components?.url,
-              requestURL.scheme == "https",
-              requestURL.host == "api.github.com",
-              requestURL.port == nil
-        else {
-            throw GitHubAnonymousRESTError.invalidResponse
-        }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = query.isEmpty ? nil : query
+        let requestURL = components.url!
         var request = URLRequest(url: requestURL)
         request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
@@ -564,6 +558,9 @@ public actor GitHubAnonymousRESTAdapter {
         if states.isSubset(of: [.closed, .merged]) {
             return "closed"
         }
+        // GitHub cannot filter for an enum value unknown to this client. Fetch
+        // all and let the provider-neutral state filter retain only requested
+        // values without guessing.
         return "all"
     }
 
@@ -578,13 +575,40 @@ public actor GitHubAnonymousRESTAdapter {
         return "all"
     }
 
+    private static func pullRequestState(_ value: String) -> ForgePullRequestState {
+        switch value.lowercased() {
+        case "open": .open
+        case "closed": .closed
+        default: .unknown
+        }
+    }
+
+    private static func issueState(_ value: String) -> ForgeIssueState {
+        switch value.lowercased() {
+        case "open": .open
+        case "closed": .closed
+        default: .unknown
+        }
+    }
+
+    private static func milestoneState(_ value: String) -> ForgeMilestoneState {
+        switch value.lowercased() {
+        case "open": .open
+        case "closed": .closed
+        default: .unknown
+        }
+    }
+
     private static func pullRequest(
         _ payload: GitHubRESTPullRequest,
         repository: ForgeRepositoryIdentity
     ) throws -> ForgePullRequestSummary {
-        let state: ForgePullRequestState = payload.mergedAt == nil
-            ? (payload.state == "open" ? .open : .closed)
-            : .merged
+        let state: ForgePullRequestState
+        if payload.mergedAt != nil {
+            state = .merged
+        } else {
+            state = pullRequestState(payload.state)
+        }
         return try ForgePullRequestSummary(
             repository: repository,
             number: ForgeItemNumber(payload.number),
@@ -592,7 +616,7 @@ public actor GitHubAnonymousRESTAdapter {
             isDraft: payload.draft ?? false,
             title: payload.title,
             author: author(payload.user, forge: repository.forge),
-            head: branch(payload.head, fallbackRepository: repository),
+            head: pullRequestHead(payload.head, forge: repository.forge),
             base: branch(payload.base, fallbackRepository: repository),
             createdAt: date(payload.createdAt),
             updatedAt: date(payload.updatedAt),
@@ -611,7 +635,7 @@ public actor GitHubAnonymousRESTAdapter {
         try ForgeIssueSummary(
             repository: repository,
             number: ForgeItemNumber(payload.number),
-            state: payload.state == "open" ? .open : .closed,
+            state: issueState(payload.state),
             title: payload.title,
             author: author(payload.user, forge: repository.forge),
             createdAt: date(payload.createdAt),
@@ -667,7 +691,7 @@ public actor GitHubAnonymousRESTAdapter {
             number: payload.number,
             title: payload.title,
             description: payload.description,
-            state: payload.state == "open" ? .open : .closed,
+            state: milestoneState(payload.state),
             dueAt: payload.dueOn.map(date)
         )
     }
@@ -683,6 +707,22 @@ public actor GitHubAnonymousRESTAdapter {
             repository = fallbackRepository
         }
         return try .available(ForgeBranchReference(
+            repository: repository,
+            name: ForgeRefName(payload.ref),
+            commit: ForgeCommitID(payload.sha)
+        ))
+    }
+
+    private static func pullRequestHead(
+        _ payload: GitHubRESTBranch,
+        forge: ForgeIdentity
+    ) throws -> ForgeReadSection<ForgePullRequestHead> {
+        let repository: ForgeRepositoryIdentity? = if let fullName = payload.repository?.fullName {
+            try self.repository(fullName: fullName, forge: forge)
+        } else {
+            nil
+        }
+        return try .available(ForgePullRequestHead(
             repository: repository,
             name: ForgeRefName(payload.ref),
             commit: ForgeCommitID(payload.sha)
@@ -705,13 +745,7 @@ public actor GitHubAnonymousRESTAdapter {
     }
 
     private static func date(_ value: String) throws -> Date {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: value) {
-            return date
-        }
-        let standard = ISO8601DateFormatter()
-        guard let date = standard.date(from: value) else {
+        guard let date = GitHubISO8601DateParser.date(from: value) else {
             throw GitHubAnonymousRESTError.invalidResponse
         }
         return date

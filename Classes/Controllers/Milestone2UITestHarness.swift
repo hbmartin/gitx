@@ -412,7 +412,7 @@ import OSLog // swiftlint:disable:this unused_import
                 isDraft: false,
                 title: title,
                 author: .unavailable(.notRequested),
-                head: .available(preparation.head),
+                head: .available(ForgePullRequestHead(reference: preparation.head)),
                 base: .available(preparation.base),
                 createdAt: Date(timeIntervalSince1970: 1_700_200_000),
                 updatedAt: Date(timeIntervalSince1970: 1_700_200_100),
@@ -482,11 +482,11 @@ import OSLog // swiftlint:disable:this unused_import
                 isDraft: false,
                 title: "Contributor checkout through the native Pull Request inspector",
                 author: .unavailable(.notRequested),
-                head: .available(ForgeBranchReference(
+                head: .available(ForgePullRequestHead(reference: ForgeBranchReference(
                     repository: contributor,
                     name: ForgeRefName("feature"),
                     commit: ForgeCommitID(expectedRaw)
-                )),
+                ))),
                 base: .available(ForgeBranchReference(
                     repository: primary,
                     name: ForgeRefName("main"),

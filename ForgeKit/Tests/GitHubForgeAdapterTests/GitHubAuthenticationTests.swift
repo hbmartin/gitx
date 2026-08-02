@@ -25,7 +25,7 @@ final class GitHubAuthenticationTests: XCTestCase {
     }
 
     func testSecretRejectsEmptyWhitespaceAndControlBytesAndProvidesExplicitByteAccess() throws {
-        for invalid in ["", " ", "abc\n", "abc\u{7F}"] {
+        for invalid in ["", " ", "abc\n", "abc\u{7F}", "tøken", "秘密"] {
             XCTAssertThrowsError(try GitHubSecret(invalid)) {
                 XCTAssertEqual($0 as? GitHubAuthenticationError, .invalidSecret)
             }

@@ -533,23 +533,24 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await service.holdNextLoadCall()
         let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
 
-        session.load()
+        let cancelledLoad = session.load()
         await service.waitForLoadCalls(1)
-        session.load()
+        let currentLoad = session.load()
         await service.waitForLoadCalls(2)
+        await currentLoad.value
         try await waitForWorkspace(session, state: .open)
         XCTAssertEqual(session.workspace?.displayedHead, fixture.newHead)
 
-        let staleWorkspaceWasInstalled = expectation(description: "cancelled workspace stayed discarded")
-        staleWorkspaceWasInstalled.isInverted = true
+        var installedHeads: [ForgeCommitID] = []
         session.onStateChange = { state in
-            if case let .loaded(workspace) = state, workspace.displayedHead == fixture.oldHead {
-                staleWorkspaceWasInstalled.fulfill()
+            if case let .loaded(workspace) = state {
+                installedHeads.append(workspace.displayedHead)
             }
         }
         await service.releaseHeldLoad()
-        await fulfillment(of: [staleWorkspaceWasInstalled], timeout: 0.1)
+        await cancelledLoad.value
         session.onStateChange = nil
+        XCTAssertFalse(installedHeads.contains(fixture.oldHead))
         XCTAssertEqual(session.workspace?.displayedHead, fixture.newHead)
     }
 
@@ -1301,24 +1302,19 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await service.waitForResolutionCalls(1)
         session.undoResolution(threadID: fixture.threadID, at: fixture.now.addingTimeInterval(2))
 
-        let inverseDispatchedEarly = expectation(description: "inverse resolution waited for its predecessor")
-        inverseDispatchedEarly.isInverted = true
-        let prematureWaiter = Task {
-            await service.waitForResolutionCalls(2)
-            guard !Task.isCancelled else { return }
-            inverseDispatchedEarly.fulfill()
-        }
-        await fulfillment(of: [inverseDispatchedEarly], timeout: 0.1)
-        prematureWaiter.cancel()
-
-        let staleOutcomeWasPublished = expectation(description: "stale unknown outcome was ignored")
-        staleOutcomeWasPublished.isInverted = true
-        session.onOutcomeUnknown = { staleOutcomeWasPublished.fulfill() }
+        var staleOutcomeWasPublished = false
+        session.onOutcomeUnknown = { staleOutcomeWasPublished = true }
         await service.releaseHeldResolution(with: .outcomeUnknown)
         await service.waitForResolutionCalls(2)
         await service.waitForLoadCalls(2)
-        await fulfillment(of: [staleOutcomeWasPublished], timeout: 0.1)
+        let maximumConcurrentCalls = await service.maximumConcurrentResolutionCalls()
         session.onOutcomeUnknown = nil
+        XCTAssertFalse(staleOutcomeWasPublished)
+        XCTAssertEqual(
+            maximumConcurrentCalls,
+            1,
+            "The inverse must not overlap its receipt-ambiguous predecessor"
+        )
 
         XCTAssertEqual(
             session.resolutionStates[fixture.threadID],
@@ -1873,6 +1869,32 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertEqual(actions, [.close], "Unknown outcomes must never retry a mutation")
     }
 
+    func testAcknowledgedLifecycleWithNonFreshReconciliationInstallsExplicitStaleState() async throws {
+        let fixture = try ReviewAppFixture()
+        let open = try fixture.workspace()
+        let retained = try open.markingMutationStateFresh(false)
+        let service = FakeReviewMutationService(
+            workspaces: [open],
+            mutationWorkspace: retained
+        )
+        let session = RepositoryPullRequestReviewSession(identity: fixture.identity, service: service)
+        try await load(session)
+
+        try await session.performLifecycle(.close)
+
+        guard case let .stale(workspace, message) = session.state else {
+            return XCTFail("An acknowledged write without authoritative reconciliation must remain visibly stale")
+        }
+        XCTAssertEqual(workspace.displayedHead, open.displayedHead)
+        XCTAssertFalse(workspace.isMutationStateFresh)
+        XCTAssertEqual(message, RepositoryPullRequestReviewServiceError.stalePullRequest.localizedDescription)
+        await XCTAssertThrowsErrorAsync(try await session.performLifecycle(.close)) {
+            XCTAssertEqual($0 as? RepositoryPullRequestReviewServiceError, .stalePullRequest)
+        }
+        let actions = await service.lifecycleActions()
+        XCTAssertEqual(actions, [.close], "Stale acknowledged state must fail closed without another write")
+    }
+
     func testMergeRefetchesTwiceStopsRaceRecordsPreferencesAndKeepsDeletionFailureSeparate() async throws {
         let fixture = try ReviewAppFixture()
         let open = try fixture.workspace(deletion: true)
@@ -1959,6 +1981,40 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         await unknownService.waitForLoadCalls(2)
         let unknownMergeRequests = await unknownService.mergeRequests()
         XCTAssertEqual(unknownMergeRequests.count, 1, "Unknown outcomes are never retried")
+    }
+
+    func testMergeDoesNotOverwriteRememberedDeleteChoiceWhenDeletionWasIneligible() async throws {
+        let fixture = try ReviewAppFixture()
+        let open = try fixture.workspace(deletion: false)
+        let merged = try fixture.workspace(state: .merged, deletion: false)
+        let service = FakeReviewMutationService(
+            workspaces: [open],
+            mutationWorkspace: merged,
+            freshMergeSnapshots: [open.mergeSnapshot, open.mergeSnapshot]
+        )
+        let preferences = FakeMutationPreferences()
+        await preferences.recordSuccessfulDeleteBranchChoice(
+            repository: fixture.repository,
+            selected: true
+        )
+        let session = RepositoryPullRequestReviewSession(
+            identity: fixture.identity,
+            service: service,
+            preferences: preferences
+        )
+        try await load(session)
+        let confirmation = try await session.prepareMerge(method: .merge)
+
+        let completion = try await session.confirmMerge(
+            confirmation,
+            title: "Merge",
+            message: "",
+            deleteHeadBranchChoice: false
+        )
+
+        XCTAssertEqual(completion, .merged)
+        let choices = await preferences.deleteChoices()
+        XCTAssertEqual(choices, [true], "A disabled checkbox must not clobber the last eligible choice")
     }
 
     func testDirectMergeEligibleDeleteChoiceDeletesSeparatelyWhileUncheckedChoiceDoesNot() async throws {
@@ -2349,15 +2405,21 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     private var shouldHoldNextResolution = false
     private var heldResolution: CheckedContinuation<Void, Error>?
     private var resolutionFailureCount = 0
+    private var concurrentResolutionCallCount = 0
+    private var maximumConcurrentResolutionCallCount = 0
     private var resolutionWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var resolutionFailureWaiters: [CheckedContinuation<Void, Never>] = []
     private var lifecycleValues: [ForgePullRequestLifecycleRequest] = []
     private var lifecycleError: (any Error & Sendable)?
     private var lifecycleWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var mergeValues: [ForgePullRequestMergeRequest] = []
+    private var shouldHoldNextMerge = false
+    private var heldMerge: CheckedContinuation<Void, Never>?
     private var mergeWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var queueValues: [ForgePullRequestMergeQueueRequest] = []
     private var deletionValues: [ForgeHeadBranchDeletionRequest] = []
+    private var shouldHoldNextDeletion = false
+    private var heldDeletion: CheckedContinuation<Void, Never>?
     private var deletionError: RepositoryPullRequestReviewServiceError?
     private var deletionWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var inlineWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -2434,6 +2496,12 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
         threadID _: ForgeObjectID,
         mutation: ForgeReviewThreadResolutionMutation
     ) async throws {
+        concurrentResolutionCallCount += 1
+        maximumConcurrentResolutionCallCount = max(
+            maximumConcurrentResolutionCallCount,
+            concurrentResolutionCallCount
+        )
+        defer { concurrentResolutionCallCount -= 1 }
         resolutionValues.append(mutation)
         resumeResolutionWaiters()
         if shouldHoldNextResolution {
@@ -2482,6 +2550,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     ) async throws -> RepositoryPullRequestReviewWorkspace {
         mergeValues.append(request)
         resumeWaiters(&mergeWaiters, count: mergeValues.count)
+        if shouldHoldNextMerge {
+            shouldHoldNextMerge = false
+            await withCheckedContinuation { heldMerge = $0 }
+        }
         if let mergeError {
             throw mergeError
         }
@@ -2506,6 +2578,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     func deleteHeadBranch(_ request: ForgeHeadBranchDeletionRequest) async throws {
         deletionValues.append(request)
         resumeWaiters(&deletionWaiters, count: deletionValues.count)
+        if shouldHoldNextDeletion {
+            shouldHoldNextDeletion = false
+            await withCheckedContinuation { heldDeletion = $0 }
+        }
         if let deletionError {
             self.deletionError = nil
             throw deletionError
@@ -2514,6 +2590,24 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
 
     func enqueueWorkspace(_ workspace: RepositoryPullRequestReviewWorkspace) {
         workspaces.append(workspace)
+    }
+
+    func holdNextMerge() {
+        shouldHoldNextMerge = true
+    }
+
+    func releaseHeldMerge() {
+        heldMerge?.resume()
+        heldMerge = nil
+    }
+
+    func holdNextDeletion() {
+        shouldHoldNextDeletion = true
+    }
+
+    func releaseHeldDeletion() {
+        heldDeletion?.resume()
+        heldDeletion = nil
     }
 
     func inlinePublications() -> [ForgeInlineReviewPublication] {
@@ -2530,6 +2624,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
 
     func resolutionMutations() -> [ForgeReviewThreadResolutionMutation] {
         resolutionValues
+    }
+
+    func maximumConcurrentResolutionCalls() -> Int {
+        maximumConcurrentResolutionCallCount
     }
 
     func lifecycleActions() -> [ForgePullRequestLifecycleAction] {

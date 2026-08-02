@@ -342,7 +342,7 @@ private struct ReviewPerformanceFixture {
             isDraft: false,
             title: workspace.title,
             author: .unavailable(.partialResponse),
-            head: .available(head),
+            head: .available(ForgePullRequestHead(reference: head)),
             base: .available(base),
             createdAt: now.addingTimeInterval(-3600),
             updatedAt: now,

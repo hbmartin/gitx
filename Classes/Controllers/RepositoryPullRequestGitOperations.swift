@@ -199,7 +199,9 @@ final nonisolated class RepositoryPullRequestCheckoutPlanner: @unchecked Sendabl
                     let branches = try Set(self.repository.outputOfTask(withArguments: [
                         "for-each-ref", "--format=%(refname:short)", "refs/heads",
                     ]).components(separatedBy: .newlines).filter { !$0.isEmpty }.map(ForgeRefName.init))
-                    guard case let .available(head) = pullRequest.head else {
+                    guard case let .available(headValue) = pullRequest.head,
+                          let head = headValue.reference
+                    else {
                         throw ForgePullRequestWorkflowError.headReferenceUnavailable
                     }
                     let path = (head.repository.ownerPathComponents + [head.repository.name + ".git"])
@@ -259,15 +261,6 @@ nonisolated struct RepositoryPullRequestCheckoutExecutor: Sendable {
             _ = try runner.run([
                 "config", "--add", "remote.\(plan.remote.name).fetch", plan.fetchRefspec,
             ])
-        } else {
-            let configured = (try? runner.run([
-                "config", "--get-all", "remote.\(plan.remote.name).fetch",
-            ])) ?? ""
-            if !configured.components(separatedBy: .newlines).contains(plan.fetchRefspec) {
-                _ = try runner.run([
-                    "config", "--add", "remote.\(plan.remote.name).fetch", plan.fetchRefspec,
-                ])
-            }
         }
 
         _ = try runner.run(["fetch", "--no-tags", plan.remote.name, plan.fetchRefspec])

@@ -1101,6 +1101,7 @@
                 addedAt: eventDate,
                 source: .repositoryOpened
             )
+            try await persistence.save(watchedRepository)
             try await persistence.persist(ForgeAttentionReconciliation(
                 watchedRepository: watchedRepository,
                 records: [record],
