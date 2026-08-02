@@ -500,13 +500,25 @@ public actor GitHubAnonymousRESTAdapter {
         path: [String],
         query: [URLQueryItem]
     ) throws -> URLRequest {
-        var url = URL(string: "https://api.github.com")!
-        for component in ["repos", repository.owner, repository.name] + path {
+        let ownerComponents = repository.ownerPathComponents
+        let requestPath = ["repos"] + ownerComponents + [repository.name] + path
+        guard ownerComponents.count == 1,
+              requestPath.allSatisfy(isSafePathComponent),
+              var url = URL(string: "https://api.github.com")
+        else {
+            throw GitHubAnonymousRESTError.invalidResponse
+        }
+        for component in requestPath {
             url.appendPathComponent(component)
         }
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { throw GitHubAnonymousRESTError.invalidResponse }
         components.queryItems = query.isEmpty ? nil : query
-        let requestURL = components.url!
+        guard let requestURL = components.url,
+              requestURL.scheme?.lowercased() == "https",
+              requestURL.host?.lowercased() == "api.github.com",
+              requestURL.port == nil
+        else { throw GitHubAnonymousRESTError.invalidResponse }
         var request = URLRequest(url: requestURL)
         request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
@@ -517,6 +529,16 @@ public actor GitHubAnonymousRESTAdapter {
         request.setValue(nil, forHTTPHeaderField: "Authorization")
         request.setValue(nil, forHTTPHeaderField: "Cookie")
         return request
+    }
+
+    private static func isSafePathComponent(_ value: String) -> Bool {
+        !value.isEmpty
+            && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+            && !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+            && value != "."
+            && value != ".."
+            && !value.contains("/")
+            && !value.contains("\\")
     }
 
     private static func isGitHubDotCom(_ forge: ForgeIdentity) -> Bool {

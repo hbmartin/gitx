@@ -346,7 +346,9 @@ struct GitHubGraphQLDocumentMapper {
         repository: ForgeRepositoryIdentity,
         problems: [GitHubGraphQLProblem]
     ) throws -> GitHubMappedValue<ForgeAttentionCandidatePage> {
-        let viewer = try actor(data.viewer.fragments.gitHubActor)!
+        guard let viewer = try actor(data.viewer.fragments.gitHubActor) else {
+            throw GitHubReadError.malformedResponse
+        }
         let connection = data.search
         let statusCheckRollupWasErrored = problems.affect(field: "statusCheckRollup")
         let mapped = try mapNodes(connection.nodes) { node -> ForgeAttentionCandidate? in
@@ -382,6 +384,44 @@ struct GitHubGraphQLDocumentMapper {
         )
     }
 }
+
+#if DEBUG
+    extension GitHubGraphQLDocumentMapper {
+        static func mapAttentionViewerWithoutNodeIdentityForProductProof(
+            forge: ForgeIdentity,
+            repository: ForgeRepositoryIdentity
+        ) -> (any Error)? {
+            let viewer = DataDict(
+                data: [
+                    "__typename": "FutureActor",
+                    "login": "future-viewer",
+                    "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4",
+                ],
+                fulfilledFragments: [
+                    ObjectIdentifier(GitHubAPI.GitHubAttentionCandidatesQuery.Data.Viewer.self),
+                    ObjectIdentifier(GitHubAPI.GitHubActor.self),
+                ]
+            )
+            let data = GitHubAPI.GitHubAttentionCandidatesQuery.Data(_dataDict: DataDict(
+                data: ["viewer": viewer],
+                fulfilledFragments: [
+                    ObjectIdentifier(GitHubAPI.GitHubAttentionCandidatesQuery.Data.self),
+                ]
+            ))
+            var mappingError: (any Error)?
+            do {
+                _ = try GitHubGraphQLDocumentMapper(forge: forge).attentionCandidates(
+                    data: data,
+                    repository: repository,
+                    problems: []
+                )
+            } catch {
+                mappingError = error
+            }
+            return mappingError
+        }
+    }
+#endif
 
 private extension GitHubGraphQLDocumentMapper {
     struct NodeMapping<Value> {
@@ -878,9 +918,9 @@ private extension GitHubGraphQLDocumentMapper {
         guard status == .completed else { return .running }
         switch conclusion {
         case .success: return .succeeded
-        case .neutral, .skipped: return .neutral
+        case .cancelled, .neutral, .skipped, .stale: return .neutral
         case .actionRequired: return .attentionRequired
-        case .cancelled, .failure, .stale, .startupFailure, .timedOut: return .failed
+        case .failure, .startupFailure, .timedOut: return .failed
         case nil: return nil
         }
     }

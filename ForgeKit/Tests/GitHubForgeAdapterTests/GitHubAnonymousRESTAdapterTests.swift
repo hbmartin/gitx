@@ -230,6 +230,24 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
     }
 
+    func testRepositoryFactsRejectMultiSegmentGitHubOwnerBeforeConstructingRequest() async throws {
+        let client = QueueAnonymousClient([])
+        let adapter = GitHubAnonymousRESTAdapter(client: client, budget: GitHubAnonymousRESTBudget())
+        let nestedOwner = try ForgeRepositoryIdentity(
+            forge: repository.forge,
+            owner: "organization/team",
+            name: "gitx"
+        )
+
+        await XCTAssertThrowsErrorAsync(
+            try await adapter.repositoryFacts(repository: nestedOwner, reason: .manual)
+        ) { error in
+            XCTAssertEqual(error as? GitHubAnonymousRESTError, .invalidResponse)
+        }
+        let requests = await client.requests()
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     func testRepositoryFactsMapStandaloneUnknownVisibilityAndRejectInvalidParent() async throws {
         let standalone = response(json: [
             "default_branch": "trunk",

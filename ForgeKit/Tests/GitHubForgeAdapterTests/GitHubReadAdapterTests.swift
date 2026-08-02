@@ -8,6 +8,17 @@ final class GitHubReadAdapterTests: XCTestCase {
         super.tearDown()
     }
 
+    func testAttentionViewerWithoutNodeIdentityThrowsMalformedResponse() throws {
+        let repository = try makeRepository()
+
+        let error = GitHubGraphQLDocumentMapper.mapAttentionViewerWithoutNodeIdentityForProductProof(
+            forge: repository.forge,
+            repository: repository
+        )
+
+        XCTAssertEqual(error as? GitHubReadError, .malformedResponse)
+    }
+
     func testEveryCheckedInOperationExecutesThroughApolloAndReturnsMetadata() async throws {
         let capture = GitHubRequestCapture()
         GitHubStubURLProtocol.setHandler { request in
@@ -1510,6 +1521,54 @@ final class GitHubReadAdapterTests: XCTestCase {
         }
         XCTAssertNotNil(issueMilestone)
         XCTAssertEqual(issueResult.value.timeline.availableValue?.items.count, 1)
+    }
+
+    func testCheckRunConclusionsMapEveryProviderValueDeliberately() async throws {
+        let repository = try makeRepository()
+        let number = try ForgeItemNumber(7)
+        let expectedStates: [(conclusion: String, state: ForgeCheckState)] = [
+            ("ACTION_REQUIRED", .attentionRequired),
+            ("CANCELLED", .neutral),
+            ("FAILURE", .failed),
+            ("NEUTRAL", .neutral),
+            ("SKIPPED", .neutral),
+            ("STALE", .neutral),
+            ("STARTUP_FAILURE", .failed),
+            ("SUCCESS", .succeeded),
+            ("TIMED_OUT", .failed),
+        ]
+
+        for expectation in expectedStates {
+            var details = Self.completePullRequestDetails
+            details["statusCheckRollup"] = [
+                "__typename": "StatusCheckRollup",
+                "state": "SUCCESS",
+                "contexts": Self.connection("StatusCheckRollupContextConnection", nodes: [[
+                    "__typename": "CheckRun",
+                    "id": "check-\(expectation.conclusion.lowercased())",
+                    "name": expectation.conclusion,
+                    "summary": NSNull(),
+                    "status": "COMPLETED",
+                    "conclusion": expectation.conclusion,
+                    "detailsUrl": NSNull(),
+                    "startedAt": NSNull(),
+                    "completedAt": NSNull(),
+                ]]),
+            ]
+            try installGraphQLData(["repository": [
+                "__typename": "Repository", "id": "repository", "pullRequest": details,
+            ]])
+
+            let result = try await makeAdapter().pullRequestDetails(
+                repository: repository,
+                number: number
+            )
+            XCTAssertEqual(
+                result.value.details.checks.availableValue?.first?.state,
+                expectation.state,
+                "Unexpected mapping for \(expectation.conclusion)"
+            )
+        }
     }
 
     func testReviewAndAttentionConnectionsExposeUnknownAndTruncatedDataAsUnavailable() async throws {
