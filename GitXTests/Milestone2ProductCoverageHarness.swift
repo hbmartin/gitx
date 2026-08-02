@@ -34,6 +34,8 @@
         /// Keeping this bridge in the DEBUG product avoids compiling a second
         /// copy of the internal coordinator into the XCTest bundle.
         @objc(repositoryForgeCoordinatorCacheProofWithRepository:)
+        // Called dynamically from the Objective-C XCTest compatibility surface.
+        // swiftlint:disable:next unused_declaration
         static func repositoryForgeCoordinatorCacheProof(repository: PBGitRepository) -> UInt64 {
             let settings = RepositoryUISettings(repository: repository)
             let cache = RepositoryForgeRemoteDescriptorCache()

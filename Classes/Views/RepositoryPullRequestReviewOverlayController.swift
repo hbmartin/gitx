@@ -158,6 +158,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private var rendersThreadsInline = false
     var onWorkspacePresentationChange: (() -> Void)?
 
+    // XCTest observes this product-owned lifecycle probe from the app-hosted test bundle.
+    // swiftlint:disable:next unused_declaration
     var trackedTaskCountForProductProof: Int {
         tasks.count + actionPresentationTasks.count
             + overlayDraftLoadTasks.count + threadDraftLoadTasks.count
