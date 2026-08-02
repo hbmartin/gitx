@@ -1,15 +1,16 @@
-# Swift 6.2 Migration
+# Swift 6.3 Migration
 
-GitX's first-party Swift now builds in Swift 6 language mode with the Swift 6.2
-concurrency model. The application remains a mixed Objective-C/Swift target;
-this migration changes the language and isolation contract of Swift code rather
-than rewriting stable Objective-C code.
+GitX's first-party Swift now builds in Swift 6 language mode with the Swift 6.3
+concurrency model and requires the Swift 6.3.3 toolchain. The application
+remains a mixed Objective-C/Swift target; this migration changes the language
+and isolation contract of Swift code rather than rewriting stable Objective-C
+code.
 
 ## Toolchain contract
 
-- CI is pinned to Xcode 26.2, whose bundled compiler is Swift 6.2.3.
+- CI is pinned to Xcode 26.6, whose bundled compiler is Swift 6.3.3.
 - Xcode expresses every Swift 6.x language mode as `SWIFT_VERSION = 6.0`.
-  The Xcode pin, not a `6.2` project-setting value, selects the 6.2 compiler.
+  The Xcode pin, not a `6.3` project-setting value, selects the 6.3 compiler.
 - The app and app-hosted unit-test targets use complete strict-concurrency
   checking and treat Swift warnings as errors.
 - ObjectiveGit's two existing framework-header warning categories are demoted
@@ -17,10 +18,9 @@ than rewriting stable Objective-C code.
   remain fatal, and the existing Objective-C warning/analyzer baselines remain
   independent.
 
-The migration was also exercised locally with Xcode 26.6 / Swift 6.3.3 because
-that is the installed developer toolchain. The Xcode 26.2 CI jobs are the
-authoritative exact-version verification. This distinction matters because the
-Swift 6.3 line has had executor-restoration regressions around
+Xcode 26.6 / Swift 6.3.3 is the minimum supported developer toolchain and the
+authoritative exact-version CI configuration. This matters because the Swift
+6.3 line has had executor-restoration regressions around
 `nonisolated(nonsending)` and `@concurrent`; GitX currently uses neither an
 `@concurrent` function nor a nonisolated async function.
 
@@ -84,7 +84,7 @@ swift6-safety-justification:
 
 The justification must name the synchronization or compatibility invariant.
 The check runs from `scripts/verify_static.sh`, and policy tests pin the language
-mode, concurrency settings, runtime checks, and Xcode 26.2 workflow versions.
+mode, concurrency settings, runtime checks, and Xcode 26.6 workflow versions.
 
 ## Verification workflow
 

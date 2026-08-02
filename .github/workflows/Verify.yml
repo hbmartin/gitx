@@ -26,7 +26,7 @@ jobs:
           persist-credentials: false
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Enforce the core dependency boundary
         run: python3 scripts/check_gitxcore_boundary.py
       - name: Run hostless core tests
@@ -59,7 +59,7 @@ jobs:
           persist-credentials: false
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Run hostless ForgeKit tests
         run: |
           swift test \
@@ -89,12 +89,12 @@ jobs:
           persist-credentials: false
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Restore pinned Swift tool cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.mint
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.2-mint-${{ hashFiles('Mintfile') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-mint-${{ hashFiles('Mintfile') }}
       - name: Install pinned Swift tools and workflow linters
         run: |
           brew install mint shellcheck actionlint
@@ -133,12 +133,12 @@ jobs:
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Restore pinned Swift tool cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.mint
-          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.2-mint-${{ hashFiles('Mintfile') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-26.6-mint-${{ hashFiles('Mintfile') }}
       - name: Install pinned Swift tools
         run: |
           brew install mint
@@ -186,7 +186,7 @@ jobs:
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git
@@ -229,7 +229,7 @@ jobs:
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git
@@ -264,7 +264,7 @@ jobs:
           submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
-          xcode-version: "26.2"
+          xcode-version: "26.6"
       - name: Prepare ObjectiveGit
         run: |
           cd External/objective-git

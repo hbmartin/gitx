@@ -43,7 +43,7 @@ GitX is a native macOS graphical client for the `git` version control system. It
 
 ## Build Requirements
 
-- macOS with Xcode installed
+- macOS with Xcode 26.6 or newer installed
 - A `Dev.xcconfig` file at the project root with `DEVELOPMENT_TEAM` and `CODE_SIGN_IDENTITY` for local signing
 
 ## License

@@ -40,13 +40,17 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertEqual(project.count("-Wno-error=incomplete-umbrella"), 4)
         self.assertEqual(project.count("-Wno-error=quoted-include-in-framework-header"), 4)
 
-    def test_ci_pins_the_swift_6_2_toolchain(self) -> None:
+    def test_ci_pins_the_swift_6_3_toolchain_and_documents_the_xcode_floor(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        readme = (ROOT / "README.markdown").read_text()
+        migration = (ROOT / "docs" / "swift6_migration.md").read_text()
 
-        self.assertNotIn("26.3", build_workflow + verify_workflow)
-        self.assertEqual(build_workflow.count("xcode: 26.2"), 1)
-        self.assertEqual(verify_workflow.count('xcode-version: "26.2"'), 7)
+        self.assertNotIn("26.2", build_workflow + verify_workflow)
+        self.assertEqual(build_workflow.count("xcode: 26.6"), 1)
+        self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 7)
+        self.assertIn("Xcode 26.6 or newer is required", readme)
+        self.assertIn("CI is pinned to Xcode 26.6", migration)
 
     def test_legacy_build_workflow_uses_shared_ui_test_plan(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()

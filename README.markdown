@@ -26,6 +26,8 @@ See also: [How to Build in Xcode](#how-to-build-in-xcode)
 
 ### How to Build in Xcode:
 
+Xcode 26.6 or newer is required.
+
 To build and run in the Xcode app with your own developer account, create
 a config file called `Dev.xcconfig` at the project root like this:
 
