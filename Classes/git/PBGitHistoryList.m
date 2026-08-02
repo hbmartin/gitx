@@ -262,8 +262,12 @@
 		return;
 
 	if (currentRevList) {
-		[currentRevList cancel];
 		[currentRevList removeObserver:self keyPath:@"commits"];
+		// Keep the shared all-branches load alive while a transient revision is
+		// selected. Returning to a branch can then graph the complete project
+		// snapshot instead of commits published before cancellation.
+		if (currentRevList != projectRevList)
+			[currentRevList cancel];
 	}
 
 	currentRevList = parser;
