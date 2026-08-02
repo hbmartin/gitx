@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import pathlib
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 from support import ROOT
@@ -57,6 +62,66 @@ class PinnedToolsTests(unittest.TestCase):
 
         self.assertIn("-testPlan GitXUI", build_workflow)
         self.assertNotIn("-only-testing:GitXUITests", build_workflow)
+
+    def test_legacy_build_workflow_archives_unsigned_when_signing_secrets_are_unavailable(self) -> None:
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+        build_step = build_workflow.split(
+            "      - name: Build project\n", maxsplit=1
+        )[1].split("      - name: Verify archived bundle identifiers\n", maxsplit=1)[0]
+
+        self.assertIn('if [[ -z "$variableSet" ]]', build_step)
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", build_step)
+        self.assertIn("CODE_SIGNING_REQUIRED=NO", build_step)
+        self.assertIn('CODE_SIGN_IDENTITY=""', build_step)
+        self.assertIn('"${signing_settings[@]}"', build_step)
+
+        run_script = textwrap.dedent(
+            build_step.split("        run: |\n", maxsplit=1)[1]
+        ).replace("${{ matrix.abi }}", "arm64")
+        with tempfile.TemporaryDirectory() as directory:
+            mock_xcodebuild = pathlib.Path(directory) / "xcodebuild"
+            mock_xcodebuild.write_text(
+                "#!/bin/sh\n"
+                'printf \'%s\\n\' "$@" > "$CAPTURED_ARGUMENTS"\n'
+            )
+            mock_xcodebuild.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{directory}:{environment['PATH']}"
+
+            observed: dict[str, list[str]] = {}
+            for name, certificate in (("unsigned", ""), ("signed", "certificate")):
+                captured = pathlib.Path(directory) / f"{name}.args"
+                environment["variableSet"] = certificate
+                environment["CAPTURED_ARGUMENTS"] = str(captured)
+                subprocess.run(
+                    ["bash", "-e", "-c", run_script],
+                    check=True,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                )
+                observed[name] = captured.read_text().splitlines()
+
+        unsigned_settings = {
+            "CODE_SIGNING_ALLOWED=NO",
+            "CODE_SIGNING_REQUIRED=NO",
+            "CODE_SIGN_IDENTITY=",
+        }
+        self.assertTrue(unsigned_settings.issubset(observed["unsigned"]))
+        self.assertTrue(unsigned_settings.isdisjoint(observed["signed"]))
+        self.assertEqual(
+            observed["signed"],
+            [
+                "-workspace",
+                "GitX.xcworkspace",
+                "-scheme",
+                "GitX",
+                "-archivePath",
+                "./GitX",
+                "archive",
+                "ARCHS=arm64",
+            ],
+        )
 
     def test_legacy_screenshot_fixture_only_overrides_ui_fixture_when_comparison_enabled(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
