@@ -355,10 +355,7 @@ final class ForgePullRequestSheetController: NSWindowController, NSWindowDelegat
     }
 
     private static func timestamp(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
+        ForgeReadDateFormatting.dateAndTime(date)
     }
 
     private var destination: ForgeDestination {

@@ -5,7 +5,6 @@ import ForgeKit
 @objc(PBGitWindowController)
 open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation { // swiftlint:disable:this type_body_length
     @objc private dynamic var _sidebarController: PBGitSidebarController? // swiftlint:disable:this identifier_name
-    @objc private dynamic var _sidebarViewController: PBGitSidebarController? // swiftlint:disable:this identifier_name
     @objc private dynamic var _historyViewController: PBGitHistoryController? // swiftlint:disable:this identifier_name
     @objc private dynamic weak var contentController: PBViewController?
 
@@ -60,7 +59,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc dynamic var sidebarViewController: PBGitSidebarController? {
-        _sidebarViewController
+        _sidebarController
     }
 
     final func ensureActionCoordinators() {

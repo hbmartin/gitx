@@ -157,7 +157,22 @@ jobs:
         # any lookup that resolves GitX that way. Each target already sets its
         # own identifier in the project file, and the step below fails the
         # build if two bundles ever share one.
-        run: xcodebuild -workspace GitX.xcworkspace -scheme GitX -archivePath ./GitX archive ARCHS="${{ matrix.abi }}"
+        run: |
+          signing_settings=()
+          if [[ -z "$variableSet" ]]; then
+            signing_settings=(
+              CODE_SIGNING_ALLOWED=NO
+              CODE_SIGNING_REQUIRED=NO
+              CODE_SIGN_IDENTITY=""
+            )
+          fi
+          xcodebuild \
+            -workspace GitX.xcworkspace \
+            -scheme GitX \
+            -archivePath ./GitX \
+            archive \
+            ARCHS="${{ matrix.abi }}" \
+            "${signing_settings[@]}"
       - name: Verify archived bundle identifiers
         run: python3 scripts/check_bundle_identifiers.py GitX.xcarchive/Products/Applications/GitX.app
       - name: Prepare artifact

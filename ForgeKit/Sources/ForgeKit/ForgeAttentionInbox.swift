@@ -7,6 +7,8 @@ public enum ForgeAttentionInboxError: Error, Equatable, LocalizedError, Sendable
     case mismatchedSubject
     case missingWatchedRepository
     case corruptPersistenceRecord
+    case duplicateAttentionRecord
+    case staleRefreshGeneration
 
     public var errorDescription: String? {
         switch self {
@@ -20,6 +22,10 @@ public enum ForgeAttentionInboxError: Error, Equatable, LocalizedError, Sendable
             "The requested repository is not watched by this Forge Account."
         case .corruptPersistenceRecord:
             "A durable Attention record does not match its canonical persistence identity."
+        case .duplicateAttentionRecord:
+            "Attention reconciliation received duplicate durable record identities."
+        case .staleRefreshGeneration:
+            "A newer Attention refresh already committed for this watched repository."
         }
     }
 }
@@ -180,7 +186,13 @@ public enum ForgeAttentionReconciler {
             }
         }
 
-        let existingByID = Dictionary(uniqueKeysWithValues: existingRecords.map { ($0.item.id, $0) })
+        var existingByID: [ForgeAttentionItemID: ForgeAttentionRecord] = [:]
+        existingByID.reserveCapacity(existingRecords.count)
+        for record in existingRecords {
+            guard existingByID.updateValue(record, forKey: record.item.id) == nil else {
+                throw ForgeAttentionInboxError.duplicateAttentionRecord
+            }
+        }
         var records: [ForgeAttentionRecord] = []
         var newlyActionable: [ForgeAttentionItem] = []
         var resolved: [ForgeAttentionItem] = []
@@ -685,6 +697,12 @@ public struct ForgeAttentionPollingScheduler: Sendable {
 }
 
 public actor ForgeSQLiteAttentionPersistence {
+    private struct PersistenceBatch: Sendable {
+        let watchedRepository: ForgeSQLiteDurableRecord
+        let records: [ForgeSQLiteDurableRecord]
+        let cacheEntries: [ForgeSQLiteCacheEntry]
+    }
+
     private let store: ForgeSQLiteStore
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -697,14 +715,7 @@ public actor ForgeSQLiteAttentionPersistence {
     }
 
     public func save(_ watchedRepository: ForgeWatchedRepository) async throws {
-        try await store.saveDurableRecord(ForgeSQLiteDurableRecord(
-            kind: .watchedRepository,
-            accountID: watchedRepository.key.accountID,
-            repository: watchedRepository.key.repository,
-            key: ForgeSQLiteStore.encodedKey(watchedRepository.key),
-            payload: encoder.encode(watchedRepository),
-            lastActivityAt: watchedRepository.lastSuccessfulPollAt ?? watchedRepository.addedAt
-        ))
+        try await store.saveDurableRecord(Self.durableRecord(for: watchedRepository, encoder: encoder))
     }
 
     public func save(_ records: [ForgeAttentionRecord]) async throws {
@@ -714,21 +725,95 @@ public actor ForgeSQLiteAttentionPersistence {
     }
 
     public func persist(_ reconciliation: ForgeAttentionReconciliation) async throws {
-        try await save(reconciliation.watchedRepository)
-        try await save(reconciliation.records)
-        for entry in reconciliation.entries {
-            let payload = try encoder.encode(entry)
-            let cacheRecord = try ForgeDisposableCacheRecord(
-                key: cacheKey(for: entry.record.item.id),
-                byteCount: UInt64(payload.count),
-                fetchedAt: reconciliation.fetchedAt,
-                lastAccessedAt: reconciliation.fetchedAt,
-                completeness: reconciliation.completeness
+        try await store.updateAttention(reconciliation.watchedRepository.key) { state in
+            guard let watchedRow = state.watchedRepository else {
+                throw ForgeAttentionInboxError.missingWatchedRepository
+            }
+            let currentWatch = try Self.validatedWatch(
+                watchedRow,
+                expectedKey: reconciliation.watchedRepository.key
             )
-            try await store.putCacheEntry(ForgeSQLiteCacheEntry(
-                record: cacheRecord,
-                payload: payload
+            guard currentWatch.lastSuccessfulPollAt.map({ reconciliation.fetchedAt > $0 }) != false else {
+                throw ForgeAttentionInboxError.staleRefreshGeneration
+            }
+            let mergedWatch = ForgeWatchedRepository(
+                key: currentWatch.key,
+                addedAt: currentWatch.addedAt,
+                source: currentWatch.source,
+                includesBotReplies: currentWatch.includesBotReplies,
+                baselineEstablishedAt: currentWatch.baselineEstablishedAt ??
+                    reconciliation.watchedRepository.baselineEstablishedAt,
+                lastSuccessfulPollAt: reconciliation.watchedRepository.lastSuccessfulPollAt
+            )
+            let batch = try Self.persistenceBatch(for: ForgeAttentionReconciliation(
+                watchedRepository: mergedWatch,
+                records: reconciliation.records,
+                entries: reconciliation.entries,
+                newlyActionable: reconciliation.newlyActionable,
+                resolved: reconciliation.resolved,
+                fetchedAt: reconciliation.fetchedAt,
+                completeness: reconciliation.completeness
             ))
+            return ForgeSQLiteAttentionTransactionUpdate(
+                watchedRepository: batch.watchedRepository,
+                records: batch.records,
+                cacheEntries: batch.cacheEntries,
+                result: ()
+            )
+        }
+    }
+
+    @discardableResult
+    public func setIncludesBotReplies(
+        _ includesBotReplies: Bool,
+        for key: ForgeWatchedRepositoryKey
+    ) async throws -> ForgeWatchedRepository {
+        try await store.updateAttention(key) { state in
+            guard let watchedRow = state.watchedRepository else {
+                throw ForgeAttentionInboxError.missingWatchedRepository
+            }
+            let current = try Self.validatedWatch(watchedRow, expectedKey: key)
+            let updated = ForgeWatchedRepository(
+                key: current.key,
+                addedAt: current.addedAt,
+                source: current.source,
+                includesBotReplies: includesBotReplies,
+                baselineEstablishedAt: current.baselineEstablishedAt,
+                lastSuccessfulPollAt: current.lastSuccessfulPollAt
+            )
+            return try ForgeSQLiteAttentionTransactionUpdate(
+                watchedRepository: Self.durableRecord(for: updated),
+                result: updated
+            )
+        }
+    }
+
+    func reconcileAndPersist(
+        _ snapshot: ForgeAttentionRepositorySnapshot,
+        policy: ForgeAttentionPolicy
+    ) async throws -> ForgeAttentionReconciliation {
+        try await store.updateAttention(snapshot.watchedRepositoryKey) { state in
+            guard let watchedRow = state.watchedRepository else {
+                throw ForgeAttentionInboxError.missingWatchedRepository
+            }
+            let watch = try Self.validatedWatch(watchedRow, expectedKey: snapshot.watchedRepositoryKey)
+            guard watch.lastSuccessfulPollAt.map({ snapshot.fetchedAt > $0 }) != false else {
+                throw ForgeAttentionInboxError.staleRefreshGeneration
+            }
+            let existing = try Self.validatedRecords(state.records, at: snapshot.fetchedAt)
+            let reconciliation = try ForgeAttentionReconciler.reconcile(
+                snapshot,
+                watchedRepository: watch,
+                existingRecords: existing,
+                policy: policy
+            )
+            let batch = try Self.persistenceBatch(for: reconciliation)
+            return ForgeSQLiteAttentionTransactionUpdate(
+                watchedRepository: batch.watchedRepository,
+                records: batch.records,
+                cacheEntries: batch.cacheEntries,
+                result: reconciliation
+            )
         }
     }
 
@@ -789,12 +874,11 @@ public actor ForgeSQLiteAttentionPersistence {
             repository: repository,
             at: date
         )
+        let cacheKeys = try durable.map { try Self.cacheKey(for: $0.item.id) }
+        let cachedRecords = try await store.cacheEntries(for: cacheKeys, accessedAt: date)
         var entries: [ForgeAttentionInboxEntry] = []
-        for record in durable {
-            guard let cached = try await store.cacheEntry(
-                for: cacheKey(for: record.item.id),
-                accessedAt: date
-            ) else { continue }
+        for (record, cachedRecord) in zip(durable, cachedRecords) {
+            guard let cached = cachedRecord else { continue }
             let previous = try decoder.decode(ForgeAttentionInboxEntry.self, from: cached.payload)
             guard previous.record.item.id == record.item.id else {
                 throw ForgeAttentionInboxError.corruptPersistenceRecord
@@ -821,26 +905,39 @@ public actor ForgeSQLiteAttentionPersistence {
         query: ForgeAttentionQuery,
         at date: Date
     ) async throws -> [ForgeAttentionRecord] {
-        let accountID: ForgeAccountID
-        let repository: ForgeRepositoryIdentity?
+        let keys: [ForgeWatchedRepositoryKey]
         switch query.scope {
         case let .all(value):
-            accountID = value
-            repository = nil
+            let rows = try await store.durableRecords(kind: .attention, accountID: value)
+            keys = try Set(rows.map(\.repository)).map {
+                try ForgeWatchedRepositoryKey(accountID: value, repository: $0)
+            }.sorted { $0.schedulingKey < $1.schedulingKey }
         case let .currentRepository(key):
-            accountID = key.accountID
-            repository = key.repository
+            keys = [key]
         }
-        let current = try await records(accountID: accountID, repository: repository, at: date)
-        let transformed = try query.markingAllSeen(current.map(\.item), at: date)
-        let selected = Set(query.applying(to: current.map(\.item)).map(\.id))
-        let byID = Dictionary(uniqueKeysWithValues: transformed.map { ($0.id, $0) })
-        let updated = current.compactMap { record -> ForgeAttentionRecord? in
-            guard selected.contains(record.item.id), let item = byID[record.item.id] else { return nil }
-            return record.replacing(item: item)
+
+        var allUpdated: [ForgeAttentionRecord] = []
+        for key in keys {
+            let updated = try await store.updateAttention(key) { state in
+                if let watchedRow = state.watchedRepository {
+                    _ = try Self.validatedWatch(watchedRow, expectedKey: key)
+                }
+                let current = try Self.validatedRecords(state.records, at: date)
+                let transformed = try query.markingAllSeen(current.map(\.item), at: date)
+                let selected = Set(query.applying(to: current.map(\.item)).map(\.id))
+                let byID = Dictionary(uniqueKeysWithValues: transformed.map { ($0.id, $0) })
+                let updated = current.compactMap { record -> ForgeAttentionRecord? in
+                    guard selected.contains(record.item.id), let item = byID[record.item.id] else { return nil }
+                    return record.replacing(item: item)
+                }
+                return try ForgeSQLiteAttentionTransactionUpdate(
+                    records: updated.map { try Self.durableRecord(for: $0) },
+                    result: updated
+                )
+            }
+            allUpdated.append(contentsOf: updated)
         }
-        try await save(updated)
-        return updated
+        return allUpdated
     }
 
     @discardableResult
@@ -849,17 +946,12 @@ public actor ForgeSQLiteAttentionPersistence {
     }
 
     public func removeWatchedRepository(_ key: ForgeWatchedRepositoryKey) async throws {
-        _ = try await store.deleteDurableRecord(
-            kind: .watchedRepository,
-            accountID: key.accountID,
-            repository: key.repository,
-            key: ForgeSQLiteStore.encodedKey(key)
-        )
-        _ = try await store.deleteDurableRecords(
-            kind: .attention,
-            accountID: key.accountID,
-            repository: key.repository
-        )
+        try await store.updateAttention(key) { _ in
+            ForgeSQLiteAttentionTransactionUpdate(
+                removesWatchedRepository: true,
+                result: ()
+            )
+        }
     }
 
     private func save(_ record: ForgeAttentionRecord) async throws {
@@ -876,12 +968,27 @@ public actor ForgeSQLiteAttentionPersistence {
 
     private func update(
         _ itemID: ForgeAttentionItemID,
-        transform: (ForgeAttentionItem) throws -> ForgeAttentionItem
+        transform: @escaping @Sendable (ForgeAttentionItem) throws -> ForgeAttentionItem
     ) async throws -> ForgeAttentionRecord? {
-        guard let current = try await record(itemID) else { return nil }
-        let updated = try current.replacing(item: transform(current.item))
-        try await save(updated)
-        return updated
+        let key = try ForgeWatchedRepositoryKey(
+            accountID: itemID.accountID,
+            repository: itemID.repository
+        )
+        let recordKey = try ForgeSQLiteStore.encodedKey(itemID)
+        return try await store.updateAttention(key) { state in
+            if let watchedRow = state.watchedRepository {
+                _ = try Self.validatedWatch(watchedRow, expectedKey: key)
+            }
+            guard let row = state.records.first(where: { $0.key == recordKey }) else {
+                return ForgeSQLiteAttentionTransactionUpdate<ForgeAttentionRecord?>(result: nil)
+            }
+            let current = try Self.validatedRecord(row)
+            let updated = try current.replacing(item: transform(current.item))
+            return try ForgeSQLiteAttentionTransactionUpdate(
+                records: [Self.durableRecord(for: updated)],
+                result: updated
+            )
+        }
     }
 
     private func validatedRecord(_ row: ForgeSQLiteDurableRecord) throws -> ForgeAttentionRecord {
@@ -893,7 +1000,121 @@ public actor ForgeSQLiteAttentionPersistence {
         return record
     }
 
-    private func cacheKey(for itemID: ForgeAttentionItemID) throws -> ForgeDisposableCacheKey {
+    private nonisolated static func validatedWatch(
+        _ row: ForgeSQLiteDurableRecord,
+        expectedKey: ForgeWatchedRepositoryKey
+    ) throws -> ForgeWatchedRepository {
+        let watch = try JSONDecoder().decode(ForgeWatchedRepository.self, from: row.payload)
+        let encodedKey = try ForgeSQLiteStore.encodedKey(expectedKey)
+        guard row.kind == .watchedRepository,
+              watch.key == expectedKey,
+              row.accountID == expectedKey.accountID,
+              row.repository == expectedKey.repository,
+              row.key == encodedKey
+        else { throw ForgeAttentionInboxError.corruptPersistenceRecord }
+        return watch
+    }
+
+    private nonisolated static func validatedRecord(
+        _ row: ForgeSQLiteDurableRecord
+    ) throws -> ForgeAttentionRecord {
+        let record = try JSONDecoder().decode(ForgeAttentionRecord.self, from: row.payload)
+        guard row.kind == .attention,
+              record.item.id.accountID == row.accountID,
+              record.item.id.repository == row.repository,
+              try ForgeSQLiteStore.encodedKey(record.item.id) == row.key
+        else { throw ForgeAttentionInboxError.corruptPersistenceRecord }
+        return record
+    }
+
+    private nonisolated static func validatedRecords(
+        _ rows: [ForgeSQLiteDurableRecord],
+        at date: Date
+    ) throws -> [ForgeAttentionRecord] {
+        try rows.compactMap { row in
+            let record = try validatedRecord(row)
+            return record.item.isExpired(at: date) ? nil : record
+        }.sorted {
+            if $0.item.lastTransitionAt != $1.item.lastTransitionAt {
+                return $0.item.lastTransitionAt > $1.item.lastTransitionAt
+            }
+            return $0.item.id.subjectID.value < $1.item.id.subjectID.value
+        }
+    }
+
+    private nonisolated static func persistenceBatch(
+        for reconciliation: ForgeAttentionReconciliation
+    ) throws -> PersistenceBatch {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let watch = reconciliation.watchedRepository
+        let watchedRepository = try ForgeSQLiteDurableRecord(
+            kind: .watchedRepository,
+            accountID: watch.key.accountID,
+            repository: watch.key.repository,
+            key: ForgeSQLiteStore.encodedKey(watch.key),
+            payload: encoder.encode(watch),
+            lastActivityAt: watch.lastSuccessfulPollAt ?? watch.addedAt
+        )
+        let records = try reconciliation.records.map { try durableRecord(for: $0, encoder: encoder) }
+        let cacheEntries = try reconciliation.entries.map { entry in
+            let payload = try encoder.encode(entry)
+            let cacheRecord = try ForgeDisposableCacheRecord(
+                key: cacheKey(for: entry.record.item.id),
+                byteCount: UInt64(payload.count),
+                fetchedAt: reconciliation.fetchedAt,
+                lastAccessedAt: reconciliation.fetchedAt,
+                completeness: reconciliation.completeness
+            )
+            return try ForgeSQLiteCacheEntry(record: cacheRecord, payload: payload)
+        }
+        return PersistenceBatch(
+            watchedRepository: watchedRepository,
+            records: records,
+            cacheEntries: cacheEntries
+        )
+    }
+
+    private nonisolated static func durableRecord(
+        for watchedRepository: ForgeWatchedRepository,
+        encoder: JSONEncoder? = nil
+    ) throws -> ForgeSQLiteDurableRecord {
+        let encoder = encoder ?? {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            return encoder
+        }()
+        return try ForgeSQLiteDurableRecord(
+            kind: .watchedRepository,
+            accountID: watchedRepository.key.accountID,
+            repository: watchedRepository.key.repository,
+            key: ForgeSQLiteStore.encodedKey(watchedRepository.key),
+            payload: encoder.encode(watchedRepository),
+            lastActivityAt: watchedRepository.lastSuccessfulPollAt ?? watchedRepository.addedAt
+        )
+    }
+
+    private nonisolated static func durableRecord(
+        for record: ForgeAttentionRecord,
+        encoder: JSONEncoder? = nil
+    ) throws -> ForgeSQLiteDurableRecord {
+        let encoder = encoder ?? {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            return encoder
+        }()
+        return try ForgeSQLiteDurableRecord(
+            kind: .attention,
+            accountID: record.item.id.accountID,
+            repository: record.item.id.repository,
+            key: ForgeSQLiteStore.encodedKey(record.item.id),
+            payload: encoder.encode(record),
+            lastActivityAt: record.item.lastUpdatedAt,
+            expiresAt: record.expiresAt
+        )
+    }
+
+    private nonisolated static func cacheKey(for itemID: ForgeAttentionItemID) throws -> ForgeDisposableCacheKey {
         let partition = try ForgeRepositoryPartitionKey(
             cachePartition: .account(itemID.accountID),
             repository: itemID.repository
@@ -1017,21 +1238,15 @@ public actor ForgeAttentionInboxCoordinator {
     private func refreshWatchedRepository(
         _ watch: ForgeWatchedRepository
     ) async throws -> ForgeAttentionReconciliation {
-        let key = watch.key
-        let existing = try await persistence.records(
-            accountID: key.accountID,
-            repository: key.repository,
-            at: Date()
-        )
         let snapshot = try await fetcher.snapshot(for: watch)
-        let reconciliation = try ForgeAttentionReconciler.reconcile(
+        let reconciliation = try await persistence.reconcileAndPersist(
             snapshot,
-            watchedRepository: watch,
-            existingRecords: existing,
             policy: attentionPolicy
         )
-        try await persistence.persist(reconciliation)
-        await deliverAlerts(for: reconciliation.newlyActionable, baselineAlreadyEstablished: watch.baselineEstablishedAt != nil)
+        await deliverAlerts(
+            for: reconciliation.newlyActionable,
+            baselineAlreadyEstablished: reconciliation.watchedRepository.baselineEstablishedAt != nil
+        )
         Self.logger.info(
             "Reconciled Attention for one watched repository: \(reconciliation.records.count) current records, \(reconciliation.newlyActionable.count) new transitions"
         )

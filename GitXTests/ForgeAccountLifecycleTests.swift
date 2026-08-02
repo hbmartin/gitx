@@ -89,14 +89,13 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         }
         ApplicationSettings.attentionAlertCategories = Set(ForgeAttentionAlertCategory.allCases)
 
-        let now = Date(timeIntervalSince1970: 2_000_000)
         let accountID = try makeAccountID("preferences-ui-app")
         let accounts = try [
             makeAccount(
                 id: accountID,
                 login: "app-user",
                 source: .forgeApplicationDeviceFlow,
-                expiresAt: now.addingTimeInterval(30 * 24 * 60 * 60)
+                expiresAt: Date().addingTimeInterval(30 * 24 * 60 * 60)
             ),
             makeAccount(
                 id: makeAccountID("preferences-ui-cli"),
@@ -157,6 +156,11 @@ final class ForgeAccountLifecycleTests: XCTestCase {
                 ))
             }
         }
+        let statusColumn = accountTable.column(withIdentifier: NSUserInterfaceItemIdentifier("Status"))
+        let currentStatus = try XCTUnwrap(
+            accountTable.view(atColumn: statusColumn, row: 0, makeIfNecessary: true) as? NSTextField
+        )
+        XCTAssertTrue(currentStatus.stringValue.hasPrefix("Expires "))
         XCTAssertNil(accountTable.delegate?.tableView?(accountTable, viewFor: nil, row: 0))
 
         let watchTable = try XCTUnwrap(descendant(identifier: "ForgeAttentionWatchesTable", in: view) as? NSTableView)

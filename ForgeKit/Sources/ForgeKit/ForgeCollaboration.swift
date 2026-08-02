@@ -305,6 +305,10 @@ extension ForgeLabel: Codable {
 public enum ForgeMilestoneState: String, CaseIterable, Codable, Hashable, Sendable {
     case open
     case closed
+    /// A provider returned a state newer than this client understands.
+    /// Consumers must preserve the item while treating state-dependent actions
+    /// as unavailable.
+    case unknown
 }
 
 public struct ForgeMilestone: Hashable, Sendable {
@@ -375,6 +379,36 @@ public struct ForgeBranchReference: Codable, Hashable, Sendable {
         self.repository = repository
         self.name = name
         self.commit = commit
+    }
+}
+
+/// The head identity GitHub retains for a Pull Request even when its source
+/// repository has been deleted or is no longer visible. Operations that need
+/// the repository itself must require `reference`; Pull Request-node and
+/// commit-OID operations can continue using `name` and `commit`.
+public struct ForgePullRequestHead: Codable, Hashable, Sendable {
+    public let repository: ForgeRepositoryIdentity?
+    public let name: ForgeRefName
+    public let commit: ForgeCommitID
+
+    public init(reference: ForgeBranchReference) {
+        repository = reference.repository
+        name = reference.name
+        commit = reference.commit
+    }
+
+    public init(
+        repository: ForgeRepositoryIdentity?,
+        name: ForgeRefName,
+        commit: ForgeCommitID
+    ) {
+        self.repository = repository
+        self.name = name
+        self.commit = commit
+    }
+
+    public var reference: ForgeBranchReference? {
+        repository.map { ForgeBranchReference(repository: $0, name: name, commit: commit) }
     }
 }
 
@@ -626,11 +660,16 @@ public enum ForgePullRequestState: String, CaseIterable, Codable, Hashable, Send
     case open
     case closed
     case merged
+    /// A provider returned a state newer than this client understands.
+    /// Mutation policy intentionally fails closed for this value.
+    case unknown
 }
 
 public enum ForgeIssueState: String, CaseIterable, Codable, Hashable, Sendable {
     case open
     case closed
+    /// A provider returned a state newer than this client understands.
+    case unknown
 }
 
 public struct ForgeLinkedIssue: Codable, Hashable, Sendable {
@@ -749,7 +788,7 @@ public struct ForgePullRequestSummary: Hashable, Sendable {
     public let isDraft: Bool
     public let title: String
     public let author: ForgeReadSection<ForgeAuthor>
-    public let head: ForgeReadSection<ForgeBranchReference>
+    public let head: ForgeReadSection<ForgePullRequestHead>
     public let base: ForgeReadSection<ForgeBranchReference>
     public let createdAt: Date
     public let updatedAt: Date
@@ -766,7 +805,7 @@ public struct ForgePullRequestSummary: Hashable, Sendable {
         isDraft: Bool,
         title: String,
         author: ForgeReadSection<ForgeAuthor>,
-        head: ForgeReadSection<ForgeBranchReference>,
+        head: ForgeReadSection<ForgePullRequestHead>,
         base: ForgeReadSection<ForgeBranchReference>,
         createdAt: Date,
         updatedAt: Date,
@@ -797,14 +836,17 @@ public struct ForgePullRequestSummary: Hashable, Sendable {
     private static func validate(
         repository: ForgeRepositoryIdentity,
         author: ForgeReadSection<ForgeAuthor>,
-        head: ForgeReadSection<ForgeBranchReference>,
+        head: ForgeReadSection<ForgePullRequestHead>,
         base: ForgeReadSection<ForgeBranchReference>,
         labels: ForgeReadSection<[ForgeLabel]>
     ) throws {
         if case let .available(.actor(value)) = author, value.id.forge != repository.forge {
             throw ForgeCollaborationModelError.mismatchedForge
         }
-        if case let .available(value) = head, value.repository.forge != repository.forge {
+        if case let .available(value) = head,
+           let headRepository = value.repository,
+           headRepository.forge != repository.forge
+        {
             throw ForgeCollaborationModelError.mismatchedForge
         }
         if case let .available(value) = base, value.repository != repository {
@@ -846,7 +888,7 @@ extension ForgePullRequestSummary: Codable {
             isDraft: container.decode(Bool.self, forKey: .isDraft),
             title: container.decode(String.self, forKey: .title),
             author: container.decode(ForgeReadSection<ForgeAuthor>.self, forKey: .author),
-            head: container.decode(ForgeReadSection<ForgeBranchReference>.self, forKey: .head),
+            head: container.decode(ForgeReadSection<ForgePullRequestHead>.self, forKey: .head),
             base: container.decode(ForgeReadSection<ForgeBranchReference>.self, forKey: .base),
             createdAt: container.decode(Date.self, forKey: .createdAt),
             updatedAt: container.decode(Date.self, forKey: .updatedAt),

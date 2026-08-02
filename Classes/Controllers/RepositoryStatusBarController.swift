@@ -314,7 +314,11 @@ final class RepositoryStatusBarController: NSObject {
     private weak var contentView: NSView?
     private var shownConstraint: NSLayoutConstraint?
     private var hiddenConstraint: NSLayoutConstraint?
-    private var refreshTimer: Timer?
+    // MainActor owns all scheduling and ordinary access. Foundation documents
+    // Timer invalidation as thread-safe, allowing deinit to tear it down after
+    // the final reference is released from any executor.
+    // swift6-safety-justification: unsafe isolation is limited to thread-safe Timer invalidation from deinit.
+    private(set) nonisolated(unsafe) var refreshTimer: Timer?
     private var forgeInput = ForgeRepositoryStatusInput.unbound
     private(set) var currentForgePresentation = ForgeRepositoryStatusPresenter.present(.unbound, now: .distantPast)
     private(set) var hasScheduledClockRefresh = false
@@ -334,6 +338,10 @@ final class RepositoryStatusBarController: NSObject {
         view.forgeRefreshButton.action = #selector(refreshForgeOverlay(_:))
         view.detailsButton.target = self
         view.detailsButton.action = #selector(showDetails(_:))
+    }
+
+    deinit {
+        refreshTimer?.invalidate()
     }
 
     func bind(to coordinator: any RepositoryForgeStatusCoordinating) {
@@ -424,10 +432,6 @@ final class RepositoryStatusBarController: NSObject {
         forgeCoordinator?.showDetails(for: detailsAction)
     }
 
-    @objc private func refreshClockTick(_ timer: Timer) {
-        refreshClock()
-    }
-
     func refreshClock() {
         updateForge(forgeInput)
     }
@@ -437,7 +441,12 @@ final class RepositoryStatusBarController: NSObject {
         refreshTimer = nil
         hasScheduledClockRefresh = false
         guard presentation.requiresClockUpdates else { return }
-        let timer = Timer(timeInterval: 30, target: self, selector: #selector(refreshClockTick(_:)), userInfo: nil, repeats: true)
+        let timer = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            // swift6-safety-justification: this Timer is installed only on RunLoop.main by the MainActor owner.
+            MainActor.assumeIsolated {
+                self?.refreshClock()
+            }
+        }
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
         hasScheduledClockRefresh = true

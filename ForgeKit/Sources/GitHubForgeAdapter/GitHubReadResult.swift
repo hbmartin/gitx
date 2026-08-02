@@ -187,6 +187,7 @@ public enum GitHubReadError: Error, Equatable, LocalizedError, Sendable,
 {
     case githubDotComRequired
     case invalidPageSize
+    case queryNodeLimitExceeded
     case invalidSearchQuery
     case repositoryNotFound
     case objectNotFound
@@ -204,6 +205,7 @@ public enum GitHubReadError: Error, Equatable, LocalizedError, Sendable,
         switch self {
         case .githubDotComRequired: "Native reads require an exact GitHub.com Forge Repository."
         case .invalidPageSize: "The GitHub page size must be between 1 and 100."
+        case .queryNodeLimitExceeded: "The GitHub query exceeds the provider node limit."
         case .invalidSearchQuery: "The GitHub search query is invalid."
         case .repositoryNotFound: "The GitHub repository was not found or is unavailable."
         case .objectNotFound: "The GitHub object was not found or is unavailable."

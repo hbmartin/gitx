@@ -18,6 +18,7 @@
                     classicScopeProof(),
                 ])
             } catch {
+                NSLog("[M2CompositionCoverage] synchronous setup/proof failed: %@", error.localizedDescription)
                 return 0
             }
         }

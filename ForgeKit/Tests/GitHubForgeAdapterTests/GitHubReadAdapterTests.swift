@@ -188,8 +188,69 @@ final class GitHubReadAdapterTests: XCTestCase {
             "repo:hbmartin/gitx is:open involves:@me"
         )
         XCTAssertEqual(variables["first"] as? Int, 100)
-        XCTAssertEqual(variables["activityLast"] as? Int, 100)
-        XCTAssertEqual(variables["reviewThreadFirst"] as? Int, 100)
+        XCTAssertEqual(variables["activityLast"] as? Int, 40)
+        XCTAssertEqual(variables["reviewThreadFirst"] as? Int, 40)
+        XCTAssertEqual(
+            GitHubAttentionGraphQLNodeBudget.upperBound(
+                pageSize: 100,
+                activityCount: 40,
+                reviewThreadCount: 40
+            ),
+            378_100
+        )
+        XCTAssertLessThan(
+            GitHubAttentionGraphQLNodeBudget.upperBound(
+                pageSize: 100,
+                activityCount: 40,
+                reviewThreadCount: 40
+            ),
+            GitHubAttentionGraphQLNodeBudget.maximumNodeCount
+        )
+    }
+
+    func testAttentionNodeBudgetEnforcesTheLiveProviderBoundaryBeforeDispatch() async throws {
+        let capture = GitHubRequestCapture()
+        GitHubStubURLProtocol.setHandler { request in
+            _ = capture.record(request)
+            return try StubResponse(
+                status: 200,
+                headers: Self.successHeaders,
+                body: Self.response(operation: "GitHubAttentionCandidates")
+            )
+        }
+        let repository = try makeRepository()
+
+        XCTAssertEqual(
+            GitHubAttentionGraphQLNodeBudget.upperBound(
+                pageSize: 89,
+                activityCount: 44,
+                reviewThreadCount: 57
+            ),
+            500_002
+        )
+        await XCTAssertThrowsGitHubError(.queryNodeLimitExceeded) {
+            try await self.makeAdapter().currentAttentionCandidates(
+                repository: repository,
+                pageSize: 89,
+                activityCount: 44,
+                reviewThreadCount: 57
+            )
+        }
+        XCTAssertEqual(
+            GitHubAttentionGraphQLNodeBudget.upperBound(
+                pageSize: 95,
+                activityCount: 37,
+                reviewThreadCount: 63
+            ),
+            499_985
+        )
+        _ = try await makeAdapter().currentAttentionCandidates(
+            repository: repository,
+            pageSize: 95,
+            activityCount: 37,
+            reviewThreadCount: 63
+        )
+        XCTAssertEqual(capture.requests.count, 1)
     }
 
     func testAttentionSnapshotFetcherPaginatesPartialDataAndRejectsAccountOrViewerChanges() async throws {
@@ -253,6 +314,9 @@ final class GitHubReadAdapterTests: XCTestCase {
             try Self.requestPayload(capture.requests[1])["variables"] as? [String: Any]
         )
         XCTAssertEqual(secondVariables["after"] as? String, "next-attention")
+        XCTAssertEqual(secondVariables["first"] as? Int, 100)
+        XCTAssertEqual(secondVariables["activityLast"] as? Int, 40)
+        XCTAssertEqual(secondVariables["reviewThreadFirst"] as? Int, 40)
 
         let otherAccountID = try ForgeAccountID(forge: repository.forge, value: "other-account")
         let otherWatch = try ForgeWatchedRepository(
@@ -1149,7 +1213,8 @@ final class GitHubReadAdapterTests: XCTestCase {
             commit: ForgeCommitID("abcdef12")
         )
         XCTAssertEqual(related.value.pullRequests.availableValue?.items.count, 1)
-        XCTAssertEqual(related.completeness, .partial)
+        XCTAssertEqual(related.value.checkRollup.availableValue, .neutral)
+        XCTAssertEqual(related.completeness, .complete)
 
         try installGraphQLData(["repository": [
             "__typename": "Repository", "id": "repository", "object": [
@@ -1327,13 +1392,16 @@ final class GitHubReadAdapterTests: XCTestCase {
         ]])
         let partial = try await adapter.pullRequestDetails(repository: repository, number: number)
         XCTAssertEqual(partial.completeness, .partial)
-        XCTAssertTrue(partial.value.details.summary.head.isUnavailable)
+        XCTAssertNil(partial.value.details.summary.head.availableValue?.repository)
+        XCTAssertEqual(partial.value.details.summary.head.availableValue?.name.value, "feature")
+        XCTAssertEqual(partial.value.details.summary.head.availableValue?.commit.value, "abcdef12")
         XCTAssertTrue(partial.value.details.summary.base.isUnavailable)
         XCTAssertTrue(partial.value.details.summary.labels.isUnavailable)
         XCTAssertTrue(partial.value.details.assignees.isUnavailable)
         XCTAssertTrue(partial.value.details.reviewers.isUnavailable)
         XCTAssertTrue(partial.value.details.linkedIssues.isUnavailable)
-        XCTAssertTrue(partial.value.details.checks.isUnavailable)
+        XCTAssertEqual(partial.value.details.summary.checkRollup.availableValue, .neutral)
+        XCTAssertEqual(partial.value.details.checks.availableValue, [])
         XCTAssertEqual(partial.value.details.timeline.availableValue?.items.count, 1)
         XCTAssertEqual(
             partial.value.details.timeline.availableValue?.items.first?.id.value,
@@ -1381,6 +1449,20 @@ final class GitHubReadAdapterTests: XCTestCase {
             number: number
         )
         XCTAssertTrue(incompleteReviewerResult.value.details.reviewers.isUnavailable)
+
+        var incompleteLinkedIssues = Self.completePullRequestDetails
+        incompleteLinkedIssues["closingIssuesReferences"] = [
+            "__typename": "IssueConnection",
+            "totalCount": 1,
+            "pageInfo": Self.pageInfo,
+            "nodes": [],
+        ]
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "pullRequest": incompleteLinkedIssues,
+        ]])
+        let incompleteLinks = try await adapter.pullRequestDetails(repository: repository, number: number)
+        XCTAssertEqual(incompleteLinks.completeness, .partial)
+        XCTAssertTrue(incompleteLinks.value.details.linkedIssues.isUnavailable)
 
         var unknownChecks = Self.completePullRequestDetails
         var contexts = Self.connection(
@@ -1786,6 +1868,173 @@ final class GitHubReadAdapterTests: XCTestCase {
         )
     }
 
+    func testUnknownItemAndMilestoneStatesRemainUsableAndFailClosed() async throws {
+        let adapter = try makeAdapter()
+        let repository = try makeRepository()
+        let number = try ForgeItemNumber(7)
+
+        var pullRequest = Self.pullRequest
+        pullRequest["pullRequestState"] = "FUTURE_STATE"
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository",
+            "pullRequests": Self.connection("PullRequestConnection", nodes: [pullRequest]),
+        ]])
+        let pullRequests = try await adapter.pullRequests(repository: repository)
+        XCTAssertEqual(pullRequests.completeness, .partial)
+        XCTAssertEqual(pullRequests.value.items.count, 1)
+        XCTAssertEqual(pullRequests.value.items[0].title, "Adapter")
+        XCTAssertEqual(pullRequests.value.items[0].state, .unknown)
+
+        var issue = Self.issue
+        issue["issueState"] = "FUTURE_STATE"
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository",
+            "issues": Self.connection("IssueConnection", nodes: [issue]),
+        ]])
+        let issues = try await adapter.issues(repository: repository)
+        XCTAssertEqual(issues.completeness, .partial)
+        XCTAssertEqual(issues.value.items.count, 1)
+        XCTAssertEqual(issues.value.items[0].title, "Issue")
+        XCTAssertEqual(issues.value.items[0].state, .unknown)
+
+        var pullRequestDetails = Self.completePullRequestDetails
+        pullRequestDetails["pullRequestState"] = "FUTURE_STATE"
+        var milestone = Self.closedMilestone
+        milestone["state"] = "FUTURE_STATE"
+        pullRequestDetails["milestone"] = milestone
+        pullRequestDetails["closingIssuesReferences"] = Self.connection(
+            "IssueConnection",
+            nodes: [[
+                "__typename": "Issue", "id": "linked", "number": 9,
+                "state": "FUTURE_STATE", "title": "Future linked issue",
+                "repository": Self.repositoryIdentity,
+            ]]
+        )
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository",
+            "pullRequest": pullRequestDetails,
+        ]])
+        let details = try await adapter.pullRequestDetails(
+            repository: repository,
+            number: number
+        )
+        XCTAssertEqual(details.completeness, .partial)
+        XCTAssertEqual(details.value.details.summary.title, "Adapter")
+        XCTAssertEqual(details.value.details.summary.state, .unknown)
+        XCTAssertEqual(
+            details.value.details.milestone.availableValue.flatMap { $0 }?.state,
+            .unknown
+        )
+        XCTAssertEqual(details.value.details.linkedIssues.availableValue?.count, 1)
+        XCTAssertEqual(details.value.details.linkedIssues.availableValue?[0].state, .unknown)
+
+        var issueDetails = Self.issue
+        issueDetails["issueState"] = "FUTURE_STATE"
+        issueDetails.merge([
+            "body": "body",
+            "assignedActors": Self.emptyConnection("AssigneeConnection"),
+            "milestone": milestone,
+            "participants": Self.emptyConnection("UserConnection"),
+            "timelineItems": Self.emptyConnection("IssueTimelineItemsConnection"),
+        ]) { _, new in new }
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "issue": issueDetails,
+        ]])
+        let mappedIssue = try await adapter.issueDetails(repository: repository, number: number)
+        XCTAssertEqual(mappedIssue.completeness, .partial)
+        XCTAssertEqual(mappedIssue.value.summary.title, "Issue")
+        XCTAssertEqual(mappedIssue.value.summary.state, .unknown)
+        XCTAssertEqual(
+            mappedIssue.value.milestone.availableValue.flatMap { $0 }?.state,
+            .unknown
+        )
+    }
+
+    func testAbsentStatusRollupIsNeutralUnlessItsGraphQLFieldFailed() async throws {
+        let adapter = try makeAdapter()
+        let repository = try makeRepository()
+        let number = try ForgeItemNumber(7)
+
+        var pullRequest = Self.pullRequest
+        pullRequest["statusCheckRollup"] = NSNull()
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository",
+            "pullRequests": Self.connection("PullRequestConnection", nodes: [pullRequest]),
+        ]])
+        let list = try await adapter.pullRequests(repository: repository)
+        XCTAssertEqual(list.completeness, .complete)
+        XCTAssertEqual(list.value.items[0].checkRollup.availableValue, .neutral)
+
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "object": [
+                "__typename": "Commit", "oid": "abcdef12",
+                "statusCheckRollup": NSNull(),
+                "associatedPullRequests": Self.emptyConnection("PullRequestConnection"),
+            ],
+        ]])
+        let history = try await adapter.historyOverlay(
+            repository: repository,
+            commit: ForgeCommitID("abcdef12")
+        )
+        XCTAssertEqual(history.completeness, .complete)
+        XCTAssertEqual(history.value.checkRollup.availableValue, .neutral)
+
+        var details = Self.completePullRequestDetails
+        details["statusCheckRollup"] = NSNull()
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository", "pullRequest": details,
+        ]])
+        let noChecks = try await adapter.pullRequestDetails(repository: repository, number: number)
+        XCTAssertEqual(noChecks.completeness, .complete)
+        XCTAssertEqual(noChecks.value.details.summary.checkRollup.availableValue, .neutral)
+        XCTAssertEqual(noChecks.value.details.checks.availableValue, [])
+
+        let unrelatedProblemBody = try JSONSerialization.data(withJSONObject: [
+            "data": ["repository": [
+                "__typename": "Repository", "id": "repository", "pullRequest": details,
+            ]],
+            "errors": [[
+                "message": "participant unavailable",
+                "path": ["repository", "pullRequest", "participants"],
+                "extensions": ["type": "PARTIAL"],
+            ]],
+        ])
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, headers: Self.successHeaders, body: unrelatedProblemBody)
+        }
+        let unrelatedProblem = try await adapter.pullRequestDetails(
+            repository: repository,
+            number: number
+        )
+        XCTAssertEqual(unrelatedProblem.completeness, .partial)
+        XCTAssertEqual(
+            unrelatedProblem.value.details.summary.checkRollup.availableValue,
+            .neutral
+        )
+        XCTAssertEqual(unrelatedProblem.value.details.checks.availableValue, [])
+
+        let rollupProblemBody = try JSONSerialization.data(withJSONObject: [
+            "data": ["repository": [
+                "__typename": "Repository", "id": "repository", "pullRequest": details,
+            ]],
+            "errors": [[
+                "message": "checks unavailable",
+                "path": ["repository", "pullRequest", "statusCheckRollup"],
+                "extensions": ["type": "PARTIAL"],
+            ]],
+        ])
+        GitHubStubURLProtocol.setHandler { _ in
+            StubResponse(status: 200, headers: Self.successHeaders, body: rollupProblemBody)
+        }
+        let unavailable = try await adapter.pullRequestDetails(
+            repository: repository,
+            number: number
+        )
+        XCTAssertEqual(unavailable.completeness, .partial)
+        XCTAssertTrue(unavailable.value.details.summary.checkRollup.isUnavailable)
+        XCTAssertTrue(unavailable.value.details.checks.isUnavailable)
+    }
+
     func testConnectionCountMismatchAndNestedCommentContinuationRemainVisibleAndPartial() async throws {
         let adapter = try makeAdapter()
         let repository = try makeRepository()
@@ -1804,6 +2053,29 @@ final class GitHubReadAdapterTests: XCTestCase {
         XCTAssertEqual(pullRequests.completeness, .partial)
         XCTAssertEqual(pullRequests.value.items.count, 1)
         XCTAssertEqual(pullRequests.value.totalCount, 2)
+
+        mismatchedPullRequests["totalCount"] = 0
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository",
+            "pullRequests": mismatchedPullRequests,
+        ]])
+        let undercountedPullRequests = try await adapter.pullRequests(repository: repository)
+        XCTAssertEqual(undercountedPullRequests.completeness, .partial)
+        XCTAssertEqual(undercountedPullRequests.value.items.count, 1)
+        XCTAssertEqual(undercountedPullRequests.value.totalCount, 0)
+
+        var malformedDatePullRequest = Self.pullRequest
+        malformedDatePullRequest["createdAt"] = "not-a-date"
+        try installGraphQLData(["repository": [
+            "__typename": "Repository", "id": "repository",
+            "pullRequests": Self.connection(
+                "PullRequestConnection",
+                nodes: [malformedDatePullRequest]
+            ),
+        ]])
+        await XCTAssertThrowsMappingError(.malformedResponse) {
+            try await adapter.pullRequests(repository: repository)
+        }
 
         var incompleteIssue = Self.issue
         incompleteIssue["labels"] = NSNull()

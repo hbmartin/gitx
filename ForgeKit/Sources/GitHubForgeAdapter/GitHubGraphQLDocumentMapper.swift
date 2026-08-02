@@ -68,12 +68,18 @@ struct GitHubGraphQLDocumentMapper {
 
     func pullRequestList(
         data: GitHubAPI.GitHubPullRequestListQuery.Data,
-        repository: ForgeRepositoryIdentity
+        repository: ForgeRepositoryIdentity,
+        problems: [GitHubGraphQLProblem]
     ) throws -> GitHubMappedValue<ForgePage<ForgePullRequestSummary>> {
         guard let repositoryNode = data.repository else { throw GitHubReadError.repositoryNotFound }
         let connection = repositoryNode.pullRequests
+        let statusCheckRollupWasErrored = problems.affect(field: "statusCheckRollup")
         let mapped = try mapNodes(connection.nodes) {
-            try pullRequestSummary($0.fragments.gitHubPullRequestSummary, repository: repository)
+            try pullRequestSummary(
+                $0.fragments.gitHubPullRequestSummary,
+                repository: repository,
+                statusCheckRollupWasErrored: statusCheckRollupWasErrored
+            )
         }
         let page = try pageMapping(
             items: mapped.values,
@@ -111,17 +117,27 @@ struct GitHubGraphQLDocumentMapper {
     func historyOverlay(
         data: GitHubAPI.GitHubHistoryOverlayQuery.Data,
         repository: ForgeRepositoryIdentity,
-        commit expectedCommit: ForgeCommitID
+        commit expectedCommit: ForgeCommitID,
+        problems: [GitHubGraphQLProblem]
     ) throws -> GitHubMappedValue<ForgeHistoryOverlay> {
         guard let repositoryNode = data.repository else { throw GitHubReadError.repositoryNotFound }
         guard let commit = repositoryNode.object?.asCommit else { throw GitHubReadError.objectNotFound }
         guard try ForgeCommitID(commit.oid) == expectedCommit else { throw GitHubReadError.malformedResponse }
-        let checkRollup = checkRollupSection(commit.statusCheckRollup?.state.value)
+        let statusCheckRollupWasErrored = problems.affect(field: "statusCheckRollup")
+        let checkRollup = checkRollupSection(
+            commit.statusCheckRollup?.state.value,
+            rollupWasReturned: commit.statusCheckRollup != nil,
+            missingIsUnavailable: statusCheckRollupWasErrored
+        )
         let pullRequests: ForgeReadSection<ForgePage<ForgePullRequestSummary>>
         let pullRequestPartial: Bool
         if let connection = commit.associatedPullRequests {
             let mapped = try mapNodes(connection.nodes) {
-                try pullRequestSummary($0.fragments.gitHubPullRequestSummary, repository: repository)
+                try pullRequestSummary(
+                    $0.fragments.gitHubPullRequestSummary,
+                    repository: repository,
+                    statusCheckRollupWasErrored: statusCheckRollupWasErrored
+                )
             }
             let page = try pageMapping(
                 items: mapped.values,
@@ -149,9 +165,11 @@ struct GitHubGraphQLDocumentMapper {
 
     func repositoryItemSearch(
         data: GitHubAPI.GitHubRepositoryItemSearchQuery.Data,
-        repository expectedRepository: ForgeRepositoryIdentity
+        repository expectedRepository: ForgeRepositoryIdentity,
+        problems: [GitHubGraphQLProblem]
     ) throws -> GitHubMappedValue<ForgePage<ForgeRepositoryItem>> {
         let connection = data.search
+        let statusCheckRollupWasErrored = problems.affect(field: "statusCheckRollup")
         let mapped = try mapNodes(connection.nodes) { node -> ForgeRepositoryItem? in
             if let pullRequest = node.asPullRequest {
                 try validateRepository(
@@ -160,7 +178,8 @@ struct GitHubGraphQLDocumentMapper {
                 )
                 let summary = try pullRequestSummary(
                     pullRequest.fragments.gitHubPullRequestSummary,
-                    repository: expectedRepository
+                    repository: expectedRepository,
+                    statusCheckRollupWasErrored: statusCheckRollupWasErrored
                 )
                 guard case let .available(base) = summary.base,
                       base.repository == expectedRepository
@@ -190,13 +209,16 @@ struct GitHubGraphQLDocumentMapper {
 
     func pullRequestDetails(
         data: GitHubAPI.GitHubPullRequestDetailsQuery.Data,
-        repository: ForgeRepositoryIdentity
+        repository: ForgeRepositoryIdentity,
+        problems: [GitHubGraphQLProblem]
     ) throws -> GitHubMappedValue<ForgePullRequestDetailsPage> {
         guard let repositoryNode = data.repository else { throw GitHubReadError.repositoryNotFound }
         guard let pullRequest = repositoryNode.pullRequest else { throw GitHubReadError.objectNotFound }
+        let statusCheckRollupWasErrored = problems.affect(field: "statusCheckRollup")
         let summary = try pullRequestSummary(
             pullRequest.fragments.gitHubPullRequestSummary,
-            repository: repository
+            repository: repository,
+            statusCheckRollupWasErrored: statusCheckRollupWasErrored
         )
         let assignees = try completeValues(
             nodes: pullRequest.assignedActors.nodes,
@@ -210,7 +232,11 @@ struct GitHubGraphQLDocumentMapper {
         )
         let reviewers = try reviewers(pullRequest)
         let linkedIssues = try linkedIssues(pullRequest, repository: repository)
-        let checkMapping = try checks(pullRequest.statusCheckRollup, repository: repository)
+        let checkMapping = try checks(
+            pullRequest.statusCheckRollup,
+            repository: repository,
+            missingIsUnavailable: statusCheckRollupWasErrored
+        )
         let timelineMapping = try pullRequestTimeline(pullRequest.timelineItems, repository: repository)
         let details = try ForgePullRequestDetails(
             summary: summary,
@@ -229,6 +255,7 @@ struct GitHubGraphQLDocumentMapper {
                 nextCheckCursor: checkMapping.nextCursor
             ),
             isPartial: pullRequestSummaryIsPartial(summary)
+                || milestoneIsPartial(milestoneSection)
                 || assignees.isPartial || reviewers.isPartial || linkedIssues.isPartial
                 || checkMapping.isPartial || timelineMapping.isPartial
         )
@@ -258,7 +285,9 @@ struct GitHubGraphQLDocumentMapper {
         )
         return GitHubMappedValue(
             value: details,
-            isPartial: issueSummaryIsPartial(summary) || assignees.isPartial || timeline.isPartial
+            isPartial: issueSummaryIsPartial(summary)
+                || milestoneIsPartial(details.milestone)
+                || assignees.isPartial || timeline.isPartial
         )
     }
 
@@ -314,19 +343,23 @@ struct GitHubGraphQLDocumentMapper {
 
     func attentionCandidates(
         data: GitHubAPI.GitHubAttentionCandidatesQuery.Data,
-        repository: ForgeRepositoryIdentity
+        repository: ForgeRepositoryIdentity,
+        problems: [GitHubGraphQLProblem]
     ) throws -> GitHubMappedValue<ForgeAttentionCandidatePage> {
-        guard let viewer = try actor(data.viewer.fragments.gitHubActor) else {
-            throw GitHubReadError.malformedResponse
-        }
+        let viewer = try actor(data.viewer.fragments.gitHubActor)!
         let connection = data.search
+        let statusCheckRollupWasErrored = problems.affect(field: "statusCheckRollup")
         let mapped = try mapNodes(connection.nodes) { node -> ForgeAttentionCandidate? in
             if let pullRequest = node.asPullRequest {
                 try validateRepository(
                     pullRequest.repository.fragments.gitHubRepositoryIdentity,
                     expected: repository
                 )
-                return try attentionPullRequest(pullRequest, repository: repository)
+                return try attentionPullRequest(
+                    pullRequest,
+                    repository: repository,
+                    statusCheckRollupWasErrored: statusCheckRollupWasErrored
+                )
             }
             if let issue = node.asIssue {
                 try validateRepository(
@@ -484,14 +517,9 @@ private extension GitHubGraphQLDocumentMapper {
     }
 
     func date(_ value: String) throws -> Date {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let parsed = fractional.date(from: value) {
-            return parsed
+        guard let parsed = GitHubISO8601DateParser.date(from: value) else {
+            throw GitHubReadError.malformedResponse
         }
-        let whole = ISO8601DateFormatter()
-        whole.formatOptions = [.withInternetDateTime]
-        guard let parsed = whole.date(from: value) else { throw GitHubReadError.malformedResponse }
         return parsed
     }
 
@@ -528,9 +556,21 @@ private extension GitHubGraphQLDocumentMapper {
         }
     }
 
-    func checkRollupSection(_ value: GitHubAPI.StatusState?) -> ForgeReadSection<ForgeCheckRollup> {
-        guard let value = checkRollup(value) else { return .unavailable(.partialResponse) }
-        return .available(value)
+    func checkRollupSection(
+        _ value: GitHubAPI.StatusState?,
+        rollupWasReturned: Bool,
+        missingIsUnavailable: Bool
+    ) -> ForgeReadSection<ForgeCheckRollup> {
+        if let value = checkRollup(value) {
+            return .available(value)
+        }
+        // `statusCheckRollup == nil` is GitHub's normal representation for a
+        // commit with no checks. Only a response error targeting that field (or
+        // a returned rollup with an unknown state) makes the data unavailable.
+        guard !missingIsUnavailable, !rollupWasReturned else {
+            return .unavailable(.partialResponse)
+        }
+        return .available(.neutral)
     }
 
     func actor(_ fragment: GitHubAPI.GitHubActor) throws -> ForgeActor? {
@@ -619,7 +659,7 @@ private extension GitHubGraphQLDocumentMapper {
         switch fragment.state.value {
         case .open: state = .open
         case .closed: state = .closed
-        case nil: throw GitHubReadError.malformedResponse
+        case nil: state = .unknown
         }
         return try ForgeMilestone(
             repository: repository,
@@ -711,7 +751,7 @@ private extension GitHubGraphQLDocumentMapper {
         guard let connection = pullRequest.closingIssuesReferences else {
             return SectionMapping(section: .unavailable(.partialResponse), isPartial: true)
         }
-        return try completeValues(
+        let mapping = try completeValues(
             nodes: connection.nodes,
             totalCount: connection.totalCount,
             pageInfo: connection.pageInfo.fragments.gitHubPageInfo
@@ -723,7 +763,7 @@ private extension GitHubGraphQLDocumentMapper {
             switch node.state.value {
             case .open: state = .open
             case .closed: state = .closed
-            case nil: throw GitHubReadError.malformedResponse
+            case nil: state = .unknown
             }
             return try ForgeLinkedIssue(
                 repository: linkedRepository,
@@ -732,6 +772,17 @@ private extension GitHubGraphQLDocumentMapper {
                 title: node.title
             )
         }
+        let containsUnknownState: Bool
+        switch mapping.section {
+        case let .available(values):
+            containsUnknownState = values.contains(where: { $0.state == .unknown })
+        case .unavailable:
+            containsUnknownState = false
+        }
+        return SectionMapping(
+            section: mapping.section,
+            isPartial: mapping.isPartial || containsUnknownState
+        )
     }
 
     func connectionIsComplete(
@@ -746,9 +797,17 @@ private extension GitHubGraphQLDocumentMapper {
 
     func checks(
         _ rollup: GitHubAPI.GitHubPullRequestDetailsQuery.Data.Repository.PullRequest.StatusCheckRollup?,
-        repository: ForgeRepositoryIdentity
+        repository: ForgeRepositoryIdentity,
+        missingIsUnavailable: Bool
     ) throws -> CursorSectionMapping<[ForgeCheck]> {
         guard let rollup else {
+            if !missingIsUnavailable {
+                return CursorSectionMapping(
+                    section: .available([]),
+                    nextCursor: nil,
+                    isPartial: false
+                )
+            }
             return CursorSectionMapping(
                 section: .unavailable(.partialResponse),
                 nextCursor: nil,
@@ -1152,7 +1211,8 @@ private extension GitHubGraphQLDocumentMapper {
 
     func attentionPullRequest(
         _ node: GitHubAPI.GitHubAttentionCandidatesQuery.Data.Search.Node.AsPullRequest,
-        repository: ForgeRepositoryIdentity
+        repository: ForgeRepositoryIdentity,
+        statusCheckRollupWasErrored: Bool
     ) throws -> ForgeAttentionCandidate {
         let assignees = try completeValues(
             nodes: node.assignedActors.nodes,
@@ -1188,7 +1248,8 @@ private extension GitHubGraphQLDocumentMapper {
             ),
             item: .pullRequest(pullRequestSummary(
                 node.fragments.gitHubPullRequestSummary,
-                repository: repository
+                repository: repository,
+                statusCheckRollupWasErrored: statusCheckRollupWasErrored
             )),
             bodyMarkdown: .available(node.body),
             assignees: assignees.section,
@@ -1502,36 +1563,42 @@ private extension GitHubGraphQLDocumentMapper {
     }
 
     func issueSummaryIsPartial(_ summary: ForgeIssueSummary) -> Bool {
-        summary.labels.isUnavailable
+        summary.state == .unknown || summary.labels.isUnavailable
     }
 
     func pullRequestSummaryIsPartial(_ summary: ForgePullRequestSummary) -> Bool {
-        summary.head.isUnavailable || summary.base.isUnavailable
+        summary.state == .unknown
+            || summary.head.isUnavailable || summary.base.isUnavailable
             || summary.labels.isUnavailable || summary.checkRollup.isUnavailable
             || summary.reviewRollup.isUnavailable
     }
 
+    func milestoneIsPartial(_ section: ForgeReadSection<ForgeMilestone?>) -> Bool {
+        switch section {
+        case let .available(milestone): milestone?.state == .unknown
+        case .unavailable: true
+        }
+    }
+
     func pullRequestSummary(
         _ fragment: GitHubAPI.GitHubPullRequestSummary,
-        repository expectedRepository: ForgeRepositoryIdentity
+        repository expectedRepository: ForgeRepositoryIdentity,
+        statusCheckRollupWasErrored: Bool = false
     ) throws -> ForgePullRequestSummary {
         let state: ForgePullRequestState
         switch fragment.pullRequestState.value {
         case .open: state = .open
         case .closed: state = .closed
         case .merged: state = .merged
-        case nil: throw GitHubReadError.malformedResponse
+        case nil: state = .unknown
         }
-        let head: ForgeReadSection<ForgeBranchReference>
-        if let headRepository = fragment.headRepository {
-            head = try .available(ForgeBranchReference(
-                repository: repository(headRepository.fragments.gitHubRepositoryIdentity),
-                name: ForgeRefName(fragment.headRefName),
-                commit: ForgeCommitID(fragment.headRefOid)
-            ))
-        } else {
-            head = .unavailable(.partialResponse)
-        }
+        let head = try ForgeReadSection.available(ForgePullRequestHead(
+            repository: fragment.headRepository.map {
+                try repository($0.fragments.gitHubRepositoryIdentity)
+            },
+            name: ForgeRefName(fragment.headRefName),
+            commit: ForgeCommitID(fragment.headRefOid)
+        ))
         let base: ForgeReadSection<ForgeBranchReference>
         if let baseRepository = fragment.baseRepository {
             let reference = try ForgeBranchReference(
@@ -1554,7 +1621,11 @@ private extension GitHubGraphQLDocumentMapper {
         } else {
             labels = .unavailable(.partialResponse)
         }
-        let check = checkRollupSection(fragment.statusCheckRollup?.state.value)
+        let check = checkRollupSection(
+            fragment.statusCheckRollup?.state.value,
+            rollupWasReturned: fragment.statusCheckRollup != nil,
+            missingIsUnavailable: statusCheckRollupWasErrored
+        )
         let review: ForgeReadSection<ForgeReviewRollup>
         switch fragment.reviewDecision?.value {
         case .approved: review = .available(.approved)
@@ -1589,7 +1660,7 @@ private extension GitHubGraphQLDocumentMapper {
         switch fragment.issueState.value {
         case .open: state = .open
         case .closed: state = .closed
-        case nil: throw GitHubReadError.malformedResponse
+        case nil: state = .unknown
         }
         let labels: ForgeReadSection<[ForgeLabel]>
         if let connection = fragment.labels {
@@ -1621,5 +1692,11 @@ private extension ForgeReadSection {
             return true
         }
         return false
+    }
+}
+
+private extension [GitHubGraphQLProblem] {
+    func affect(field: String) -> Bool {
+        contains { $0.path.contains(field) }
     }
 }

@@ -70,6 +70,130 @@ final class ForgePullRequestMutationPolicyTests: XCTestCase {
         )
     }
 
+    func testUnknownPullRequestStateFailsClosedForConsequentialActions() throws {
+        let fixture = try MutationFixture()
+        let context = try fixture.context(state: .unknown)
+
+        XCTAssertEqual(
+            ForgePullRequestLifecyclePolicy.decision(context: context, action: .close),
+            .unavailable(.pullRequestNotOpen)
+        )
+        XCTAssertEqual(
+            ForgePullRequestLifecyclePolicy.decision(context: context, action: .reopen),
+            .unavailable(.pullRequestNotClosed)
+        )
+        XCTAssertEqual(
+            try ForgePullRequestMergePolicy.confirmationDecision(
+                snapshot: fixture.mergeSnapshot(state: .unknown),
+                method: .merge
+            ),
+            .unavailable(.pullRequestNotOpen)
+        )
+        XCTAssertEqual(
+            try ForgePullRequestMergeQueuePolicy.decision(
+                snapshot: fixture.mergeSnapshot(state: .unknown),
+                action: .enter
+            ),
+            .unavailable(.pullRequestNotOpen)
+        )
+    }
+
+    func testDeletedHeadRepositoryPreservesPullRequestActionsAndBlocksRepositoryActions() throws {
+        let fixture = try MutationFixture()
+        let head = ForgePullRequestHead(
+            repository: nil,
+            name: fixture.head.name,
+            commit: fixture.head.commit
+        )
+        func context(
+            state: ForgePullRequestState = .open,
+            isDraft: Bool = false
+        ) throws -> ForgePullRequestMutationContext {
+            try ForgePullRequestMutationContext(
+                accountID: fixture.account,
+                repository: fixture.repository,
+                number: fixture.number,
+                state: state,
+                isDraft: isDraft,
+                head: head,
+                base: fixture.base,
+                updatedAt: fixture.updatedAt,
+                allowedOperations: Set(ForgeOperation.allCases)
+            )
+        }
+
+        let lifecycleCases: [(ForgePullRequestLifecycleAction, ForgePullRequestMutationContext)] = try [
+            (.markReady, context(isDraft: true)),
+            (.convertToDraft, context()),
+            (.close, context()),
+            (.reopen, context(state: .closed)),
+        ]
+        for (action, mutationContext) in lifecycleCases {
+            guard case let .available(request) = ForgePullRequestLifecyclePolicy.decision(
+                context: mutationContext,
+                action: action
+            ) else {
+                return XCTFail("Expected \(action) without a live head repository")
+            }
+            XCTAssertEqual(request.expectedHead, head.commit)
+        }
+        XCTAssertEqual(
+            try ForgePullRequestLifecyclePolicy.decision(
+                context: context(),
+                action: .updateBranch,
+                canUpdateBranch: true
+            ),
+            .unavailable(.updateBranchUnavailable)
+        )
+
+        let merge = try ForgePullRequestMergeSnapshot(
+            context: context(),
+            viewerCanMerge: true,
+            enabledMethods: Set(ForgePullRequestMergeMethod.allCases)
+        )
+        guard case let .available(confirmation) = ForgePullRequestMergePolicy.confirmationDecision(
+            snapshot: merge,
+            method: .merge
+        ) else {
+            return XCTFail("Expected merge confirmation without a live head repository")
+        }
+        XCTAssertNil(confirmation.headReference.repository)
+        XCTAssertNoThrow(try ForgePullRequestMergePolicy.validate(
+            confirmation: confirmation,
+            fresh: merge
+        ))
+        guard case let .available(rebaseConfirmation) = ForgePullRequestMergePolicy.confirmationDecision(
+            snapshot: merge,
+            method: .rebase
+        ) else {
+            return XCTFail("Expected rebase confirmation without a live head repository")
+        }
+        XCTAssertNil(try XCTUnwrap(rebaseConfirmation.rebaseSummary).head.repository)
+        XCTAssertNoThrow(try ForgePullRequestMergeRequest(confirmation: rebaseConfirmation))
+        guard case .available = ForgePullRequestMergeQueuePolicy.decision(
+            snapshot: merge,
+            action: .enter
+        ) else {
+            return XCTFail("Expected merge queue without a live head repository")
+        }
+        let deletion = try ForgeHeadBranchDeletionSnapshot(
+            mergeSnapshot: ForgePullRequestMergeSnapshot(
+                context: context(state: .merged),
+                viewerCanMerge: true,
+                enabledMethods: [.merge]
+            ),
+            isSameRepository: false,
+            isDefaultBranch: false,
+            isProtected: false,
+            viewerCanDelete: true,
+            hasCheckedOutSafetyConflict: false
+        )
+        XCTAssertEqual(
+            ForgeHeadBranchDeletionPolicy.decision(snapshot: deletion, mergeWasQueued: false),
+            .unavailable(.forkHeadBranch)
+        )
+    }
+
     func testEnvironmentAndCapabilityStopEveryMutationBeforeStateEvaluation() throws {
         let fixture = try MutationFixture()
         let rateLimit = Date(timeIntervalSince1970: 500)
@@ -130,7 +254,7 @@ final class ForgePullRequestMutationPolicyTests: XCTestCase {
         XCTAssertEqual(confirmation.accountID, fixture.account)
         XCTAssertEqual(confirmation.repository, fixture.repository)
         XCTAssertEqual(confirmation.number, fixture.number)
-        XCTAssertEqual(confirmation.headReference, fixture.head)
+        XCTAssertEqual(confirmation.headReference.reference, fixture.head)
         XCTAssertEqual(confirmation.baseReference, fixture.base)
         XCTAssertEqual(confirmation.head, fixture.head.commit)
         XCTAssertEqual(confirmation.base, fixture.base.commit)
@@ -153,7 +277,7 @@ final class ForgePullRequestMutationPolicyTests: XCTestCase {
         let summary = try XCTUnwrap(confirmation.rebaseSummary)
         XCTAssertEqual(summary.repository, fixture.repository)
         XCTAssertEqual(summary.number, fixture.number)
-        XCTAssertEqual(summary.head, fixture.head)
+        XCTAssertEqual(summary.head.reference, fixture.head)
         XCTAssertEqual(summary.base, fixture.base)
     }
 

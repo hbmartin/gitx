@@ -301,6 +301,8 @@
 		C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */; };
 		C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */; };
 		C0DF00000000000000000001 /* RepositoryForgeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */; };
+		C0CAC4000000000000000001 /* RepositoryForgeRemoteDescriptorLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0CAC4000000000000000011 /* RepositoryForgeRemoteDescriptorLoader.swift */; };
+		C0CAC4000000000000000002 /* RepositoryForgeRemoteDescriptorLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0CAC4000000000000000011 /* RepositoryForgeRemoteDescriptorLoader.swift */; };
 		C0DF10000000000000000001 /* ForgeDestinationScriptCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */; };
 		C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DF20000000000000000011 /* ForgeScriptingTests.swift */; };
 		C0D5B0000000000000000001 /* RepositoryStatusBarPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5B0000000000000000011 /* RepositoryStatusBarPresentation.swift */; };
@@ -332,6 +334,18 @@
 		F0C100000000000000000004 /* ForgeReadSurfaceViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */; };
 		F0C100000000000000000005 /* ForgeReadSurfaceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */; };
 		F0C100000000000000000006 /* ForgeReadSurfaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */; };
+		D8F800000000000000000001 /* ForgeApplicationNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000101 /* ForgeApplicationNotifications.swift */; };
+		D8F800000000000000000002 /* ForgeApplicationNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000101 /* ForgeApplicationNotifications.swift */; };
+		D8F800000000000000000003 /* ForgeReadSurfaceRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000102 /* ForgeReadSurfaceRendering.swift */; };
+		D8F800000000000000000004 /* ForgeReadSurfaceRendering.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000102 /* ForgeReadSurfaceRendering.swift */; };
+		D8F800000000000000000005 /* GitHubAnonymousReadSurfaceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000103 /* GitHubAnonymousReadSurfaceService.swift */; };
+		D8F800000000000000000006 /* GitHubAnonymousReadSurfaceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000103 /* GitHubAnonymousReadSurfaceService.swift */; };
+		D8F800000000000000000007 /* RepositoryAttentionSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000104 /* RepositoryAttentionSession.swift */; };
+		D8F800000000000000000008 /* RepositoryAttentionSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000104 /* RepositoryAttentionSession.swift */; };
+		D8F800000000000000000009 /* ForgeAttentionViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000105 /* ForgeAttentionViewController.swift */; };
+		D8F80000000000000000000A /* ForgeAttentionViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000105 /* ForgeAttentionViewController.swift */; };
+		D8F80000000000000000000B /* RepositoryForgeCollaborationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */; };
+		D8F80000000000000000000C /* RepositoryForgeCollaborationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */; };
 		F0D100000000000000000001 /* ForgeExternalLinkRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */; };
 		F0D100000000000000000002 /* ForgeExternalLinkRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */; };
 		F0D100000000000000000003 /* ForgeExternalLinkRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */; };
@@ -973,6 +987,7 @@
 		C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsStore.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryPresentationPolicies.swift; sourceTree = "<group>"; };
 		C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeCoordinator.swift; sourceTree = "<group>"; };
+		C0CAC4000000000000000011 /* RepositoryForgeRemoteDescriptorLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeRemoteDescriptorLoader.swift; sourceTree = "<group>"; };
 		C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeDestinationScriptCommand.swift; sourceTree = "<group>"; };
 		C0DF20000000000000000011 /* ForgeScriptingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeScriptingTests.swift; sourceTree = "<group>"; };
 		C0D5B0000000000000000011 /* RepositoryStatusBarPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryStatusBarPresentation.swift; sourceTree = "<group>"; };
@@ -994,6 +1009,12 @@
 		F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceViewController.swift; sourceTree = "<group>"; };
 		F0C100000000000000000013 /* ForgeReadSurfaceModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceModelsTests.swift; sourceTree = "<group>"; };
 		F0C100000000000000000014 /* ForgeReadSurfaceViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceViewControllerTests.swift; sourceTree = "<group>"; };
+		D8F800000000000000000101 /* ForgeApplicationNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeApplicationNotifications.swift; sourceTree = "<group>"; };
+		D8F800000000000000000102 /* ForgeReadSurfaceRendering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeReadSurfaceRendering.swift; sourceTree = "<group>"; };
+		D8F800000000000000000103 /* GitHubAnonymousReadSurfaceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubAnonymousReadSurfaceService.swift; sourceTree = "<group>"; };
+		D8F800000000000000000104 /* RepositoryAttentionSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryAttentionSession.swift; sourceTree = "<group>"; };
+		D8F800000000000000000105 /* ForgeAttentionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAttentionViewController.swift; sourceTree = "<group>"; };
+		D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryForgeCollaborationController.swift; sourceTree = "<group>"; };
 		F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeExternalLinkRouting.swift; sourceTree = "<group>"; };
 		F0D100000000000000000012 /* ForgeExternalLinkRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeExternalLinkRoutingTests.swift; sourceTree = "<group>"; };
 		F0E100000000000000000011 /* ForgeAccountsPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountsPreferences.swift; sourceTree = "<group>"; };
@@ -1336,6 +1357,10 @@
 				F0B100000000000000000014 /* ForgeApplicationServices.swift */,
 				C0D5E0000000000000000011 /* ForgeApplicationRefreshCoordinator.swift */,
 				F0B200000000000000000011 /* GitHubReadComposition.swift */,
+				D8F800000000000000000101 /* ForgeApplicationNotifications.swift */,
+				D8F800000000000000000103 /* GitHubAnonymousReadSurfaceService.swift */,
+				D8F800000000000000000104 /* RepositoryAttentionSession.swift */,
+				D8F800000000000000000106 /* RepositoryForgeCollaborationController.swift */,
 				F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */,
 				F0E100000000000000000011 /* ForgeAccountsPreferences.swift */,
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
@@ -1351,6 +1376,7 @@
 				C0DEC3000000000000000011 /* RepositorySettingsController.swift */,
 				C0D0C0A00000000000000016 /* RepositoryPresentationPolicies.swift */,
 				C0DF00000000000000000011 /* RepositoryForgeCoordinator.swift */,
+				C0CAC4000000000000000011 /* RepositoryForgeRemoteDescriptorLoader.swift */,
 				C0DF30000000000000000011 /* RepositoryForgeLinkUseCase.swift */,
 				C0DF10000000000000000011 /* ForgeDestinationScriptCommand.swift */,
 				C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */,
@@ -1560,6 +1586,8 @@
 				C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */,
 				F0C100000000000000000011 /* ForgeReadSurfaceModels.swift */,
 				F0C100000000000000000012 /* ForgeReadSurfaceViewController.swift */,
+				D8F800000000000000000102 /* ForgeReadSurfaceRendering.swift */,
+				D8F800000000000000000105 /* ForgeAttentionViewController.swift */,
 				F0F200000000000000000105 /* ForgePullRequestSheetController.swift */,
 				F0F200000000000000000106 /* ForgeRepositoryCloneSheetController.swift */,
 				F0F200000000000000000109 /* Milestone2DiagnosticPresenters.swift */,
@@ -2172,6 +2200,12 @@
 				C0DAA2000000000000000001 /* ForgeAvatarLoading.swift in Sources */,
 				F0C100000000000000000001 /* ForgeReadSurfaceModels.swift in Sources */,
 				F0C100000000000000000002 /* ForgeReadSurfaceViewController.swift in Sources */,
+				D8F800000000000000000001 /* ForgeApplicationNotifications.swift in Sources */,
+				D8F800000000000000000003 /* ForgeReadSurfaceRendering.swift in Sources */,
+				D8F800000000000000000005 /* GitHubAnonymousReadSurfaceService.swift in Sources */,
+				D8F800000000000000000007 /* RepositoryAttentionSession.swift in Sources */,
+				D8F800000000000000000009 /* ForgeAttentionViewController.swift in Sources */,
+				D8F80000000000000000000B /* RepositoryForgeCollaborationController.swift in Sources */,
 				C0DAA5000000000000000001 /* ForgeMarkdownAvatarProductHarness.swift in Sources */,
 				F0F400000000000000000001 /* Milestone2ProductCoverageHarness.swift in Sources */,
 				F0F400000000000000000002 /* Milestone2CompositionCoverageHarness.swift in Sources */,
@@ -2243,6 +2277,7 @@
 				C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */,
 				C0D0C0A00000000000000007 /* RepositoryPresentationPolicies.swift in Sources */,
 				C0DF00000000000000000001 /* RepositoryForgeCoordinator.swift in Sources */,
+				C0CAC4000000000000000001 /* RepositoryForgeRemoteDescriptorLoader.swift in Sources */,
 				C0DF10000000000000000001 /* ForgeDestinationScriptCommand.swift in Sources */,
 				C0DE10000000000000000012 /* PBNativeContentView.m in Sources */,
 				C0DE10000000000000000013 /* PBHistoryArrayController.swift in Sources */,
@@ -2361,6 +2396,7 @@
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
+				C0CAC4000000000000000002 /* RepositoryForgeRemoteDescriptorLoader.swift in Sources */,
 				C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */,
 				C05900000000000000000001 /* RepositoryIgnoreTestSupport.m in Sources */,
 				C0DEE0000000000000000002 /* IndexSnapshotTests.swift in Sources */,
@@ -2395,6 +2431,12 @@
 				F0C100000000000000000004 /* ForgeReadSurfaceViewControllerTests.swift in Sources */,
 				F0C100000000000000000005 /* ForgeReadSurfaceModels.swift in Sources */,
 				F0C100000000000000000006 /* ForgeReadSurfaceViewController.swift in Sources */,
+				D8F800000000000000000002 /* ForgeApplicationNotifications.swift in Sources */,
+				D8F800000000000000000004 /* ForgeReadSurfaceRendering.swift in Sources */,
+				D8F800000000000000000006 /* GitHubAnonymousReadSurfaceService.swift in Sources */,
+				D8F800000000000000000008 /* RepositoryAttentionSession.swift in Sources */,
+				D8F80000000000000000000A /* ForgeAttentionViewController.swift in Sources */,
+				D8F80000000000000000000C /* RepositoryForgeCollaborationController.swift in Sources */,
 				F0B200000000000000000005 /* GitHubReadCompositionTests.swift in Sources */,
 				F0B100000000000000000007 /* ForgeCredentialStore.swift in Sources */,
 				F0B100000000000000000008 /* ForgeAccountLifecycle.swift in Sources */,

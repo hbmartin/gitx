@@ -49,14 +49,15 @@
 											GIT_REPOSITORY_OPEN_CROSS_FS,
 											nil);
 
-	NSData *repoPathBuffer = nil;
-	if (path_buffer.ptr) {
-		repoPathBuffer = [NSData dataWithBytes:path_buffer.ptr length:path_buffer.size];
-		git_buf_dispose(&path_buffer);
+	NSString *repoPath = nil;
+	if (gitResult == GIT_OK && path_buffer.ptr && path_buffer.size) {
+		repoPath = [[NSString alloc] initWithBytes:path_buffer.ptr
+											length:path_buffer.size
+										  encoding:NSUTF8StringEncoding];
 	}
+	git_buf_dispose(&path_buffer);
 
-	if (gitResult == GIT_OK && repoPathBuffer.length) {
-		NSString *repoPath = [NSString stringWithUTF8String:repoPathBuffer.bytes];
+	if (repoPath.length) {
 		BOOL isDirectory;
 		if ([[NSFileManager defaultManager] fileExistsAtPath:repoPath
 												 isDirectory:&isDirectory] &&

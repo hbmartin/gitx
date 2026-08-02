@@ -2494,11 +2494,11 @@ private enum ReadFixture {
             isDraft: false,
             title: "Native read surface",
             author: .available(.actor(actor())),
-            head: .available(ForgeBranchReference(
+            head: .available(ForgePullRequestHead(reference: ForgeBranchReference(
                 repository: repository,
                 name: ForgeRefName("read-surface"),
                 commit: ForgeCommitID("aaaaaaa")
-            )),
+            ))),
             base: .available(ForgeBranchReference(
                 repository: repository,
                 name: ForgeRefName("main"),

@@ -37,6 +37,7 @@
 
 - (BOOL)isLoadGenerationCurrent:(NSUInteger)generation;
 - (void)performLoadStateOnMainThread:(dispatch_block_t)block;
+- (GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error;
 - (void)updateCommits:(NSArray<PBGitCommit *> *)revisions operation:(NSOperation *)operation generation:(NSUInteger)generation;
 - (void)addCommitsFromEnumerator:(GTEnumerator *)enumerator operation:(NSOperation *)operation generation:(NSUInteger)generation;
 - (void)finishLoadGeneration:(NSUInteger)generation completionBlock:(void (^)(void))completionBlock;
@@ -83,14 +84,29 @@
 	__weak typeof(parseOperation) weakParseOperation = parseOperation;
 
 	[parseOperation addExecutionBlock:^{
-		PBGitRepository *pbRepo = weakSelf.repository;
+		__strong typeof(weakSelf) strongSelf = weakSelf;
+		NSBlockOperation *operation = weakParseOperation;
+		if (!strongSelf || !operation || operation.cancelled) {
+			NSLog(@"[GitX] Skipped cancelled or released revision load generation %lu", (unsigned long)generation);
+			return;
+		}
+
+		PBGitRepository *pbRepo = strongSelf.repository;
 		GTRepository *repo = pbRepo.gtRepo;
+		if (!pbRepo || !repo) {
+			NSLog(@"[GitX] Skipped revision load generation %lu because its repository is unavailable", (unsigned long)generation);
+			return;
+		}
 
 		NSError *error = nil;
-		GTEnumerator *enu = [[GTEnumerator alloc] initWithRepository:repo error:&error];
+		GTEnumerator *enu = [strongSelf enumeratorForRepository:repo error:&error];
+		if (!enu) {
+			NSLog(@"[GitX] Failed to create the enumerator for revision load generation %lu: %@", (unsigned long)generation, error);
+			return;
+		}
 
-		[weakSelf setupEnumerator:enu forRevspec:weakSelf.currentRev];
-		[weakSelf addCommitsFromEnumerator:enu operation:weakParseOperation generation:generation];
+		[strongSelf setupEnumerator:enu forRevspec:strongSelf.currentRev];
+		[strongSelf addCommitsFromEnumerator:enu operation:operation generation:generation];
 	}];
 	[parseOperation setCompletionBlock:^{
 		dispatch_async(dispatch_get_main_queue(), ^{
@@ -99,6 +115,11 @@
 	}];
 
 	[self.operationQueue addOperation:parseOperation];
+}
+
+- (GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error
+{
+	return [[GTEnumerator alloc] initWithRepository:repository error:error];
 }
 
 

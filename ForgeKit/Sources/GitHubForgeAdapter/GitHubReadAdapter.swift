@@ -97,7 +97,7 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
+        ) { data, _ in
             try mapper.repositoryFacts(data: data, expectedRepository: repository, credential: credential.reference)
         }
     }
@@ -111,11 +111,12 @@ public actor GitHubReadAdapter {
         let (authentication, permit) = try await validate(repository)
         let first = try pageSizeValue(pageSize)
         let stateValues = states.map { values in
-            values.map { value -> GraphQLEnum<GitHubAPI.PullRequestState> in
+            values.compactMap { value -> GraphQLEnum<GitHubAPI.PullRequestState>? in
                 switch value {
                 case .open: GraphQLEnum(.open)
                 case .closed: GraphQLEnum(.closed)
                 case .merged: GraphQLEnum(.merged)
+                case .unknown: nil
                 }
             }
         }
@@ -131,8 +132,8 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
-            try mapper.pullRequestList(data: data, repository: repository)
+        ) { data, problems in
+            try mapper.pullRequestList(data: data, repository: repository, problems: problems)
         }
     }
 
@@ -145,10 +146,11 @@ public actor GitHubReadAdapter {
         let (authentication, permit) = try await validate(repository)
         let first = try pageSizeValue(pageSize)
         let stateValues = states.map { values in
-            values.map { value -> GraphQLEnum<GitHubAPI.IssueState> in
+            values.compactMap { value -> GraphQLEnum<GitHubAPI.IssueState>? in
                 switch value {
                 case .open: GraphQLEnum(.open)
                 case .closed: GraphQLEnum(.closed)
+                case .unknown: nil
                 }
             }
         }
@@ -164,7 +166,7 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
+        ) { data, _ in
             try mapper.issueList(data: data, repository: repository)
         }
     }
@@ -192,8 +194,8 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
-            try mapper.pullRequestDetails(data: data, repository: repository)
+        ) { data, problems in
+            try mapper.pullRequestDetails(data: data, repository: repository, problems: problems)
         }
     }
 
@@ -216,7 +218,7 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
+        ) { data, _ in
             try mapper.issueDetails(data: data, repository: repository)
         }
     }
@@ -240,8 +242,13 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
-            try mapper.historyOverlay(data: data, repository: repository, commit: commit)
+        ) { data, problems in
+            try mapper.historyOverlay(
+                data: data,
+                repository: repository,
+                commit: commit,
+                problems: problems
+            )
         }
     }
 
@@ -263,8 +270,8 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
-            try mapper.repositoryItemSearch(data: data, repository: repository)
+        ) { data, problems in
+            try mapper.repositoryItemSearch(data: data, repository: repository, problems: problems)
         }
     }
 
@@ -277,6 +284,11 @@ public actor GitHubReadAdapter {
         reviewThreadCount: Int = 25
     ) async throws -> GitHubReadResult<ForgeAttentionCandidatePage> {
         let (authentication, permit) = try await validate(repository)
+        try validateAttentionNodeBudget(
+            pageSize: pageSize,
+            activityCount: activityCount,
+            reviewThreadCount: reviewThreadCount
+        )
         let query = try GitHubAPI.GitHubAttentionCandidatesQuery(
             query: searchQuery(repository: repository, text: searchText),
             first: pageSizeValue(pageSize),
@@ -289,8 +301,8 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
-            try mapper.attentionCandidates(data: data, repository: repository)
+        ) { data, problems in
+            try mapper.attentionCandidates(data: data, repository: repository, problems: problems)
         }
     }
 
@@ -301,10 +313,15 @@ public actor GitHubReadAdapter {
         repository: ForgeRepositoryIdentity,
         pageSize: Int = 100,
         after: ForgePageCursor? = nil,
-        activityCount: Int = 100,
-        reviewThreadCount: Int = 100
+        activityCount: Int = 40,
+        reviewThreadCount: Int = 40
     ) async throws -> GitHubReadResult<ForgeAttentionCandidatePage> {
         let (authentication, permit) = try await validate(repository)
+        try validateAttentionNodeBudget(
+            pageSize: pageSize,
+            activityCount: activityCount,
+            reviewThreadCount: reviewThreadCount
+        )
         let query = try GitHubAPI.GitHubAttentionCandidatesQuery(
             query: "repo:\(repository.owner)/\(repository.name) is:open involves:@me",
             first: pageSizeValue(pageSize),
@@ -317,8 +334,8 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
-            try mapper.attentionCandidates(data: data, repository: repository)
+        ) { data, problems in
+            try mapper.attentionCandidates(data: data, repository: repository, problems: problems)
         }
     }
 
@@ -343,7 +360,7 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
+        ) { data, _ in
             try mapper.reviewThreads(data: data, repository: repository)
         }
     }
@@ -366,7 +383,7 @@ public actor GitHubReadAdapter {
             repository: repository,
             authentication: authentication,
             permit: permit
-        ) { data in
+        ) { data, _ in
             try mapper.reviewThreadComments(data: data, repository: repository)
         }
     }
@@ -382,7 +399,7 @@ private extension GitHubReadAdapter {
         repository: ForgeRepositoryIdentity,
         authentication: GitHubReadAuthentication,
         permit: GitHubCredentialRequestPermit,
-        map: (Query.Data) throws -> GitHubMappedValue<Value>
+        map: (Query.Data, [GitHubGraphQLProblem]) throws -> GitHubMappedValue<Value>
     ) async throws -> GitHubReadResult<Value> where Query.ResponseFormat == SingleResponseFormat {
         let credential = authentication.credential
         let metadataBox = GitHubResponseMetadataBox(
@@ -419,7 +436,7 @@ private extension GitHubReadAdapter {
             }
             let mapped: GitHubMappedValue<Value>
             do {
-                mapped = try map(data)
+                mapped = try map(data, problems)
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as GitHubReadError {
@@ -603,6 +620,27 @@ private extension GitHubReadAdapter {
         return Int32(value)
     }
 
+    /// GitHub validates a GraphQL document against the maximum number of nodes
+    /// its connection arguments can request, rather than the number a particular
+    /// repository happens to return. Keep the Attention operation below the
+    /// 500,000-node provider limit on every outer pagination request.
+    func validateAttentionNodeBudget(
+        pageSize: Int,
+        activityCount: Int,
+        reviewThreadCount: Int
+    ) throws {
+        _ = try pageSizeValue(pageSize)
+        _ = try pageSizeValue(activityCount)
+        _ = try pageSizeValue(reviewThreadCount)
+        guard GitHubAttentionGraphQLNodeBudget.upperBound(
+            pageSize: pageSize,
+            activityCount: activityCount,
+            reviewThreadCount: reviewThreadCount
+        ) < GitHubAttentionGraphQLNodeBudget.maximumNodeCount else {
+            throw GitHubReadError.queryNodeLimitExceeded
+        }
+    }
+
     func int32(_ value: Int) throws -> Int32 {
         guard let result = Int32(exactly: value) else { throw GitHubReadError.malformedResponse }
         return result
@@ -624,5 +662,26 @@ private extension GitHubReadAdapter {
 
     func nullable<Value: Sendable>(_ value: Value?) -> GraphQLNullable<Value> {
         value.map(GraphQLNullable.some) ?? .none
+    }
+}
+
+/// GitHub's validated upper bound for `GitHubAttentionCandidates` is
+/// `pageSize * (501 + activityCount + reviewThreadCount
+/// + 2 * activityCount * reviewThreadCount)`. The final term accounts for the
+/// nested review-thread activity expansion. Scalars and non-connection objects
+/// do not consume GitHub's node budget.
+enum GitHubAttentionGraphQLNodeBudget {
+    static let maximumNodeCount = 500_000
+
+    static func upperBound(
+        pageSize: Int,
+        activityCount: Int,
+        reviewThreadCount: Int
+    ) -> Int {
+        let nodesPerCandidate = 501
+            + activityCount
+            + reviewThreadCount
+            + (2 * activityCount * reviewThreadCount)
+        return pageSize * nodesPerCandidate
     }
 }

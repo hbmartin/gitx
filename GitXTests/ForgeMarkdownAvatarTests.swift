@@ -268,27 +268,51 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
             XCTAssertEqual($0 as? ForgeAvatarLoadingError, .disabled)
         }
 
-        let blocking = BlockingAvatarTransport()
+        let blocking = ControlledAvatarTransport(payload: ForgeAvatarPayload(
+            data: Data([4, 2]),
+            mediaType: .png
+        ))
         let cancellingLoader = ForgeAvatarLoader(transport: blocking)
         let request = Task { try await cancellingLoader.load(firstURL) }
-        await blocking.waitUntilStarted()
+        let blockingStarted = await blocking.waitUntilStarted()
+        XCTAssertTrue(blockingStarted)
         let activeBeforeDisable = await cancellingLoader.statistics().activeRequests
         XCTAssertEqual(activeBeforeDisable, 1)
         await cancellingLoader.setLoadingEnabled(false)
-        await XCTAssertThrowsErrorAsync(try await request.value) { error in
-            XCTAssertTrue(error is CancellationError || error as? ForgeAvatarLoadingError == .disabled)
+        let disabledResult = await boundedResult(of: request) {
+            await blocking.complete()
         }
+        switch disabledResult {
+        case let .failure(error):
+            XCTAssertTrue(error is CancellationError || error as? ForgeAvatarLoadingError == .disabled)
+        case .success:
+            XCTFail("Disabling avatar loading must cancel the active request")
+        }
+        let disableCancellationObserved = await blocking.waitForCancellation()
+        XCTAssertTrue(disableCancellationObserved)
         let activeAfterDisable = await cancellingLoader.statistics().activeRequests
         XCTAssertEqual(activeAfterDisable, 0)
 
-        let directlyCancelledTransport = BlockingAvatarTransport()
+        let directlyCancelledTransport = ControlledAvatarTransport(payload: ForgeAvatarPayload(
+            data: Data([4, 3]),
+            mediaType: .png
+        ))
         let directlyCancelledLoader = ForgeAvatarLoader(transport: directlyCancelledTransport)
         let directlyCancelledRequest = Task { try await directlyCancelledLoader.load(firstURL) }
-        await directlyCancelledTransport.waitUntilStarted()
+        let directRequestStarted = await directlyCancelledTransport.waitUntilStarted()
+        XCTAssertTrue(directRequestStarted)
         directlyCancelledRequest.cancel()
-        await XCTAssertThrowsErrorAsync(try await directlyCancelledRequest.value) { error in
-            XCTAssertTrue(error is CancellationError)
+        let directResult = await boundedResult(of: directlyCancelledRequest) {
+            await directlyCancelledTransport.complete()
         }
+        switch directResult {
+        case let .failure(error):
+            XCTAssertTrue(error is CancellationError)
+        case .success:
+            XCTFail("Cancelling the waiter must cancel its avatar request")
+        }
+        let directCancellationObserved = await directlyCancelledTransport.waitForCancellation()
+        XCTAssertTrue(directCancellationObserved)
         let activeAfterDirectCancellation = await directlyCancelledLoader.statistics().activeRequests
         XCTAssertEqual(activeAfterDirectCancellation, 0)
     }
@@ -300,7 +324,8 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         let loader = ForgeAvatarLoader(transport: transport)
 
         let first = Task { try await loader.load(avatarURL) }
-        await transport.waitUntilStarted()
+        let sharedRequestStarted = await transport.waitUntilStarted()
+        XCTAssertTrue(sharedRequestStarted)
         let second = Task { try await loader.load(avatarURL) }
         let joinedWaiters = await waitForWaiterCount(2, in: loader)
         XCTAssertTrue(joinedWaiters)
@@ -325,12 +350,19 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         let finalTransport = ControlledAvatarTransport(payload: payload)
         let finalLoader = ForgeAvatarLoader(transport: finalTransport)
         let finalWaiter = Task { try await finalLoader.load(avatarURL) }
-        await finalTransport.waitUntilStarted()
+        let finalRequestStarted = await finalTransport.waitUntilStarted()
+        XCTAssertTrue(finalRequestStarted)
         let finalWaiterJoined = await waitForWaiterCount(1, in: finalLoader)
         XCTAssertTrue(finalWaiterJoined)
         finalWaiter.cancel()
-        await XCTAssertThrowsErrorAsync(try await finalWaiter.value) { error in
+        let finalResult = await boundedResult(of: finalWaiter) {
+            await finalTransport.complete()
+        }
+        switch finalResult {
+        case let .failure(error):
             XCTAssertTrue(error is CancellationError)
+        case .success:
+            XCTFail("Cancelling the last waiter must cancel the transport")
         }
         let transportCancelled = await finalTransport.waitForCancellation()
         let finalActiveRequests = await finalLoader.statistics().activeRequests
@@ -664,7 +696,8 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         let secondAccount = try ForgeAccountID(forge: forge, value: "avatar-owner-two")
 
         let first = Task { try await loader.load(avatarURL, owner: .account(firstAccount)) }
-        await transport.waitUntilStarted()
+        let ownerRequestStarted = await transport.waitUntilStarted()
+        XCTAssertTrue(ownerRequestStarted)
         let second = Task { try await loader.load(avatarURL, owner: .account(secondAccount)) }
         let coalesced = await waitForWaiterCount(2, in: loader)
         XCTAssertTrue(coalesced)
@@ -968,6 +1001,21 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         root.subviews + root.subviews.flatMap(descendants(of:))
     }
 
+    private func boundedResult<Value>(
+        of task: Task<Value, any Error>,
+        cleanup: @escaping @Sendable () async -> Void
+    ) async -> Result<Value, any Error> {
+        let completed = expectation(description: "Asynchronous avatar request completed")
+        let result = Task {
+            let value = await task.result
+            completed.fulfill()
+            return value
+        }
+        await fulfillment(of: [completed], timeout: 2)
+        await cleanup()
+        return await result.value
+    }
+
     private func attachScreenshot(of view: NSView, named name: String) throws {
         let representation = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: representation)
@@ -1042,32 +1090,11 @@ private actor RecordingAvatarTransport: ForgeAvatarTransport {
     }
 }
 
-private actor BlockingAvatarTransport: ForgeAvatarTransport {
-    private var started = false
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
-
-    func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
-        started = true
-        startWaiters.forEach { $0.resume() }
-        startWaiters.removeAll()
-        try await Task.sleep(nanoseconds: 60_000_000_000)
-        throw CancellationError()
-    }
-
-    func waitUntilStarted() async {
-        guard !started else { return }
-        await withCheckedContinuation { continuation in
-            startWaiters.append(continuation)
-        }
-    }
-}
-
 private actor ControlledAvatarTransport: ForgeAvatarTransport {
     let payload: ForgeAvatarPayload
     private(set) var fetchCount = 0
     private(set) var cancellationCount = 0
     private var continuation: CheckedContinuation<ForgeAvatarPayload, Error>?
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(payload: ForgeAvatarPayload) {
         self.payload = payload
@@ -1075,8 +1102,6 @@ private actor ControlledAvatarTransport: ForgeAvatarTransport {
 
     func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
         fetchCount += 1
-        startWaiters.forEach { $0.resume() }
-        startWaiters.removeAll()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation = $0 }
         } onCancel: {
@@ -1084,9 +1109,17 @@ private actor ControlledAvatarTransport: ForgeAvatarTransport {
         }
     }
 
-    func waitUntilStarted() async {
-        guard fetchCount == 0 else { return }
-        await withCheckedContinuation { startWaiters.append($0) }
+    func waitUntilStarted() async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while fetchCount == 0 {
+            guard clock.now < deadline else {
+                complete()
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return true
     }
 
     func complete() {
@@ -1095,13 +1128,13 @@ private actor ControlledAvatarTransport: ForgeAvatarTransport {
     }
 
     func waitForCancellation() async -> Bool {
-        for _ in 0 ..< 1000 {
-            if cancellationCount > 0 {
-                return true
-            }
-            await Task.yield()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while cancellationCount == 0 {
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(10))
         }
-        return false
+        return true
     }
 
     private func cancel() {

@@ -633,9 +633,10 @@ open class PBGitSidebarController: PBViewController, NSMenuDelegate, NSOutlineVi
         }
         synchronizeConfiguredRemotes()
         for rawSubmodule in repository.submodules {
-            // swift6-safety-justification: NSMutableArray erases its generic; this preserves Objective-C's
-            // message-compatible handling of GTSubmodule test doubles and legacy subclasses with reference-sized objects.
-            let submodule = unsafeBitCast(rawSubmodule as AnyObject, to: GTSubmodule.self)
+            guard let submodule = rawSubmodule as? GTSubmodule else {
+                Self.logger.error("Ignored an invalid repository submodule object")
+                continue
+            }
             submodules.addChild(PBSourceViewGitSubmoduleItem(submodule: submodule))
         }
 

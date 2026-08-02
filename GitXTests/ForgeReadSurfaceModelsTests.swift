@@ -224,6 +224,14 @@ final class ForgeReadSurfaceModelsTests: XCTestCase {
             author: .available(.actor(Fixture.actor(login: "login-only", name: nil)))
         )
         XCTAssertEqual(ForgeReadSurfaceRow(item: .issue(loginOnlyIssue)).author, "login-only")
+
+        let unknownPullRequest = try Fixture.pullRequest(number: 14, state: .unknown)
+        let unknownIssue = try Fixture.issue(number: 15, state: .unknown)
+        XCTAssertEqual(
+            ForgeReadSurfaceRow(item: .pullRequest(unknownPullRequest)).state,
+            "Unknown"
+        )
+        XCTAssertEqual(ForgeReadSurfaceRow(item: .issue(unknownIssue)).state, "Unknown")
     }
 
     func testPullRequestInspectorPresentsAllReadOnlySectionsAndChronologicalTimeline() throws {
@@ -687,11 +695,11 @@ private enum Fixture {
             isDraft: isDraft,
             title: title,
             author: author ?? .available(.actor(actor())),
-            head: .available(ForgeBranchReference(
+            head: .available(ForgePullRequestHead(reference: ForgeBranchReference(
                 repository: repository,
                 name: ForgeRefName("feature"),
                 commit: ForgeCommitID("1111111")
-            )),
+            ))),
             base: .available(ForgeBranchReference(
                 repository: repository,
                 name: ForgeRefName("main"),

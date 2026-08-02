@@ -61,14 +61,12 @@ struct GitHubMutationMapper {
         _ fragment: GitHubAPI.GitHubPullRequestMutationSnapshot,
         expectedRepository: ForgeRepositoryIdentity
     ) throws -> GitHubPullRequestMutationValue {
-        guard let headRepositoryNode = fragment.headRepository,
-              let baseRepositoryNode = fragment.baseRepository
-        else {
+        guard let baseRepositoryNode = fragment.baseRepository else {
             throw GitHubMutationError.malformedResponse
         }
-        let headRepository = try repository(
-            headRepositoryNode.fragments.gitHubRepositoryIdentity
-        )
+        let headRepository = try fragment.headRepository.map {
+            try repository($0.fragments.gitHubRepositoryIdentity)
+        }
         let baseRepository = try repository(
             baseRepositoryNode.fragments.gitHubRepositoryIdentity
         )
@@ -80,7 +78,7 @@ struct GitHubMutationMapper {
         case .open: state = .open
         case .closed: state = .closed
         case .merged: state = .merged
-        case nil: throw GitHubMutationError.malformedResponse
+        case nil: state = .unknown
         }
         return try GitHubPullRequestMutationValue(
             id: objectID(fragment.id),
@@ -90,7 +88,7 @@ struct GitHubMutationMapper {
             isDraft: fragment.isDraft,
             title: fragment.title,
             bodyMarkdown: fragment.body,
-            head: ForgeBranchReference(
+            head: GitHubPullRequestMutationHead(
                 repository: headRepository,
                 name: ForgeRefName(fragment.headRefName),
                 commit: ForgeCommitID(fragment.headRefOid)
@@ -293,14 +291,7 @@ struct GitHubMutationMapper {
     }
 
     private func date(_ value: String) throws -> Date {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let parsed = fractional.date(from: value) {
-            return parsed
-        }
-        let whole = ISO8601DateFormatter()
-        whole.formatOptions = [.withInternetDateTime]
-        guard let parsed = whole.date(from: value) else {
+        guard let parsed = GitHubISO8601DateParser.date(from: value) else {
             throw GitHubMutationError.malformedResponse
         }
         return parsed

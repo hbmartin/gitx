@@ -66,6 +66,33 @@ public struct ForgeSQLiteDurableRecord: Equatable, Sendable {
     }
 }
 
+struct ForgeSQLiteAttentionTransactionState: Sendable {
+    let watchedRepository: ForgeSQLiteDurableRecord?
+    let records: [ForgeSQLiteDurableRecord]
+}
+
+struct ForgeSQLiteAttentionTransactionUpdate<Result: Sendable>: Sendable {
+    let watchedRepository: ForgeSQLiteDurableRecord?
+    let records: [ForgeSQLiteDurableRecord]
+    let cacheEntries: [ForgeSQLiteCacheEntry]
+    let removesWatchedRepository: Bool
+    let result: Result
+
+    init(
+        watchedRepository: ForgeSQLiteDurableRecord? = nil,
+        records: [ForgeSQLiteDurableRecord] = [],
+        cacheEntries: [ForgeSQLiteCacheEntry] = [],
+        removesWatchedRepository: Bool = false,
+        result: Result
+    ) {
+        self.watchedRepository = watchedRepository
+        self.records = records
+        self.cacheEntries = cacheEntries
+        self.removesWatchedRepository = removesWatchedRepository
+        self.result = result
+    }
+}
+
 public struct ForgeSQLiteRecoveryCopy: Equatable, Sendable {
     public let url: URL
     public let sidecarURLs: [URL]
@@ -362,59 +389,84 @@ public actor ForgeSQLiteStore {
         for key: ForgeDisposableCacheKey,
         accessedAt: Date
     ) throws -> ForgeSQLiteCacheEntry? {
+        try cacheEntries(for: [key], accessedAt: accessedAt)[0]
+    }
+
+    /// Loads a set of cache records and advances their LRU timestamps in one
+    /// SQLite transaction. Callers that render a list avoid one FULL-sync
+    /// commit per row while retaining exact key/partition validation.
+    func cacheEntries(
+        for keys: [ForgeDisposableCacheKey],
+        accessedAt: Date
+    ) throws -> [ForgeSQLiteCacheEntry?] {
         guard accessedAt.timeIntervalSince1970.isFinite else {
             throw ForgeSQLiteError.invalidTimestamp
         }
+        guard !keys.isEmpty else { return [] }
         let connection = try activeConnection()
-        let fields = try Self.cacheFields(key)
         return try connection.transaction {
-            let rows = try connection.query(
-                """
-                SELECT cache_kind, partition_kind, account_key, repository_key,
-                       payload, byte_count, fetched_at, accessed_at, completeness
-                FROM forge_cache_entries WHERE record_key = ?
-                """,
-                bindings: [.blob(fields.recordKey)]
-            )
-            guard let row = rows.first else { return nil }
-            guard try row.integer(0) == Int64(fields.cacheKind),
-                  try row.integer(1) == Int64(fields.partitionKind),
-                  try row.blob(2) == fields.accountKey,
-                  try row.blob(3) == fields.repositoryKey
-            else {
-                throw ForgeSQLiteError.sqlite(
-                    operation: "validate cache partition",
-                    code: SQLITE_CORRUPT,
-                    message: "stored cache partition differs from its canonical key"
+            try keys.map {
+                try Self.cacheEntry(
+                    for: $0,
+                    accessedAt: accessedAt,
+                    using: connection
                 )
             }
-            let previousAccess = try row.date(7)
-            let effectiveAccess = max(previousAccess, accessedAt)
-            try connection.execute(
-                "UPDATE forge_cache_entries SET accessed_at = ? WHERE record_key = ?",
-                bindings: [.double(effectiveAccess.timeIntervalSince1970), .blob(fields.recordKey)]
-            )
-            let completeness = try JSONDecoder().decode(
-                ForgeSnapshotCompleteness.self,
-                from: row.blob(8)
-            )
-            let storedByteCount = try row.integer(5)
-            guard storedByteCount >= 0 else {
-                throw ForgeSQLiteError.sqlite(
-                    operation: "read cache byte count",
-                    code: SQLITE_CORRUPT,
-                    message: "negative byte count"
-                )
-            }
-            let record = try ForgeDisposableCacheRecord(
-                key: key,
-                byteCount: UInt64(storedByteCount),
-                fetchedAt: row.date(6),
-                lastAccessedAt: effectiveAccess,
-                completeness: completeness
-            )
-            return try ForgeSQLiteCacheEntry(record: record, payload: row.blob(4))
         }
+    }
+
+    private static func cacheEntry(
+        for key: ForgeDisposableCacheKey,
+        accessedAt: Date,
+        using connection: ForgeSQLiteConnection
+    ) throws -> ForgeSQLiteCacheEntry? {
+        let fields = try cacheFields(key)
+        let rows = try connection.query(
+            """
+            SELECT cache_kind, partition_kind, account_key, repository_key,
+                   payload, byte_count, fetched_at, accessed_at, completeness
+            FROM forge_cache_entries WHERE record_key = ?
+            """,
+            bindings: [.blob(fields.recordKey)]
+        )
+        guard let row = rows.first else { return nil }
+        guard try row.integer(0) == Int64(fields.cacheKind),
+              try row.integer(1) == Int64(fields.partitionKind),
+              try row.blob(2) == fields.accountKey,
+              try row.blob(3) == fields.repositoryKey
+        else {
+            throw ForgeSQLiteError.sqlite(
+                operation: "validate cache partition",
+                code: SQLITE_CORRUPT,
+                message: "stored cache partition differs from its canonical key"
+            )
+        }
+        let previousAccess = try row.date(7)
+        let effectiveAccess = max(previousAccess, accessedAt)
+        try connection.execute(
+            "UPDATE forge_cache_entries SET accessed_at = ? WHERE record_key = ?",
+            bindings: [.double(effectiveAccess.timeIntervalSince1970), .blob(fields.recordKey)]
+        )
+        let completeness = try JSONDecoder().decode(
+            ForgeSnapshotCompleteness.self,
+            from: row.blob(8)
+        )
+        let storedByteCount = try row.integer(5)
+        guard storedByteCount >= 0 else {
+            throw ForgeSQLiteError.sqlite(
+                operation: "read cache byte count",
+                code: SQLITE_CORRUPT,
+                message: "negative byte count"
+            )
+        }
+        let record = try ForgeDisposableCacheRecord(
+            key: key,
+            byteCount: UInt64(storedByteCount),
+            fetchedAt: row.date(6),
+            lastAccessedAt: effectiveAccess,
+            completeness: completeness
+        )
+        return try ForgeSQLiteCacheEntry(record: record, payload: row.blob(4))
     }
 
     @discardableResult
@@ -465,6 +517,117 @@ public actor ForgeSQLiteStore {
 
     public func saveDurableRecord(_ record: ForgeSQLiteDurableRecord) throws {
         let connection = try activeConnection()
+        try Self.upsertDurableRecord(record, using: connection)
+        Self.logger.debug("Stored durable Forge record of kind \(record.kind.rawValue)")
+    }
+
+    func updateAttention<Result: Sendable>(
+        _ key: ForgeWatchedRepositoryKey,
+        operation: @Sendable (ForgeSQLiteAttentionTransactionState) throws -> ForgeSQLiteAttentionTransactionUpdate<Result>
+    ) throws -> Result {
+        let connection = try activeConnection()
+        var removedWatchedRepository = false
+        let result = try connection.transaction {
+            let watchKey = try Self.encodedKey(key)
+            let watchedRepository = try durableRecord(
+                kind: .watchedRepository,
+                accountID: key.accountID,
+                repository: key.repository,
+                key: watchKey
+            )
+            let records = try durableRecords(
+                kind: .attention,
+                accountID: key.accountID,
+                repository: key.repository
+            )
+            let update = try operation(ForgeSQLiteAttentionTransactionState(
+                watchedRepository: watchedRepository,
+                records: records
+            ))
+            try Self.validateAttentionUpdate(update, for: key, watchKey: watchKey)
+
+            if update.removesWatchedRepository {
+                _ = try connection.changeCount {
+                    try connection.execute(
+                        """
+                        DELETE FROM forge_durable_records
+                        WHERE kind = ? AND account_key = ? AND repository_key = ? AND record_key = ?
+                        """,
+                        bindings: [
+                            .integer(Int64(ForgeSQLiteDurableKind.watchedRepository.rawValue)),
+                            .blob(Self.encodedKey(key.accountID)),
+                            .blob(Self.encodedKey(key.repository)),
+                            .blob(watchKey),
+                        ]
+                    )
+                }
+                _ = try connection.changeCount {
+                    try connection.execute(
+                        """
+                        DELETE FROM forge_durable_records
+                        WHERE kind = ? AND account_key = ? AND repository_key = ?
+                        """,
+                        bindings: [
+                            .integer(Int64(ForgeSQLiteDurableKind.attention.rawValue)),
+                            .blob(Self.encodedKey(key.accountID)),
+                            .blob(Self.encodedKey(key.repository)),
+                        ]
+                    )
+                }
+                removedWatchedRepository = true
+            } else {
+                if let watchedRepository = update.watchedRepository {
+                    try Self.upsertDurableRecord(watchedRepository, using: connection)
+                }
+                for record in update.records {
+                    try Self.upsertDurableRecord(record, using: connection)
+                }
+                for entry in update.cacheEntries {
+                    try Self.upsertCacheEntry(entry, using: connection)
+                }
+            }
+            return update.result
+        }
+        if removedWatchedRepository {
+            Self.logger.notice("Atomically removed one watched repository and its durable Attention records")
+        } else {
+            Self.logger.debug("Committed one atomic Attention update")
+        }
+        return result
+    }
+
+    private static func validateAttentionUpdate<Result>(
+        _ update: ForgeSQLiteAttentionTransactionUpdate<Result>,
+        for key: ForgeWatchedRepositoryKey,
+        watchKey: Data
+    ) throws {
+        guard !update.removesWatchedRepository ||
+            (update.watchedRepository == nil && update.records.isEmpty && update.cacheEntries.isEmpty)
+        else { throw ForgeAttentionInboxError.corruptPersistenceRecord }
+        if let watchedRepository = update.watchedRepository {
+            guard watchedRepository.kind == .watchedRepository,
+                  watchedRepository.accountID == key.accountID,
+                  watchedRepository.repository == key.repository,
+                  watchedRepository.key == watchKey
+            else { throw ForgeAttentionInboxError.corruptPersistenceRecord }
+        }
+        guard update.records.allSatisfy({
+            $0.kind == .attention &&
+                $0.accountID == key.accountID &&
+                $0.repository == key.repository
+        }) else { throw ForgeAttentionInboxError.corruptPersistenceRecord }
+        for entry in update.cacheEntries {
+            guard case let .snapshot(snapshotKey) = entry.record.key,
+                  snapshotKey.repositoryPartition.cachePartition == .account(key.accountID),
+                  snapshotKey.repositoryPartition.repository == key.repository
+            else { throw ForgeAttentionInboxError.corruptPersistenceRecord }
+        }
+    }
+
+    private static func upsertDurableRecord(
+        _ record: ForgeSQLiteDurableRecord,
+        using connection: ForgeSQLiteConnection
+    ) throws {
         let account = try Self.encodedKey(record.accountID)
         let repository = try Self.encodedKey(record.repository)
         try connection.execute(
@@ -484,7 +647,6 @@ public actor ForgeSQLiteStore {
                 record.expiresAt.map { .double($0.timeIntervalSince1970) } ?? .null,
             ]
         )
-        Self.logger.debug("Stored durable Forge record of kind \(record.kind.rawValue)")
     }
 
     public func durableRecord(
@@ -1077,6 +1239,10 @@ final class ForgeSQLiteConnection {
         let opened = try Self.open(url: url, flags: flags)
         database = opened
         sqlite3_extended_result_codes(opened, 1)
+    }
+
+    deinit {
+        close()
     }
 
     private static func open(url: URL, flags: Int32) throws -> OpaquePointer {

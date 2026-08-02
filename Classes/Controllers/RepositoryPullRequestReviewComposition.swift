@@ -526,10 +526,11 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
             identity: identity,
             operation: request.action.operation,
             afterSuccess: { [localService] value in
-                guard let remoteTrackingBranch = RepositoryPullRequestReviewLocalRefreshPolicy.remoteTrackingBranch(
-                    after: request.action,
-                    updatedHead: value.head
-                ) else { return }
+                guard let updatedHead = value.head.reference,
+                      let remoteTrackingBranch = RepositoryPullRequestReviewLocalRefreshPolicy.remoteTrackingBranch(
+                          after: request.action,
+                          updatedHead: updatedHead
+                      ) else { return }
                 try await localService.fetchBase(remoteTrackingBranch)
             }
         ) { context in
@@ -766,7 +767,7 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
     private func workspaceMergeSnapshot(
         identity: RepositoryPullRequestReviewIdentity,
         readContext: ForgeGitHubPullRequestReviewReadContext,
-        detailsHead: ForgeBranchReference,
+        detailsHead: ForgePullRequestHead,
         detailsBase: ForgeBranchReference,
         summary: ForgePullRequestSummary,
         previous: RepositoryPullRequestReviewWorkspace?
@@ -1063,7 +1064,7 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
     private func unavailableMergeSnapshot(
         identity: RepositoryPullRequestReviewIdentity,
         readContext: ForgeGitHubPullRequestReviewReadContext,
-        detailsHead: ForgeBranchReference,
+        detailsHead: ForgePullRequestHead,
         detailsBase: ForgeBranchReference,
         summary: ForgePullRequestSummary
     ) throws -> ForgePullRequestMergeSnapshot {
@@ -1559,7 +1560,8 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
         guard context.accountID == identity.accountID,
               context.repository == identity.repository,
               context.number == identity.number,
-              context.head.repository.forge == identity.repository.forge,
+              context.head.repository?.forge == nil
+              || context.head.repository?.forge == identity.repository.forge,
               context.base.repository == identity.repository
         else {
             throw RepositoryPullRequestReviewServiceError.invalidWorkspace

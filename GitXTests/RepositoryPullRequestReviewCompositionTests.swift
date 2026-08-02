@@ -58,6 +58,80 @@ final class RepositoryPullRequestReviewCompositionTests: XCTestCase {
         XCTAssertEqual(requestedCommentCursors, [commentCursor])
     }
 
+    func testDeletedHeadRepositoryLoadsFreshWorkspaceAndPreservesSafeActionSurfaces() async throws {
+        let fixture = try ReviewCompositionFixture()
+        let deletedHead = ForgePullRequestHead(
+            repository: nil,
+            name: fixture.head.name,
+            commit: fixture.head.commit
+        )
+        let allowedOperations: Set<ForgeOperation> = [
+            .closePullRequest,
+            .updatePullRequestBranch,
+            .mergePullRequest,
+            .enterMergeQueue,
+            .submitCommentReview,
+            .publishInlineReviewComment,
+            .deleteHeadBranch,
+        ]
+        let read = try ReviewReadAdapterStub(
+            fixture: fixture,
+            defaultDetails: fixture.detailsResult(pullRequestHead: deletedHead)
+        )
+        let merge = try fixture.mergeSnapshot(
+            pullRequestHead: deletedHead,
+            allowedOperations: allowedOperations
+        )
+        let mutation = ReviewMutationAdapterStub(
+            fixture: fixture,
+            defaultMergeSnapshot: merge
+        )
+        let harness = try ReviewCompositionHarness(
+            fixture: fixture,
+            read: read,
+            mutation: mutation,
+            allowedOperations: allowedOperations
+        )
+
+        let workspace = try await harness.service.loadWorkspace(identity: fixture.identity)
+
+        XCTAssertTrue(workspace.isMutationStateFresh)
+        XCTAssertNil(workspace.mutationContext.head.repository)
+        XCTAssertEqual(workspace.displayedHead, fixture.head.commit)
+        XCTAssertNil(workspace.headBranchDeletionSnapshot)
+        XCTAssertFalse(workspace.canOfferHeadBranchDeletionAfterMerge)
+        guard case .available = ForgePullRequestLifecyclePolicy.decision(
+            context: workspace.mutationContext,
+            action: .close
+        ) else {
+            return XCTFail("Closing a deleted-head Pull Request should remain available")
+        }
+        XCTAssertEqual(
+            ForgePullRequestLifecyclePolicy.decision(
+                context: workspace.mutationContext,
+                action: .updateBranch,
+                canUpdateBranch: true
+            ),
+            .unavailable(.updateBranchUnavailable)
+        )
+        guard case .available = ForgePullRequestMergeQueuePolicy.decision(
+            snapshot: workspace.mergeSnapshot,
+            action: .enter
+        ) else {
+            return XCTFail("Merge queue should not require the deleted head repository")
+        }
+
+        let fresh = try await harness.service.freshMergeSnapshot(identity: fixture.identity)
+        XCTAssertNil(fresh.context.head.repository)
+        guard case let .available(confirmation) = ForgePullRequestMergePolicy.confirmationDecision(
+            snapshot: fresh,
+            method: .merge
+        ) else {
+            return XCTFail("Merge confirmation should not require the deleted head repository")
+        }
+        XCTAssertNil(confirmation.headReference.repository)
+    }
+
     func testNestedCommentPaginationAloneExplainsPartialThreadResult() async throws {
         let fixture = try ReviewCompositionFixture()
         let commentCursor = try ForgePageCursor("nested-comment-page-2")
@@ -1077,6 +1151,7 @@ private struct ReviewCompositionFixture: Sendable {
 
     func summary(
         head: ForgeBranchReference? = nil,
+        pullRequestHead: ForgePullRequestHead? = nil,
         state: ForgePullRequestState = .open,
         isDraft: Bool = false,
         updatedAt: Date? = nil
@@ -1088,7 +1163,9 @@ private struct ReviewCompositionFixture: Sendable {
             isDraft: isDraft,
             title: "Native composition review",
             author: .available(.deleted),
-            head: .available(head ?? self.head),
+            head: .available(
+                pullRequestHead ?? ForgePullRequestHead(reference: head ?? self.head)
+            ),
             base: .available(base),
             createdAt: now.addingTimeInterval(-100),
             updatedAt: updatedAt ?? now,
@@ -1100,6 +1177,7 @@ private struct ReviewCompositionFixture: Sendable {
 
     func detailsResult(
         head: ForgeBranchReference? = nil,
+        pullRequestHead: ForgePullRequestHead? = nil,
         state: ForgePullRequestState = .open,
         checks: [ForgeCheck] = [],
         timelineCursor: ForgePageCursor? = nil,
@@ -1107,7 +1185,11 @@ private struct ReviewCompositionFixture: Sendable {
         completeness: GitHubReadCompleteness = .complete,
         ownership: GitHubReadOwnership? = nil
     ) throws -> GitHubReadResult<ForgePullRequestDetailsPage> {
-        let summary = try summary(head: head, state: state)
+        let summary = try summary(
+            head: head,
+            pullRequestHead: pullRequestHead,
+            state: state
+        )
         let details = try ForgePullRequestDetails(
             summary: summary,
             bodyMarkdown: .available("Review body"),
@@ -1166,6 +1248,7 @@ private struct ReviewCompositionFixture: Sendable {
     func mutationContext(
         state: ForgePullRequestState = .open,
         head: ForgeBranchReference? = nil,
+        pullRequestHead: ForgePullRequestHead? = nil,
         updatedAt: Date? = nil,
         allowedOperations: Set<ForgeOperation> = []
     ) throws -> ForgePullRequestMutationContext {
@@ -1175,7 +1258,7 @@ private struct ReviewCompositionFixture: Sendable {
             number: number,
             state: state,
             isDraft: false,
-            head: head ?? self.head,
+            head: pullRequestHead ?? ForgePullRequestHead(reference: head ?? self.head),
             base: base,
             updatedAt: updatedAt ?? now,
             allowedOperations: allowedOperations
@@ -1185,6 +1268,7 @@ private struct ReviewCompositionFixture: Sendable {
     func mergeSnapshot(
         state: ForgePullRequestState = .open,
         head: ForgeBranchReference? = nil,
+        pullRequestHead: ForgePullRequestHead? = nil,
         updatedAt: Date? = nil,
         allowedOperations: Set<ForgeOperation> = [],
         warnings: Set<ForgePullRequestMergeWarning> = [],
@@ -1194,6 +1278,7 @@ private struct ReviewCompositionFixture: Sendable {
             context: mutationContext(
                 state: state,
                 head: head,
+                pullRequestHead: pullRequestHead,
                 updatedAt: updatedAt,
                 allowedOperations: allowedOperations
             ),

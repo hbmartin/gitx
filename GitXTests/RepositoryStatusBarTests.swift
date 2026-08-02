@@ -383,7 +383,7 @@ final class RepositoryStatusBarTests: XCTestCase {
         XCTAssertTrue(controller.hasScheduledClockRefresh)
 
         clock.addTimeInterval(60)
-        controller.refreshClock()
+        controller.refreshTimer?.fire()
         XCTAssertEqual(controller.currentForgePresentation.freshnessText, "Updated 2m ago")
         controller.updateForge(statusInput(freshness: .stale(cachedAt: now.addingTimeInterval(-120))))
         XCTAssertEqual(controller.currentForgePresentation.freshnessText, "Stale · cached 3m ago")
@@ -392,6 +392,26 @@ final class RepositoryStatusBarTests: XCTestCase {
         controller.updateForge(statusInput(freshness: .stale(cachedAt: nil)))
         XCTAssertFalse(controller.hasScheduledClockRefresh)
         controller.invalidate()
+    }
+
+    func testScheduledClockRefreshDoesNotRetainStatusBarController() {
+        weak var releasedController: RepositoryStatusBarController?
+
+        autoreleasepool {
+            var controller: RepositoryStatusBarController? = RepositoryStatusBarController(
+                splitView: NSView(),
+                contentView: NSView(),
+                now: { self.now }
+            )
+            controller?.updateForge(statusInput(
+                freshness: .current(fetchedAt: now.addingTimeInterval(-60))
+            ))
+            XCTAssertTrue(controller?.hasScheduledClockRefresh == true)
+            releasedController = controller
+            controller = nil
+        }
+
+        XCTAssertNil(releasedController)
     }
 
     func testStatusBarPalettePreservesSnowLeopardDepthInLightAndDarkAppearances() throws {
@@ -591,6 +611,17 @@ final class RepositoryStatusBarTests: XCTestCase {
         }
         loader.refresh()
         wait(for: [loaded], timeout: 10)
+
+        var unavailableSnapshot: RepositoryLocalStatusSnapshot?
+        let unavailableRepository = PBGitRepository()
+        let unavailableLoader = RepositoryLocalStatusLoader(
+            repository: unavailableRepository,
+            gitExecutablePath: "/usr/bin/git"
+        ) { snapshot in
+            unavailableSnapshot = snapshot
+        }
+        unavailableLoader.refresh()
+        XCTAssertEqual(unavailableSnapshot, .unavailable)
 
         let failed = expectation(description: "local status failure")
         let failingLoader = RepositoryLocalStatusLoader(repository: repository, gitExecutablePath: "/not/an/executable") {

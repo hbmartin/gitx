@@ -424,6 +424,20 @@ final class RepositoryPullRequestWorkflowAppTests: XCTestCase {
         XCTAssertLessThan(branchIndex, switchIndex)
     }
 
+    func testCheckoutExecutorDoesNotPersistAnExactRefspecOnAnExistingRemote() throws {
+        let fixture = try PullRequestAppFixture()
+        let runner = RecordingPullRequestGitRunner(head: fixture.headCommit.value)
+        let plan = try fixture.checkoutPlan(addsRemote: false)
+
+        _ = try RepositoryPullRequestCheckoutExecutor(runner: runner).execute(plan)
+
+        XCTAssertFalse(runner.commands.contains { $0.first == "config" })
+        XCTAssertFalse(runner.commands.contains { $0.starts(with: ["remote", "add"]) })
+        XCTAssertTrue(runner.commands.contains([
+            "fetch", "--no-tags", plan.remote.name, plan.fetchRefspec,
+        ]))
+    }
+
     func testCheckoutExecutorStopsBeforeMutationForDirtyOrInProgressRepository() throws {
         let fixture = try PullRequestAppFixture()
         let dirty = RecordingPullRequestGitRunner(head: fixture.headCommit.value, status: "? untracked")
@@ -1084,8 +1098,16 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
         let title = try XCTUnwrap(descendant("GitX.PullRequest.Title", in: view) as? NSTextField)
         let body = try XCTUnwrap(descendant("GitX.PullRequest.Body", in: view) as? NSTextView)
         let submit = try XCTUnwrap(descendant("GitX.PullRequest.Submit", in: view) as? NSButton)
+        let writePreview = try XCTUnwrap(
+            descendant("GitX.PullRequest.WritePreview", in: view) as? NSSegmentedControl
+        )
+        let preview = try XCTUnwrap(descendant("GitX.PullRequest.Preview", in: view))
         XCTAssertEqual(title.stringValue, "Draft title")
         XCTAssertEqual(body.string, "Draft body")
+        writePreview.selectedSegment = 1
+        writePreview.sendAction(writePreview.action, to: writePreview.target)
+        XCTAssertFalse(preview.isHidden)
+        XCTAssertEqual(preview.subviews.count, 1)
         try attachScreenshot(
             of: XCTUnwrap(controller.window),
             named: "Milestone 2 Edit Pull Request sheet"
@@ -1343,13 +1365,21 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
 
     func testCancelledOwnershipCancelsATaskInstalledAfterCancellation() async throws {
         let ownership = RepositoryPullRequestPreparationTaskOwnership()
+        let cancellation = PullRequestPreparationCancellationProbe()
         let task = Task.detached { () throws -> RepositoryPullRequestCreationPreparation in
-            try await Task.sleep(nanoseconds: 60_000_000_000)
+            try await cancellation.wait()
             throw CancellationError()
         }
+        let cancellationProbeStarted = await cancellation.waitUntilStarted()
+        XCTAssertTrue(cancellationProbeStarted)
 
         ownership.cancel()
         ownership.install(task)
+        let cancellationWasObserved = await cancellation.waitForCancellation()
+        XCTAssertTrue(cancellationWasObserved, "Installing into cancelled ownership must cancel immediately")
+        if !cancellationWasObserved {
+            await cancellation.releaseForCleanup()
+        }
         do {
             _ = try await task.value
             XCTFail("A task installed after parent cancellation must be cancelled immediately")
@@ -1749,6 +1779,62 @@ private actor PullRequestPreparationGate {
     func open() {
         isOpen = true
         continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor PullRequestPreparationCancellationProbe {
+    private var started = false
+    private var cancelled = false
+    private var continuation: CheckedContinuation<Void, Error>?
+
+    func wait() async throws {
+        try await withTaskCancellationHandler {
+            let _: Void = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                started = true
+                if cancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    self.continuation = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.cancel() }
+        }
+    }
+
+    func waitUntilStarted() async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while !started {
+            guard clock.now < deadline else {
+                releaseForCleanup()
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return true
+    }
+
+    func waitForCancellation() async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while !cancelled {
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return true
+    }
+
+    func releaseForCleanup() {
+        continuation?.resume(throwing: CancellationError())
+        continuation = nil
+    }
+
+    private func cancel() {
+        guard !cancelled else { return }
+        cancelled = true
+        continuation?.resume(throwing: CancellationError())
         continuation = nil
     }
 }
