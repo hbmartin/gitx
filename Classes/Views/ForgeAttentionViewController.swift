@@ -26,6 +26,7 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
     private var entries: [ForgeAttentionInboxEntry] = []
     private var rows: [ForgeAttentionReadSurfaceRow] = []
     private var loadTask: Task<Void, Never>?
+    private var loadGeneration: UInt = 0
     private var detailsTask: Task<Void, Never>?
     private var currentRoute: ForgeAttentionInspectorRoute?
     private var currentDetails: ForgeReadSurfaceDetailsSnapshot?
@@ -146,7 +147,15 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         case ForgeAttentionColumn.updated.rawValue: Self.shortDate(rowValue.readRow.updatedAt)
         default: ""
         }
-        let field = NSTextField(labelWithString: value)
+        let cellIdentifier = NSUserInterfaceItemIdentifier("ForgeAttention.\(identifier).Cell")
+        let field: NSTextField
+        if let reused = tableView.makeView(withIdentifier: cellIdentifier, owner: self) as? NSTextField {
+            field = reused
+            field.stringValue = value
+        } else {
+            field = NSTextField(labelWithString: value)
+            field.identifier = cellIdentifier
+        }
         field.lineBreakMode = identifier == ForgeAttentionColumn.title.rawValue
             ? .byTruncatingTail
             : .byTruncatingMiddle
@@ -373,12 +382,22 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         Self.logger.info("Reloading Attention rows")
         setLoading(true)
         loadTask?.cancel()
+        loadGeneration &+= 1
+        let requestedGeneration = loadGeneration
         let requestedState = state
         loadTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.loadGeneration == requestedGeneration {
+                    self.setLoading(false)
+                    self.updateActionState()
+                }
+            }
             do {
                 let loaded = try await self.session.entries(state: requestedState)
-                guard requestedState == self.state else { return }
+                guard requestedGeneration == self.loadGeneration,
+                      requestedState == self.state
+                else { return }
                 self.entries = loaded
                 Self.logger.info("Loaded \(loaded.count) Attention entries")
                 let presentation = ForgeAttentionReadSurfacePresenter.present(
@@ -419,7 +438,12 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
                     self.statusLabel.stringValue = presentation.statusMessage ?? ""
                     self.statusLabel.isHidden = presentation.statusMessage == nil
                 }
+            } catch is CancellationError {
+                return
             } catch {
+                guard requestedGeneration == self.loadGeneration,
+                      requestedState == self.state
+                else { return }
                 Self.logger.error("Attention rows failed to load type=\(String(describing: type(of: error)), privacy: .public)")
                 self.rows = []
                 self.entries = []
@@ -430,8 +454,6 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
                     self?.reload()
                 }
             }
-            self.setLoading(false)
-            self.updateActionState()
         }
     }
 
@@ -464,7 +486,6 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
                     snapshot,
                     formatDate: Self.dateDescription
                 ))
-                self.reload()
             } catch is CancellationError {
                 return
             } catch {
@@ -511,6 +532,7 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
             } catch is CancellationError {
                 return
             } catch {
+                guard self.currentRoute == route else { return }
                 self.inspectorController.showContinuationError(error.localizedDescription)
                 self.authorizationRecoveryHandler?(error) { [weak self] in
                     self?.loadMore(continuation)
@@ -705,7 +727,7 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
     }
 
     private static func shortDate(_ date: Date) -> String {
-        DateFormatter.localizedString(from: date, dateStyle: .short, timeStyle: .none)
+        ForgeReadDateFormatting.date(date)
     }
 
     private static func kindTitle(_ kind: ForgeAttentionKind) -> String {

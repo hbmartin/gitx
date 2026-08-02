@@ -1520,6 +1520,25 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         XCTAssertEqual(session.entryStates.first?.visibility, .unseenOnly)
         XCTAssertEqual(session.entryStates.first?.sortOrder, .newestFirst)
 
+        let kindColumn = try XCTUnwrap(table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(
+            ForgeAttentionColumn.kind.rawValue
+        )))
+        let reusableKindCell = NSTextField(labelWithString: "Reusable")
+        reusableKindCell.identifier = NSUserInterfaceItemIdentifier("ForgeAttention.kind.Cell")
+        let recordingTable = RecordingAttentionTableView(reusableView: reusableKindCell)
+        let kindCell = controller.tableView(recordingTable, viewFor: kindColumn, row: 0)
+        XCTAssertTrue(kindCell === reusableKindCell)
+        XCTAssertEqual(recordingTable.requestedIdentifiers, [NSUserInterfaceItemIdentifier("ForgeAttention.kind.Cell")])
+
+        let updatedColumn = try XCTUnwrap(table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(
+            ForgeAttentionColumn.updated.rawValue
+        )))
+        let updatedCell = try XCTUnwrap(
+            controller.tableView(table, viewFor: updatedColumn, row: 0) as? NSTextField
+        )
+        XCTAssertEqual(updatedCell.stringValue, ForgeReadDateFormatting.date(ReadFixture.date(2)))
+
+        let entryLoadsBeforeSelection = session.entryStates.count
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         await waitUntil("selected Attention item to be marked open") {
             session.markedOpen == [session.entry.record.item.id]
@@ -1529,6 +1548,11 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         }
         await settleMainActor()
         XCTAssertEqual(session.markedOpen, [session.entry.record.item.id])
+        XCTAssertEqual(
+            session.entryStates.count,
+            entryLoadsBeforeSelection,
+            "Installing inspector details must not trigger a redundant list reload"
+        )
         let inspectorMode = try XCTUnwrap(
             descendant(identifier: "GitX.PullRequest.InspectorMode", in: controller.view) as? NSSegmentedControl
         )
@@ -1683,6 +1707,43 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         try attachScreenshot(of: window, named: "GitHub Attention compact minimum-width controls")
     }
 
+    func testAttentionLoadMoreFailureDoesNotReplaceANewSelection() async throws {
+        let session = try FakeAttentionSession()
+        _ = try session.appendDuplicateEntry()
+        let controller = try ForgeAttentionViewController(
+            session: session,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            defaultRevision: .branch(ForgeRefName("main"))
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await waitUntil("two Attention rows") { session.entryStates.count >= 1 }
+        await settleMainActor()
+        let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        XCTAssertEqual(table.numberOfRows, 2)
+
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        await session.readService.waitForDetailsCall(count: 1)
+        await settleMainActor()
+        let timeline = try XCTUnwrap(
+            descendant(identifier: "ForgeInspectorLoadMoreTimeline", in: controller.view) as? NSButton
+        )
+        session.readService.holdNextDetailsCall()
+        timeline.performClick(nil)
+        await session.readService.waitForDetailsCall(count: 2)
+
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        await session.readService.waitForDetailsCall(count: 3)
+        session.readService.releaseHeldDetails(throwing: ReadFixture.failure("Stale continuation failure"))
+        await waitUntil("all Attention detail calls completed") {
+            session.readService.detailsCompletionCount == 3
+        }
+
+        XCTAssertNil(descendant(identifier: "ForgeInspectorContinuationError", in: controller.view))
+    }
+
     func testAttentionNotificationActionsAndUnavailableDatabaseErrorRemainExplicit() {
         XCTAssertEqual(
             ForgeAttentionNotificationDelivery.action(for: "PBForgeAttention.Open"),
@@ -1701,6 +1762,109 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             RepositoryAttentionSessionError.databaseUnavailable.localizedDescription,
             "Forge data is unavailable for this session. Local Git remains available."
         )
+
+        let recorder = NotificationDelegateCompletionRecorder()
+        ForgeAttentionNotificationDelegateBridge.forwardPresentation(
+            { _ in nil },
+            completionHandler: recorder.recordPresentation
+        )
+        ForgeAttentionNotificationDelegateBridge.forwardResponse(
+            { _ in nil },
+            completionHandler: recorder.recordResponse
+        )
+        XCTAssertEqual(recorder.presentationOptions, [])
+        XCTAssertEqual(recorder.responseCount, 1)
+    }
+
+    func testAttentionReloadCancellationPreservesRowsAndDoesNotOfferAuthorizationRecovery() async throws {
+        let session = try FakeAttentionSession()
+        var recoveryCount = 0
+        let controller = try ForgeAttentionViewController(
+            session: session,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            defaultRevision: .branch(ForgeRefName("main")),
+            authorizationRecoveryHandler: { _, _ in recoveryCount += 1 }
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await waitUntil("initial Attention rows") { session.entryStates.count == 1 }
+        await settleMainActor()
+        let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        XCTAssertEqual(table.numberOfRows, 1)
+
+        session.entriesError = CancellationError()
+        NotificationCenter.default.post(name: .forgeAttentionInboxDidChange, object: nil)
+        await waitUntil("cancelled Attention reload") { session.entryStates.count == 2 }
+        await settleMainActor()
+
+        XCTAssertEqual(table.numberOfRows, 1)
+        XCTAssertEqual(recoveryCount, 0)
+    }
+
+    func testAttentionReloadFailureFromReplacedStateDoesNotClobberCurrentRows() async throws {
+        let session = try FakeAttentionSession()
+        session.holdNextEntriesCall(throwing: ReadFixture.failure("Stale inbox failure"))
+        var recoveryCount = 0
+        let controller = try ForgeAttentionViewController(
+            session: session,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            defaultRevision: .branch(ForgeRefName("main")),
+            authorizationRecoveryHandler: { _, _ in recoveryCount += 1 }
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await waitUntil("held Attention reload") { session.entryStates.count == 1 }
+
+        let scope = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionScope", in: controller.view) as? NSPopUpButton
+        )
+        scope.selectItem(at: 1)
+        try NSApp.sendAction(XCTUnwrap(scope.action), to: scope.target, from: scope)
+        await waitUntil("replacement Attention reload") { session.entryStates.count == 2 }
+        session.releaseHeldEntriesCall()
+        await waitUntil("completed Attention reloads") { session.entriesCompletionCount == 2 }
+
+        let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        let status = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionStatus", in: controller.view) as? NSTextField
+        )
+        XCTAssertEqual(table.numberOfRows, 1)
+        XCTAssertFalse(status.stringValue.contains("Stale inbox failure"))
+        XCTAssertEqual(recoveryCount, 0)
+    }
+
+    func testAttentionReloadFailureFromReplacedSameStateRequestDoesNotClobberCurrentRows() async throws {
+        let session = try FakeAttentionSession()
+        session.holdNextEntriesCall(throwing: ReadFixture.failure("Stale same-state failure"))
+        var recoveryCount = 0
+        let controller = try ForgeAttentionViewController(
+            session: session,
+            markdownRenderer: RecordingMarkdownRenderer(),
+            avatarRenderer: RecordingAvatarRenderer(),
+            destinationRouter: RecordingDestinationRouter(),
+            defaultRevision: .branch(ForgeRefName("main")),
+            authorizationRecoveryHandler: { _, _ in recoveryCount += 1 }
+        )
+        _ = makeWindow(controller)
+        controller.viewDidAppear()
+        await waitUntil("held same-state Attention reload") { session.entryStates.count == 1 }
+
+        NotificationCenter.default.post(name: .forgeAttentionInboxDidChange, object: nil)
+        await waitUntil("replacement same-state Attention reload") { session.entryStates.count == 2 }
+        session.releaseHeldEntriesCall()
+        await waitUntil("completed same-state Attention reloads") { session.entriesCompletionCount == 2 }
+
+        let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        let status = try XCTUnwrap(
+            descendant(identifier: "ForgeAttentionStatus", in: controller.view) as? NSTextField
+        )
+        XCTAssertEqual(table.numberOfRows, 1)
+        XCTAssertFalse(status.stringValue.contains("Stale same-state failure"))
+        XCTAssertEqual(recoveryCount, 0)
     }
 
     func testAttentionSurfaceMakesCachedAndFailureStatesActionable() async throws {
@@ -2066,8 +2230,11 @@ private final class FakeReadService: ForgeReadSurfaceServing {
     var detailsError: Error?
     private var listWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var detailsWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var shouldHoldNextDetails = false
+    private var heldDetails: CheckedContinuation<ForgeReadSurfaceDetailsSnapshot, Error>?
     private(set) var listCalls: [ListCall] = []
     private(set) var detailsCalls: [DetailsCall] = []
+    private(set) var detailsCompletionCount = 0
 
     init(
         pages: [ForgeReadSurfacePage],
@@ -2102,9 +2269,14 @@ private final class FakeReadService: ForgeReadSurfaceServing {
         checkAfter: ForgePageCursor?
     ) async throws -> ForgeReadSurfaceDetailsSnapshot {
         detailsCalls.append(DetailsCall(item: item, timelineCursor: timelineAfter, checkCursor: checkAfter))
+        defer { detailsCompletionCount += 1 }
         let waiters = detailsWaiters.filter { detailsCalls.count >= $0.0 }
         detailsWaiters.removeAll { detailsCalls.count >= $0.0 }
         waiters.forEach { $0.1.resume() }
+        if shouldHoldNextDetails {
+            shouldHoldNextDetails = false
+            return try await withCheckedThrowingContinuation { heldDetails = $0 }
+        }
         if let detailsError {
             throw detailsError
         }
@@ -2128,6 +2300,15 @@ private final class FakeReadService: ForgeReadSurfaceServing {
         }
     }
 
+    func holdNextDetailsCall() {
+        shouldHoldNextDetails = true
+    }
+
+    func releaseHeldDetails(throwing error: any Error) {
+        heldDetails?.resume(throwing: error)
+        heldDetails = nil
+    }
+
     private func resumeListWaiters() {
         let ready = listWaiters.filter { listCalls.count >= $0.0 }
         listWaiters.removeAll { listCalls.count >= $0.0 }
@@ -2149,6 +2330,11 @@ private final class FakeAttentionSession: RepositoryAttentionServing {
     private(set) var markedUnseen: [ForgeAttentionItemID] = []
     private(set) var markAllStates: [ForgeAttentionViewState] = []
     private(set) var refreshCount = 0
+    private(set) var entriesCompletionCount = 0
+    private var returnedEntries: [ForgeAttentionInboxEntry] = []
+    private var shouldHoldNextEntries = false
+    private var heldEntriesError: Error?
+    private var heldEntriesContinuation: CheckedContinuation<Void, Never>?
 
     init() throws {
         repositoryIdentity = try ReadFixture.repository()
@@ -2197,14 +2383,55 @@ private final class FakeAttentionSession: RepositoryAttentionServing {
             details: details,
             continuationDetails: [timelineContinuation, checkContinuation]
         )
+        returnedEntries = [entry]
     }
 
     func entries(state: ForgeAttentionViewState) async throws -> [ForgeAttentionInboxEntry] {
         entryStates.append(state)
+        defer { entriesCompletionCount += 1 }
+        if shouldHoldNextEntries {
+            shouldHoldNextEntries = false
+            let error = heldEntriesError
+            heldEntriesError = nil
+            await withCheckedContinuation { heldEntriesContinuation = $0 }
+            if let error {
+                throw error
+            }
+        }
         if let entriesError {
             throw entriesError
         }
-        return [entry]
+        return returnedEntries
+    }
+
+    func holdNextEntriesCall(throwing error: Error) {
+        shouldHoldNextEntries = true
+        heldEntriesError = error
+    }
+
+    func releaseHeldEntriesCall() {
+        heldEntriesContinuation?.resume()
+        heldEntriesContinuation = nil
+    }
+
+    func appendDuplicateEntry() throws -> ForgeAttentionItemID {
+        let itemID = try ForgeAttentionItemID(
+            accountID: account.id,
+            repository: repositoryIdentity,
+            kind: .reviewRequest,
+            subjectID: ForgeAttentionSubjectID("review-duplicate")
+        )
+        let record = try ForgeAttentionRecord(
+            item: ForgeAttentionItem(
+                id: itemID,
+                destination: entry.record.item.destination,
+                becameActionableAt: ReadFixture.date(8)
+            ),
+            sourceIdentifier: ForgeAttentionSubjectID("review-source-duplicate"),
+            sourceOccurredAt: ReadFixture.date(8)
+        )
+        try returnedEntries.append(ForgeAttentionInboxEntry(record: record, subject: entry.subject))
+        return itemID
     }
 
     func markOpen(_ itemID: ForgeAttentionItemID) async throws {
@@ -2234,6 +2461,50 @@ private final class FakeAttentionSession: RepositoryAttentionServing {
 
     func makeReadService(for _: ForgeRepositoryIdentity) throws -> ForgeReadSurfaceServing {
         readService
+    }
+}
+
+@MainActor
+private final class RecordingAttentionTableView: NSTableView {
+    private let reusableView: NSView
+    private(set) var requestedIdentifiers: [NSUserInterfaceItemIdentifier] = []
+
+    init(reusableView: NSView) {
+        self.reusableView = reusableView
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func makeView(withIdentifier identifier: NSUserInterfaceItemIdentifier, owner: Any?) -> NSView? {
+        requestedIdentifiers.append(identifier)
+        return reusableView
+    }
+}
+
+// swift6-safety-justification: The lock serializes every recorded completion value.
+private final class NotificationDelegateCompletionRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedPresentationOptions: UNNotificationPresentationOptions?
+    private var storedResponseCount = 0
+
+    var presentationOptions: UNNotificationPresentationOptions? {
+        lock.withLock { storedPresentationOptions }
+    }
+
+    var responseCount: Int {
+        lock.withLock { storedResponseCount }
+    }
+
+    func recordPresentation(_ options: UNNotificationPresentationOptions) {
+        lock.withLock { storedPresentationOptions = options }
+    }
+
+    func recordResponse() {
+        lock.withLock { storedResponseCount += 1 }
     }
 }
 

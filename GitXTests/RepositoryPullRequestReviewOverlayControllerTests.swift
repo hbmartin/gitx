@@ -1152,6 +1152,81 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         deletionController.detach()
     }
 
+    func testMergeAuthorizationRecoveryCannotOverlapAReplacementConfirmation() async throws {
+        let fixture = try ReviewAppFixture()
+        let open = try fixture.workspace(deletion: true)
+        let merged = try fixture.workspace(state: .merged, deletion: true)
+        let service = FakeReviewMutationService(
+            workspaces: [open],
+            mutationWorkspace: merged,
+            freshMergeSnapshots: Array(repeating: open.mergeSnapshot, count: 4)
+        )
+        await service.failNextMerge(with: ReviewAuthorizationRecoveryTestFixture.samlError(at: fixture.now))
+        let recoveryOffered = expectation(description: "merge authorization recovery offered")
+        var retryAction: (@MainActor () -> Void)?
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: RepositoryPullRequestReviewSession(identity: fixture.identity, service: service),
+            router: OverlayRecordingRouter(),
+            authorizationRecoveryHandler: { error, retry in
+                guard GitHubAuthorizationRecoveryPresentation.make(error: error)?.kind == .saml else {
+                    return false
+                }
+                retryAction = retry
+                recoveryOffered.fulfill()
+                return true
+            }
+        )
+        _ = controller.view
+        controller.start()
+        await service.waitForLoadCalls(1)
+        let merge = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.merge,
+            in: controller.view
+        ) as? NSButton)
+        merge.performClick(nil)
+        await waitUntil("merge confirmation") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+                in: controller.view
+            ) != nil
+        }
+        let confirm = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+            in: controller.view
+        ) as? NSButton)
+
+        confirm.performClick(nil)
+        await fulfillment(of: [recoveryOffered])
+        await service.waitForMergeCalls(1)
+        await service.holdNextMerge()
+
+        confirm.performClick(nil)
+        await service.waitForMergeCalls(2)
+        retryAction?()
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+
+        let mergeRequests = await service.mergeRequests()
+        let maximumConcurrentMerges = await service.maximumConcurrentMergeCalls()
+        XCTAssertEqual(mergeRequests.count, 2)
+        XCTAssertEqual(maximumConcurrentMerges, 1)
+        await service.releaseHeldMerge()
+        await waitUntil("replacement merge confirmation completes") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+                in: controller.view
+            ) == nil
+        }
+        retryAction?()
+        for _ in 0 ..< 20 {
+            await Task.yield()
+        }
+        let requestsAfterObsoleteRetry = await service.mergeRequests()
+        XCTAssertEqual(requestsAfterObsoleteRetry.count, 2)
+        controller.detach()
+    }
+
     func testMergeDeletionFailurePreservesMergeAndOffersBrowserAndSuccessfulRetry() async throws {
         let fixture = try ReviewAppFixture()
         let open = try fixture.workspace(deletion: true)

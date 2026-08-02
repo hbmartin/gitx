@@ -2413,9 +2413,12 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     private var lifecycleError: (any Error & Sendable)?
     private var lifecycleWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var mergeValues: [ForgePullRequestMergeRequest] = []
+    private var nextMergeError: (any Error & Sendable)?
     private var shouldHoldNextMerge = false
     private var heldMerge: CheckedContinuation<Void, Never>?
     private var mergeWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var concurrentMergeCallCount = 0
+    private var maximumConcurrentMergeCallCount = 0
     private var queueValues: [ForgePullRequestMergeQueueRequest] = []
     private var deletionValues: [ForgeHeadBranchDeletionRequest] = []
     private var shouldHoldNextDeletion = false
@@ -2548,11 +2551,18 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     func mergePullRequest(
         _ request: ForgePullRequestMergeRequest
     ) async throws -> RepositoryPullRequestReviewWorkspace {
+        concurrentMergeCallCount += 1
+        maximumConcurrentMergeCallCount = max(maximumConcurrentMergeCallCount, concurrentMergeCallCount)
+        defer { concurrentMergeCallCount -= 1 }
         mergeValues.append(request)
         resumeWaiters(&mergeWaiters, count: mergeValues.count)
         if shouldHoldNextMerge {
             shouldHoldNextMerge = false
             await withCheckedContinuation { heldMerge = $0 }
+        }
+        if let nextMergeError {
+            self.nextMergeError = nil
+            throw nextMergeError
         }
         if let mergeError {
             throw mergeError
@@ -2596,6 +2606,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
         shouldHoldNextMerge = true
     }
 
+    func failNextMerge(with error: any Error & Sendable) {
+        nextMergeError = error
+    }
+
     func releaseHeldMerge() {
         heldMerge?.resume()
         heldMerge = nil
@@ -2636,6 +2650,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
 
     func mergeRequests() -> [ForgePullRequestMergeRequest] {
         mergeValues
+    }
+
+    func maximumConcurrentMergeCalls() -> Int {
+        maximumConcurrentMergeCallCount
     }
 
     func queueActions() -> [ForgePullRequestMergeQueueAction] {
