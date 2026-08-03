@@ -52,6 +52,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private var credentialCooldownObservationTask: Task<Void, Never>?
     private var credentialCooldownRefreshTask: Task<Void, Never>?
     private var accountSelectionTask: Task<Void, Never>?
+    private var accessPreparationGeneration: UInt64 = 0
     private var services: ForgeApplicationServices?
     private var pullRequestMutationService: (any RepositoryPullRequestMutationServing)?
     private var accounts: [ForgeAccount] = []
@@ -79,6 +80,10 @@ final class RepositoryForgeCollaborationController: PBViewController {
     private var syncForkControl = ForgeMutationControlPresentation.hidden
     private weak var mountedController: NSViewController?
     private var isPrepared = false
+    private var isClosed = false
+    #if DEBUG
+        private var credentialCooldownObservationReadyForProductProof = false
+    #endif
 
     @objc(initWithRepository:superController:)
     override init?(repository: PBGitRepository, superController controller: PBGitWindowController?) {
@@ -209,11 +214,30 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     override func closeView() {
+        isClosed = true
+        accessPreparationGeneration &+= 1
         preparationTask?.cancel()
+        preparationTask = nil
         repositoryFactsTask?.cancel()
+        repositoryFactsTask = nil
+        credentialCooldownObservationTask?.cancel()
+        credentialCooldownObservationTask = nil
+        #if DEBUG
+            credentialCooldownObservationReadyForProductProof = false
+        #endif
+        credentialCooldownRefreshTask?.cancel()
+        credentialCooldownRefreshTask = nil
+        accountSelectionTask?.cancel()
+        accountSelectionTask = nil
         attentionSession?.stop()
+        attentionSession = nil
         pullRequestReviewOverlayHost?.detach()
         pullRequestReviewOverlayHost = nil
+        NotificationCenter.default.removeObserver(
+            self,
+            name: .forgeAccountsDidChange,
+            object: nil
+        )
         super.closeView()
     }
 
@@ -315,6 +339,9 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     private func reloadAccess(resetPublicChoice: Bool) {
+        guard !isClosed else { return }
+        accessPreparationGeneration &+= 1
+        let preparationGeneration = accessPreparationGeneration
         preparationTask?.cancel()
         repositoryFactsTask?.cancel()
         credentialCooldownObservationTask?.cancel()
@@ -366,7 +393,12 @@ final class RepositoryForgeCollaborationController: PBViewController {
             do {
                 let services = try await composition.forgeServices.services()
                 let accounts = try await services.accountStore.accounts()
-                guard let self, !Task.isCancelled else { return }
+                guard let self,
+                      !Task.isCancelled,
+                      !self.isClosed,
+                      self.accessPreparationGeneration == preparationGeneration,
+                      self.binding == binding
+                else { return }
                 self.services = services
                 self.accounts = accounts
                 self.applyAccess(binding: binding)
@@ -374,7 +406,12 @@ final class RepositoryForgeCollaborationController: PBViewController {
             } catch is CancellationError {
                 return
             } catch {
-                guard let self else { return }
+                guard let self,
+                      !Task.isCancelled,
+                      !self.isClosed,
+                      self.accessPreparationGeneration == preparationGeneration,
+                      self.binding == binding
+                else { return }
                 self.services = nil
                 self.accounts = []
                 self.accessResolution = ForgeCollaborationAccessPolicy.resolve(
@@ -434,16 +471,31 @@ final class RepositoryForgeCollaborationController: PBViewController {
 
     private func observeCredentialCooldowns(using services: ForgeApplicationServices) {
         credentialCooldownObservationTask?.cancel()
+        #if DEBUG
+            credentialCooldownObservationReadyForProductProof = false
+        #endif
         credentialCooldownObservationTask = Task { [weak self] in
             let changes = await services.credentialCooldowns.changes()
-            guard let self, !Task.isCancelled else { return }
-            await self.refreshCredentialCooldownState(using: services)
+            guard !Task.isCancelled else { return }
+            if let controller = self {
+                await controller.refreshCredentialCooldownState(using: services)
+                guard !Task.isCancelled else { return }
+                #if DEBUG
+                    controller.credentialCooldownObservationReadyForProductProof = true
+                #endif
+            } else {
+                return
+            }
             for await changedCredential in changes {
                 guard !Task.isCancelled else { return }
-                guard case let .authenticated(account) = self.accessResolution,
+                // Reacquire the controller only for this bounded refresh. The
+                // task must not retain a closed window while awaiting the next
+                // change from this process-lifetime stream.
+                guard let controller = self else { return }
+                guard case let .authenticated(account) = controller.accessResolution,
                       account.currentCredential.reference == changedCredential
                 else { continue }
-                await self.refreshCredentialCooldownState(using: services)
+                await controller.refreshCredentialCooldownState(using: services)
             }
         }
     }
@@ -1203,6 +1255,19 @@ final class RepositoryForgeCollaborationController: PBViewController {
         func waitForAccountSelectionForProductProof() async {
             await accountSelectionTask?.value
         }
+
+        var accessPreparationTaskForProductProof: Task<Void, Never>? {
+            preparationTask
+        }
+
+        var accessPreparationGenerationForProductProof: UInt64 {
+            accessPreparationGeneration
+        }
+
+        var observesCredentialCooldownsForProductProof: Bool {
+            credentialCooldownObservationTask != nil
+                && credentialCooldownObservationReadyForProductProof
+        }
     #endif
 
     private func applyAccountSelection(_ account: ForgeAccount, binding: ForgeRepositoryBinding) {
@@ -1275,6 +1340,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
     }
 
     @objc private func accountsDidChange(_: Notification) {
+        guard !isClosed else { return }
         reloadAccess(resetPublicChoice: true)
     }
 }

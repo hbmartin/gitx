@@ -126,7 +126,7 @@ actor ForgeAttentionNotificationDelivery: ForgeAttentionAlertDelivering {
 }
 
 @MainActor
-private final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificationCenterDelegate {
+final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = ForgeAttentionNotificationDelegateBridge()
 
     // UserNotifications calls these delegate methods outside MainActor. The delegate is
@@ -151,14 +151,15 @@ private final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNo
             completionHandler([.banner, .sound])
             return
         }
-        guard let previousDelegate else {
-            completionHandler([])
-            return
-        }
-        previousDelegate.userNotificationCenter?(
-            center,
-            willPresent: notification,
-            withCompletionHandler: completionHandler
+        Self.forwardPresentation(
+            { handler in
+                previousDelegate?.userNotificationCenter?(
+                    center,
+                    willPresent: notification,
+                    withCompletionHandler: handler
+                )
+            },
+            completionHandler: completionHandler
         )
     }
 
@@ -183,15 +184,34 @@ private final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNo
             }
             return
         }
-        guard let previousDelegate else {
-            completionHandler()
-            return
-        }
-        previousDelegate.userNotificationCenter?(
-            center,
-            didReceive: response,
-            withCompletionHandler: completionHandler
+        Self.forwardResponse(
+            { handler in
+                previousDelegate?.userNotificationCenter?(
+                    center,
+                    didReceive: response,
+                    withCompletionHandler: handler
+                )
+            },
+            completionHandler: completionHandler
         )
+    }
+
+    nonisolated static func forwardPresentation(
+        _ forwarding: (@escaping @Sendable (UNNotificationPresentationOptions) -> Void) -> Void?,
+        completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+    ) {
+        if forwarding(completionHandler) == nil {
+            completionHandler([])
+        }
+    }
+
+    nonisolated static func forwardResponse(
+        _ forwarding: (@escaping @Sendable () -> Void) -> Void?,
+        completionHandler: @escaping @Sendable () -> Void
+    ) {
+        if forwarding(completionHandler) == nil {
+            completionHandler()
+        }
     }
 }
 
@@ -345,6 +365,10 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
     }
 
     func refreshNow() async {
+        // A cancelled replacement refresh must not leave an authorization
+        // failure from an older attempt visible to the view.
+        lastRefreshError = nil
+        lastRefreshErrorDescription = nil
         var refreshFailure: (any Error)?
         do {
             _ = try await coordinator.refreshAllWatched(accountID: account.id)

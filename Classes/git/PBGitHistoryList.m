@@ -91,11 +91,18 @@
 
 - (void)cleanup
 {
+	PBGitRevList *activeRevList = currentRevList;
 	if (currentRevList) {
 		[currentRevList removeObserver:self keyPath:@"commits"];
-		[currentRevList cancel];
+		// The shared project revision list keeps loading while a complex revision is
+		// selected so returning to a branch cannot expose a truncated history.
+		// Transient revision lists are still cancelled when they are abandoned.
+		if (currentRevList != projectRevList)
+			[currentRevList cancel];
 		currentRevList = nil;
 	}
+	if (projectRevList != activeRevList)
+		[projectRevList cancel];
 	[graphQueue cancelAllOperations];
 }
 

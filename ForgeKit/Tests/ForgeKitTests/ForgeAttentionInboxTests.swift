@@ -1101,7 +1101,7 @@ final class ForgeAttentionInboxTests: XCTestCase {
         XCTAssertEqual(storedWatch.lastSuccessfulPollAt, fixture.date(30))
     }
 
-    func testPublicPersistRejectsMissingWatchAndStaleGeneration() async throws {
+    func testPublicPersistBootstrapsMissingWatchAndRejectsStaleGeneration() async throws {
         let fixture = try Fixture()
         let sqliteFixture = try SQLiteFixture()
         defer { try? FileManager.default.removeItem(at: sqliteFixture.root) }
@@ -1120,12 +1120,9 @@ final class ForgeAttentionInboxTests: XCTestCase {
             existingRecords: []
         )
 
-        do {
-            try await persistence.persist(reconciliation)
-            XCTFail("Persisting cannot recreate a missing watch")
-        } catch {
-            XCTAssertEqual(error as? ForgeAttentionInboxError, .missingWatchedRepository)
-        }
+        try await persistence.persist(reconciliation)
+        let bootstrapped = try await persistence.watchedRepositories(accountID: fixture.accountID)
+        XCTAssertEqual(bootstrapped, [reconciliation.watchedRepository])
 
         try await persistence.save(fixture.watch.recordingSuccessfulPoll(
             at: fixture.date(30),

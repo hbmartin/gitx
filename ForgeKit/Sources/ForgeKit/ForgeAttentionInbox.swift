@@ -726,25 +726,27 @@ public actor ForgeSQLiteAttentionPersistence {
 
     public func persist(_ reconciliation: ForgeAttentionReconciliation) async throws {
         try await store.updateAttention(reconciliation.watchedRepository.key) { state in
-            guard let watchedRow = state.watchedRepository else {
-                throw ForgeAttentionInboxError.missingWatchedRepository
+            let mergedWatch: ForgeWatchedRepository
+            if let watchedRow = state.watchedRepository {
+                let currentWatch = try Self.validatedWatch(
+                    watchedRow,
+                    expectedKey: reconciliation.watchedRepository.key
+                )
+                guard currentWatch.lastSuccessfulPollAt.map({ reconciliation.fetchedAt > $0 }) != false else {
+                    throw ForgeAttentionInboxError.staleRefreshGeneration
+                }
+                mergedWatch = ForgeWatchedRepository(
+                    key: currentWatch.key,
+                    addedAt: currentWatch.addedAt,
+                    source: currentWatch.source,
+                    includesBotReplies: currentWatch.includesBotReplies,
+                    baselineEstablishedAt: currentWatch.baselineEstablishedAt ??
+                        reconciliation.watchedRepository.baselineEstablishedAt,
+                    lastSuccessfulPollAt: reconciliation.watchedRepository.lastSuccessfulPollAt
+                )
+            } else {
+                mergedWatch = reconciliation.watchedRepository
             }
-            let currentWatch = try Self.validatedWatch(
-                watchedRow,
-                expectedKey: reconciliation.watchedRepository.key
-            )
-            guard currentWatch.lastSuccessfulPollAt.map({ reconciliation.fetchedAt > $0 }) != false else {
-                throw ForgeAttentionInboxError.staleRefreshGeneration
-            }
-            let mergedWatch = ForgeWatchedRepository(
-                key: currentWatch.key,
-                addedAt: currentWatch.addedAt,
-                source: currentWatch.source,
-                includesBotReplies: currentWatch.includesBotReplies,
-                baselineEstablishedAt: currentWatch.baselineEstablishedAt ??
-                    reconciliation.watchedRepository.baselineEstablishedAt,
-                lastSuccessfulPollAt: reconciliation.watchedRepository.lastSuccessfulPollAt
-            )
             let batch = try Self.persistenceBatch(for: ForgeAttentionReconciliation(
                 watchedRepository: mergedWatch,
                 records: reconciliation.records,

@@ -257,6 +257,193 @@
             }
         }
 
+        @objc(collaborationLifecycleProofWithCompletion:)
+        // Objective-C XCTest invokes this explicit runtime selector.
+        // swiftlint:disable:next unused_declaration
+        static func collaborationLifecycleProof(completion: @escaping (UInt64) -> Void) {
+            Task {
+                completion(await makeCollaborationLifecycleProof())
+            }
+        }
+
+        private static func makeCollaborationLifecycleProof() async -> UInt64 {
+            let originalComposition = ApplicationComposition.shared
+            let originalPollingPreset = ApplicationSettings.attentionPollingPreset
+            let defaultsName = "GitXCollaborationLifecycleHarness-\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: defaultsName) else { return 0 }
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("GitXCollaborationLifecycleHarness-\(UUID().uuidString)", isDirectory: true)
+            let repositoryURL = root.appendingPathComponent("repository", isDirectory: true)
+            defaults.removePersistentDomain(forName: defaultsName)
+            defer {
+                ApplicationComposition.setSharedComposition(originalComposition)
+                ApplicationSettings.attentionPollingPreset = originalPollingPreset
+                defaults.removePersistentDomain(forName: defaultsName)
+                try? FileManager.default.removeItem(at: root)
+            }
+            ApplicationSettings.attentionPollingPreset = .manual
+
+            do {
+                try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+                guard runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL),
+                      runGit(
+                          ["remote", "add", "origin", "https://github.com/hbmartin/gitx.git"],
+                          in: repositoryURL
+                      )
+                else { return 0 }
+
+                let services = try await ForgeApplicationServiceFactory.make(
+                    forgeDirectory: root.appendingPathComponent("forge", isDirectory: true),
+                    bindingCleaner: ForgeRepositoryBindingAccountCleaner(userDefaults: defaults),
+                    keychain: HarnessForgeKeychain(),
+                    cliRunner: HarnessForgeCLIRunner()
+                )
+                let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+                let accountID = try ForgeAccountID(forge: forge, value: "collaboration-lifecycle-account")
+                _ = try await services.addAccountCoordinator.addPersonalAccessToken(
+                    accountID: accountID,
+                    login: "lifecycle-user",
+                    credentialID: ForgeCredentialID("collaboration-lifecycle-pat"),
+                    kind: .fineGrained,
+                    token: Data("lifecycle-token".utf8),
+                    expiresAt: nil
+                )
+                let identity = try ForgeRepositoryIdentity(
+                    forge: forge,
+                    owner: "hbmartin",
+                    name: "gitx"
+                )
+                let binding = try ForgeRepositoryBinding(
+                    localRemoteName: "origin",
+                    primaryRepository: identity,
+                    preferredAccount: accountID
+                )
+                let repository = try PBGitRepository(url: repositoryURL)
+                let successfulComposition = ApplicationComposition(
+                    userDefaults: defaults,
+                    forgeServices: ForgeApplicationServiceLoader { services },
+                    automaticallyStartsForgeServices: false
+                )
+                successfulComposition.repositoryViewState(for: repository).forgeRepositoryBinding = binding
+                ApplicationComposition.setSharedComposition(successfulComposition)
+
+                var unclosedController = RepositoryForgeCollaborationController(
+                    repository: repository,
+                    superController: nil
+                )
+                let unclosedPrepared: Bool
+                if let controller = unclosedController {
+                    unclosedPrepared = await prepareAuthenticatedCollaboration(controller)
+                } else {
+                    return 0
+                }
+                guard unclosedPrepared,
+                      unclosedController?.observesCredentialCooldownsForProductProof == true
+                else { return 0 }
+                weak var releasedUnclosedController = unclosedController
+                unclosedController = nil
+                let streamDoesNotRetainController = await waitForCondition {
+                    releasedUnclosedController == nil
+                }
+
+                var closedController = RepositoryForgeCollaborationController(
+                    repository: repository,
+                    superController: nil
+                )
+                let closedPrepared: Bool
+                if let controller = closedController {
+                    closedPrepared = await prepareAuthenticatedCollaboration(controller)
+                } else {
+                    return 0
+                }
+                guard closedPrepared,
+                      closedController?.observesCredentialCooldownsForProductProof == true
+                else { return 0 }
+                closedController?.closeView()
+                let closedGeneration = closedController?.accessPreparationGenerationForProductProof
+                let closeCancelledTasks = closedController?.accessPreparationTaskForProductProof == nil
+                    && closedController?.observesCredentialCooldownsForProductProof == false
+                NotificationCenter.default.post(name: .forgeAccountsDidChange, object: nil)
+                await Task.yield()
+                let closeIgnoredAccountChanges = closedController?.accessPreparationGenerationForProductProof
+                    == closedGeneration
+                    && closedController?.accessPreparationTaskForProductProof == nil
+                    && closedController?.observesCredentialCooldownsForProductProof == false
+                weak var releasedClosedController = closedController
+                closedController = nil
+                let closedControllerReleased = await waitForCondition {
+                    releasedClosedController == nil
+                }
+
+                let delayedFailure = HarnessControlledPreparationFailure()
+                let failingComposition = ApplicationComposition(
+                    userDefaults: defaults,
+                    forgeServices: ForgeApplicationServiceLoader {
+                        try await delayedFailure.failWhenReleased()
+                    },
+                    automaticallyStartsForgeServices: false
+                )
+                failingComposition.repositoryViewState(for: repository).forgeRepositoryBinding = binding
+                ApplicationComposition.setSharedComposition(failingComposition)
+                var supersededController = RepositoryForgeCollaborationController(
+                    repository: repository,
+                    superController: nil
+                )
+                guard let supersededView = supersededController?.view else { return 0 }
+                supersededController?.prepare()
+                await delayedFailure.waitUntilStarted()
+                let stalePreparation = supersededController?.accessPreparationTaskForProductProof
+
+                ApplicationComposition.setSharedComposition(successfulComposition)
+                supersededController?.repositoryBindingDidChange()
+                guard await waitForCollaborationStatus("Using @lifecycle-user", in: supersededView) else {
+                    await delayedFailure.release()
+                    supersededController?.closeView()
+                    return 0
+                }
+                await delayedFailure.release()
+                await stalePreparation?.value
+                await Task.yield()
+                let lateFailureWasIgnored = await waitForCondition {
+                    let status = descendant(
+                        identifier: "ForgeCollaborationAccountStatus",
+                        in: supersededView
+                    ) as? NSTextField
+                    return status?.stringValue == "Using @lifecycle-user"
+                }
+                supersededController?.closeView()
+                supersededController = nil
+
+                await services.refreshCoordinator?.invalidate()
+                await services.database?.close()
+                let conditions = [
+                    streamDoesNotRetainController,
+                    closeCancelledTasks && closeIgnoredAccountChanges && closedControllerReleased,
+                    lateFailureWasIgnored,
+                ]
+                return conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
+                    if condition.element {
+                        proof |= UInt64(1) << UInt64(condition.offset)
+                    }
+                }
+            } catch {
+                return 0
+            }
+        }
+
+        private static func prepareAuthenticatedCollaboration(
+            _ controller: RepositoryForgeCollaborationController
+        ) async -> Bool {
+            let view = controller.view
+            controller.prepare()
+            guard await waitForCollaborationStatus("Using @lifecycle-user", in: view) else {
+                return false
+            }
+            return await waitForCondition {
+                controller.observesCredentialCooldownsForProductProof
+            }
+        }
+
         private static func makeApplicationStartupFailureProof() async -> UInt64 {
             let originalComposition = ApplicationComposition.shared
             let defaultsName = "GitXApplicationStartupFailureHarness-\(UUID().uuidString)"
@@ -2009,6 +2196,34 @@
             private func cancel() {
                 continuation?.resume(throwing: CancellationError())
                 continuation = nil
+            }
+        }
+
+        private actor HarnessControlledPreparationFailure {
+            private var started = false
+            private var startWaiters: [CheckedContinuation<Void, Never>] = []
+            private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+            func failWhenReleased() async throws -> ForgeApplicationServices {
+                started = true
+                startWaiters.forEach { $0.resume() }
+                startWaiters.removeAll()
+                await withCheckedContinuation { releaseContinuation = $0 }
+                throw NSError(
+                    domain: "GitXCollaborationLifecycleHarness",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Superseded Forge service failure"]
+                )
+            }
+
+            func waitUntilStarted() async {
+                guard !started else { return }
+                await withCheckedContinuation { startWaiters.append($0) }
+            }
+
+            func release() {
+                releaseContinuation?.resume()
+                releaseContinuation = nil
             }
         }
 

@@ -39,6 +39,7 @@
 
 @interface PBGitHistoryList (GitXCoreTests)
 - (NSSet<GTOID *> *)baseCommits;
+- (void)setCurrentRevList:(PBGitRevList *)parser;
 @end
 
 @interface PBGitBinary (GitXCoreTests)
@@ -1767,6 +1768,30 @@
 	XCTAssertFalse([publishedCounts containsObject:@0], @"A nonempty refresh should not flash an empty commit list");
 	XCTAssertEqual(commits.count, expectedCount);
 	XCTAssertEqual(uniqueSHAs.count, expectedCount);
+}
+
+- (void)testSelectingComplexRevisionKeepsSharedProjectHistoryLoadAlive
+{
+	PBGitHistoryList *history = [[PBGitHistoryList alloc] initWithRepository:self.repository];
+	PBGitRevList *projectRevisionList = [history valueForKey:@"projectRevList"];
+	NSOperationQueue *projectQueue = [projectRevisionList valueForKey:@"operationQueue"];
+	projectQueue.suspended = YES;
+	[history setCurrentRevList:projectRevisionList];
+	[projectRevisionList loadRevisionsWithCompletionBlock:nil];
+	NSUInteger activeGeneration = [[projectRevisionList valueForKey:@"loadGeneration"] unsignedIntegerValue];
+
+	PBGitRevList *complexRevisionList = [[PBGitRevList alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~0" ]]
+			   shouldGraph:YES];
+	[history setCurrentRevList:complexRevisionList];
+
+	XCTAssertEqual([[projectRevisionList valueForKey:@"loadGeneration"] unsignedIntegerValue], activeGeneration);
+
+	[history cleanup];
+	[projectRevisionList cancel];
+	projectQueue.suspended = NO;
+	[projectQueue waitUntilAllOperationsAreFinished];
 }
 
 - (void)testUnchangedSymlinkRenameUsesRenameMetadata

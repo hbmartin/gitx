@@ -145,6 +145,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private var inlineWritesInFlight: Set<InlineWriteDestination> = []
     private var suggestionInFlight: ForgeSuggestedChange?
     private var destructiveConfirmationInFlight = false
+    private var destructiveConfirmationGeneration: UInt = 0
     private var transientMessage: String?
     private var postMergeDeletionFailure: String?
     private var modalPanel: NSPanel?
@@ -1327,24 +1328,49 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
 
     private func performDestructiveConfirmation(
         buttons: [NSButton],
-        operation: @escaping @MainActor () async throws -> Void
+        operation: @escaping @MainActor () async throws -> Void,
+        retrying expectedGeneration: UInt? = nil
     ) {
         guard !destructiveConfirmationInFlight else { return }
+        if let expectedGeneration {
+            guard expectedGeneration == destructiveConfirmationGeneration else { return }
+        } else {
+            destructiveConfirmationGeneration &+= 1
+        }
+        let attemptGeneration = destructiveConfirmationGeneration
         destructiveConfirmationInFlight = true
         buttons.forEach { $0.isEnabled = false }
-        perform { [weak self] in
+        tasks.start { [weak self] in
             guard let self else { return }
-            // The authorization-recovery path may invoke this same operation
-            // again, so re-establish the guard before every dispatch.
-            destructiveConfirmationInFlight = true
-            buttons.forEach { $0.isEnabled = false }
             defer {
                 destructiveConfirmationInFlight = false
                 if modalPanel != nil || embeddedModalView != nil {
                     buttons.forEach { $0.isEnabled = true }
                 }
             }
-            try await operation()
+            do {
+                try await operation()
+            } catch is CancellationError {
+                return
+            } catch {
+                if authorizationRecoveryHandler?(error, { [weak self] in
+                    // Queueing guarantees a synchronous recovery callback runs
+                    // after this attempt releases its guard. A later callback
+                    // still has to acquire the same guard as a button click.
+                    Task { @MainActor [weak self] in
+                        await Task.yield()
+                        self?.performDestructiveConfirmation(
+                            buttons: buttons,
+                            operation: operation,
+                            retrying: attemptGeneration
+                        )
+                    }
+                }) == true {
+                    return
+                }
+                transientMessage = error.localizedDescription
+                render()
+            }
         }
     }
 
