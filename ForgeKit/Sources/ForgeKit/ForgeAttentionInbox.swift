@@ -1340,7 +1340,7 @@ public actor ForgeAttentionInboxCoordinator {
         } catch let error as CancellationError {
             throw error
         } catch {
-            let backoff = scheduler.recordFailure(target, at: date)
+            let backoff = scheduler.recordFailure(target, at: now())
             Self.logger.error(
                 "Scheduled Attention refresh failed; deferring this repository for \(backoff.delay, privacy: .public) seconds after \(backoff.consecutiveFailures, privacy: .public) consecutive failures"
             )

@@ -37,24 +37,60 @@ final class ForgeCredentialStoreTests: XCTestCase {
         XCTAssertEqual(updateStatus, errSecItemNotFound)
     }
 
-    func testSecurityClientForwardsEveryOperationThroughInjectedSystemCalls() {
+    func testSecurityClientForwardsEveryOperationThroughInjectedSystemCalls() throws {
         let returnedData = Data("credential".utf8)
+        let recorder = SystemForgeSecurityItemCallRecorder(returnedData: returnedData)
         let client = SystemForgeSecurityItemClient(
-            copyMatching: { _, result in
-                result?.pointee = returnedData as CFData
-                return 101
-            },
-            update: { _, _ in 102 },
-            add: { _, _ in 103 },
-            delete: { _ in 104 }
+            copyMatching: recorder.copyMatching,
+            update: recorder.update,
+            add: recorder.add,
+            delete: recorder.delete
         )
+        let copyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "copy-service",
+        ]
+        let updateQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "update-service",
+            kSecAttrAccount as String: "update-account",
+        ]
+        let updateAttributes: [String: Any] = [
+            kSecValueData as String: Data("replacement".utf8),
+        ]
+        let addAttributes: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "add-service",
+            kSecAttrAccount as String: "add-account",
+            kSecValueData as String: Data("addition".utf8),
+        ]
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "delete-service",
+            kSecAttrAccount as String: "delete-account",
+        ]
 
-        let response = client.copyMatching([kSecClass as String: kSecClassGenericPassword])
+        let response = client.copyMatching(copyQuery)
         XCTAssertEqual(response.status, 101)
         XCTAssertEqual(response.result as? Data, returnedData)
-        XCTAssertEqual(client.update([:], attributes: [:]), 102)
-        XCTAssertEqual(client.add([:]), 103)
-        XCTAssertEqual(client.delete([:]), 104)
+        XCTAssertEqual(client.update(updateQuery, attributes: updateAttributes), 102)
+        XCTAssertEqual(client.add(addAttributes), 103)
+        XCTAssertEqual(client.delete(deleteQuery), 104)
+
+        let calls = recorder.snapshot
+        XCTAssertEqual(calls.copyQueries.count, 1)
+        XCTAssertEqual(calls.updateQueries.count, 1)
+        XCTAssertEqual(calls.updateAttributes.count, 1)
+        XCTAssertEqual(calls.addAttributes.count, 1)
+        XCTAssertEqual(calls.deleteQueries.count, 1)
+        XCTAssertEqual(try XCTUnwrap(calls.copyQueries.first), copyQuery as NSDictionary)
+        XCTAssertEqual(try XCTUnwrap(calls.updateQueries.first), updateQuery as NSDictionary)
+        XCTAssertEqual(try XCTUnwrap(calls.updateAttributes.first), updateAttributes as NSDictionary)
+        XCTAssertEqual(try XCTUnwrap(calls.addAttributes.first), addAttributes as NSDictionary)
+        XCTAssertEqual(try XCTUnwrap(calls.deleteQueries.first), deleteQuery as NSDictionary)
+        XCTAssertEqual(calls.copyResultPointerWasNil, [false])
+        XCTAssertEqual(calls.copyInitialResultWasNil, [true])
+        XCTAssertEqual(calls.addResultPointerWasNil, [true])
     }
 
     func testPATStorageListsOnlySafeMetadataAndRedactsSecretSurfaces() async throws {
@@ -901,6 +937,83 @@ private final nonisolated class InMemoryForgeCredentialKeychain: ForgeCredential
 
     func setRaw(_ data: Data, for accountKey: String) {
         lock.withLock { storage[accountKey] = data }
+    }
+}
+
+private struct SystemForgeSecurityItemCallSnapshot {
+    let copyQueries: [NSDictionary]
+    let copyResultPointerWasNil: [Bool]
+    let copyInitialResultWasNil: [Bool]
+    let updateQueries: [NSDictionary]
+    let updateAttributes: [NSDictionary]
+    let addAttributes: [NSDictionary]
+    let addResultPointerWasNil: [Bool]
+    let deleteQueries: [NSDictionary]
+}
+
+// swift6-safety-justification: The lock serializes all injected Security call arguments and pointer state.
+private final nonisolated class SystemForgeSecurityItemCallRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private let returnedData: Data
+    private var copyQueries: [NSDictionary] = []
+    private var copyResultPointerWasNil: [Bool] = []
+    private var copyInitialResultWasNil: [Bool] = []
+    private var updateQueries: [NSDictionary] = []
+    private var updateAttributes: [NSDictionary] = []
+    private var addAttributes: [NSDictionary] = []
+    private var addResultPointerWasNil: [Bool] = []
+    private var deleteQueries: [NSDictionary] = []
+
+    init(returnedData: Data) {
+        self.returnedData = returnedData
+    }
+
+    var snapshot: SystemForgeSecurityItemCallSnapshot {
+        lock.withLock {
+            SystemForgeSecurityItemCallSnapshot(
+                copyQueries: copyQueries,
+                copyResultPointerWasNil: copyResultPointerWasNil,
+                copyInitialResultWasNil: copyInitialResultWasNil,
+                updateQueries: updateQueries,
+                updateAttributes: updateAttributes,
+                addAttributes: addAttributes,
+                addResultPointerWasNil: addResultPointerWasNil,
+                deleteQueries: deleteQueries
+            )
+        }
+    }
+
+    func copyMatching(_ query: CFDictionary, result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
+        lock.withLock {
+            copyQueries.append(query as NSDictionary)
+            copyResultPointerWasNil.append(result == nil)
+            copyInitialResultWasNil.append(result?.pointee == nil)
+            result?.pointee = returnedData as CFData
+            return 101
+        }
+    }
+
+    func update(_ query: CFDictionary, attributes: CFDictionary) -> OSStatus {
+        lock.withLock {
+            updateQueries.append(query as NSDictionary)
+            updateAttributes.append(attributes as NSDictionary)
+            return 102
+        }
+    }
+
+    func add(_ attributes: CFDictionary, result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
+        lock.withLock {
+            addAttributes.append(attributes as NSDictionary)
+            addResultPointerWasNil.append(result == nil)
+            return 103
+        }
+    }
+
+    func delete(_ query: CFDictionary) -> OSStatus {
+        lock.withLock {
+            deleteQueries.append(query as NSDictionary)
+            return 104
+        }
     }
 }
 

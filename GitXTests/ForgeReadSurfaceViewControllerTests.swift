@@ -1779,6 +1779,31 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
             completionHandler: recorder.recordResponse
         )
         XCTAssertEqual(recorder.presentationOptions, [])
+        XCTAssertEqual(recorder.presentationCount, 1)
+        XCTAssertEqual(recorder.responseCount, 1)
+    }
+
+    func testAttentionNotificationDelegateCompletionForwardingPreservesOptionsAndCompletesExactlyOnce() {
+        let recorder = NotificationDelegateCompletionRecorder()
+        let expectedOptions: UNNotificationPresentationOptions = [.banner, .sound]
+
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardPresentation(
+            { completionHandler in
+                completionHandler(expectedOptions)
+                return ()
+            },
+            completionHandler: recorder.recordPresentation
+        )
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardResponse(
+            { completionHandler in
+                completionHandler()
+                return ()
+            },
+            completionHandler: recorder.recordResponse
+        )
+
+        XCTAssertEqual(recorder.presentationOptions, expectedOptions)
+        XCTAssertEqual(recorder.presentationCount, 1)
         XCTAssertEqual(recorder.responseCount, 1)
     }
 
@@ -2494,10 +2519,15 @@ private final class RecordingAttentionTableView: NSTableView {
 private final class NotificationDelegateCompletionRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var storedPresentationOptions: UNNotificationPresentationOptions?
+    private var storedPresentationCount = 0
     private var storedResponseCount = 0
 
     var presentationOptions: UNNotificationPresentationOptions? {
         lock.withLock { storedPresentationOptions }
+    }
+
+    var presentationCount: Int {
+        lock.withLock { storedPresentationCount }
     }
 
     var responseCount: Int {
@@ -2505,7 +2535,10 @@ private final class NotificationDelegateCompletionRecorder: @unchecked Sendable 
     }
 
     func recordPresentation(_ options: UNNotificationPresentationOptions) {
-        lock.withLock { storedPresentationOptions = options }
+        lock.withLock {
+            storedPresentationOptions = options
+            storedPresentationCount += 1
+        }
     }
 
     func recordResponse() {

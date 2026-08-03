@@ -638,6 +638,51 @@ final class RepositoryPullRequestReviewCompositionTests: XCTestCase {
         XCTAssertEqual(lifecycle.finishedRegistrationIDs().count, 1)
     }
 
+    func testDeletionSnapshotPreservesCheckedOutSafetyConflictReportedByLocalService() async throws {
+        let fixture = try ReviewCompositionFixture()
+        let local = LocalReviewServiceSpy(checkedOutHeads: [fixture.head.commit])
+        let mergeSnapshot = try fixture.mergeSnapshot(
+            state: .merged,
+            allowedOperations: [.deleteHeadBranch]
+        )
+        let adapterSnapshot = ForgeHeadBranchDeletionSnapshot(
+            mergeSnapshot: mergeSnapshot,
+            isSameRepository: true,
+            isDefaultBranch: false,
+            isProtected: false,
+            viewerCanDelete: true,
+            hasCheckedOutSafetyConflict: false
+        )
+        let read = try ReviewReadAdapterStub(
+            fixture: fixture,
+            defaultDetails: fixture.detailsResult(state: .merged)
+        )
+        let mutation = ReviewMutationAdapterStub(
+            fixture: fixture,
+            defaultMergeSnapshot: mergeSnapshot,
+            defaultDeletionSnapshot: adapterSnapshot
+        )
+        let harness = try ReviewCompositionHarness(
+            fixture: fixture,
+            read: read,
+            mutation: mutation,
+            local: local,
+            allowedOperations: [.deleteHeadBranch]
+        )
+
+        let workspace = try await harness.service.loadWorkspace(identity: fixture.identity)
+        let snapshot = try XCTUnwrap(workspace.headBranchDeletionSnapshot)
+
+        XCTAssertEqual(snapshot, ForgeHeadBranchDeletionSnapshot(
+            mergeSnapshot: mergeSnapshot,
+            isSameRepository: true,
+            isDefaultBranch: false,
+            isProtected: false,
+            viewerCanDelete: true,
+            hasCheckedOutSafetyConflict: true
+        ))
+    }
+
     func testForkHeadSkipsOptionalDeletePreflightWithoutMakingWorkspaceStale() async throws {
         let fixture = try ReviewCompositionFixture()
         let forkHead = ForgeBranchReference(
@@ -1632,11 +1677,18 @@ private actor ReviewMutationAdapterStub: ForgeGitHubPullRequestReviewMutationExe
         pullRequest _: ForgeItemNumber,
         branch _: ForgeRefName,
         expectedHead _: ForgeCommitID,
-        hasCheckedOutSafetyConflict _: Bool,
+        hasCheckedOutSafetyConflict: Bool,
         authorization _: GitHubMutationAuthorization
     ) async throws -> ForgeHeadBranchDeletionSnapshot {
         deletionSnapshotCalls += 1
-        return defaultDeletionSnapshot
+        return ForgeHeadBranchDeletionSnapshot(
+            mergeSnapshot: defaultDeletionSnapshot.mergeSnapshot,
+            isSameRepository: defaultDeletionSnapshot.isSameRepository,
+            isDefaultBranch: defaultDeletionSnapshot.isDefaultBranch,
+            isProtected: defaultDeletionSnapshot.isProtected,
+            viewerCanDelete: defaultDeletionSnapshot.viewerCanDelete,
+            hasCheckedOutSafetyConflict: hasCheckedOutSafetyConflict
+        )
     }
 
     func deleteHeadBranch(

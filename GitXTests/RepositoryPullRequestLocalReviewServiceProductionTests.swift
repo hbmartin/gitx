@@ -62,6 +62,30 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
         ])
     }
 
+    func testCheckedOutBranchSafetyAllowsDetachedHeadAtDifferentValidOID() async throws {
+        let branch = try ForgeRefName("feature/github-mutations")
+        let head = try ForgeCommitID("abcdef12")
+        let runner = ScriptedLocalReviewGitRunner(responses: [
+            ["rev-parse", "--symbolic-full-name", "HEAD"]: .output("HEAD\n"),
+            ["rev-parse", "--verify", "HEAD"]: .output("fedcba98\n"),
+        ])
+        let service = RepositoryPullRequestLocalReviewService(
+            runner: runner,
+            workingDirectory: nil
+        )
+
+        let hasConflict = try await service.hasCheckedOutSafetyConflict(
+            branch: branch,
+            expectedHead: head
+        )
+
+        XCTAssertFalse(hasConflict)
+        XCTAssertEqual(runner.commands, [
+            ["rev-parse", "--symbolic-full-name", "HEAD"],
+            ["rev-parse", "--verify", "HEAD"],
+        ])
+    }
+
     func testCheckedOutBranchSafetyFailsClosedWhenSymbolicHeadCannotBeRead() async throws {
         let runner = ScriptedLocalReviewGitRunner(responses: [
             ["rev-parse", "--symbolic-full-name", "HEAD"]: .failure,
