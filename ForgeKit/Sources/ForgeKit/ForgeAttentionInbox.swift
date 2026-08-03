@@ -648,9 +648,19 @@ public struct ForgeAttentionPollingTarget: Hashable, Sendable {
     }
 }
 
+struct ForgeAttentionPollingBackoff: Hashable, Sendable {
+    let consecutiveFailures: Int
+    let delay: TimeInterval
+    let retryAt: Date
+}
+
 public struct ForgeAttentionPollingScheduler: Sendable {
+    private static let maximumBackoff: TimeInterval = 60 * 60
+    private static let maximumTrackedFailureCount = 64
+
     public let preset: ForgeAttentionPollingPreset
     private var cursor = ForgeAttentionPollingCursor()
+    private var failureBackoffs: [ForgeWatchedRepositoryKey: ForgeAttentionPollingBackoff] = [:]
 
     public init(preset: ForgeAttentionPollingPreset = .defaultValue) {
         self.preset = preset
@@ -676,6 +686,9 @@ public struct ForgeAttentionPollingScheduler: Sendable {
         }
         for offset in ordered.indices {
             let watch = ordered[(startIndex + offset) % ordered.count]
+            if let backoff = failureBackoffs[watch.key], date < backoff.retryAt {
+                continue
+            }
             let activity: ForgeAttentionPollingActivity = activeOrOpenRepositories.contains(watch.key)
                 ? .activeOrOpen
                 : .background
@@ -693,6 +706,34 @@ public struct ForgeAttentionPollingScheduler: Sendable {
 
     public mutating func recordSelection(_ target: ForgeAttentionPollingTarget) {
         cursor = ForgeAttentionPollingCursor(lastPolled: target.watchedRepository.key)
+    }
+
+    @discardableResult
+    mutating func recordFailure(
+        _ target: ForgeAttentionPollingTarget,
+        at date: Date
+    ) -> ForgeAttentionPollingBackoff {
+        let previousBackoff = failureBackoffs[target.watchedRepository.key]
+        let previousCount = previousBackoff?.consecutiveFailures ?? 0
+        let failureCount = min(previousCount + 1, Self.maximumTrackedFailureCount)
+        let maximumDelay = max(Self.maximumBackoff, target.targetInterval)
+        let targetDelay = max(target.targetInterval, 1)
+        let delay = if let previousBackoff {
+            min(max(targetDelay, previousBackoff.delay * 2), maximumDelay)
+        } else {
+            min(targetDelay, maximumDelay)
+        }
+        let backoff = ForgeAttentionPollingBackoff(
+            consecutiveFailures: failureCount,
+            delay: delay,
+            retryAt: date.addingTimeInterval(delay)
+        )
+        failureBackoffs[target.watchedRepository.key] = backoff
+        return backoff
+    }
+
+    mutating func recordSuccess(for key: ForgeWatchedRepositoryKey) {
+        failureBackoffs.removeValue(forKey: key)
     }
 }
 
@@ -1172,6 +1213,7 @@ public actor ForgeAttentionInboxCoordinator {
     private let fetcher: any ForgeAttentionSnapshotFetching
     private let alertDelivery: any ForgeAttentionAlertDelivering
     private let attentionPolicy: ForgeAttentionPolicy
+    private let now: @Sendable () -> Date
     private var enabledAlertCategories: Set<ForgeAttentionAlertCategory>
     private var scheduler: ForgeAttentionPollingScheduler
 
@@ -1181,12 +1223,14 @@ public actor ForgeAttentionInboxCoordinator {
         alertDelivery: any ForgeAttentionAlertDelivering,
         attentionPolicy: ForgeAttentionPolicy = .defaultValue,
         enabledAlertCategories: Set<ForgeAttentionAlertCategory> = [],
-        pollingPreset: ForgeAttentionPollingPreset = .defaultValue
+        pollingPreset: ForgeAttentionPollingPreset = .defaultValue,
+        now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.persistence = persistence
         self.fetcher = fetcher
         self.alertDelivery = alertDelivery
         self.attentionPolicy = attentionPolicy
+        self.now = now
         self.enabledAlertCategories = enabledAlertCategories
         scheduler = ForgeAttentionPollingScheduler(preset: pollingPreset)
     }
@@ -1207,7 +1251,9 @@ public actor ForgeAttentionInboxCoordinator {
         guard let watch = watches.first(where: { $0.key == key }) else {
             throw ForgeAttentionInboxError.missingWatchedRepository
         }
-        return try await refreshWatchedRepository(watch)
+        let reconciliation = try await refreshWatchedRepository(watch)
+        scheduler.recordSuccess(for: key)
+        return reconciliation
     }
 
     /// Refreshes an account's entire watch set as one manual operation. A
@@ -1221,6 +1267,7 @@ public actor ForgeAttentionInboxCoordinator {
             try Task.checkCancellation()
             do {
                 try reconciliations.append(await refreshWatchedRepository(watch))
+                scheduler.recordSuccess(for: watch.key)
             } catch let error as CancellationError {
                 throw error
             } catch {
@@ -1272,8 +1319,9 @@ public actor ForgeAttentionInboxCoordinator {
     public func refreshNextDue(
         accountID: ForgeAccountID,
         activeOrOpenRepositories: Set<ForgeWatchedRepositoryKey>,
-        at date: Date
+        at requestedDate: Date? = nil
     ) async throws -> ForgeAttentionReconciliation? {
+        let date = requestedDate ?? now()
         let watches = try await persistence.watchedRepositories(accountID: accountID)
         guard let target = scheduler.nextTarget(
             watchedRepositories: watches,
@@ -1283,7 +1331,17 @@ public actor ForgeAttentionInboxCoordinator {
         // Move the fairness cursor before network work so a failing repository
         // cannot starve the remainder of an account's watch set.
         scheduler.recordSelection(target)
-        return try await refresh(target.watchedRepository.key)
+        do {
+            return try await refresh(target.watchedRepository.key)
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            let backoff = scheduler.recordFailure(target, at: date)
+            Self.logger.error(
+                "Scheduled Attention refresh failed; deferring this repository for \(backoff.delay, privacy: .public) seconds after \(backoff.consecutiveFailures, privacy: .public) consecutive failures"
+            )
+            throw error
+        }
     }
 
     private func deliverAlerts(

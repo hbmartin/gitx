@@ -232,7 +232,8 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
 
     func testRepositoryFactsRejectMultiSegmentGitHubOwnerBeforeConstructingRequest() async throws {
         let client = QueueAnonymousClient([])
-        let adapter = GitHubAnonymousRESTAdapter(client: client, budget: GitHubAnonymousRESTBudget())
+        let budget = GitHubAnonymousRESTBudget(initialRemainingRequestCount: 12)
+        let adapter = GitHubAnonymousRESTAdapter(client: client, budget: budget)
         let nestedOwner = try ForgeRepositoryIdentity(
             forge: repository.forge,
             owner: "organization/team",
@@ -244,6 +245,8 @@ final class GitHubAnonymousRESTAdapterTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? GitHubAnonymousRESTError, .invalidResponse)
         }
+        let remainingBudget = await budget.current().remainingRequestCount
+        XCTAssertEqual(remainingBudget, 12)
         let requests = await client.requests()
         XCTAssertTrue(requests.isEmpty)
     }

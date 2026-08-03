@@ -7,6 +7,9 @@ final class GitHubResponseMetadataBox: @unchecked Sendable {
     private let lock = NSLock()
     private let installationConfigurationURL: URL?
     private var value: GitHubResponseMetadata?
+    private var responseBody = Data()
+    private var responseBodyExceededEvidenceLimit = false
+    private var secondaryRateLimitDetected = false
 
     init(installationConfigurationURL: URL? = nil) {
         self.installationConfigurationURL = installationConfigurationURL
@@ -20,6 +23,7 @@ final class GitHubResponseMetadataBox: @unchecked Sendable {
             receivedAt: Date()
         )
         lock.withLock {
+            recordResponseBodyEvidence(body)
             value = GitHubResponseMetadata(
                 statusCode: parsed.statusCode,
                 requestID: parsed.requestID,
@@ -32,6 +36,47 @@ final class GitHubResponseMetadataBox: @unchecked Sendable {
 
     func take() -> GitHubResponseMetadata? {
         lock.withLock { value }
+    }
+
+    func indicatesSecondaryRateLimit() -> Bool {
+        lock.withLock { secondaryRateLimitDetected }
+    }
+
+    private func recordResponseBodyEvidence(_ body: Data) {
+        guard !body.isEmpty, !responseBodyExceededEvidenceLimit else { return }
+        guard body.count <= GitHubSecondaryRateLimitEvidence.maximumBodySize - responseBody.count
+        else {
+            responseBody.removeAll(keepingCapacity: false)
+            responseBodyExceededEvidenceLimit = true
+            secondaryRateLimitDetected = false
+            return
+        }
+        responseBody.append(body)
+        secondaryRateLimitDetected = GitHubSecondaryRateLimitEvidence.detect(in: responseBody)
+    }
+}
+
+enum GitHubSecondaryRateLimitEvidence {
+    static let maximumBodySize = 64 * 1024
+
+    static func detect(in body: Data) -> Bool {
+        guard !body.isEmpty,
+              body.count <= maximumBodySize,
+              let payload = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+        else {
+            return false
+        }
+        var messages = [payload["message"] as? String]
+        if let errors = payload["errors"] as? [[String: Any]] {
+            messages.append(contentsOf: errors.map { $0["message"] as? String })
+        }
+        return messages.compactMap { $0 }.contains(where: isSecondaryRateLimitMessage)
+    }
+
+    private static func isSecondaryRateLimitMessage(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("secondary rate limit")
+            || normalized.contains("abuse detection mechanism")
     }
 }
 

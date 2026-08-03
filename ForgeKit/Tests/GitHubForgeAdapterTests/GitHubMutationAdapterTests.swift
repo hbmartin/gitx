@@ -641,6 +641,7 @@ final class GitHubMutationAdapterTests: XCTestCase {
                 fixtures.pullRequestPreflight(state: .merged)
             ),
             .graphQL("GitHubHeadBranchDeletionPreflight", fixtures.headBranchPreflight()),
+            .graphQL("GitHubHeadBranchDeletionPreflight", fixtures.headBranchPreflight()),
             .graphQL("GitHubDeleteHeadBranch", fixtures.mutation("GitHubDeleteHeadBranch")),
         ])
         install(deleteQueue)
@@ -1173,6 +1174,50 @@ final class GitHubMutationAdapterTests: XCTestCase {
         XCTAssertTrue(snapshot.viewerCanDelete)
         XCTAssertTrue(snapshot.hasCheckedOutSafetyConflict)
         XCTAssertEqual(queue.remainingCount, 0)
+    }
+
+    func testDeleteHeadBranchRejectsHeadChangeDuringFinalRemoteRevalidation() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let request = try headBranchDeletionRequest(
+            accountID: authentication.account.id,
+            repository: repository
+        )
+        var changedHead = fixtures.headBranchPreflight()
+        try fixtures.updateDictionary(named: "target", in: &changedHead) {
+            $0["oid"] = "abcdef13"
+        }
+        let queue = MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                fixtures.pullRequestPreflight(state: .merged)
+            ),
+            .graphQL("GitHubHeadBranchDeletionPreflight", fixtures.headBranchPreflight()),
+            .graphQL("GitHubHeadBranchDeletionPreflight", changedHead),
+        ])
+        install(queue)
+
+        await XCTAssertThrowsMutationError(.stalePullRequest) {
+            try await self.makeAdapter(authentication: authentication).deleteHeadBranch(
+                request,
+                authorization: self.authorization(
+                    authentication: authentication,
+                    repository: repository,
+                    operation: .deleteHeadBranch
+                )
+            )
+        }
+
+        XCTAssertEqual(queue.remainingCount, 0)
+        XCTAssertEqual(
+            queue.payloads.compactMap { $0["operationName"] as? String },
+            [
+                "GitHubPullRequestMutationPreflight",
+                "GitHubHeadBranchDeletionPreflight",
+                "GitHubHeadBranchDeletionPreflight",
+            ]
+        )
     }
 
     func testResolutionTransitionGateSerializesGenerationsForOneThread() async throws {
@@ -2014,6 +2059,7 @@ final class GitHubMutationAdapterTests: XCTestCase {
                 "GitHubPullRequestMutationPreflight",
                 fixtures.pullRequestPreflight(state: .merged)
             ),
+            .graphQL("GitHubHeadBranchDeletionPreflight", fixtures.headBranchPreflight()),
             .graphQL("GitHubHeadBranchDeletionPreflight", fixtures.headBranchPreflight()),
             .graphQL("GitHubDeleteHeadBranch", ["deleteRef": NSNull()]),
         ]))
@@ -3217,6 +3263,152 @@ final class GitHubMutationAdapterTests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testHeaderlessGraphQLSecondaryRateLimitRecordsMinimumCooldown() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let form = try creationForm(repository: repository)
+        let createAuthorization = try authorization(
+            authentication: authentication,
+            repository: repository,
+            operation: .createPullRequest
+        )
+        let evaluationDate = Date(timeIntervalSince1970: 1_775_000_000)
+
+        let scenarios: [([MutationStubResponse], Int)] = [
+            ([
+                MutationStubResponse.graphQLPayload(
+                    "GitHubPullRequestCreationPreflight",
+                    [
+                        "errors": [[
+                            "message": "You have hit a secondary rate limit.",
+                        ]],
+                    ],
+                    headers: ["Content-Type": "application/json"]
+                ),
+            ], 200),
+            ([
+                MutationStubResponse.graphQLPayload(
+                    "GitHubPullRequestCreationPreflight",
+                    ["message": "You have exceeded a secondary rate limit."],
+                    statusCode: 403,
+                    headers: ["Content-Type": "application/json"]
+                ),
+            ], 403),
+            ([
+                MutationStubResponse.graphQL(
+                    "GitHubPullRequestCreationPreflight",
+                    fixtures.creationPreflight()
+                ),
+                MutationStubResponse.graphQLPayload(
+                    "GitHubCreatePullRequest",
+                    [
+                        "errors": [[
+                            "message": "You have exceeded a secondary rate limit.",
+                        ]],
+                    ],
+                    statusCode: 403,
+                    headers: ["Content-Type": "application/json"]
+                ),
+            ], 403),
+        ]
+        for (responses, expectedStatus) in scenarios {
+            let gate = GitHubMutationSessionGate()
+            install(MutationResponseQueue(responses))
+
+            do {
+                _ = try await makeAdapter(
+                    authentication: authentication,
+                    restClient: MutationRESTClient(responses: []),
+                    sessionGate: gate
+                ).createPullRequest(
+                    accountID: authentication.account.id,
+                    form: form,
+                    authorization: createAuthorization
+                )
+                XCTFail("Expected a secondary-rate-limit failure")
+            } catch let error as GitHubMutationError {
+                guard case let .rateLimited(metadata) = error else {
+                    return XCTFail("Unexpected secondary-rate-limit error: \(error)")
+                }
+                XCTAssertEqual(metadata.statusCode, expectedStatus)
+                XCTAssertNil(metadata.rateLimit.retryAt)
+                XCTAssertNil(metadata.rateLimit.resetAt)
+            }
+
+            let environment = await gate.environment(
+                for: authentication.credential.reference,
+                at: evaluationDate
+            )
+            XCTAssertEqual(
+                environment,
+                .rateLimited(until: evaluationDate.addingTimeInterval(60))
+            )
+        }
+    }
+
+    func testHeaderlessRESTSecondaryRateLimitRecordsMinimumCooldown() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let parent = try ForgeRepositoryIdentity(
+            forge: repository.forge,
+            owner: "gitx",
+            name: "gitx"
+        )
+        let plan = try ForgeSyncForkPlan(
+            fork: repository,
+            parent: parent,
+            branch: ForgeRefName("master"),
+            localFetchRemoteName: "origin"
+        )
+        let gate = GitHubMutationSessionGate()
+        let evaluationDate = Date(timeIntervalSince1970: 1_775_000_000)
+        install(MutationResponseQueue([
+            .graphQL("GitHubSyncForkPreflight", fixtures.syncPreflight()),
+        ]))
+        let adapter = makeAdapter(
+            authentication: authentication,
+            restClient: MutationRESTClient(responses: [
+                GitHubMutationHTTPResponse(
+                    statusCode: 403,
+                    headers: ["Content-Type": "application/json"],
+                    data: Data(#"{"message":"You have exceeded a secondary rate limit."}"#.utf8)
+                ),
+            ]),
+            sessionGate: gate
+        )
+
+        do {
+            _ = try await adapter.syncFork(
+                accountID: authentication.account.id,
+                plan: plan,
+                authorization: authorization(
+                    authentication: authentication,
+                    repository: repository,
+                    operation: .syncFork
+                )
+            )
+            XCTFail("Expected a secondary-rate-limit failure")
+        } catch let error as GitHubMutationError {
+            guard case let .rateLimited(metadata) = error else {
+                return XCTFail("Unexpected secondary-rate-limit error: \(error)")
+            }
+            XCTAssertEqual(metadata.statusCode, 403)
+            XCTAssertNil(metadata.rateLimit.retryAt)
+            XCTAssertNil(metadata.rateLimit.resetAt)
+        }
+
+        let environment = await gate.environment(
+            for: authentication.credential.reference,
+            at: evaluationDate
+        )
+        XCTAssertEqual(
+            environment,
+            .rateLimited(until: evaluationDate.addingTimeInterval(60))
+        )
     }
 
     func testGraphQLMutationHTTPThrottlesRecordCooldownBeforeUnknownOutcomeFallback() async throws {

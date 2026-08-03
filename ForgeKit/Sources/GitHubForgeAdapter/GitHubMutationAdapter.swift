@@ -671,8 +671,27 @@ public extension GitHubMutationAdapter {
         ), validated == request else {
             throw GitHubMutationError.stalePullRequest
         }
+        let finalPreflight = try await headBranchPreflight(
+            repository: request.repository,
+            branch: request.branch,
+            expectedHead: request.expectedHead,
+            authentication: authentication
+        )
+        guard finalPreflight.refID == preflight.refID,
+              finalPreflight.branch == preflight.branch,
+              finalPreflight.head == preflight.head,
+              finalPreflight.isDefaultBranch == preflight.isDefaultBranch,
+              finalPreflight.isProtected == preflight.isProtected,
+              finalPreflight.viewerCanDelete == preflight.viewerCanDelete
+        else {
+            throw GitHubMutationError.stalePullRequest
+        }
+        // GitHub's deleteRef mutation accepts only a ref ID and has no
+        // expected-OID compare-and-swap input. This second network-only read
+        // is therefore the closest available revalidation boundary; a
+        // provider-side race after it remains unavoidable.
         let mutation = GitHubAPI.GitHubDeleteHeadBranchMutation(input: .init(
-            refId: preflight.refID.value
+            refId: finalPreflight.refID.value
         ))
         let executed = try await executeMutation(mutation, authentication: authentication) { data in
             guard data.deleteRef != nil else { throw GitHubMutationError.malformedResponse }
@@ -848,7 +867,9 @@ private extension GitHubMutationAdapter {
             ) {
                 throw authorizationError
             }
-            if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
+            if metadataBox.indicatesSecondaryRateLimit()
+                || problems.contains(where: { $0.classification == "RATE_LIMITED" })
+            {
                 await recordCooldown(response, assumeThrottled: true)
                 throw GitHubMutationError.rateLimited(response)
             }
@@ -879,6 +900,7 @@ private extension GitHubMutationAdapter {
                 error,
                 mutationStarted: false,
                 metadata: metadata,
+                secondaryRateLimitDetected: metadataBox.indicatesSecondaryRateLimit(),
                 credentialSource: authentication.credential.source
             )
             if case .rateLimited = classified, let metadata {
@@ -917,7 +939,9 @@ private extension GitHubMutationAdapter {
             ) {
                 throw authorizationError
             }
-            if problems.contains(where: { $0.classification == "RATE_LIMITED" }) {
+            if metadataBox.indicatesSecondaryRateLimit()
+                || problems.contains(where: { $0.classification == "RATE_LIMITED" })
+            {
                 await recordCooldown(response, assumeThrottled: true)
                 throw GitHubMutationError.rateLimited(response)
             }
@@ -954,6 +978,7 @@ private extension GitHubMutationAdapter {
                 error,
                 mutationStarted: true,
                 metadata: metadata,
+                secondaryRateLimitDetected: metadataBox.indicatesSecondaryRateLimit(),
                 credentialSource: authentication.credential.source
             )
             if case .rateLimited = classified, let metadata {
@@ -1237,6 +1262,7 @@ private extension GitHubMutationAdapter {
         _ error: Error,
         mutationStarted: Bool,
         metadata: GitHubResponseMetadata?,
+        secondaryRateLimitDetected: Bool = false,
         credentialSource: ForgeCredentialSource
     ) -> GitHubMutationError {
         if let metadata,
@@ -1249,7 +1275,9 @@ private extension GitHubMutationAdapter {
         }
         if let metadata {
             switch metadata.statusCode {
-            case 403 where metadata.rateLimit.remaining == 0 || metadata.rateLimit.retryAt != nil:
+            case 403 where secondaryRateLimitDetected
+                || metadata.rateLimit.remaining == 0
+                || metadata.rateLimit.retryAt != nil:
                 return .rateLimited(metadata)
             case 429:
                 return .rateLimited(metadata)
@@ -1267,7 +1295,9 @@ private extension GitHubMutationAdapter {
         if let metadata {
             switch metadata.statusCode {
             case 401: return .authenticationRequired
-            case 403 where metadata.rateLimit.remaining == 0 || metadata.rateLimit.retryAt != nil:
+            case 403 where secondaryRateLimitDetected
+                || metadata.rateLimit.remaining == 0
+                || metadata.rateLimit.retryAt != nil:
                 return .rateLimited(metadata)
             case 403: return .permissionDenied(metadata)
             case 429: return .rateLimited(metadata)
@@ -1344,7 +1374,9 @@ private extension GitHubMutationAdapter {
         }
         switch response.statusCode {
         case 401: return .authenticationRequired
-        case 403 where metadata.rateLimit.remaining == 0 || metadata.rateLimit.retryAt != nil:
+        case 403 where GitHubSecondaryRateLimitEvidence.detect(in: response.data)
+            || metadata.rateLimit.remaining == 0
+            || metadata.rateLimit.retryAt != nil:
             return .rateLimited(metadata)
         case 403, 404: return .permissionDenied(metadata)
         case 429: return .rateLimited(metadata)

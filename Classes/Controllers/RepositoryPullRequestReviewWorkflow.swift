@@ -177,7 +177,7 @@ nonisolated enum RepositoryPullRequestHeadDeletionDispatchPolicy {
     static func validate(
         request: ForgeHeadBranchDeletionRequest,
         workspace: RepositoryPullRequestReviewWorkspace,
-        checkedOutHead: ForgeCommitID?
+        hasCheckedOutSafetyConflict: Bool
     ) throws {
         guard workspace.isMutationStateFresh,
               workspace.identity.accountID == request.accountID,
@@ -189,7 +189,7 @@ nonisolated enum RepositoryPullRequestHeadDeletionDispatchPolicy {
         else {
             throw RepositoryPullRequestReviewServiceError.stalePullRequest
         }
-        guard checkedOutHead != request.expectedHead else {
+        guard !hasCheckedOutSafetyConflict else {
             throw RepositoryPullRequestReviewServiceError.authoritative(
                 RepositoryPullRequestMutationUnavailablePresenter.message(.checkedOutBranch)
             )
@@ -434,6 +434,12 @@ nonisolated protocol RepositoryPullRequestLocalReviewServing: Sendable {
     ) async throws -> [ForgeReviewReanchorCandidate]
 
     func checkedOutHead() async throws -> ForgeCommitID?
+    /// Uses symbolic local branch identity where it is available. Conformers
+    /// that cannot inspect symbolic refs retain the conservative OID guard.
+    func hasCheckedOutSafetyConflict(
+        branch: ForgeRefName,
+        expectedHead: ForgeCommitID
+    ) async throws -> Bool
     /// Revalidates checkout and dirty-file state, then compares the exact file
     /// bytes again immediately before one replacement so a changed target
     /// fails closed.
@@ -444,6 +450,13 @@ nonisolated protocol RepositoryPullRequestLocalReviewServing: Sendable {
 }
 
 extension RepositoryPullRequestLocalReviewServing {
+    func hasCheckedOutSafetyConflict(
+        branch _: ForgeRefName,
+        expectedHead: ForgeCommitID
+    ) async throws -> Bool {
+        try await checkedOutHead() == expectedHead
+    }
+
     func fetchPostMergeBase(_ base: ForgeBranchReference) async throws {
         try await fetchBase(base)
     }
@@ -632,6 +645,25 @@ actor RepositoryPullRequestLocalReviewService: RepositoryPullRequestLocalReviewS
         let value = try runner.run(["rev-parse", "--verify", "HEAD"])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return try ForgeCommitID(value)
+    }
+
+    func hasCheckedOutSafetyConflict(
+        branch: ForgeRefName,
+        expectedHead: ForgeCommitID
+    ) async throws -> Bool {
+        let symbolicHead = try runner.run(["rev-parse", "--symbolic-full-name", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let localBranchPrefix = "refs/heads/"
+        if symbolicHead.hasPrefix(localBranchPrefix) {
+            let localBranch = try ForgeRefName(String(symbolicHead.dropFirst(localBranchPrefix.count)))
+            return localBranch == branch
+        }
+        guard symbolicHead == "HEAD" else {
+            throw RepositoryPullRequestReviewServiceError.unsafeLocalEdit
+        }
+        // Detached HEAD has no branch identity. Preserve the existing
+        // conservative OID guard instead of silently weakening safety.
+        return try await checkedOutHead() == expectedHead
     }
 
     func applySuggestedChange(_ change: ForgeSuggestedChange) async throws {

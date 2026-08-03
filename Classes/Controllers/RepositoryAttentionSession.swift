@@ -479,7 +479,7 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
         } catch {
             lastRefreshErrorDescription = error.localizedDescription
             Self.logger.error(
-                "Scheduled Attention refresh failed type=\(String(describing: type(of: error)), privacy: .public)"
+                "Scheduled Attention refresh failed; the coordinator deferred that watched repository using its bounded retry policy type=\(String(describing: type(of: error)), privacy: .public)"
             )
             NotificationCenter.default.post(
                 name: .forgeAttentionInboxDidChange,

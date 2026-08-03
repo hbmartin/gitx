@@ -1719,9 +1719,8 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         _ = makeWindow(controller)
         controller.viewDidAppear()
-        await waitUntil("two Attention rows") { session.entryStates.count >= 1 }
-        await settleMainActor()
         let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        await waitUntil("Attention table to display two rows") { table.numberOfRows == 2 }
         XCTAssertEqual(table.numberOfRows, 2)
 
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
@@ -1796,9 +1795,8 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         _ = makeWindow(controller)
         controller.viewDidAppear()
-        await waitUntil("initial Attention rows") { session.entryStates.count == 1 }
-        await settleMainActor()
         let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        await waitUntil("Attention table to display its initial row") { table.numberOfRows == 1 }
         XCTAssertEqual(table.numberOfRows, 1)
 
         session.entriesError = CancellationError()

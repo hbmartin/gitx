@@ -4,6 +4,30 @@ import XCTest
 
 @MainActor
 final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
+    func testDestructiveConfirmationStateRejectsOverlapAndMakesRecoveryGenerationsSingleUse() throws {
+        var state = RepositoryDestructiveConfirmationState()
+
+        let initial = try XCTUnwrap(state.begin())
+        XCTAssertEqual(initial, 1)
+        XCTAssertTrue(state.isInFlight)
+        XCTAssertNil(state.begin(), "An overlapping button action must not start")
+
+        state.finish(initial)
+        XCTAssertFalse(state.isInFlight)
+        let retry = try XCTUnwrap(state.begin(retrying: initial))
+        XCTAssertEqual(retry, 2, "A matching recovery token starts a new generation")
+        XCTAssertNil(state.begin(retrying: initial), "The consumed token cannot overlap its retry")
+
+        state.finish(retry)
+        XCTAssertNil(state.begin(retrying: initial), "A consumed recovery token remains stale")
+        let replacement = try XCTUnwrap(state.begin())
+        XCTAssertEqual(replacement, 3)
+        state.invalidate()
+        XCTAssertFalse(state.isInFlight)
+        XCTAssertEqual(state.generation, 4)
+        XCTAssertNil(state.begin(retrying: replacement), "Invalidation makes retained callbacks stale")
+    }
+
     func testRendersNativeThreadStatesActionsAndExpandedThreadCanCollapseAndExpand() async throws {
         let fixture = try ReviewAppFixture()
         let workspace = try fixture.workspace(canUpdateBranch: true, deletion: true)
@@ -1225,6 +1249,104 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         let requestsAfterObsoleteRetry = await service.mergeRequests()
         XCTAssertEqual(requestsAfterObsoleteRetry.count, 2)
         controller.detach()
+    }
+
+    func testDetachedControllerRejectsStoredDestructiveRecoveryRetries() async throws {
+        let fixture = try ReviewAppFixture()
+        let open = try fixture.workspace(deletion: true)
+        let merged = try fixture.workspace(state: .merged, deletion: true)
+        let authorizationError = ReviewAuthorizationRecoveryTestFixture.samlError(at: fixture.now)
+
+        let mergeService = FakeReviewMutationService(
+            workspaces: [open],
+            mutationWorkspace: merged,
+            freshMergeSnapshots: [open.mergeSnapshot, open.mergeSnapshot]
+        )
+        await mergeService.failNextMerge(with: authorizationError)
+        let mergeRecoveryOffered = expectation(description: "merge recovery callback stored")
+        var mergeRetry: (@MainActor () -> Void)?
+        let mergeController = RepositoryPullRequestReviewOverlayController(
+            session: RepositoryPullRequestReviewSession(identity: fixture.identity, service: mergeService),
+            router: OverlayRecordingRouter(),
+            authorizationRecoveryHandler: { _, retry in
+                mergeRetry = retry
+                mergeRecoveryOffered.fulfill()
+                return true
+            }
+        )
+        _ = mergeController.view
+        mergeController.start()
+        await mergeService.waitForLoadCalls(1)
+        let merge = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.merge,
+            in: mergeController.view
+        ) as? NSButton)
+        merge.performClick(nil)
+        await waitUntil("merge confirmation") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+                in: mergeController.view
+            ) != nil
+        }
+        let mergeConfirm = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+            in: mergeController.view
+        ) as? NSButton)
+        mergeConfirm.performClick(nil)
+        await fulfillment(of: [mergeRecoveryOffered])
+        await mergeService.waitForMergeCalls(1)
+
+        mergeRetry?()
+        mergeController.detach()
+        await Task.yield()
+        XCTAssertEqual(mergeController.trackedTaskCountForProductProof, 0)
+        let mergeRequests = await mergeService.mergeRequests()
+        XCTAssertEqual(mergeRequests.count, 1, "Detach must cancel a queued merge retry before it starts")
+
+        let deletionService = FakeReviewMutationService(
+            workspaces: [merged],
+            mutationWorkspace: merged
+        )
+        await deletionService.failNextDeletion(with: authorizationError)
+        let deletionRecoveryOffered = expectation(description: "branch deletion recovery callback stored")
+        var deletionRetry: (@MainActor () -> Void)?
+        let deletionController = RepositoryPullRequestReviewOverlayController(
+            session: RepositoryPullRequestReviewSession(identity: fixture.identity, service: deletionService),
+            router: OverlayRecordingRouter(),
+            authorizationRecoveryHandler: { _, retry in
+                deletionRetry = retry
+                deletionRecoveryOffered.fulfill()
+                return true
+            }
+        )
+        _ = deletionController.view
+        deletionController.start()
+        await deletionService.waitForLoadCalls(1)
+        let delete = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch,
+            in: deletionController.view
+        ) as? NSButton)
+        delete.performClick(nil)
+        await waitUntil("delete confirmation") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.deleteBranch + ".Confirm",
+                in: deletionController.view
+            ) != nil
+        }
+        let deleteConfirm = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.deleteBranch + ".Confirm",
+            in: deletionController.view
+        ) as? NSButton)
+        deleteConfirm.performClick(nil)
+        await fulfillment(of: [deletionRecoveryOffered])
+        await deletionService.waitForDeletionCalls(1)
+
+        deletionController.detach()
+        deletionRetry?()
+        await Task.yield()
+        XCTAssertEqual(deletionController.trackedTaskCountForProductProof, 0)
+        let deletionRequests = await deletionService.deletionRequests()
+        XCTAssertEqual(deletionRequests.count, 1, "A detached controller must not repeat branch deletion")
     }
 
     func testMergeDeletionFailurePreservesMergeAndOffersBrowserAndSuccessfulRetry() async throws {
