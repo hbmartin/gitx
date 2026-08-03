@@ -430,11 +430,14 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
 
     private func beginPollingCycle(shouldEnrollOpenedRepository: Bool) {
         pollingTask?.cancel()
+        // Preference notifications cancel and restart this cycle, so keep one
+        // stable interval instead of re-reading a mutable preset mid-poll.
+        let activeInterval = ApplicationSettings.attentionPollingPreset.activeInterval
         pollingTask = Task { [weak self] in
             if shouldEnrollOpenedRepository, let session = self {
                 await session.enrollOpenedRepositoryForPolling()
             }
-            guard ApplicationSettings.attentionPollingPreset != .manual else { return }
+            guard let activeInterval else { return }
             while !Task.isCancelled {
                 // Reacquire the session only for one bounded poll. The task
                 // must not keep its owner alive while it sleeps indefinitely.
@@ -443,9 +446,8 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
                 } else {
                     return
                 }
-                let interval = ApplicationSettings.attentionPollingPreset.activeInterval ?? 60
                 do {
-                    try await Task.sleep(nanoseconds: UInt64(max(interval, 1) * 1_000_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(max(activeInterval, 1) * 1_000_000_000))
                 } catch {
                     return
                 }
