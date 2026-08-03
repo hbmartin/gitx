@@ -1938,6 +1938,23 @@
 	[history cleanup];
 }
 
+- (void)testRemoteBranchBaseCommitsIncludeTrackingRemoteRefs
+{
+	NSError *error = nil;
+	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/origin/main", @"HEAD" ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/origin/topic", @"HEAD" ] error:&error]), @"%@", error);
+	[self.repository reloadRefs];
+	self.repository.currentBranch = [[PBGitRevSpecifier alloc]
+		initWithRef:[PBGitRef refFromString:@"refs/remotes/origin/main"]];
+	self.repository.currentBranchFilter = kGitXLocalRemoteBranchesFilter;
+	GTOID *expectedOID = [self.repository OIDForRef:self.repository.currentBranch.ref];
+	XCTAssertNotNil(expectedOID);
+
+	PBGitHistoryList *history = [[PBGitHistoryList alloc] initWithRepository:self.repository];
+	XCTAssertEqualObjects([history baseCommits], [NSSet setWithObject:expectedOID]);
+	[history cleanup];
+}
+
 - (void)testStashLifecycleAndNewIgnoreFile
 {
 	NSError *error = nil;
