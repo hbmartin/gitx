@@ -1789,7 +1789,23 @@
 	XCTAssertEqual([[projectRevisionList valueForKey:@"loadGeneration"] unsignedIntegerValue], activeGeneration);
 
 	[history cleanup];
-	[projectRevisionList cancel];
+	projectQueue.suspended = NO;
+	[projectQueue waitUntilAllOperationsAreFinished];
+}
+
+- (void)testCleanupCancelsActiveSharedProjectHistoryLoad
+{
+	PBGitHistoryList *history = [[PBGitHistoryList alloc] initWithRepository:self.repository];
+	PBGitRevList *projectRevisionList = [history valueForKey:@"projectRevList"];
+	NSOperationQueue *projectQueue = [projectRevisionList valueForKey:@"operationQueue"];
+	projectQueue.suspended = YES;
+	[history setCurrentRevList:projectRevisionList];
+	[projectRevisionList loadRevisionsWithCompletionBlock:nil];
+	NSUInteger activeGeneration = [[projectRevisionList valueForKey:@"loadGeneration"] unsignedIntegerValue];
+
+	[history cleanup];
+	XCTAssertGreaterThan([[projectRevisionList valueForKey:@"loadGeneration"] unsignedIntegerValue], activeGeneration,
+						 @"History cleanup must cancel the active shared project revision load");
 	projectQueue.suspended = NO;
 	[projectQueue waitUntilAllOperationsAreFinished];
 }

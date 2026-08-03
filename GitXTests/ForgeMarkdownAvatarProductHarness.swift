@@ -270,7 +270,9 @@
             let originalComposition = ApplicationComposition.shared
             let originalPollingPreset = ApplicationSettings.attentionPollingPreset
             let defaultsName = "GitXCollaborationLifecycleHarness-\(UUID().uuidString)"
-            guard let defaults = UserDefaults(suiteName: defaultsName) else { return 0 }
+            guard let defaults = UserDefaults(suiteName: defaultsName) else {
+                return collaborationLifecycleFailure("create isolated user defaults")
+            }
             let root = FileManager.default.temporaryDirectory
                 .appendingPathComponent("GitXCollaborationLifecycleHarness-\(UUID().uuidString)", isDirectory: true)
             let repositoryURL = root.appendingPathComponent("repository", isDirectory: true)
@@ -290,7 +292,7 @@
                           ["remote", "add", "origin", "https://github.com/hbmartin/gitx.git"],
                           in: repositoryURL
                       )
-                else { return 0 }
+                else { return collaborationLifecycleFailure("initialize temporary repository") }
 
                 let services = try await ForgeApplicationServiceFactory.make(
                     forgeDirectory: root.appendingPathComponent("forge", isDirectory: true),
@@ -336,11 +338,11 @@
                     if let controller = unclosedController {
                         unclosedPrepared = await prepareAuthenticatedCollaboration(controller)
                     } else {
-                        return 0
+                        return collaborationLifecycleFailure("create unclosed collaboration controller")
                     }
                     guard unclosedPrepared,
                           unclosedController?.observesCredentialCooldownsForProductProof == true
-                    else { return 0 }
+                    else { return collaborationLifecycleFailure("prepare unclosed collaboration controller") }
                     weak let releasedUnclosedController = unclosedController
                     unclosedController = nil
                     let streamDoesNotRetainController = await waitForCondition {
@@ -355,11 +357,11 @@
                     if let controller = closedController {
                         closedPrepared = await prepareAuthenticatedCollaboration(controller)
                     } else {
-                        return 0
+                        return collaborationLifecycleFailure("create close-tested collaboration controller")
                     }
                     guard closedPrepared,
                           closedController?.observesCredentialCooldownsForProductProof == true
-                    else { return 0 }
+                    else { return collaborationLifecycleFailure("prepare close-tested collaboration controller") }
                     closedController?.closeView()
                     let closedGeneration = closedController?.accessPreparationGenerationForProductProof
                     let closeCancelledTasks = closedController?.accessPreparationTaskForProductProof == nil
@@ -390,7 +392,9 @@
                         repository: repository,
                         superController: nil
                     )
-                    guard let supersededView = supersededController?.view else { return 0 }
+                    guard let supersededView = supersededController?.view else {
+                        return collaborationLifecycleFailure("create superseded collaboration view")
+                    }
                     supersededController?.prepare()
                     await delayedFailure.waitUntilStarted()
                     let stalePreparation = supersededController?.accessPreparationTaskForProductProof
@@ -400,7 +404,7 @@
                     guard await waitForCollaborationStatus("Using @lifecycle-user", in: supersededView) else {
                         await delayedFailure.release()
                         supersededController?.closeView()
-                        return 0
+                        return collaborationLifecycleFailure("replace superseded collaboration preparation")
                     }
                     await delayedFailure.release()
                     await stalePreparation?.value
@@ -415,19 +419,24 @@
                     supersededController?.closeView()
                     supersededController = nil
 
-                    let conditions = [
-                        streamDoesNotRetainController,
-                        closeCancelledTasks && closeIgnoredAccountChanges && closedControllerReleased,
-                        lateFailureWasIgnored,
+                    let conditions: [(stage: String, passed: Bool)] = [
+                        ("credential stream releases controller", streamDoesNotRetainController),
+                        (
+                            "close cancels tasks, ignores notifications, and releases controller",
+                            closeCancelledTasks && closeIgnoredAccountChanges && closedControllerReleased
+                        ),
+                        ("late preparation failure is ignored", lateFailureWasIgnored),
                     ]
                     return conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
-                        if condition.element {
+                        if condition.element.passed {
                             proof |= UInt64(1) << UInt64(condition.offset)
+                        } else {
+                            logCollaborationLifecycleFailure(condition.element.stage)
                         }
                     }
                 }
             } catch {
-                return 0
+                return collaborationLifecycleFailure("construct collaboration lifecycle proof", error: error)
             }
         }
 
@@ -439,11 +448,27 @@
             do {
                 proof = try await operation()
             } catch {
-                proof = 0
+                proof = collaborationLifecycleFailure("run collaboration lifecycle services", error: error)
             }
             await services.refreshCoordinator?.invalidate()
             await services.database?.close()
             return proof
+        }
+
+        private static func collaborationLifecycleFailure(
+            _ stage: String,
+            error: (any Error)? = nil
+        ) -> UInt64 {
+            logCollaborationLifecycleFailure(stage, error: error)
+            return 0
+        }
+
+        private static func logCollaborationLifecycleFailure(
+            _ stage: String,
+            error: (any Error)? = nil
+        ) {
+            let detail = error.map { ": \($0.localizedDescription)" } ?? ""
+            NSLog("[GitX] Collaboration lifecycle proof failed at \(stage)\(detail)")
         }
 
         private static func prepareAuthenticatedCollaboration(

@@ -765,6 +765,10 @@ public actor ForgeSQLiteAttentionPersistence {
         }
     }
 
+    /// Atomically persists a complete reconciliation, creating its watched-repository row when absent.
+    ///
+    /// This method intentionally has upsert semantics for bootstrap and import callers. Repository refreshes use
+    /// the package's guarded reconciliation path so a concurrent unwatch cannot be recreated.
     public func persist(_ reconciliation: ForgeAttentionReconciliation) async throws {
         try await store.updateAttention(reconciliation.watchedRepository.key) { state in
             let mergedWatch: ForgeWatchedRepository

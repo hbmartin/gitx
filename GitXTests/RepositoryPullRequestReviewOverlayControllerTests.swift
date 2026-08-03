@@ -1226,9 +1226,12 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
 
         confirm.performClick(nil)
         await service.waitForMergeCalls(2)
+        let taskCountBeforeOverlapRetry = controller.trackedTaskCountForProductProof
+        XCTAssertGreaterThan(taskCountBeforeOverlapRetry, 0)
         retryAction?()
-        for _ in 0 ..< 20 {
-            await Task.yield()
+        XCTAssertEqual(controller.trackedTaskCountForProductProof, taskCountBeforeOverlapRetry + 1)
+        await waitUntil("overlapping recovery retry to self-prune") {
+            controller.trackedTaskCountForProductProof == taskCountBeforeOverlapRetry
         }
 
         let mergeRequests = await service.mergeRequests()
@@ -1242,9 +1245,13 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
                 in: controller.view
             ) == nil
         }
+        await waitUntil("replacement merge task to self-prune") {
+            controller.trackedTaskCountForProductProof == 0
+        }
         retryAction?()
-        for _ in 0 ..< 20 {
-            await Task.yield()
+        XCTAssertEqual(controller.trackedTaskCountForProductProof, 1)
+        await waitUntil("obsolete recovery retry to self-prune") {
+            controller.trackedTaskCountForProductProof == 0
         }
         let requestsAfterObsoleteRetry = await service.mergeRequests()
         XCTAssertEqual(requestsAfterObsoleteRetry.count, 2)
