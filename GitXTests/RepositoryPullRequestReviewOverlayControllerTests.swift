@@ -1349,6 +1349,59 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         XCTAssertEqual(deletionRequests.count, 1, "A detached controller must not repeat branch deletion")
     }
 
+    func testCancelledDestructiveConfirmationDoesNotOfferAuthorizationRecovery() async throws {
+        let fixture = try ReviewAppFixture()
+        let open = try fixture.workspace(deletion: true)
+        let merged = try fixture.workspace(state: .merged, deletion: true)
+        let service = FakeReviewMutationService(
+            workspaces: [open],
+            mutationWorkspace: merged,
+            freshMergeSnapshots: [open.mergeSnapshot, open.mergeSnapshot]
+        )
+        await service.failNextMerge(with: CancellationError())
+        var authorizationRecoveryOfferCount = 0
+        let controller = RepositoryPullRequestReviewOverlayController(
+            session: RepositoryPullRequestReviewSession(identity: fixture.identity, service: service),
+            router: OverlayRecordingRouter(),
+            authorizationRecoveryHandler: { _, _ in
+                authorizationRecoveryOfferCount += 1
+                return true
+            }
+        )
+        _ = controller.view
+        controller.start()
+        await service.waitForLoadCalls(1)
+        let merge = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.merge,
+            in: controller.view
+        ) as? NSButton)
+        merge.performClick(nil)
+        await waitUntil("merge confirmation") {
+            self.descendant(
+                identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+                in: controller.view
+            ) != nil
+        }
+        let confirm = try XCTUnwrap(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+            in: controller.view
+        ) as? NSButton)
+
+        confirm.performClick(nil)
+        await service.waitForMergeCalls(1)
+        await waitUntil("cancelled destructive task to self-prune") {
+            controller.trackedTaskCountForProductProof == 0
+        }
+
+        XCTAssertEqual(authorizationRecoveryOfferCount, 0)
+        XCTAssertTrue(confirm.isEnabled)
+        XCTAssertNotNil(descendant(
+            identifier: RepositoryPullRequestReviewAccessibility.mergeConfirm,
+            in: controller.view
+        ))
+        controller.detach()
+    }
+
     func testMergeDeletionFailurePreservesMergeAndOffersBrowserAndSuccessfulRetry() async throws {
         let fixture = try ReviewAppFixture()
         let open = try fixture.workspace(deletion: true)
