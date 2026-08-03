@@ -97,8 +97,10 @@
 			[currentRevList cancel];
 		currentRevList = nil;
 	}
+	BOOL projectLoadWasActive = projectRevList.isParsing;
 	[projectRevList cancel];
-	NSLog(@"[GitX] Cancelled project history during cleanup");
+	if (projectLoadWasActive)
+		NSLog(@"[GitX] Cancelled an active project history load during cleanup");
 	[graphQueue cancelAllOperations];
 }
 

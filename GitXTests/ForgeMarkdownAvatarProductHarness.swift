@@ -419,7 +419,7 @@
                     supersededController?.closeView()
                     supersededController = nil
 
-                    let conditions: [(stage: String, passed: Bool)] = [
+                    let conditions: [(condition: String, passed: Bool)] = [
                         ("credential stream releases controller", streamDoesNotRetainController),
                         (
                             "close cancels tasks, ignores notifications, and releases controller",
@@ -431,7 +431,7 @@
                         if condition.element.passed {
                             proof |= UInt64(1) << UInt64(condition.offset)
                         } else {
-                            logCollaborationLifecycleFailure(condition.element.stage)
+                            logCollaborationLifecycleFailure(condition.element.condition)
                         }
                     }
                 }
@@ -578,10 +578,8 @@
                 .appendingPathComponent("GitXWindowRecoveryHarness-\(UUID().uuidString)", isDirectory: true)
             let forgeRoot = root.appendingPathComponent("Forge", isDirectory: true)
             let repositoryURL = root.appendingPathComponent("Repository", isDirectory: true)
-            var recoveryServices: ForgeApplicationServices?
             var controller: PBGitWindowController?
             defer {
-                controller?.repositoryForgeOverlaySession?.invalidate()
                 ApplicationComposition.setSharedComposition(originalComposition)
                 defaults.removePersistentDomain(forName: defaultsName)
                 try? FileManager.default.removeItem(at: root)
@@ -608,160 +606,163 @@
                     )
                 }
                 let loadedRecoveryServices = try await recoveryLoader.services()
-                recoveryServices = loadedRecoveryServices
-                guard let retainedRecoveryCopy = loadedRecoveryServices.dataAvailability.recoveryCopy else {
-                    return 0
-                }
-                ApplicationComposition.setSharedComposition(ApplicationComposition(
-                    userDefaults: defaults,
-                    forgeServices: recoveryLoader,
-                    automaticallyStartsForgeServices: false
-                ))
-
-                let window = NSWindow(
-                    contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
-                    styleMask: [.titled, .closable],
-                    backing: .buffered,
-                    defer: false
-                )
-                let madeController = PBGitWindowController(window: window)
-                controller = madeController
-                let repository = try PBGitRepository(url: repositoryURL)
-                let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
-                let identity = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
-                ApplicationComposition.shared.repositoryViewState(for: repository)
-                    .forgeRepositoryBinding = try ForgeRepositoryBinding(
-                        localRemoteName: "origin",
-                        primaryRepository: identity
-                    )
-                madeController.repository = repository
-                madeController.ensureActionCoordinators()
-                madeController.installRepositoryForgeOverlaySession()
-                guard await waitForCondition({
-                    madeController.repositoryForgeOverlaySession?.recoveryCopy == retainedRecoveryCopy
-                }) else { return 0 }
-
-                var proof: UInt64 = 0
-                var revealedRecoveryCopy: URL?
-                madeController.presentForgeStatusDetails(.recoverForgeData) { url in
-                    revealedRecoveryCopy = url
-                }
-                guard let discoverySheet = await waitForAttachedSheet(on: window) else { return proof }
-                await respond(
-                    to: discoverySheet,
-                    on: window,
-                    with: recoveryResponse(offset: 3)
-                )
-                if await waitForNoAttachedSheet(on: window),
-                   await waitForCondition({
-                       revealedRecoveryCopy?.resolvingSymlinksInPath()
-                           == retainedRecoveryCopy.url.resolvingSymlinksInPath()
-                   })
-                {
-                    proof |= 1 << 0
-                }
-
-                let failingLoader = ForgeApplicationServiceLoader {
-                    throw HarnessStartupFailure.expected
-                }
-                ApplicationComposition.setSharedComposition(ApplicationComposition(
-                    userDefaults: defaults,
-                    forgeServices: failingLoader,
-                    automaticallyStartsForgeServices: false
-                ))
-
-                madeController.presentForgeStatusDetails(
-                    .recoverForgeData,
-                    recoveryCopyOverride: retainedRecoveryCopy
-                )
-                if let retrySheet = await waitForAttachedSheet(on: window) {
-                    await respond(to: retrySheet, on: window, with: recoveryResponse(offset: 0))
-                    if let failure = await waitForAttachedSheet(on: window, excluding: retrySheet) {
-                        proof |= 1 << 1
-                        await dismiss(failure, from: window)
+                return await withCollaborationLifecycleServices(loadedRecoveryServices) {
+                    defer {
+                        controller?.repositoryForgeOverlaySession?.invalidate()
+                        controller = nil
                     }
-                }
+                    guard let retainedRecoveryCopy = loadedRecoveryServices.dataAvailability.recoveryCopy else {
+                        return 0
+                    }
+                    ApplicationComposition.setSharedComposition(ApplicationComposition(
+                        userDefaults: defaults,
+                        forgeServices: recoveryLoader,
+                        automaticallyStartsForgeServices: false
+                    ))
 
-                let sessionlessWindow = NSWindow(
-                    contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
-                    styleMask: [.titled],
-                    backing: .buffered,
-                    defer: false
-                )
-                let sessionlessController = PBGitWindowController(window: sessionlessWindow)
-                sessionlessController.presentForgeStatusDetails(.recoverForgeData)
-                if let missingCopySheet = await waitForAttachedSheet(on: sessionlessWindow) {
+                    let window = NSWindow(
+                        contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+                        styleMask: [.titled, .closable],
+                        backing: .buffered,
+                        defer: false
+                    )
+                    let madeController = PBGitWindowController(window: window)
+                    controller = madeController
+                    let repository = try PBGitRepository(url: repositoryURL)
+                    let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+                    let identity = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
+                    ApplicationComposition.shared.repositoryViewState(for: repository)
+                        .forgeRepositoryBinding = try ForgeRepositoryBinding(
+                            localRemoteName: "origin",
+                            primaryRepository: identity
+                        )
+                    madeController.repository = repository
+                    madeController.ensureActionCoordinators()
+                    madeController.installRepositoryForgeOverlaySession()
+                    guard await waitForCondition({
+                        madeController.repositoryForgeOverlaySession?.recoveryCopy == retainedRecoveryCopy
+                    }) else { return 0 }
+
+                    var proof: UInt64 = 0
+                    var revealedRecoveryCopy: URL?
+                    madeController.presentForgeStatusDetails(.recoverForgeData) { url in
+                        revealedRecoveryCopy = url
+                    }
+                    guard let discoverySheet = await waitForAttachedSheet(on: window) else { return proof }
                     await respond(
-                        to: missingCopySheet,
-                        on: sessionlessWindow,
-                        with: recoveryResponse(offset: 4)
+                        to: discoverySheet,
+                        on: window,
+                        with: recoveryResponse(offset: 3)
                     )
-                    if await waitForNoAttachedSheet(on: sessionlessWindow) {
-                        proof |= 1 << 2
+                    if await waitForNoAttachedSheet(on: window),
+                       await waitForCondition({
+                           revealedRecoveryCopy?.resolvingSymlinksInPath()
+                               == retainedRecoveryCopy.url.resolvingSymlinksInPath()
+                       })
+                    {
+                        proof |= 1 << 0
                     }
-                }
 
-                madeController.presentForgeStatusDetails(
-                    .recoverForgeData,
-                    recoveryCopyOverride: retainedRecoveryCopy
-                )
-                if let resetChoice = await waitForAttachedSheet(on: window) {
-                    await respond(to: resetChoice, on: window, with: recoveryResponse(offset: 1))
-                    if let confirmation = await waitForAttachedSheet(on: window, excluding: resetChoice) {
-                        await respond(to: confirmation, on: window, with: .alertSecondButtonReturn)
-                        if await waitForNoAttachedSheet(on: window) {
-                            proof |= 1 << 3
-                        }
+                    let failingLoader = ForgeApplicationServiceLoader {
+                        throw HarnessStartupFailure.expected
                     }
-                }
+                    ApplicationComposition.setSharedComposition(ApplicationComposition(
+                        userDefaults: defaults,
+                        forgeServices: failingLoader,
+                        automaticallyStartsForgeServices: false
+                    ))
 
-                madeController.presentForgeStatusDetails(
-                    .recoverForgeData,
-                    recoveryCopyOverride: retainedRecoveryCopy
-                )
-                if let resetChoice = await waitForAttachedSheet(on: window) {
-                    await respond(to: resetChoice, on: window, with: recoveryResponse(offset: 1))
-                    if let confirmation = await waitForAttachedSheet(on: window, excluding: resetChoice) {
-                        await respond(to: confirmation, on: window, with: .alertFirstButtonReturn)
-                        if let failure = await waitForAttachedSheet(on: window, excluding: confirmation) {
-                            proof |= 1 << 4
+                    madeController.presentForgeStatusDetails(
+                        .recoverForgeData,
+                        recoveryCopyOverride: retainedRecoveryCopy
+                    )
+                    if let retrySheet = await waitForAttachedSheet(on: window) {
+                        await respond(to: retrySheet, on: window, with: recoveryResponse(offset: 0))
+                        if let failure = await waitForAttachedSheet(on: window, excluding: retrySheet) {
+                            proof |= 1 << 1
                             await dismiss(failure, from: window)
                         }
                     }
-                }
 
-                madeController.presentForgeStatusDetails(
-                    .recoverForgeData,
-                    recoveryCopyOverride: retainedRecoveryCopy
-                )
-                if let notNow = await waitForAttachedSheet(on: window) {
-                    await respond(to: notNow, on: window, with: recoveryResponse(offset: 2))
-                    if await waitForCondition({
-                        if case .sessionDisabled = try? await failingLoader.overlayServices() {
-                            return true
+                    let sessionlessWindow = NSWindow(
+                        contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+                        styleMask: [.titled],
+                        backing: .buffered,
+                        defer: false
+                    )
+                    let sessionlessController = PBGitWindowController(window: sessionlessWindow)
+                    sessionlessController.presentForgeStatusDetails(.recoverForgeData)
+                    if let missingCopySheet = await waitForAttachedSheet(on: sessionlessWindow) {
+                        await respond(
+                            to: missingCopySheet,
+                            on: sessionlessWindow,
+                            with: recoveryResponse(offset: 4)
+                        )
+                        if await waitForNoAttachedSheet(on: sessionlessWindow) {
+                            proof |= 1 << 2
                         }
-                        return false
-                    }) {
-                        proof |= 1 << 5
                     }
-                }
 
-                madeController.presentForgeStatusDetails(
-                    .recoverForgeData,
-                    recoveryCopyOverride: retainedRecoveryCopy
-                )
-                if let delete = await waitForAttachedSheet(on: window) {
-                    await respond(to: delete, on: window, with: recoveryResponse(offset: 4))
-                    if let failure = await waitForAttachedSheet(on: window, excluding: delete) {
-                        proof |= 1 << 6
-                        await dismiss(failure, from: window)
+                    madeController.presentForgeStatusDetails(
+                        .recoverForgeData,
+                        recoveryCopyOverride: retainedRecoveryCopy
+                    )
+                    if let resetChoice = await waitForAttachedSheet(on: window) {
+                        await respond(to: resetChoice, on: window, with: recoveryResponse(offset: 1))
+                        if let confirmation = await waitForAttachedSheet(on: window, excluding: resetChoice) {
+                            await respond(to: confirmation, on: window, with: .alertSecondButtonReturn)
+                            if await waitForNoAttachedSheet(on: window) {
+                                proof |= 1 << 3
+                            }
+                        }
                     }
-                }
 
-                await loadedRecoveryServices.refreshCoordinator?.invalidate()
-                return proof
+                    madeController.presentForgeStatusDetails(
+                        .recoverForgeData,
+                        recoveryCopyOverride: retainedRecoveryCopy
+                    )
+                    if let resetChoice = await waitForAttachedSheet(on: window) {
+                        await respond(to: resetChoice, on: window, with: recoveryResponse(offset: 1))
+                        if let confirmation = await waitForAttachedSheet(on: window, excluding: resetChoice) {
+                            await respond(to: confirmation, on: window, with: .alertFirstButtonReturn)
+                            if let failure = await waitForAttachedSheet(on: window, excluding: confirmation) {
+                                proof |= 1 << 4
+                                await dismiss(failure, from: window)
+                            }
+                        }
+                    }
+
+                    madeController.presentForgeStatusDetails(
+                        .recoverForgeData,
+                        recoveryCopyOverride: retainedRecoveryCopy
+                    )
+                    if let notNow = await waitForAttachedSheet(on: window) {
+                        await respond(to: notNow, on: window, with: recoveryResponse(offset: 2))
+                        if await waitForCondition({
+                            if case .sessionDisabled = try? await failingLoader.overlayServices() {
+                                return true
+                            }
+                            return false
+                        }) {
+                            proof |= 1 << 5
+                        }
+                    }
+
+                    madeController.presentForgeStatusDetails(
+                        .recoverForgeData,
+                        recoveryCopyOverride: retainedRecoveryCopy
+                    )
+                    if let delete = await waitForAttachedSheet(on: window) {
+                        await respond(to: delete, on: window, with: recoveryResponse(offset: 4))
+                        if let failure = await waitForAttachedSheet(on: window, excluding: delete) {
+                            proof |= 1 << 6
+                            await dismiss(failure, from: window)
+                        }
+                    }
+
+                    return proof
+                }
             } catch {
-                await recoveryServices?.refreshCoordinator?.invalidate()
                 return 0
             }
         }
@@ -810,7 +811,6 @@
                 && attentionViewStateRoundTrips
 
             var sidebar: PBGitSidebarController?
-            var services: ForgeApplicationServices?
             do {
                 try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
                 guard runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL),
@@ -828,193 +828,186 @@
                     keychain: HarnessForgeKeychain(),
                     cliRunner: HarnessForgeCLIRunner()
                 )
-                services = madeServices
-                let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
-                let accountID = try ForgeAccountID(forge: forge, value: "sidebar-attention-account")
-                let account = try await madeServices.addAccountCoordinator.addPersonalAccessToken(
-                    accountID: accountID,
-                    login: "sidebar-user",
-                    credentialID: ForgeCredentialID("sidebar-attention-pat"),
-                    kind: .fineGrained,
-                    token: Data("sidebar-token".utf8),
-                    expiresAt: nil
-                )
-                let alternateAccountID = try ForgeAccountID(
-                    forge: forge,
-                    value: "sidebar-attention-alternate-account"
-                )
-                let alternateAccount = try await madeServices.addAccountCoordinator.addPersonalAccessToken(
-                    accountID: alternateAccountID,
-                    login: "zz-alternate-user",
-                    credentialID: ForgeCredentialID("sidebar-attention-alternate-pat"),
-                    kind: .fineGrained,
-                    token: Data("sidebar-alternate-token".utf8),
-                    expiresAt: nil
-                )
-                _ = try madeServices.githubReadAdapterFactory.makeMutationAdapter(
-                    for: account.currentCredential.reference
-                )
-                var unsafeRequestRejected = false
-                if let unsafeURL = URL(string: "http://api.github.com/user") {
-                    do {
-                        _ = try await madeServices.githubReadAdapterFactory.authorizedRequest(
-                            URLRequest(url: unsafeURL),
-                            for: account.currentCredential.reference
-                        )
-                    } catch let error as ForgeGitHubReadCompositionError {
-                        unsafeRequestRejected = error == .githubDotComCredentialRequired
+                return await withCollaborationLifecycleServices(madeServices) {
+                    defer {
+                        sidebar?.closeView()
+                        sidebar = nil
+                    }
+                    let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+                    let accountID = try ForgeAccountID(forge: forge, value: "sidebar-attention-account")
+                    let account = try await madeServices.addAccountCoordinator.addPersonalAccessToken(
+                        accountID: accountID,
+                        login: "sidebar-user",
+                        credentialID: ForgeCredentialID("sidebar-attention-pat"),
+                        kind: .fineGrained,
+                        token: Data("sidebar-token".utf8),
+                        expiresAt: nil
+                    )
+                    let alternateAccountID = try ForgeAccountID(
+                        forge: forge,
+                        value: "sidebar-attention-alternate-account"
+                    )
+                    let alternateAccount = try await madeServices.addAccountCoordinator.addPersonalAccessToken(
+                        accountID: alternateAccountID,
+                        login: "zz-alternate-user",
+                        credentialID: ForgeCredentialID("sidebar-attention-alternate-pat"),
+                        kind: .fineGrained,
+                        token: Data("sidebar-alternate-token".utf8),
+                        expiresAt: nil
+                    )
+                    _ = try madeServices.githubReadAdapterFactory.makeMutationAdapter(
+                        for: account.currentCredential.reference
+                    )
+                    var unsafeRequestRejected = false
+                    if let unsafeURL = URL(string: "http://api.github.com/user") {
+                        do {
+                            _ = try await madeServices.githubReadAdapterFactory.authorizedRequest(
+                                URLRequest(url: unsafeURL),
+                                for: account.currentCredential.reference
+                            )
+                        } catch let error as ForgeGitHubReadCompositionError {
+                            unsafeRequestRejected = error == .githubDotComCredentialRequired
+                        }
+                    }
+                    let githubReadFactoryProof = unsafeRequestRejected
+                    ApplicationComposition.setSharedComposition(ApplicationComposition(
+                        userDefaults: defaults,
+                        forgeServices: ForgeApplicationServiceLoader { madeServices },
+                        automaticallyStartsForgeServices: false
+                    ))
+
+                    let repository = try PBGitRepository(url: repositoryURL)
+                    let identity = try ForgeRepositoryIdentity(
+                        forge: forge,
+                        owner: "hbmartin",
+                        name: "gitx"
+                    )
+                    let binding = try ForgeRepositoryBinding(
+                        localRemoteName: "origin",
+                        primaryRepository: identity,
+                        preferredAccount: accountID
+                    )
+                    ApplicationComposition.shared.repositoryViewState(for: repository)
+                        .forgeRepositoryBinding = binding
+                    let sessionBehavior = try await exerciseAttentionSession(
+                        account: account,
+                        repositoryIdentity: identity,
+                        repositoryObject: repository,
+                        services: madeServices
+                    )
+                    let unboundCollaborationBehavior = try exerciseUnboundCollaboration(
+                        at: root.appendingPathComponent("unbound", isDirectory: true),
+                        destinationRepository: identity
+                    )
+                    let windowController = PBGitWindowController()
+                    windowController.repository = repository
+                    let boundCollaborationProof = await exerciseBoundCollaboration(
+                        repository: repository,
+                        windowController: windowController,
+                        identity: identity,
+                        account: account,
+                        alternateAccount: alternateAccount,
+                        services: madeServices,
+                        binding: binding
+                    )
+                    guard let madeSidebar = PBGitSidebarController(
+                        repository: repository,
+                        superController: windowController
+                    ) else {
+                        return 0
+                    }
+                    sidebar = madeSidebar
+                    _ = madeSidebar.view
+
+                    let authenticated = await waitForSidebarItem(titled: "Attention", in: madeSidebar)
+                    let roots = madeSidebar.items.compactMap { $0 as? PBSourceViewItem }
+                    guard authenticated,
+                          let attention = sidebarItem(titled: "Attention", in: roots),
+                          let pullRequests = sidebarItem(titled: "Pull Requests", in: roots),
+                          let outline = madeSidebar.sourceView,
+                          let tableColumn = outline.tableColumns.first
+                    else {
+                        return 0
+                    }
+
+                    NotificationCenter.default.post(
+                        name: .repositoryAttentionUnseenDidChange,
+                        object: repository,
+                        userInfo: [RepositoryAttentionNotificationKey.count: 3]
+                    )
+                    let attentionCell = madeSidebar.outlineView(
+                        outline,
+                        viewFor: tableColumn,
+                        item: attention
+                    ) as? NSTableCellView
+                    let attentionBadge = attentionCell?.subviews.first {
+                        $0.identifier?.rawValue == "PBForgeAttentionBadgeIdentifier"
+                    } as? NSTextField
+                    let pullRequestCell = madeSidebar.outlineView(
+                        outline,
+                        viewFor: tableColumn,
+                        item: pullRequests
+                    ) as? NSTableCellView
+                    let pullRequestBadge = pullRequestCell?.subviews.first {
+                        $0.identifier?.rawValue == "PBForgeAttentionBadgeIdentifier"
+                    } as? NSTextField
+
+                    NotificationCenter.default.post(
+                        name: .repositoryAttentionUnseenDidChange,
+                        object: repository,
+                        userInfo: [RepositoryAttentionNotificationKey.count: -4]
+                    )
+                    let emptyCell = madeSidebar.outlineView(
+                        outline,
+                        viewFor: tableColumn,
+                        item: attention
+                    ) as? NSTableCellView
+                    let emptyBadge = emptyCell?.subviews.first {
+                        $0.identifier?.rawValue == "PBForgeAttentionBadgeIdentifier"
+                    } as? NSTextField
+
+                    madeSidebar.showForgeAttention(nil)
+                    let collaborationController = windowController.value(
+                        forKey: "contentController"
+                    ) as? RepositoryForgeCollaborationController
+                    let publicButton = collaborationController.flatMap {
+                        descendant(
+                            identifier: "ForgeCollaborationContinuePublicly",
+                            in: $0.view
+                        ) as? NSButton
+                    }
+                    publicButton?.performClick(nil)
+                    let publicFallbackSelected = madeSidebar.selectedItem()?.title == "Pull Requests"
+                        && sidebarItem(titled: "Attention", in: madeSidebar.items.compactMap {
+                            $0 as? PBSourceViewItem
+                        }) == nil
+                    let conditions = [
+                        authenticated,
+                        attention.icon != nil,
+                        attentionCell?.accessibilityIdentifier() == "RepositoryForgeSidebarItem",
+                        attentionCell?.accessibilityLabel() == "Attention, 3 unseen Attention items",
+                        attentionBadge?.stringValue == "3",
+                        attentionBadge?.isHidden == false,
+                        attentionBadge?.accessibilityLabel() == "Attention, 3 unseen Attention items",
+                        pullRequestBadge?.isHidden == true,
+                        emptyBadge?.isHidden == true,
+                        emptyCell?.accessibilityLabel() == "Attention, No unseen Attention items",
+                        sessionBehavior,
+                        unboundCollaborationBehavior,
+                        boundCollaborationProof.baseline,
+                        boundCollaborationProof.collaborationCooldown,
+                        boundCollaborationProof.toolbarCooldown
+                            && publicFallbackSelected
+                            && settingsPersistenceProof
+                            && githubReadFactoryProof,
+                    ]
+                    return conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
+                        if condition.element {
+                            proof |= UInt64(1) << UInt64(condition.offset)
+                        }
                     }
                 }
-                let githubReadFactoryProof = unsafeRequestRejected
-                ApplicationComposition.setSharedComposition(ApplicationComposition(
-                    userDefaults: defaults,
-                    forgeServices: ForgeApplicationServiceLoader { madeServices },
-                    automaticallyStartsForgeServices: false
-                ))
-
-                let repository = try PBGitRepository(url: repositoryURL)
-                let identity = try ForgeRepositoryIdentity(
-                    forge: forge,
-                    owner: "hbmartin",
-                    name: "gitx"
-                )
-                let binding = try ForgeRepositoryBinding(
-                    localRemoteName: "origin",
-                    primaryRepository: identity,
-                    preferredAccount: accountID
-                )
-                ApplicationComposition.shared.repositoryViewState(for: repository)
-                    .forgeRepositoryBinding = binding
-                let sessionBehavior = try await exerciseAttentionSession(
-                    account: account,
-                    repositoryIdentity: identity,
-                    repositoryObject: repository,
-                    services: madeServices
-                )
-                let unboundCollaborationBehavior = try exerciseUnboundCollaboration(
-                    at: root.appendingPathComponent("unbound", isDirectory: true),
-                    destinationRepository: identity
-                )
-                let windowController = PBGitWindowController()
-                windowController.repository = repository
-                let boundCollaborationProof = await exerciseBoundCollaboration(
-                    repository: repository,
-                    windowController: windowController,
-                    identity: identity,
-                    account: account,
-                    alternateAccount: alternateAccount,
-                    services: madeServices,
-                    binding: binding
-                )
-                guard let madeSidebar = PBGitSidebarController(
-                    repository: repository,
-                    superController: windowController
-                ) else {
-                    await madeServices.refreshCoordinator?.invalidate()
-                    await madeServices.database?.close()
-                    return 0
-                }
-                sidebar = madeSidebar
-                _ = madeSidebar.view
-
-                let authenticated = await waitForSidebarItem(titled: "Attention", in: madeSidebar)
-                let roots = madeSidebar.items.compactMap { $0 as? PBSourceViewItem }
-                guard authenticated,
-                      let attention = sidebarItem(titled: "Attention", in: roots),
-                      let pullRequests = sidebarItem(titled: "Pull Requests", in: roots),
-                      let outline = madeSidebar.sourceView,
-                      let tableColumn = outline.tableColumns.first
-                else {
-                    madeSidebar.closeView()
-                    await madeServices.refreshCoordinator?.invalidate()
-                    await madeServices.database?.close()
-                    return 0
-                }
-
-                NotificationCenter.default.post(
-                    name: .repositoryAttentionUnseenDidChange,
-                    object: repository,
-                    userInfo: [RepositoryAttentionNotificationKey.count: 3]
-                )
-                let attentionCell = madeSidebar.outlineView(
-                    outline,
-                    viewFor: tableColumn,
-                    item: attention
-                ) as? NSTableCellView
-                let attentionBadge = attentionCell?.subviews.first {
-                    $0.identifier?.rawValue == "PBForgeAttentionBadgeIdentifier"
-                } as? NSTextField
-                let pullRequestCell = madeSidebar.outlineView(
-                    outline,
-                    viewFor: tableColumn,
-                    item: pullRequests
-                ) as? NSTableCellView
-                let pullRequestBadge = pullRequestCell?.subviews.first {
-                    $0.identifier?.rawValue == "PBForgeAttentionBadgeIdentifier"
-                } as? NSTextField
-
-                NotificationCenter.default.post(
-                    name: .repositoryAttentionUnseenDidChange,
-                    object: repository,
-                    userInfo: [RepositoryAttentionNotificationKey.count: -4]
-                )
-                let emptyCell = madeSidebar.outlineView(
-                    outline,
-                    viewFor: tableColumn,
-                    item: attention
-                ) as? NSTableCellView
-                let emptyBadge = emptyCell?.subviews.first {
-                    $0.identifier?.rawValue == "PBForgeAttentionBadgeIdentifier"
-                } as? NSTextField
-
-                madeSidebar.showForgeAttention(nil)
-                let collaborationController = windowController.value(
-                    forKey: "contentController"
-                ) as? RepositoryForgeCollaborationController
-                let publicButton = collaborationController.flatMap {
-                    descendant(
-                        identifier: "ForgeCollaborationContinuePublicly",
-                        in: $0.view
-                    ) as? NSButton
-                }
-                publicButton?.performClick(nil)
-                let publicFallbackSelected = madeSidebar.selectedItem()?.title == "Pull Requests"
-                    && sidebarItem(titled: "Attention", in: madeSidebar.items.compactMap {
-                        $0 as? PBSourceViewItem
-                    }) == nil
-                let conditions = [
-                    authenticated,
-                    attention.icon != nil,
-                    attentionCell?.accessibilityIdentifier() == "RepositoryForgeSidebarItem",
-                    attentionCell?.accessibilityLabel() == "Attention, 3 unseen Attention items",
-                    attentionBadge?.stringValue == "3",
-                    attentionBadge?.isHidden == false,
-                    attentionBadge?.accessibilityLabel() == "Attention, 3 unseen Attention items",
-                    pullRequestBadge?.isHidden == true,
-                    emptyBadge?.isHidden == true,
-                    emptyCell?.accessibilityLabel() == "Attention, No unseen Attention items",
-                    sessionBehavior,
-                    unboundCollaborationBehavior,
-                    boundCollaborationProof.baseline,
-                    boundCollaborationProof.collaborationCooldown,
-                    boundCollaborationProof.toolbarCooldown
-                        && publicFallbackSelected
-                        && settingsPersistenceProof
-                        && githubReadFactoryProof,
-                ]
-                let proof = conditions.enumerated().reduce(into: UInt64(0)) { proof, condition in
-                    if condition.element {
-                        proof |= UInt64(1) << UInt64(condition.offset)
-                    }
-                }
-                madeSidebar.closeView()
-                await madeServices.refreshCoordinator?.invalidate()
-                await madeServices.database?.close()
-                return proof
             } catch {
-                sidebar?.closeView()
-                await services?.refreshCoordinator?.invalidate()
-                await services?.database?.close()
                 return 0
             }
         }
@@ -1548,6 +1541,7 @@
             let firstResponder = controller.firstResponder()
             let conditions = [
                 view.accessibilityIdentifier() == "RepositoryForgeCollaboration",
+                controller.sidebarRepositories.isEmpty,
                 gateway != nil,
                 status?.stringValue == "Resolving repository access…",
                 firstResponder != nil,

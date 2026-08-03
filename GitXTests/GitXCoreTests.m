@@ -1938,20 +1938,42 @@
 	[history cleanup];
 }
 
-- (void)testRemoteBranchBaseCommitsIncludeTrackingRemoteRefs
+- (void)testRemoteBranchBaseCommitsIncludeOnlyTheSelectedRemotesTrackingRefs
 {
 	NSError *error = nil;
-	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/origin/main", @"HEAD" ] error:&error]), @"%@", error);
-	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/origin/topic", @"HEAD" ] error:&error]), @"%@", error);
+	NSString *headSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(headSHA, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"origin main\n" toPath:@"origin-main.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"origin main" error:&error], @"%@", error);
+	NSString *originMainSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(originMainSHA, @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"origin topic\n" toPath:@"origin-topic.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"origin topic" error:&error], @"%@", error);
+	NSString *originTopicSHA = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	XCTAssertNotNil(originTopicSHA, @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"reset", @"--hard", @"--quiet", headSHA ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/origin/main", originMainSHA ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/origin/topic", originTopicSHA ] error:&error]), @"%@", error);
+	XCTAssertNotNil(([self.fixture git:@[ @"update-ref", @"refs/remotes/upstream/main", headSHA ] error:&error]), @"%@", error);
 	[self.repository reloadRefs];
 	self.repository.currentBranch = [[PBGitRevSpecifier alloc]
 		initWithRef:[PBGitRef refFromString:@"refs/remotes/origin/main"]];
 	self.repository.currentBranchFilter = kGitXLocalRemoteBranchesFilter;
-	GTOID *expectedOID = [self.repository OIDForRef:self.repository.currentBranch.ref];
-	XCTAssertNotNil(expectedOID);
+	GTOID *originMainOID = [self.repository OIDForRef:self.repository.currentBranch.ref];
+	GTOID *originTopicOID = [self.repository OIDForRef:[PBGitRef refFromString:@"refs/remotes/origin/topic"]];
+	GTOID *upstreamMainOID = [self.repository OIDForRef:[PBGitRef refFromString:@"refs/remotes/upstream/main"]];
+	XCTAssertNotNil(originMainOID);
+	XCTAssertNotNil(originTopicOID);
+	XCTAssertNotNil(upstreamMainOID);
+	XCTAssertNotEqualObjects(originMainOID, originTopicOID);
+	XCTAssertNotEqualObjects(originMainOID, upstreamMainOID);
+	NSSet<GTOID *> *expectedOIDs = [NSSet setWithObjects:originMainOID, originTopicOID, nil];
 
 	PBGitHistoryList *history = [[PBGitHistoryList alloc] initWithRepository:self.repository];
-	XCTAssertEqualObjects([history baseCommits], [NSSet setWithObject:expectedOID]);
+	XCTAssertEqualObjects([history baseCommits], expectedOIDs);
 	[history cleanup];
 }
 

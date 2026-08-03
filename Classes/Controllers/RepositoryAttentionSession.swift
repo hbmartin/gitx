@@ -467,10 +467,11 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
 
     private func refreshScheduledAttention() async {
         do {
+            // No explicit date: target selection and failure backoff must both
+            // read the coordinator's injected clock.
             let reconciliation = try await coordinator.refreshNextDue(
                 accountID: account.id,
-                activeOrOpenRepositories: [watchedKey],
-                at: Date()
+                activeOrOpenRepositories: [watchedKey]
             )
             if reconciliation != nil {
                 lastRefreshErrorDescription = nil

@@ -86,6 +86,26 @@ final class RepositoryPullRequestLocalReviewServiceProductionTests: XCTestCase {
         ])
     }
 
+    func testCheckedOutBranchSafetyRejectsUnexpectedSymbolicReferenceWithoutOIDFallback() async {
+        let runner = ScriptedLocalReviewGitRunner(responses: [
+            ["rev-parse", "--symbolic-full-name", "HEAD"]: .output("refs/remotes/origin/main\n"),
+            ["rev-parse", "--verify", "HEAD"]: .output("abcdef12\n"),
+        ])
+        let service = RepositoryPullRequestLocalReviewService(
+            runner: runner,
+            workingDirectory: nil
+        )
+
+        await assertServiceError(.unsafeLocalEdit) {
+            _ = try await service.hasCheckedOutSafetyConflict(
+                branch: ForgeRefName("feature/github-mutations"),
+                expectedHead: ForgeCommitID("abcdef12")
+            )
+        }
+
+        XCTAssertEqual(runner.commands, [["rev-parse", "--symbolic-full-name", "HEAD"]])
+    }
+
     func testCheckedOutBranchSafetyFailsClosedWhenSymbolicHeadCannotBeRead() async throws {
         let runner = ScriptedLocalReviewGitRunner(responses: [
             ["rev-parse", "--symbolic-full-name", "HEAD"]: .failure,
