@@ -4029,6 +4029,45 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBApplicationSettings.changedFilesSort = previousSort;
 }
 
+- (void)testChangedFileTreeAlphabeticalSortOrdersMultiplePaths
+{
+	BOOL previousChangedFilesOnly = PBApplicationSettings.changedFilesOnly;
+	NSInteger previousSort = PBApplicationSettings.changedFilesSort;
+	[self addTeardownBlock:^{
+		PBApplicationSettings.changedFilesOnly = previousChangedFilesOnly;
+		PBApplicationSettings.changedFilesSort = previousSort;
+	}];
+
+	NSError *error = nil;
+	XCTAssertTrue([@"ten\n" writeToURL:[self.repositoryURL URLByAppendingPathComponent:@"file10.txt"]
+							atomically:YES
+							  encoding:NSUTF8StringEncoding
+								 error:&error],
+				  @"%@", error);
+	XCTAssertTrue([@"two\n" writeToURL:[self.repositoryURL URLByAppendingPathComponent:@"file2.txt"]
+							atomically:YES
+							  encoding:NSUTF8StringEncoding
+								 error:&error],
+				  @"%@", error);
+	[self git:@[ @"add", @"--all" ] directory:self.repositoryURL];
+	[self git:@[ @"commit", @"--quiet", @"-m", @"add sortable paths" ] directory:self.repositoryURL];
+
+	NSString *headSHA = [[self git:@[ @"rev-parse", @"HEAD" ] directory:self.repositoryURL]
+		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	GTCommit *gtCommit = [self.repository.gtRepo lookUpObjectBySHA:headSHA
+														objectType:GTObjectTypeCommit
+															 error:&error];
+	XCTAssertNotNil(gtCommit, @"%@", error);
+	if (!gtCommit) return;
+	PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:gtCommit];
+	PBApplicationSettings.changedFilesOnly = YES;
+	PBApplicationSettings.changedFilesSort = 0;
+
+	PBHistoryTreePresentation *presentation = [[PBHistoryTreePresentation alloc] initWithRepository:self.repository];
+	NSArray<NSString *> *paths = [[presentation treeForCommit:commit].children valueForKey:@"fullPath"];
+	XCTAssertEqualObjects(paths, (@[ @"file2.txt", @"file10.txt" ]));
+}
+
 - (void)testDialogsErrorsSettingsHookAndSuppressionBehavior
 {
 	[self.controller showMessageSheet:@"Message" infoText:@"Info"];

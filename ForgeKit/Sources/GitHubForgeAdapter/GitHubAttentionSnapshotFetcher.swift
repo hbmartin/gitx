@@ -6,6 +6,12 @@ import OSLog // swiftlint:disable:this unused_import
 /// Attention polling boundary. One instance is bound to one current Credential
 /// through its `GitHubReadAdapter`.
 public actor GitHubAttentionSnapshotFetcher: ForgeAttentionSnapshotFetching {
+    /// GitHub prices nested connections against the requested outer page size,
+    /// even when a repository returns only one candidate. Paging one candidate
+    /// at a time keeps the accepted 40-activity/40-thread depth and complete
+    /// cursor traversal while making GraphQL point cost follow actual results.
+    private static let candidatePageSize = 1
+
     private static let logger = Logger(
         subsystem: "com.gitx.gitx",
         category: "github-attention-fetch"
@@ -26,7 +32,8 @@ public actor GitHubAttentionSnapshotFetcher: ForgeAttentionSnapshotFetching {
         for watchedRepository: ForgeWatchedRepository
     ) async throws -> ForgeAttentionRepositorySnapshot {
         let first = try await adapter.currentAttentionCandidates(
-            repository: watchedRepository.key.repository
+            repository: watchedRepository.key.repository,
+            pageSize: Self.candidatePageSize
         )
         guard first.ownership.credential.accountID == watchedRepository.key.accountID else {
             throw GitHubReadError.authenticationRequired
@@ -47,6 +54,7 @@ public actor GitHubAttentionSnapshotFetcher: ForgeAttentionSnapshotFetching {
             }
             let next = try await adapter.currentAttentionCandidates(
                 repository: watchedRepository.key.repository,
+                pageSize: Self.candidatePageSize,
                 after: currentCursor
             )
             guard next.ownership.credential.accountID == watchedRepository.key.accountID else {

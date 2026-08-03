@@ -576,6 +576,52 @@ final class ForgeAttentionInboxTests: XCTestCase {
         ))
     }
 
+    func testPollingSchedulerBacksOffFailuresExponentiallyCapsAndResetsAfterSuccess() throws {
+        let fixture = try Fixture()
+        let watch = fixture.watch
+        var scheduler = ForgeAttentionPollingScheduler(preset: .frequent)
+        var attemptAt: TimeInterval = 0
+        let expectedDelays: [TimeInterval] = [300, 600, 1200, 2400, 3600, 3600]
+
+        for (index, expectedDelay) in expectedDelays.enumerated() {
+            let target = try XCTUnwrap(scheduler.nextTarget(
+                watchedRepositories: [watch],
+                activeOrOpenRepositories: [],
+                at: fixture.date(attemptAt)
+            ))
+            scheduler.recordSelection(target)
+            let backoff = scheduler.recordFailure(target, at: fixture.date(attemptAt))
+            XCTAssertEqual(backoff.consecutiveFailures, index + 1)
+            XCTAssertEqual(backoff.delay, expectedDelay)
+            XCTAssertEqual(backoff.retryAt, fixture.date(attemptAt + expectedDelay))
+            XCTAssertNil(scheduler.nextTarget(
+                watchedRepositories: [watch],
+                activeOrOpenRepositories: [],
+                at: fixture.date(attemptAt + expectedDelay - 1)
+            ))
+            attemptAt += expectedDelay
+        }
+
+        scheduler.recordSuccess(for: watch.key)
+        let reset = try XCTUnwrap(scheduler.nextTarget(
+            watchedRepositories: [watch],
+            activeOrOpenRepositories: [],
+            at: fixture.date(attemptAt - 1)
+        ))
+        let firstFailureAgain = scheduler.recordFailure(reset, at: fixture.date(attemptAt - 1))
+        XCTAssertEqual(firstFailureAgain.consecutiveFailures, 1)
+        XCTAssertEqual(firstFailureAgain.delay, 300)
+        let activeRetry = try XCTUnwrap(scheduler.nextTarget(
+            watchedRepositories: [watch],
+            activeOrOpenRepositories: [watch.key],
+            at: firstFailureAgain.retryAt
+        ))
+        XCTAssertEqual(activeRetry.targetInterval, 120)
+        let secondFailureAfterActivityChange = scheduler.recordFailure(activeRetry, at: firstFailureAgain.retryAt)
+        XCTAssertEqual(secondFailureAfterActivityChange.consecutiveFailures, 2)
+        XCTAssertEqual(secondFailureAfterActivityChange.delay, 600)
+    }
+
     func testSQLiteAttentionPersistenceOwnsWatchesSeenStateMarkAllAndExpiry() async throws {
         let fixture = try Fixture()
         let sqliteFixture = try SQLiteFixture()
@@ -872,11 +918,13 @@ final class ForgeAttentionInboxTests: XCTestCase {
         try await persistence.save(fixture.watch)
         try await persistence.save(secondWatch)
         let fetcher = KeyedSnapshotFetcher(viewer: fixture.viewer, failing: fixture.watch.key)
+        let clock = MutableAttentionTestClock(fixture.date(0))
         let coordinator = ForgeAttentionInboxCoordinator(
             persistence: persistence,
             fetcher: fetcher,
             alertDelivery: AlertDelivery(authorization: .denied, requestResult: false),
-            pollingPreset: .frequent
+            pollingPreset: .frequent,
+            now: { clock.now() }
         )
 
         do {
@@ -895,6 +943,143 @@ final class ForgeAttentionInboxTests: XCTestCase {
         XCTAssertEqual(second?.watchedRepository.key, secondKey)
         let requestedKeys = await fetcher.requestedKeys
         XCTAssertEqual(requestedKeys.count, 2)
+
+        let deferred = try await coordinator.refreshNextDue(
+            accountID: fixture.accountID,
+            activeOrOpenRepositories: [],
+            at: fixture.date(299)
+        )
+        XCTAssertNil(deferred)
+    }
+
+    func testCoordinatorStartsFailureBackoffWhenAsyncRefreshCompletes() async throws {
+        let fixture = try Fixture()
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        try await persistence.save(fixture.watch)
+        let clock = MutableAttentionTestClock(fixture.date(0))
+        let fetcher = ClockAdvancingFailingOnceSnapshotFetcher(
+            viewer: fixture.viewer,
+            clock: clock,
+            failureCompletionDate: fixture.date(30)
+        )
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false),
+            pollingPreset: .frequent,
+            now: { clock.now() }
+        )
+
+        do {
+            _ = try await coordinator.refreshNextDue(
+                accountID: fixture.accountID,
+                activeOrOpenRepositories: []
+            )
+            XCTFail("Expected the scheduled provider failure")
+        } catch ClockAdvancingFailingOnceSnapshotFetcher.Failure.expected {}
+        XCTAssertEqual(clock.now(), fixture.date(30))
+
+        clock.set(fixture.date(300))
+        let prematureRetry = try await coordinator.refreshNextDue(
+            accountID: fixture.accountID,
+            activeOrOpenRepositories: []
+        )
+        XCTAssertNil(prematureRetry)
+        let prematureRequestCount = await fetcher.requestCount
+        XCTAssertEqual(prematureRequestCount, 1)
+
+        clock.set(fixture.date(330))
+        let retry = try await coordinator.refreshNextDue(
+            accountID: fixture.accountID,
+            activeOrOpenRepositories: []
+        )
+        XCTAssertEqual(retry?.watchedRepository.lastSuccessfulPollAt, fixture.date(330))
+        let completedRequestCount = await fetcher.requestCount
+        XCTAssertEqual(completedRequestCount, 2)
+    }
+
+    func testCoordinatorUsesInjectedClockAndManualRefreshBypassesScheduledFailureBackoff() async throws {
+        let fixture = try Fixture()
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        try await persistence.save(fixture.watch)
+        let fetcher = FailingOnceSnapshotFetcher(
+            viewer: fixture.viewer,
+            fetchedAt: fixture.date(1)
+        )
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false),
+            pollingPreset: .frequent,
+            now: { fixture.date(0) }
+        )
+
+        do {
+            _ = try await coordinator.refreshNextDue(
+                accountID: fixture.accountID,
+                activeOrOpenRepositories: []
+            )
+            XCTFail("Expected the scheduled provider failure")
+        } catch FailingOnceSnapshotFetcher.Failure.expected {}
+
+        let manual = try await coordinator.refresh(fixture.watch.key)
+        XCTAssertEqual(manual.watchedRepository.lastSuccessfulPollAt, fixture.date(1))
+        let requestedKeys = await fetcher.requestedKeys
+        XCTAssertEqual(requestedKeys, [fixture.watch.key, fixture.watch.key])
+    }
+
+    func testCoordinatorDefaultClockHandlesEmptyWatchSet() async throws {
+        let fixture = try Fixture()
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: SnapshotFetcher(snapshots: []),
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false),
+            pollingPreset: .frequent
+        )
+
+        let reconciliation = try await coordinator.refreshNextDue(
+            accountID: fixture.accountID,
+            activeOrOpenRepositories: []
+        )
+
+        XCTAssertNil(reconciliation)
+    }
+
+    func testCoordinatorDoesNotCountScheduledCancellationAsAProviderFailure() async throws {
+        let fixture = try Fixture()
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        try await persistence.save(fixture.watch)
+        let fetcher = CancellingSnapshotFetcher()
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false),
+            pollingPreset: .frequent
+        )
+
+        for _ in 0 ..< 2 {
+            do {
+                _ = try await coordinator.refreshNextDue(
+                    accountID: fixture.accountID,
+                    activeOrOpenRepositories: [],
+                    at: fixture.date(0)
+                )
+                XCTFail("Expected scheduled refresh cancellation")
+            } catch is CancellationError {} catch {
+                XCTFail("Expected CancellationError, received \(type(of: error))")
+            }
+        }
+        let requestedKeys = await fetcher.requestedKeys
+        XCTAssertEqual(requestedKeys, [fixture.watch.key, fixture.watch.key])
     }
 
     func testInFlightRefreshPreservesSeenStateWrittenThroughAnotherCoordinator() async throws {
@@ -1833,6 +2018,89 @@ private actor KeyedSnapshotFetcher: ForgeAttentionSnapshotFetching {
             viewer: viewer,
             candidates: [],
             fetchedAt: Date(timeIntervalSince1970: 0),
+            completeness: .complete
+        )
+    }
+}
+
+private actor FailingOnceSnapshotFetcher: ForgeAttentionSnapshotFetching {
+    enum Failure: Error {
+        case expected
+    }
+
+    let viewer: ForgeActor
+    let fetchedAt: Date
+    private var shouldFail = true
+    private(set) var requestedKeys: [ForgeWatchedRepositoryKey] = []
+
+    init(viewer: ForgeActor, fetchedAt: Date) {
+        self.viewer = viewer
+        self.fetchedAt = fetchedAt
+    }
+
+    func snapshot(for watch: ForgeWatchedRepository) async throws -> ForgeAttentionRepositorySnapshot {
+        requestedKeys.append(watch.key)
+        if shouldFail {
+            shouldFail = false
+            throw Failure.expected
+        }
+        return ForgeAttentionRepositorySnapshot(
+            watchedRepositoryKey: watch.key,
+            viewer: viewer,
+            candidates: [],
+            fetchedAt: fetchedAt,
+            completeness: .complete
+        )
+    }
+}
+
+private final class MutableAttentionTestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Date
+
+    init(_ value: Date) {
+        self.value = value
+    }
+
+    func now() -> Date {
+        lock.withLock { value }
+    }
+
+    func set(_ value: Date) {
+        lock.withLock { self.value = value }
+    }
+}
+
+private actor ClockAdvancingFailingOnceSnapshotFetcher: ForgeAttentionSnapshotFetching {
+    enum Failure: Error {
+        case expected
+    }
+
+    let viewer: ForgeActor
+    let clock: MutableAttentionTestClock
+    let failureCompletionDate: Date
+    private var shouldFail = true
+    private(set) var requestCount = 0
+
+    init(viewer: ForgeActor, clock: MutableAttentionTestClock, failureCompletionDate: Date) {
+        self.viewer = viewer
+        self.clock = clock
+        self.failureCompletionDate = failureCompletionDate
+    }
+
+    func snapshot(for watch: ForgeWatchedRepository) async throws -> ForgeAttentionRepositorySnapshot {
+        requestCount += 1
+        if shouldFail {
+            shouldFail = false
+            await Task.yield()
+            clock.set(failureCompletionDate)
+            throw Failure.expected
+        }
+        return ForgeAttentionRepositorySnapshot(
+            watchedRepositoryKey: watch.key,
+            viewer: viewer,
+            candidates: [],
+            fetchedAt: clock.now(),
             completeness: .complete
         )
     }

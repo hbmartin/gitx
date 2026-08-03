@@ -1726,6 +1726,27 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertFalse(recentRepositoryPaths().contains(second.path))
     }
 
+    func testRecentRepositoryStoreSortsTiedDatesByPath() {
+        let restore = preservePersistentDefault(forKey: "PBRecentRepositories")
+        defer { restore() }
+        let tiedDate = Date(timeIntervalSince1970: 1000)
+        let first = URL(fileURLWithPath: "/tmp/GitX-Recent-A")
+        let second = URL(fileURLWithPath: "/tmp/GitX-Recent-B")
+        let newest = URL(fileURLWithPath: "/tmp/GitX-Recent-Newest")
+        UserDefaults.standard.set(
+            [
+                ["path": second.path, "lastOpened": tiedDate],
+                ["path": first.path, "lastOpened": tiedDate],
+            ],
+            forKey: "PBRecentRepositories"
+        )
+
+        PBRecentRepositoryStore.shared.record(newest)
+        let tiedPaths = recentRepositoryPaths()
+            .filter { $0 == first.path || $0 == second.path }
+        XCTAssertEqual(tiedPaths, [first.path, second.path])
+    }
+
     func testHighlightingThemesAndPlainFallbackFont() {
         let restoreTheme = preservePersistentDefault(forKey: "PBSyntaxTheme")
         let restoreFont = preservePersistentDefault(forKey: "PBDiffFontName")

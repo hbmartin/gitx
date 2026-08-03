@@ -423,9 +423,9 @@ public actor GitHubAnonymousRESTAdapter {
         guard Self.isGitHubDotCom(repository.forge) else {
             throw GitHubAnonymousRESTError.githubDotComRepositoryRequired
         }
+        let request = try Self.makeRequest(repository: repository, path: path, query: query)
         let requestedAt = now()
         let reservation = try await budget.reserve(reason: reason, at: requestedAt)
-        let request = try Self.makeRequest(repository: repository, path: path, query: query)
         let response = try await client.execute(request)
         let receivedAt = now()
         await budget.update(

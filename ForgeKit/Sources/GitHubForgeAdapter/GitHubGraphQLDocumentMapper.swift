@@ -387,6 +387,8 @@ struct GitHubGraphQLDocumentMapper {
 
 #if DEBUG
     extension GitHubGraphQLDocumentMapper {
+        // The app compiler log excludes the SwiftPM adapter test target that invokes this proof.
+        // swiftlint:disable:next unused_declaration
         static func mapAttentionViewerWithoutNodeIdentityForProductProof(
             forge: ForgeIdentity,
             repository: ForgeRepositoryIdentity

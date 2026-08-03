@@ -198,20 +198,20 @@ final class GitHubReadAdapterTests: XCTestCase {
             variables["query"] as? String,
             "repo:hbmartin/gitx is:open involves:@me"
         )
-        XCTAssertEqual(variables["first"] as? Int, 100)
+        XCTAssertEqual(variables["first"] as? Int, 1)
         XCTAssertEqual(variables["activityLast"] as? Int, 40)
         XCTAssertEqual(variables["reviewThreadFirst"] as? Int, 40)
         XCTAssertEqual(
             GitHubAttentionGraphQLNodeBudget.upperBound(
-                pageSize: 100,
+                pageSize: 1,
                 activityCount: 40,
                 reviewThreadCount: 40
             ),
-            378_100
+            3781
         )
         XCTAssertLessThan(
             GitHubAttentionGraphQLNodeBudget.upperBound(
-                pageSize: 100,
+                pageSize: 1,
                 activityCount: 40,
                 reviewThreadCount: 40
             ),
@@ -325,7 +325,7 @@ final class GitHubReadAdapterTests: XCTestCase {
             try Self.requestPayload(capture.requests[1])["variables"] as? [String: Any]
         )
         XCTAssertEqual(secondVariables["after"] as? String, "next-attention")
-        XCTAssertEqual(secondVariables["first"] as? Int, 100)
+        XCTAssertEqual(secondVariables["first"] as? Int, 1)
         XCTAssertEqual(secondVariables["activityLast"] as? Int, 40)
         XCTAssertEqual(secondVariables["reviewThreadFirst"] as? Int, 40)
 

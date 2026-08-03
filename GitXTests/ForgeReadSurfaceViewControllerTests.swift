@@ -1719,9 +1719,8 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         _ = makeWindow(controller)
         controller.viewDidAppear()
-        await waitUntil("two Attention rows") { session.entryStates.count >= 1 }
-        await settleMainActor()
         let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        await waitUntil("Attention table to display two rows") { table.numberOfRows == 2 }
         XCTAssertEqual(table.numberOfRows, 2)
 
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
@@ -1745,6 +1744,13 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
     }
 
     func testAttentionNotificationActionsAndUnavailableDatabaseErrorRemainExplicit() {
+        XCTAssertEqual(ForgeAttentionNotificationDelivery.title(.reviewRequests), "Review Requested")
+        XCTAssertEqual(ForgeAttentionNotificationDelivery.title(.mentionsAndReplies), "Mention or Reply")
+        XCTAssertEqual(ForgeAttentionNotificationDelivery.title(.assignments), "Assignment")
+        XCTAssertEqual(
+            ForgeAttentionNotificationDelivery.title(.failedChecksOnAuthoredPullRequests),
+            "Pull Request Check Failed"
+        )
         XCTAssertEqual(
             ForgeAttentionNotificationDelivery.action(for: "PBForgeAttention.Open"),
             .open
@@ -1764,15 +1770,40 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
 
         let recorder = NotificationDelegateCompletionRecorder()
-        ForgeAttentionNotificationDelegateBridge.forwardPresentation(
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardPresentation(
             { _ in nil },
             completionHandler: recorder.recordPresentation
         )
-        ForgeAttentionNotificationDelegateBridge.forwardResponse(
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardResponse(
             { _ in nil },
             completionHandler: recorder.recordResponse
         )
         XCTAssertEqual(recorder.presentationOptions, [])
+        XCTAssertEqual(recorder.presentationCount, 1)
+        XCTAssertEqual(recorder.responseCount, 1)
+    }
+
+    func testAttentionNotificationDelegateCompletionForwardingPreservesOptionsAndCompletesExactlyOnce() {
+        let recorder = NotificationDelegateCompletionRecorder()
+        let expectedOptions: UNNotificationPresentationOptions = [.banner, .sound]
+
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardPresentation(
+            { completionHandler in
+                completionHandler(expectedOptions)
+                return ()
+            },
+            completionHandler: recorder.recordPresentation
+        )
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardResponse(
+            { completionHandler in
+                completionHandler()
+                return ()
+            },
+            completionHandler: recorder.recordResponse
+        )
+
+        XCTAssertEqual(recorder.presentationOptions, expectedOptions)
+        XCTAssertEqual(recorder.presentationCount, 1)
         XCTAssertEqual(recorder.responseCount, 1)
     }
 
@@ -1789,9 +1820,8 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         )
         _ = makeWindow(controller)
         controller.viewDidAppear()
-        await waitUntil("initial Attention rows") { session.entryStates.count == 1 }
-        await settleMainActor()
         let table = try XCTUnwrap(descendant(identifier: "ForgeAttentionTable", in: controller.view) as? NSTableView)
+        await waitUntil("Attention table to display its initial row") { table.numberOfRows == 1 }
         XCTAssertEqual(table.numberOfRows, 1)
 
         session.entriesError = CancellationError()
@@ -2489,10 +2519,15 @@ private final class RecordingAttentionTableView: NSTableView {
 private final class NotificationDelegateCompletionRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var storedPresentationOptions: UNNotificationPresentationOptions?
+    private var storedPresentationCount = 0
     private var storedResponseCount = 0
 
     var presentationOptions: UNNotificationPresentationOptions? {
         lock.withLock { storedPresentationOptions }
+    }
+
+    var presentationCount: Int {
+        lock.withLock { storedPresentationCount }
     }
 
     var responseCount: Int {
@@ -2500,7 +2535,10 @@ private final class NotificationDelegateCompletionRecorder: @unchecked Sendable 
     }
 
     func recordPresentation(_ options: UNNotificationPresentationOptions) {
-        lock.withLock { storedPresentationOptions = options }
+        lock.withLock {
+            storedPresentationOptions = options
+            storedPresentationCount += 1
+        }
     }
 
     func recordResponse() {

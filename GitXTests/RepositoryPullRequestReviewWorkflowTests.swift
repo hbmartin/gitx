@@ -1826,12 +1826,12 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertNoThrow(try RepositoryPullRequestHeadDeletionDispatchPolicy.validate(
             request: request,
             workspace: workspace,
-            checkedOutHead: fixture.newHead
+            hasCheckedOutSafetyConflict: false
         ))
         XCTAssertThrowsError(try RepositoryPullRequestHeadDeletionDispatchPolicy.validate(
             request: request,
             workspace: workspace,
-            checkedOutHead: fixture.oldHead
+            hasCheckedOutSafetyConflict: true
         )) {
             XCTAssertEqual(
                 $0 as? RepositoryPullRequestReviewServiceError,
@@ -1842,7 +1842,7 @@ final class RepositoryPullRequestReviewWorkflowTests: XCTestCase {
         XCTAssertThrowsError(try RepositoryPullRequestHeadDeletionDispatchPolicy.validate(
             request: request,
             workspace: changed,
-            checkedOutHead: nil
+            hasCheckedOutSafetyConflict: false
         )) {
             XCTAssertEqual($0 as? RepositoryPullRequestReviewServiceError, .stalePullRequest)
         }
@@ -2423,7 +2423,7 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
     private var deletionValues: [ForgeHeadBranchDeletionRequest] = []
     private var shouldHoldNextDeletion = false
     private var heldDeletion: CheckedContinuation<Void, Never>?
-    private var deletionError: RepositoryPullRequestReviewServiceError?
+    private var deletionError: (any Error & Sendable)?
     private var deletionWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var inlineWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var deletionSnapshot: ForgeHeadBranchDeletionSnapshot?
@@ -2608,6 +2608,10 @@ actor FakeReviewMutationService: RepositoryPullRequestReviewMutationServing {
 
     func failNextMerge(with error: any Error & Sendable) {
         nextMergeError = error
+    }
+
+    func failNextDeletion(with error: any Error & Sendable) {
+        deletionError = error
     }
 
     func releaseHeldMerge() {

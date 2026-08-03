@@ -95,7 +95,7 @@ actor ForgeAttentionNotificationDelivery: ForgeAttentionAlertDelivering {
         }
     }
 
-    private static func title(_ category: ForgeAttentionAlertCategory) -> String {
+    nonisolated static func title(_ category: ForgeAttentionAlertCategory) -> String {
         switch category {
         case .reviewRequests: "Review Requested"
         case .mentionsAndReplies: "Mention or Reply"
@@ -125,8 +125,28 @@ actor ForgeAttentionNotificationDelivery: ForgeAttentionAlertDelivering {
     }
 }
 
+enum ForgeAttentionNotificationDelegateCompletionForwarding {
+    nonisolated static func forwardPresentation(
+        _ forwarding: (@escaping @Sendable (UNNotificationPresentationOptions) -> Void) -> Void?,
+        completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+    ) {
+        if forwarding(completionHandler) == nil {
+            completionHandler([])
+        }
+    }
+
+    nonisolated static func forwardResponse(
+        _ forwarding: (@escaping @Sendable () -> Void) -> Void?,
+        completionHandler: @escaping @Sendable () -> Void
+    ) {
+        if forwarding(completionHandler) == nil {
+            completionHandler()
+        }
+    }
+}
+
 @MainActor
-final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificationCenterDelegate {
+private final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificationCenterDelegate {
     static let shared = ForgeAttentionNotificationDelegateBridge()
 
     // UserNotifications calls these delegate methods outside MainActor. The delegate is
@@ -151,7 +171,7 @@ final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificati
             completionHandler([.banner, .sound])
             return
         }
-        Self.forwardPresentation(
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardPresentation(
             { handler in
                 previousDelegate?.userNotificationCenter?(
                     center,
@@ -184,7 +204,7 @@ final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificati
             }
             return
         }
-        Self.forwardResponse(
+        ForgeAttentionNotificationDelegateCompletionForwarding.forwardResponse(
             { handler in
                 previousDelegate?.userNotificationCenter?(
                     center,
@@ -194,24 +214,6 @@ final class ForgeAttentionNotificationDelegateBridge: NSObject, UNUserNotificati
             },
             completionHandler: completionHandler
         )
-    }
-
-    nonisolated static func forwardPresentation(
-        _ forwarding: (@escaping @Sendable (UNNotificationPresentationOptions) -> Void) -> Void?,
-        completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
-    ) {
-        if forwarding(completionHandler) == nil {
-            completionHandler([])
-        }
-    }
-
-    nonisolated static func forwardResponse(
-        _ forwarding: (@escaping @Sendable () -> Void) -> Void?,
-        completionHandler: @escaping @Sendable () -> Void
-    ) {
-        if forwarding(completionHandler) == nil {
-            completionHandler()
-        }
     }
 }
 
@@ -428,11 +430,14 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
 
     private func beginPollingCycle(shouldEnrollOpenedRepository: Bool) {
         pollingTask?.cancel()
+        // Preference notifications cancel and restart this cycle, so keep one
+        // stable interval instead of re-reading a mutable preset mid-poll.
+        let activeInterval = ApplicationSettings.attentionPollingPreset.activeInterval
         pollingTask = Task { [weak self] in
             if shouldEnrollOpenedRepository, let session = self {
                 await session.enrollOpenedRepositoryForPolling()
             }
-            guard ApplicationSettings.attentionPollingPreset != .manual else { return }
+            guard let activeInterval else { return }
             while !Task.isCancelled {
                 // Reacquire the session only for one bounded poll. The task
                 // must not keep its owner alive while it sleeps indefinitely.
@@ -441,9 +446,8 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
                 } else {
                     return
                 }
-                let interval = ApplicationSettings.attentionPollingPreset.activeInterval ?? 60
                 do {
-                    try await Task.sleep(nanoseconds: UInt64(max(interval, 1) * 1_000_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(max(activeInterval, 1) * 1_000_000_000))
                 } catch {
                     return
                 }
@@ -477,7 +481,7 @@ final class RepositoryAttentionSession: NSObject, RepositoryAttentionServing {
         } catch {
             lastRefreshErrorDescription = error.localizedDescription
             Self.logger.error(
-                "Scheduled Attention refresh failed type=\(String(describing: type(of: error)), privacy: .public)"
+                "Scheduled Attention refresh failed; the coordinator deferred that watched repository using its bounded retry policy type=\(String(describing: type(of: error)), privacy: .public)"
             )
             NotificationCenter.default.post(
                 name: .forgeAttentionInboxDidChange,

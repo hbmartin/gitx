@@ -73,6 +73,7 @@ nonisolated enum RepositoryPullRequestRebaseSummaryPresenter {
 @MainActor
 private final class RepositoryReviewTaskRegistry {
     private var tasks: [UUID: Task<Void, Never>] = [:]
+    private var acceptsNewTasks = true
 
     deinit {
         tasks.values.forEach { $0.cancel() }
@@ -83,16 +84,51 @@ private final class RepositoryReviewTaskRegistry {
     }
 
     func start(_ operation: @escaping @MainActor () async -> Void) {
+        guard acceptsNewTasks else { return }
         let identifier = UUID()
         tasks[identifier] = Task { [weak self] in
+            defer { self?.tasks.removeValue(forKey: identifier) }
+            guard !Task.isCancelled else { return }
             await operation()
-            self?.tasks.removeValue(forKey: identifier)
         }
     }
 
     func cancelAll() {
         tasks.values.forEach { $0.cancel() }
         tasks.removeAll()
+    }
+
+    func invalidate() {
+        acceptsNewTasks = false
+        cancelAll()
+    }
+}
+
+/// Serializes destructive confirmations and turns an authorization-recovery
+/// callback into a single-use generation token. AppKit and task ownership stay
+/// in the controller while this value owns only the retry decision.
+struct RepositoryDestructiveConfirmationState: Equatable {
+    private(set) var isInFlight = false
+    private(set) var generation: UInt = 0
+
+    mutating func begin(retrying expectedGeneration: UInt? = nil) -> UInt? {
+        guard !isInFlight else { return nil }
+        if let expectedGeneration {
+            guard expectedGeneration == generation else { return nil }
+        }
+        generation &+= 1
+        isInFlight = true
+        return generation
+    }
+
+    mutating func finish(_ attemptGeneration: UInt) {
+        guard attemptGeneration == generation else { return }
+        isInFlight = false
+    }
+
+    mutating func invalidate() {
+        generation &+= 1
+        isInFlight = false
     }
 }
 
@@ -144,8 +180,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     private var replyWritesInFlight: Set<ForgeObjectID> = []
     private var inlineWritesInFlight: Set<InlineWriteDestination> = []
     private var suggestionInFlight: ForgeSuggestedChange?
-    private var destructiveConfirmationInFlight = false
-    private var destructiveConfirmationGeneration: UInt = 0
+    private var destructiveConfirmationState = RepositoryDestructiveConfirmationState()
     private var transientMessage: String?
     private var postMergeDeletionFailure: String?
     private var modalPanel: NSPanel?
@@ -226,9 +261,11 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
     }
 
     func detach() {
-        tasks.cancelAll()
-        actionPresentationTasks.cancelAll()
-        overlayDraftLoadTasks.cancelAll()
+        destructiveConfirmationState.invalidate()
+        tasks.invalidate()
+        actionPresentationTasks.invalidate()
+        overlayDraftLoadTasks.invalidate()
+        threadDraftLoadTasks.invalidate()
         overlayDraftCoordinators.forEach { $0.detach() }
         overlayDraftCoordinators.removeAll()
         resetThreadPresentation()
@@ -1232,7 +1269,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             guard let self, let confirmButton = weakConfirmButton else { return }
             self.performDestructiveConfirmation(
                 buttons: [confirmButton, cancelButton]
-            ) {
+            ) { [weak self] in
+                guard let self else { return }
                 let completion = try await self.session.confirmMerge(
                     confirmation,
                     title: confirmation.method == .rebase ? nil : title?.stringValue,
@@ -1283,7 +1321,8 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             guard let self, let deleteButton = weakDeleteButton else { return }
             self.performDestructiveConfirmation(
                 buttons: [deleteButton, cancelButton]
-            ) {
+            ) { [weak self] in
+                guard let self else { return }
                 try await self.session.deleteHeadBranch()
                 self.closeModal()
             }
@@ -1331,19 +1370,14 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
         operation: @escaping @MainActor () async throws -> Void,
         retrying expectedGeneration: UInt? = nil
     ) {
-        guard !destructiveConfirmationInFlight else { return }
-        if let expectedGeneration {
-            guard expectedGeneration == destructiveConfirmationGeneration else { return }
-        } else {
-            destructiveConfirmationGeneration &+= 1
-        }
-        let attemptGeneration = destructiveConfirmationGeneration
-        destructiveConfirmationInFlight = true
+        guard let attemptGeneration = destructiveConfirmationState.begin(
+            retrying: expectedGeneration
+        ) else { return }
         buttons.forEach { $0.isEnabled = false }
         tasks.start { [weak self] in
             guard let self else { return }
             defer {
-                destructiveConfirmationInFlight = false
+                destructiveConfirmationState.finish(attemptGeneration)
                 if modalPanel != nil || embeddedModalView != nil {
                     buttons.forEach { $0.isEnabled = true }
                 }
@@ -1357,9 +1391,10 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
                     // Queueing guarantees a synchronous recovery callback runs
                     // after this attempt releases its guard. A later callback
                     // still has to acquire the same guard as a button click.
-                    Task { @MainActor [weak self] in
+                    self?.tasks.start { [weak self] in
                         await Task.yield()
-                        self?.performDestructiveConfirmation(
+                        guard !Task.isCancelled, let self else { return }
+                        self.performDestructiveConfirmation(
                             buttons: buttons,
                             operation: operation,
                             retrying: attemptGeneration

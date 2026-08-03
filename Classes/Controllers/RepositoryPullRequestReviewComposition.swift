@@ -610,7 +610,10 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
         let context = try await mutationContext(identity: identity, operation: .deleteHeadBranch)
         try validate(identity)
         _ = try requireCurrentWorkspace(identity)
-        let checkedOutHead = try await localService.checkedOutHead()
+        let hasCheckedOutSafetyConflict = try await localService.hasCheckedOutSafetyConflict(
+            branch: workspace.mutationContext.head.name,
+            expectedHead: workspace.displayedHead
+        )
         try validate(identity)
         _ = try requireCurrentWorkspace(identity)
         do {
@@ -620,7 +623,7 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
                 pullRequest: identity.number,
                 branch: workspace.mutationContext.head.name,
                 expectedHead: workspace.displayedHead,
-                hasCheckedOutSafetyConflict: checkedOutHead == workspace.displayedHead,
+                hasCheckedOutSafetyConflict: hasCheckedOutSafetyConflict,
                 authorization: context.authorization
             )
             try validate(identity)
@@ -642,7 +645,10 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
         let context = try await mutationContext(identity: identity, operation: .deleteHeadBranch)
         try validate(identity)
         let workspace = try requireCurrentWorkspace(identity)
-        let checkedOutHead = try await localService.checkedOutHead()
+        let hasCheckedOutSafetyConflict = try await localService.hasCheckedOutSafetyConflict(
+            branch: request.branch,
+            expectedHead: request.expectedHead
+        )
         try validate(identity)
         let current = try requireCurrentWorkspace(identity)
         guard current.displayedHead == workspace.displayedHead else {
@@ -651,7 +657,7 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
         try RepositoryPullRequestHeadDeletionDispatchPolicy.validate(
             request: request,
             workspace: current,
-            checkedOutHead: checkedOutHead
+            hasCheckedOutSafetyConflict: hasCheckedOutSafetyConflict
         )
         _ = try await dispatch(
             identity: identity,
@@ -1099,7 +1105,10 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
         }
         do {
             let context = try await mutationContext(identity: identity, operation: .deleteHeadBranch)
-            let checkedOutHead = try await localService.checkedOutHead()
+            let hasCheckedOutSafetyConflict = try await localService.hasCheckedOutSafetyConflict(
+                branch: merge.context.head.name,
+                expectedHead: merge.context.head.commit
+            )
             try Task.checkCancellation()
             try validate(identity)
             let snapshot = try await context.mutationAdapter.freshHeadBranchDeletionSnapshot(
@@ -1108,7 +1117,7 @@ actor RepositoryPullRequestReviewProductionService: RepositoryPullRequestReviewM
                 pullRequest: identity.number,
                 branch: merge.context.head.name,
                 expectedHead: merge.context.head.commit,
-                hasCheckedOutSafetyConflict: checkedOutHead == merge.context.head.commit,
+                hasCheckedOutSafetyConflict: hasCheckedOutSafetyConflict,
                 authorization: context.authorization
             )
             try validate(identity)
