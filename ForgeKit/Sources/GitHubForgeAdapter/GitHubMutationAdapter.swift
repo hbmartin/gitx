@@ -1295,12 +1295,7 @@ private extension GitHubMutationAdapter {
         if let metadata {
             switch metadata.statusCode {
             case 401: return .authenticationRequired
-            case 403 where secondaryRateLimitDetected
-                || metadata.rateLimit.remaining == 0
-                || metadata.rateLimit.retryAt != nil:
-                return .rateLimited(metadata)
             case 403: return .permissionDenied(metadata)
-            case 429: return .rateLimited(metadata)
             case 408, 500 ... 599: return .transportFailure
             default: break
             }

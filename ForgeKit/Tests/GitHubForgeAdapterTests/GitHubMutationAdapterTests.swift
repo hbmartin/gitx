@@ -1220,6 +1220,50 @@ final class GitHubMutationAdapterTests: XCTestCase {
         )
     }
 
+    func testDeleteHeadBranchRejectsPermissionChangeDuringFinalRemoteRevalidation() async throws {
+        let fixtures = try MutationFixtures()
+        let authentication = try makeAuthentication()
+        let repository = try makeRepository()
+        let request = try headBranchDeletionRequest(
+            accountID: authentication.account.id,
+            repository: repository
+        )
+        var readOnlyBranch = fixtures.headBranchPreflight()
+        var repositoryPayload = try XCTUnwrap(readOnlyBranch["repository"] as? [String: Any])
+        repositoryPayload["viewerPermission"] = "READ"
+        readOnlyBranch["repository"] = repositoryPayload
+        let queue = MutationResponseQueue([
+            .graphQL(
+                "GitHubPullRequestMutationPreflight",
+                fixtures.pullRequestPreflight(state: .merged)
+            ),
+            .graphQL("GitHubHeadBranchDeletionPreflight", fixtures.headBranchPreflight()),
+            .graphQL("GitHubHeadBranchDeletionPreflight", readOnlyBranch),
+        ])
+        install(queue)
+
+        await XCTAssertThrowsMutationError(.stalePullRequest) {
+            try await self.makeAdapter(authentication: authentication).deleteHeadBranch(
+                request,
+                authorization: self.authorization(
+                    authentication: authentication,
+                    repository: repository,
+                    operation: .deleteHeadBranch
+                )
+            )
+        }
+
+        XCTAssertEqual(queue.remainingCount, 0)
+        XCTAssertEqual(
+            queue.payloads.compactMap { $0["operationName"] as? String },
+            [
+                "GitHubPullRequestMutationPreflight",
+                "GitHubHeadBranchDeletionPreflight",
+                "GitHubHeadBranchDeletionPreflight",
+            ]
+        )
+    }
+
     func testResolutionTransitionGateSerializesGenerationsForOneThread() async throws {
         let authentication = try makeAuthentication()
         let adapter = makeAdapter(authentication: authentication)

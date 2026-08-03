@@ -982,6 +982,26 @@ final class ForgeAttentionInboxTests: XCTestCase {
         XCTAssertEqual(requestedKeys, [fixture.watch.key, fixture.watch.key])
     }
 
+    func testCoordinatorDefaultClockHandlesEmptyWatchSet() async throws {
+        let fixture = try Fixture()
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: SnapshotFetcher(snapshots: []),
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false),
+            pollingPreset: .frequent
+        )
+
+        let reconciliation = try await coordinator.refreshNextDue(
+            accountID: fixture.accountID,
+            activeOrOpenRepositories: []
+        )
+
+        XCTAssertNil(reconciliation)
+    }
+
     func testCoordinatorDoesNotCountScheduledCancellationAsAProviderFailure() async throws {
         let fixture = try Fixture()
         let persistence = try ForgeSQLiteAttentionPersistence(
