@@ -993,6 +993,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.selectedCommitDetailsIndex = 0
         refreshIndex()
         historyController.updateUncommittedChanges()
+        XCTAssertTrue(
+            waitForCondition {
+                self.historyController.commitController.value(forKey: "pinnedObject") is PBUncommittedChanges
+            },
+            "the refreshed index publishes the uncommitted working state"
+        )
         let workingState = try XCTUnwrap(
             historyController.commitController.value(forKey: "pinnedObject") as? PBUncommittedChanges
         )
@@ -1527,7 +1533,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         pumpRunLoop()
         waitForIndexUpdate { coordinator.didDoubleClick(fileList.stagedTable) }
-        XCTAssertEqual(fileList.stagedFileCount, 0, "double-clicking staged rows unstages them")
+        XCTAssertTrue(
+            waitForCondition { fileList.stagedFileCount == 0 },
+            "double-clicking staged rows unstages them"
+        )
     }
 
     func testSectionedDragPayloadsOnlyMutateCurrentCrossSectionEntries() throws {
