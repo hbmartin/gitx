@@ -793,6 +793,26 @@ IA
                                                 </constraints>
                                             </view>
                                         </tabViewItem>
+                                        <tabViewItem label="Flow" identifier="Flow" id="FD-flow-tab" userLabel="Flow Tab">
+                                            <view key="view" focusRingType="none" id="FD-flow-tab-view">
+                                                <rect key="frame" x="0.0" y="0.0" width="955" height="206"/>
+                                                <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+                                                <subviews>
+                                                    <customView translatesAutoresizingMaskIntoConstraints="NO" id="FD-flow-view" userLabel="Flow Delta" customClass="PBFlowDeltaAdapterView">
+                                                        <rect key="frame" x="0.0" y="0.0" width="955" height="206"/>
+                                                        <connections>
+                                                            <outlet property="historyController" destination="-2" id="FD-flow-controller-outlet"/>
+                                                        </connections>
+                                                    </customView>
+                                                </subviews>
+                                                <constraints>
+                                                    <constraint firstItem="FD-flow-view" firstAttribute="top" secondItem="FD-flow-tab-view" secondAttribute="top" id="FD-flow-top"/>
+                                                    <constraint firstItem="FD-flow-view" firstAttribute="leading" secondItem="FD-flow-tab-view" secondAttribute="leading" id="FD-flow-leading"/>
+                                                    <constraint firstAttribute="trailing" secondItem="FD-flow-view" secondAttribute="trailing" id="FD-flow-trailing"/>
+                                                    <constraint firstAttribute="bottom" secondItem="FD-flow-view" secondAttribute="bottom" id="FD-flow-bottom"/>
+                                                </constraints>
+                                            </view>
+                                        </tabViewItem>
                                     </tabViewItems>
                                     <connections>
                                         <binding destination="-2" name="selectedIndex" keyPath="selectedCommitDetailsIndex" id="80"/>
@@ -883,13 +903,14 @@ IA
                             </connections>
                         </button>
                         <segmentedControl verticalHuggingPriority="750" fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="48">
-                            <rect key="frame" x="268" y="3" width="67" height="23"/>
+                            <rect key="frame" x="268" y="3" width="112" height="23"/>
                             <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
                             <segmentedCell key="cell" state="on" borderStyle="border" alignment="left" style="texturedSquare" trackingMode="selectOne" id="51">
                                 <font key="font" metaFont="system"/>
                                 <segments>
                                     <segment toolTip="Detailed View" image="DetailViewTemplate" imageScaling="none" width="32" selected="YES"/>
                                     <segment toolTip="Tree View" image="TreeViewTemplate" imageScaling="none" width="32" tag="9"/>
+                                    <segment label="Flow" toolTip="Flow Delta View" width="42" tag="10"/>
                                 </segments>
                             </segmentedCell>
                             <connections>

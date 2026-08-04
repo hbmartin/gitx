@@ -1,10 +1,11 @@
 {
   "version": 1,
   "target": "GitXCore",
-  "minimumLineCoverage": 0.9915,
+  "minimumLineCoverage": 0.9923,
   "files": {
     "ApplicationPreferencesPolicy.swift": 1.0,
     "CommitPolicy.swift": 1.0,
+    "HistoryFlowSelectionPolicy.swift": 1.0,
     "HistorySearchPolicy.swift": 0.9705,
     "RepositoryConfigurationPolicy.swift": 1.0,
     "SidebarPolicy.swift": 0.9782
