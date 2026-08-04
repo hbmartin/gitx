@@ -83,6 +83,35 @@ final class GitHubGraphQLTransportTests: XCTestCase {
         ))
         XCTAssertFalse(oversizedBox.indicatesSecondaryRateLimit())
     }
+
+    func testMetadataBoxKeepsSecondaryRateLimitDetectionOnceEstablished() throws {
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: XCTUnwrap(URL(string: "https://api.github.com/graphql")),
+            statusCode: 403,
+            httpVersion: "HTTP/2",
+            headerFields: ["Content-Type": "application/json"]
+        ))
+        let box = GitHubResponseMetadataBox()
+        box.record(response, body: Data(
+            #"{"message":"You have exceeded a secondary rate limit."}"#.utf8
+        ))
+        XCTAssertTrue(box.indicatesSecondaryRateLimit())
+
+        box.record(response, body: Data(#"{"message":"ok"}"#.utf8))
+        XCTAssertTrue(
+            box.indicatesSecondaryRateLimit(),
+            "A later unparseable accumulation must not revert an established detection"
+        )
+
+        box.record(response, body: Data(
+            repeating: 0x20,
+            count: GitHubSecondaryRateLimitEvidence.maximumBodySize
+        ))
+        XCTAssertTrue(
+            box.indicatesSecondaryRateLimit(),
+            "Evidence overflow must not revert an established detection"
+        )
+    }
 }
 
 private final class GraphQLIsolationURLProtocol: URLProtocol, @unchecked Sendable {

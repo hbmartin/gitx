@@ -622,6 +622,80 @@ final class ForgeAttentionInboxTests: XCTestCase {
         XCTAssertEqual(secondFailureAfterActivityChange.delay, 600)
     }
 
+    func testPollingSchedulerPrunesOnlyTheAccountsUnwatchedBackoffs() throws {
+        let fixture = try Fixture()
+        let watch = fixture.watch
+        let secondAccountID = try ForgeAccountID(
+            forge: fixture.repository.forge,
+            value: "second-account"
+        )
+        let secondWatch = try ForgeWatchedRepository(
+            key: ForgeWatchedRepositoryKey(
+                accountID: secondAccountID,
+                repository: fixture.repository
+            ),
+            addedAt: fixture.date(0),
+            source: .repositoryOpened
+        )
+        var scheduler = ForgeAttentionPollingScheduler(preset: .frequent)
+        let firstTarget = try XCTUnwrap(scheduler.nextTarget(
+            watchedRepositories: [watch],
+            activeOrOpenRepositories: [],
+            at: fixture.date(0)
+        ))
+        let firstBackoff = scheduler.recordFailure(firstTarget, at: fixture.date(0))
+        let secondTarget = try XCTUnwrap(scheduler.nextTarget(
+            watchedRepositories: [secondWatch],
+            activeOrOpenRepositories: [],
+            at: fixture.date(0)
+        ))
+        let secondBackoff = scheduler.recordFailure(secondTarget, at: fixture.date(0))
+
+        scheduler.pruneBackoffs(accountID: fixture.accountID, watchedRepositories: [])
+
+        XCTAssertNotNil(
+            scheduler.nextTarget(
+                watchedRepositories: [watch],
+                activeOrOpenRepositories: [],
+                at: fixture.date(firstBackoff.delay - 1)
+            ),
+            "Pruning must forget the unwatched repository's backoff"
+        )
+        XCTAssertNil(
+            scheduler.nextTarget(
+                watchedRepositories: [secondWatch],
+                activeOrOpenRepositories: [],
+                at: fixture.date(secondBackoff.delay - 1)
+            ),
+            "Pruning one account must retain another account's backoff"
+        )
+    }
+
+    func testPollingSchedulerDoesNotCarryBackoffAcrossAnImmediateRewatch() throws {
+        let fixture = try Fixture()
+        var scheduler = ForgeAttentionPollingScheduler(preset: .frequent)
+        let firstTarget = try XCTUnwrap(scheduler.nextTarget(
+            watchedRepositories: [fixture.watch],
+            activeOrOpenRepositories: [],
+            at: fixture.date(0)
+        ))
+        let backoff = scheduler.recordFailure(firstTarget, at: fixture.date(0))
+        let rewatched = ForgeWatchedRepository(
+            key: fixture.watch.key,
+            addedAt: fixture.date(1),
+            source: .preferences
+        )
+
+        let immediateTarget = scheduler.nextTarget(
+            watchedRepositories: [rewatched],
+            activeOrOpenRepositories: [],
+            at: fixture.date(1)
+        )
+
+        XCTAssertNotNil(immediateTarget)
+        XCTAssertLessThan(fixture.date(1), backoff.retryAt)
+    }
+
     func testSQLiteAttentionPersistenceOwnsWatchesSeenStateMarkAllAndExpiry() async throws {
         let fixture = try Fixture()
         let sqliteFixture = try SQLiteFixture()
@@ -1028,6 +1102,56 @@ final class ForgeAttentionInboxTests: XCTestCase {
 
         let manual = try await coordinator.refresh(fixture.watch.key)
         XCTAssertEqual(manual.watchedRepository.lastSuccessfulPollAt, fixture.date(1))
+        let requestedKeys = await fetcher.requestedKeys
+        XCTAssertEqual(requestedKeys, [fixture.watch.key, fixture.watch.key])
+    }
+
+    func testCoordinatorForgetsFailureBackoffWhenTheRepositoryIsUnwatched() async throws {
+        let fixture = try Fixture()
+        let persistence = try ForgeSQLiteAttentionPersistence(
+            store: ForgeSQLiteStore(configuration: SQLiteFixture().configuration)
+        )
+        try await persistence.save(fixture.watch)
+        let clock = MutableAttentionTestClock(fixture.date(0))
+        let fetcher = FailingOnceSnapshotFetcher(
+            viewer: fixture.viewer,
+            fetchedAt: fixture.date(2)
+        )
+        let coordinator = ForgeAttentionInboxCoordinator(
+            persistence: persistence,
+            fetcher: fetcher,
+            alertDelivery: AlertDelivery(authorization: .denied, requestResult: false),
+            pollingPreset: .frequent,
+            now: { clock.now() }
+        )
+
+        do {
+            _ = try await coordinator.refreshNextDue(
+                accountID: fixture.accountID,
+                activeOrOpenRepositories: []
+            )
+            XCTFail("Expected the scheduled provider failure")
+        } catch FailingOnceSnapshotFetcher.Failure.expected {}
+
+        try await persistence.removeWatchedRepository(fixture.watch.key)
+        clock.set(fixture.date(1))
+        let unwatched = try await coordinator.refreshNextDue(
+            accountID: fixture.accountID,
+            activeOrOpenRepositories: []
+        )
+        XCTAssertNil(unwatched)
+
+        try await persistence.save(fixture.watch)
+        clock.set(fixture.date(2))
+        let rewatched = try await coordinator.refreshNextDue(
+            accountID: fixture.accountID,
+            activeOrOpenRepositories: []
+        )
+        XCTAssertEqual(
+            rewatched?.watchedRepository.key,
+            fixture.watch.key,
+            "A re-watched repository must not inherit the backoff recorded before it was unwatched"
+        )
         let requestedKeys = await fetcher.requestedKeys
         XCTAssertEqual(requestedKeys, [fixture.watch.key, fixture.watch.key])
     }

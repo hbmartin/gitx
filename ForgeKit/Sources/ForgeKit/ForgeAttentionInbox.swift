@@ -649,6 +649,7 @@ public struct ForgeAttentionPollingTarget: Hashable, Sendable {
 }
 
 struct ForgeAttentionPollingBackoff: Hashable, Sendable {
+    let watchedRepositoryAddedAt: Date
     let consecutiveFailures: Int
     let delay: TimeInterval
     let retryAt: Date
@@ -686,7 +687,10 @@ public struct ForgeAttentionPollingScheduler: Sendable {
         }
         for offset in ordered.indices {
             let watch = ordered[(startIndex + offset) % ordered.count]
-            if let backoff = failureBackoffs[watch.key], date < backoff.retryAt {
+            if let backoff = failureBackoffs[watch.key],
+               backoff.watchedRepositoryAddedAt == watch.addedAt,
+               date < backoff.retryAt
+            {
                 continue
             }
             let activity: ForgeAttentionPollingActivity = activeOrOpenRepositories.contains(watch.key)
@@ -713,7 +717,9 @@ public struct ForgeAttentionPollingScheduler: Sendable {
         _ target: ForgeAttentionPollingTarget,
         at date: Date
     ) -> ForgeAttentionPollingBackoff {
-        let previousBackoff = failureBackoffs[target.watchedRepository.key]
+        let previousBackoff = failureBackoffs[target.watchedRepository.key].flatMap {
+            $0.watchedRepositoryAddedAt == target.watchedRepository.addedAt ? $0 : nil
+        }
         let previousCount = previousBackoff?.consecutiveFailures ?? 0
         let failureCount = min(previousCount + 1, Self.maximumTrackedFailureCount)
         let maximumDelay = max(Self.maximumBackoff, target.targetInterval)
@@ -724,6 +730,7 @@ public struct ForgeAttentionPollingScheduler: Sendable {
             min(targetDelay, maximumDelay)
         }
         let backoff = ForgeAttentionPollingBackoff(
+            watchedRepositoryAddedAt: target.watchedRepository.addedAt,
             consecutiveFailures: failureCount,
             delay: delay,
             retryAt: date.addingTimeInterval(delay)
@@ -734,6 +741,19 @@ public struct ForgeAttentionPollingScheduler: Sendable {
 
     mutating func recordSuccess(for key: ForgeWatchedRepositoryKey) {
         failureBackoffs.removeValue(forKey: key)
+    }
+
+    /// Forgets backoff state for the account's repositories that are no longer
+    /// watched, so an unwatch releases the failure history and a later re-watch
+    /// starts fresh. Other accounts' backoffs are retained.
+    mutating func pruneBackoffs(
+        accountID: ForgeAccountID,
+        watchedRepositories: [ForgeWatchedRepository]
+    ) {
+        let retained = Set(watchedRepositories.map(\.key))
+        failureBackoffs = failureBackoffs.filter {
+            $0.key.accountID != accountID || retained.contains($0.key)
+        }
     }
 }
 
@@ -1327,6 +1347,7 @@ public actor ForgeAttentionInboxCoordinator {
     ) async throws -> ForgeAttentionReconciliation? {
         let date = requestedDate ?? now()
         let watches = try await persistence.watchedRepositories(accountID: accountID)
+        scheduler.pruneBackoffs(accountID: accountID, watchedRepositories: watches)
         guard let target = scheduler.nextTarget(
             watchedRepositories: watches,
             activeOrOpenRepositories: activeOrOpenRepositories,

@@ -31,6 +31,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBGitRepositoryWatcher (GitXTests)
 - (nullable NSDate *)fileModificationDateAtPath:(NSString *)path;
 - (void)handleGitDirEventCallback:(NSArray<PBGitRepositoryWatcherEventPath *> *)eventPaths;
+- (void)handleWorkDirEventCallback:(NSArray<PBGitRepositoryWatcherEventPath *> *)eventPaths;
 @end
 
 @interface PBGitRepositoryWatcherEventPath : NSObject
@@ -297,6 +298,36 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 	[watcher handleGitDirEventCallback:branchEvents];
 
 	[self waitForExpectations:@[ notification ] timeout:2.0];
+}
+
+- (void)testWorkDirectoryCallbackIgnoresOutsideAndInitiallyIgnoredPaths
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	[watcher stop];
+	NSError *error = nil;
+	NSString *ignoredPath = [self.repositoryURL.path stringByAppendingPathComponent:@"ignored.txt"];
+	XCTAssertTrue([@"ignored.txt\n" writeToFile:[self.repositoryURL.path stringByAppendingPathComponent:@".gitignore"]
+									 atomically:NO
+									   encoding:NSUTF8StringEncoding
+										  error:&error],
+				  @"%@", error);
+	XCTAssertTrue([@"ignored\n" writeToFile:ignoredPath atomically:NO encoding:NSUTF8StringEncoding error:&error], @"%@", error);
+
+	NSMutableArray<PBGitRepositoryWatcherEventPath *> *events = [NSMutableArray array];
+	for (NSString *path in @[ [self.repositoryURL.path stringByAppendingString:@"-outside"], ignoredPath ]) {
+		PBGitRepositoryWatcherEventPath *eventPath = [PBGitRepositoryWatcherEventPath new];
+		eventPath.path = path;
+		eventPath.flag = kFSEventStreamEventFlagNone;
+		[events addObject:eventPath];
+	}
+	XCTestExpectation *notification = [self expectationForNotification:PBGitRepositoryEventNotification
+																object:self.repository
+															   handler:nil];
+	notification.inverted = YES;
+
+	[watcher handleWorkDirEventCallback:events];
+
+	[self waitForExpectations:@[ notification ] timeout:0.2];
 }
 
 - (void)testLinkedWorktreeWatcherOpensStatusRepositoryFromWorktree

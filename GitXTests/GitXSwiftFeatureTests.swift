@@ -1742,9 +1742,10 @@ final class GitXSwiftFeatureTests: XCTestCase {
         )
 
         PBRecentRepositoryStore.shared.record(newest)
-        let tiedPaths = recentRepositoryPaths()
-            .filter { $0 == first.path || $0 == second.path }
-        XCTAssertEqual(tiedPaths, [first.path, second.path])
+        let expectedPaths = [newest.path, first.path, second.path]
+        let paths = recentRepositoryPaths()
+        XCTAssertEqual(paths.first, newest.path)
+        XCTAssertEqual(paths.filter(Set(expectedPaths).contains), expectedPaths)
     }
 
     func testHighlightingThemesAndPlainFallbackFont() {

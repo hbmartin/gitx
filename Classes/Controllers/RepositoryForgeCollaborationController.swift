@@ -922,7 +922,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
             let publishedEnabledControl = windowController?.createPullRequestControl == createPullRequestControl
             editPullRequestHandler(account: account)(snapshot, destination)
 
-            repositoryFacts = try ForgeRepositoryFacts(
+            let forkFacts = try ForgeRepositoryFacts(
                 repository: binding.primaryRepository,
                 defaultBranch: .available(ForgeRefName("main")),
                 description: .available("Capability proof"),
@@ -931,8 +931,29 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 isArchived: .available(false),
                 forkRelationship: .available(.fork(parent: parent))
             )
+            repositoryFacts = forkFacts
             updateSyncForkButton()
             let enabledFork = !syncForkButton.isHidden && syncForkButton.isEnabled
+            let forkSidebarRepositories = sidebarRepositories
+            let forkRelationshipIsPresented = forkSidebarRepositories.contains {
+                $0.isPrimary && $0.relationships.contains(.fork)
+            } && forkSidebarRepositories.contains {
+                !$0.isPrimary && $0.relationships.contains(.parent)
+            }
+
+            repositoryFacts = try ForgeRepositoryFacts(
+                repository: binding.primaryRepository,
+                defaultBranch: .available(ForgeRefName("main")),
+                description: .available("Capability proof"),
+                topics: .available([]),
+                visibility: .available(.public),
+                isArchived: .available(false),
+                forkRelationship: .available(.standalone)
+            )
+            let standaloneRelationshipIsPresented = sidebarRepositories.contains {
+                $0.isPrimary && !$0.relationships.contains(.fork)
+            }
+            repositoryFacts = forkFacts
 
             applyMutationCapabilities([:], resolution: .authenticated(account))
             updateSyncForkButton()
@@ -958,6 +979,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
                 && publicReadsRemainVisible && unavailableIssueFallsBack
                 && unavailableShowIsIgnored && unavailableNativeRouteIsRejected
                 && enabled && publishedEnabledControl && enabledFork
+                && forkRelationshipIsPresented && standaloneRelationshipIsPresented
                 && missingFailsClosed && errorFailsClosed && capabilityErrorPreservesReads
                 && publishedErrorControl
         }

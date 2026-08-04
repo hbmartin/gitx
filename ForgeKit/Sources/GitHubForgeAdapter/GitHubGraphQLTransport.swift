@@ -43,16 +43,22 @@ final class GitHubResponseMetadataBox: @unchecked Sendable {
     }
 
     private func recordResponseBodyEvidence(_ body: Data) {
-        guard !body.isEmpty, !responseBodyExceededEvidenceLimit else { return }
+        // Detection is sticky for the box's lifetime: one box serves one
+        // GraphQL operation, so evidence recorded by any chunk stays
+        // authoritative and later bytes must not revert it.
+        guard !body.isEmpty, !responseBodyExceededEvidenceLimit, !secondaryRateLimitDetected
+        else { return }
         guard body.count <= GitHubSecondaryRateLimitEvidence.maximumBodySize - responseBody.count
         else {
             responseBody.removeAll(keepingCapacity: false)
             responseBodyExceededEvidenceLimit = true
-            secondaryRateLimitDetected = false
             return
         }
         responseBody.append(body)
         secondaryRateLimitDetected = GitHubSecondaryRateLimitEvidence.detect(in: responseBody)
+        if secondaryRateLimitDetected {
+            responseBody.removeAll(keepingCapacity: false)
+        }
     }
 }
 

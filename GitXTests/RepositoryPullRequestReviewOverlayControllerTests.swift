@@ -1304,9 +1304,17 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
         await mergeService.waitForMergeCalls(1)
 
         mergeRetry?()
+        XCTAssertEqual(
+            mergeController.trackedTaskCountForProductProof,
+            1,
+            "The stored retry must enter the controller-owned task registry before detach"
+        )
         mergeController.detach()
-        await Task.yield()
-        XCTAssertEqual(mergeController.trackedTaskCountForProductProof, 0)
+        XCTAssertEqual(
+            mergeController.trackedTaskCountForProductProof,
+            0,
+            "Detach must synchronously cancel and remove the queued retry"
+        )
         let mergeRequests = await mergeService.mergeRequests()
         XCTAssertEqual(mergeRequests.count, 1, "Detach must cancel a queued merge retry before it starts")
 
@@ -1350,8 +1358,11 @@ final class RepositoryPullRequestReviewOverlayControllerTests: XCTestCase {
 
         deletionController.detach()
         deletionRetry?()
-        await Task.yield()
-        XCTAssertEqual(deletionController.trackedTaskCountForProductProof, 0)
+        XCTAssertEqual(
+            deletionController.trackedTaskCountForProductProof,
+            0,
+            "A detached controller must synchronously reject a stored retry"
+        )
         let deletionRequests = await deletionService.deletionRequests()
         XCTAssertEqual(deletionRequests.count, 1, "A detached controller must not repeat branch deletion")
     }
