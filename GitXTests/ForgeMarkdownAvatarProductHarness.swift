@@ -1595,6 +1595,9 @@
             controller.show(.attention)
             controller.refresh(nil)
             let mountedAttention = await waitForDescendant(identifier: "ForgeAttentionTable", in: view)
+            let attentionRecovery = controller.runAttentionAuthorizationRecoveryForProductProof(
+                NSError(domain: "GitXAttentionRecoveryProductProof", code: 1)
+            )
 
             let settings = ApplicationComposition.shared.repositoryViewState(for: repository)
             let choiceBinding = try? ForgeRepositoryBinding(
@@ -1667,6 +1670,7 @@
                 openedIssue &&
                 !rejectedCommit &&
                 mountedAttention &&
+                attentionRecovery &&
                 choice &&
                 selectedAccount &&
                 publicAccess &&

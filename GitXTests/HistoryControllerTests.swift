@@ -387,6 +387,29 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertNotNil(tableCoordinator.tableView(historyController.commitList, rowViewForRow: 0))
     }
 
+    func testHistoryNibContainsNativeFlowTabAndPersistsItsSelection() throws {
+        historyController.selectedCommitDetailsIndex = 2
+        pumpRunLoop()
+
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+        XCTAssertEqual(flowView.accessibilityLabel(), "Commit flow delta")
+
+        XCTAssertEqual(historyController.selectedCommitDetailsIndex, 2)
+        XCTAssertEqual(UserDefaults.standard.integer(forKey: "PBHistorySelectedDetailIndex"), 2)
+
+        historyController.selectedCommitDetailsIndex = 0
+        historyController.commitController.setSelectedObjects([])
+        pumpRunLoop()
+        historyController.selectedCommitDetailsIndex = 2
+        pumpRunLoop()
+
+        let statusLabels = controls(in: flowView).compactMap { $0 as? NSTextField }
+        XCTAssertTrue(
+            statusLabels.contains { $0.stringValue == "Select one commit to review its flow delta." },
+            "Flow status labels: \(statusLabels.map(\.stringValue))"
+        )
+    }
+
     func testHistoryForgeColumnsDiagnosticScreenshot() throws {
         let checkColumn = try XCTUnwrap(historyController.commitList.tableColumn(
             withIdentifier: NSUserInterfaceItemIdentifier("ForgeCheckRollupColumn")
@@ -3144,6 +3167,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     private func flattenedTree(_ root: PBGitTree) -> [PBGitTree] {
         [root] + root.children.flatMap(flattenedTree)
+    }
+
+    private func descendant(identifier: String, in root: NSView?) -> NSView? {
+        guard let root else { return nil }
+        if root.accessibilityIdentifier() == identifier {
+            return root
+        }
+        return root.subviews.lazy.compactMap { self.descendant(identifier: identifier, in: $0) }.first
     }
 
     private func controls(in view: NSView) -> [NSControl] {

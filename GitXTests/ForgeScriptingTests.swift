@@ -21,9 +21,9 @@ final class ForgeScriptingTests: XCTestCase {
     private var documents: [NSDocument] = []
 
     private func cleanUpFixtures() {
-        let documentController = NSDocumentController.shared
         for document in documents {
-            documentController.removeDocument(document)
+            // Let NSDocument coordinate file-presenter teardown and unregister itself.
+            // Removing it first can deadlock Foundation's presenter arbiter under ASan.
             document.close()
         }
         documents.removeAll()
