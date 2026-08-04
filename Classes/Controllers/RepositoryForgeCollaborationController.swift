@@ -1268,6 +1268,12 @@ final class RepositoryForgeCollaborationController: PBViewController {
             credentialCooldownObservationTask != nil
                 && credentialCooldownObservationReadyForProductProof
         }
+
+        func runAttentionAuthorizationRecoveryForProductProof(_ error: Error) -> Bool {
+            guard let attentionController else { return false }
+            attentionController.runAuthorizationRecoveryForProductProof(error)
+            return true
+        }
     #endif
 
     private func applyAccountSelection(_ account: ForgeAccount, binding: ForgeRepositoryBinding) {
