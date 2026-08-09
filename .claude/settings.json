@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(scripts/xcodebuild.sh:*)",
+      "Bash(scripts/run_app.sh:*)",
+      "Bash(scripts/observe_app.sh:*)",
+      "Bash(scripts/report_xcresult.py:*)",
+      "Bash(scripts/verify_static.sh:*)",
+      "Bash(scripts/run_analyzer.sh:*)",
+      "Bash(scripts/run_pinned_tool.sh:*)",
+      "Bash(python3 scripts/:*)",
+      "Bash(./scripts/:*)",
+      "Bash(xcbeautify:*)",
+      "Bash(xcrun xcresulttool:*)",
+      "Bash(xcrun simctl list:*)",
+      "Bash(swift test:*)",
+      "Bash(swift build:*)",
+      "Bash(peekaboo:*)",
+      "Bash(log show:*)",
+      "Bash(log stream:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git blame:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git submodule status:*)",
+      "Bash(git check-ignore:*)",
+      "Bash(mint run:*)",
+      "Bash(shellcheck:*)",
+      "Bash(actionlint:*)",
+      "Bash(plutil -lint:*)",
+      "Bash(jq:*)",
+      "Bash(codesign -dv:*)",
+      "Bash(/usr/libexec/PlistBuddy -c Print:*)"
+    ],
+    "deny": [
+      "Edit(**/project.pbxproj)",
+      "Edit(**/*.xcodeproj/**)",
+      "Edit(**/*.xcworkspace/**)",
+      "Edit(**/*.xib)",
+      "Edit(**/*.storyboard)",
+      "Write(**/project.pbxproj)",
+      "Write(**/*.xcodeproj/**)",
+      "Write(**/*.xcworkspace/**)",
+      "Write(**/*.xib)",
+      "Write(**/*.storyboard)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Checking for protected project files",
+            "timeout": 10,
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in *.pbxproj|*.xcodeproj/*|*.xcworkspace/*|*.xib|*.storyboard) printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"%s\"}}' \"Xcode project and Interface Builder files are not safe to edit as text: a reference added in one section without its matching build-phase entry compiles until the linker fails somewhere unrelated. Create the file on disk and ask the user to add it to the target in Xcode.\";; esac; }"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Formatting Swift",
+            "timeout": 120,
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && jq -r '.tool_response.filePath // .tool_input.file_path // empty' | { read -r f; case \"$f\" in *ForgeKit/Sources/GitHubForgeAdapter/Generated/*.swift) ;; *.swift) scripts/run_pinned_tool.sh swiftformat \"$f\" && scripts/run_pinned_tool.sh swiftlint --fix --config .swiftlint.yml \"$f\";; esac; } >/dev/null 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}

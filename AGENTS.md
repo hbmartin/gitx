@@ -1,5 +1,19 @@
 - The overall aesthetic of the app should be inspired by Mac OS X 10.6 Snow Leopard
 
+### Building and running
+- Build only through `scripts/xcodebuild.sh`. It pins the stable Xcode at `/Applications/Xcode.app`, which CI also pins; the selected Xcode may be a beta that cannot build this workspace. Bare `xcodebuild` is not a supported entry point.
+- The wrapper pins `-derivedDataPath build/DerivedData`. Never pass an ad-hoc derived data path: per-session paths turn a roughly 5 second warm build into a roughly 60 second cold build and leak gigabytes into `build/`.
+- Refresh the stable Debug app with `scripts/xcodebuild.sh --stage-app build`, which stages `build/GitX.app` from the built products.
+- Read test failures with `scripts/report_xcresult.py <result.xcresult>`, which prints only failures: a count header, then each failing test with its `path/File.swift:LINE: message` lines indented beneath it (runner-level failures may carry no source location). The wrapper writes test runs to `build/Logs/last-test.xcresult` and the full build log to `build/Logs/last-xcodebuild.log`.
+- Never edit `.pbxproj`, `.xcodeproj/`, `.xcworkspace/`, `.xib`, or `.storyboard` as text. Create files on disk and ask the user to add them to the target in Xcode. This is enforced by a `PreToolUse` deny hook in `.claude/settings.json`.
+- `buildServer.json` backs sourcekit-lsp and clangd for the app target. Regenerate it with `xcode-build-server config -workspace GitX.xcworkspace -scheme GitX` after targets or schemes change; a stale file makes the language server fail to resolve modules. After regenerating, point `build_root` back at the repo's `build/DerivedData`: the generator records the user-global DerivedData path, which the pinned wrapper never populates.
+
+### Runtime verification
+- Use the repo-local `$gitx-runtime-verification` skill whenever confirming a change in the running app, reproducing a bug, inspecting runtime logging, capturing diagnostic screenshots, or driving the UI.
+- Launch with `scripts/run_app.sh` and observe with `scripts/observe_app.sh`. The launch harness reuses the XCUITest launch environment, so manual observation matches CI.
+- Keep fixture repositories and the isolated preferences home under `$TMPDIR`. That location is not TCC-protected, so a debug-signed build never raises a consent prompt. Opening a repository on an external volume, Desktop, Documents, or Downloads reintroduces prompts, and a denied prompt then fails silently on every later run.
+- Read the screenshot you capture and quote the log lines that corroborate what you claim. Both `os_log` and `NSLog` output are captured; consult both.
+
 ### Commit and PR rules
 - Never open a PR against the upstream, PR's are always on the hbmartin fork
 - When committing, if you made a plan, use that plan as the basis for your commit message (unless it is a test only commit).

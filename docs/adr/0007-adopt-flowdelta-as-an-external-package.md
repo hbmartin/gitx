@@ -1,0 +1,11 @@
+# Adopt FlowDelta as an external, exact-pinned package
+
+GitX will consume FlowDelta — a Swift library and CLI that computes per-commit control-flow and data-flow deltas and a deterministic layout for rendering them — as an externally developed Swift package from `hbmartin/FlowDelta`, pinned exactly like HighlightKit, rather than as a third local package beside `GitXCore` and `ForgeKit`. ADR 0002 rejected additional feature packages until ownership boundaries stabilize, and that reasoning still holds inside this repository; FlowDelta sidesteps it because it is a standalone product with consumers beyond GitX (its own CLI, reference app, and other embedders), its own release cadence, and its own verification. The library's coverage ratchet (≥90%), SwiftLint/SwiftFormat rules, screenshot tests, and CI live in its repository; GitX does not add a boundary checker, coverage baseline, or Verify job for the package's internals.
+
+Following ADR 0004's pinning doctrine, GitX pins FlowDelta releases exactly and treats upgrades as explicit reviewed changes that rerun the complete verification matrix. During active development a local path override substitutes for the pin; the override must never be committed.
+
+The application consumes FlowDelta the way it consumes `GitXCore`: package types stay Swift-only, and thin `@objc` adapter files in `Classes/` (the `GitXCoreAdapters.swift` pattern) re-export the ObjC-visible surface the app needs. Adapter files are app-target code and fall under the existing per-file coverage floors and lint rules. The application must not import FlowDelta targets outside the adapters.
+
+FlowDelta does not depend on ObjectiveGit — hbmartin/objective-git is an Xcode-framework submodule, not SPM-consumable — and defaults to a `Process`-based git provider behind its `RevisionProvider` protocol. GitX may inject an ObjectiveGit-backed provider through that protocol rather than having the package grow a git dependency.
+
+FlowDelta is licensed LGPL-3.0 while GitX remains GPLv2-only, a combination the FSF considers formally incompatible. This is knowingly accepted by the maintainer — GitX already ships the Apache-2.0 `swift-markdown` via ForgeKit under the same pragmatic posture — and the FlowDelta README documents that linking into GPLv2-only hosts is the embedder's call.
