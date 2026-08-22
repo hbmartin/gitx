@@ -220,9 +220,33 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             try git(["config", "user.name", "GitX Tests"])
             try git(["config", "user.email", "gitx-tests@example.invalid"])
             try write("initial\n", to: "nested/tracked.txt")
+            try write(
+                """
+                func flowValue(_ enabled: Bool) -> Int {
+                    if enabled {
+                        return 1
+                    }
+                    return 0
+                }
+
+                """,
+                to: "FlowSample.swift"
+            )
             try git(["add", "--all"])
             try git(["commit", "--quiet", "-m", "initial commit"])
             try write("second\n", to: "nested/tracked.txt")
+            try write(
+                """
+                func flowValue(_ enabled: Bool) -> Int {
+                    guard enabled else {
+                        return -1
+                    }
+                    return 2
+                }
+
+                """,
+                to: "FlowSample.swift"
+            )
             try git(["commit", "--quiet", "-am", "second main commit"])
             try git(["branch", "feature", "HEAD^"])
             try git(["checkout", "--quiet", "feature"])
@@ -407,6 +431,41 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(
             statusLabels.contains { $0.stringValue == "Select one commit to review its flow delta." },
             "Flow status labels: \(statusLabels.map(\.stringValue))"
+        )
+    }
+
+    func testHistoryFlowRendersSuccessfulRevisionAnalysis() throws {
+        selectMainCommitForFlowAnalysis()
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains {
+                    $0.contains("1 files (Swift)") && $0.contains("function deltas")
+                }
+            },
+            "Flow labels after analysis: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testHistoryFlowReportsRevisionAnalysisFailure() throws {
+        selectMainCommitForFlowAnalysis()
+        let repositoryURL = URL(fileURLWithPath: fixture.path)
+        let unavailableURL = repositoryURL.appendingPathExtension("unavailable")
+        try FileManager.default.moveItem(at: repositoryURL, to: unavailableURL)
+        defer {
+            try? FileManager.default.moveItem(at: unavailableURL, to: repositoryURL)
+        }
+
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains { $0.hasPrefix("Flow analysis failed.\n") }
+            },
+            "Flow labels after analysis failure: \(flowLabels(in: flowView))"
         )
     }
 
@@ -3058,6 +3117,24 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     private func loadedCommits() -> [PBGitCommit] {
         waitForHistory()
         return repository.revisionList?.commits.compactMap { $0 as? PBGitCommit } ?? []
+    }
+
+    private func selectMainCommitForFlowAnalysis(
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let mainSHA = try? fixture.git(["rev-parse", "main"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let commit = loadedCommits().first { $0.sha == mainSHA }
+        XCTAssertNotNil(commit, "The main commit was not loaded", file: file, line: line)
+        guard let commit else { return }
+        historyController.commitController.setSelectedObjects([commit])
+        historyController.updateKeys()
+        XCTAssertEqual(historyController.selectedCommits, [commit], file: file, line: line)
+    }
+
+    private func flowLabels(in flowView: NSView) -> [String] {
+        controls(in: flowView).compactMap { ($0 as? NSTextField)?.stringValue }
     }
 
     private func searchResultRows(
