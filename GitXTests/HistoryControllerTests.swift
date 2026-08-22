@@ -469,6 +469,24 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testHistoryFlowReloadsSameCommitAfterLeavingWhileAnalysisIsPending() throws {
+        selectMainCommitForFlowAnalysis()
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        historyController.selectedCommitDetailsIndex = 0
+        historyController.selectedCommitDetailsIndex = 2
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains {
+                    $0.contains("1 files (Swift)") && $0.contains("function deltas")
+                }
+            },
+            "Flow labels after returning to the pending revision: \(flowLabels(in: flowView))"
+        )
+    }
+
     func testHistoryForgeColumnsDiagnosticScreenshot() throws {
         let checkColumn = try XCTUnwrap(historyController.commitList.tableColumn(
             withIdentifier: NSUserInterfaceItemIdentifier("ForgeCheckRollupColumn")

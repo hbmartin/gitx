@@ -127,6 +127,7 @@ final class FlowDeltaAdapterView: NSView {
         switch decision {
         case .inactive:
             analysisTask?.cancel()
+            representedRequest = nil
         case let .message(message):
             representedRequest = nil
             analysisTask?.cancel()
@@ -159,7 +160,7 @@ final class FlowDeltaAdapterView: NSView {
                 Self.logger.debug("Cancelled stale History flow analysis")
             } catch {
                 guard let self, requestedGeneration == self.generation else { return }
-                Self.logger.error("History flow analysis failed: \(String(describing: error), privacy: .public)")
+                Self.logger.error("History flow analysis failed: \(String(describing: error), privacy: .private)")
                 self.showMessage("Flow analysis failed.\n\(error.localizedDescription)")
             }
         }

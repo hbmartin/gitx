@@ -150,9 +150,9 @@ def build_path_index(root: pathlib.Path) -> dict[str, str]:
 
 def resolve(failure: Failure, index: dict[str, str]) -> Failure:
     """Expand a bare basename into a repository-relative path when unambiguous."""
-    if failure.file is None:
+    if failure.file is None or pathlib.PurePath(failure.file).name != failure.file:
         return failure
-    resolved = index.get(failure.file.rsplit("/", 1)[-1])
+    resolved = index.get(failure.file)
     if resolved is None:
         return failure
     return failure._replace(file=resolved)

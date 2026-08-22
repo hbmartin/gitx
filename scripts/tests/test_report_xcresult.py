@@ -197,6 +197,13 @@ class ResolveTests(unittest.TestCase):
 
         self.assertEqual(reporter.resolve(failure, {}).file, "File.swift")
 
+    def test_preserves_a_reported_path_instead_of_matching_its_basename(self) -> None:
+        failure = reporter.Failure("GitXTests", "S/t()", "ThirdParty/File.swift", 3, "boom")
+
+        resolved = reporter.resolve(failure, {"File.swift": "GitXTests/File.swift"})
+
+        self.assertEqual(resolved.file, "ThirdParty/File.swift")
+
     def test_ignores_failures_without_a_file(self) -> None:
         failure = reporter.Failure("GitXTests", "S/t()", None, None, "boom")
 
