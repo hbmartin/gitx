@@ -1,7 +1,7 @@
 {
   "version": 1,
   "target": "GitX.app",
-  "minimumLineCoverage": 0.8984,
+  "minimumLineCoverage": 0.899,
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
     "Classes/Controllers/ApplicationController.m": 0.4963,
@@ -12,7 +12,7 @@
     "Classes/Controllers/CommitPatchExportCoordinator.swift": 0.1421,
     "Classes/Controllers/CommitTableInteractionCoordinator.swift": 0.9818,
     "Classes/Controllers/DBPrefsWindowController.m": 0.6538,
-    "Classes/Controllers/FlowDeltaAdapters.swift": 0.9117,
+    "Classes/Controllers/FlowDeltaAdapters.swift": 0.9707,
     "Classes/Controllers/ForgeAccountLifecycle.swift": 0.9851,
     "Classes/Controllers/ForgeAccountsPreferences.swift": 0.9463,
     "Classes/Controllers/ForgeApplicationRefreshCoordinator.swift": 0.9207,
@@ -57,7 +57,7 @@
     "Classes/Controllers/RepositoryActionContextResolver.swift": 1.0,
     "Classes/Controllers/RepositoryAttentionSession.swift": 0.6679,
     "Classes/Controllers/RepositoryFocusRefreshCoordinator.swift": 0.9934,
-    "Classes/Controllers/RepositoryForgeCollaborationController.swift": 0.9007,
+    "Classes/Controllers/RepositoryForgeCollaborationController.swift": 0.9056,
     "Classes/Controllers/RepositoryForgeCoordinator.swift": 0.9638,
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
     "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8807,
