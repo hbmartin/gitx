@@ -218,6 +218,34 @@ extern void PBGitRepositoryWatcherCallback(ConstFSEventStreamRef _Nullable strea
 	XCTAssertNil([watcher fileModificationDateAtPath:missingPath]);
 }
 
+- (void)testWorkingTreeCallbackRefreshesConservativelyWithoutIsolatedStatusHandle
+{
+	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];
+	[watcher stop];
+	[watcher setValue:nil forKey:@"statusRepository"];
+	NSString *changedPath = [self.repositoryURL.path stringByAppendingPathComponent:@"changed.txt"];
+	PBGitRepositoryWatcherEventPath *eventPath = [PBGitRepositoryWatcherEventPath new];
+	eventPath.path = changedPath;
+	eventPath.flag = kFSEventStreamEventFlagNone;
+	PBGitRepositoryWatcherEventPath *outsideEventPath = [PBGitRepositoryWatcherEventPath new];
+	outsideEventPath.path = NSTemporaryDirectory();
+	outsideEventPath.flag = kFSEventStreamEventFlagNone;
+	XCTestExpectation *notification =
+		[self expectationForNotification:PBGitRepositoryEventNotification
+								  object:self.repository
+								 handler:^BOOL(NSNotification *note) {
+									 NSUInteger eventType = [note.userInfo[kPBGitRepositoryEventTypeUserInfoKey] unsignedIntegerValue];
+									 NSArray<NSString *> *paths = note.userInfo[kPBGitRepositoryEventPathsUserInfoKey];
+									 XCTAssertNotEqual(eventType & PBGitRepositoryWatcherEventTypeWorkingDirectory, (NSUInteger)0);
+									 XCTAssertEqualObjects(paths, @[ changedPath ]);
+									 return YES;
+								 }];
+
+	[watcher handleWorkDirEventCallback:@[ outsideEventPath, eventPath ]];
+
+	[self waitForExpectations:@[ notification ] timeout:2.0];
+}
+
 - (void)testWatcherCallbackIgnoresGitLockFiles
 {
 	PBGitRepositoryWatcher *watcher = [self.repository valueForKey:@"watcher"];

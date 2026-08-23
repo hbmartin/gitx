@@ -293,6 +293,11 @@
 		C0DEC8000000000000000001 /* CommitMessageEditCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC8000000000000000011 /* CommitMessageEditCoordinator.swift */; };
 		C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */; };
 		C0D0C0A00000000000000001 /* GitXCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0D0C0A00000000000000018 /* GitXCore */; };
+		FD2000000000000000000001 /* FlowDeltaAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD2000000000000000000011 /* FlowDeltaAdapters.swift */; };
+		FD2000000000000000000002 /* FlowDeltaCore in Frameworks */ = {isa = PBXBuildFile; productRef = FD2000000000000000000018 /* FlowDeltaCore */; };
+		FD2000000000000000000003 /* FlowDeltaAnalysis in Frameworks */ = {isa = PBXBuildFile; productRef = FD2000000000000000000019 /* FlowDeltaAnalysis */; };
+		FD2000000000000000000004 /* FlowDeltaGit in Frameworks */ = {isa = PBXBuildFile; productRef = FD200000000000000000001A /* FlowDeltaGit */; };
+		FD2000000000000000000005 /* FlowDeltaUI in Frameworks */ = {isa = PBXBuildFile; productRef = FD200000000000000000001B /* FlowDeltaUI */; };
 		F0A000000000000000000001 /* ForgeKit in Frameworks */ = {isa = PBXBuildFile; productRef = F0A000000000000000000018 /* ForgeKit */; };
 		C0D0C0A00000000000000002 /* ApplicationComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000011 /* ApplicationComposition.swift */; };
 		C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */; };
@@ -982,6 +987,7 @@
 		C0DEC3000000000000000011 /* RepositorySettingsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsController.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000011 /* ApplicationComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationComposition.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXCoreAdapters.swift; sourceTree = "<group>"; };
+		FD2000000000000000000011 /* FlowDeltaAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowDeltaAdapters.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationPreferencesUI.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000014 /* TerminalIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegration.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsStore.swift; sourceTree = "<group>"; };
@@ -1084,6 +1090,10 @@
 				F0A000000000000000000001 /* ForgeKit in Frameworks */,
 				F0B200000000000000000001 /* GitHubForgeAdapter in Frameworks */,
 				C0D0C0A00000000000000001 /* GitXCore in Frameworks */,
+				FD2000000000000000000002 /* FlowDeltaCore in Frameworks */,
+				FD2000000000000000000003 /* FlowDeltaAnalysis in Frameworks */,
+				FD2000000000000000000004 /* FlowDeltaGit in Frameworks */,
+				FD2000000000000000000005 /* FlowDeltaUI in Frameworks */,
 				C0DE1000000000000000001A /* UserNotifications.framework in Frameworks */,
 				C0DE10000000000000000016 /* HighlightKit in Frameworks */,
 				4A68AD7414A00541006DE321 /* Sparkle.framework in Frameworks */,
@@ -1364,6 +1374,7 @@
 				F0D100000000000000000011 /* ForgeExternalLinkRouting.swift */,
 				F0E100000000000000000011 /* ForgeAccountsPreferences.swift */,
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
+				FD2000000000000000000011 /* FlowDeltaAdapters.swift */,
 				C0DEC1000000000000000011 /* ApplicationSettings.swift */,
 				C0D1C0A00000000000000011 /* ApplicationIcon.swift */,
 				C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */,
@@ -1802,6 +1813,10 @@
 				F0A000000000000000000018 /* ForgeKit */,
 				F0B200000000000000000018 /* GitHubForgeAdapter */,
 				C0D0C0A00000000000000018 /* GitXCore */,
+				FD2000000000000000000018 /* FlowDeltaCore */,
+				FD2000000000000000000019 /* FlowDeltaAnalysis */,
+				FD200000000000000000001A /* FlowDeltaGit */,
+				FD200000000000000000001B /* FlowDeltaUI */,
 				C0DE10000000000000000018 /* HighlightKit */,
 			);
 			productInstallPath = "$(HOME)/Applications";
@@ -1884,6 +1899,7 @@
 			packageReferences = (
 				F0A000000000000000000017 /* XCLocalSwiftPackageReference "ForgeKit" */,
 				C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */,
+				FD2000000000000000017 /* XCRemoteSwiftPackageReference "FlowDelta" */,
 				C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */,
 			);
 			projectDirPath = "";
@@ -2272,6 +2288,7 @@
 				D3A300000000000000000004 /* Milestone3UITestHarness.swift in Sources */,
 				D3A300000000000000000005 /* Milestone3DiagnosticPresenters.swift in Sources */,
 				C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */,
+				FD2000000000000000000001 /* FlowDeltaAdapters.swift in Sources */,
 				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
 				C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */,
@@ -3035,6 +3052,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		FD2000000000000000017 /* XCRemoteSwiftPackageReference "FlowDelta" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/hbmartin/FlowDelta.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.2.2;
+			};
+		};
 		C0DE10000000000000000017 /* XCRemoteSwiftPackageReference "HighlightKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/hbmartin/HighlightKit.git";
@@ -3060,6 +3085,26 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C0D0C0A00000000000000017 /* XCLocalSwiftPackageReference "GitXCore" */;
 			productName = GitXCore;
+		};
+		FD2000000000000000000018 /* FlowDeltaCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FD2000000000000000017 /* XCRemoteSwiftPackageReference "FlowDelta" */;
+			productName = FlowDeltaCore;
+		};
+		FD2000000000000000000019 /* FlowDeltaAnalysis */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FD2000000000000000017 /* XCRemoteSwiftPackageReference "FlowDelta" */;
+			productName = FlowDeltaAnalysis;
+		};
+		FD200000000000000000001A /* FlowDeltaGit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FD2000000000000000017 /* XCRemoteSwiftPackageReference "FlowDelta" */;
+			productName = FlowDeltaGit;
+		};
+		FD200000000000000000001B /* FlowDeltaUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FD2000000000000000017 /* XCRemoteSwiftPackageReference "FlowDelta" */;
+			productName = FlowDeltaUI;
 		};
 		C0DE10000000000000000018 /* HighlightKit */ = {
 			isa = XCSwiftPackageProductDependency;

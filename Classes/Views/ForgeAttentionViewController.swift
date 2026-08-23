@@ -114,6 +114,14 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
         }
     }
 
+    #if DEBUG
+        func runAuthorizationRecoveryForProductProof(_ error: Error) {
+            let retry: @MainActor @Sendable () -> Void = {}
+            retry()
+            authorizationRecoveryHandler?(error, retry)
+        }
+    #endif
+
     func open(_ itemID: ForgeAttentionItemID) {
         pendingItemID = itemID
         persistAttentionSelection(itemID)
