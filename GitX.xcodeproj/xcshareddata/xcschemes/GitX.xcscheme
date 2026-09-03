@@ -79,6 +79,9 @@
             reference = "container:GitXTests/GitXPerformance.xctestplan">
          </TestPlanReference>
          <TestPlanReference
+            reference = "container:GitXTests/GitXUIPreflight.xctestplan">
+         </TestPlanReference>
+         <TestPlanReference
             reference = "container:GitXTests/GitXUI.xctestplan">
          </TestPlanReference>
       </TestPlans>

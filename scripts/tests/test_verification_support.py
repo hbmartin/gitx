@@ -80,6 +80,43 @@ class ReceiptTests(unittest.TestCase):
         self.assertIsNone(step["testCounts"])
         self.assertIsNone(step["coverage"])
 
+    def test_finish_discovers_durable_outputs_without_derived_data_internals(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            run_directory = pathlib.Path(directory)
+            receipt = run_directory / "receipt.json"
+            (run_directory / "Logs").mkdir()
+            (run_directory / "Logs" / "build.log").write_text("log")
+            (run_directory / "Results" / "test.xcresult" / "Data").mkdir(parents=True)
+            (run_directory / "Results" / "test.xcresult" / "Data" / "payload").write_text("opaque")
+            (run_directory / "DerivedData").mkdir()
+            (run_directory / "DerivedData" / "object.o").write_text("opaque")
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "runId": "unit-test",
+                        "_startedMonotonic": 0,
+                        "artifacts": [],
+                    }
+                )
+            )
+            arguments = argparse.Namespace(
+                path=receipt,
+                status="passed",
+                exit_code=0,
+            )
+
+            with mock.patch.object(verification, "ROOT", ROOT), mock.patch.object(
+                verification, "load_config", return_value={"artifactRoot": "artifacts/verification"}
+            ), mock.patch.object(verification, "atomic_json") as atomic_json:
+                verification.command_receipt_finish(arguments)
+
+            payload = atomic_json.call_args_list[0].args[1]
+
+        self.assertTrue(any(path.endswith("/Logs/build.log") for path in payload["artifacts"]))
+        self.assertTrue(any(path.endswith("/Results/test.xcresult") for path in payload["artifacts"]))
+        self.assertFalse(any("DerivedData" in path for path in payload["artifacts"]))
+        self.assertFalse(any(path.endswith("/Data/payload") for path in payload["artifacts"]))
+
 
 class DoctorTests(unittest.TestCase):
     def test_missing_supported_xcode_is_a_failed_check(self) -> None:
@@ -111,6 +148,27 @@ class DoctorTests(unittest.TestCase):
 
 
 class WrapperContractTests(unittest.TestCase):
+    def test_ui_preflight_selects_one_test_excluded_from_full_ui_plan(self) -> None:
+        preflight = json.loads((ROOT / "GitXTests" / "GitXUIPreflight.xctestplan").read_text())
+        full_ui = json.loads((ROOT / "GitXTests" / "GitXUI.xctestplan").read_text())
+        scheme = (ROOT / "GitX.xcodeproj" / "xcshareddata" / "xcschemes" / "GitX.xcscheme").read_text()
+
+        selected = preflight["testTargets"][0]["selectedTests"]
+        skipped = full_ui["testTargets"][0]["skippedTests"]
+        self.assertEqual(selected, ["GitXUIActivationPreflightTests/testRepositoryWindowActivates()"])
+        self.assertEqual(skipped, selected)
+        self.assertIn("container:GitXTests/GitXUIPreflight.xctestplan", scheme)
+
+    def test_ui_wrapper_runs_preflight_before_full_plan(self) -> None:
+        wrapper = (ROOT / "scripts" / "xcodebuild.sh").read_text()
+        preflight = 'xcode_test ui-preflight "$preflight"'
+        full_ui = 'xcode_test ui "$plan"'
+
+        self.assertIn(preflight, wrapper)
+        self.assertIn(full_ui, wrapper)
+        self.assertLess(wrapper.index(preflight), wrapper.index(full_ui))
+        self.assertIn("-maximum-test-execution-time-allowance 90", wrapper)
+
     def test_wrapper_owns_all_build_output_paths(self) -> None:
         wrapper = (ROOT / "scripts" / "xcodebuild.sh").read_text()
 

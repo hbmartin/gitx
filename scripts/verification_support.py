@@ -421,12 +421,18 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
     payload["status"] = arguments.status
     payload["exitCode"] = arguments.exit_code
     run_directory = arguments.path.parent
-    discovered = {
-        relative_artifact(str(path))
-        for path in run_directory.rglob("*")
-        if path != arguments.path
-        and (path.is_file() or path.suffix in {".xcresult", ".xcarchive"})
-    }
+    bundle_suffixes = {".app", ".xcarchive", ".xcresult"}
+    discovered: set[str | None] = set()
+    for collection in ("Logs", "Results", "Products"):
+        collection_root = run_directory / collection
+        if not collection_root.exists():
+            continue
+        for path in collection_root.rglob("*"):
+            parents_inside_collection = path.relative_to(collection_root).parents
+            if any(parent.suffix in bundle_suffixes for parent in parents_inside_collection):
+                continue
+            if path.is_file() or path.suffix in bundle_suffixes:
+                discovered.add(relative_artifact(str(path)))
     payload["artifacts"] = sorted(
         artifact for artifact in set(payload.get("artifacts", [])) | discovered if artifact
     )
