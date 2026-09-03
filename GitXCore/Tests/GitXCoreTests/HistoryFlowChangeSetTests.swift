@@ -64,10 +64,28 @@ final class HistoryFlowChangeSetTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? HistoryFlowChangeSetError, .malformedNameStatus)
         }
+        for status in ["D", "M", "T"] {
+            XCTAssertThrowsError(
+                try HistoryFlowChangeSet.changedFiles(nameStatus: nameStatus([status]), isAnalyzable: isSwift)
+            ) { error in
+                XCTAssertEqual(error as? HistoryFlowChangeSetError, .malformedNameStatus)
+            }
+        }
         XCTAssertThrowsError(
             try HistoryFlowChangeSet.changedFiles(nameStatus: Data([0x4D, 0x00, 0xFF, 0xFE, 0x00]), isAnalyzable: isSwift)
         ) { error in
             XCTAssertEqual(error as? HistoryFlowChangeSetError, .invalidUTF8)
         }
+    }
+
+    func testErrorsDescribeTheMalformedGitOutput() {
+        XCTAssertEqual(
+            HistoryFlowChangeSetError.invalidUTF8.description,
+            "Git returned non-UTF-8 name-status data."
+        )
+        XCTAssertEqual(
+            HistoryFlowChangeSetError.malformedNameStatus.description,
+            "Git returned malformed NUL-delimited name-status data."
+        )
     }
 }

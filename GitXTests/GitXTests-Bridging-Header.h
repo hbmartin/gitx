@@ -28,6 +28,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBGitBinary (HistoryFlowTestSupport)
++ (BOOL)acceptBinary:(nullable NSString *)path;
+@end
+
 typedef NS_ENUM(NSInteger, PBOpenDisposition) {
 	PBOpenDispositionAlwaysNewWindow,
 	PBOpenDispositionFollowSystem,

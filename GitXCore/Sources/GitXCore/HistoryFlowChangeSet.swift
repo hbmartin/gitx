@@ -54,7 +54,11 @@ public enum HistoryFlowChangeSet {
             let status = fields[index]
             index += 1
             let record: (oldPath: String?, newPath: String?)
-            switch status.first {
+            // Empty fields are omitted above, so every status has a first
+            // character. Keeping that invariant explicit avoids an
+            // unreachable parser branch and makes malformed records about
+            // missing paths, where the actual ambiguity lies.
+            switch status.first! {
             case "R", "C":
                 // Renames and copies carry a similarity score and two paths.
                 guard index + 1 < fields.count else { throw HistoryFlowChangeSetError.malformedNameStatus }
@@ -68,14 +72,12 @@ public enum HistoryFlowChangeSet {
                 guard index < fields.count else { throw HistoryFlowChangeSetError.malformedNameStatus }
                 record = (fields[index], nil)
                 index += 1
-            case .some:
+            default:
                 // M, and any single-path status the caller's diff filter lets
                 // through (such as a type change), name one path on both sides.
                 guard index < fields.count else { throw HistoryFlowChangeSetError.malformedNameStatus }
                 record = (fields[index], fields[index])
                 index += 1
-            case .none:
-                throw HistoryFlowChangeSetError.malformedNameStatus
             }
 
             let oldPath = record.oldPath.flatMap { isAnalyzable($0) ? $0 : nil }

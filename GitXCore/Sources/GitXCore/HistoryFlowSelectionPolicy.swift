@@ -32,16 +32,12 @@ public enum HistoryFlowSelectionDecision: Equatable, Sendable {
 }
 
 public struct HistoryFlowSelectionPolicy: Sendable {
-    public static let flowTabIndex = 2
-
     public init() {}
 
     public func decision(
-        selectedTabIndex: Int,
         repositoryURL: URL?,
         commits: [HistoryFlowCommitInput]
     ) -> HistoryFlowSelectionDecision {
-        guard selectedTabIndex == Self.flowTabIndex else { return .inactive }
         guard commits.count == 1, let commit = commits.first else {
             return .message("Select one commit to review its flow delta.")
         }

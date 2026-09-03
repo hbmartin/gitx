@@ -121,39 +121,62 @@ stop_pid_file() {
 	local pid_file=$1 expected=$2 pid recorded_start_time executable current_start_time
 	[[ -f "$pid_file" ]] || return 1
 	IFS=$'\t' read -r pid recorded_start_time <"$pid_file" || return 1
-	rm -f "$pid_file"
-	if [[ ! "$pid" =~ ^[0-9]+$ ]] || [[ -z "$recorded_start_time" ]] || ! kill -0 "$pid" 2>/dev/null; then
+	if [[ ! "$pid" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null; then
+		rm -f "$pid_file"
+		return 1
+	fi
+	if [[ -z "$recorded_start_time" ]]; then
+		echo "Ignoring legacy PID-only record $pid_file; process identity cannot be verified." >&2
+		rm -f "$pid_file"
 		return 1
 	fi
 	executable=$(ps -p "$pid" -o comm= 2>/dev/null)
 	case "$executable" in
 		"$expected" | */"$expected") ;;
-		*) return 1 ;;
+		*) rm -f "$pid_file"; return 1 ;;
 	esac
-	current_start_time=$(process_start_time "$pid") || return 1
-	[[ "$current_start_time" == "$recorded_start_time" ]] || return 1
-	kill "$pid" 2>/dev/null || return 1
+	current_start_time=$(process_start_time "$pid") || { rm -f "$pid_file"; return 1; }
+	if [[ "$current_start_time" != "$recorded_start_time" ]]; then
+		rm -f "$pid_file"
+		return 1
+	fi
+	kill "$pid" 2>/dev/null || return 2
 	for _ in {1..20}; do
-		kill -0 "$pid" 2>/dev/null || break
+		if ! kill -0 "$pid" 2>/dev/null || [[ "$(ps -p "$pid" -o stat= 2>/dev/null)" == *Z* ]]; then
+			rm -f "$pid_file"
+			return 0
+		fi
 		sleep 0.25
 	done
-	return 0
+	echo "Process $pid ($expected) did not exit after SIGTERM; leaving $pid_file for retry." >&2
+	return 2
 }
 
 stop_session() {
-	local stopped=0
+	local stopped=0 failed=0 result
 	if stop_pid_file "$app_pid_file" GitX; then
 		stopped=1
+	else
+		result=$?
+		(( result == 2 )) && failed=1
 	fi
 	if stop_pid_file "$log_pid_file" log; then
 		stopped=1
+	else
+		result=$?
+		(( result == 2 )) && failed=1
 	fi
 	if (( stopped )); then
 		echo "Stopped the previous GitX session."
 	fi
+	(( failed == 0 ))
 }
 
 stop_session
+stop_status=$?
+if (( stop_status != 0 )); then
+	exit "$stop_status"
+fi
 if (( stop_only )); then
 	exit 0
 fi

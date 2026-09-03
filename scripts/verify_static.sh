@@ -56,6 +56,7 @@ fi
 scripts/run_pinned_tool.sh swiftlint lint --strict --config .swiftlint.yml --baseline .swiftlint-baseline.json
 
 python3 scripts/check_gitxcore_boundary.py
+python3 scripts/check_flowdelta_boundary.py
 python3 scripts/check_forgekit_boundary.py
 python3 scripts/check_forgekit_exports.py
 python3 scripts/check_forge_codegen_drift.py

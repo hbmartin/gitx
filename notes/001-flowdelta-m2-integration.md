@@ -5,7 +5,11 @@ Started 2026-08-04 on `codex/flowdelta-m2`, based on the published ADR branch. T
 ## Intended seam
 
 - Add the external `hbmartin/FlowDelta` Swift package with an exact release pin.
-- Restrict package imports to `Classes/Controllers/FlowDeltaAdapters.swift`.
+- Restrict package imports to the two explicit integration seams:
+  `Classes/Controllers/FlowDeltaAdapters.swift` owns UI adaptation and
+  `Classes/Controllers/HistoryFlowRevisionProvider.swift` owns bounded,
+  cancellable Git loading. `scripts/check_flowdelta_boundary.py` enforces that
+  no other app source imports FlowDelta.
 - Add a third no-border History tab, **Flow**, and a third Snow Leopard-style segmented-control item.
 - Let the Swift adapter observe History selection and perform cancellable analysis for a single real commit against its first parent.
 - Render deterministic syntax-derived call edges. FlowDelta's optional IndexStoreDB enrichment lives in a separately resolved extension whose unstable upstream graph is intentionally outside GitX's exact semantic pin.

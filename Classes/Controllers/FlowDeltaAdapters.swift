@@ -74,7 +74,10 @@ final class FlowDeltaAdapterView: NSView {
         warningImage.setContentHuggingPriority(.required, for: .horizontal)
         diagnosticsLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         diagnosticsLabel.textColor = .secondaryLabelColor
-        diagnosticsLabel.maximumNumberOfLines = 4
+        // The summary can contain a headline, three details, and an overflow
+        // line. Let the stack view size to the complete bounded summary rather
+        // than clipping the final line that explains omitted diagnostics.
+        diagnosticsLabel.maximumNumberOfLines = 0
         diagnosticsLabel.setAccessibilityIdentifier("History.Flow.Diagnostics")
         diagnosticsBanner.orientation = .horizontal
         diagnosticsBanner.alignment = .top
@@ -162,7 +165,6 @@ final class FlowDeltaAdapterView: NSView {
             )
         }
         let decision = HistoryFlowSelectionPolicy().decision(
-            selectedTabIndex: selectedTabIndex,
             repositoryURL: historyController.repository?.workingDirectoryURL(),
             commits: commits
         )

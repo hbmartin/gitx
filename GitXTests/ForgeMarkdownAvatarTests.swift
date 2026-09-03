@@ -444,6 +444,10 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         let failedBackingFetches = await transport.fetchCount
         XCTAssertEqual(loaded, payload)
         XCTAssertEqual(failedBackingFetches, 1)
+        let memoryHit = try await failingLoader.load(avatarURL)
+        let failuresAfterAttributionFailure = await failingLoader.statistics().backingStoreFailures
+        XCTAssertEqual(memoryHit, payload)
+        XCTAssertEqual(failuresAfterAttributionFailure, 3)
         await failingLoader.setLoadingEnabled(false)
         let enabledAfterBackingPurgeFailure = await failingLoader.statistics().enabled
         XCTAssertFalse(enabledAfterBackingPurgeFailure)
@@ -773,6 +777,7 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         )
         await view.waitForPendingLoad()
         XCTAssertTrue(view.accessibilityLabel()?.contains(", avatar") == true)
+        try attachScreenshot(of: view, named: "Loaded structured avatar diagnostic")
 
         let coordinator = ForgeAvatarLoadingPreferenceCoordinator(
             apply: { enabled in

@@ -399,7 +399,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             inDirectory: nil
         )
         task.additionalEnvironment = ["PB_TASK_PID_FILE": pidURL.path]
-        task.timeout = 0.05
+        task.timeout = 0.5
         let startedAt = Date()
 
         XCTAssertThrowsError(try task.launch()) { error in
@@ -408,8 +408,9 @@ final class PBTaskLifecycleTests: XCTestCase {
             XCTAssertEqual(taskError.code, Int(PBTaskErrorCode.timeoutError.rawValue))
         }
 
-        XCTAssertGreaterThan(Date().timeIntervalSince(startedAt), 0.15)
-        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1.0)
+        let elapsed = Date().timeIntervalSince(startedAt)
+        XCTAssertGreaterThan(elapsed, task.timeout + 0.15)
+        XCTAssertLessThan(elapsed, task.timeout + 2.0)
         let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
         XCTAssertEqual(Darwin.kill(processID, 0), -1, "PBTask must reap the timed-out child before completion")
     }

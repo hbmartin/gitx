@@ -7,7 +7,7 @@ extracts one line per failure: the test identifier, the source location, and
 the assertion message.
 
 Usage:
-    scripts/report_xcresult.py build/Logs/last-test.xcresult
+    scripts/report_xcresult.py build/Logs/test-<invocation>.xcresult
     scripts/report_xcresult.py --format json result.xcresult
     scripts/report_xcresult.py --full result.xcresult
 
@@ -280,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
         # "no failing tests" there would read as success for a run that never ran.
         print(
             "No tests were executed. The build most likely failed; "
-            "see build/Logs/last-xcodebuild.log",
+            "see the matching build/Logs/xcodebuild-<invocation>.log",
             file=sys.stderr,
         )
         return 2

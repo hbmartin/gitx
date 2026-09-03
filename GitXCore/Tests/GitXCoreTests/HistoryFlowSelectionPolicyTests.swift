@@ -10,11 +10,7 @@ final class HistoryFlowSelectionPolicyTests: XCTestCase {
         let commit = HistoryFlowCommitInput(sha: "target", firstParentSHA: "base", isWorkingState: false)
 
         XCTAssertEqual(
-            policy.decision(selectedTabIndex: 0, repositoryURL: repositoryURL, commits: [commit]),
-            .inactive
-        )
-        XCTAssertEqual(
-            policy.decision(selectedTabIndex: 2, repositoryURL: repositoryURL, commits: [commit]),
+            policy.decision(repositoryURL: repositoryURL, commits: [commit]),
             .load(HistoryFlowRevisionRequest(repositoryURL: repositoryURL, base: "base", target: "target"))
         )
     }
@@ -23,16 +19,15 @@ final class HistoryFlowSelectionPolicyTests: XCTestCase {
         let commit = HistoryFlowCommitInput(sha: "target", firstParentSHA: "base", isWorkingState: false)
 
         XCTAssertEqual(
-            policy.decision(selectedTabIndex: 2, repositoryURL: repositoryURL, commits: []),
+            policy.decision(repositoryURL: repositoryURL, commits: []),
             .message("Select one commit to review its flow delta.")
         )
         XCTAssertEqual(
-            policy.decision(selectedTabIndex: 2, repositoryURL: repositoryURL, commits: [commit, commit]),
+            policy.decision(repositoryURL: repositoryURL, commits: [commit, commit]),
             .message("Select one commit to review its flow delta.")
         )
         XCTAssertEqual(
             policy.decision(
-                selectedTabIndex: 2,
                 repositoryURL: repositoryURL,
                 commits: [HistoryFlowCommitInput(sha: "working", firstParentSHA: "base", isWorkingState: true)]
             ),
@@ -40,14 +35,13 @@ final class HistoryFlowSelectionPolicyTests: XCTestCase {
         )
         XCTAssertEqual(
             policy.decision(
-                selectedTabIndex: 2,
                 repositoryURL: repositoryURL,
                 commits: [HistoryFlowCommitInput(sha: "root", firstParentSHA: nil, isWorkingState: false)]
             ),
             .message("This root commit has no parent revision to compare.")
         )
         XCTAssertEqual(
-            policy.decision(selectedTabIndex: 2, repositoryURL: nil, commits: [commit]),
+            policy.decision(repositoryURL: nil, commits: [commit]),
             .message("The repository working directory is unavailable.")
         )
     }

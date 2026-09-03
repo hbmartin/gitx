@@ -167,6 +167,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    private final class QuickLookHistoryControllerSpy: PBGitHistoryController {
+        var detailIndex = 0
+        private(set) var toggleCount = 0
+
+        override var selectedCommitDetailsIndex: Int {
+            get { detailIndex }
+            set { detailIndex = newValue }
+        }
+
+        override func toggleQLPreviewPanel(_: Any) {
+            toggleCount += 1
+        }
+    }
+
     @MainActor
     private final class DraggingInfoFake: NSObject, NSDraggingInfo {
         let draggingPasteboard: NSPasteboard
@@ -308,12 +322,22 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     private var repository: PBGitRepository!
     private var historyController: PBGitHistoryController!
     private var windowController: PBGitWindowController!
+    private var testArtifactDirectory: URL!
     private var previousDetailIndex: Any?
+    private var didCapturePreviousDetailIndex = false
 
     override nonisolated func setUpWithError() throws {
         try super.setUpWithError()
         // swift6-safety-justification: App-hosted XCTest invokes setup on the main thread, where all AppKit fixtures must be created.
         try MainActor.assumeIsolated {
+            // Capture the developer's real preference before any throwing
+            // fixture work so teardown never mistakes a partial setup for an
+            // intentionally absent value.
+            previousDetailIndex = UserDefaults.standard.object(forKey: Self.detailIndexKey)
+            didCapturePreviousDetailIndex = true
+            testArtifactDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("GitXHistoryControllerArtifacts-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: testArtifactDirectory, withIntermediateDirectories: true)
             for window in NSApp.windows where window.windowController is PBGitWindowController {
                 window.orderOut(nil)
                 window.close()
@@ -323,9 +347,6 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             repository.currentBranchFilter = 0
             repository.readCurrentBranch()
             waitForHistory()
-            // The test host writes the real net.phere.GitX domain, so restore
-            // whatever tab the developer's own GitX had persisted.
-            previousDetailIndex = UserDefaults.standard.object(forKey: Self.detailIndexKey)
             UserDefaults.standard.set(0, forKey: Self.detailIndexKey)
             windowController = HistoryWindowController(repository: repository)
             historyController = PBGitHistoryController(
@@ -349,10 +370,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             windowController = nil
             repository = nil
             fixture = nil
-            if let previousDetailIndex {
-                UserDefaults.standard.set(previousDetailIndex, forKey: Self.detailIndexKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Self.detailIndexKey)
+            if let testArtifactDirectory {
+                try? FileManager.default.removeItem(at: testArtifactDirectory)
+            }
+            testArtifactDirectory = nil
+            if didCapturePreviousDetailIndex {
+                if let previousDetailIndex {
+                    UserDefaults.standard.set(previousDetailIndex, forKey: Self.detailIndexKey)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: Self.detailIndexKey)
+                }
             }
         }
         super.tearDown()
@@ -598,6 +625,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             banner.stringValue.contains("FlowSample.swift: Swift parsed with"),
             "Flow diagnostics banner: \(banner.stringValue)"
         )
+        XCTAssertEqual(banner.maximumNumberOfLines, 0, "The overflow summary must not be clipped")
+        try attachScreenshot(of: flowView, named: "History-Flow-Diagnostics")
 
         // A clean analysis takes the banner down again.
         let mainSHA = try fixture.git(["rev-parse", "main~1"]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -632,6 +661,54 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testHistoryFlowRejectsABlobBeyondTheAnalysisLimit() throws {
+        // Keep the fixture itself small so AppKit never has to lay out a
+        // multi-megabyte diff. The configured git shim reports the committed
+        // blob's production-sized object length at the preflight boundary.
+        try fixture.write("let oversized = 0\n", to: "Oversized.swift")
+        try fixture.git(["add", "Oversized.swift"])
+        try commitAndReloadHistory("add an oversized source file")
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let commandLog = testArtifactDirectory.appendingPathComponent("flow-git-commands")
+        let wrapper = try installLoggingGitWrapper(log: commandLog, oversizedBlobPath: "Oversized.swift")
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+        selectCommitForFlowAnalysis(revision: "HEAD")
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 15) {
+                self.flowLabels(in: flowView).contains {
+                    $0.contains("Oversized.swift is") && $0.contains("exceeding the limit")
+                }
+            },
+            "Flow labels after exceeding the blob limit: \(flowLabels(in: flowView))"
+        )
+        let commands = try String(contentsOf: commandLog, encoding: .utf8)
+        XCTAssertTrue(commands.contains("cat-file -s"), "Flow commands: \(commands)")
+        XCTAssertFalse(commands.contains("show ") && commands.contains(":Oversized.swift"), "Flow commands: \(commands)")
+    }
+
+    func testHistoryFlowTerminatesGitWhenTheChangedFileListExceedsTheByteLimit() throws {
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let wrapper = try installOversizedNameStatusGitWrapper()
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+        selectCommitForFlowAnalysis(revision: "HEAD")
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains {
+                    $0.contains("more than 8388608 bytes for changed-file list")
+                }
+            },
+            "Flow labels after oversized name-status output: \(flowLabels(in: flowView))"
+        )
+    }
+
     func testHistoryFlowRefusesRevisionsBeyondTheChangedFileLimit() throws {
         let limit = 500
         for index in 0 ... limit {
@@ -654,21 +731,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryFlowCancelsRunningGitWorkWhenTheSelectionMoves() throws {
-        // Enough analyzable files that loading them outlasts the debounce, so
-        // the next selection cancels a git process that is already running.
-        for index in 0 ..< 300 {
-            try fixture.write("let value\(index) = \(index)\n", to: "Bulk/File\(index).swift")
-        }
-        try fixture.git(["add", "Bulk"])
-        let bulkSHA = try commitAndReloadHistory("add many analyzable files")
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let processStarted = testArtifactDirectory.appendingPathComponent("flow-git-started")
+        let processTerminated = testArtifactDirectory.appendingPathComponent("flow-git-terminated")
+        let wrapper = try installCancellableGitWrapper(started: processStarted, terminated: processTerminated)
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+
+        try fixture.write("let cancelled = true\n", to: "Cancelled.swift")
+        try fixture.git(["add", "Cancelled.swift"])
+        let bulkSHA = try commitAndReloadHistory("add a cancellable source file")
         let mainSHA = try fixture.git(["rev-parse", "main~1"]).trimmingCharacters(in: .whitespacesAndNewlines)
         selectCommitForFlowAnalysis(revision: "HEAD")
         historyController.selectedCommitDetailsIndex = 2
         let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
-        _ = waitForCondition(timeout: 0.6) { false }
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: processStarted.path) },
+            "The configured git wrapper never began loading a source snapshot"
+        )
 
         selectCommitForFlowAnalysis(revision: "main~1")
 
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: processTerminated.path) },
+            "The running configured git process did not receive SIGTERM"
+        )
         XCTAssertTrue(
             waitForCondition(timeout: 15) {
                 self.flowLabels(in: flowView).contains { $0.contains(String(mainSHA.prefix(7))) }
@@ -678,6 +765,33 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(
             flowLabels(in: flowView).contains { $0.contains(String(bulkSHA.prefix(7))) },
             "The cancelled revision must not be displayed: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testHistoryTreeExplainsASelectedDirectoryWithoutRelyingOnIncidentalCoverage() throws {
+        let previousChangedFilesOnly = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = false
+        defer { PBApplicationSettings.changedFilesOnly = previousChangedFilesOnly }
+        let mainSHA = try fixture.git(["rev-parse", "main"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let commit = try XCTUnwrap(loadedCommits().first { $0.sha == mainSHA })
+        historyController.commitController.setSelectedObjects([commit])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        let directory = try XCTUnwrap(waitForTreeNode(fullPath: "nested"))
+        XCTAssertFalse((directory.representedObject as? PBGitTree)?.leaf ?? true)
+        historyController.treeController.setSelectionIndexPath(directory.indexPath)
+        let fileView = try XCTUnwrap(historyController.value(forKey: "fileView") as? NSObject)
+        let modeControl = try XCTUnwrap(fileView.value(forKey: "modeControl") as? NSSegmentedControl)
+        let nativeView = try XCTUnwrap(fileView.value(forKey: "nativeView") as? PBNativeContentView)
+        modeControl.selectedSegment = 0
+        fileView.perform(NSSelectorFromString("showFile"))
+
+        XCTAssertTrue(
+            waitForCondition {
+                nativeView.textView.string == "Select one or more files to view this mode."
+            },
+            "Unexpected empty directory presentation: \(nativeView.textView.string)"
         )
     }
 
@@ -3037,6 +3151,24 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try historyController.commitList.keyDown(with: spaceEvent(modifiers: []))
         XCTAssertEqual(historyController.selectedCommitDetailsIndex, 2)
         XCTAssertEqual(historyController.selectedCommits, [commit])
+
+        // Assert the actual Quick Look dispatch, not only the selected tab.
+        let quickLookSpy = try XCTUnwrap(QuickLookHistoryControllerSpy(
+            repository: repository,
+            superController: nil
+        ))
+        let commitList = historyController.commitList
+        let originalController = commitList.value(forKey: "controller")
+        commitList.setValue(quickLookSpy, forKey: "controller")
+        defer { commitList.setValue(originalController, forKey: "controller") }
+
+        quickLookSpy.detailIndex = 2
+        try commitList.keyDown(with: spaceEvent(modifiers: []))
+        XCTAssertEqual(quickLookSpy.toggleCount, 0, "Flow must not open an empty Quick Look panel")
+
+        quickLookSpy.detailIndex = 1
+        try commitList.keyDown(with: spaceEvent(modifiers: []))
+        XCTAssertEqual(quickLookSpy.toggleCount, 1, "Tree mode must continue to route Space to Quick Look")
     }
 
     func testBranchDragSourceMaskNegotiatesMoveOnlyInsideApplication() throws {
@@ -3638,6 +3770,71 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func installCancellableGitWrapper(started: URL, terminated: URL) throws -> URL {
+        let wrapper = testArtifactDirectory.appendingPathComponent("git-flow-wrapper")
+        let startedPath = shellSingleQuoted(started.path)
+        let terminatedPath = shellSingleQuoted(terminated.path)
+        let script = """
+        #!/bin/bash
+        for argument in "$@"; do
+            if [[ "$argument" == *":Cancelled.swift" ]]; then
+                : > \(startedPath)
+                trap ': > \(terminatedPath); exit 143' TERM
+                while true; do
+                    sleep 1
+                done
+            fi
+        done
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return wrapper
+    }
+
+    private func installLoggingGitWrapper(log: URL, oversizedBlobPath: String? = nil) throws -> URL {
+        let wrapper = testArtifactDirectory.appendingPathComponent("git-flow-logging-wrapper")
+        let logPath = shellSingleQuoted(log.path)
+        let oversizedBlobResponse = oversizedBlobPath.map { path in
+            """
+            if [[ "$*" == *"cat-file -s"* && "$*" == *":\(path)"* ]]; then
+                printf '2200018\\n'
+                exit 0
+            fi
+            """
+        } ?? ""
+        let script = """
+        #!/bin/bash
+        printf '%s\\n' "$*" >> \(logPath)
+        \(oversizedBlobResponse)
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return wrapper
+    }
+
+    private func installOversizedNameStatusGitWrapper() throws -> URL {
+        let wrapper = testArtifactDirectory.appendingPathComponent("git-flow-oversized-output-wrapper")
+        let script = """
+        #!/bin/bash
+        for argument in "$@"; do
+            if [[ "$argument" == "--name-status" ]]; then
+                /bin/dd if=/dev/zero bs=1048576 count=9 2>/dev/null
+                exit 0
+            fi
+        done
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return wrapper
+    }
+
+    private func shellSingleQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
     private func menuItems(selector: String, argument: Any?) -> [NSMenuItem]? {

@@ -78,6 +78,7 @@ final nonisolated class ForgeAvatarRedirectDelegate: NSObject, URLSessionTaskDel
 
 // swift6-safety-justification: The copied configuration is private, immutable, and used to create per-call sessions.
 final nonisolated class ForgeAvatarNetworkTransport: ForgeAvatarTransport, @unchecked Sendable {
+    private static let streamChunkSize = 16 * 1024
     private let configuration: URLSessionConfiguration
 
     init(configuration: URLSessionConfiguration = ForgeAvatarNetworkTransport.secureConfiguration()) {
@@ -106,11 +107,11 @@ final nonisolated class ForgeAvatarNetworkTransport: ForgeAvatarTransport, @unch
             expectedByteCount: metadata.expectedByteCount
         )
         var chunk: [UInt8] = []
-        chunk.reserveCapacity(16 * 1024)
+        chunk.reserveCapacity(Self.streamChunkSize)
         for try await byte in bytes {
             try Task.checkCancellation()
             chunk.append(byte)
-            if chunk.count == chunk.capacity {
+            if chunk.count == Self.streamChunkSize {
                 try accumulator.append(Data(chunk))
                 chunk.removeAll(keepingCapacity: true)
             }
