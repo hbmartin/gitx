@@ -167,6 +167,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    private final class QuickLookHistoryControllerSpy: PBGitHistoryController {
+        var detailIndex = 0
+        private(set) var toggleCount = 0
+
+        override var selectedCommitDetailsIndex: Int {
+            get { detailIndex }
+            set { detailIndex = newValue }
+        }
+
+        override func toggleQLPreviewPanel(_: Any) {
+            toggleCount += 1
+        }
+    }
+
     @MainActor
     private final class DraggingInfoFake: NSObject, NSDraggingInfo {
         let draggingPasteboard: NSPasteboard
@@ -3132,6 +3146,24 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try historyController.commitList.keyDown(with: spaceEvent(modifiers: []))
         XCTAssertEqual(historyController.selectedCommitDetailsIndex, 2)
         XCTAssertEqual(historyController.selectedCommits, [commit])
+
+        // Assert the actual Quick Look dispatch, not only the selected tab.
+        let quickLookSpy = try XCTUnwrap(QuickLookHistoryControllerSpy(
+            repository: repository,
+            superController: nil
+        ))
+        let commitList = historyController.commitList
+        let originalController = commitList.value(forKey: "controller")
+        commitList.setValue(quickLookSpy, forKey: "controller")
+        defer { commitList.setValue(originalController, forKey: "controller") }
+
+        quickLookSpy.detailIndex = 2
+        try commitList.keyDown(with: spaceEvent(modifiers: []))
+        XCTAssertEqual(quickLookSpy.toggleCount, 0, "Flow must not open an empty Quick Look panel")
+
+        quickLookSpy.detailIndex = 1
+        try commitList.keyDown(with: spaceEvent(modifiers: []))
+        XCTAssertEqual(quickLookSpy.toggleCount, 1, "Tree mode must continue to route Space to Quick Look")
     }
 
     func testBranchDragSourceMaskNegotiatesMoveOnlyInsideApplication() throws {
