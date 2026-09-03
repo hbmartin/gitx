@@ -632,6 +632,25 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testHistoryFlowRejectsABlobBeyondTheAnalysisLimit() throws {
+        let oversizedSource = "let oversized = 0\n" + String(repeating: "// padding\n", count: 200_000)
+        try fixture.write(oversizedSource, to: "Oversized.swift")
+        try fixture.git(["add", "Oversized.swift"])
+        try commitAndReloadHistory("add an oversized source file")
+        selectCommitForFlowAnalysis(revision: "HEAD")
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 15) {
+                self.flowLabels(in: flowView).contains {
+                    $0.contains("Oversized.swift is") && $0.contains("exceeding the limit")
+                }
+            },
+            "Flow labels after exceeding the blob limit: \(flowLabels(in: flowView))"
+        )
+    }
+
     func testHistoryFlowRefusesRevisionsBeyondTheChangedFileLimit() throws {
         let limit = 500
         for index in 0 ... limit {
@@ -654,21 +673,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryFlowCancelsRunningGitWorkWhenTheSelectionMoves() throws {
-        // Enough analyzable files that loading them outlasts the debounce, so
-        // the next selection cancels a git process that is already running.
-        for index in 0 ..< 300 {
-            try fixture.write("let value\(index) = \(index)\n", to: "Bulk/File\(index).swift")
-        }
-        try fixture.git(["add", "Bulk"])
-        let bulkSHA = try commitAndReloadHistory("add many analyzable files")
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let processStarted = URL(fileURLWithPath: fixture.path).appendingPathComponent("flow-git-started")
+        let processTerminated = URL(fileURLWithPath: fixture.path).appendingPathComponent("flow-git-terminated")
+        let wrapper = try installCancellableGitWrapper(started: processStarted, terminated: processTerminated)
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+
+        try fixture.write("let cancelled = true\n", to: "Cancelled.swift")
+        try fixture.git(["add", "Cancelled.swift"])
+        let bulkSHA = try commitAndReloadHistory("add a cancellable source file")
         let mainSHA = try fixture.git(["rev-parse", "main~1"]).trimmingCharacters(in: .whitespacesAndNewlines)
         selectCommitForFlowAnalysis(revision: "HEAD")
         historyController.selectedCommitDetailsIndex = 2
         let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
-        _ = waitForCondition(timeout: 0.6) { false }
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: processStarted.path) },
+            "The configured git wrapper never began loading a source snapshot"
+        )
 
         selectCommitForFlowAnalysis(revision: "main~1")
 
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) { FileManager.default.fileExists(atPath: processTerminated.path) },
+            "The running configured git process did not receive SIGTERM"
+        )
         XCTAssertTrue(
             waitForCondition(timeout: 15) {
                 self.flowLabels(in: flowView).contains { $0.contains(String(mainSHA.prefix(7))) }
@@ -678,6 +707,28 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(
             flowLabels(in: flowView).contains { $0.contains(String(bulkSHA.prefix(7))) },
             "The cancelled revision must not be displayed: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testHistoryTreeExplainsASelectedDirectoryWithoutRelyingOnIncidentalCoverage() throws {
+        let commit = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.setSelectedObjects([commit])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        let directory = try XCTUnwrap(waitForTreeNode(fullPath: "nested"))
+        XCTAssertFalse((directory.representedObject as? PBGitTree)?.leaf ?? true)
+        historyController.treeController.setSelectionIndexPath(directory.indexPath)
+        let fileView = try XCTUnwrap(historyController.value(forKey: "fileView") as? NSObject)
+        let modeControl = try XCTUnwrap(fileView.value(forKey: "modeControl") as? NSSegmentedControl)
+        let nativeView = try XCTUnwrap(fileView.value(forKey: "nativeView") as? PBNativeContentView)
+        modeControl.selectedSegment = 0
+        fileView.perform(NSSelectorFromString("showFile"))
+
+        XCTAssertTrue(
+            waitForCondition {
+                nativeView.textView.string == "Select one or more files to view this mode."
+            },
+            "Unexpected empty directory presentation: \(nativeView.textView.string)"
         )
     }
 
@@ -3638,6 +3689,32 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func installCancellableGitWrapper(started: URL, terminated: URL) throws -> URL {
+        let wrapper = URL(fileURLWithPath: fixture.path).appendingPathComponent("git-flow-wrapper")
+        let startedPath = shellSingleQuoted(started.path)
+        let terminatedPath = shellSingleQuoted(terminated.path)
+        let script = """
+        #!/bin/bash
+        for argument in "$@"; do
+            if [[ "$argument" == *":Cancelled.swift" ]]; then
+                : > \(startedPath)
+                trap ': > \(terminatedPath); exit 143' TERM
+                while true; do
+                    sleep 1
+                done
+            fi
+        done
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        return wrapper
+    }
+
+    private func shellSingleQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
     }
 
     private func menuItems(selector: String, argument: Any?) -> [NSMenuItem]? {

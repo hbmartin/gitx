@@ -33,4 +33,15 @@ final class HistoryFlowDiagnosticsSummaryTests: XCTestCase {
         XCTAssertEqual(summary.details, ["problem 1", "problem 2"])
         XCTAssertEqual(summary.omittedCount, 3)
     }
+
+    func testWarningOnlySummaryAndNegativeDetailLimitStayWellFormed() throws {
+        let summary = try XCTUnwrap(HistoryFlowDiagnosticsSummary.make(
+            from: [HistoryFlowDiagnosticInput(severity: .warning, path: "A.swift", message: "warning")],
+            maximumDetails: -1
+        ))
+
+        XCTAssertEqual(summary.headline, "Flow analysis is incomplete: 1 warning.")
+        XCTAssertEqual(summary.details, [])
+        XCTAssertEqual(summary.omittedCount, 1)
+    }
 }
