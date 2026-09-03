@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import os
-import pathlib
-import subprocess
-import tempfile
-import textwrap
 import unittest
 
 from support import ROOT
@@ -53,17 +48,18 @@ class PinnedToolsTests(unittest.TestCase):
 
         self.assertNotIn("26.2", build_workflow + verify_workflow)
         self.assertEqual(build_workflow.count("xcode: 26.6"), 1)
-        self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 7)
+        self.assertEqual(build_workflow.count('xcode-version: "26.6"'), 1)
+        self.assertEqual(verify_workflow.count('xcode-version: "26.6"'), 8)
         self.assertIn("Xcode 26.6 or newer is required", readme)
         self.assertIn("CI is pinned to Xcode 26.6", migration)
 
-    def test_legacy_build_workflow_uses_shared_ui_test_plan(self) -> None:
+    def test_build_workflow_uses_canonical_ui_preset(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
 
-        self.assertIn("-testPlan GitXUI", build_workflow)
+        self.assertIn('scripts/xcodebuild.sh --run-id "$UI_RUN_ID" test ui', build_workflow)
         self.assertNotIn("-only-testing:GitXUITests", build_workflow)
 
-    def test_legacy_build_workflow_archives_unsigned_when_signing_secrets_are_unavailable(self) -> None:
+    def test_build_workflow_archives_unsigned_when_signing_secrets_are_unavailable(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
         build_step = build_workflow.split(
             "      - name: Build project\n", maxsplit=1
@@ -74,56 +70,10 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn("CODE_SIGNING_REQUIRED=NO", build_step)
         self.assertIn('CODE_SIGN_IDENTITY=""', build_step)
         self.assertIn('"${signing_settings[@]}"', build_step)
+        self.assertIn('scripts/xcodebuild.sh --run-id "$ARCHIVE_RUN_ID" archive', build_step)
+        self.assertNotIn("-archivePath", build_step)
 
-        run_script = textwrap.dedent(
-            build_step.split("        run: |\n", maxsplit=1)[1]
-        ).replace("${{ matrix.abi }}", "arm64")
-        with tempfile.TemporaryDirectory() as directory:
-            mock_xcodebuild = pathlib.Path(directory) / "xcodebuild"
-            mock_xcodebuild.write_text(
-                "#!/bin/sh\n"
-                'printf \'%s\\n\' "$@" > "$CAPTURED_ARGUMENTS"\n'
-            )
-            mock_xcodebuild.chmod(0o755)
-            environment = os.environ.copy()
-            environment["PATH"] = f"{directory}:{environment['PATH']}"
-
-            observed: dict[str, list[str]] = {}
-            for name, certificate in (("unsigned", ""), ("signed", "certificate")):
-                captured = pathlib.Path(directory) / f"{name}.args"
-                environment["variableSet"] = certificate
-                environment["CAPTURED_ARGUMENTS"] = str(captured)
-                subprocess.run(
-                    ["bash", "-e", "-c", run_script],
-                    check=True,
-                    env=environment,
-                    capture_output=True,
-                    text=True,
-                )
-                observed[name] = captured.read_text().splitlines()
-
-        unsigned_settings = {
-            "CODE_SIGNING_ALLOWED=NO",
-            "CODE_SIGNING_REQUIRED=NO",
-            "CODE_SIGN_IDENTITY=",
-        }
-        self.assertTrue(unsigned_settings.issubset(observed["unsigned"]))
-        self.assertTrue(unsigned_settings.isdisjoint(observed["signed"]))
-        self.assertEqual(
-            observed["signed"],
-            [
-                "-workspace",
-                "GitX.xcworkspace",
-                "-scheme",
-                "GitX",
-                "-archivePath",
-                "./GitX",
-                "archive",
-                "ARCHS=arm64",
-            ],
-        )
-
-    def test_legacy_screenshot_fixture_only_overrides_ui_fixture_when_comparison_enabled(self) -> None:
+    def test_screenshot_fixture_only_overrides_ui_fixture_when_comparison_enabled(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
         checkout_step = build_workflow.split(
             "      - name: Checkout fixed repo snapshot for screenshots\n", maxsplit=1
@@ -135,19 +85,20 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn("if: ${{ env.variableSet != ''", checkout_step)
         self.assertIn("if [[ -d /tmp/gitx-screenshot-repo ]]; then", test_step)
         self.assertIn('"${screenshot_repo_setting[@]}"', test_step)
+        self.assertIn('artifacts/verification/$UI_RUN_ID/Results/GitXUI.xcresult', build_workflow)
 
     def test_verify_workflow_pins_actions_and_does_not_persist_checkout_credentials(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         pinned_actions = {
-            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 7,
-            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 7,
+            "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0": 8,
+            "maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90": 8,
             "actions/cache@caa296126883cff596d87d8935842f9db880ef25": 2,
-            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 6,
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a": 7,
         }
 
         for action, expected_count in pinned_actions.items():
             self.assertEqual(verify_workflow.count(action), expected_count)
-        self.assertEqual(verify_workflow.count("persist-credentials: false"), 7)
+        self.assertEqual(verify_workflow.count("persist-credentials: false"), 8)
         for mutable_tag in [
             "actions/checkout@v7",
             "maxim-lobanov/setup-xcode@v1",
@@ -168,7 +119,7 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn("github.event_name == 'schedule'", condition)
         self.assertIn("github.event_name == 'workflow_dispatch'", condition)
         self.assertIn("runs-on: [self-hosted, macOS, ARM64]", performance_job)
-        self.assertIn("-testPlan GitXPerformance", performance_job)
+        self.assertIn("test performance", performance_job)
 
     def test_app_build_jobs_fetch_tags_for_version_generation(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
@@ -205,12 +156,33 @@ class PinnedToolsTests(unittest.TestCase):
             "\n  forgekit:\n", maxsplit=1
         )[1].split("\n  static:\n", maxsplit=1)[0]
 
-        self.assertIn('--package-path ForgeKit', forgekit_job)
-        self.assertIn('--build-system swiftbuild', forgekit_job)
-        self.assertIn('--enable-code-coverage', forgekit_job)
-        self.assertIn('--swiftpm-scratch-path "$RUNNER_TEMP/ForgeKitBuild"', forgekit_job)
-        self.assertIn('--combined-output "$RUNNER_TEMP/ForgeKitCombinedCoverage.json"', forgekit_job)
+        self.assertIn("scripts/xcodebuild.sh", forgekit_job)
+        self.assertIn("test forgekit", forgekit_job)
+        self.assertIn("artifacts/verification/verify-forgekit-", forgekit_job)
         self.assertIn('fetch-depth: 0', forgekit_job)
+
+    def test_all_ci_build_test_analyze_and_archive_actions_use_the_wrapper(self) -> None:
+        workflows = [
+            (ROOT / ".github" / "workflows" / name).read_text()
+            for name in ("BuildPR.yml", "Verify.yml")
+        ]
+
+        for workflow in workflows:
+            self.assertNotIn("xcodebuild test", workflow)
+            self.assertNotIn("xcodebuild archive", workflow)
+            self.assertNotIn("xcodebuild analyze", workflow)
+            self.assertNotIn("xcodebuild build", workflow)
+        self.assertIn("scripts/xcodebuild.sh", "".join(workflows))
+
+    def test_expensive_ci_lanes_depend_on_toolchain_smoke(self) -> None:
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+
+        self.assertIn("\n  toolchain-smoke:\n", verify_workflow)
+        self.assertIn("\n  toolchain-smoke:\n", build_workflow)
+        self.assertEqual(verify_workflow.count("needs: toolchain-smoke"), 6)
+        self.assertIn("needs: toolchain-smoke", build_workflow)
+        self.assertIn("artifacts/verification", verify_workflow + build_workflow)
 
     def test_static_ci_pins_apollo_cli_for_offline_codegen(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()

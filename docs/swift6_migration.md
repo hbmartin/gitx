@@ -91,20 +91,16 @@ mode, concurrency settings, runtime checks, and Xcode 26.6 workflow versions.
 Migration changes must keep these shared plans green:
 
 ```sh
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitX \
-  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXUI \
-  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXPerformance \
-  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXThreadSanitizer \
-  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXAddressUndefined \
-  -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
+scripts/xcodebuild.sh test correctness
+scripts/xcodebuild.sh test ui
+scripts/xcodebuild.sh test performance
+scripts/xcodebuild.sh test thread-sanitizer
+scripts/xcodebuild.sh test address-undefined
 ```
 
-After the unit plan, enforce and ratchet coverage with
-`scripts/check_coverage.py`. Run pinned SwiftFormat and SwiftLint through
+The correctness preset enforces current coverage floors and writes a
+non-mutating improvement proposal beside its xcresult. Apply an accepted
+proposal with `scripts/check_coverage.py --record-improvements`. Run pinned SwiftFormat and SwiftLint through
 `scripts/run_pinned_tool.sh`, then run `scripts/verify_static.sh` and the Clang
 analyzer.
 

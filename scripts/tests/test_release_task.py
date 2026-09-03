@@ -21,6 +21,13 @@ class ReleaseTaskTests(unittest.TestCase):
     def test_release_task_has_valid_bash_syntax(self) -> None:
         subprocess.run(["bash", "-n", self.task], check=True)
 
+    def test_release_archive_uses_the_canonical_wrapper_and_receipt(self) -> None:
+        task = self.task.read_text()
+
+        self.assertIn('scripts/xcodebuild.sh --run-id "$verification_run_id" archive', task)
+        self.assertIn('verification_receipt="$root/artifacts/verification/', task)
+        self.assertNotIn('-derivedDataPath "$derived_data_path"', task)
+
     def test_release_task_documents_the_single_command_and_artifacts(self) -> None:
         result = subprocess.run(
             [self.task, "--help"],
