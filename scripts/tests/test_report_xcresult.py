@@ -241,6 +241,42 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(report.count("S/t()"), 1)
         self.assertIn("File.swift:1: first", report)
 
+    def test_collapses_shared_infrastructure_failures_in_text(self) -> None:
+        failures = [
+            reporter.Failure("GitXUITests", "S/testOne()", None, None, "Application is running in the background."),
+            reporter.Failure("GitXUITests", "S/testTwo()", None, None, "Application is running in the background."),
+        ]
+
+        report = reporter.format_report(failures, 100)
+
+        self.assertIn("1 shared infrastructure failure(s)", report)
+        self.assertIn("2 tests", report)
+        self.assertEqual(report.count("Application is running in the background."), 1)
+
+    def test_grouped_json_keeps_source_assertions_separate(self) -> None:
+        failures = [
+            reporter.Failure("GitXTests", "S/testOne()", "One.swift", 10, "same assertion"),
+            reporter.Failure("GitXTests", "S/testTwo()", "Two.swift", 20, "same assertion"),
+        ]
+
+        payload = reporter.grouped_payload(failures)
+
+        self.assertEqual(payload["schemaVersion"], 1)
+        self.assertEqual(payload["sharedFailures"], [])
+        self.assertEqual(len(payload["failures"]), 2)
+
+    def test_grouped_json_has_a_stable_shared_failure_fingerprint(self) -> None:
+        failures = [
+            reporter.Failure("GitXUITests", "S/testTwo()", None, None, "  Test runner lost\nconnection. "),
+            reporter.Failure("GitXUITests", "S/testOne()", None, None, "Test runner lost connection."),
+        ]
+
+        first = reporter.grouped_payload(failures)
+        second = reporter.grouped_payload(list(reversed(failures)))
+
+        self.assertEqual(first["sharedFailures"][0]["fingerprint"], second["sharedFailures"][0]["fingerprint"])
+        self.assertEqual(first["sharedFailures"][0]["tests"], ["S/testOne()", "S/testTwo()"])
+
 
 class ParseArgumentsTests(unittest.TestCase):
     def reject(self, *arguments: str) -> None:
@@ -258,6 +294,14 @@ class ParseArgumentsTests(unittest.TestCase):
         arguments = reporter.parse_arguments(["bundle.xcresult", "--max-per-test", "1", "--max-chars", "10"])
 
         self.assertEqual((arguments.max_per_test, arguments.max_chars), (1, 10))
+
+    def test_accepts_grouped_json_and_show_all(self) -> None:
+        arguments = reporter.parse_arguments(
+            ["bundle.xcresult", "--format", "grouped-json", "--show-all"]
+        )
+
+        self.assertEqual(arguments.format, "grouped-json")
+        self.assertTrue(arguments.show_all)
 
 
 class ExecutedAnyTestTests(unittest.TestCase):

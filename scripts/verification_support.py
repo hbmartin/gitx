@@ -420,6 +420,16 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
     payload["durationSeconds"] = round(time.time() - started, 3) if isinstance(started, (int, float)) else None
     payload["status"] = arguments.status
     payload["exitCode"] = arguments.exit_code
+    run_directory = arguments.path.parent
+    discovered = {
+        relative_artifact(str(path))
+        for path in run_directory.rglob("*")
+        if path != arguments.path
+        and (path.is_file() or path.suffix in {".xcresult", ".xcarchive"})
+    }
+    payload["artifacts"] = sorted(
+        artifact for artifact in set(payload.get("artifacts", [])) | discovered if artifact
+    )
     atomic_json(arguments.path, payload)
     config = load_config()
     latest = ROOT / config["artifactRoot"] / "latest.json"

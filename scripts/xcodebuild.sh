@@ -403,7 +403,9 @@ case "$command" in
 			correctness)
 				plan=$(config testPlans.correctness)
 				xcode_test correctness "$plan" -enableCodeCoverage YES ${extra[@]+"${extra[@]}"} || exit $?
-				run_step coverage "$logs/coverage.log" "" scripts/check_coverage.py "$results/$plan.xcresult" || exit $?
+				proposal="$results/coverage-proposal.json"
+				run_step coverage "$logs/coverage.log" "" scripts/check_coverage.py \
+					"$results/$plan.xcresult" --propose-improvements "$proposal" || exit $?
 				;;
 			ui)
 				preflight=$(config testPlans.ui-preflight)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 from support import load_script
 
@@ -266,6 +267,63 @@ class CoveragePolicyTests(unittest.TestCase):
         )
 
         self.assertEqual(relative, "Classes/A.m")
+
+    def test_proposal_writes_candidate_without_mutating_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy_path = pathlib.Path(directory) / "coverage.json"
+            proposal_path = pathlib.Path(directory) / "proposal.json"
+            policy_path.write_text(
+                '{"version": 1, "target": "GitX.app", '
+                '"minimumLineCoverage": 0.5, "files": {"Classes/A.m": 0.75}}'
+            )
+            original = policy_path.read_bytes()
+            report = {
+                "targets": [
+                    {
+                        "name": "GitX.app",
+                        "lineCoverage": 0.6,
+                        "files": [
+                            {
+                                "path": str(self.module.pathlib.Path.cwd() / "Classes/A.m"),
+                                "lineCoverage": 0.8,
+                                "coveredLines": 8,
+                                "executableLines": 10,
+                            }
+                        ],
+                    }
+                ]
+            }
+
+            with mock.patch.object(self.module, "xccov_report", return_value=report):
+                status = self.module.main(
+                    [
+                        "result.xcresult",
+                        "--policy",
+                        str(policy_path),
+                        "--propose-improvements",
+                        str(proposal_path),
+                    ]
+                )
+
+            proposal = self.module.json.loads(proposal_path.read_text())
+            unchanged = policy_path.read_bytes()
+
+        self.assertEqual(status, 0)
+        self.assertEqual(unchanged, original)
+        self.assertEqual(proposal["schemaVersion"], 1)
+        self.assertEqual(proposal["candidatePolicy"]["minimumLineCoverage"], 0.6)
+        self.assertEqual(proposal["candidatePolicy"]["files"]["Classes/A.m"], 0.8)
+
+    def test_proposal_and_recording_are_mutually_exclusive(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.module.parse_arguments(
+                [
+                    "result.xcresult",
+                    "--record-improvements",
+                    "--propose-improvements",
+                    "candidate.json",
+                ]
+            )
 
 
 if __name__ == "__main__":
