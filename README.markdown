@@ -55,8 +55,12 @@ In the steps below, we assume the certificate name to be _"Apple Development"_ b
 10. Double-click on this certificate to view its details.
 11. Copy the **Organizational Unit** value. This is your development team ID.
 
-You can also build and run on the command line. Once you've created the config file,
-you may use [the script shared here](https://github.com/gitx/gitx/discussions/366#discussion-4897466).
+For command-line work, run `scripts/doctor.sh` first when diagnosing a host and use
+`scripts/xcodebuild.sh` for every build, test, analysis, or archive action. Common
+commands are `scripts/xcodebuild.sh build --stage-app`,
+`scripts/xcodebuild.sh test correctness`, and `scripts/xcodebuild.sh test ui`.
+Each invocation uses clean products and writes its logs, results, and
+machine-readable receipt under the ignored `artifacts/verification/` directory.
 GitX builds for arm64 only and requires an Apple Silicon Mac.
 
 ### Apple Silicon

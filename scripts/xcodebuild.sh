@@ -1,195 +1,459 @@
 #!/bin/bash
-#
-# Canonical xcodebuild entry point for GitX.
-#
-# Every build in this repository must go through this wrapper. It pins three
-# things that agents and terminals otherwise get wrong:
-#
-#   1. DEVELOPER_DIR. The selected Xcode may be a beta that cannot build this
-#      workspace. CI pins 26.6, so local builds pin the same stable Xcode.
-#   2. -derivedDataPath. Ad-hoc per-session derived data directories turn every
-#      build into a cold build and leak gigabytes. One shared path keeps the
-#      cache warm across worktrees and sessions.
-#   3. Output shaping. Raw xcodebuild output is unreadable; xcbeautify renders
-#      it while the full log is still written to disk for grepping.
-#
-# Usage:
-#   scripts/xcodebuild.sh build
-#   scripts/xcodebuild.sh test -testPlan GitX
-#   scripts/xcodebuild.sh --stage-app build
-#   scripts/xcodebuild.sh --raw analyze
-#
-# Defaults injected only when absent from the caller's arguments:
-#   -workspace GitX.xcworkspace
-#   -scheme GitX
-#   -destination "platform=macOS,arch=arm64"
-#   -derivedDataPath build/DerivedData
-#   -resultBundlePath build/Logs/last-test.xcresult   (test actions only)
-#
-# Environment overrides:
-#   GITX_DEVELOPER_DIR   alternate Xcode developer directory
-#   GITX_DERIVED_DATA    alternate derived data path
+# Canonical build, test, analysis, and archive entry point for GitX.
 
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+support="$root/scripts/verification_support.py"
 cd "$root" || exit 2
 
-default_developer_dir=/Applications/Xcode.app/Contents/Developer
-developer_dir=${GITX_DEVELOPER_DIR:-$default_developer_dir}
+usage() {
+	cat <<'USAGE'
+Usage:
+  scripts/xcodebuild.sh build [--configuration Debug|Release] [--stage-app]
+  scripts/xcodebuild.sh archive [--configuration Release]
+  scripts/xcodebuild.sh smoke
+  scripts/xcodebuild.sh analyze
+  scripts/xcodebuild.sh test correctness|ui|address-undefined|thread-sanitizer|performance|core|forgekit
+  scripts/xcodebuild.sh raw -- <xcodebuild arguments>
 
-if [[ ! -d "$developer_dir" ]]; then
-	cat >&2 <<-MESSAGE
-		GitX builds require a stable Xcode at:
-		  $developer_dir
-		Install it, or point GITX_DEVELOPER_DIR at another Xcode developer directory.
-	MESSAGE
-	exit 2
-fi
-export DEVELOPER_DIR="$developer_dir"
+Global options:
+  --configuration NAME
+  --destination SPEC
+  --developer-dir PATH
+  --run-id ID
+  --raw-output
+  --stage-app
 
-derived_data=${GITX_DERIVED_DATA:-$root/build/DerivedData}
-log_dir=$root/build/Logs
-raw_log=$log_dir/last-xcodebuild.log
-default_result_bundle=$log_dir/last-test.xcresult
+Every invocation uses a new artifacts/verification/<run-id> directory and emits receipt.json.
+USAGE
+}
 
+config() {
+	python3 "$support" config "$1"
+}
+
+configuration=Debug
+configuration_explicit=0
+destination=$(config destination) || exit 2
+developer_dir=
+requested_run_id=
 stage_app=0
 use_xcbeautify=1
-passthrough=()
+command=
+command_arguments=()
 
-for argument in "$@"; do
-	case "$argument" in
+while (( $# )); do
+	case "$1" in
+		--configuration|-configuration)
+			(( $# >= 2 )) || { echo "$1 requires a value" >&2; exit 2; }
+			configuration=$2
+			configuration_explicit=1
+			shift 2
+			;;
+		--destination|-destination)
+			(( $# >= 2 )) || { echo "$1 requires a value" >&2; exit 2; }
+			destination=$2
+			shift 2
+			;;
+		--developer-dir)
+			(( $# >= 2 )) || { echo "$1 requires a value" >&2; exit 2; }
+			developer_dir=$2
+			shift 2
+			;;
+		--run-id)
+			(( $# >= 2 )) || { echo "$1 requires a value" >&2; exit 2; }
+			requested_run_id=$2
+			shift 2
+			;;
 		--stage-app)
 			stage_app=1
+			shift
 			;;
-		--raw)
+		--raw|--raw-output)
+			# --raw was the original wrapper's spelling for unformatted output.
 			use_xcbeautify=0
+			shift
+			;;
+		-h|--help)
+			usage
+			exit 0
 			;;
 		*)
-			passthrough+=("$argument")
+			command=$1
+			shift
+			command_arguments=("$@")
+			break
 			;;
 	esac
 done
 
-if (( ${#passthrough[@]} == 0 )); then
-	echo "Usage: $0 [--stage-app] [--raw] <xcodebuild arguments...>" >&2
+if [[ -z "$command" ]]; then
+	usage >&2
 	exit 2
 fi
 
-joined=" ${passthrough[*]} "
-settings=()
+if [[ "$command" != "raw" ]]; then
+	filtered_arguments=()
+	index=0
+	while (( index < ${#command_arguments[@]} )); do
+		argument=${command_arguments[$index]}
+		case "$argument" in
+			--configuration|-configuration)
+				(( index + 1 < ${#command_arguments[@]} )) || { echo "$argument requires a value" >&2; exit 2; }
+				configuration=${command_arguments[$((index + 1))]}
+				configuration_explicit=1
+				index=$((index + 2))
+				;;
+			--destination|-destination)
+				(( index + 1 < ${#command_arguments[@]} )) || { echo "$argument requires a value" >&2; exit 2; }
+				destination=${command_arguments[$((index + 1))]}
+				index=$((index + 2))
+				;;
+			--developer-dir)
+				(( index + 1 < ${#command_arguments[@]} )) || { echo "$argument requires a value" >&2; exit 2; }
+				developer_dir=${command_arguments[$((index + 1))]}
+				index=$((index + 2))
+				;;
+			--run-id)
+				(( index + 1 < ${#command_arguments[@]} )) || { echo "$argument requires a value" >&2; exit 2; }
+				requested_run_id=${command_arguments[$((index + 1))]}
+				index=$((index + 2))
+				;;
+			--stage-app)
+				stage_app=1
+				index=$((index + 1))
+				;;
+			--raw|--raw-output)
+				use_xcbeautify=0
+				index=$((index + 1))
+				;;
+			*)
+				filtered_arguments+=("$argument")
+				index=$((index + 1))
+				;;
+		esac
+	done
+	command_arguments=(${filtered_arguments[@]+"${filtered_arguments[@]}"})
+fi
 
-if [[ "$joined" != *" -workspace "* && "$joined" != *" -project "* ]]; then
-	settings+=(-workspace GitX.xcworkspace)
-fi
-if [[ "$joined" != *" -scheme "* ]]; then
-	settings+=(-scheme GitX)
-fi
-if [[ "$joined" != *" -destination "* ]]; then
-	settings+=(-destination "platform=macOS,arch=arm64")
-fi
-if [[ "$joined" != *" -derivedDataPath "* ]]; then
-	settings+=(-derivedDataPath "$derived_data")
+if [[ "$command" == "archive" && "$configuration_explicit" == 0 ]]; then
+	configuration=Release
 fi
 
-is_test_action=0
-for argument in "${passthrough[@]}"; do
+if [[ -z "$developer_dir" ]]; then
+	developer_dir=$(python3 "$support" developer-dir) || exit $?
+fi
+export DEVELOPER_DIR="$developer_dir"
+xcodebuild="$developer_dir/usr/bin/xcodebuild"
+xcrun=$(command -v xcrun)
+
+run_id=$(python3 "$support" run-id "$requested_run_id") || exit $?
+artifact_root=$(config artifactRoot) || exit 2
+source_package_cache=$(config sourcePackageCache) || exit 2
+run_dir="$root/$artifact_root/$run_id"
+if [[ -e "$run_dir" ]]; then
+	echo "Verification run already exists: $run_dir" >&2
+	exit 2
+fi
+logs="$run_dir/Logs"
+results="$run_dir/Results"
+products="$run_dir/Products"
+derived_data="$run_dir/DerivedData"
+mkdir -p "$logs" "$results" "$products" "$derived_data" "$root/$source_package_cache"
+receipt="$run_dir/receipt.json"
+
+signing_mode=ad-hoc
+for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
 	case "$argument" in
-		test|test-without-building)
-			is_test_action=1
+		CODE_SIGNING_ALLOWED=NO|CODE_SIGNING_REQUIRED=NO)
+			signing_mode=disabled
 			;;
 	esac
 done
 
-result_bundle=
-if (( is_test_action )) && [[ "$joined" != *" -resultBundlePath "* ]]; then
-	result_bundle=$default_result_bundle
-	settings+=(-resultBundlePath "$result_bundle")
-elif (( is_test_action )); then
-	# Remember the caller's bundle so the failure-report hint points at it.
-	previous=
-	for argument in "${passthrough[@]}"; do
-		if [[ "$previous" == "-resultBundlePath" ]]; then
-			result_bundle=$argument
-			break
-		fi
-		previous=$argument
-	done
+preset=$command
+if [[ -n "${command_arguments[0]:-}" ]]; then
+	preset="$preset:${command_arguments[0]}"
 fi
+python3 "$support" receipt-init \
+	--run-id "$run_id" \
+	--preset "$preset" \
+	--configuration "$configuration" \
+	--destination "$destination" \
+	--developer-dir "$developer_dir" \
+	--signing-mode "$signing_mode" \
+	"$receipt" \
+	-- ${command_arguments[@]+"${command_arguments[@]}"} || exit 2
 
-mkdir -p "$log_dir"
-if [[ -n "$result_bundle" && -e "$result_bundle" ]]; then
-	# xcodebuild refuses to overwrite an existing result bundle, so a leftover
-	# one must be removed first. Deletion is gated on the .xcresult suffix: a
-	# mistyped -resultBundlePath (say, plain "build") must never recursively
-	# delete a real directory.
-	if [[ "$result_bundle" == *.xcresult ]]; then
-		rm -rf "$result_bundle"
+overall_status=failed
+interrupted=0
+finish_receipt() {
+	exit_code=$?
+	trap - EXIT INT TERM
+	if (( interrupted )); then
+		overall_status=interrupted
+	elif (( exit_code == 0 )); then
+		overall_status=passed
+	fi
+	python3 "$support" receipt-finish "$receipt" --status "$overall_status" --exit-code "$exit_code" >/dev/null 2>&1 || true
+	echo "Verification receipt: $receipt"
+	exit "$exit_code"
+}
+trap finish_receipt EXIT
+trap 'interrupted=1; exit 130' INT TERM
+
+elapsed_seconds() {
+	python3 -c 'import sys, time; print(f"{time.time() - float(sys.argv[1]):.3f}")' "$1"
+}
+
+record_step() {
+	name=$1
+	status=$2
+	exit_code=$3
+	duration=$4
+	log_path=$5
+	result_path=$6
+	shift 6
+	python3 "$support" receipt-step \
+		--name "$name" --status "$status" --exit-code "$exit_code" \
+		--duration "$duration" --log "$log_path" --xcresult "$result_path" \
+		"$receipt" \
+		-- "$@" >/dev/null
+}
+
+run_step() {
+	step_name=$1
+	log_path=$2
+	result_path=$3
+	shift 3
+	started=$(python3 -c 'import time; print(time.time())')
+	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" ]]; then
+		"$@" 2>&1 | tee "$log_path" | xcbeautify --disable-logging
+		step_status=${PIPESTATUS[0]}
 	else
-		echo "-resultBundlePath $result_bundle exists and is not an .xcresult bundle; refusing to delete it." >&2
+		"$@" 2>&1 | tee "$log_path"
+		step_status=${PIPESTATUS[0]}
+	fi
+	duration=$(elapsed_seconds "$started")
+	if (( step_status == 0 )); then
+		step_result=passed
+	else
+		step_result=failed
+	fi
+	record_step "$step_name" "$step_result" "$step_status" "$duration" "$log_path" "$result_path" "$@"
+	return "$step_status"
+}
+
+doctor_mode=build
+case "$command" in
+	test)
+		if [[ "${command_arguments[0]:-}" != "core" && "${command_arguments[0]:-}" != "forgekit" ]]; then
+			doctor_mode="test"
+		fi
+		if [[ "${command_arguments[0]:-}" == "ui" ]]; then
+			doctor_mode=ui
+		fi
+		;;
+	analyze|archive|smoke|build|raw)
+		;;
+	*)
+		echo "Unknown verification command: $command" >&2
+		usage >&2
 		exit 2
-	fi
-fi
+		;;
+esac
 
-if (( use_xcbeautify )) && ! command -v xcbeautify >/dev/null 2>&1; then
-	use_xcbeautify=0
-fi
-
-# The settings array is empty when the caller supplies every default, and
-# macOS ships bash 3.2, where `set -u` treats expanding an empty array as an
-# unbound-variable error. The ${settings[@]+...} form expands to nothing there.
-if (( use_xcbeautify )); then
-	xcodebuild ${settings[@]+"${settings[@]}"} "${passthrough[@]}" 2>&1 \
-		| tee "$raw_log" \
-		| xcbeautify --disable-logging
-	status=${PIPESTATUS[0]}
+doctor_log="$logs/doctor.log"
+started=$(python3 -c 'import time; print(time.time())')
+"$root/scripts/doctor.sh" --mode "$doctor_mode" --developer-dir "$developer_dir" 2>&1 | tee "$doctor_log"
+doctor_status=${PIPESTATUS[0]}
+duration=$(elapsed_seconds "$started")
+if (( doctor_status == 0 )); then
+	doctor_result=passed
 else
-	xcodebuild ${settings[@]+"${settings[@]}"} "${passthrough[@]}" 2>&1 | tee "$raw_log"
-	status=${PIPESTATUS[0]}
+	doctor_result=blocked
+	overall_status=blocked
 fi
+record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode"
+(( doctor_status == 0 )) || exit "$doctor_status"
 
-if (( status != 0 )); then
-	echo >&2
-	echo "xcodebuild failed (exit $status). Full log: $raw_log" >&2
-	if [[ -n "$result_bundle" && -d "$result_bundle" ]]; then
-		echo "Failing tests: scripts/report_xcresult.py $result_bundle" >&2
-	fi
-	exit "$status"
-fi
+workspace=$(config workspace)
+scheme=$(config scheme)
+deployment_target=$(config macOSDeploymentTarget)
+common=(
+	-workspace "$workspace"
+	-scheme "$scheme"
+	-destination "$destination"
+	-derivedDataPath "$derived_data"
+	-clonedSourcePackagesDirPath "$root/$source_package_cache"
+	-configuration "$configuration"
+	MACOSX_DEPLOYMENT_TARGET="$deployment_target"
+)
 
-if (( stage_app )); then
-	products_dir=$(
-		xcodebuild ${settings[@]+"${settings[@]}"} "${passthrough[@]}" -showBuildSettings 2>/dev/null \
-			| awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{print $2; exit}'
-	)
-	if [[ -z "$products_dir" || ! -d "$products_dir/GitX.app" ]]; then
-		echo "Could not locate GitX.app to stage from build settings." >&2
-		exit 3
+reject_managed_paths() {
+	for argument in "$@"; do
+		case "$argument" in
+			-derivedDataPath|-resultBundlePath|-clonedSourcePackagesDirPath|-archivePath)
+				echo "$argument is managed by scripts/xcodebuild.sh" >&2
+				return 2
+				;;
+		esac
+	done
+}
+
+xcode_test() {
+	test_preset=$1
+	plan=$2
+	result="$results/$plan.xcresult"
+	shift 2
+	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
+		"$xcodebuild" "${common[@]}" test -testPlan "$plan" -resultBundlePath "$result" \
+		CODE_SIGN_IDENTITY=- "$@"
+}
+
+stage_built_app() {
+	built_app=
+	while IFS= read -r candidate; do
+		if [[ -z "$built_app" ]]; then
+			built_app=$candidate
+		else
+			echo "More than one GitX.app was produced; refusing to stage an ambiguous bundle." >&2
+			return 3
+		fi
+	done < <(find "$derived_data/Build/Products" -maxdepth 3 -type d -name GitX.app -print 2>/dev/null)
+	if [[ -z "$built_app" || ! -x "$built_app/Contents/MacOS/GitX" ]]; then
+		echo "Could not locate a valid GitX.app in $derived_data" >&2
+		return 3
 	fi
-	staged_bundle=$root/build/GitX.app
-	# Swapping the bundle out from under a running instance invalidates its
-	# code signature mid-flight; macOS can kill the process and observation
-	# becomes ambiguous.
-	running_pids=$(
-		pgrep -x GitX 2>/dev/null | while read -r pid; do
-			# The leading "(" keeps bash 3.2's $() parser from tripping on the
-			# pattern's unbalanced ")".
-			case "$(ps -p "$pid" -o comm= 2>/dev/null)" in
-				("$staged_bundle"/*) printf '%s ' "$pid" ;;
+	/usr/bin/codesign --verify --deep --strict "$built_app" || return 3
+	staged="$root/build/GitX.app"
+	running_pids=$(pgrep -x GitX 2>/dev/null || true)
+	if [[ -n "$running_pids" ]]; then
+		echo "GitX is running; stop it before replacing $staged." >&2
+		return 3
+	fi
+	mkdir -p "$root/build"
+	if [[ -e "$staged" ]]; then
+		mv "$staged" "$run_dir/previous-GitX.app" || return 3
+	fi
+	temporary="$root/build/.GitX.app.$run_id"
+	if ! ditto "$built_app" "$temporary"; then
+		[[ ! -e "$run_dir/previous-GitX.app" ]] || mv "$run_dir/previous-GitX.app" "$staged"
+		return 3
+	fi
+	if ! mv "$temporary" "$staged"; then
+		mv "$temporary" "$run_dir/failed-staged-GitX.app" 2>/dev/null || true
+		[[ ! -e "$run_dir/previous-GitX.app" ]] || mv "$run_dir/previous-GitX.app" "$staged"
+		return 3
+	fi
+	echo "Staged app: $staged"
+}
+
+case "$command" in
+	build)
+		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		run_step build "$logs/build.log" "" "$xcodebuild" "${common[@]}" build CODE_SIGN_IDENTITY=- ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		if (( stage_app )); then
+			stage_built_app || exit $?
+		fi
+		;;
+	smoke)
+		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		run_step smoke "$logs/smoke.log" "" "$xcodebuild" "${common[@]}" build \
+			CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+			${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		;;
+	archive)
+		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		archive_path="$products/GitX.xcarchive"
+		run_step archive "$logs/archive.log" "" "$xcodebuild" "${common[@]}" archive \
+			-archivePath "$archive_path" ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		echo "Archive: $archive_path"
+		;;
+	analyze)
+		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		analyzer_log="$logs/analyze.log"
+		run_step analyze "$analyzer_log" "" "$xcodebuild" "${common[@]}" analyze \
+			ARCHS=arm64 CLANG_STATIC_ANALYZER_MODE_ON_ANALYZE_ACTION=deep \
+			CLANG_WARN_NULLABILITY_COMPLETENESS=YES CLANG_WARN_NULLABILITY_COMPLETENESS_ON_ARRAYS=YES \
+			CODE_SIGN_IDENTITY=- \
+			${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		run_step analyzer-policy "$logs/analyzer-policy.log" "" python3 scripts/check_analyzer_diagnostics.py "$analyzer_log" || exit $?
+		run_step swiftlint-analyze "$logs/swiftlint-analyze.log" "" scripts/run_pinned_tool.sh swiftlint analyze --strict --config .swiftlint.yml --baseline .swiftlint-baseline.json --compiler-log-path "$analyzer_log" || exit $?
+		;;
+	test)
+		test_preset=${command_arguments[0]:-}
+		extra=("${command_arguments[@]:1}")
+		# Compatibility with the original wrapper's `test -testPlan NAME` form.
+		if [[ "$test_preset" == "-testPlan" && -n "${command_arguments[1]:-}" ]]; then
+			plan_name=${command_arguments[1]}
+			extra=("${command_arguments[@]:2}")
+			case "$plan_name" in
+				GitX) test_preset=correctness ;;
+				GitXUI) test_preset=ui ;;
+				GitXAddressUndefined) test_preset=address-undefined ;;
+				GitXThreadSanitizer) test_preset=thread-sanitizer ;;
+				GitXPerformance) test_preset=performance ;;
+				*) echo "Unknown test plan: $plan_name" >&2; exit 2 ;;
 			esac
+		fi
+		reject_managed_paths ${extra[@]+"${extra[@]}"} || exit $?
+		case "$test_preset" in
+			correctness)
+				plan=$(config testPlans.correctness)
+				xcode_test correctness "$plan" -enableCodeCoverage YES ${extra[@]+"${extra[@]}"} || exit $?
+				run_step coverage "$logs/coverage.log" "" scripts/check_coverage.py "$results/$plan.xcresult" || exit $?
+				;;
+			ui)
+				preflight=$(config testPlans.ui-preflight)
+				plan=$(config testPlans.ui)
+				xcode_test ui-preflight "$preflight" ${extra[@]+"${extra[@]}"} || exit $?
+				xcode_test ui "$plan" ${extra[@]+"${extra[@]}"} || exit $?
+				;;
+			address-undefined|thread-sanitizer|performance)
+				plan=$(config "testPlans.$test_preset")
+				xcode_test "$test_preset" "$plan" ${extra[@]+"${extra[@]}"} || exit $?
+				;;
+			core)
+				package=$(config packages.core)
+				scratch="$products/GitXCoreBuild"
+				run_step test:core "$logs/core.log" "" "$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
+				codecov=$("$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --show-codecov-path) || exit $?
+				run_step coverage:core "$logs/core-coverage.log" "$codecov" python3 scripts/check_core_coverage.py "$codecov" || exit $?
+				;;
+			forgekit)
+				package=$(config packages.forgekit)
+				scratch="$products/ForgeKitBuild"
+				combined="$results/ForgeKitCombinedCoverage.json"
+				run_step test:forgekit "$logs/forgekit.log" "" "$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --build-system swiftbuild --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
+				run_step coverage:forgekit "$logs/forgekit-coverage.log" "$combined" python3 scripts/check_forgekit_coverage.py --swiftpm-scratch-path "$scratch" --combined-output "$combined" || exit $?
+				;;
+			*)
+				echo "Unknown test preset: ${test_preset:-<missing>}" >&2
+				usage >&2
+				exit 2
+				;;
+		esac
+		;;
+	raw)
+		use_xcbeautify=0
+		extra=(${command_arguments[@]+"${command_arguments[@]}"})
+		if [[ "${extra[0]:-}" == "--" ]]; then
+			extra=("${extra[@]:1}")
+		fi
+		(( ${#extra[@]} )) || { echo "raw requires xcodebuild arguments" >&2; exit 2; }
+		reject_managed_paths "${extra[@]}" || exit $?
+		result_path=
+		for argument in "${extra[@]}"; do
+			if [[ "$argument" == "test" || "$argument" == "test-without-building" ]]; then
+				result_path="$results/raw.xcresult"
+				extra+=( -resultBundlePath "$result_path" )
+				break
+			fi
 		done
-	)
-	if [[ -n "${running_pids// /}" ]]; then
-		echo "GitX is still running from $staged_bundle (pid(s): $running_pids)." >&2
-		echo "Stop it first (scripts/run_app.sh --stop), then re-run --stage-app." >&2
-		exit 3
-	fi
-	rm -rf "$staged_bundle"
-	# ditto preserves the bundle's symlinks and extended attributes; cp -R does not.
-	ditto "$products_dir/GitX.app" "$staged_bundle"
-	echo "Staged app: $staged_bundle"
-fi
+		run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" "${common[@]}" "${extra[@]}" || exit $?
+		;;
+esac
 
-if [[ -n "$result_bundle" && -d "$result_bundle" ]]; then
-	echo "Result bundle: $result_bundle"
-fi
+overall_status=passed
