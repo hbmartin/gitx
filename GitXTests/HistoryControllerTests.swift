@@ -769,7 +769,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryTreeExplainsASelectedDirectoryWithoutRelyingOnIncidentalCoverage() throws {
-        let commit = try XCTUnwrap(loadedCommits().first)
+        let previousChangedFilesOnly = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = false
+        defer { PBApplicationSettings.changedFilesOnly = previousChangedFilesOnly }
+        let mainSHA = try fixture.git(["rev-parse", "main"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let commit = try XCTUnwrap(loadedCommits().first { $0.sha == mainSHA })
         historyController.commitController.setSelectedObjects([commit])
         historyController.selectedCommitDetailsIndex = 1
         historyController.updateKeys()
