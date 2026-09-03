@@ -125,19 +125,20 @@ stop_pid_file() {
 		rm -f "$pid_file"
 		return 1
 	fi
+	if [[ -z "$recorded_start_time" ]]; then
+		echo "Ignoring legacy PID-only record $pid_file; process identity cannot be verified." >&2
+		rm -f "$pid_file"
+		return 1
+	fi
 	executable=$(ps -p "$pid" -o comm= 2>/dev/null)
 	case "$executable" in
 		"$expected" | */"$expected") ;;
 		*) rm -f "$pid_file"; return 1 ;;
 	esac
-	# Records written before start-time validation was introduced contain only
-	# the PID. The executable check above still makes those safe to stop.
-	if [[ -n "$recorded_start_time" ]]; then
-		current_start_time=$(process_start_time "$pid") || { rm -f "$pid_file"; return 1; }
-		if [[ "$current_start_time" != "$recorded_start_time" ]]; then
-			rm -f "$pid_file"
-			return 1
-		fi
+	current_start_time=$(process_start_time "$pid") || { rm -f "$pid_file"; return 1; }
+	if [[ "$current_start_time" != "$recorded_start_time" ]]; then
+		rm -f "$pid_file"
+		return 1
 	fi
 	kill "$pid" 2>/dev/null || return 2
 	for _ in {1..20}; do

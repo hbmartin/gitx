@@ -198,7 +198,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(process.wait(timeout=2), -15)
         self.assertFalse((session_directory / "app.pid").exists())
 
-    def test_run_app_stop_supports_a_legacy_pid_only_record(self) -> None:
+    def test_run_app_stop_refuses_an_unverifiable_legacy_pid_only_record(self) -> None:
         script = self.install_script("run_app.sh")
         session_directory = self.root / "build" / "Logs" / "run-app"
         session_directory.mkdir(parents=True)
@@ -208,7 +208,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.addCleanup(self._terminate_process, process)
         (session_directory / "app.pid").write_text(f"{process.pid}\n")
 
-        subprocess.run(
+        result = subprocess.run(
             [script, "--stop"],
             check=True,
             capture_output=True,
@@ -216,8 +216,9 @@ class ScriptEntrypointTests(unittest.TestCase):
             env=self.environment,
         )
 
-        self.assertEqual(process.wait(timeout=2), -15)
+        self.assertIsNone(process.poll())
         self.assertFalse((session_directory / "app.pid").exists())
+        self.assertIn("process identity cannot be verified", result.stderr)
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[bytes]) -> None:
