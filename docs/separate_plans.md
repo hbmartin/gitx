@@ -51,7 +51,7 @@ Address Sanitizer and Thread Sanitizer remain separate because their instrumenta
 ### Sanitizer tests
 
 - Use the same correctness tests under separate plan configurations.
-- Upload result bundles even when `xcodebuild` fails.
+- Upload wrapper receipts, logs, and result bundles even when verification fails.
 - Do not weaken sanitizer settings to preserve a warning or finding baseline; sanitizer findings have a zero budget.
 
 ## Local Commands
@@ -59,16 +59,17 @@ Address Sanitizer and Thread Sanitizer remain separate because their instrumenta
 The canonical forms are:
 
 ```sh
-swift test --package-path GitXCore --enable-code-coverage
-python3 scripts/check_core_coverage.py "$(swift test --package-path GitXCore --show-codecov-path)"
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitX -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXUI -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXPerformance -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXAddressUndefined -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
-xcodebuild test -workspace GitX.xcworkspace -scheme GitX -testPlan GitXThreadSanitizer -destination 'platform=macOS,arch=arm64' CODE_SIGN_IDENTITY=-
+scripts/xcodebuild.sh test core
+scripts/xcodebuild.sh test correctness
+scripts/xcodebuild.sh test ui
+scripts/xcodebuild.sh test performance
+scripts/xcodebuild.sh test address-undefined
+scripts/xcodebuild.sh test thread-sanitizer
 ```
 
-Use a unique `-resultBundlePath` in CI. Do not rely on whichever plan is currently selected in a developer's scheme editor.
+The wrapper creates a unique clean output directory and machine-readable receipt
+for every invocation. Do not rely on whichever plan is currently selected in a
+developer's scheme editor.
 
 ## Change Policy
 

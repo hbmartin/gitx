@@ -68,14 +68,12 @@ public enum HistoryFlowChangeSet {
                 guard index < fields.count else { throw HistoryFlowChangeSetError.malformedNameStatus }
                 record = (fields[index], nil)
                 index += 1
-            case .some:
+            default:
                 // M, and any single-path status the caller's diff filter lets
                 // through (such as a type change), name one path on both sides.
                 guard index < fields.count else { throw HistoryFlowChangeSetError.malformedNameStatus }
                 record = (fields[index], fields[index])
                 index += 1
-            case .none:
-                throw HistoryFlowChangeSetError.malformedNameStatus
             }
 
             let oldPath = record.oldPath.flatMap { isAnalyzable($0) ? $0 : nil }

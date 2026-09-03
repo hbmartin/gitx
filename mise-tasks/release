@@ -42,7 +42,7 @@ Environment overrides:
   GITX_RELEASE_DIR
       Artifact directory. Defaults to <repository>/release.
   GITX_RELEASE_WORK_DIR
-      Archive, Derived Data, and log directory. Defaults to
+      Notarization staging and log directory. Defaults to
       <repository>/build/release-arm64.
   GITX_NOTARIZATION_TIMEOUT_SECONDS
       Maximum wait for notarization. Defaults to 3600.
@@ -180,8 +180,9 @@ work_root=$(cd "$work_root" && pwd -P)
 [[ "$work_root" != "$output_root" ]] ||
 	fail "GITX_RELEASE_DIR and GITX_RELEASE_WORK_DIR must be different directories"
 
-archive_path="$work_root/GitX.xcarchive"
-derived_data_path="$work_root/DerivedData"
+verification_run_id="release-$artifact_arch-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+archive_path="$root/artifacts/verification/$verification_run_id/Products/GitX.xcarchive"
+verification_receipt="$root/artifacts/verification/$verification_run_id/receipt.json"
 upload_export_path="$work_root/Upload"
 notarized_export_path="$work_root/Notarized"
 logs_path="$work_root/logs"
@@ -200,17 +201,12 @@ rm -rf \
 mkdir -p "$logs_path" "$upload_export_path"
 
 log "Archiving GitX ($artifact_arch)"
-xcodebuild \
-	-workspace GitX.xcworkspace \
-	-scheme GitX \
-	-configuration Release \
-	-destination "generic/platform=macOS" \
-	-derivedDataPath "$derived_data_path" \
-	-archivePath "$archive_path" \
+scripts/xcodebuild.sh --run-id "$verification_run_id" archive \
+	--configuration Release \
+	--destination "generic/platform=macOS" \
 	-allowProvisioningUpdates \
 	"ARCHS=$xcode_archs" \
-	ONLY_ACTIVE_ARCH=NO \
-	archive 2>&1 | tee "$logs_path/archive.log"
+	ONLY_ACTIVE_ARCH=NO
 
 archived_app="$archive_path/Products/Applications/GitX.app"
 [[ -d "$archived_app" ]] || fail "Archive did not contain GitX.app"
@@ -329,3 +325,4 @@ printf '  ZIP:       %s\n' "$zip_path"
 printf '  DMG:       %s\n' "$dmg_path"
 printf '  Checksums: %s\n' "$checksum_path"
 printf '  Logs:      %s\n' "$logs_path"
+printf '  Receipt:   %s\n' "$verification_receipt"

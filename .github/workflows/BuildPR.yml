@@ -11,12 +11,48 @@ on:
 permissions: {}
 
 jobs:
+  toolchain-smoke:
+    name: dependency and toolchain smoke
+    permissions:
+      contents: read
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: "26.6"
+      - name: Prepare ObjectiveGit
+        run: |
+          cd External/objective-git
+          script/bootstrap
+          script/update_libgit2
+      - name: Compile the dependency and toolchain smoke lane
+        run: scripts/xcodebuild.sh --run-id "buildpr-smoke-${{ github.run_id }}-${{ github.run_attempt }}" smoke
+      - name: Upload smoke receipt and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: GitX-build-smoke-verification
+          path: |
+            artifacts/verification/buildpr-smoke-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+            artifacts/verification/buildpr-smoke-${{ github.run_id }}-${{ github.run_attempt }}/Logs
+
   build-gitx:
     name: build
+    needs: toolchain-smoke
     permissions:
       contents: read
     env:
       variableSet: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+      UI_RUN_ID: buildpr-ui-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.abi }}
+      ARCHIVE_RUN_ID: buildpr-archive-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.abi }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -101,20 +137,15 @@ jobs:
           if [[ -d /tmp/gitx-screenshot-repo ]]; then
             screenshot_repo_setting=(GITX_SCREENSHOT_REPO=/tmp/gitx-screenshot-repo)
           fi
-          xcodebuild test \
-            -workspace GitX.xcworkspace \
-            -scheme GitX \
-            -destination "platform=macOS,arch=${{ matrix.abi }}" \
-            -testPlan GitXUI \
+          scripts/xcodebuild.sh --run-id "$UI_RUN_ID" test ui \
+            --destination "platform=macOS,arch=${{ matrix.abi }}" \
             ARCHS="${{ matrix.abi }}" \
-            CODE_SIGN_IDENTITY="-" \
-            "${screenshot_repo_setting[@]}" \
-            -resultBundlePath TestResults-${{ matrix.abi }}.xcresult
+            "${screenshot_repo_setting[@]}"
       - name: Extract screenshots from test results
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
         run: |
           python3 scripts/extract_screenshots.py \
-            TestResults-${{ matrix.abi }}.xcresult \
+            "artifacts/verification/$UI_RUN_ID/Results/GitXUI.xcresult" \
             ./scripts/screenshots-${{ matrix.abi }}
       - name: Upload screenshots
         if: ${{ matrix.abi == 'arm64' && github.event_name == 'pull_request' }}
@@ -166,29 +197,29 @@ jobs:
               CODE_SIGN_IDENTITY=""
             )
           fi
-          xcodebuild \
-            -workspace GitX.xcworkspace \
-            -scheme GitX \
-            -archivePath ./GitX \
-            archive \
+          scripts/xcodebuild.sh --run-id "$ARCHIVE_RUN_ID" archive \
+            --destination "platform=macOS,arch=${{ matrix.abi }}" \
             ARCHS="${{ matrix.abi }}" \
             "${signing_settings[@]}"
       - name: Verify archived bundle identifiers
-        run: python3 scripts/check_bundle_identifiers.py GitX.xcarchive/Products/Applications/GitX.app
+        run: python3 scripts/check_bundle_identifiers.py "artifacts/verification/$ARCHIVE_RUN_ID/Products/GitX.xcarchive/Products/Applications/GitX.app"
       - name: Prepare artifact
         if: ${{ env.variableSet != '' }}
         env:
           EXPORT_OPTIONS: ${{ secrets.NOTARY_EXPORT_OPTIONS }}
         run: |
           EXPORT_OPTIONS_PATH="$RUNNER_TEMP/ExportOptions.plist"
+          ARCHIVE_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/GitX.xcarchive"
+          EXPORT_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export"
           echo -n "$EXPORT_OPTIONS" > "$EXPORT_OPTIONS_PATH"
           echo "EXPORT_OPTIONS_PATH=$EXPORT_OPTIONS_PATH"
-          xcodebuild -exportArchive -archivePath GitX.xcarchive -exportPath . -exportOptionsPlist "$EXPORT_OPTIONS_PATH"
+          mkdir -p "$EXPORT_PATH"
+          xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" -exportPath "$EXPORT_PATH" -exportOptionsPlist "$EXPORT_OPTIONS_PATH"
           echo "Create GitX-${{ matrix.abi }}.dmg"
-          mkdir dist && cp -R GitX.app dist/ && ln -s /Applications dist/
+          mkdir dist && ditto "$EXPORT_PATH/GitX.app" dist/GitX.app && ln -s /Applications dist/
           hdiutil create -fs HFS+ -srcfolder dist/ -volname GitX GitX-${{ matrix.abi }}.dmg
           rm -rf dist
-          zip -r GitX-${{ matrix.abi }}.zip GitX.app
+          ditto -c -k --keepParent "$EXPORT_PATH/GitX.app" GitX-${{ matrix.abi }}.zip
       - name: Notarize App
         if: ${{ env.variableSet != '' }}
         env:
@@ -197,9 +228,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           KEY_ID: ${{ secrets.APPLE_KEY_ID }}
         run: |
-          APP_PATH="GitX.app"
-          ZIP_PATH="GitX.zip"
-          NOTARY_LOG="notary.log"
+          APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/GitX.app"
+          ZIP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/notarization.zip"
+          NOTARY_LOG="artifacts/verification/$ARCHIVE_RUN_ID/Logs/notary.log"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
           xcrun notarytool submit "$ZIP_PATH" --key-id "$KEY_ID" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APPLE_PASSWORD" --wait | tee "$NOTARY_LOG"
@@ -216,14 +247,23 @@ jobs:
           # Instead, run stapler against each item that you added to the archive.
           # Then create a new ZIP file containing the stapled items for distribution.
           # Reference: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution/customizing_the_notarization_workflow
-          APP_PATH="GitX.app"
-          ZIP_PATH="GitX.zip"
+          APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/GitX.app"
+          ZIP_PATH="GitX-${{ matrix.abi }}.zip"
 
           xcrun stapler staple "$APP_PATH"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
       - name: Check Notarization
         if: ${{ env.variableSet != '' }}
-        run: spctl -a -vv GitX.app
+        run: spctl -a -vv "artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/GitX.app"
+      - name: Upload verification receipts and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: GitX-build-verification-${{ matrix.abi }}
+          path: |
+            artifacts/verification/*/receipt.json
+            artifacts/verification/*/Logs
+            artifacts/verification/*/Results
       - name: Upload dmg
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ success() }}

@@ -162,7 +162,7 @@ mkdir -p "$session_dir"
 
 if (( should_build )); then
 	echo "Building GitX (Debug)..."
-	if ! "$root/scripts/xcodebuild.sh" --stage-app build -configuration Debug; then
+	if ! "$root/scripts/xcodebuild.sh" build --configuration Debug --stage-app; then
 		echo "Build failed; not launching." >&2
 		exit 1
 	fi

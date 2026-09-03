@@ -17,67 +17,86 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  toolchain-smoke:
+    name: dependency and toolchain smoke
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          submodules: recursive
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
+        with:
+          xcode-version: "26.6"
+      - name: Prepare ObjectiveGit
+        run: |
+          cd External/objective-git
+          script/bootstrap
+          script/update_libgit2
+      - name: Compile the dependency and toolchain smoke lane
+        run: scripts/xcodebuild.sh --run-id "verify-smoke-${{ github.run_id }}-${{ github.run_attempt }}" smoke
+      - name: Upload smoke receipt and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: GitX-smoke-verification
+          path: |
+            artifacts/verification/verify-smoke-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+            artifacts/verification/verify-smoke-${{ github.run_id }}-${{ github.run_attempt }}/Logs
+
   core:
     name: GitXCore hostless tests
+    needs: toolchain-smoke
     runs-on: macos-26
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
+          submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: "26.6"
       - name: Enforce the core dependency boundary
         run: python3 scripts/check_gitxcore_boundary.py
       - name: Run hostless core tests
-        run: |
-          swift test \
-            --package-path GitXCore \
-            --scratch-path "$RUNNER_TEMP/GitXCoreBuild" \
-            --enable-code-coverage
-      - name: Enforce core coverage floors
-        run: |
-          CODECOV_PATH=$(swift test \
-            --package-path GitXCore \
-            --scratch-path "$RUNNER_TEMP/GitXCoreBuild" \
-            --show-codecov-path)
-          python3 scripts/check_core_coverage.py "$CODECOV_PATH"
-      - name: Upload core coverage
+        run: scripts/xcodebuild.sh --run-id "verify-core-${{ github.run_id }}-${{ github.run_attempt }}" test core
+      - name: Upload core verification
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: GitXCore-coverage
-          path: ${{ runner.temp }}/GitXCoreBuild/**/codecov/GitXCore.json
+          name: GitXCore-verification
+          path: |
+            artifacts/verification/verify-core-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+            artifacts/verification/verify-core-${{ github.run_id }}-${{ github.run_attempt }}/Logs
+            artifacts/verification/verify-core-${{ github.run_id }}-${{ github.run_attempt }}/Products/**/codecov/*.json
 
   forgekit:
     name: ForgeKit hostless tests
+    needs: toolchain-smoke
     runs-on: macos-26
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: "26.6"
       - name: Run hostless ForgeKit tests
-        run: |
-          swift test \
-            --package-path ForgeKit \
-            --scratch-path "$RUNNER_TEMP/ForgeKitBuild" \
-            --build-system swiftbuild \
-            --enable-code-coverage
-      - name: Enforce ForgeKit coverage floors
-        run: |
-          python3 scripts/check_forgekit_coverage.py \
-            --swiftpm-scratch-path "$RUNNER_TEMP/ForgeKitBuild" \
-            --combined-output "$RUNNER_TEMP/ForgeKitCombinedCoverage.json"
-      - name: Upload ForgeKit coverage
+        run: scripts/xcodebuild.sh --run-id "verify-forgekit-${{ github.run_id }}-${{ github.run_attempt }}" test forgekit
+      - name: Upload ForgeKit verification
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: ForgeKit-coverage
-          path: ${{ runner.temp }}/ForgeKitCombinedCoverage.json
+          name: ForgeKit-verification
+          path: |
+            artifacts/verification/verify-forgekit-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+            artifacts/verification/verify-forgekit-${{ github.run_id }}-${{ github.run_attempt }}/Logs
+            artifacts/verification/verify-forgekit-${{ github.run_id }}-${{ github.run_attempt }}/Results
 
   static:
     name: static verification
@@ -123,7 +142,9 @@ jobs:
 
   unit-and-analyze:
     name: unit tests and analyzer
+    needs: toolchain-smoke
     runs-on: macos-26
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -149,34 +170,24 @@ jobs:
           script/bootstrap
           script/update_libgit2
       - name: Run unit and integration tests
-        run: |
-          xcodebuild test \
-            -workspace GitX.xcworkspace \
-            -scheme GitX \
-            -testPlan GitX \
-            -destination "platform=macOS,arch=arm64" \
-            -enableCodeCoverage YES \
-            CODE_SIGN_IDENTITY="-" \
-            -resultBundlePath "$RUNNER_TEMP/GitXTests.xcresult"
-      - name: Enforce coverage floors
-        run: scripts/check_coverage.py "$RUNNER_TEMP/GitXTests.xcresult"
+        run: scripts/xcodebuild.sh --run-id "verify-correctness-${{ github.run_id }}-${{ github.run_attempt }}" test correctness
       - name: Run Clang static analyzer
-        env:
-          DERIVED_DATA_PATH: ${{ runner.temp }}/GitXAnalyze
-          ANALYZER_LOG_PATH: ${{ runner.temp }}/GitXAnalyze.log
-        run: scripts/run_analyzer.sh
+        run: scripts/xcodebuild.sh --run-id "verify-analyze-${{ github.run_id }}-${{ github.run_attempt }}" analyze
       - name: Upload test and analyzer results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: GitX-verification-results
           path: |
-            ${{ runner.temp }}/GitXTests.xcresult
-            ${{ runner.temp }}/GitXAnalyze.log
+            artifacts/verification/*/receipt.json
+            artifacts/verification/*/Logs
+            artifacts/verification/*/Results
 
   ui:
     name: UI workflows
+    needs: toolchain-smoke
     runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -193,24 +204,21 @@ jobs:
           script/bootstrap
           script/update_libgit2
       - name: Run UI plan
-        run: |
-          xcodebuild test \
-            -workspace GitX.xcworkspace \
-            -scheme GitX \
-            -testPlan GitXUI \
-            -destination "platform=macOS,arch=arm64" \
-            CODE_SIGN_IDENTITY="-" \
-            -resultBundlePath "$RUNNER_TEMP/GitXUI.xcresult"
+        run: scripts/xcodebuild.sh --run-id "verify-ui-${{ github.run_id }}-${{ github.run_attempt }}" test ui
       - name: Upload UI result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: GitXUI-results
-          path: ${{ runner.temp }}/GitXUI.xcresult
+          path: |
+            artifacts/verification/verify-ui-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+            artifacts/verification/verify-ui-${{ github.run_id }}-${{ github.run_attempt }}/Logs
+            artifacts/verification/verify-ui-${{ github.run_id }}-${{ github.run_attempt }}/Results
 
   sanitizers:
     name: ${{ matrix.name }}
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: toolchain-smoke
     runs-on: [self-hosted, macOS, ARM64]
     strategy:
       fail-fast: false
@@ -218,8 +226,10 @@ jobs:
         include:
           - name: Address and undefined behavior sanitizers
             test_plan: GitXAddressUndefined
+            preset: address-undefined
           - name: Thread sanitizer
             test_plan: GitXThreadSanitizer
+            preset: thread-sanitizer
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -236,24 +246,21 @@ jobs:
           script/bootstrap
           script/update_libgit2
       - name: Run sanitizer configuration
-        run: |
-          xcodebuild test \
-            -workspace GitX.xcworkspace \
-            -scheme GitX \
-            -testPlan "${{ matrix.test_plan }}" \
-            -destination "platform=macOS,arch=arm64" \
-            CODE_SIGN_IDENTITY="-" \
-            -resultBundlePath "$RUNNER_TEMP/${{ matrix.test_plan }}.xcresult"
+        run: scripts/xcodebuild.sh --run-id "verify-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}" test "${{ matrix.preset }}"
       - name: Upload sanitizer result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: ${{ matrix.test_plan }}-results
-          path: ${{ runner.temp }}/${{ matrix.test_plan }}.xcresult
+          path: |
+            artifacts/verification/verify-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+            artifacts/verification/verify-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}/Logs
+            artifacts/verification/verify-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}/Results
 
   performance:
     name: performance suite
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: toolchain-smoke
     runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -271,17 +278,13 @@ jobs:
           script/bootstrap
           script/update_libgit2
       - name: Run performance suite
-        run: |
-          xcodebuild test \
-            -workspace GitX.xcworkspace \
-            -scheme GitX \
-            -testPlan GitXPerformance \
-            -destination "platform=macOS,arch=arm64" \
-            CODE_SIGN_IDENTITY="-" \
-            -resultBundlePath "$RUNNER_TEMP/GitXPerformance.xcresult"
+        run: scripts/xcodebuild.sh --run-id "verify-performance-${{ github.run_id }}-${{ github.run_attempt }}" test performance
       - name: Upload performance result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: GitXPerformance-results
-          path: ${{ runner.temp }}/GitXPerformance.xcresult
+          path: |
+            artifacts/verification/verify-performance-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+            artifacts/verification/verify-performance-${{ github.run_id }}-${{ github.run_attempt }}/Logs
+            artifacts/verification/verify-performance-${{ github.run_id }}-${{ github.run_attempt }}/Results
