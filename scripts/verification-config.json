@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "minimumXcodeVersion": "26.6",
+  "developerDirectoryCandidates": [
+    "/Applications/Xcode.app/Contents/Developer",
+    "/Applications/Xcode-beta.app/Contents/Developer"
+  ],
+  "workspace": "GitX.xcworkspace",
+  "scheme": "GitX",
+  "destination": "platform=macOS,arch=arm64",
+  "macOSDeploymentTarget": "15.0",
+  "artifactRoot": "artifacts/verification",
+  "sourcePackageCache": "artifacts/cache/SourcePackages",
+  "testPlans": {
+    "correctness": "GitX",
+    "ui-preflight": "GitXUIPreflight",
+    "ui": "GitXUI",
+    "address-undefined": "GitXAddressUndefined",
+    "thread-sanitizer": "GitXThreadSanitizer",
+    "performance": "GitXPerformance"
+  },
+  "packages": {
+    "core": "GitXCore",
+    "forgekit": "ForgeKit"
+  }
+}

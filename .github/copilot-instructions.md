@@ -45,6 +45,7 @@ GitX is a native macOS graphical client for the `git` version control system. It
 
 - macOS with Xcode 26.6 or newer installed
 - A `Dev.xcconfig` file at the project root with `DEVELOPMENT_TEAM` and `CODE_SIGN_IDENTITY` for local signing
+- Use `scripts/doctor.sh` for host preflight and `scripts/xcodebuild.sh` for builds, tests, analysis, and archives; inspect the resulting `artifacts/verification/*/receipt.json` when reporting verification.
 
 ## License
 
