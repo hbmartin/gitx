@@ -2,11 +2,11 @@
 #
 # Canonical xcodebuild entry point for GitX.
 #
-# Every build in this repository must go through this wrapper. It pins three
+# Every build in this repository must go through this wrapper. It controls three
 # things that agents and terminals otherwise get wrong:
 #
-#   1. DEVELOPER_DIR. The selected Xcode may be a beta that cannot build this
-#      workspace. CI pins 26.6, so local builds pin the same stable Xcode.
+#   1. DEVELOPER_DIR. CI pins Xcode 26.6; local builds select the stable Xcode
+#      path by default and reject versions older than that supported baseline.
 #   2. -derivedDataPath. Ad-hoc per-session derived data directories turn every
 #      build into a cold build and leak gigabytes. One shared path keeps the
 #      cache warm across worktrees and sessions.
@@ -24,7 +24,7 @@
 #   -scheme GitX
 #   -destination "platform=macOS,arch=arm64"
 #   -derivedDataPath build/DerivedData
-#   -resultBundlePath build/Logs/last-test.xcresult   (test actions only)
+#   -resultBundlePath build/Logs/test-<invocation>.xcresult (test actions only)
 #
 # Environment overrides:
 #   GITX_DEVELOPER_DIR   alternate Xcode developer directory
@@ -48,14 +48,41 @@ if [[ ! -d "$developer_dir" ]]; then
 fi
 export DEVELOPER_DIR="$developer_dir"
 
+if ! xcode_version_output=$(xcodebuild -version 2>&1); then
+	echo "Could not determine the Xcode version under $developer_dir:" >&2
+	echo "$xcode_version_output" >&2
+	exit 2
+fi
+xcode_version=$(printf '%s\n' "$xcode_version_output" | awk 'NR == 1 && $1 == "Xcode" { print $2 }')
+if [[ ! "$xcode_version" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+	echo "Could not parse the Xcode version under $developer_dir: $xcode_version_output" >&2
+	exit 2
+fi
+xcode_major=${xcode_version%%.*}
+xcode_minor=${xcode_version#*.}
+if [[ "$xcode_minor" == "$xcode_version" ]]; then
+	xcode_minor=0
+fi
+if (( xcode_major < 26 || (xcode_major == 26 && xcode_minor < 6) )); then
+	echo "GitX requires Xcode 26.6 or newer; $developer_dir provides Xcode $xcode_version." >&2
+	exit 2
+fi
+
 derived_data=${GITX_DERIVED_DATA:-$root/build/DerivedData}
 log_dir=$root/build/Logs
-raw_log=$log_dir/last-xcodebuild.log
-default_result_bundle=$log_dir/last-test.xcresult
+invocation_id=$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM
+raw_log=$log_dir/xcodebuild-$invocation_id.log
+default_result_bundle=$log_dir/test-$invocation_id.xcresult
 
 stage_app=0
 use_xcbeautify=1
 passthrough=()
+has_workspace=0
+has_project=0
+has_scheme=0
+has_destination=0
+has_derived_data=0
+has_result_bundle=0
 
 for argument in "$@"; do
 	case "$argument" in
@@ -67,6 +94,14 @@ for argument in "$@"; do
 			;;
 		*)
 			passthrough+=("$argument")
+			case "$argument" in
+				-workspace) has_workspace=1 ;;
+				-project) has_project=1 ;;
+				-scheme) has_scheme=1 ;;
+				-destination) has_destination=1 ;;
+				-derivedDataPath) has_derived_data=1 ;;
+				-resultBundlePath) has_result_bundle=1 ;;
+			esac
 			;;
 	esac
 done
@@ -76,19 +111,18 @@ if (( ${#passthrough[@]} == 0 )); then
 	exit 2
 fi
 
-joined=" ${passthrough[*]} "
 settings=()
 
-if [[ "$joined" != *" -workspace "* && "$joined" != *" -project "* ]]; then
+if (( ! has_workspace && ! has_project )); then
 	settings+=(-workspace GitX.xcworkspace)
 fi
-if [[ "$joined" != *" -scheme "* ]]; then
+if (( ! has_scheme )); then
 	settings+=(-scheme GitX)
 fi
-if [[ "$joined" != *" -destination "* ]]; then
+if (( ! has_destination )); then
 	settings+=(-destination "platform=macOS,arch=arm64")
 fi
-if [[ "$joined" != *" -derivedDataPath "* ]]; then
+if (( ! has_derived_data )); then
 	settings+=(-derivedDataPath "$derived_data")
 fi
 
@@ -102,7 +136,7 @@ for argument in "${passthrough[@]}"; do
 done
 
 result_bundle=
-if (( is_test_action )) && [[ "$joined" != *" -resultBundlePath "* ]]; then
+if (( is_test_action && ! has_result_bundle )); then
 	result_bundle=$default_result_bundle
 	settings+=(-resultBundlePath "$result_bundle")
 elif (( is_test_action )); then
@@ -187,6 +221,12 @@ if (( stage_app )); then
 	rm -rf "$staged_bundle"
 	# ditto preserves the bundle's symlinks and extended attributes; cp -R does not.
 	ditto "$products_dir/GitX.app" "$staged_bundle"
+	ditto_status=$?
+	if (( ditto_status != 0 )); then
+		rm -rf "$staged_bundle"
+		echo "Could not stage GitX.app (ditto exit $ditto_status)." >&2
+		exit "$ditto_status"
+	fi
 	echo "Staged app: $staged_bundle"
 fi
 

@@ -27,19 +27,16 @@ public enum HistorySearchPolicy {
             let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty else { return .clear }
             var arguments = ["log", "--pretty=format:%H", "--no-textconv"]
-            switch mode {
-            case .regex:
+            if mode == .regex {
                 arguments.append("--pickaxe-regex")
                 arguments.append("-S\(normalized)")
-            case .pickaxe:
+            } else if mode == .pickaxe {
                 arguments.append("-S\(normalized)")
-            case .path:
+            } else if mode == .path {
                 arguments.append("--")
                 arguments.append(contentsOf: components(in: normalized))
-            case .raw:
+            } else {
                 arguments.append(contentsOf: components(in: normalized))
-            case .basic:
-                break
             }
             return .background(query: normalized, arguments: arguments)
         }
