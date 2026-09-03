@@ -4,13 +4,16 @@ import XCTest
 final class SidebarPolicyTests: XCTestCase {
     func testRemoteSyncAddsAndRemovesOnlySafeNames() {
         let plan = SidebarRemotePolicy.syncPlan(
-            configuredRemoteNames: ["origin", "upstream"],
-            existingRemoteNames: ["backup", "origin", "stale"],
+            configuredRemoteNames: ["zeta", "origin", "alpha", "upstream"],
+            existingRemoteNames: ["backup", "origin", "stale", "archive"],
             nonEmptyRemoteNames: ["stale"]
         )
         XCTAssertEqual(
             plan,
-            SidebarRemoteSyncPlan(namesToAdd: ["upstream"], namesToRemove: ["backup"])
+            SidebarRemoteSyncPlan(
+                namesToAdd: ["alpha", "upstream", "zeta"],
+                namesToRemove: ["archive", "backup"]
+            )
         )
     }
 

@@ -423,7 +423,7 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
     run_directory = arguments.path.parent
     bundle_suffixes = {".app", ".xcarchive", ".xcresult"}
     discovered: set[str | None] = set()
-    for collection in ("Logs", "Results", "Products"):
+    for collection in ("Logs", "Results"):
         collection_root = run_directory / collection
         if not collection_root.exists():
             continue
@@ -431,6 +431,14 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
             parents_inside_collection = path.relative_to(collection_root).parents
             if any(parent.suffix in bundle_suffixes for parent in parents_inside_collection):
                 continue
+            if path.is_file() or path.suffix in bundle_suffixes:
+                discovered.add(relative_artifact(str(path)))
+    products_root = run_directory / "Products"
+    if products_root.exists():
+        for path in products_root.iterdir():
+            # Package scratch directories contain thousands of compiler cache
+            # files. A coverage file explicitly attached to a step is retained,
+            # while discovery records only top-level deliverables.
             if path.is_file() or path.suffix in bundle_suffixes:
                 discovered.add(relative_artifact(str(path)))
     payload["artifacts"] = sorted(
