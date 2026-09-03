@@ -431,8 +431,19 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @property (nonatomic, copy, readonly) NSString *localTitle;
 @end
 
+typedef NS_ENUM(NSInteger, PBHistoryDetailMode) {
+	PBHistoryDetailModeDetails = 0,
+	PBHistoryDetailModeTree = 1,
+	PBHistoryDetailModeFlow = 2,
+} NS_SWIFT_NAME(HistoryDetailMode);
+
 @interface PBHistoryStateCoordinator : NSObject
 - (NSArray<PBGitCommit *> *)normalizedSelection:(NSArray<PBGitCommit *> *)selection;
+- (PBHistoryDetailMode)detailModeForPersistedIndex:(NSInteger)persistedIndex
+	NS_SWIFT_NAME(detailMode(persistedIndex:));
+- (PBHistoryDetailMode)detailModeForCurrentMode:(PBHistoryDetailMode)current
+                                 selectionCount:(NSInteger)selectionCount
+	NS_SWIFT_NAME(detailMode(current:selectionCount:));
 - (BOOL)shouldShowStagingForSelection:(NSArray<PBGitCommit *> *)selection
 	NS_SWIFT_NAME(shouldShowStaging(for:));
 - (nullable NSArray<PBGitCommit *> *)preservedSelection:(NSArray<PBGitCommit *> *)selection

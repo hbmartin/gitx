@@ -1793,6 +1793,12 @@ final class GitXSwiftFeatureTests: XCTestCase {
         let repository = PBGitRepository()
         let working = PBUncommittedChanges(repository: repository)
         XCTAssertTrue(coordinator.normalizedSelection([working, working]).first === working)
+        XCTAssertEqual(coordinator.detailMode(current: .tree, selectionCount: 2), .details)
+        XCTAssertEqual(coordinator.detailMode(current: .tree, selectionCount: 1), .tree)
+        XCTAssertEqual(coordinator.detailMode(current: .flow, selectionCount: 2), .flow)
+        XCTAssertEqual(coordinator.detailMode(persistedIndex: 2), .flow)
+        XCTAssertEqual(coordinator.detailMode(persistedIndex: 7), .details)
+        XCTAssertEqual(coordinator.detailMode(persistedIndex: -1), .details)
 
         let presentation = coordinator.branchFilterPresentation(
             simpleBranch: true,

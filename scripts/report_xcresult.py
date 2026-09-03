@@ -84,6 +84,33 @@ def walk(node: dict, bundle_name: str = "") -> Iterator[tuple[dict, str]]:
         yield from walk(child, bundle_name)
 
 
+# Failure messages sit directly under a "Test Case" for a plain run, but one
+# level deeper under "Repetition" (-retry-tests-on-failure, -test-iterations),
+# "Device", "Test Plan Configuration", or "Arguments" nodes. The bound keeps a
+# pathological tree from being walked forever.
+FAILURE_MESSAGE_MAX_DEPTH = 4
+
+
+def failure_messages(node: dict, max_depth: int = FAILURE_MESSAGE_MAX_DEPTH) -> list[str]:
+    """Return the distinct failure messages recorded anywhere under a test case."""
+    messages: list[str] = []
+    seen: set[str] = set()
+
+    def visit(current: dict, depth: int) -> None:
+        for child in current.get("children") or []:
+            node_type = child.get("nodeType")
+            if node_type == "Failure Message":
+                text = child.get("name", "")
+                if text not in seen:
+                    seen.add(text)
+                    messages.append(text)
+            elif node_type != "Test Case" and depth < max_depth:
+                visit(child, depth + 1)
+
+    visit(node, 0)
+    return messages
+
+
 def collect_failures(payload: dict, max_per_test: int = DEFAULT_MAX_PER_TEST) -> list[Failure]:
     """Extract failures from a `get test-results tests` payload."""
     # A non-positive cap would slice nothing (or, negative, from the wrong
@@ -95,11 +122,7 @@ def collect_failures(payload: dict, max_per_test: int = DEFAULT_MAX_PER_TEST) ->
             if node.get("nodeType") != "Test Case" or node.get("result") != "Failed":
                 continue
             test = node.get("nodeIdentifier") or node.get("name") or "<unknown test>"
-            messages = [
-                child.get("name", "")
-                for child in node.get("children") or []
-                if child.get("nodeType") == "Failure Message"
-            ]
+            messages = failure_messages(node)
             if not messages:
                 failures.append(Failure(bundle_name, test, None, None, "Test failed without a message"))
                 continue
@@ -205,7 +228,8 @@ def executed_any_test(summary: dict) -> bool:
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # `python3 -OO` strips docstrings, so the description must not rely on one.
+    parser = argparse.ArgumentParser(description=next(iter((__doc__ or "").splitlines()), None))
     parser.add_argument("result_bundle", type=pathlib.Path)
     parser.add_argument(
         "--max-chars",

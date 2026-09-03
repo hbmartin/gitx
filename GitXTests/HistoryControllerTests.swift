@@ -302,10 +302,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    private static let detailIndexKey = "PBHistorySelectedDetailIndex"
+
     private var fixture: GitFixture!
     private var repository: PBGitRepository!
     private var historyController: PBGitHistoryController!
     private var windowController: PBGitWindowController!
+    private var previousDetailIndex: Any?
 
     override nonisolated func setUpWithError() throws {
         try super.setUpWithError()
@@ -320,7 +323,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             repository.currentBranchFilter = 0
             repository.readCurrentBranch()
             waitForHistory()
-            UserDefaults.standard.set(0, forKey: "PBHistorySelectedDetailIndex")
+            // The test host writes the real net.phere.GitX domain, so restore
+            // whatever tab the developer's own GitX had persisted.
+            previousDetailIndex = UserDefaults.standard.object(forKey: Self.detailIndexKey)
+            UserDefaults.standard.set(0, forKey: Self.detailIndexKey)
             windowController = HistoryWindowController(repository: repository)
             historyController = PBGitHistoryController(
                 repository: repository,
@@ -343,6 +349,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             windowController = nil
             repository = nil
             fixture = nil
+            if let previousDetailIndex {
+                UserDefaults.standard.set(previousDetailIndex, forKey: Self.detailIndexKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.detailIndexKey)
+            }
         }
         super.tearDown()
     }
@@ -365,11 +376,21 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.validateMenuItem(treeItem))
         XCTAssertEqual(treeItem.state, .on)
 
+        let flowItem = NSMenuItem(title: "Flow", action: #selector(PBGitHistoryController.setFlowView(_:)), keyEquivalent: "")
+        historyController.setFlowView(flowItem)
+        XCTAssertEqual(historyController.selectedCommitDetailsIndex, 2)
+        XCTAssertTrue(historyController.validateMenuItem(flowItem))
+        XCTAssertEqual(flowItem.state, .on)
+        XCTAssertTrue(historyController.validateMenuItem(treeItem))
+        XCTAssertEqual(treeItem.state, .off)
+
         let detailItem = NSMenuItem(title: "Detail", action: #selector(PBGitHistoryController.setDetailedView(_:)), keyEquivalent: "")
         historyController.setDetailedView(detailItem)
         XCTAssertEqual(historyController.selectedCommitDetailsIndex, 0)
         XCTAssertTrue(historyController.validateMenuItem(detailItem))
         XCTAssertEqual(detailItem.state, .on)
+        XCTAssertTrue(historyController.validateMenuItem(flowItem))
+        XCTAssertEqual(flowItem.state, .off)
 
         let patchItem = NSMenuItem(title: "Create Patch…", action: #selector(PBGitHistoryController.createPatch(_:)), keyEquivalent: "")
         XCTAssertTrue(historyController.validateMenuItem(patchItem))
@@ -435,7 +456,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryFlowRendersSuccessfulRevisionAnalysis() throws {
-        selectMainCommitForFlowAnalysis()
+        selectCommitForFlowAnalysis()
         historyController.selectedCommitDetailsIndex = 2
         let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
 
@@ -450,7 +471,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryFlowReportsRevisionAnalysisFailure() throws {
-        selectMainCommitForFlowAnalysis()
+        selectCommitForFlowAnalysis()
         let repositoryURL = URL(fileURLWithPath: fixture.path)
         let unavailableURL = repositoryURL.appendingPathExtension("unavailable")
         try FileManager.default.moveItem(at: repositoryURL, to: unavailableURL)
@@ -470,7 +491,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryFlowReloadsSameCommitAfterLeavingWhileAnalysisIsPending() throws {
-        selectMainCommitForFlowAnalysis()
+        selectCommitForFlowAnalysis()
         historyController.selectedCommitDetailsIndex = 2
         let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
 
@@ -484,6 +505,190 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 }
             },
             "Flow labels after returning to the pending revision: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testHistoryFlowExplainsCommitsWithoutAnalyzableFiles() throws {
+        selectCommitForFlowAnalysis()
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains { $0.contains("1 files (Swift)") }
+            },
+            "Flow labels after analysis: \(flowLabels(in: flowView))"
+        )
+
+        try fixture.write("notes\n", to: "notes.md")
+        try fixture.git(["add", "notes.md"])
+        try commitAndReloadHistory("add notes")
+        selectCommitForFlowAnalysis(revision: "HEAD")
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains { $0.hasPrefix("This commit changes no files Flow can analyze.") }
+            },
+            "Flow labels for a commit without analyzable files: \(flowLabels(in: flowView))"
+        )
+        // The previous commit's review must not linger under the message.
+        let reviewView = try XCTUnwrap(descendant(identifier: "History.Flow.Review", in: flowView))
+        XCTAssertTrue(reviewView.isHiddenOrHasHiddenAncestor, "The review view stayed visible for a commit without analyzable files")
+    }
+
+    func testHistoryFlowAnalyzesRenamesAcrossTheSupportedLanguageBoundary() throws {
+        // FlowDelta's own provider traps on a rename whose other side is not a
+        // supported language; GitX's provider reduces it to the loadable side.
+        try fixture.git(["mv", "FlowSample.swift", "FlowSample.swift.bak"])
+        let retiredSHA = try commitAndReloadHistory("retire the flow sample")
+        selectCommitForFlowAnalysis(revision: "HEAD")
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                let labels = self.flowLabels(in: flowView)
+                return labels.contains { $0.contains("1 files (Swift)") }
+                    && labels.contains { $0.contains(String(retiredSHA.prefix(7))) }
+            },
+            "Flow labels after analyzing a rename to an unsupported extension: \(flowLabels(in: flowView))"
+        )
+
+        try fixture.git(["mv", "FlowSample.swift.bak", "FlowSample.swift"])
+        let restoredSHA = try commitAndReloadHistory("restore the flow sample")
+        selectCommitForFlowAnalysis(revision: "HEAD")
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                let labels = self.flowLabels(in: flowView)
+                return labels.contains { $0.contains("1 files (Swift)") }
+                    && labels.contains { $0.contains(String(restoredSHA.prefix(7))) }
+            },
+            "Flow labels after analyzing a rename from an unsupported extension: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testHistoryFlowSurfacesPartialParseDiagnostics() throws {
+        try fixture.write(
+            """
+            func flowValue(_ enabled: Bool) -> Int {
+                if enabled {
+                    return 1
+                }
+                return 0 )))
+            }
+
+            """,
+            to: "FlowSample.swift"
+        )
+        try fixture.git(["add", "FlowSample.swift"])
+        try commitAndReloadHistory("break the flow sample")
+        selectCommitForFlowAnalysis(revision: "HEAD")
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+        let banner = try XCTUnwrap(descendant(identifier: "History.Flow.Diagnostics", in: flowView) as? NSTextField)
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                !banner.isHiddenOrHasHiddenAncestor
+                    && banner.stringValue.hasPrefix("Flow analysis is incomplete:")
+            },
+            "Flow diagnostics banner: \(banner.stringValue) hidden=\(banner.isHiddenOrHasHiddenAncestor)"
+        )
+        XCTAssertTrue(
+            banner.stringValue.contains("FlowSample.swift: Swift parsed with"),
+            "Flow diagnostics banner: \(banner.stringValue)"
+        )
+
+        // A clean analysis takes the banner down again.
+        let mainSHA = try fixture.git(["rev-parse", "main~1"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        selectCommitForFlowAnalysis(revision: "main~1")
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains { $0.contains(String(mainSHA.prefix(7))) }
+            },
+            "Flow labels after re-analyzing the clean revision: \(flowLabels(in: flowView))"
+        )
+        XCTAssertTrue(banner.isHiddenOrHasHiddenAncestor, "The diagnostics banner outlived a clean analysis")
+    }
+
+    func testHistoryFlowReportsProviderFailuresInPlainLanguage() throws {
+        // A source file git cannot hand back as UTF-8 fails the load with the
+        // provider's own description rather than a generic NSError sentence.
+        let brokenURL = URL(fileURLWithPath: fixture.path).appendingPathComponent("Broken.swift")
+        try Data([0x66, 0x75, 0x6E, 0x63, 0x20, 0xFF, 0xFE, 0x0A]).write(to: brokenURL)
+        try fixture.git(["add", "Broken.swift"])
+        try commitAndReloadHistory("add a file git cannot decode")
+        selectCommitForFlowAnalysis(revision: "HEAD")
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains {
+                    $0.hasPrefix("Flow analysis failed.\n") && $0.contains("Git returned non-UTF-8 data for Broken.swift")
+                }
+            },
+            "Flow labels after a provider failure: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testHistoryFlowRefusesRevisionsBeyondTheChangedFileLimit() throws {
+        let limit = 500
+        for index in 0 ... limit {
+            try fixture.write("let value\(index) = \(index)\n", to: "Bulk/File\(index).swift")
+        }
+        try fixture.git(["add", "Bulk"])
+        try commitAndReloadHistory("add more files than Flow will analyze")
+        selectCommitForFlowAnalysis(revision: "HEAD")
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains {
+                    $0.contains("Revision changes \(limit + 1) files, exceeding the limit of \(limit).")
+                }
+            },
+            "Flow labels after exceeding the changed-file limit: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testHistoryFlowCancelsRunningGitWorkWhenTheSelectionMoves() throws {
+        // Enough analyzable files that loading them outlasts the debounce, so
+        // the next selection cancels a git process that is already running.
+        for index in 0 ..< 300 {
+            try fixture.write("let value\(index) = \(index)\n", to: "Bulk/File\(index).swift")
+        }
+        try fixture.git(["add", "Bulk"])
+        let bulkSHA = try commitAndReloadHistory("add many analyzable files")
+        let mainSHA = try fixture.git(["rev-parse", "main~1"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        selectCommitForFlowAnalysis(revision: "HEAD")
+        historyController.selectedCommitDetailsIndex = 2
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+        _ = waitForCondition(timeout: 0.6) { false }
+
+        selectCommitForFlowAnalysis(revision: "main~1")
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 15) {
+                self.flowLabels(in: flowView).contains { $0.contains(String(mainSHA.prefix(7))) }
+            },
+            "Flow labels after moving the selection away from \(bulkSHA): \(flowLabels(in: flowView))"
+        )
+        XCTAssertFalse(
+            flowLabels(in: flowView).contains { $0.contains(String(bulkSHA.prefix(7))) },
+            "The cancelled revision must not be displayed: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testFlowAdapterWithoutAHistoryControllerExplainsItself() throws {
+        let adapterClass = try XCTUnwrap(NSClassFromString("PBFlowDeltaAdapterView") as? NSView.Type)
+        let adapter = adapterClass.init(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        adapter.awakeFromNib()
+
+        XCTAssertTrue(
+            controls(in: adapter).contains { ($0 as? NSTextField)?.stringValue == "The History controller is unavailable." },
+            "Adapter labels: \(controls(in: adapter).compactMap { ($0 as? NSTextField)?.stringValue })"
         )
     }
 
@@ -2802,6 +3007,38 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.previewPanel(nil, handle: previewKeyEvent))
     }
 
+    func testCommitListSpaceKeyFollowsTheDetailMode() throws {
+        func spaceEvent(modifiers: NSEvent.ModifierFlags) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: 0,
+                windowNumber: windowController.window?.windowNumber ?? 0,
+                context: nil,
+                characters: " ",
+                charactersIgnoringModifiers: " ",
+                isARepeat: false,
+                keyCode: 49
+            ))
+        }
+        let commit = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.setSelectedObjects([commit])
+        historyController.updateKeys()
+
+        // Details pages the diff; Flow has nothing to page or preview, so the
+        // key falls through to the table without opening an empty Quick Look.
+        historyController.selectedCommitDetailsIndex = 0
+        try historyController.commitList.keyDown(with: spaceEvent(modifiers: []))
+        try historyController.commitList.keyDown(with: spaceEvent(modifiers: [.shift]))
+        XCTAssertEqual(historyController.selectedCommitDetailsIndex, 0)
+
+        historyController.selectedCommitDetailsIndex = 2
+        try historyController.commitList.keyDown(with: spaceEvent(modifiers: []))
+        XCTAssertEqual(historyController.selectedCommitDetailsIndex, 2)
+        XCTAssertEqual(historyController.selectedCommits, [commit])
+    }
+
     func testBranchDragSourceMaskNegotiatesMoveOnlyInsideApplication() throws {
         let commitListClass = try XCTUnwrap(NSClassFromString("GitX.PBCommitList") as? NSTableView.Type)
         let commitList = commitListClass.init(frame: .zero)
@@ -3137,18 +3374,41 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         return repository.revisionList?.commits.compactMap { $0 as? PBGitCommit } ?? []
     }
 
-    private func selectMainCommitForFlowAnalysis(
+    private func selectCommitForFlowAnalysis(
+        revision: String = "main",
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let mainSHA = try? fixture.git(["rev-parse", "main"])
+        let sha = try? fixture.git(["rev-parse", revision])
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let commit = loadedCommits().first { $0.sha == mainSHA }
-        XCTAssertNotNil(commit, "The main commit was not loaded", file: file, line: line)
+        let commit = loadedCommits().first { $0.sha == sha }
+        XCTAssertNotNil(commit, "The \(revision) commit was not loaded", file: file, line: line)
         guard let commit else { return }
         historyController.commitController.setSelectedObjects([commit])
         historyController.updateKeys()
         XCTAssertEqual(historyController.selectedCommits, [commit], file: file, line: line)
+    }
+
+    /// Commits the staged fixture changes and waits until History lists the
+    /// new commit, returning its SHA.
+    @discardableResult
+    private func commitAndReloadHistory(
+        _ message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> String {
+        try fixture.git(["commit", "--quiet", "-m", message])
+        let sha = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        historyController.refresh(self)
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.repository.revisionList?.commits.contains(where: { ($0 as? PBGitCommit)?.sha == sha }) == true
+            },
+            "History did not list the commit \"\(message)\"",
+            file: file,
+            line: line
+        )
+        return sha
     }
 
     private func flowLabels(in flowView: NSView) -> [String] {

@@ -25,6 +25,16 @@ final class HistoryBranchFilterPresentation: NSObject {
     }
 }
 
+/// The History detail tabs in segment order. The controller, the coordinator,
+/// menu validation, the commit list and the Flow adapter all read this one
+/// definition, so a new tab is introduced in exactly one place.
+@objc(PBHistoryDetailMode)
+nonisolated enum HistoryDetailMode: Int {
+    case details = 0
+    case tree = 1
+    case flow = 2
+}
+
 @objc(PBHistoryStateCoordinator)
 final class HistoryStateCoordinator: NSObject {
     private var savedTreePath: [String] = []
@@ -60,9 +70,18 @@ final class HistoryStateCoordinator: NSObject {
         return preserved
     }
 
-    @objc(detailIndexForCurrentIndex:selectionCount:)
-    func detailIndex(currentIndex: Int, selectionCount: Int) -> Int {
-        selectionCount > 1 && currentIndex == 1 ? 0 : currentIndex
+    /// Maps a persisted segment index back onto a mode, falling back to
+    /// Details for values no current tab owns.
+    @objc(detailModeForPersistedIndex:)
+    func detailMode(persistedIndex: Int) -> HistoryDetailMode {
+        HistoryDetailMode(rawValue: persistedIndex) ?? .details
+    }
+
+    /// The Tree tab can show one commit only, so a multi-selection falls back
+    /// to Details; Flow explains multi-selections itself.
+    @objc(detailModeForCurrentMode:selectionCount:)
+    func detailMode(current: HistoryDetailMode, selectionCount: Int) -> HistoryDetailMode {
+        selectionCount > 1 && current == .tree ? .details : current
     }
 
     @objc(statusForArrangedCount:hasWorkingState:)

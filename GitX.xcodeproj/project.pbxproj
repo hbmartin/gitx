@@ -294,6 +294,7 @@
 		C0DEC9000000000000000001 /* NativeDiffSectionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEC9000000000000000011 /* NativeDiffSectionSettings.swift */; };
 		C0D0C0A00000000000000001 /* GitXCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0D0C0A00000000000000018 /* GitXCore */; };
 		FD2000000000000000000001 /* FlowDeltaAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD2000000000000000000011 /* FlowDeltaAdapters.swift */; };
+		FD2100000000000000000001 /* HistoryFlowRevisionProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD2100000000000000000011 /* HistoryFlowRevisionProvider.swift */; };
 		FD2000000000000000000002 /* FlowDeltaCore in Frameworks */ = {isa = PBXBuildFile; productRef = FD2000000000000000000018 /* FlowDeltaCore */; };
 		FD2000000000000000000003 /* FlowDeltaAnalysis in Frameworks */ = {isa = PBXBuildFile; productRef = FD2000000000000000000019 /* FlowDeltaAnalysis */; };
 		FD2000000000000000000004 /* FlowDeltaGit in Frameworks */ = {isa = PBXBuildFile; productRef = FD200000000000000000001A /* FlowDeltaGit */; };
@@ -988,6 +989,7 @@
 		C0D0C0A00000000000000011 /* ApplicationComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationComposition.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXCoreAdapters.swift; sourceTree = "<group>"; };
 		FD2000000000000000000011 /* FlowDeltaAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowDeltaAdapters.swift; sourceTree = "<group>"; };
+		FD2100000000000000000011 /* HistoryFlowRevisionProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFlowRevisionProvider.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationPreferencesUI.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000014 /* TerminalIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegration.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsStore.swift; sourceTree = "<group>"; };
@@ -1375,6 +1377,7 @@
 				F0E100000000000000000011 /* ForgeAccountsPreferences.swift */,
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
 				FD2000000000000000000011 /* FlowDeltaAdapters.swift */,
+				FD2100000000000000000011 /* HistoryFlowRevisionProvider.swift */,
 				C0DEC1000000000000000011 /* ApplicationSettings.swift */,
 				C0D1C0A00000000000000011 /* ApplicationIcon.swift */,
 				C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */,
@@ -2289,6 +2292,7 @@
 				D3A300000000000000000005 /* Milestone3DiagnosticPresenters.swift in Sources */,
 				C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */,
 				FD2000000000000000000001 /* FlowDeltaAdapters.swift in Sources */,
+				FD2100000000000000000001 /* HistoryFlowRevisionProvider.swift in Sources */,
 				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
 				C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */,

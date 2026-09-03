@@ -82,6 +82,63 @@ class CollectFailuresTests(unittest.TestCase):
         self.assertEqual(failures[0].target, "GitXTests")
         self.assertEqual((failures[0].file, failures[0].line), ("File.swift", 12))
 
+    def test_reads_messages_recorded_under_repetitions_devices_and_arguments(self) -> None:
+        nested = {
+            "nodeType": "Test Case",
+            "nodeIdentifier": "SuiteA/testFlaky()",
+            "name": "SuiteA/testFlaky()",
+            "result": "Failed",
+            "children": [
+                {
+                    "nodeType": "Device",
+                    "name": "My Mac",
+                    "children": [
+                        {
+                            "nodeType": "Repetition",
+                            "name": "First Run",
+                            "result": "Failed",
+                            "children": [failure_message("File.swift:12: first run")],
+                        },
+                        {
+                            "nodeType": "Repetition",
+                            "name": "Second Run",
+                            "result": "Failed",
+                            "children": [failure_message("File.swift:12: first run")],
+                        },
+                        {
+                            "nodeType": "Arguments",
+                            "name": "case 2",
+                            "children": [failure_message("File.swift:30: argument case")],
+                        },
+                    ],
+                }
+            ],
+        }
+
+        failures = reporter.collect_failures(payload([nested]))
+
+        self.assertEqual(
+            [(failure.file, failure.line, failure.message) for failure in failures],
+            [("File.swift", 12, "first run"), ("File.swift", 30, "argument case")],
+        )
+
+    def test_does_not_descend_into_nested_test_cases_or_below_the_depth_bound(self) -> None:
+        deep = failure_message("File.swift:99: too deep")
+        for _ in range(reporter.FAILURE_MESSAGE_MAX_DEPTH + 1):
+            deep = {"nodeType": "Group", "name": "level", "children": [deep]}
+        outer = test_case("SuiteA/testOuter()", "Failed", [])
+        outer["children"] = [test_case("SuiteA/testInner()", "Failed", ["File.swift:1: inner"]), deep]
+
+        failures = reporter.collect_failures(payload([outer]))
+
+        self.assertEqual(
+            [(failure.test, failure.message) for failure in failures],
+            [
+                ("SuiteA/testOuter()", "Test failed without a message"),
+                ("SuiteA/testInner()", "inner"),
+            ],
+        )
+
     def test_records_a_failure_without_any_message(self) -> None:
         failures = reporter.collect_failures(payload([test_case("SuiteA/testFails()", "Failed", [])]))
 
