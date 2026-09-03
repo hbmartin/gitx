@@ -9,6 +9,8 @@ the assertion message.
 Usage:
     scripts/report_xcresult.py build/Logs/last-test.xcresult
     scripts/report_xcresult.py --format json result.xcresult
+    scripts/report_xcresult.py --format grouped-json result.xcresult
+    scripts/report_xcresult.py --show-all result.xcresult
     scripts/report_xcresult.py --full result.xcresult
 
 Exits 1 when the bundle records failures, 0 when it is clean, and 2 when the
@@ -18,6 +20,7 @@ bundle cannot be read.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -34,6 +37,12 @@ DEFAULT_MAX_PER_TEST = 3
 # The file token rejects spaces so prose such as "Timed out at 12:30: waiting"
 # is kept as a message rather than misread as a source location.
 LOCATION_PATTERN = re.compile(r"^(?P<file>[^\s:]+):(?P<line>\d+):\s*(?P<message>.*)$", re.DOTALL)
+INFRASTRUCTURE_PATTERN = re.compile(
+    r"(?:application is running in the background|application under test|test runner|"
+    r"failed to launch|failed to terminate|lost connection|automation mode|"
+    r"early unexpected exit|runner crashed)",
+    re.IGNORECASE,
+)
 
 
 class Failure(NamedTuple):
@@ -42,6 +51,14 @@ class Failure(NamedTuple):
     file: str | None
     line: int | None
     message: str
+
+
+class SharedFailure(NamedTuple):
+    fingerprint: str
+    target: str
+    message: str
+    count: int
+    tests: tuple[str, ...]
 
 
 def run_xcresulttool(bundle: pathlib.Path, subcommand: str) -> dict:
@@ -182,20 +199,101 @@ def resolve(failure: Failure, index: dict[str, str]) -> Failure:
 
 
 def truncate(message: str, limit: int | None) -> str:
-    collapsed = " ".join(message.split())
+    collapsed = normalize_message(message)
     if limit is None or len(collapsed) <= limit:
         return collapsed
     return collapsed[:limit].rstrip() + " ..."
 
 
-def format_report(failures: list[Failure], limit: int | None) -> str:
+def normalize_message(message: str) -> str:
+    """Remove only formatting noise; preserve paths, numbers, and test-specific details."""
+    return " ".join(message.split())
+
+
+def shared_failure_fingerprint(target: str, message: str) -> str:
+    return hashlib.sha256(f"{target}\0{message}".encode()).hexdigest()[:16]
+
+
+def collapse_shared_failures(
+    failures: list[Failure],
+) -> tuple[list[SharedFailure], list[Failure]]:
+    candidates: dict[tuple[str, str], list[tuple[int, Failure]]] = {}
+    for index, failure in enumerate(failures):
+        message = normalize_message(failure.message)
+        if failure.file is None and INFRASTRUCTURE_PATTERN.search(message):
+            candidates.setdefault((failure.target, message), []).append((index, failure))
+
+    collapsed_indexes: set[int] = set()
+    shared: list[SharedFailure] = []
+    for (target, message), entries in sorted(candidates.items()):
+        tests = tuple(sorted({failure.test for _, failure in entries}))
+        if len(tests) < 2:
+            continue
+        collapsed_indexes.update(index for index, _ in entries)
+        shared.append(
+            SharedFailure(
+                fingerprint=shared_failure_fingerprint(target, message),
+                target=target,
+                message=message,
+                count=len(entries),
+                tests=tests,
+            )
+        )
+    remaining = [failure for index, failure in enumerate(failures) if index not in collapsed_indexes]
+    return shared, remaining
+
+
+def grouped_payload(failures: list[Failure]) -> dict[str, object]:
+    shared, remaining = collapse_shared_failures(failures)
+    return {
+        "schemaVersion": 1,
+        "summary": {
+            "failingTests": len({failure.test for failure in failures}),
+            "failureMessages": len(failures),
+            "sharedFailureGroups": len(shared),
+            "collapsedOccurrences": sum(group.count for group in shared),
+        },
+        "sharedFailures": [
+            {
+                "fingerprint": group.fingerprint,
+                "target": group.target,
+                "message": group.message,
+                "count": group.count,
+                "tests": list(group.tests),
+            }
+            for group in shared
+        ],
+        "failures": [failure._asdict() for failure in remaining],
+    }
+
+
+def format_report(
+    failures: list[Failure],
+    limit: int | None,
+    *,
+    show_all: bool = False,
+) -> str:
     if not failures:
         return "No failing tests."
     lines: list[str] = []
     tests = {failure.test for failure in failures}
     lines.append(f"{len(tests)} failing test(s), {len(failures)} failure message(s)")
+    shared: list[SharedFailure] = []
+    visible = failures
+    if not show_all:
+        shared, visible = collapse_shared_failures(failures)
+    if shared:
+        lines[0] += f", {len(shared)} shared infrastructure failure(s)"
+        lines.extend(("", "Shared infrastructure failures:"))
+        for group in shared:
+            target = f"{group.target}: " if group.target else ""
+            lines.append(
+                f"  [{group.fingerprint}] {target}{truncate(group.message, limit)} "
+                f"({len(group.tests)} tests, {group.count} occurrence(s))"
+            )
+            lines.append(f"    {', '.join(group.tests)}")
     current = None
-    for failure in failures:
+    for failure in visible:
         if failure.test != current:
             current = failure.test
             label = f"{failure.target}: " if failure.target else ""
@@ -244,7 +342,8 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help=f"Report at most this many messages per test (default {DEFAULT_MAX_PER_TEST}).",
     )
     parser.add_argument("--full", action="store_true", help="Do not truncate messages.")
-    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument("--show-all", action="store_true", help="Expand shared infrastructure failures.")
+    parser.add_argument("--format", choices=("text", "json", "grouped-json"), default="text")
     return parser.parse_args(argv)
 
 
@@ -271,8 +370,10 @@ def main(argv: list[str] | None = None) -> int:
     limit = None if arguments.full else arguments.max_chars
     if arguments.format == "json":
         print(json.dumps([failure._asdict() for failure in failures], indent=2))
+    elif arguments.format == "grouped-json":
+        print(json.dumps(grouped_payload(failures), indent=2, sort_keys=True))
     else:
-        print(format_report(failures, limit))
+        print(format_report(failures, limit, show_all=arguments.show_all))
     if failures:
         return 1
     if not executed_any_test(summary):
@@ -280,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         # "no failing tests" there would read as success for a run that never ran.
         print(
             "No tests were executed. The build most likely failed; "
-            "see build/Logs/last-xcodebuild.log",
+            "see the verification run's command log",
             file=sys.stderr,
         )
         return 2

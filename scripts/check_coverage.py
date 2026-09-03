@@ -10,6 +10,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 from typing import NamedTuple
 
 
@@ -245,7 +246,49 @@ def render_markdown(
     return "\n".join(rows) + "\n"
 
 
-def main() -> int:
+def improvements_payload(
+    original: CoveragePolicy,
+    candidate: CoveragePolicy,
+) -> dict[str, object]:
+    target = None
+    if candidate.minimum_line_coverage > original.minimum_line_coverage:
+        target = {
+            "previous": original.minimum_line_coverage,
+            "candidate": candidate.minimum_line_coverage,
+        }
+    files = {
+        path: {
+            "previous": original.files.get(path),
+            "candidate": minimum,
+        }
+        for path, minimum in sorted(candidate.files.items())
+        if minimum > original.files.get(path, -1)
+    }
+    groups = {
+        name: {
+            "previous": original.groups[name].minimum_line_coverage,
+            "candidate": group.minimum_line_coverage,
+        }
+        for name, group in sorted(candidate.groups.items())
+        if group.minimum_line_coverage > original.groups[name].minimum_line_coverage
+    }
+    return {"target": target, "files": files, "groups": groups}
+
+
+def write_json_atomic(path: pathlib.Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w") as output:
+            json.dump(payload, output, indent=2, sort_keys=True)
+            output.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("result_bundle", type=pathlib.Path)
     parser.add_argument(
@@ -253,12 +296,23 @@ def main() -> int:
         type=pathlib.Path,
         default=pathlib.Path(__file__).with_name("coverage-baseline.json"),
     )
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
         "--record-improvements",
         action="store_true",
         help="Raise checked-in floors to the current measurements without ever lowering them.",
     )
-    args = parser.parse_args()
+    modes.add_argument(
+        "--propose-improvements",
+        type=pathlib.Path,
+        metavar="OUTPUT",
+        help="Write a candidate ratchet report without changing the checked-in policy.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_arguments(argv)
 
     root = pathlib.Path(__file__).resolve().parent.parent
     policy = load_policy(args.policy)
@@ -284,15 +338,32 @@ def main() -> int:
         actual_text = "missing" if actual is None else f"{actual:.2%}"
         print(f"{name}: {actual_text} (minimum {group.minimum_line_coverage:.2%})")
 
-    if args.record_improvements:
-        policy = ratchet_policy(
+    if args.record_improvements or args.propose_improvements:
+        candidate = ratchet_policy(
             policy,
             target_coverage=target_coverage,
             file_coverage=file_coverage,
             file_line_counts=file_line_counts,
         )
-        args.policy.write_text(json.dumps(policy_payload(policy), indent=2) + "\n")
-        print(f"Raised coverage floors in {args.policy}")
+        if args.record_improvements:
+            policy = candidate
+            write_json_atomic(args.policy, policy_payload(policy))
+            print(f"Raised coverage floors in {args.policy}")
+        else:
+            assert args.propose_improvements is not None
+            if args.propose_improvements.resolve() == args.policy.resolve():
+                print("Proposal output must differ from the checked-in policy path.", file=sys.stderr)
+                return 2
+            write_json_atomic(
+                args.propose_improvements,
+                {
+                    "schemaVersion": 1,
+                    "sourcePolicy": str(args.policy),
+                    "candidatePolicy": policy_payload(candidate),
+                    "improvements": improvements_payload(policy, candidate),
+                },
+            )
+            print(f"Wrote non-mutating coverage proposal to {args.propose_improvements}")
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
