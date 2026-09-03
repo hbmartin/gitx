@@ -1293,8 +1293,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
 
         func runAttentionAuthorizationRecoveryForProductProof(_ error: Error) -> Bool {
             guard let attentionController else { return false }
-            attentionController.runAuthorizationRecoveryForProductProof(error)
-            return true
+            return attentionController.runAuthorizationRecoveryForProductProof(error)
         }
     #endif
 

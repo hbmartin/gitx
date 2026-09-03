@@ -115,10 +115,12 @@ final class ForgeAttentionViewController: NSSplitViewController, NSTableViewData
     }
 
     #if DEBUG
-        func runAuthorizationRecoveryForProductProof(_ error: Error) {
+        func runAuthorizationRecoveryForProductProof(_ error: Error) -> Bool {
+            guard let authorizationRecoveryHandler else { return false }
             let retry: @MainActor @Sendable () -> Void = {}
             retry()
-            authorizationRecoveryHandler?(error, retry)
+            authorizationRecoveryHandler(error, retry)
+            return true
         }
     #endif
 

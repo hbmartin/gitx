@@ -54,8 +54,12 @@ while (( $# )); do
 			shift 2 || exit 2
 			;;
 		--fixture)
-			fixture_name=${2:-}
-			shift 2 || exit 2
+			if (( $# < 2 )); then
+				echo "--fixture requires a fixture name." >&2
+				exit 2
+			fi
+			fixture_name=$2
+			shift 2
 			;;
 		--m2)
 			milestone2_scenario=${2:-}
@@ -98,14 +102,27 @@ while (( $# )); do
 done
 
 # A pid file can outlive its process, and the kernel reuses pids, so only a
-# pid whose executable still matches what this script started may be killed.
+# pid whose executable and start time still match what this script started may
+# be killed.
 # Waits for the process to exit so a relaunch never races the dying instance.
+process_start_time() {
+	local pid=$1
+	ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+write_pid_file() {
+	local pid_file=$1 pid=$2 start_time
+	start_time=$(process_start_time "$pid") || return 1
+	[[ -n "$start_time" ]] || return 1
+	printf '%s\t%s\n' "$pid" "$start_time" >"$pid_file"
+}
+
 stop_pid_file() {
-	local pid_file=$1 expected=$2 pid executable
+	local pid_file=$1 expected=$2 pid recorded_start_time executable current_start_time
 	[[ -f "$pid_file" ]] || return 1
-	pid=$(cat "$pid_file")
+	IFS=$'\t' read -r pid recorded_start_time <"$pid_file" || return 1
 	rm -f "$pid_file"
-	if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+	if [[ ! "$pid" =~ ^[0-9]+$ ]] || [[ -z "$recorded_start_time" ]] || ! kill -0 "$pid" 2>/dev/null; then
 		return 1
 	fi
 	executable=$(ps -p "$pid" -o comm= 2>/dev/null)
@@ -113,6 +130,8 @@ stop_pid_file() {
 		"$expected" | */"$expected") ;;
 		*) return 1 ;;
 	esac
+	current_start_time=$(process_start_time "$pid") || return 1
+	[[ "$current_start_time" == "$recorded_start_time" ]] || return 1
 	kill "$pid" 2>/dev/null || return 1
 	for _ in {1..20}; do
 		kill -0 "$pid" 2>/dev/null || break
@@ -225,6 +244,10 @@ make_fixture() {
 }
 
 if [[ -z "$repository" ]]; then
+	if [[ -z "$fixture_name" || ! "$fixture_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+		echo "Invalid fixture name '$fixture_name': use only letters, numbers, dots, underscores, and hyphens, starting with a letter or number." >&2
+		exit 2
+	fi
 	repository=${TMPDIR:-/tmp}/$fixture_name
 	echo "Creating fixture repository at $repository"
 	if ! make_fixture "$repository"; then
@@ -283,12 +306,21 @@ log stream \
 	--level "$log_level" \
 	>>"$log_file" 2>&1 &
 log_pid=$!
-echo "$log_pid" >"$log_pid_file"
+if ! write_pid_file "$log_pid_file" "$log_pid"; then
+	echo "Could not record the log stream process identity." >&2
+	kill "$log_pid" 2>/dev/null
+	exit 1
+fi
 
 : >"$stdout_file"
 env "${environment[@]}" "$app_binary" "${arguments[@]}" >>"$stdout_file" 2>&1 &
 app_pid=$!
-echo "$app_pid" >"$app_pid_file"
+if ! write_pid_file "$app_pid_file" "$app_pid"; then
+	echo "Could not record the GitX process identity." >&2
+	kill "$app_pid" 2>/dev/null
+	stop_pid_file "$log_pid_file" log >/dev/null
+	exit 1
+fi
 
 # Wait for the repository window rather than sleeping a fixed interval. Any
 # window is not good enough: GitX activates before the deferred document open
@@ -330,6 +362,7 @@ done
 	echo "stdout=$stdout_file"
 } >"$session_file"
 
+launch_status=0
 if (( ready )); then
 	echo "GitX is running (pid $app_pid) with the repository window open."
 elif (( ! can_observe )); then
@@ -338,6 +371,7 @@ elif (( ! can_observe )); then
 else
 	echo "GitX started (pid $app_pid) but no window titled '$repository_name'" >&2
 	echo "appeared within ${ready_timeout}s. Check $stdout_file and $log_file." >&2
+	launch_status=1
 fi
 
 cat <<-SUMMARY
@@ -353,4 +387,4 @@ cat <<-SUMMARY
 	Stop    : scripts/run_app.sh --stop
 SUMMARY
 
-exit 0
+exit "$launch_status"

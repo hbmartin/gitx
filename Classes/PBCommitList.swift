@@ -98,14 +98,18 @@
         }
 
         if character == " " {
-            if controller.selectedCommitDetailsIndex == 0 {
+            switch HistoryDetailMode(rawValue: controller.selectedCommitDetailsIndex) {
+            case .details:
                 if modifiers.contains(.shift) {
                     webController.scrollPageUp()
                 } else {
                     webController.scrollPageDown()
                 }
-            } else {
+            case .tree:
                 controller.toggleQLPreviewPanel(self)
+            case .flow, .none:
+                // Flow has neither a scrolling diff nor a file to preview.
+                super.keyDown(with: event)
             }
         } else if let range = character.rangeOfCharacter(from: CharacterSet(charactersIn: "jkcv")),
                   range.lowerBound == character.startIndex

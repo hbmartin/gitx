@@ -631,6 +631,12 @@ DQ
                                     <action selector="setTreeView:" target="-1" id="963"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Flow View" keyEquivalent="3" id="fLw-Vw-mi1">
+                                <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
+                                <connections>
+                                    <action selector="setFlowView:" target="-1" id="fLw-Vw-ac1"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="916"/>
                             <menuItem title="Jump to Checked-Out Branch" keyEquivalent="j" id="jump-to-checked-out-branch-menu-item">
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>

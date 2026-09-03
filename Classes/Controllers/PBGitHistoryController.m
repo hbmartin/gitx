@@ -31,8 +31,6 @@
 #import "GitX-Swift.h"
 
 #define kHistorySelectedDetailIndexKey @"PBHistorySelectedDetailIndex"
-#define kHistoryDetailViewIndex 0
-#define kHistoryTreeViewIndex 1
 
 @interface PBGitHistoryController () {
 	IBOutlet NSArrayController *commitController;
@@ -100,10 +98,9 @@
 
 	[historySplitView pb_restoreAutosavedPositions];
 
-	self.selectedCommitDetailsIndex = [[NSUserDefaults standardUserDefaults] integerForKey:kHistorySelectedDetailIndexKey];
-
 	PBGitRepository *repository = self.repository;
 	stateCoordinator = [PBHistoryStateCoordinator new];
+	self.selectedCommitDetailsIndex = [stateCoordinator detailModeForPersistedIndex:[[NSUserDefaults standardUserDefaults] integerForKey:kHistorySelectedDetailIndexKey]];
 	treePresentation = [[PBHistoryTreePresentation alloc] initWithRepository:repository];
 	menuBuilder = [[PBHistoryMenuBuilder alloc] initWithRepository:repository];
 	tableInteractionCoordinator = [[PBHistoryTableInteractionCoordinator alloc] initWithOwner:self commitList:commitList stateCoordinator:stateCoordinator];
@@ -260,7 +257,7 @@
 - (void)selectUncommittedChanges
 {
 	if (uncommittedChanges) {
-		self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
+		self.selectedCommitDetailsIndex = PBHistoryDetailModeDetails;
 		[commitController setSelectedObjects:@[ uncommittedChanges ]];
 		return;
 	}
@@ -282,7 +279,7 @@
 			uncommittedChanges = [[PBUncommittedChanges alloc] initWithRepository:self.repository];
 			((PBHistoryArrayController *)commitController).pinnedObject = uncommittedChanges;
 			if (consumedPendingSelection)
-				self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
+				self.selectedCommitDetailsIndex = PBHistoryDetailModeDetails;
 			if (wasSelected) [commitController setSelectedObjects:@[ uncommittedChanges ]];
 		} else {
 			[uncommittedChanges refreshFromRepository];
@@ -291,11 +288,11 @@
 			if (row != NSNotFound)
 				[commitList reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:row] columnIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, commitList.numberOfColumns)]];
 			if (consumedPendingSelection) {
-				self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
+				self.selectedCommitDetailsIndex = PBHistoryDetailModeDetails;
 				[commitController setSelectedObjects:@[ uncommittedChanges ]];
 			}
 			if (wasSelected) {
-				if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex)
+				if (self.detailMode == PBHistoryDetailModeTree)
 					[self updateKeys];
 				// In the Details tab the staging pane observes the index
 				// itself, so no explicit refresh is needed here.
@@ -379,26 +376,40 @@
 		if (self.webCommits.count) self.webCommits = @[];
 		return;
 	}
-	self.selectedCommitDetailsIndex = [stateCoordinator detailIndexForCurrentIndex:self.selectedCommitDetailsIndex selectionCount:self.selectedCommits.count];
+	self.selectedCommitDetailsIndex = [stateCoordinator detailModeForCurrentMode:self.detailMode selectionCount:self.selectedCommits.count];
 
-	if (self.selectedCommitDetailsIndex == kHistoryTreeViewIndex) {
-		[self setStagingPaneVisible:NO];
-		self.gitTree = [treePresentation treeForCommit:firstSelectedCommit];
-		[self restoreFileBrowserSelection];
-	} else {
-		// kHistoryDetailViewIndex
-		BOOL showStagingPane = [stateCoordinator shouldShowStagingForSelection:self.selectedCommits];
-		[self setStagingPaneVisible:showStagingPane];
-		if (showStagingPane) {
-			// The staging pane owns the working-state presentation; leave
-			// webCommits untouched so the hidden detail view neither renders
-			// the read-only working-state diff nor loses its last commit.
-			return;
-		}
-		if (![self.webCommits isEqualToArray:self.selectedCommits]) {
-			self.webCommits = self.selectedCommits;
+	switch (self.detailMode) {
+		case PBHistoryDetailModeTree:
+			[self setStagingPaneVisible:NO];
+			self.gitTree = [treePresentation treeForCommit:firstSelectedCommit];
+			[self restoreFileBrowserSelection];
+			break;
+		case PBHistoryDetailModeFlow:
+			// The Flow adapter observes the selection itself. The hidden Details
+			// and Tree panes keep their last content rather than rendering a diff
+			// or mounting the staging pane for a selection nobody can see.
+			[self setStagingPaneVisible:NO];
+			break;
+		case PBHistoryDetailModeDetails: {
+			BOOL showStagingPane = [stateCoordinator shouldShowStagingForSelection:self.selectedCommits];
+			[self setStagingPaneVisible:showStagingPane];
+			if (showStagingPane) {
+				// The staging pane owns the working-state presentation; leave
+				// webCommits untouched so the hidden detail view neither renders
+				// the read-only working-state diff nor loses its last commit.
+				return;
+			}
+			if (![self.webCommits isEqualToArray:self.selectedCommits]) {
+				self.webCommits = self.selectedCommits;
+			}
+			break;
 		}
 	}
+}
+
+- (PBHistoryDetailMode)detailMode
+{
+	return [stateCoordinator detailModeForPersistedIndex:self.selectedCommitDetailsIndex];
 }
 
 - (void)setStagingPaneVisible:(BOOL)visible
@@ -429,7 +440,7 @@
 
 - (void)historyTreeSettingsDidChange:(NSNotification *)notification
 {
-	if (self.selectedCommitDetailsIndex != kHistoryTreeViewIndex) return;
+	if (self.detailMode != PBHistoryDetailModeTree) return;
 	PBGitCommit *commit = self.selectedCommits.firstObject;
 	if (!commit) return;
 	self.gitTree = [treePresentation treeForCommit:commit];
@@ -535,7 +546,7 @@
 
 - (void)restoreFileBrowserSelection
 {
-	NSIndexPath *path = [stateCoordinator treeSelectionIndexPathForChildren:treeController.content treeMode:self.selectedCommitDetailsIndex == kHistoryTreeViewIndex];
+	NSIndexPath *path = [stateCoordinator treeSelectionIndexPathForChildren:treeController.content treeMode:self.detailMode == PBHistoryDetailModeTree];
 	if (path) [treeController setSelectionIndexPath:path];
 }
 
@@ -546,13 +557,19 @@
 
 - (IBAction)setDetailedView:(id)sender
 {
-	self.selectedCommitDetailsIndex = kHistoryDetailViewIndex;
+	self.selectedCommitDetailsIndex = PBHistoryDetailModeDetails;
 	forceSelectionUpdate = YES;
 }
 
 - (IBAction)setTreeView:(id)sender
 {
-	self.selectedCommitDetailsIndex = kHistoryTreeViewIndex;
+	self.selectedCommitDetailsIndex = PBHistoryDetailModeTree;
+	forceSelectionUpdate = YES;
+}
+
+- (IBAction)setFlowView:(id)sender
+{
+	self.selectedCommitDetailsIndex = PBHistoryDetailModeFlow;
 	forceSelectionUpdate = YES;
 }
 

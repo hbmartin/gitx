@@ -61,6 +61,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (IBAction)setDetailedView:(id)sender;
 - (IBAction)setTreeView:(id)sender;
+- (IBAction)setFlowView:(id)sender;
 - (IBAction)setBranchFilter:(id)sender;
 
 - (IBAction)refresh:(nullable id)sender;

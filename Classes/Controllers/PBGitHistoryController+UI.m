@@ -11,12 +11,10 @@
 #import "GitXCommitCopier.h"
 #import "GitX-Swift.h"
 
-#define kHistoryDetailViewIndex 0
-#define kHistoryTreeViewIndex 1
-
 @interface PBGitHistoryController (PBFacadePrivate)
 - (void)updateKeys;
 - (PBGitCommit *)firstCommit;
+- (PBHistoryDetailMode)detailMode;
 @end
 
 #pragma clang diagnostic push
@@ -40,9 +38,11 @@
 	SEL action = menuItem.action;
 
 	if (action == @selector(setDetailedView:)) {
-		[menuItem setState:(self.selectedCommitDetailsIndex == kHistoryDetailViewIndex) ? NSControlStateValueOn : NSControlStateValueOff];
+		[menuItem setState:(self.detailMode == PBHistoryDetailModeDetails) ? NSControlStateValueOn : NSControlStateValueOff];
 	} else if (action == @selector(setTreeView:)) {
-		[menuItem setState:(self.selectedCommitDetailsIndex == kHistoryTreeViewIndex) ? NSControlStateValueOn : NSControlStateValueOff];
+		[menuItem setState:(self.detailMode == PBHistoryDetailModeTree) ? NSControlStateValueOn : NSControlStateValueOff];
+	} else if (action == @selector(setFlowView:)) {
+		[menuItem setState:(self.detailMode == PBHistoryDetailModeFlow) ? NSControlStateValueOn : NSControlStateValueOff];
 	}
 
 	if ([self respondsToSelector:action]) {
