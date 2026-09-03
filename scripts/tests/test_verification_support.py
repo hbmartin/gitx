@@ -90,6 +90,12 @@ class ReceiptTests(unittest.TestCase):
             (run_directory / "Results" / "test.xcresult" / "Data" / "payload").write_text("opaque")
             (run_directory / "DerivedData").mkdir()
             (run_directory / "DerivedData" / "object.o").write_text("opaque")
+            (run_directory / "Products" / "GitXCoreBuild" / "out").mkdir(parents=True)
+            (run_directory / "Products" / "GitXCoreBuild" / "out" / "object.o").write_text(
+                "opaque"
+            )
+            (run_directory / "Products" / "GitX.xcarchive" / "Products").mkdir(parents=True)
+            (run_directory / "Products" / "GitX.xcarchive" / "Info.plist").write_text("opaque")
             receipt.write_text(
                 json.dumps(
                     {
@@ -114,7 +120,9 @@ class ReceiptTests(unittest.TestCase):
 
         self.assertTrue(any(path.endswith("/Logs/build.log") for path in payload["artifacts"]))
         self.assertTrue(any(path.endswith("/Results/test.xcresult") for path in payload["artifacts"]))
+        self.assertTrue(any(path.endswith("/Products/GitX.xcarchive") for path in payload["artifacts"]))
         self.assertFalse(any("DerivedData" in path for path in payload["artifacts"]))
+        self.assertFalse(any(path.endswith("/GitXCoreBuild/out/object.o") for path in payload["artifacts"]))
         self.assertFalse(any(path.endswith("/Data/payload") for path in payload["artifacts"]))
 
 
