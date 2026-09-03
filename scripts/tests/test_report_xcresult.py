@@ -163,6 +163,39 @@ class CollectFailuresTests(unittest.TestCase):
         self.assertEqual((failures[0].file, failures[0].line), ("File.swift", 1))
         self.assertIn("and 2 more failure(s)", failures[-1].message)
 
+    def test_preserves_identical_runner_messages_for_each_test(self) -> None:
+        document = payload(
+            [
+                test_case("SuiteA/testOne()", "Failed", ["Application is running in the background."]),
+                test_case("SuiteA/testTwo()", "Failed", ["Application is running in the background."]),
+            ]
+        )
+
+        failures = reporter.collect_failures(document)
+
+        self.assertEqual(
+            [(failure.test, failure.message) for failure in failures],
+            [
+                ("SuiteA/testOne()", "Application is running in the background."),
+                ("SuiteA/testTwo()", "Application is running in the background."),
+            ],
+        )
+
+    def test_preserves_source_locations_for_identical_assertions(self) -> None:
+        document = payload(
+            [
+                test_case("SuiteA/testOne()", "Failed", ["One.swift:12: XCTAssertTrue failed"]),
+                test_case("SuiteA/testTwo()", "Failed", ["Two.swift:34: XCTAssertTrue failed"]),
+            ]
+        )
+
+        failures = reporter.collect_failures(document)
+
+        self.assertEqual(
+            [(failure.file, failure.line) for failure in failures],
+            [("One.swift", 12), ("Two.swift", 34)],
+        )
+
 
 class RunnerFailureTests(unittest.TestCase):
     def test_adds_failures_missing_from_the_test_tree(self) -> None:
