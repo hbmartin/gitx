@@ -112,8 +112,8 @@ class BundleIdentifierTests(unittest.TestCase):
 
         self.assertNotIn("PRODUCT_BUNDLE_IDENTIFIER=", workflow)
         self.assertIn(
-            "scripts/check_bundle_identifiers.py "
-            "GitX.xcarchive/Products/Applications/GitX.app",
+            'scripts/check_bundle_identifiers.py "artifacts/verification/'
+            '$ARCHIVE_RUN_ID/Products/GitX.xcarchive/Products/Applications/GitX.app"',
             workflow,
         )
 
