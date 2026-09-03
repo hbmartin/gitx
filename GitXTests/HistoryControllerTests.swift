@@ -648,14 +648,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryFlowRejectsABlobBeyondTheAnalysisLimit() throws {
-        let oversizedSource = "let oversized = 0\n" + String(repeating: "// padding\n", count: 200_000)
-        try fixture.write(oversizedSource, to: "Oversized.swift")
+        // Keep the fixture itself small so AppKit never has to lay out a
+        // multi-megabyte diff. The configured git shim reports the committed
+        // blob's production-sized object length at the preflight boundary.
+        try fixture.write("let oversized = 0\n", to: "Oversized.swift")
         try fixture.git(["add", "Oversized.swift"])
         try commitAndReloadHistory("add an oversized source file")
         let originalGit = try XCTUnwrap(PBGitBinary.path())
         defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
         let commandLog = testArtifactDirectory.appendingPathComponent("flow-git-commands")
-        let wrapper = try installLoggingGitWrapper(log: commandLog)
+        let wrapper = try installLoggingGitWrapper(log: commandLog, oversizedBlobPath: "Oversized.swift")
         XCTAssertTrue(PBGitBinary.accept(wrapper.path))
         selectCommitForFlowAnalysis(revision: "HEAD")
         historyController.selectedCommitDetailsIndex = 2
@@ -3755,12 +3757,21 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         return wrapper
     }
 
-    private func installLoggingGitWrapper(log: URL) throws -> URL {
+    private func installLoggingGitWrapper(log: URL, oversizedBlobPath: String? = nil) throws -> URL {
         let wrapper = testArtifactDirectory.appendingPathComponent("git-flow-logging-wrapper")
         let logPath = shellSingleQuoted(log.path)
+        let oversizedBlobResponse = oversizedBlobPath.map { path in
+            """
+            if [[ "$*" == *"cat-file -s"* && "$*" == *":\(path)"* ]]; then
+                printf '2200018\\n'
+                exit 0
+            fi
+            """
+        } ?? ""
         let script = """
         #!/bin/bash
         printf '%s\\n' "$*" >> \(logPath)
+        \(oversizedBlobResponse)
         exec /usr/bin/git "$@"
         """
         try script.write(to: wrapper, atomically: true, encoding: .utf8)
