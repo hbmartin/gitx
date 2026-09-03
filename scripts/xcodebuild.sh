@@ -410,7 +410,11 @@ case "$command" in
 			ui)
 				preflight=$(config testPlans.ui-preflight)
 				plan=$(config testPlans.ui)
-				xcode_test ui-preflight "$preflight" ${extra[@]+"${extra[@]}"} || exit $?
+				xcode_test ui-preflight "$preflight" \
+					-test-timeouts-enabled YES \
+					-default-test-execution-time-allowance 60 \
+					-maximum-test-execution-time-allowance 90 \
+					${extra[@]+"${extra[@]}"} || exit $?
 				xcode_test ui "$plan" ${extra[@]+"${extra[@]}"} || exit $?
 				;;
 			address-undefined|thread-sanitizer|performance)
