@@ -103,6 +103,21 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertEqual(ratcheted.files["Classes/A.m"], 0.9)
         self.assertEqual(ratcheted.files["Classes/B.m"], 0.8)
 
+    def test_policy_payload_is_stable_and_sorted(self) -> None:
+        policy = self.module.CoveragePolicy(
+            target="GitX.app",
+            minimum_line_coverage=0.5,
+            files={"Classes/Z.m": 0.6, "Classes/A.m": 0.7},
+            groups={},
+        )
+
+        payload = self.module.policy_payload(policy)
+
+        self.assertEqual(
+            list(payload["files"]),
+            ["Classes/A.m", "Classes/Z.m"],
+        )
+
     def test_recording_improvements_adds_new_first_party_sources(self) -> None:
         policy = self.module.CoveragePolicy(
             target="GitX.app",
