@@ -1253,7 +1253,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
             "PBDiffAddedBackgroundColor", "PBDiffRemovedBackgroundColor",
             "PBTerminalBundleIdentifier", "PBTerminalInitialCommand",
             "PBCustomTerminalExecutable", "PBCustomTerminalArguments",
-            "PBRaycastScriptsDirectory", "PBPatchExportMode",
+            "PBRaycastScriptsDirectory", "PBPatchExportMode", "PBShowWhitespaceDifferences",
         ]
         let restorers = keys.map { preservePersistentDefault(forKey: $0) }
         defer { restorers.reversed().forEach { $0() } }
@@ -1282,6 +1282,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         PBApplicationSettings.customTerminalArguments = "--working-directory {directory}"
         PBApplicationSettings.raycastScriptsDirectory = "/tmp/raycast"
         PBApplicationSettings.patchExportMode = 1
+        UserDefaults.standard.set(true, forKey: "PBShowWhitespaceDifferences")
 
         XCTAssertEqual(PBApplicationSettings.openDisposition, .preferTab)
         XCTAssertEqual(PBApplicationSettings.restorePolicy, .never)
@@ -1395,6 +1396,17 @@ final class GitXSwiftFeatureTests: XCTestCase {
                 .first { $0.accessibilityIdentifier() == "DiffFontSizeValue" }?.stringValue,
             "15 pt"
         )
+    }
+
+    func testDiffCommandOptionsHonorWhitespacePreference() {
+        let restoreWhitespacePreference = preservePersistentDefault(forKey: "PBShowWhitespaceDifferences")
+        defer { restoreWhitespacePreference() }
+
+        UserDefaults.standard.set(true, forKey: "PBShowWhitespaceDifferences")
+        XCTAssertFalse(PBDiffCommandOptions.arguments.contains("--ignore-all-space"))
+
+        UserDefaults.standard.set(false, forKey: "PBShowWhitespaceDifferences")
+        XCTAssertTrue(PBDiffCommandOptions.arguments.contains("--ignore-all-space"))
     }
 
     func testDockIconChoicesRenderAndApplyImmediately() throws {

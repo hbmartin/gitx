@@ -24,10 +24,14 @@ final nonisolated class DiffCommandOptions: NSObject { // swiftlint:disable:this
         case .patience: "patience"
         case .histogram: "histogram"
         }
-        return [
+        var arguments = [
             "--diff-algorithm=\(algorithm)",
             "--unified=\(ApplicationSettings.diffContextLines)",
         ]
+        if !PBGitDefaults.showWhitespaceDifferences() {
+            arguments.append("--ignore-all-space")
+        }
+        return arguments
     }
 }
 
