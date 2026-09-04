@@ -158,4 +158,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)applicationDidFinishLaunching;
 @end
 
+@interface PBWelcomePresentationPolicy : NSObject
++ (BOOL)shouldPresentWithOpenDocumentCount:(NSInteger)openDocumentCount
+						   hasPendingOpens:(BOOL)hasPendingOpens
+							   environment:(NSDictionary<NSString *, NSString *> *)environment;
+@end
+
 NS_ASSUME_NONNULL_END

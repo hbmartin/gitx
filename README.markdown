@@ -28,17 +28,24 @@ See also: [How to Build in Xcode](#how-to-build-in-xcode)
 
 Xcode 26.6 or newer is required.
 
-To build and run in the Xcode app with your own developer account, create
-a config file called `Dev.xcconfig` at the project root like this:
+The project signs with the maintainer's team by default. `DEVELOPMENT_TEAM` and
+`CODE_SIGN_IDENTITY` are set per target in `GitX.xcodeproj`, and Xcode gives target
+settings higher precedence than any `.xcconfig`, so **putting signing settings in
+`Dev.xcconfig` has no effect.** `Dev.xcconfig` is only for the GitHub App identifiers.
 
-```
-DEVELOPMENT_TEAM = YOUR_TEAM_ID
-CODE_SIGN_IDENTITY = YOUR_CERT_NAME
-ENABLE_HARDENED_RUNTIME = YES
+You have two options:
+
+**Build without signing** — nothing to configure, and what CI does for forks:
+
+```sh
+scripts/xcodebuild.sh build -configuration Debug \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
 ```
 
-Replace `YOUR_TEAM_ID` with your development team ID and `YOUR_CERT_NAME` with the name of your certificate.
-If you don't know your ID or don't have a certificate yet, follow the steps below.
+**Sign with your own account** — select the GitX project, then each target's
+**Signing & Capabilities** tab, and set **Team** to your own. This edits
+`project.pbxproj`; leave that change out of any commit. Follow the steps below if you
+do not have a certificate yet.
 
 The certificate name is usually something like _Apple Development, Mac Developer, iPhone Developer, Apple Developer,_ etc.
 In the steps below, we assume the certificate name to be _"Apple Development"_ but you should use the name you see in your keychain.

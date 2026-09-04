@@ -16,6 +16,80 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(replies.values.isEmpty)
     }
 
+    func testQuitStaysPossibleAfterATerminationThatNeverCompletes() throws {
+        // Returning .terminateNow does not guarantee the process exits: an unsaved
+        // document sheet, a cancelled quit, or a debugger pause all leave the app
+        // running. A later quit must still be honored rather than deferred forever
+        // with no reply, which would make the app impossible to quit.
+        let choices = ChoiceSpy(choice: .wait)
+        let replies = ReplySpy()
+        let coordinator = makeCoordinator(choices: choices, replies: replies)
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
+        XCTAssertEqual(choices.requestCount, 0)
+        XCTAssertTrue(replies.values.isEmpty)
+
+        // Forge mutations must keep working too; registration is refused while a
+        // termination is pending, so a stuck state would disable them for good.
+        let fixture = try Fixture()
+        XCTAssertNoThrow(try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .createPullRequest
+        ))
+    }
+
+    func testWaitingForAMutationThatNeverFinishesStillResolvesTheQuit() throws {
+        // `wait` depends on every mutation calling finish(). A dropped error path
+        // or a hung request would otherwise defer termination forever with no
+        // reply, which AppKit waits on indefinitely.
+        let timeouts = TimeoutSpy()
+        let replies = ReplySpy()
+        let coordinator = makeCoordinator(
+            choices: ChoiceSpy(choice: .wait),
+            replies: replies,
+            timeouts: timeouts
+        )
+        let fixture = try Fixture()
+        _ = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .createPullRequest
+        )
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        XCTAssertTrue(replies.values.isEmpty)
+
+        timeouts.fireAll()
+
+        XCTAssertEqual(replies.values, [true])
+    }
+
+    func testRecordingThatNeverCompletesStillResolvesTheQuit() throws {
+        // Recording awaits the Forge database provider, which can stall; the same
+        // guarantee has to hold on this path.
+        let timeouts = TimeoutSpy()
+        let replies = ReplySpy()
+        let coordinator = makeCoordinator(
+            persistence: PersistenceDouble(stalls: true),
+            choices: ChoiceSpy(choice: .quitAnyway),
+            replies: replies,
+            timeouts: timeouts
+        )
+        let fixture = try Fixture()
+        _ = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest
+        )
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        timeouts.fireAll()
+
+        XCTAssertEqual(replies.values, [true])
+    }
+
     func testWaitDefersTerminationUntilEveryRegisteredMutationFinishes() async throws {
         let choices = ChoiceSpy(choice: .wait)
         let replies = ReplySpy()
@@ -416,13 +490,42 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
     private func makeCoordinator(
         persistence: PersistenceDouble = PersistenceDouble(),
         choices: ChoiceSpy = ChoiceSpy(choice: .wait),
-        replies: ReplySpy = ReplySpy()
+        replies: ReplySpy = ReplySpy(),
+        timeouts: TimeoutSpy? = nil
     ) -> ForgeMutationQuitCoordinator {
-        ForgeMutationQuitCoordinator(
+        guard let timeouts else {
+            return ForgeMutationQuitCoordinator(
+                persistence: persistence,
+                choiceProvider: { mutations in choices.choose(mutations) },
+                terminationReply: { value in replies.record(value) }
+            )
+        }
+        return ForgeMutationQuitCoordinator(
             persistence: persistence,
             choiceProvider: { mutations in choices.choose(mutations) },
-            terminationReply: { value in replies.record(value) }
+            terminationReply: { value in replies.record(value) },
+            terminationTimeout: 0,
+            scheduleTimeout: { _, body in timeouts.schedule(body) }
         )
+    }
+}
+
+/// Holds the coordinator's watchdogs so a test fires the deadline itself rather
+/// than waiting on the clock.
+@MainActor
+private final class TimeoutSpy {
+    private var pending: [@MainActor @Sendable () -> Void] = []
+
+    func schedule(_ body: @escaping @MainActor @Sendable () -> Void) {
+        pending.append(body)
+    }
+
+    func fireAll() {
+        let scheduled = pending
+        pending = []
+        for body in scheduled {
+            body()
+        }
     }
 }
 
@@ -457,14 +560,20 @@ private final class ReplySpy {
 // swift6-safety-justification: the private serial queue protects the recorded outcomes.
 private final class PersistenceDouble: ForgeUnknownMutationOutcomePersisting, @unchecked Sendable {
     private let error: Error?
+    private let stalls: Bool
     private let queue = DispatchQueue(label: "com.gitx.tests.forge-mutation-persistence")
     private var recorded: [ForgeUnknownMutationOutcomeRecord] = []
 
-    init(error: Error? = nil) {
+    init(error: Error? = nil, stalls: Bool = false) {
         self.error = error
+        self.stalls = stalls
     }
 
     func record(_ records: [ForgeUnknownMutationOutcomeRecord]) async throws {
+        if stalls {
+            // Models a database provider that never resolves.
+            try await Task.sleep(nanoseconds: .max)
+        }
         try queue.sync {
             if let error {
                 throw error

@@ -203,14 +203,18 @@
 			if (![document.fileURL isEqual:repoURL])
 				[document close];
 		}
-		// Defer to the next run-loop iteration so the app is fully initialised.
+		// Route through the open coordinator rather than the document controller.
+		// The coordinator dismisses the Welcome window, records the repository as
+		// recent, and reuses an already-open document; opening the document
+		// directly skips all of that, which is how a Welcome window shown during
+		// launch used to survive for the rest of the session.
 		dispatch_async(dispatch_get_main_queue(), ^{
-			[controller openDocumentWithContentsOfURL:repoURL
-											  display:YES
-									completionHandler:^(NSDocument *document, BOOL documentWasAlreadyOpen, NSError *error) {
-										if (!document)
-											NSLog(@"[UITest] Failed to open repo %@: %@", uitestRepo, error);
-									}];
+			[[PBRepositoryOpenCoordinator shared] openKnownRepositoryURLs:@[ repoURL ]
+															 sourceWindow:nil
+															   completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+																   if (documents.count == 0)
+																	   NSLog(@"[UITest] Failed to open repo %@: %@", uitestRepo, errors.firstObject);
+															   }];
 		});
 	}
 }
@@ -222,6 +226,10 @@
 
 - (void)applicationWillTerminate:(NSNotification *)notification
 {
+	// Stop unattended fetching first: it outlives every window otherwise, and a
+	// termination that stalls would keep running git against recent repositories.
+	[[PBAutoFetchManager sharedManager] stop];
+
 	if ([PBWindowSessionLaunchPolicy shouldManageSessionForEnvironment:NSProcessInfo.processInfo.environment])
 		[[PBWindowSessionCoordinator shared] applicationWillTerminate];
 	else

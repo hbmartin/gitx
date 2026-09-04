@@ -241,6 +241,16 @@ final class RepositoryOpenCoordinator: NSObject {
     private let classifier: RepositoryOpeningClassifier
     private let creationPrompter: RepositoryCreationPrompting
     private let repositoryInitializer: (URL) -> Result<Void, NSError>
+    private var pendingOpenCount = 0
+
+    /// Whether a repository open is under way. Opening is asynchronous and the
+    /// document only registers at the end, so `NSDocumentController.documents`
+    /// stays empty in the meantime. Anything that treats an empty document list
+    /// as "no repository" — the Welcome window above all — has to consult this
+    /// too, or it will act during the gap.
+    @objc var hasPendingOpens: Bool {
+        pendingOpenCount > 0
+    }
 
     override convenience init() {
         self.init(
@@ -311,11 +321,24 @@ final class RepositoryOpenCoordinator: NSObject {
         sourceWindow: NSWindow?,
         disposition: OpenDisposition,
         classify: @escaping (URL) -> RepositoryOpenClassification,
-        completion: @escaping ([NSDocument], [NSError]) -> Void
+        completion originalCompletion: @escaping ([NSDocument], [NSError]) -> Void
     ) {
         var documents: [NSDocument] = []
         var errors: [NSError] = []
         var tabTarget = eligibleRepositoryWindow(preferred: sourceWindow)
+
+        pendingOpenCount += 1
+        var hasSettled = false
+        let completion: ([NSDocument], [NSError]) -> Void = { [weak self] finished, failures in
+            // Every exit from this operation runs through here, including the
+            // failure paths, so the count cannot leak and strand the Welcome
+            // window permanently suppressed.
+            if !hasSettled {
+                hasSettled = true
+                self?.pendingOpenCount -= 1
+            }
+            originalCompletion(finished, failures)
+        }
 
         func openRepository(at url: URL, then continueOpening: @escaping () -> Void) {
             if let existing = existingDocument(for: url) {
@@ -349,7 +372,7 @@ final class RepositoryOpenCoordinator: NSObject {
                             tabTarget = newWindow
                         }
                     }
-                    WelcomeWindowController.shared.closeWelcome()
+                    WelcomeWindowController.closeIfShown()
                 } else if let error {
                     errors.append(error as NSError)
                     self.logger.error("Failed to open repository: \(error.localizedDescription, privacy: .public)")
@@ -455,6 +478,35 @@ final class RepositoryOpenCoordinator: NSObject {
     }
 }
 
+/// Decides whether GitX may present the Welcome window on its own initiative.
+///
+/// The window used to be governed by a single `documents.isEmpty` check spread
+/// across five call sites, which is wrong in two ways: an open that has started
+/// but not finished leaves that list empty, and a launch that was handed an
+/// explicit repository never wants the window at all. Keeping the rule here, as a
+/// pure function, means every path answers the same question the same way.
+///
+/// An explicit request — the `--welcome` argument, or the menu item — calls
+/// `show()` directly and is deliberately not routed through this policy.
+@objc(PBWelcomePresentationPolicy)
+final class WelcomePresentationPolicy: NSObject {
+    @objc(shouldPresentWithOpenDocumentCount:hasPendingOpens:environment:)
+    static func shouldPresent(
+        openDocumentCount: Int,
+        hasPendingOpens: Bool,
+        environment: [String: String]
+    ) -> Bool {
+        guard openDocumentCount == 0 else { return false }
+        guard !hasPendingOpens else { return false }
+        // A launch pointed at one repository shows that repository, never a
+        // chooser for a different one.
+        guard environment["GITX_UITEST_REPO"] == nil else { return false }
+        // App-hosted unit tests must not have windows appear underneath them.
+        guard environment["XCTestConfigurationFilePath"] == nil else { return false }
+        return true
+    }
+}
+
 @objc(PBWelcomeWindowController)
 final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     @objc static let shared = WelcomeWindowController()
@@ -473,6 +525,11 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
         )
         window.title = "Welcome to GitX"
         window.isReleasedWhenClosed = false
+        // Whether this window belongs on screen is a decision made fresh at every
+        // launch by WelcomePresentationPolicy. Letting AppKit restore it means it
+        // reappears from saved state without any of that code running — over the
+        // top of a repository the launch was explicitly asked to open.
+        window.isRestorable = false
         super.init(window: window)
         window.delegate = self
         dateFormatter.dateStyle = .medium
@@ -485,7 +542,21 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Whether the window has ever been presented. `shared` is a `static let`, so
+    /// merely naming it builds the controller and its window; anything that only
+    /// wants to *hide* the window must not pay that price, or a launch that never
+    /// showed a Welcome window still ends up owning one.
+    private static var hasEverBeenShown = false
+
+    /// Hides the Welcome window if one was ever presented, and does nothing at all
+    /// otherwise. Prefer this over `shared.closeWelcome()`.
+    @objc static func closeIfShown() {
+        guard hasEverBeenShown else { return }
+        shared.closeWelcome()
+    }
+
     @objc func show() {
+        Self.hasEverBeenShown = true
         refresh()
         window?.center()
         showWindow(nil)
@@ -493,7 +564,11 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
     }
 
     @objc func showIfNeeded() {
-        guard NSDocumentController.shared.documents.isEmpty else { return }
+        guard WelcomePresentationPolicy.shouldPresent(
+            openDocumentCount: NSDocumentController.shared.documents.count,
+            hasPendingOpens: RepositoryOpenCoordinator.shared.hasPendingOpens,
+            environment: ProcessInfo.processInfo.environment
+        ) else { return }
         show()
     }
 

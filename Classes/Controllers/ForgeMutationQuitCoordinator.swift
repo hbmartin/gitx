@@ -68,12 +68,31 @@ nonisolated extension ForgeMutationLifecycleCoordinating {
 final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoordinating, @unchecked Sendable {
     typealias ChoiceProvider = @MainActor @Sendable ([ForgeInFlightMutation]) -> ForgeMutationQuitChoice
     typealias TerminationReply = @MainActor @Sendable (Bool) -> Void
+    /// Runs `body` after `seconds`. Injected so tests drive the deadline directly
+    /// instead of waiting on the clock.
+    typealias TimeoutScheduler = @MainActor @Sendable (
+        _ seconds: TimeInterval,
+        _ body: @escaping @MainActor @Sendable () -> Void
+    ) -> Void
 
+    /// Every state other than `idle` answers a quit with `terminateLater`, which
+    /// obliges someone to call `reply(toApplicationShouldTerminate:)` later. A state
+    /// that cannot be left therefore makes the application impossible to quit by any
+    /// normal means, so each one below has an explicit exit.
     private enum TerminationState {
         case idle
         case waiting
         case recordingUnknownOutcomes
         case replyingToTermination
+    }
+
+    static let defaultTerminationTimeout: TimeInterval = 10
+
+    static let defaultTimeoutScheduler: TimeoutScheduler = { seconds, body in
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            body()
+        }
     }
 
     #if GITX_APP_TARGET
@@ -97,6 +116,8 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     private let persistence: any ForgeUnknownMutationOutcomePersisting
     private let choiceProvider: ChoiceProvider
     private let terminationReply: TerminationReply
+    private let terminationTimeout: TimeInterval
+    private let scheduleTimeout: TimeoutScheduler
     private let lock = NSLock()
     private var active: [UUID: ForgeInFlightMutation] = [:]
     private var terminationState = TerminationState.idle
@@ -105,11 +126,15 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     init(
         persistence: any ForgeUnknownMutationOutcomePersisting,
         choiceProvider: @escaping ChoiceProvider,
-        terminationReply: @escaping TerminationReply
+        terminationReply: @escaping TerminationReply,
+        terminationTimeout: TimeInterval = ForgeMutationQuitCoordinator.defaultTerminationTimeout,
+        scheduleTimeout: @escaping TimeoutScheduler = ForgeMutationQuitCoordinator.defaultTimeoutScheduler
     ) {
         self.persistence = persistence
         self.choiceProvider = choiceProvider
         self.terminationReply = terminationReply
+        self.terminationTimeout = terminationTimeout
+        self.scheduleTimeout = scheduleTimeout
     }
 
     func register(
@@ -201,18 +226,24 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         let initial = lock.withForgeMutationLock { () -> (pending: Bool, mutations: [ForgeInFlightMutation]) in
             switch terminationState {
             case .idle:
-                (false, active.values.sorted(by: Self.sortsBefore))
-            case .waiting, .recordingUnknownOutcomes, .replyingToTermination:
-                (true, [])
+                return (false, active.values.sorted(by: Self.sortsBefore))
+            case .waiting, .recordingUnknownOutcomes:
+                return (true, [])
+            case .replyingToTermination:
+                // Being asked again means the previous termination never happened:
+                // a sheet cancelled it, a debugger held the process, or the reply
+                // was answered but the app stayed alive. Deferring again would
+                // strand the quit forever, so start over from a clean state.
+                terminationState = .idle
+                return (false, active.values.sorted(by: Self.sortsBefore))
             }
         }
         if initial.pending {
             return .terminateLater
         }
         guard !initial.mutations.isEmpty else {
-            lock.withForgeMutationLock {
-                terminationState = .replyingToTermination
-            }
+            // Nothing is in flight and no reply is deferred, so leave the state
+            // idle. Marking it here would strand a quit that never completes.
             return .terminateNow
         }
 
@@ -221,7 +252,6 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
             guard case .idle = terminationState else { return .later }
             let current = active.values.sorted(by: Self.sortsBefore)
             guard !current.isEmpty else {
-                terminationState = .replyingToTermination
                 return .now
             }
             switch choice {
@@ -247,10 +277,12 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         case .now:
             return .terminateNow
         case .later:
+            scheduleTerminationWatchdog()
             return .terminateLater
         case .cancel:
             return .terminateCancel
         case let .record(records):
+            scheduleTerminationWatchdog()
             logger.notice("Recording \(records.count) in-flight Forge mutations as unknown outcomes before quit")
             Task { @MainActor [self, persistence] in
                 do {
@@ -262,6 +294,28 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
                 }
             }
             return .terminateLater
+        }
+    }
+
+    /// Guarantees that a deferred quit is always answered. `waiting` depends on
+    /// every mutation calling `finish`, and `recordingUnknownOutcomes` depends on
+    /// persistence resolving; neither is certain, and AppKit waits indefinitely for
+    /// a reply that never arrives.
+    @MainActor
+    private func scheduleTerminationWatchdog() {
+        scheduleTimeout(terminationTimeout) { [self] in
+            let expired = lock.withForgeMutationLock { () -> Bool in
+                switch terminationState {
+                case .idle, .replyingToTermination:
+                    return false
+                case .waiting, .recordingUnknownOutcomes:
+                    terminationState = .replyingToTermination
+                    return true
+                }
+            }
+            guard expired else { return }
+            logger.error("Forge quit did not resolve within its deadline; terminating anyway")
+            terminationReply(true)
         }
     }
 

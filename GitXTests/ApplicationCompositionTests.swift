@@ -38,6 +38,53 @@ final class ApplicationCompositionTests: XCTestCase {
         )
     }
 
+    func testWelcomePolicyPresentsOnlyForAnIdleUnattendedLaunch() {
+        XCTAssertTrue(
+            PBWelcomePresentationPolicy.shouldPresent(
+                withOpenDocumentCount: 0,
+                hasPendingOpens: false,
+                environment: [:]
+            )
+        )
+    }
+
+    func testWelcomePolicySuppressesWhileARepositoryIsOpenOrOpening() {
+        XCTAssertFalse(
+            PBWelcomePresentationPolicy.shouldPresent(
+                withOpenDocumentCount: 1,
+                hasPendingOpens: false,
+                environment: [:]
+            )
+        )
+        // The regression this whole change exists for: an open that has started
+        // but not finished leaves the document list empty, and the window used to
+        // appear in that gap and never leave.
+        XCTAssertFalse(
+            PBWelcomePresentationPolicy.shouldPresent(
+                withOpenDocumentCount: 0,
+                hasPendingOpens: true,
+                environment: [:]
+            )
+        )
+    }
+
+    func testWelcomePolicySuppressesForDeterministicAndTestLaunches() {
+        XCTAssertFalse(
+            PBWelcomePresentationPolicy.shouldPresent(
+                withOpenDocumentCount: 0,
+                hasPendingOpens: false,
+                environment: ["GITX_UITEST_REPO": "/tmp/fixture"]
+            )
+        )
+        XCTAssertFalse(
+            PBWelcomePresentationPolicy.shouldPresent(
+                withOpenDocumentCount: 0,
+                hasPendingOpens: false,
+                environment: ["XCTestConfigurationFilePath": "/tmp/GitXTests.xctestconfiguration"]
+            )
+        )
+    }
+
     func testApplicationSettingsAndLegacyDefaultsUseInjectedPreferences() {
         PBApplicationSettings.diffContextLines = 99
         XCTAssertEqual(defaults.integer(forKey: "PBDiffContextLines"), 20)
