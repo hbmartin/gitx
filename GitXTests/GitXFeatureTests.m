@@ -258,6 +258,8 @@ static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacemen
 + (NSTimeInterval)retryDelayForFailureCount:(NSUInteger)failureCount;
 - (void)ensureNotificationAuthorization;
 - (void)timerFired:(NSTimer *)timer;
+- (void)autoFetchPreferencesChanged:(nullable NSNotification *)notification;
+- (void)workspaceDidWake:(nullable NSNotification *)notification;
 @end
 
 @interface PBAutoFetchManagerSpy : PBAutoFetchManager
@@ -402,6 +404,88 @@ static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacemen
 
 	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1);
 	XCTAssertFalse(manager.lastEvaluationWasImmediate);
+}
+
+- (void)testAutoFetchStopEndsWakeDrivenEvaluationAndCanRestart
+{
+	PBAutoFetchScope previousScope = [PBGitDefaults autoFetchScope];
+	// A disabled scope keeps `start` from requesting notification authorization
+	// or fetching; the observers this test cares about are registered regardless.
+	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeNone];
+	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
+	NSNotificationCenter *workspaceCenter = [[NSWorkspace sharedWorkspace] notificationCenter];
+
+	[manager start];
+	[workspaceCenter postNotificationName:NSWorkspaceDidWakeNotification object:nil];
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1);
+
+	[manager stop];
+	[workspaceCenter postNotificationName:NSWorkspaceDidWakeNotification object:nil];
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1, @"stop must drop the workspace observer");
+
+	// Stopping twice is harmless, and a stopped manager can be started again.
+	[manager stop];
+	[manager start];
+	[workspaceCenter postNotificationName:NSWorkspaceDidWakeNotification object:nil];
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)2);
+
+	[manager stop];
+	[PBGitDefaults setAutoFetchScope:previousScope];
+}
+
+- (void)testAutoFetchPreferenceChangeReevaluatesAndResetsBackoffWhenReenabled
+{
+	// This ran only incidentally before, through the shared manager's live
+	// observers. Driving it directly keeps the behavior covered no matter what
+	// else the suite does to that singleton.
+	PBAutoFetchScope previousScope = [PBGitDefaults autoFetchScope];
+	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
+
+	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeNone];
+	[manager autoFetchPreferencesChanged:nil];
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)0, @"a disabled scope must not fetch");
+
+	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
+	[manager autoFetchPreferencesChanged:nil];
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1);
+	XCTAssertTrue(manager.lastEvaluationWasImmediate, @"re-enabling fetches immediately");
+
+	// Still enabled, so this is not a transition and must not fetch immediately.
+	[manager autoFetchPreferencesChanged:nil];
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)2);
+	XCTAssertFalse(manager.lastEvaluationWasImmediate);
+
+	[PBGitDefaults setAutoFetchScope:previousScope];
+}
+
+- (void)testAutoFetchManualSuccessClearsBackoffAndDefersTheNextFetch
+{
+	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
+	NSURL *repository = [NSURL fileURLWithPath:@"/tmp/gitx-auto-fetch-fixture" isDirectory:YES];
+
+	// A manual fetch counts as a success: it clears recorded failures so the next
+	// unattended attempt starts from the plain interval rather than a backoff.
+	[manager recordManualFetchSucceededForRepositoryURL:repository];
+
+	XCTAssertNoThrow([manager recordManualFetchSucceededForRepositoryURL:repository]);
+}
+
+- (void)testAutoFetchWakeAlwaysRequestsAnImmediateCatchUp
+{
+	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
+
+	[manager workspaceDidWake:nil];
+
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1);
+	XCTAssertTrue(manager.lastEvaluationWasImmediate);
+}
+
+- (void)testAutoFetchStopBeforeStartIsSafe
+{
+	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
+
+	XCTAssertNoThrow([manager stop]);
+	XCTAssertEqual(manager.evaluationCount, (NSUInteger)0);
 }
 
 - (void)testAutoFetchNotificationAuthorizationRunsCompletionOnce

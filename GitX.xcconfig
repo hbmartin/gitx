@@ -1,6 +1,9 @@
 // Configuration settings file format documentation can be found at:
 // https://help.apple.com/xcode/#/dev745c5c974
 
+// Applies only to targets that set no identity of their own. Every native target
+// overrides this from the project file, because Xcode ranks target settings above
+// any xcconfig. Changing it here does not change how GitX.app is signed.
 CODE_SIGN_IDENTITY = -
 ARCHS = arm64
 
