@@ -1,8 +1,8 @@
 {
   "configurations" : [
     {
-      "id" : "7FD102A7-6911-488B-BD07-0379F642C6F8",
-      "name" : "UI",
+      "id" : "D0C70000-0000-0000-0000-000000000001",
+      "name" : "UI Activation Preflight",
       "options" : {
         "mainThreadCheckerEnabled" : true
       }
@@ -20,7 +20,7 @@
   "testTargets" : [
     {
       "parallelizable" : false,
-      "skippedTests" : [
+      "selectedTests" : [
         "GitXUIActivationPreflightTests/testRepositoryWindowActivates()"
       ],
       "target" : {

@@ -75,12 +75,28 @@ static NSTimeInterval const PBAutoFetchRetryMaximumInterval = 15.0 * 60.0;
 	}
 }
 
+- (void)stop
+{
+	if (!self.started) return;
+	self.started = NO;
+
+	[self.timer invalidate];
+	self.timer = nil;
+
+	[[NSNotificationCenter defaultCenter] removeObserver:self name:PBAutoFetchPreferencesDidChangeNotification object:nil];
+	[[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self name:NSWorkspaceDidWakeNotification object:nil];
+
+	if ([UNUserNotificationCenter currentNotificationCenter].delegate == self)
+		[UNUserNotificationCenter currentNotificationCenter].delegate = nil;
+}
+
 - (void)ensureNotificationAuthorization
 {
 	if (self.requestedNotificationAuthorization) return;
 	self.requestedNotificationAuthorization = YES;
 	[[UNUserNotificationCenter currentNotificationCenter] requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
-												 completionHandler:^(__unused BOOL granted, __unused NSError *error) {}];
+																		completionHandler:^(__unused BOOL granted, __unused NSError *error){
+																		}];
 }
 
 - (void)autoFetchPreferencesChanged:(NSNotification *)notification

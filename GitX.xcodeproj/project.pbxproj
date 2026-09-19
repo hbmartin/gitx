@@ -251,6 +251,7 @@
 		D3A300000000000000000005 /* Milestone3DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */; };
 		D3A300000000000000000006 /* Milestone3DiagnosticPresenters.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000104 /* Milestone3DiagnosticPresenters.swift */; };
 		D3A300000000000000000007 /* Milestone3WorkflowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */; };
+		D0C700000000000000000001 /* GitXUIActivationPreflightTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */; };
 		D3A300000000000000000008 /* RepositoryPullRequestReviewPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000106 /* RepositoryPullRequestReviewPerformanceTests.swift */; };
 		D3A300000000000000000009 /* Milestone3DiagnosticPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000107 /* Milestone3DiagnosticPresenterTests.swift */; };
 		D3A30000000000000000000A /* Milestone3UITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3A300000000000000000103 /* Milestone3UITestHarness.swift */; };
@@ -1068,6 +1069,7 @@
 		C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffLoadCoordinatorTests.swift; sourceTree = "<group>"; };
 		C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffPaneControllerTests.swift; sourceTree = "<group>"; };
 		CC0000020000002 /* GitXScreenshotTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXScreenshotTests.m; sourceTree = "<group>"; };
+		D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXUIActivationPreflightTests.swift; sourceTree = "<group>"; };
 		CC0000030000003 /* GitXUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitXUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D87127001229A21C00012334 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
 		D89E9AB21218A9DA0097A90B /* ScriptingBridge.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScriptingBridge.framework; path = System/Library/Frameworks/ScriptingBridge.framework; sourceTree = SDKROOT; };
@@ -1766,6 +1768,7 @@
 		CC0000040000004 /* GitXUITests */ = {
 			isa = PBXGroup;
 			children = (
+				D0C700000000000000000002 /* GitXUIActivationPreflightTests.swift */,
 				CC0000020000002 /* GitXScreenshotTests.m */,
 				F0F200000000000000000202 /* Milestone2WorkflowUITests.swift */,
 				D3A300000000000000000105 /* Milestone3WorkflowUITests.swift */,
@@ -2507,6 +2510,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D0C700000000000000000001 /* GitXUIActivationPreflightTests.swift in Sources */,
 				CC0000010000001 /* GitXScreenshotTests.m in Sources */,
 				F0F200000000000000000019 /* Milestone2WorkflowUITests.swift in Sources */,
 				D3A300000000000000000007 /* Milestone3WorkflowUITests.swift in Sources */,
