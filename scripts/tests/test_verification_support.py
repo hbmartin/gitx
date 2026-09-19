@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -30,6 +31,19 @@ class VersionTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_working_tree_fingerprint_includes_untracked_file_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            untracked = root / "untracked.txt"
+            untracked.write_text("first contents\n")
+            first = verification.working_tree_fingerprint(root)
+
+            untracked.write_text("second contents\n")
+            second = verification.working_tree_fingerprint(root)
+
+        self.assertNotEqual(first, second)
+
     def test_secret_arguments_are_redacted_without_recording_the_environment(self) -> None:
         scrubbed = verification.scrub_arguments(
             ["build", "TOKEN=private", "--password", "also-private", "SAFE=value"]

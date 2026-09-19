@@ -121,6 +121,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     private let lock = NSLock()
     private var active: [UUID: ForgeInFlightMutation] = [:]
     private var terminationState = TerminationState.idle
+    private var terminationWatchdogGeneration: UInt64 = 0
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeMutationQuit")
 
     init(
@@ -169,6 +170,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
             }
             if case .waiting = terminationState, active.isEmpty {
                 terminationState = .replyingToTermination
+                terminationWatchdogGeneration &+= 1
                 return (true, true)
             }
             return (true, false)
@@ -235,6 +237,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
                 // was answered but the app stayed alive. Deferring again would
                 // strand the quit forever, so start over from a clean state.
                 terminationState = .idle
+                terminationWatchdogGeneration &+= 1
                 return (false, active.values.sorted(by: Self.sortsBefore))
             }
         }
@@ -297,25 +300,41 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         }
     }
 
-    /// Guarantees that a deferred quit is always answered. `waiting` depends on
-    /// every mutation calling `finish`, and `recordingUnknownOutcomes` depends on
-    /// persistence resolving; neither is certain, and AppKit waits indefinitely for
-    /// a reply that never arrives.
+    /// Guarantees that a deferred quit is always answered. An expired `waiting`
+    /// attempt is cancelled because the user did not consent to abandon the
+    /// mutation. An expired `recordingUnknownOutcomes` attempt may terminate because
+    /// the user already chose Quit Anyway.
     @MainActor
     private func scheduleTerminationWatchdog() {
+        let generation = lock.withForgeMutationLock { () -> UInt64 in
+            terminationWatchdogGeneration &+= 1
+            return terminationWatchdogGeneration
+        }
         scheduleTimeout(terminationTimeout) { [self] in
-            let expired = lock.withForgeMutationLock { () -> Bool in
+            let action = lock.withForgeMutationLock { () -> TerminationWatchdogAction in
+                guard generation == terminationWatchdogGeneration else { return .none }
+                terminationWatchdogGeneration &+= 1
                 switch terminationState {
                 case .idle, .replyingToTermination:
-                    return false
-                case .waiting, .recordingUnknownOutcomes:
+                    return .none
+                case .waiting:
+                    terminationState = .idle
+                    return .cancel
+                case .recordingUnknownOutcomes:
                     terminationState = .replyingToTermination
-                    return true
+                    return .terminate
                 }
             }
-            guard expired else { return }
-            logger.error("Forge quit did not resolve within its deadline; terminating anyway")
-            terminationReply(true)
+            switch action {
+            case .none:
+                return
+            case .cancel:
+                logger.error("Forge mutation did not finish within the quit deadline; cancelling this quit attempt")
+                terminationReply(false)
+            case .terminate:
+                logger.error("Forge outcome recording did not finish within the quit deadline; terminating after Quit Anyway")
+                terminationReply(true)
+            }
         }
     }
 
@@ -324,6 +343,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         let shouldReply = lock.withForgeMutationLock { () -> Bool in
             guard case .recordingUnknownOutcomes = terminationState else { return false }
             terminationState = shouldTerminate ? .replyingToTermination : .idle
+            terminationWatchdogGeneration &+= 1
             return true
         }
         if shouldReply {
@@ -336,6 +356,12 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         case later
         case cancel
         case record([ForgeUnknownMutationOutcomeRecord])
+    }
+
+    private enum TerminationWatchdogAction {
+        case none
+        case cancel
+        case terminate
     }
 
     private static func sortsBefore(_ lhs: ForgeInFlightMutation, _ rhs: ForgeInFlightMutation) -> Bool {

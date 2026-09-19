@@ -40,14 +40,17 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         ))
     }
 
-    func testWaitingForAMutationThatNeverFinishesStillResolvesTheQuit() throws {
+    func testWaitingForAMutationThatNeverFinishesCancelsThatQuitAttempt() throws {
         // `wait` depends on every mutation calling finish(). A dropped error path
         // or a hung request would otherwise defer termination forever with no
-        // reply, which AppKit waits on indefinitely.
+        // reply, which AppKit waits on indefinitely. The deadline must cancel this
+        // quit attempt rather than override the user's explicit choice to wait.
         let timeouts = TimeoutSpy()
         let replies = ReplySpy()
+        let choices = ChoiceSpy(choice: .wait)
         let coordinator = makeCoordinator(
-            choices: ChoiceSpy(choice: .wait),
+            persistence: PersistenceDouble(stalls: true),
+            choices: choices,
             replies: replies,
             timeouts: timeouts
         )
@@ -63,7 +66,56 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
 
         timeouts.fireAll()
 
+        XCTAssertEqual(replies.values, [false])
+        XCTAssertEqual(coordinator.activeMutations().count, 1)
+
+        // Cancelling the expired attempt must return to idle so a subsequent quit
+        // can present the choice again and honor an explicit force-quit decision.
+        choices.choice = .quitAnyway
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        XCTAssertEqual(choices.requestCount, 2)
+        timeouts.fireAll()
+        XCTAssertEqual(replies.values, [false, true])
+    }
+
+    func testCompletedWaitWatchdogCannotCancelALaterQuitAttempt() async throws {
+        let timeouts = TimeoutSpy()
+        let replies = ReplySpy()
+        let replied = expectation(description: "first wait completes")
+        replies.expectation = replied
+        let choices = ChoiceSpy(choice: .wait)
+        let coordinator = makeCoordinator(
+            choices: choices,
+            replies: replies,
+            timeouts: timeouts
+        )
+        let fixture = try Fixture()
+        let first = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .createPullRequest
+        )
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        XCTAssertTrue(coordinator.finish(first))
+        await fulfillment(of: [replied], timeout: 1)
+        replies.expectation = nil
         XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
+
+        _ = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest
+        )
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+
+        timeouts.fireNext()
+        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(coordinator.activeMutations().count, 1)
+
+        timeouts.fireNext()
+        XCTAssertEqual(replies.values, [true, false])
     }
 
     func testRecordingThatNeverCompletesStillResolvesTheQuit() throws {
@@ -527,11 +579,16 @@ private final class TimeoutSpy {
             body()
         }
     }
+
+    func fireNext() {
+        guard !pending.isEmpty else { return }
+        pending.removeFirst()()
+    }
 }
 
 @MainActor
 private final class ChoiceSpy {
-    let choice: ForgeMutationQuitChoice
+    var choice: ForgeMutationQuitChoice
     private(set) var requestCount = 0
     private(set) var requestedMutations: [[ForgeInFlightMutation]] = []
 

@@ -103,20 +103,60 @@ def resolve_developer_dir(config: dict[str, Any]) -> pathlib.Path | None:
     return None
 
 
-def git_output(*arguments: str) -> str:
+def git_output(*arguments: str, cwd: pathlib.Path = ROOT) -> str:
     try:
-        result = run(["git", *arguments], timeout=15)
+        result = run(["git", *arguments], cwd=cwd, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def working_tree_fingerprint() -> str:
+def untracked_content_fingerprint(root: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=root,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        digest.update(f"untracked-list-error:{type(error).__name__}".encode())
+        return digest.hexdigest()
+    if result.returncode != 0:
+        digest.update(f"untracked-list-exit:{result.returncode}".encode())
+        return digest.hexdigest()
+
+    for raw_path in sorted(path for path in result.stdout.split(b"\0") if path):
+        digest.update(len(raw_path).to_bytes(8, "big"))
+        digest.update(raw_path)
+        path = root / os.fsdecode(raw_path)
+        content_digest = hashlib.sha256()
+        try:
+            if path.is_symlink():
+                content_digest.update(b"symlink\0")
+                content_digest.update(os.fsencode(os.readlink(path)))
+            elif path.is_file():
+                content_digest.update(b"file\0")
+                with path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        content_digest.update(chunk)
+            else:
+                content_digest.update(b"other\0")
+        except OSError as error:
+            content_digest.update(f"read-error:{error.errno}".encode())
+        digest.update(content_digest.digest())
+    return digest.hexdigest()
+
+
+def working_tree_fingerprint(root: pathlib.Path = ROOT) -> str:
     state = "\n".join(
         (
-            git_output("status", "--porcelain=v1", "--untracked-files=all"),
-            git_output("diff", "--binary"),
-            git_output("diff", "--cached", "--binary"),
+            git_output("status", "--porcelain=v1", "--untracked-files=all", cwd=root),
+            git_output("diff", "--binary", cwd=root),
+            git_output("diff", "--cached", "--binary", cwd=root),
+            untracked_content_fingerprint(root),
         )
     )
     return hashlib.sha256(state.encode()).hexdigest()

@@ -163,14 +163,42 @@ derived_data="$run_dir/DerivedData"
 mkdir -p "$logs" "$results" "$products" "$derived_data" "$root/$source_package_cache"
 receipt="$run_dir/receipt.json"
 
-signing_mode=ad-hoc
-for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
-	case "$argument" in
-		CODE_SIGNING_ALLOWED=NO|CODE_SIGNING_REQUIRED=NO)
-			signing_mode=disabled
-			;;
-	esac
-done
+signing_allowed=YES
+signing_required=YES
+signing_identity=
+case "$command" in
+	smoke)
+		signing_allowed=NO
+		signing_required=NO
+		;;
+	build|analyze)
+		signing_identity=-
+		;;
+	test)
+		case "${command_arguments[0]:-}" in
+			core|forgekit) signing_mode=not-applicable ;;
+			*) signing_identity=- ;;
+		esac
+		;;
+	archive|raw)
+		;;
+esac
+if [[ -z "${signing_mode:-}" ]]; then
+	for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
+		case "$argument" in
+			CODE_SIGNING_ALLOWED=*) signing_allowed=${argument#*=} ;;
+			CODE_SIGNING_REQUIRED=*) signing_required=${argument#*=} ;;
+			CODE_SIGN_IDENTITY=*) signing_identity=${argument#*=} ;;
+		esac
+	done
+	if [[ "$signing_allowed" == "NO" || "$signing_required" == "NO" ]]; then
+		signing_mode=disabled
+	elif [[ "$signing_identity" == "-" ]]; then
+		signing_mode=ad-hoc
+	else
+		signing_mode=project
+	fi
+fi
 
 preset=$command
 if [[ -n "${command_arguments[0]:-}" ]]; then
@@ -338,9 +366,11 @@ stage_built_app() {
 		mv "$staged" "$run_dir/previous-GitX.app" || return 3
 	fi
 	temporary="$root/build/.GitX.app.$run_id"
-	if ! ditto "$built_app" "$temporary"; then
+	ditto "$built_app" "$temporary"
+	copy_status=$?
+	if (( copy_status != 0 )); then
 		[[ ! -e "$run_dir/previous-GitX.app" ]] || mv "$run_dir/previous-GitX.app" "$staged"
-		return 3
+		return "$copy_status"
 	fi
 	if ! mv "$temporary" "$staged"; then
 		mv "$temporary" "$run_dir/failed-staged-GitX.app" 2>/dev/null || true

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import shutil
@@ -20,6 +21,20 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.bin.mkdir()
         self.developer_directory = self.root / "Xcode.app" / "Contents" / "Developer"
         self.developer_directory.mkdir(parents=True)
+        workspace_data = self.root / "GitX.xcworkspace" / "xcshareddata" / "swiftpm"
+        workspace_data.mkdir(parents=True)
+        (workspace_data / "Package.resolved").write_text("{}\n")
+        test_directory = self.root / "GitXTests"
+        test_directory.mkdir()
+        for plan in (
+            "GitX",
+            "GitXUIPreflight",
+            "GitXUI",
+            "GitXAddressUndefined",
+            "GitXThreadSanitizer",
+            "GitXPerformance",
+        ):
+            (test_directory / f"{plan}.xctestplan").write_text("{}\n")
         self.environment = os.environ.copy()
         self.environment["PATH"] = f"{self.bin}:{self.environment['PATH']}"
         self.environment["GITX_DEVELOPER_DIR"] = str(self.developer_directory)
@@ -30,6 +45,9 @@ class ScriptEntrypointTests(unittest.TestCase):
     def install_script(self, name: str) -> pathlib.Path:
         destination = self.scripts / name
         shutil.copy2(ROOT / "scripts" / name, destination)
+        if name == "xcodebuild.sh":
+            for dependency in ("doctor.sh", "verification_support.py", "verification-config.json"):
+                shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
         return destination
 
     def install_mock_xcodebuild(
@@ -39,7 +57,9 @@ class ScriptEntrypointTests(unittest.TestCase):
         version: str = "26.6",
     ) -> pathlib.Path:
         captured_arguments = self.root / "xcodebuild.args"
-        mock = self.bin / "xcodebuild"
+        mock_directory = self.developer_directory / "usr" / "bin"
+        mock_directory.mkdir(parents=True, exist_ok=True)
+        mock = mock_directory / "xcodebuild"
         mock.write_text(
             "#!/bin/bash\n"
             "if [[ \"${1:-}\" == '-version' ]]; then\n"
@@ -47,9 +67,19 @@ class ScriptEntrypointTests(unittest.TestCase):
             "  exit 0\n"
             "fi\n"
             "printf '%s\\n' \"$@\" >>\"$CAPTURED_ARGUMENTS\"\n"
-            "for argument in \"$@\"; do\n"
-            "  if [[ \"$argument\" == '-showBuildSettings' ]]; then\n"
-            "    printf '    BUILT_PRODUCTS_DIR = %s\\n' \"$PRODUCTS_DIRECTORY\"\n"
+            "arguments=(\"$@\")\n"
+            "for ((index = 0; index < ${#arguments[@]}; index++)); do\n"
+            "  if [[ \"${arguments[$index]}\" == '-derivedDataPath' ]]; then\n"
+            "    derived=${arguments[$((index + 1))]}\n"
+            "    app=\"$derived/Build/Products/Debug/GitX.app\"\n"
+            "    mkdir -p \"$app/Contents/MacOS\" \"$app/Contents/Resources\"\n"
+            "    printf '#!/bin/bash\\n' >\"$app/Contents/MacOS/GitX\"\n"
+            "    chmod +x \"$app/Contents/MacOS/GitX\"\n"
+            "    printf 'staged\\n' >\"$app/Contents/Resources/fixture.txt\"\n"
+            "    /usr/bin/plutil -create xml1 \"$app/Contents/Info.plist\"\n"
+            "    /usr/bin/plutil -insert CFBundleExecutable -string GitX \"$app/Contents/Info.plist\"\n"
+            "    /usr/bin/plutil -insert CFBundleIdentifier -string com.gitx.test \"$app/Contents/Info.plist\"\n"
+            "    /usr/bin/codesign --force --sign - \"$app\" >/dev/null 2>&1\n"
             "  fi\n"
             "done\n"
         )
@@ -57,6 +87,10 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.environment["CAPTURED_ARGUMENTS"] = str(captured_arguments)
         self.environment["PRODUCTS_DIRECTORY"] = str(products_directory)
         return captured_arguments
+
+    def receipt(self, run_id: str) -> dict[str, object]:
+        path = self.root / "artifacts" / "verification" / run_id / "receipt.json"
+        return json.loads(path.read_text())
 
     def install_mock_ditto(self, exit_status: int) -> None:
         mock = self.bin / "ditto"
@@ -83,15 +117,12 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertIn("-destination", arguments)
         self.assertIn("platform=macOS,arch=arm64", arguments)
         self.assertIn("-derivedDataPath", arguments)
-        self.assertEqual(arguments[-1], "build")
+        self.assertIn("build", arguments)
+        self.assertEqual(arguments[-1], "CODE_SIGN_IDENTITY=-")
 
     def test_xcodebuild_wrapper_stages_the_built_application(self) -> None:
         script = self.install_script("xcodebuild.sh")
-        products = self.root / "Products"
-        source_application = products / "GitX.app"
-        source_application.mkdir(parents=True)
-        (source_application / "fixture.txt").write_text("staged\n")
-        self.install_mock_xcodebuild(products)
+        self.install_mock_xcodebuild(self.root / "Products")
 
         subprocess.run(
             [script, "--raw", "--stage-app", "build"],
@@ -101,35 +132,38 @@ class ScriptEntrypointTests(unittest.TestCase):
             env=self.environment,
         )
 
-        self.assertEqual((self.root / "build" / "GitX.app" / "fixture.txt").read_text(), "staged\n")
+        fixture = self.root / "build" / "GitX.app" / "Contents" / "Resources" / "fixture.txt"
+        self.assertEqual(fixture.read_text(), "staged\n")
 
     def test_xcodebuild_wrapper_rejects_an_xcode_older_than_ci(self) -> None:
         script = self.install_script("xcodebuild.sh")
         self.install_mock_xcodebuild(self.root / "Products", version="26.5")
 
         result = subprocess.run(
-            [script, "--raw", "build"],
+            [script, "--raw", "--developer-dir", str(self.developer_directory), "build"],
             capture_output=True,
             text=True,
             env=self.environment,
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("26.6", result.stderr)
+        self.assertIn("26.6", result.stdout + result.stderr)
 
     def test_xcodebuild_wrapper_matches_options_as_exact_arguments(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
 
         subprocess.run(
-            [script, "--raw", "CUSTOM_TEXT=before -scheme after", "build"],
+            [script, "--raw", "build", "CUSTOM_TEXT=before -scheme after"],
             check=True,
             capture_output=True,
             text=True,
             env=self.environment,
         )
 
-        self.assertIn("-scheme", captured.read_text().splitlines())
+        arguments = captured.read_text().splitlines()
+        self.assertIn("-scheme", arguments)
+        self.assertIn("CUSTOM_TEXT=before -scheme after", arguments)
 
     def test_xcodebuild_wrapper_uses_unique_logs_and_result_bundles(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -137,7 +171,7 @@ class ScriptEntrypointTests(unittest.TestCase):
 
         for _ in range(2):
             subprocess.run(
-                [script, "--raw", "test"],
+                [script, "--raw", "raw", "--", "test"],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -152,13 +186,30 @@ class ScriptEntrypointTests(unittest.TestCase):
         ]
         self.assertEqual(len(result_bundles), 2)
         self.assertEqual(len(set(result_bundles)), 2)
-        self.assertEqual(len(list((self.root / "build" / "Logs").glob("xcodebuild-*.log"))), 2)
+        logs = list((self.root / "artifacts" / "verification").glob("*/Logs/raw.log"))
+        self.assertEqual(len(logs), 2)
+
+    def test_xcodebuild_wrapper_records_effective_preset_signing_modes(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+
+        for run_id, command, expected in (
+            ("smoke-signing", "smoke", "disabled"),
+            ("build-signing", "build", "ad-hoc"),
+            ("archive-signing", "archive", "project"),
+        ):
+            subprocess.run(
+                [script, "--raw", "--run-id", run_id, command],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=self.environment,
+            )
+            self.assertEqual(self.receipt(run_id)["invocation"]["signingMode"], expected)
 
     def test_xcodebuild_wrapper_propagates_a_staging_copy_failure(self) -> None:
         script = self.install_script("xcodebuild.sh")
-        products = self.root / "Products"
-        (products / "GitX.app").mkdir(parents=True)
-        self.install_mock_xcodebuild(products)
+        self.install_mock_xcodebuild(self.root / "Products")
         self.install_mock_ditto(exit_status=37)
 
         result = subprocess.run(
