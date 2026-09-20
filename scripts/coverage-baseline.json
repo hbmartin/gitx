@@ -49,7 +49,7 @@
     "Classes/Controllers/PBHistorySearchMode.m": 0.8333,
     "Classes/Controllers/PBOpenShallowRepositoryErrorRecoveryAttempter.m": 0.0,
     "Classes/Controllers/PBPrefsWindowController.m": 0.7885,
-    "Classes/Controllers/PBRepositoryDocumentController.m": 0.909,
+    "Classes/Controllers/PBRepositoryDocumentController.swift": 0.909,
     "Classes/Controllers/PBServicesController.m": 0.0,
     "Classes/Controllers/PBViewController.m": 0.909,
     "Classes/Controllers/PBWebController.m": 1.0,

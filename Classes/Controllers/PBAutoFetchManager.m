@@ -8,7 +8,7 @@
 #import "PBGitRepositoryDocument.h"
 #import "PBGitRevSpecifier.h"
 #import "PBGitWindowController.h"
-#import "PBRepositoryDocumentController.h"
+#import "GitX-Swift.h"
 #import "PBTask.h"
 
 #import <ObjectiveGit/GTOID.h>

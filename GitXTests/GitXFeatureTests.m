@@ -11,7 +11,7 @@
 #import "PBMacros.h"
 #import "PBGitRepository.h"
 #import "PBGitRepositoryDocument.h"
-#import "PBRepositoryDocumentController.h"
+#import "PBRepositoryDocumentControllerCompatibility.h"
 #import "PBGitBinary.h"
 #import "PBGitWindowControllerCompatibility.h"
 #import "PBHistoryArrayController.h"

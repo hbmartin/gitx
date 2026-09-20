@@ -7,7 +7,6 @@
 //
 
 #import "ApplicationController.h"
-#import "PBRepositoryDocumentController.h"
 #import "PBGitRevisionCell.h"
 #import "PBGitWindowController.h"
 #import "PBServicesController.h"
