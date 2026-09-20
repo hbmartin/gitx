@@ -40,6 +40,7 @@ static NSDocumentController *PBAutoFetchDocumentController;
 
 @property (nonatomic) NSModalResponse response;
 @property (nullable, nonatomic) NSURL *selectedURL;
+@property (nullable, nonatomic, readonly) NSArray<NSString *> *testAllowedFileTypes;
 
 @end
 
@@ -57,6 +58,8 @@ static NSDocumentController *PBAutoFetchDocumentController;
 @end
 
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-implementations"
 @implementation PBRepositoryOpenPanelSpy
 
 - (BOOL)canChooseFiles
@@ -84,6 +87,10 @@ static NSDocumentController *PBAutoFetchDocumentController;
 	_testAllowsMultipleSelection = value;
 }
 - (NSArray<NSString *> *)allowedFileTypes
+{
+	return _testAllowedFileTypes;
+}
+- (NSArray<NSString *> *)testAllowedFileTypes
 {
 	return _testAllowedFileTypes;
 }
@@ -119,6 +126,7 @@ static NSDocumentController *PBAutoFetchDocumentController;
 }
 
 @end
+#pragma clang diagnostic pop
 
 static PBRepositoryOpenPanelSpy *PBNewRepositoryOpenPanelSpy(void)
 {
@@ -1324,7 +1332,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 	XCTAssertTrue(panel.canChooseFiles);
 	XCTAssertTrue(panel.canChooseDirectories);
-	XCTAssertEqualObjects(panel.allowedFileTypes, (@[ @"git" ]));
+	XCTAssertEqualObjects(panel.testAllowedFileTypes, (@[ @"git" ]));
 	XCTAssertEqual(response, NSModalResponseOK);
 }
 
@@ -1456,8 +1464,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)testRepositoryDocumentControllerValidatesNewAndUnrelatedMenuItems
 {
 	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentController.class);
-	NSMenuItem *newItem = [[NSMenuItem alloc] initWithTitle:@"New" action:@selector(newDocument:) keyEquivalent:@""];
-	NSMenuItem *otherItem = [[NSMenuItem alloc] initWithTitle:@"Other" action:@selector(copy:) keyEquivalent:@""];
+	NSMenuItem *newItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"New", nil) action:@selector(newDocument:) keyEquivalent:@""];
+	NSMenuItem *otherItem = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Other", nil) action:@selector(copy:) keyEquivalent:@""];
 
 	XCTAssertEqual([controller validateMenuItem:newItem], [PBGitBinary path] != nil);
 	XCTAssertTrue([controller validateMenuItem:otherItem]);
