@@ -371,15 +371,16 @@
 
 	XCUIElement *window = self.app.windows.firstMatch;
 	CGRect originalFrame = window.frame;
-	XCUICoordinate *titleBar = [[window coordinateWithNormalizedOffset:CGVectorMake(0, 0)]
+	[self.app activate];
+	XCUICoordinate *dragStart = [[window coordinateWithNormalizedOffset:CGVectorMake(0, 0)]
 		coordinateWithOffset:CGVectorMake(originalFrame.size.width * 0.5, 12)];
-	XCUICoordinate *destination = [titleBar coordinateWithOffset:CGVectorMake(80, 50)];
-	[titleBar pressForDuration:0.1 thenDragToCoordinate:destination];
+	XCUICoordinate *destination = [dragStart coordinateWithOffset:CGVectorMake(80, 50)];
+	[dragStart clickForDuration:0.2 thenDragToCoordinate:destination];
 	NSPredicate *frameChanged = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 		return !CGPointEqualToPoint(window.frame.origin, originalFrame.origin);
 	}];
 	XCTNSPredicateExpectation *moveExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:frameChanged object:window];
-	[self waitForExpectations:@[ moveExpectation ] timeout:5];
+	XCTAssertEqual([XCTWaiter waitForExpectations:@[ moveExpectation ] timeout:5], XCTWaiterResultCompleted);
 
 	XCTAssertTrue([[diff.value description] containsString:@"Hunk 1"]);
 	XCTAssertTrue(self.app.tables[@"PendingFiles"].hittable);
