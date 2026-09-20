@@ -185,7 +185,7 @@
 		C0DE10000000000000000014 /* PBWorkingTree.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE10000000000000000008 /* PBWorkingTree.m */; };
 		C0DE10000000000000000015 /* PBUncommittedChanges.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE1000000000000000000A /* PBUncommittedChanges.m */; };
 		C0DE10000000000000000016 /* HighlightKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0DE10000000000000000018 /* HighlightKit */; };
-		C0DE10000000000000000019 /* PBAutoFetchManager.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE1000000000000000000C /* PBAutoFetchManager.m */; };
+		C0DE10000000000000000019 /* PBAutoFetchManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE1000000000000000000C /* PBAutoFetchManager.swift */; };
 		C0DE1000000000000000001A /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DE1000000000000000001B /* UserNotifications.framework */; };
 		C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE20000000000000000003 /* GitXFeatureTests.m */; };
 		C0DE20000000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C0DE20000000000000000005 /* XCTest.framework */; };
@@ -913,8 +913,8 @@
 		C0DE10000000000000000008 /* PBWorkingTree.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBWorkingTree.m; sourceTree = "<group>"; };
 		C0DE10000000000000000009 /* PBUncommittedChanges.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBUncommittedChanges.h; sourceTree = "<group>"; };
 		C0DE1000000000000000000A /* PBUncommittedChanges.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBUncommittedChanges.m; sourceTree = "<group>"; };
-		C0DE1000000000000000000B /* PBAutoFetchManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBAutoFetchManager.h; sourceTree = "<group>"; };
-		C0DE1000000000000000000C /* PBAutoFetchManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = PBAutoFetchManager.m; sourceTree = "<group>"; };
+		C0DE1000000000000000000C /* PBAutoFetchManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBAutoFetchManager.swift; sourceTree = "<group>"; };
+		C0DE1000000000000000000B /* PBAutoFetchManagerCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBAutoFetchManagerCompatibility.h; sourceTree = "<group>"; };
 		C0DE1000000000000000001B /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
 		C0DE20000000000000000003 /* GitXFeatureTests.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXFeatureTests.m; sourceTree = "<group>"; };
 		C0DE20000000000000000004 /* GitXTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GitXTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1361,8 +1361,7 @@
 		4A5D762514A9A9CC00DF6C68 /* Controllers */ = {
 			isa = PBXGroup;
 			children = (
-				C0DE1000000000000000000B /* PBAutoFetchManager.h */,
-				C0DE1000000000000000000C /* PBAutoFetchManager.m */,
+				C0DE1000000000000000000C /* PBAutoFetchManager.swift */,
 				4A5D762614A9A9CC00DF6C68 /* ApplicationController.h */,
 				4A5D762714A9A9CC00DF6C68 /* ApplicationController.m */,
 				C0D0C0A00000000000000011 /* ApplicationComposition.swift */,
@@ -1709,6 +1708,7 @@
 				C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */,
 				C0DEC0000000000000000005 /* PBWebHistoryControllerCompatibility.h */,
 				C0DEC0000000000000000006 /* PBRepositoryDocumentControllerCompatibility.h */,
+				C0DE1000000000000000000B /* PBAutoFetchManagerCompatibility.h */,
 				C0DE30000000000000000002 /* GitXCoreTests.m */,
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
@@ -2196,7 +2196,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C0DE10000000000000000019 /* PBAutoFetchManager.m in Sources */,
+				C0DE10000000000000000019 /* PBAutoFetchManager.swift in Sources */,
 				C0DE10000000000000000011 /* PBHighlighting.swift in Sources */,
 				C0DE44300000000000000001 /* PBProcessEnvironment.swift in Sources */,
 				C0DE70000000000000000001 /* RepositoryRefreshCoordinator.swift in Sources */,

@@ -7,7 +7,7 @@
 
 #import "GitXApplicationLocator.h"
 #import "PBGitDefaults.h"
-#import "PBAutoFetchManager.h"
+#import "PBAutoFetchManagerCompatibility.h"
 #import "PBMacros.h"
 #import "PBGitRepository.h"
 #import "PBGitRepositoryDocument.h"
@@ -180,11 +180,21 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 @interface PBAutoFetchWindowControllerSpy : PBGitWindowController
 @property (nonatomic) NSUInteger showHistoryCount;
+@property (nullable, nonatomic, strong) PBGitHistoryController *testHistoryViewController;
 @end
 
 @implementation PBAutoFetchWindowControllerSpy
 - (void)showHistoryView:(id)sender { self.showHistoryCount++; }
 - (NSWindow *)window { return nil; }
+- (PBGitHistoryController *)historyViewController { return self.testHistoryViewController; }
+@end
+
+@interface PBAutoFetchHistoryControllerSpy : PBGitHistoryController
+@property (nullable, nonatomic) XCTestExpectation *selectionExpectation;
+@end
+
+@implementation PBAutoFetchHistoryControllerSpy
+- (void)selectCommit:(GTOID *)commit { [self.selectionExpectation fulfill]; }
 @end
 
 @interface PBAutoFetchRepositoryDocumentSpy : PBGitRepositoryDocument
@@ -726,6 +736,24 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqual(manager.evaluationCount, (NSUInteger)2);
 
 	[manager stop];
+
+	PBAutoFetchAuthorizationRequestCount = 0;
+	PBFeatureSwapInstanceMethods(
+		UNUserNotificationCenter.class,
+		@selector(requestAuthorizationWithOptions:completionHandler:),
+		@selector(pb_feature_requestAuthorizationWithOptions:completionHandler:));
+	@try {
+		[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
+		[manager start];
+		XCTAssertTrue(manager.lastEvaluationWasImmediate);
+		XCTAssertEqual(PBAutoFetchAuthorizationRequestCount, (NSUInteger)1);
+		[manager stop];
+	} @finally {
+		PBFeatureSwapInstanceMethods(
+			UNUserNotificationCenter.class,
+			@selector(requestAuthorizationWithOptions:completionHandler:),
+			@selector(pb_feature_requestAuthorizationWithOptions:completionHandler:));
+	}
 	[PBGitDefaults setAutoFetchScope:previousScope];
 }
 
@@ -1046,6 +1074,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	NSURL *repositoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-notification" isDirectory:YES];
 	repository.testWorkingDirectoryURL = repositoryURL;
 	PBAutoFetchWindowControllerSpy *windowController = class_createInstance(PBAutoFetchWindowControllerSpy.class, 0);
+	PBAutoFetchHistoryControllerSpy *historyController = class_createInstance(PBAutoFetchHistoryControllerSpy.class, 0);
+	windowController.testHistoryViewController = historyController;
 	PBAutoFetchRepositoryDocumentSpy *document = class_createInstance(PBAutoFetchRepositoryDocumentSpy.class, 0);
 	document.testRepository = repository;
 	document.testWindowController = windowController;
@@ -1086,14 +1116,16 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 			@"repository" : repositoryURL.path,
 			@"multipleBranches" : @NO,
 			@"ref" : @"refs/remotes/origin/main",
+			@"sha" : @"0123456789012345678901234567890123456789",
 		};
+		historyController.selectionExpectation = [self expectationWithDescription:@"notification selected commit"];
 		notification.testRequest = [UNNotificationRequest requestWithIdentifier:@"branch" content:branchContent trigger:nil];
 		[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
 			didReceiveNotificationResponse:response
 					 withCompletionHandler:^{ completionCount++; }];
 		XCTestExpectation *focused = [self expectationWithDescription:@"notification focused repository"];
 		dispatch_async(dispatch_get_main_queue(), ^{ [focused fulfill]; });
-		[self waitForExpectations:@[ focused ] timeout:2];
+		[self waitForExpectations:@[ focused, historyController.selectionExpectation ] timeout:2];
 		XCTAssertEqual(windowController.showHistoryCount, (NSUInteger)2);
 		XCTAssertEqual(repository.testBranchFilter, kGitXSelectedBranchFilter);
 		XCTAssertEqual(completionCount, (NSUInteger)3);

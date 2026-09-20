@@ -25,6 +25,7 @@
 #import "PBGitBinary.h"
 #import "PBGitWindowControllerCompatibility.h"
 #import "PBRepositoryDocumentControllerCompatibility.h"
+#import "PBAutoFetchManagerCompatibility.h"
 #import "PBWebHistoryControllerCompatibility.h"
 
 NS_ASSUME_NONNULL_BEGIN

@@ -17,7 +17,6 @@
 #import "PBCloneRepositoryPanel.h"
 #import "OpenRecentController.h"
 #import "PBGitBinary.h"
-#import "PBAutoFetchManager.h"
 #import "GitX-Swift.h"
 
 #import <Sparkle/SPUStandardUpdaterController.h>

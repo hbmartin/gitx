@@ -6,7 +6,7 @@
 #import <stdatomic.h>
 
 #import "PBMacros.h"
-#import "PBAutoFetchManager.h"
+#import "PBAutoFetchManagerCompatibility.h"
 #import "PBAddRemoteSheet.h"
 #import "PBChangedFile.h"
 #import "PBCommitHookFailedSheet.h"
