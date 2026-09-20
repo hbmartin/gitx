@@ -83,12 +83,13 @@
 - (NSDictionary<NSString *, NSString *> *)launchEnvironmentForRepository:(NSString *)repositoryPath
 {
 	NSString *isolatedHome = [NSTemporaryDirectory() stringByAppendingPathComponent:
-		[NSString stringWithFormat:@"gitx-screenshot-home-%@", NSUUID.UUID.UUIDString]];
+														 [NSString stringWithFormat:@"gitx-screenshot-home-%@", NSUUID.UUID.UUIDString]];
 	NSError *error = nil;
 	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtPath:isolatedHome
-											  withIntermediateDirectories:YES
+											withIntermediateDirectories:YES
 															 attributes:nil
-																	error:&error], @"Failed to create isolated preferences home: %@", error);
+																  error:&error],
+				  @"Failed to create isolated preferences home: %@", error);
 	[self.temporaryRepositoryPaths addObject:isolatedHome];
 	return @{
 		@"CFFIXED_USER_HOME" : isolatedHome,

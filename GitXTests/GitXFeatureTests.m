@@ -59,18 +59,54 @@ static NSDocumentController *PBAutoFetchDocumentController;
 
 @implementation PBRepositoryOpenPanelSpy
 
-- (BOOL)canChooseFiles { return _testCanChooseFiles; }
-- (void)setCanChooseFiles:(BOOL)value { _testCanChooseFiles = value; }
-- (BOOL)canChooseDirectories { return _testCanChooseDirectories; }
-- (void)setCanChooseDirectories:(BOOL)value { _testCanChooseDirectories = value; }
-- (BOOL)allowsMultipleSelection { return _testAllowsMultipleSelection; }
-- (void)setAllowsMultipleSelection:(BOOL)value { _testAllowsMultipleSelection = value; }
-- (NSArray<NSString *> *)allowedFileTypes { return _testAllowedFileTypes; }
-- (void)setAllowedFileTypes:(NSArray<NSString *> *)value { _testAllowedFileTypes = [value copy]; }
-- (NSString *)message { return _testMessage; }
-- (void)setMessage:(NSString *)value { _testMessage = [value copy]; }
-- (NSString *)title { return _testTitle; }
-- (void)setTitle:(NSString *)value { _testTitle = [value copy]; }
+- (BOOL)canChooseFiles
+{
+	return _testCanChooseFiles;
+}
+- (void)setCanChooseFiles:(BOOL)value
+{
+	_testCanChooseFiles = value;
+}
+- (BOOL)canChooseDirectories
+{
+	return _testCanChooseDirectories;
+}
+- (void)setCanChooseDirectories:(BOOL)value
+{
+	_testCanChooseDirectories = value;
+}
+- (BOOL)allowsMultipleSelection
+{
+	return _testAllowsMultipleSelection;
+}
+- (void)setAllowsMultipleSelection:(BOOL)value
+{
+	_testAllowsMultipleSelection = value;
+}
+- (NSArray<NSString *> *)allowedFileTypes
+{
+	return _testAllowedFileTypes;
+}
+- (void)setAllowedFileTypes:(NSArray<NSString *> *)value
+{
+	_testAllowedFileTypes = [value copy];
+}
+- (NSString *)message
+{
+	return _testMessage;
+}
+- (void)setMessage:(NSString *)value
+{
+	_testMessage = [value copy];
+}
+- (NSString *)title
+{
+	return _testTitle;
+}
+- (void)setTitle:(NSString *)value
+{
+	_testTitle = [value copy];
+}
 
 - (NSModalResponse)runModal
 {
@@ -136,7 +172,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation NSDocumentController (GitXFeatureTests)
-+ (NSDocumentController *)pb_feature_sharedDocumentController { return PBAutoFetchDocumentController; }
++ (NSDocumentController *)pb_feature_sharedDocumentController
+{
+	return PBAutoFetchDocumentController;
+}
 @end
 
 @interface PBAutoFetchDocumentControllerSpy : NSDocumentController
@@ -147,12 +186,21 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation PBAutoFetchDocumentControllerSpy
-- (NSArray<NSDocument *> *)documents { return self.testDocuments ?: @[]; }
-- (NSArray<NSURL *> *)recentDocumentURLs { return self.testRecentURLs ?: @[]; }
-- (NSDocument *)currentDocument { return self.testCurrentDocument; }
+- (NSArray<NSDocument *> *)documents
+{
+	return self.testDocuments ?: @[];
+}
+- (NSArray<NSURL *> *)recentDocumentURLs
+{
+	return self.testRecentURLs ?: @[];
+}
+- (NSDocument *)currentDocument
+{
+	return self.testCurrentDocument;
+}
 - (void)openDocumentWithContentsOfURL:(NSURL *)url
-								  display:(BOOL)displayDocument
-						completionHandler:(void (^)(NSDocument *_Nullable document, BOOL documentWasAlreadyOpen, NSError *_Nullable error))completionHandler
+							  display:(BOOL)displayDocument
+					completionHandler:(void (^)(NSDocument *_Nullable document, BOOL documentWasAlreadyOpen, NSError *_Nullable error))completionHandler
 {
 	completionHandler(self.testDocumentToOpen, NO, nil);
 }
@@ -167,15 +215,42 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation PBAutoFetchRepositorySpy
-- (NSURL *)workingDirectoryURL { return self.testWorkingDirectoryURL; }
-- (void)reloadRefs { self.reloadCount++; }
-- (void)forceUpdateRevisions { self.forceUpdateCount++; }
-- (NSInteger)currentBranchFilter { return self.testBranchFilter; }
-- (void)setCurrentBranchFilter:(NSInteger)value { self.testBranchFilter = value; }
-- (BOOL)refExists:(PBGitRef *)ref { return YES; }
-- (PBGitRevSpecifier *)addBranch:(PBGitRevSpecifier *)rev { return rev; }
-- (PBGitRevSpecifier *)currentBranch { return self.testCurrentBranch; }
-- (void)setCurrentBranch:(PBGitRevSpecifier *)value { self.testCurrentBranch = value; }
+- (NSURL *)workingDirectoryURL
+{
+	return self.testWorkingDirectoryURL;
+}
+- (void)reloadRefs
+{
+	self.reloadCount++;
+}
+- (void)forceUpdateRevisions
+{
+	self.forceUpdateCount++;
+}
+- (NSInteger)currentBranchFilter
+{
+	return self.testBranchFilter;
+}
+- (void)setCurrentBranchFilter:(NSInteger)value
+{
+	self.testBranchFilter = value;
+}
+- (BOOL)refExists:(PBGitRef *)ref
+{
+	return YES;
+}
+- (PBGitRevSpecifier *)addBranch:(PBGitRevSpecifier *)rev
+{
+	return rev;
+}
+- (PBGitRevSpecifier *)currentBranch
+{
+	return self.testCurrentBranch;
+}
+- (void)setCurrentBranch:(PBGitRevSpecifier *)value
+{
+	self.testCurrentBranch = value;
+}
 @end
 
 @interface PBAutoFetchWindowControllerSpy : PBGitWindowController
@@ -184,9 +259,18 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation PBAutoFetchWindowControllerSpy
-- (void)showHistoryView:(id)sender { self.showHistoryCount++; }
-- (NSWindow *)window { return nil; }
-- (PBGitHistoryController *)historyViewController { return self.testHistoryViewController; }
+- (void)showHistoryView:(id)sender
+{
+	self.showHistoryCount++;
+}
+- (NSWindow *)window
+{
+	return nil;
+}
+- (PBGitHistoryController *)historyViewController
+{
+	return self.testHistoryViewController;
+}
 @end
 
 @interface PBAutoFetchHistoryControllerSpy : PBGitHistoryController
@@ -194,7 +278,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation PBAutoFetchHistoryControllerSpy
-- (void)selectCommit:(GTOID *)commit { [self.selectionExpectation fulfill]; }
+- (void)selectCommit:(GTOID *)commit
+{
+	[self.selectionExpectation fulfill];
+}
 @end
 
 @interface PBAutoFetchRepositoryDocumentSpy : PBGitRepositoryDocument
@@ -203,8 +290,14 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation PBAutoFetchRepositoryDocumentSpy
-- (PBGitRepository *)repository { return self.testRepository; }
-- (PBGitWindowController *)windowController { return self.testWindowController; }
+- (PBGitRepository *)repository
+{
+	return self.testRepository;
+}
+- (PBGitWindowController *)windowController
+{
+	return self.testWindowController;
+}
 @end
 
 @interface PBAutoFetchNotificationSpy : UNNotification
@@ -212,7 +305,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation PBAutoFetchNotificationSpy
-- (UNNotificationRequest *)request { return self.testRequest; }
+- (UNNotificationRequest *)request
+{
+	return self.testRequest;
+}
 @end
 
 @interface PBAutoFetchNotificationResponseSpy : UNNotificationResponse
@@ -220,7 +316,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation PBAutoFetchNotificationResponseSpy
-- (UNNotification *)notification { return self.testNotification; }
+- (UNNotification *)notification
+{
+	return self.testNotification;
+}
 @end
 
 @interface UNUserNotificationCenter (GitXFeatureTests)
@@ -241,13 +340,13 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 @interface UNUserNotificationCenter (GitXFeatureNotificationTests)
 - (void)pb_feature_addNotificationRequest:(UNNotificationRequest *)request
-						 completionHandler:(nullable void (^)(NSError *_Nullable error))completionHandler;
+						completionHandler:(nullable void (^)(NSError *_Nullable error))completionHandler;
 @end
 
 @implementation UNUserNotificationCenter (GitXFeatureNotificationTests)
 
 - (void)pb_feature_addNotificationRequest:(UNNotificationRequest *)request
-						 completionHandler:(void (^)(NSError *_Nullable error))completionHandler
+						completionHandler:(void (^)(NSError *_Nullable error))completionHandler
 {
 	PBAutoFetchLastNotificationRequest = request;
 	if (completionHandler) completionHandler(nil);
@@ -484,8 +583,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)postFailureNotificationForURL:(NSURL *)url error:(NSError *)error;
 - (void)postAdvanceNotificationForURL:(NSURL *)url advances:(NSArray<NSDictionary *> *)advances;
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
-		 willPresentNotification:(nullable UNNotification *)notification
-		   withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler;
+	   willPresentNotification:(nullable UNNotification *)notification
+		 withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler;
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
 	didReceiveNotificationResponse:(UNNotificationResponse *)response
 			 withCompletionHandler:(void (^)(void))completionHandler;
@@ -514,7 +613,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	if (!self.succeeds && error) *error = self.testError;
 	return self.succeeds;
 }
-- (NSString *)standardOutputString { return self.testOutput; }
+- (NSString *)standardOutputString
+{
+	return self.testOutput;
+}
 @end
 
 @interface PBAutoFetchBehaviorSpy : PBAutoFetchManager
@@ -536,7 +638,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 @implementation PBAutoFetchBehaviorSpy
-- (NSDictionary<NSString *, NSURL *> *)candidateRepositoryURLs { return self.testCandidates ?: @{}; }
+- (NSDictionary<NSString *, NSURL *> *)candidateRepositoryURLs
+{
+	return self.testCandidates ?: @{};
+}
 - (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key
 {
 	if (self.fetchExpectation) {
@@ -554,15 +659,27 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	}
 	return self.testSnapshots[self.snapshotIndex++];
 }
-- (PBTask *)taskForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments { return self.testTask; }
+- (PBTask *)taskForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments
+{
+	return self.testTask;
+}
 - (NSString *)outputForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments error:(NSError **)error
 {
 	if (self.snapshotError && error) *error = self.snapshotError;
 	return self.testOutput;
 }
-- (BOOL)isAncestor:(NSString *)oldSHA of:(NSString *)newSHA repositoryURL:(NSURL *)url { return self.ancestorResult; }
-- (NSInteger)commitCountFrom:(NSString *)oldSHA to:(NSString *)newSHA repositoryURL:(NSURL *)url { return self.testCommitCount; }
-- (NSTimeInterval)commitTimestampForSHA:(NSString *)sha repositoryURL:(NSURL *)url { return self.testTimestamp; }
+- (BOOL)isAncestor:(NSString *)oldSHA of:(NSString *)newSHA repositoryURL:(NSURL *)url
+{
+	return self.ancestorResult;
+}
+- (NSInteger)commitCountFrom:(NSString *)oldSHA to:(NSString *)newSHA repositoryURL:(NSURL *)url
+{
+	return self.testCommitCount;
+}
+- (NSTimeInterval)commitTimestampForSHA:(NSString *)sha repositoryURL:(NSURL *)url
+{
+	return self.testTimestamp;
+}
 - (void)refreshOpenRepositoryAtURL:(NSURL *)url
 {
 	self.refreshCount++;
@@ -856,7 +973,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 {
 	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
 	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-scheduled" isDirectory:YES];
-	manager.testCandidates = @{ url.path : url };
+	manager.testCandidates = @{url.path : url};
 	manager.fetchExpectation = [self expectationWithDescription:@"fetch scheduled"];
 	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
 
@@ -868,7 +985,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqual(manager.fetchCount, (NSUInteger)1, @"an in-flight repository must not be scheduled twice");
 
 	[manager setValue:[NSMutableSet set] forKey:@"inFlightRepositories"];
-	[manager setValue:[@{ url.path : [NSDate dateWithTimeIntervalSinceNow:300] } mutableCopy] forKey:@"nextFetchDates"];
+	[manager setValue:[@{url.path : [NSDate dateWithTimeIntervalSinceNow:300]} mutableCopy] forKey:@"nextFetchDates"];
 	[manager evaluateRepositoriesForImmediateFetch:NO];
 	XCTAssertEqual(manager.fetchCount, (NSUInteger)1, @"a future due date must defer polling");
 }
@@ -877,7 +994,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 {
 	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
 	PBTask *task = [manager taskForRepositoryURL:[NSURL fileURLWithPath:NSTemporaryDirectory()]
-										arguments:@[ @"--version" ]];
+									   arguments:@[ @"--version" ]];
 
 	XCTAssertEqual(task.timeout, 10.0 * 60.0);
 	XCTAssertEqualObjects(task.additionalEnvironment[@"GIT_TERMINAL_PROMPT"], @"0");
@@ -885,8 +1002,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqualObjects(task.additionalEnvironment[@"GIT_ASKPASS"], @"/usr/bin/false");
 	NSError *error = nil;
 	NSString *output = [manager outputForRepositoryURL:[NSURL fileURLWithPath:NSTemporaryDirectory()]
-													arguments:@[ @"--version" ]
-														 error:&error];
+											 arguments:@[ @"--version" ]
+												 error:&error];
 	XCTAssertNotNil(output);
 	XCTAssertNil(error);
 }
@@ -898,7 +1015,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	manager.testOutput = @"refs/remotes/origin/main\tabc\nrefs/remotes/origin/HEAD\tdef\nmalformed\n";
 	NSError *error = nil;
 
-	XCTAssertEqualObjects([manager remoteSnapshotForURL:url error:&error], @{ @"refs/remotes/origin/main" : @"abc" });
+	XCTAssertEqualObjects([manager remoteSnapshotForURL:url error:&error], @{@"refs/remotes/origin/main" : @"abc"});
 	manager.testOutput = @"7\n";
 	XCTAssertEqual([manager commitCountFrom:@"old" to:@"new" repositoryURL:url], 7);
 	manager.testOutput = @"1234\n";
@@ -912,8 +1029,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
 	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-success" isDirectory:YES];
 	manager.testSnapshots = @[
-		@{ @"refs/remotes/origin/main" : @"old", @"refs/remotes/origin/stable" : @"same" },
-		@{ @"refs/remotes/origin/main" : @"new", @"refs/remotes/origin/stable" : @"same", @"refs/remotes/origin/new" : @"first" },
+		@{@"refs/remotes/origin/main" : @"old", @"refs/remotes/origin/stable" : @"same"},
+		@{@"refs/remotes/origin/main" : @"new", @"refs/remotes/origin/stable" : @"same", @"refs/remotes/origin/new" : @"first"},
 	];
 	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
 	manager.testTask.succeeds = YES;
@@ -938,7 +1055,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 {
 	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
 	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-failure" isDirectory:YES];
-	manager.testSnapshots = @[ @{ @"refs/remotes/origin/main" : @"old" } ];
+	manager.testSnapshots = @[ @{@"refs/remotes/origin/main" : @"old"} ];
 	manager.snapshotError = [NSError errorWithDomain:@"test" code:9 userInfo:nil];
 	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
 	manager.testTask.succeeds = NO;
@@ -955,7 +1072,9 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	manager.deliveryExpectation = nil;
 	[manager fetchRepositoryAtURL:url key:url.path];
 	XCTestExpectation *settled = [self expectationWithDescription:@"second failure settled"];
-	dispatch_async(dispatch_get_main_queue(), ^{ [settled fulfill]; });
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[settled fulfill];
+	});
 	[self waitForExpectations:@[ settled ] timeout:2];
 	XCTAssertEqual(manager.failureNotificationCount, (NSUInteger)1);
 	XCTAssertEqualObjects([[manager valueForKey:@"failureCounts"] objectForKey:url.path], @2);
@@ -966,8 +1085,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
 	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-cancelled-fetch" isDirectory:YES];
 	manager.testSnapshots = @[
-		@{ @"refs/remotes/origin/main" : @"old" },
-		@{ @"refs/remotes/origin/main" : @"new" },
+		@{@"refs/remotes/origin/main" : @"old"},
+		@{@"refs/remotes/origin/main" : @"new"},
 	];
 	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
 	manager.testTask.succeeds = YES;
@@ -1004,15 +1123,16 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		@selector(addNotificationRequest:withCompletionHandler:),
 		@selector(pb_feature_addNotificationRequest:completionHandler:));
 	@try {
-		NSError *error = [NSError errorWithDomain:@"test" code:4 userInfo:@{ NSLocalizedFailureReasonErrorKey : @"Offline" }];
+		NSError *error = [NSError errorWithDomain:@"test" code:4 userInfo:@{NSLocalizedFailureReasonErrorKey : @"Offline"}];
 		[manager postFailureNotificationForURL:url error:error];
 		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.body containsString:@"Offline"]);
 		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"kind"], @"failure");
 
-		[manager postAdvanceNotificationForURL:url advances:@[
-			@{ @"ref" : @"refs/remotes/origin/main", @"sha" : @"a", @"count" : @1, @"timestamp" : @1 },
-			@{ @"ref" : @"refs/remotes/origin/next", @"sha" : @"b", @"count" : @2, @"timestamp" : @2 },
-		]];
+		[manager postAdvanceNotificationForURL:url
+									  advances:@[
+										  @{@"ref" : @"refs/remotes/origin/main", @"sha" : @"a", @"count" : @1, @"timestamp" : @1},
+										  @{@"ref" : @"refs/remotes/origin/next", @"sha" : @"b", @"count" : @2, @"timestamp" : @2},
+									  ]];
 		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.title containsString:@"3 new commits"]);
 		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"sha"], @"b");
 		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"multipleBranches"], @YES);
@@ -1029,8 +1149,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
 	__block UNNotificationPresentationOptions options = 0;
 	[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
-			  willPresentNotification:(UNNotification *)nil
-				 withCompletionHandler:^(UNNotificationPresentationOptions value) { options = value; }];
+			willPresentNotification:(UNNotification *)nil
+			  withCompletionHandler:^(UNNotificationPresentationOptions value) {
+				  options = value;
+			  }];
 	XCTAssertTrue((options & UNNotificationPresentationOptionBanner) != 0);
 	XCTAssertTrue((options & UNNotificationPresentationOptionSound) != 0);
 }
@@ -1049,8 +1171,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	controller.testRecentURLs = @[ recent, [NSURL URLWithString:@"https://example.com/not-local"] ];
 	PBAutoFetchDocumentController = controller;
 	PBFeatureSwapClassMethods(NSDocumentController.class,
-		@selector(sharedDocumentController),
-		@selector(pb_feature_sharedDocumentController));
+							  @selector(sharedDocumentController),
+							  @selector(pb_feature_sharedDocumentController));
 	@try {
 		[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeActiveRepository];
 		XCTAssertEqualObjects([manager candidateRepositoryURLs].allValues, @[ repository.testWorkingDirectoryURL ]);
@@ -1064,8 +1186,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		XCTAssertEqualObjects(candidates[recent.path], recent);
 	} @finally {
 		PBFeatureSwapClassMethods(NSDocumentController.class,
-			@selector(sharedDocumentController),
-			@selector(pb_feature_sharedDocumentController));
+								  @selector(sharedDocumentController),
+								  @selector(pb_feature_sharedDocumentController));
 		PBAutoFetchDocumentController = nil;
 	}
 }
@@ -1081,8 +1203,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	controller.testDocuments = @[ [[NSDocument alloc] init], document ];
 	PBAutoFetchDocumentController = controller;
 	PBFeatureSwapClassMethods(NSDocumentController.class,
-		@selector(sharedDocumentController),
-		@selector(pb_feature_sharedDocumentController));
+							  @selector(sharedDocumentController),
+							  @selector(pb_feature_sharedDocumentController));
 	@try {
 		NSURL *equivalent = [NSURL fileURLWithPath:@"/tmp/gitx-refresh/repository" isDirectory:YES];
 		XCTAssertEqual([manager openDocumentForRepositoryURL:equivalent], document);
@@ -1092,8 +1214,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		XCTAssertNil([manager openDocumentForRepositoryURL:[NSURL fileURLWithPath:@"/tmp/missing"]]);
 	} @finally {
 		PBFeatureSwapClassMethods(NSDocumentController.class,
-			@selector(sharedDocumentController),
-			@selector(pb_feature_sharedDocumentController));
+								  @selector(sharedDocumentController),
+								  @selector(pb_feature_sharedDocumentController));
 		PBAutoFetchDocumentController = nil;
 	}
 }
@@ -1102,7 +1224,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 {
 	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
 	XCTAssertFalse([manager isAncestor:@"missing-old"
-									 of:@"missing-new"
+									of:@"missing-new"
 						 repositoryURL:[NSURL fileURLWithPath:NSTemporaryDirectory()]]);
 }
 
@@ -1123,8 +1245,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	controller.testDocumentToOpen = document;
 	PBAutoFetchDocumentController = controller;
 	PBFeatureSwapClassMethods(NSDocumentController.class,
-		@selector(sharedDocumentController),
-		@selector(pb_feature_sharedDocumentController));
+							  @selector(sharedDocumentController),
+							  @selector(pb_feature_sharedDocumentController));
 	@try {
 		PBAutoFetchNotificationSpy *notification = class_createInstance(PBAutoFetchNotificationSpy.class, 0);
 		PBAutoFetchNotificationResponseSpy *response = class_createInstance(PBAutoFetchNotificationResponseSpy.class, 0);
@@ -1135,17 +1257,23 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		notification.testRequest = [UNNotificationRequest requestWithIdentifier:@"empty" content:emptyContent trigger:nil];
 		[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
 			didReceiveNotificationResponse:response
-					 withCompletionHandler:^{ completionCount++; }];
+					 withCompletionHandler:^{
+						 completionCount++;
+					 }];
 		XCTAssertEqual(completionCount, (NSUInteger)1);
 
 		UNMutableNotificationContent *multipleContent = [[UNMutableNotificationContent alloc] init];
-		multipleContent.userInfo = @{ @"repository" : repositoryURL.path, @"multipleBranches" : @YES };
+		multipleContent.userInfo = @{@"repository" : repositoryURL.path, @"multipleBranches" : @YES};
 		notification.testRequest = [UNNotificationRequest requestWithIdentifier:@"multiple" content:multipleContent trigger:nil];
 		[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
 			didReceiveNotificationResponse:response
-					 withCompletionHandler:^{ completionCount++; }];
+					 withCompletionHandler:^{
+						 completionCount++;
+					 }];
 		XCTestExpectation *opened = [self expectationWithDescription:@"notification opened repository"];
-		dispatch_async(dispatch_get_main_queue(), ^{ [opened fulfill]; });
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[opened fulfill];
+		});
 		[self waitForExpectations:@[ opened ] timeout:2];
 		XCTAssertEqual(windowController.showHistoryCount, (NSUInteger)1);
 		XCTAssertEqual(repository.testBranchFilter, kGitXAllBranchesFilter);
@@ -1162,17 +1290,21 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		notification.testRequest = [UNNotificationRequest requestWithIdentifier:@"branch" content:branchContent trigger:nil];
 		[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
 			didReceiveNotificationResponse:response
-					 withCompletionHandler:^{ completionCount++; }];
+					 withCompletionHandler:^{
+						 completionCount++;
+					 }];
 		XCTestExpectation *focused = [self expectationWithDescription:@"notification focused repository"];
-		dispatch_async(dispatch_get_main_queue(), ^{ [focused fulfill]; });
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[focused fulfill];
+		});
 		[self waitForExpectations:@[ focused, historyController.selectionExpectation ] timeout:2];
 		XCTAssertEqual(windowController.showHistoryCount, (NSUInteger)2);
 		XCTAssertEqual(repository.testBranchFilter, kGitXSelectedBranchFilter);
 		XCTAssertEqual(completionCount, (NSUInteger)3);
 	} @finally {
 		PBFeatureSwapClassMethods(NSDocumentController.class,
-			@selector(sharedDocumentController),
-			@selector(pb_feature_sharedDocumentController));
+								  @selector(sharedDocumentController),
+								  @selector(pb_feature_sharedDocumentController));
 		PBAutoFetchDocumentController = nil;
 	}
 }
@@ -1184,9 +1316,11 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	panel.response = NSModalResponseOK;
 	__block NSInteger response = NSModalResponseCancel;
 
-	[controller beginOpenPanel:panel forTypes:@[] completionHandler:^(NSInteger value) {
-		response = value;
-	}];
+	[controller beginOpenPanel:panel
+					  forTypes:@[]
+			 completionHandler:^(NSInteger value) {
+				 response = value;
+			 }];
 
 	XCTAssertTrue(panel.canChooseFiles);
 	XCTAssertTrue(panel.canChooseDirectories);
@@ -1212,7 +1346,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)testRepositoryDocumentControllerCreatesRepositoryInChosenFolder
 {
 	NSURL *folder = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]
-							 isDirectory:YES];
+							   isDirectory:YES];
 	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil]);
 	PBRepositoryOpenPanelSpy *panel = PBNewRepositoryOpenPanelSpy();
 	panel.response = NSModalResponseOK;

@@ -10,6 +10,7 @@ private let autoFetchRetryMaximumInterval: TimeInterval = 15 * 60
 /// Coordinates unattended remote refreshes for the repositories selected by
 /// the global auto-fetch preference. Failures retry with bounded exponential
 /// backoff independently for each repository.
+// swift6-safety-justification: NSLock protects generation/tasks; AppKit state stays on MainActor.
 @objc(PBAutoFetchManager)
 nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
     private static let singleton = PBAutoFetchManager()
