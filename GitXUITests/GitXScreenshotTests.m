@@ -749,13 +749,9 @@
 	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
 	[self selectHistoryForCurrentBranch];
 
-	XCUIElement *viewRemoteGroup =
-		[self.app.toolbars.groups containingType:XCUIElementTypeStaticText
-									  identifier:@"View Remote"]
-			.firstMatch;
-	XCTAssertTrue([viewRemoteGroup waitForExistenceWithTimeout:30],
-				  @"The repository toolbar should expose the View Remote item");
-	XCUIElement *viewRemote = viewRemoteGroup.menuButtons.firstMatch;
+	// NSMenuToolbarItem exposes its split control as a nested group on macOS 26+
+	// rather than publishing its toolbar label as an accessibility element.
+	XCUIElement *viewRemote = self.app.toolbars.groups.groups.menuButtons.firstMatch;
 	XCTAssertTrue([viewRemote waitForExistenceWithTimeout:10],
 				  @"The repository toolbar should expose the View Remote pull-down");
 	[viewRemote click];
