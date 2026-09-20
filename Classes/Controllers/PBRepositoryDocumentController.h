@@ -8,5 +8,9 @@
 
 #import <Cocoa/Cocoa.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBRepositoryDocumentController : NSDocumentController
 @end
+
+NS_ASSUME_NONNULL_END

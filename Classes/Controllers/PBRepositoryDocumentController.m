@@ -14,6 +14,12 @@
 #import <ObjectiveGit/GTRepository.h>
 
 @implementation PBRepositoryDocumentController
+
++ (NSOpenPanel *)newOpenPanel
+{
+	return [NSOpenPanel openPanel];
+}
+
 // This method is overridden to configure the open panel to only allow
 // selection of directories
 - (void)beginOpenPanel:(NSOpenPanel *)openPanel forTypes:(NSArray<NSString *> *)inTypes completionHandler:(void (^)(NSInteger))completionHandler
@@ -29,7 +35,7 @@
 
 - (id)makeUntitledDocumentOfType:(NSString *)typeName error:(NSError *__autoreleasing *)outError
 {
-	NSOpenPanel *op = [NSOpenPanel openPanel];
+	NSOpenPanel *op = [[self class] newOpenPanel];
 
 	[op setCanChooseFiles:NO];
 	[op setCanChooseDirectories:YES];

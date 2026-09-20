@@ -11,6 +11,8 @@
 #import "PBMacros.h"
 #import "PBGitRepository.h"
 #import "PBGitRepositoryDocument.h"
+#import "PBRepositoryDocumentController.h"
+#import "PBGitBinary.h"
 #import "PBGitWindowControllerCompatibility.h"
 #import "PBHistoryArrayController.h"
 #import "PBHighlighting.h"
@@ -24,6 +26,85 @@
 #import "PBSourceViewBadge.h"
 
 static NSUInteger PBAutoFetchAuthorizationRequestCount;
+
+@interface PBRepositoryOpenPanelSpy : NSOpenPanel {
+	BOOL _testCanChooseFiles;
+	BOOL _testCanChooseDirectories;
+	BOOL _testAllowsMultipleSelection;
+	NSArray<NSString *> *_testAllowedFileTypes;
+	NSString *_testMessage;
+	NSString *_testTitle;
+}
+
+@property (nonatomic) NSModalResponse response;
+@property (nullable, nonatomic) NSURL *selectedURL;
+
+@end
+
+
+@implementation PBRepositoryOpenPanelSpy
+
+- (BOOL)canChooseFiles { return _testCanChooseFiles; }
+- (void)setCanChooseFiles:(BOOL)value { _testCanChooseFiles = value; }
+- (BOOL)canChooseDirectories { return _testCanChooseDirectories; }
+- (void)setCanChooseDirectories:(BOOL)value { _testCanChooseDirectories = value; }
+- (BOOL)allowsMultipleSelection { return _testAllowsMultipleSelection; }
+- (void)setAllowsMultipleSelection:(BOOL)value { _testAllowsMultipleSelection = value; }
+- (NSArray<NSString *> *)allowedFileTypes { return _testAllowedFileTypes; }
+- (void)setAllowedFileTypes:(NSArray<NSString *> *)value { _testAllowedFileTypes = [value copy]; }
+- (NSString *)message { return _testMessage; }
+- (void)setMessage:(NSString *)value { _testMessage = [value copy]; }
+- (NSString *)title { return _testTitle; }
+- (void)setTitle:(NSString *)value { _testTitle = [value copy]; }
+
+- (NSModalResponse)runModal
+{
+	return self.response;
+}
+
+- (NSURL *)URL
+{
+	return self.selectedURL;
+}
+
+@end
+
+static PBRepositoryOpenPanelSpy *PBNewRepositoryOpenPanelSpy(void)
+{
+	return class_createInstance(PBRepositoryOpenPanelSpy.class, 0);
+}
+
+static PBRepositoryDocumentController *PBNewRepositoryDocumentController(Class controllerClass)
+{
+	return class_createInstance(controllerClass, 0);
+}
+
+
+@interface PBRepositoryDocumentController (GitXFeatureTests)
++ (NSOpenPanel *)newOpenPanel;
+@end
+
+
+@interface PBRepositoryDocumentControllerSpy : PBRepositoryDocumentController
++ (void)setTestOpenPanel:(PBRepositoryOpenPanelSpy *)panel;
+@end
+
+
+@implementation PBRepositoryDocumentControllerSpy
+
+static PBRepositoryOpenPanelSpy *PBRepositoryTestOpenPanel;
+
++ (void)setTestOpenPanel:(PBRepositoryOpenPanelSpy *)panel
+{
+	PBRepositoryTestOpenPanel = panel;
+}
+
++ (NSOpenPanel *)newOpenPanel
+{
+	return PBRepositoryTestOpenPanel;
+}
+
+@end
 
 static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacement)
 {
@@ -506,6 +587,84 @@ static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacemen
 			@selector(requestAuthorizationWithOptions:completionHandler:),
 			@selector(pb_feature_requestAuthorizationWithOptions:completionHandler:));
 	}
+}
+
+- (void)testRepositoryDocumentControllerConfiguresAndCompletesTheOpenPanel
+{
+	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentController.class);
+	PBRepositoryOpenPanelSpy *panel = PBNewRepositoryOpenPanelSpy();
+	panel.response = NSModalResponseOK;
+	__block NSInteger response = NSModalResponseCancel;
+
+	[controller beginOpenPanel:panel forTypes:@[] completionHandler:^(NSInteger value) {
+		response = value;
+	}];
+
+	XCTAssertTrue(panel.canChooseFiles);
+	XCTAssertTrue(panel.canChooseDirectories);
+	XCTAssertEqualObjects(panel.allowedFileTypes, (@[ @"git" ]));
+	XCTAssertEqual(response, NSModalResponseOK);
+}
+
+- (void)testRepositoryDocumentControllerReportsCancelledRepositoryCreation
+{
+	PBRepositoryOpenPanelSpy *panel = PBNewRepositoryOpenPanelSpy();
+	panel.response = NSModalResponseCancel;
+	[PBRepositoryDocumentControllerSpy setTestOpenPanel:panel];
+	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentControllerSpy.class);
+	NSError *error = nil;
+
+	NSDocument *document = [controller makeUntitledDocumentOfType:PBGitRepositoryDocumentType error:&error];
+
+	XCTAssertNil(document);
+	XCTAssertEqualObjects(error.domain, NSCocoaErrorDomain);
+	XCTAssertEqual(error.code, NSUserCancelledError);
+}
+
+- (void)testRepositoryDocumentControllerCreatesRepositoryInChosenFolder
+{
+	NSURL *folder = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]
+							 isDirectory:YES];
+	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil]);
+	PBRepositoryOpenPanelSpy *panel = PBNewRepositoryOpenPanelSpy();
+	panel.response = NSModalResponseOK;
+	panel.selectedURL = folder;
+	[PBRepositoryDocumentControllerSpy setTestOpenPanel:panel];
+	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentControllerSpy.class);
+	NSError *error = nil;
+
+	NSDocument *document = [controller makeUntitledDocumentOfType:PBGitRepositoryDocumentType error:&error];
+
+	XCTAssertNotNil(document);
+	XCTAssertNil(error);
+	XCTAssertTrue([[NSFileManager defaultManager] fileExistsAtPath:[folder.path stringByAppendingPathComponent:@".git"]]);
+	[document close];
+	[[NSFileManager defaultManager] removeItemAtURL:folder error:nil];
+}
+
+- (void)testRepositoryDocumentControllerReportsRepositoryCreationFailure
+{
+	PBRepositoryOpenPanelSpy *panel = PBNewRepositoryOpenPanelSpy();
+	panel.response = NSModalResponseOK;
+	panel.selectedURL = [NSURL fileURLWithPath:@"/dev/null/not-a-directory" isDirectory:YES];
+	[PBRepositoryDocumentControllerSpy setTestOpenPanel:panel];
+	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentControllerSpy.class);
+	NSError *error = nil;
+
+	NSDocument *document = [controller makeUntitledDocumentOfType:PBGitRepositoryDocumentType error:&error];
+
+	XCTAssertNil(document);
+	XCTAssertNotNil(error);
+}
+
+- (void)testRepositoryDocumentControllerValidatesNewAndUnrelatedMenuItems
+{
+	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentController.class);
+	NSMenuItem *newItem = [[NSMenuItem alloc] initWithTitle:@"New" action:@selector(newDocument:) keyEquivalent:@""];
+	NSMenuItem *otherItem = [[NSMenuItem alloc] initWithTitle:@"Other" action:@selector(copy:) keyEquivalent:@""];
+
+	XCTAssertEqual([controller validateMenuItem:newItem], [PBGitBinary path] != nil);
+	XCTAssertTrue([controller validateMenuItem:otherItem]);
 }
 
 - (void)testJumpToCheckedOutBranchReloadsAndReadsHead
