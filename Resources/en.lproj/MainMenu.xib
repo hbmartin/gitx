@@ -7,6 +7,7 @@
     <objects>
         <customObject id="-2" userLabel="File's Owner" customClass="ApplicationController"/>
         <customObject id="-1" userLabel="First Responder" customClass="FirstResponder"/>
+        <customObject id="PBRepositoryDocumentController" userLabel="Repository Document Controller" customClass="PBRepositoryDocumentController"/>
         <customObject id="-3" userLabel="Application" customClass="NSObject">
             <connections>
                 <outlet property="delegate" destination="205" id="2IS-vA-KKo"/>

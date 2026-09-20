@@ -123,9 +123,14 @@
 {
 	NSMutableArray<NSURL *> *URLs = [NSMutableArray arrayWithCapacity:filenames.count];
 	for (NSString *filename in filenames) [URLs addObject:[NSURL fileURLWithPath:filename]];
+	PBRepositoryDocumentController *documentController = (PBRepositoryDocumentController *)[PBRepositoryDocumentController sharedDocumentController];
+	if ([documentController isKindOfClass:PBRepositoryDocumentController.class])
+		[documentController beginExplicitLaunchOpen];
 	[[PBRepositoryOpenCoordinator shared] openURLs:URLs
 									  sourceWindow:NSApp.keyWindow
 										completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+											if ([documentController isKindOfClass:PBRepositoryDocumentController.class])
+												[documentController finishExplicitLaunchOpen];
 											if (errors.count > 0) {
 												BOOL isUnitTestHost = [NSProcessInfo.processInfo.environment objectForKey:@"XCTestConfigurationFilePath"] != nil;
 												for (NSError *error in errors) {

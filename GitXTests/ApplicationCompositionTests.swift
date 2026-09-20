@@ -85,6 +85,49 @@ final class ApplicationCompositionTests: XCTestCase {
         )
     }
 
+    func testRepositoryDocumentOpenStateBalancesNestedRequestsAndRecordsSuccess() {
+        let state = PBRepositoryDocumentOpenStateModel()
+        let repositoryURL = URL(fileURLWithPath: "/tmp/gitx-open-state")
+
+        state.beginOpen()
+        state.beginOpen()
+        XCTAssertTrue(state.hasPendingOpens)
+
+        state.finishOpen(withSuccessfulURL: repositoryURL)
+        XCTAssertTrue(state.hasPendingOpens)
+
+        state.finishOpen(withSuccessfulURL: nil)
+        XCTAssertFalse(state.hasPendingOpens)
+    }
+
+    func testRepositoryDocumentOpenStateSealsSuccessfulExplicitLaunchBeforeFinalSettlement() {
+        let state = PBRepositoryDocumentOpenStateModel()
+
+        state.beginExplicitLaunchOpen()
+        state.beginOpen()
+        state.finishOpen(withSuccessfulURL: URL(fileURLWithPath: "/tmp/gitx-explicit-open"))
+
+        XCTAssertTrue(state.explicitLaunchOpenSucceeded)
+        XCTAssertTrue(state.hasPendingExplicitLaunchOpens)
+        XCTAssertTrue(state.hasPendingOpens)
+
+        state.finishExplicitLaunchOpen()
+        XCTAssertFalse(state.hasPendingExplicitLaunchOpens)
+        XCTAssertFalse(state.hasPendingOpens)
+    }
+
+    func testRepositoryDocumentOpenStateLeavesFailedExplicitLaunchEligibleForRecovery() {
+        let state = PBRepositoryDocumentOpenStateModel()
+
+        state.beginExplicitLaunchOpen()
+        state.beginOpen()
+        state.finishOpen(withSuccessfulURL: nil)
+        state.finishExplicitLaunchOpen()
+
+        XCTAssertFalse(state.explicitLaunchOpenSucceeded)
+        XCTAssertFalse(state.hasPendingOpens)
+    }
+
     func testApplicationSettingsAndLegacyDefaultsUseInjectedPreferences() {
         PBApplicationSettings.diffContextLines = 99
         XCTAssertEqual(defaults.integer(forKey: "PBDiffContextLines"), 20)

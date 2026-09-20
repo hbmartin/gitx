@@ -241,17 +241,6 @@ final class RepositoryOpenCoordinator: NSObject {
     private let classifier: RepositoryOpeningClassifier
     private let creationPrompter: RepositoryCreationPrompting
     private let repositoryInitializer: (URL) -> Result<Void, NSError>
-    private var pendingOpenCount = 0
-
-    /// Whether a repository open is under way. Opening is asynchronous and the
-    /// document only registers at the end, so `NSDocumentController.documents`
-    /// stays empty in the meantime. Anything that treats an empty document list
-    /// as "no repository" — the Welcome window above all — has to consult this
-    /// too, or it will act during the gap.
-    @objc var hasPendingOpens: Bool {
-        pendingOpenCount > 0
-    }
-
     override convenience init() {
         self.init(
             classifier: RepositoryOpeningClassifier(),
@@ -327,37 +316,28 @@ final class RepositoryOpenCoordinator: NSObject {
         var errors: [NSError] = []
         var tabTarget = eligibleRepositoryWindow(preferred: sourceWindow)
 
-        pendingOpenCount += 1
+        let documentController = NSDocumentController.shared
+        let repositoryDocumentController = documentController as? PBRepositoryDocumentController
+        repositoryDocumentController?.beginCoordinatedOpen()
         var hasSettled = false
-        let completion: ([NSDocument], [NSError]) -> Void = { [weak self] finished, failures in
+        let completion: ([NSDocument], [NSError]) -> Void = { finished, failures in
             // Every exit from this operation runs through here, including the
             // failure paths, so the count cannot leak and strand the Welcome
             // window permanently suppressed.
             if !hasSettled {
                 hasSettled = true
-                self?.pendingOpenCount -= 1
+                repositoryDocumentController?.finishCoordinatedOpen()
             }
             originalCompletion(finished, failures)
         }
 
         func openRepository(at url: URL, then continueOpening: @escaping () -> Void) {
-            if let existing = existingDocument(for: url) {
-                existing.showWindows()
-                existing.windowControllers.first?.window?.makeKeyAndOrderFront(self)
-                documents.append(existing)
-                RecentRepositoryStore.shared.record(url)
-                logger.info("Focused an already-open repository")
-                continueOpening()
-                return
-            }
-
-            NSDocumentController.shared.openDocument(
+            documentController.openDocument(
                 withContentsOf: url,
                 display: true
             ) { document, _, error in
                 if let document {
                     documents.append(document)
-                    RecentRepositoryStore.shared.record(url)
                     if let newWindow = document.windowControllers.first?.window {
                         if self.shouldUseTab(disposition), let tabTarget, tabTarget != newWindow {
                             tabTarget.addTabbedWindow(newWindow, ordered: .above)
@@ -372,7 +352,6 @@ final class RepositoryOpenCoordinator: NSObject {
                             tabTarget = newWindow
                         }
                     }
-                    WelcomeWindowController.closeIfShown()
                 } else if let error {
                     errors.append(error as NSError)
                     self.logger.error("Failed to open repository: \(error.localizedDescription, privacy: .public)")
@@ -470,12 +449,6 @@ final class RepositoryOpenCoordinator: NSObject {
         }
         return NSApp.windows.first { $0.windowController is PBGitWindowController && $0.isVisible }
     }
-
-    private func existingDocument(for url: URL) -> NSDocument? {
-        NSDocumentController.shared.documents.first {
-            $0.fileURL?.standardizedFileURL == url.standardizedFileURL
-        }
-    }
 }
 
 /// Decides whether GitX may present the Welcome window on its own initiative.
@@ -566,7 +539,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
     @objc func showIfNeeded() {
         guard WelcomePresentationPolicy.shouldPresent(
             openDocumentCount: NSDocumentController.shared.documents.count,
-            hasPendingOpens: RepositoryOpenCoordinator.shared.hasPendingOpens,
+            hasPendingOpens: (PBRepositoryDocumentController.shared as? PBRepositoryDocumentController)?.hasPendingOpens ?? false,
             environment: ProcessInfo.processInfo.environment
         ) else { return }
         show()
@@ -769,6 +742,7 @@ final class WindowSessionCoordinator: NSObject {
     private static let snapshotKey = "PBWindowSessionSnapshot"
     private static let cleanShutdownKey = "PBWindowSessionCleanShutdown"
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "WindowSession")
+    private var launchOpenObserver: NSObjectProtocol?
 
     @objc func applicationDidFinishLaunching() {
         let defaults = UserDefaults.standard
@@ -776,6 +750,52 @@ final class WindowSessionCoordinator: NSObject {
         defaults.set(false, forKey: Self.cleanShutdownKey)
         guard ProcessInfo.processInfo.environment["GITX_UITEST_REPO"] == nil else { return }
         guard NSDocumentController.shared.documents.isEmpty else { return }
+        guard let documentController = NSDocumentController.shared as? PBRepositoryDocumentController else {
+            evaluateLaunchPresentation(previousRunWasClean: previousRunWasClean, documentController: nil)
+            return
+        }
+        guard documentController.hasPendingExplicitLaunchOpens else {
+            evaluateLaunchPresentation(
+                previousRunWasClean: previousRunWasClean,
+                documentController: documentController
+            )
+            return
+        }
+
+        if let launchOpenObserver {
+            NotificationCenter.default.removeObserver(launchOpenObserver)
+        }
+        logger.info("Deferring window-session restoration until explicit launch opens settle")
+        launchOpenObserver = NotificationCenter.default.addObserver(
+            forName: PBRepositoryDocumentController.opensDidSettleNotification,
+            object: documentController,
+            queue: .main
+        ) { [weak self, weak documentController] _ in
+            Task { @MainActor in
+                guard let self, let documentController,
+                      !documentController.hasPendingExplicitLaunchOpens
+                else { return }
+                if let launchOpenObserver = self.launchOpenObserver {
+                    NotificationCenter.default.removeObserver(launchOpenObserver)
+                    self.launchOpenObserver = nil
+                }
+                self.evaluateLaunchPresentation(
+                    previousRunWasClean: previousRunWasClean,
+                    documentController: documentController
+                )
+            }
+        }
+    }
+
+    private func evaluateLaunchPresentation(
+        previousRunWasClean: Bool,
+        documentController: PBRepositoryDocumentController?
+    ) {
+        if documentController?.hasSuccessfulExplicitLaunchOpen == true {
+            WelcomeWindowController.closeIfShown()
+            logger.info("Suppressing previous-session restoration after a successful explicit launch open")
+            return
+        }
 
         if !previousRunWasClean, !snapshot().isEmpty {
             WelcomeWindowController.shared.show()

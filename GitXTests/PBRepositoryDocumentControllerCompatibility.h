@@ -2,6 +2,17 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBRepositoryDocumentOpenStateModel : NSObject
+@property (nonatomic, readonly) NSInteger pendingOpenCount;
+@property (nonatomic, readonly) BOOL hasPendingOpens;
+@property (nonatomic, readonly) BOOL hasPendingExplicitLaunchOpens;
+@property (nonatomic, readonly) BOOL explicitLaunchOpenSucceeded;
+- (void)beginOpen;
+- (void)beginExplicitLaunchOpen;
+- (void)finishOpenWithSuccessfulURL:(nullable NSURL *)successfulURL;
+- (void)finishExplicitLaunchOpen;
+@end
+
 /// Narrow test-only mirror of GitX-Swift.h's PBRepositoryDocumentController interface.
 /// App-hosted Objective-C tests cannot directly import the app target's generated header.
 @interface PBRepositoryDocumentController : NSDocumentController
