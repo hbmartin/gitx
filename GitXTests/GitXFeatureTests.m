@@ -897,7 +897,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
 	NSString *repositoryKey = @"/tmp/gitx-auto-fetch-reset";
 	[manager setValue:[@{repositoryKey : [NSDate dateWithTimeIntervalSinceNow:600]} mutableCopy]
-			  forKey:@"nextFetchDates"];
+			   forKey:@"nextFetchDates"];
 	[manager setValue:[@{repositoryKey : @3} mutableCopy] forKey:@"failureCounts"];
 
 	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeNone];
@@ -927,7 +927,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[PBGitDefaults setAutoFetchIntervalMinutes:5];
 	[manager setValue:[@{repository.path : @4} mutableCopy] forKey:@"failureCounts"];
 	[manager setValue:[@{repository.path : [NSDate dateWithTimeIntervalSinceNow:900]} mutableCopy]
-			  forKey:@"nextFetchDates"];
+			   forKey:@"nextFetchDates"];
 	NSDate *recordedAt = [NSDate date];
 
 	// A manual fetch counts as a success: it clears recorded failures so the next
