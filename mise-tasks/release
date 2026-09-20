@@ -7,6 +7,9 @@ task_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$task_dir/.." && pwd)
 cd "$root"
 
+developer_dir=$(python3 scripts/verification_support.py developer-dir) || exit $?
+export DEVELOPER_DIR="$developer_dir"
+
 log()
 {
 	printf '[gitx-release] %s %s\n' "$(date '+%H:%M:%S')" "$*"

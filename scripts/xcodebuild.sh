@@ -205,8 +205,15 @@ if [[ -z "${signing_mode:-}" ]]; then
 fi
 
 preset=$command
-if [[ -n "${command_arguments[0]:-}" ]]; then
-	preset="$preset:${command_arguments[0]}"
+if [[ "$command" == "test" ]]; then
+	case "${command_arguments[0]:-}" in
+		correctness|ui|address-undefined|thread-sanitizer|performance|core|forgekit)
+			preset="test:${command_arguments[0]}"
+			;;
+		-testPlan)
+			preset="test:${command_arguments[1]:-unknown}"
+			;;
+	esac
 fi
 coverage_gate=not-applicable
 if [[ "$command" == "test" ]]; then
@@ -315,7 +322,7 @@ esac
 
 doctor_log="$logs/doctor.log"
 started=$(python3 -c 'import time; print(time.time())')
-"$root/scripts/doctor.sh" --mode "$doctor_mode" --developer-dir "$developer_dir" 2>&1 | tee "$doctor_log"
+"$root/scripts/doctor.sh" --mode "$doctor_mode" --developer-dir "$developer_dir" --destination "$destination" 2>&1 | tee "$doctor_log"
 doctor_status=${PIPESTATUS[0]}
 duration=$(elapsed_seconds "$started")
 if (( doctor_status == 0 )); then
@@ -324,7 +331,7 @@ else
 	doctor_result=blocked
 	overall_status=blocked
 fi
-record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode"
+record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --destination "$destination"
 (( doctor_status == 0 )) || exit "$doctor_status"
 
 workspace=$(config workspace)

@@ -197,9 +197,48 @@ def atomic_json(path: pathlib.Path, payload: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
-def doctor_checks(mode: str, developer_dir: pathlib.Path | None = None) -> tuple[list[dict[str, str]], pathlib.Path | None]:
+def destination_components(specification: str) -> dict[str, str]:
+    """Return the destination fields that xcodebuild must satisfy."""
+    normalized = specification.removeprefix("generic/")
+    result: dict[str, str] = {}
+    for component in normalized.split(","):
+        key, separator, value = component.partition("=")
+        if separator and key.strip() and value.strip():
+            result[key.strip().lower()] = value.strip()
+    return result
+
+
+def available_destinations(output: str) -> list[dict[str, str]]:
+    destinations: list[dict[str, str]] = []
+    for body in re.findall(r"\{([^{}]+)\}", output):
+        destination: dict[str, str] = {}
+        for component in body.split(","):
+            key, separator, value = component.partition(":")
+            if separator and key.strip() and value.strip():
+                destination[key.strip().lower()] = value.strip()
+        if destination:
+            destinations.append(destination)
+    return destinations
+
+
+def destination_is_available(specification: str, output: str) -> bool:
+    requested = destination_components(specification)
+    if not requested:
+        return False
+    return any(
+        all(candidate.get(key) == value for key, value in requested.items())
+        for candidate in available_destinations(output)
+    )
+
+
+def doctor_checks(
+    mode: str,
+    developer_dir: pathlib.Path | None = None,
+    destination: str | None = None,
+) -> tuple[list[dict[str, str]], pathlib.Path | None]:
     config = load_config()
     checks: list[dict[str, str]] = []
+    requested_destination = destination or config["destination"]
 
     def add(name: str, status: str, detail: str) -> None:
         checks.append({"name": name, "status": status, "detail": detail})
@@ -270,7 +309,7 @@ def doctor_checks(mode: str, developer_dir: pathlib.Path | None = None) -> tuple
             pids = []
         add("ui-processes", "failed" if pids else "passed", f"running GitX pid(s): {', '.join(pids)}" if pids else "no competing GitX process")
 
-    if selected is not None and workspace.exists() and mode in {"test", "ui", "ci"}:
+    if selected is not None and workspace.exists():
         executable = selected / "usr/bin/xcodebuild"
         derived_data = ROOT / config["derivedDataCache"]
         package_cache = ROOT / config["sourcePackageCache"]
@@ -292,20 +331,36 @@ def doctor_checks(mode: str, developer_dir: pathlib.Path | None = None) -> tuple
                 timeout=90,
             )
             output = destinations.stdout + destinations.stderr
-            wanted = "platform:macOS" in output.replace(" ", "") or "platform: macOS" in output
+            wanted = destination_is_available(requested_destination, output)
             add(
                 "destination",
                 "passed" if destinations.returncode == 0 and wanted else "failed",
-                config["destination"] if destinations.returncode == 0 else (output.strip().splitlines()[-1] if output.strip() else "xcodebuild failed"),
+                requested_destination
+                if destinations.returncode == 0 and wanted
+                else (
+                    f"Requested destination is unavailable: {requested_destination}"
+                    if destinations.returncode == 0
+                    else (output.strip().splitlines()[-1] if output.strip() else "xcodebuild failed")
+                ),
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
+        except subprocess.TimeoutExpired as error:
+            add(
+                "destination",
+                "warning",
+                f"Discovery timed out for {requested_destination}; the requested xcodebuild operation remains authoritative ({error})",
+            )
+        except OSError as error:
             add("destination", "failed", str(error))
 
     return checks, selected
 
 
-def doctor_payload(mode: str, developer_dir: pathlib.Path | None = None) -> dict[str, Any]:
-    checks, selected = doctor_checks(mode, developer_dir)
+def doctor_payload(
+    mode: str,
+    developer_dir: pathlib.Path | None = None,
+    destination: str | None = None,
+) -> dict[str, Any]:
+    checks, selected = doctor_checks(mode, developer_dir, destination)
     failed = sum(check["status"] == "failed" for check in checks)
     warnings = sum(check["status"] == "warning" for check in checks)
     return {
@@ -313,6 +368,7 @@ def doctor_payload(mode: str, developer_dir: pathlib.Path | None = None) -> dict
         "mode": mode,
         "status": "failed" if failed else "passed",
         "developerDir": str(selected) if selected else None,
+        "destination": destination or load_config()["destination"],
         "summary": {"failed": failed, "warnings": warnings, "passed": len(checks) - failed - warnings},
         "checks": checks,
     }
@@ -322,6 +378,7 @@ def command_doctor(arguments: argparse.Namespace) -> int:
     payload = doctor_payload(
         arguments.mode,
         pathlib.Path(arguments.developer_dir) if arguments.developer_dir else None,
+        arguments.destination,
     )
     if arguments.format == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -433,9 +490,10 @@ def command_receipt_step(arguments: argparse.Namespace) -> int:
                 targets = json.loads(coverage_result.stdout).get("targets", [])
                 target = next((item for item in targets if item.get("name") == "GitX.app"), None)
                 if target is not None:
+                    line_coverage = target.get("lineCoverage")
                     coverage = {
                         "target": target["name"],
-                        "lineCoverage": float(target["lineCoverage"]),
+                        "lineCoverage": float(line_coverage) if line_coverage is not None else None,
                     }
         except (OSError, subprocess.TimeoutExpired, ValueError, json.JSONDecodeError):
             pass
@@ -551,6 +609,7 @@ def parser() -> argparse.ArgumentParser:
     doctor.add_argument("--mode", choices=("build", "test", "ui", "ci"), default="build")
     doctor.add_argument("--format", choices=("text", "json"), default="text")
     doctor.add_argument("--developer-dir")
+    doctor.add_argument("--destination")
     doctor.set_defaults(handler=command_doctor)
 
     config = subparsers.add_parser("config")

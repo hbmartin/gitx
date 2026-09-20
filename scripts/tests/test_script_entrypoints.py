@@ -105,6 +105,65 @@ class ScriptEntrypointTests(unittest.TestCase):
         mock.write_text(f"#!/bin/bash\nexit {exit_status}\n")
         mock.chmod(0o755)
 
+    def install_mock_peekaboo(self) -> pathlib.Path:
+        mock = self.bin / "peekaboo"
+        mock.write_text(
+            "#!/bin/bash\n"
+            "case \"${1:-} ${2:-}\" in\n"
+            "  'list windows')\n"
+            "    printf '%s\\n' '{\"success\":true,\"data\":{\"windows\":[{\"windowID\":7,\"index\":1,\"title\":\"Welcome\",\"isMainWindow\":false},{\"windowID\":42,\"index\":0,\"title\":\"fixture-repo (branch: main)\",\"isMainWindow\":true}]}}'\n"
+            "    ;;\n"
+            "  'image --pid')\n"
+            "    for ((index = 1; index <= $#; index++)); do\n"
+            "      if [[ \"${!index}\" == '--path' ]]; then next=$((index + 1)); output=${!next}; fi\n"
+            "    done\n"
+            "    [[ \"${PEEKABOO_IMAGE_FAIL:-0}\" == 1 ]] && exit 9\n"
+            "    printf 'png' >\"$output\"\n"
+            "    ;;\n"
+            "  'see --pid')\n"
+            "    for ((index = 1; index <= $#; index++)); do\n"
+            "      if [[ \"${!index}\" == '--path' ]]; then next=$((index + 1)); output=${!next}; fi\n"
+            "    done\n"
+            "    printf 'png' >\"$output\"\n"
+            "    printf '%s\\n' '{\"success\":true,\"data\":{\"elements\":[{\"role\":\"button\",\"label\":\"Commit\"}]}}'\n"
+            "    ;;\n"
+            "  'inspect-ui --app-target')\n"
+            "    printf '%s\\n' '{\"success\":true,\"data\":{\"role\":\"window\",\"children\":[{\"role\":\"button\",\"label\":\"Commit\"},{\"role\":\"button\",\"label\":\"Push\"}]}}'\n"
+            "    ;;\n"
+            "  *) exit 64 ;;\n"
+            "esac\n"
+        )
+        mock.chmod(0o755)
+        return mock
+
+    def create_live_run_app_session(self) -> tuple[subprocess.Popen[bytes], pathlib.Path]:
+        session_directory = self.root / "build" / "Logs" / "run-app"
+        session_directory.mkdir(parents=True)
+        repository = self.root / "fixture-repo"
+        repository.mkdir()
+        executable = self.root / "GitX"
+        executable.symlink_to("/bin/sleep")
+        process = subprocess.Popen([executable, "60"])
+        self.addCleanup(self._terminate_process, process)
+        start_time = subprocess.run(
+            ["ps", "-p", str(process.pid), "-o", "lstart="],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        (session_directory / "app.pid").write_text(f"{process.pid}\t{start_time}\n")
+        os_log = session_directory / "gitx-oslog.txt"
+        stdout = session_directory / "gitx-stdout.txt"
+        os_log.write_text("runtime error marker\n")
+        stdout.write_text("standard output marker\n")
+        (session_directory / "session.txt").write_text(
+            f"app_pid={process.pid}\n"
+            f"repository={repository}\n"
+            f"os_log={os_log}\n"
+            f"stdout={stdout}\n"
+        )
+        return process, session_directory
+
     def test_xcodebuild_wrapper_injects_the_documented_defaults(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
@@ -117,7 +176,12 @@ class ScriptEntrypointTests(unittest.TestCase):
             env=self.environment,
         )
 
-        arguments = captured.read_text().splitlines()
+        build_invocations = [
+            invocation
+            for invocation in captured.read_text().split("__INVOCATION__")
+            if invocation.strip() and "-showdestinations" not in invocation
+        ]
+        arguments = "\n".join(build_invocations).splitlines()
         self.assertIn("-workspace", arguments)
         self.assertIn("GitX.xcworkspace", arguments)
         self.assertIn("-scheme", arguments)
@@ -169,7 +233,12 @@ class ScriptEntrypointTests(unittest.TestCase):
             env=self.environment,
         )
 
-        arguments = captured.read_text().splitlines()
+        raw_invocation = next(
+            invocation
+            for invocation in captured.read_text().split("__INVOCATION__")
+            if invocation.strip() and "-showdestinations" not in invocation
+        )
+        arguments = raw_invocation.splitlines()
         self.assertIn("-scheme", arguments)
         self.assertIn("CUSTOM_TEXT=before -scheme after", arguments)
 
@@ -210,7 +279,12 @@ class ScriptEntrypointTests(unittest.TestCase):
                 env=self.environment,
             )
 
-        arguments = captured.read_text().splitlines()
+        build_invocations = [
+            invocation
+            for invocation in captured.read_text().split("__INVOCATION__")
+            if invocation.strip() and "-showdestinations" not in invocation
+        ]
+        arguments = "\n".join(build_invocations).splitlines()
         derived_paths = [
             arguments[index + 1]
             for index, argument in enumerate(arguments[:-1])
@@ -248,7 +322,12 @@ class ScriptEntrypointTests(unittest.TestCase):
             env=self.environment,
         )
 
-        arguments = captured.read_text().splitlines()
+        raw_invocation = next(
+            invocation
+            for invocation in captured.read_text().split("__INVOCATION__")
+            if invocation.strip() and "-showdestinations" not in invocation
+        )
+        arguments = raw_invocation.splitlines()
         self.assertNotIn("-workspace", arguments)
         self.assertEqual(arguments.count("-project"), 1)
         self.assertEqual(arguments.count("-scheme"), 1)
@@ -319,6 +398,24 @@ class ScriptEntrypointTests(unittest.TestCase):
             )
             self.assertEqual(self.receipt(run_id)["invocation"]["signingMode"], expected)
 
+    def test_xcodebuild_wrapper_never_copies_secrets_into_the_receipt_preset(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+
+        subprocess.run(
+            [script, "--raw", "--run-id", "redacted-preset", "build", "TOKEN=private-value"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+        receipt = self.receipt("redacted-preset")
+        serialized = json.dumps(receipt)
+
+        self.assertEqual(receipt["invocation"]["preset"], "build")
+        self.assertNotIn("private-value", serialized)
+        self.assertIn("TOKEN=<redacted>", serialized)
+
     def test_xcodebuild_wrapper_propagates_a_staging_copy_failure(self) -> None:
         script = self.install_script("xcodebuild.sh")
         self.install_mock_xcodebuild(self.root / "Products")
@@ -382,6 +479,92 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertIsNone(process.poll())
         self.assertFalse((session_directory / "app.pid").exists())
         self.assertIn("process identity cannot be verified", result.stderr)
+
+    def test_observe_app_logs_remain_available_after_the_app_exits(self) -> None:
+        script = self.install_script("observe_app.sh")
+        process, _ = self.create_live_run_app_session()
+        process.terminate()
+        process.wait(timeout=2)
+
+        result = subprocess.run(
+            [script, "logs", "error"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        self.assertIn("runtime error marker", result.stdout)
+        self.assertNotIn("standard output marker", result.stdout)
+
+    def test_observe_app_identifies_the_recorded_repository_window(self) -> None:
+        script = self.install_script("observe_app.sh")
+        self.install_mock_peekaboo()
+        process, _ = self.create_live_run_app_session()
+
+        result = subprocess.run(
+            [script, "id"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        self.assertIn(f"pid={process.pid}", result.stdout)
+        self.assertIn("window_id=42", result.stdout)
+        self.assertIn("window_title=fixture-repo (branch: main)", result.stdout)
+
+    def test_observe_app_rejects_a_session_with_a_mismatched_pid(self) -> None:
+        script = self.install_script("observe_app.sh")
+        self.install_mock_peekaboo()
+        _, session_directory = self.create_live_run_app_session()
+        session = session_directory / "session.txt"
+        session.write_text(session.read_text().replace("app_pid=", "app_pid=999"))
+
+        result = subprocess.run(
+            [script, "id"],
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("do not match", result.stderr)
+
+    def test_observe_app_removes_a_stale_image_when_capture_fails(self) -> None:
+        script = self.install_script("observe_app.sh")
+        self.install_mock_peekaboo()
+        _, session_directory = self.create_live_run_app_session()
+        output = session_directory / "capture.png"
+        output.write_text("stale")
+        environment = self.environment.copy()
+        environment["PEEKABOO_IMAGE_FAIL"] = "1"
+
+        result = subprocess.run(
+            [script, "image", output],
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(output.exists())
+
+    def test_observe_app_filters_the_accessibility_tree(self) -> None:
+        script = self.install_script("observe_app.sh")
+        self.install_mock_peekaboo()
+        self.create_live_run_app_session()
+
+        result = subprocess.run(
+            [script, "tree", "commit"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        self.assertIn("Commit", result.stdout)
+        self.assertNotIn("Push", result.stdout)
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[bytes]) -> None:

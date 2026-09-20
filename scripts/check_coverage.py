@@ -277,8 +277,10 @@ def improvements_payload(
 
 def write_json_atomic(path: pathlib.Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o644
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
+        os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, "w") as output:
             json.dump(payload, output, indent=2, sort_keys=True)
             output.write("\n")

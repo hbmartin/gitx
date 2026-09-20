@@ -277,6 +277,19 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(first["sharedFailures"][0]["fingerprint"], second["sharedFailures"][0]["fingerprint"])
         self.assertEqual(first["sharedFailures"][0]["tests"], ["S/testOne()", "S/testTwo()"])
 
+    def test_grouped_json_show_all_expands_shared_failures(self) -> None:
+        failures = [
+            reporter.Failure("GitXUITests", "S/testOne()", None, None, "runner disconnected"),
+            reporter.Failure("GitXUITests", "S/testTwo()", None, None, "runner disconnected"),
+        ]
+
+        payload = reporter.grouped_payload(failures, show_all=True)
+
+        self.assertEqual(payload["sharedFailures"], [])
+        self.assertEqual(payload["summary"]["sharedFailureGroups"], 0)
+        self.assertEqual(payload["summary"]["collapsedOccurrences"], 0)
+        self.assertEqual(len(payload["failures"]), 2)
+
 
 class ParseArgumentsTests(unittest.TestCase):
     def reject(self, *arguments: str) -> None:

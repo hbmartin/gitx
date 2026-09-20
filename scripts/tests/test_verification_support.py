@@ -112,6 +112,36 @@ class ReceiptTests(unittest.TestCase):
         self.assertIsNone(step["testCounts"])
         self.assertIsNone(step["coverage"])
 
+    def test_receipt_step_preserves_missing_target_coverage_as_null(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            receipt = root / "receipt.json"
+            result = root / "result.xcresult"
+            result.mkdir()
+            receipt.write_text('{"steps": [], "artifacts": []}')
+            arguments = argparse.Namespace(
+                path=receipt,
+                name="correctness",
+                status="passed",
+                exit_code=0,
+                duration=2.5,
+                command=["xcodebuild", "test"],
+                log=None,
+                xcresult=str(result),
+            )
+            summary = subprocess.CompletedProcess(
+                [], 0, stdout='{"totalTestCount": 1, "passedTests": 1}', stderr=""
+            )
+            coverage = subprocess.CompletedProcess(
+                [], 0, stdout='{"targets": [{"name": "GitX.app"}]}', stderr=""
+            )
+
+            with mock.patch.object(verification, "run", side_effect=[summary, coverage]):
+                verification.command_receipt_step(arguments)
+            step = json.loads(receipt.read_text())["steps"][0]
+
+        self.assertEqual(step["coverage"], {"target": "GitX.app", "lineCoverage": None})
+
     def test_finish_discovers_durable_outputs_without_derived_data_internals(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:
             run_directory = pathlib.Path(directory)
@@ -159,6 +189,61 @@ class ReceiptTests(unittest.TestCase):
 
 
 class DoctorTests(unittest.TestCase):
+    def test_destination_matching_honors_every_requested_component(self) -> None:
+        output = """
+            { platform: macOS, arch: arm64, id: host, name: This Mac }
+            { platform: macOS, arch: x86_64, id: translated, name: Rosetta }
+        """
+
+        self.assertTrue(
+            verification.destination_is_available("platform=macOS,arch=arm64", output)
+        )
+        self.assertTrue(
+            verification.destination_is_available("generic/platform=macOS", output)
+        )
+        self.assertFalse(
+            verification.destination_is_available("platform=macOS,arch=arm64,name=Rosetta", output)
+        )
+
+    def test_destination_discovery_timeout_warns_for_build_mode(self) -> None:
+        selected = pathlib.Path("/Applications/Xcode.app/Contents/Developer")
+        disk_usage = mock.Mock(free=10_000_000_000)
+        with mock.patch.object(verification, "xcode_version", return_value=("26.6", "Test")), mock.patch.object(
+            verification.shutil, "which", return_value="/usr/bin/tool"
+        ), mock.patch.object(verification.shutil, "disk_usage", return_value=disk_usage), mock.patch.object(
+            verification, "git_output", return_value=""
+        ), mock.patch.object(
+            verification,
+            "run",
+            side_effect=subprocess.TimeoutExpired(["xcodebuild", "-showdestinations"], 90),
+        ):
+            payload = verification.doctor_payload(
+                "build", selected, "platform=macOS,arch=arm64"
+            )
+
+        destination = next(check for check in payload["checks"] if check["name"] == "destination")
+        self.assertEqual(destination["status"], "warning")
+        self.assertEqual(payload["status"], "passed")
+
+    def test_destination_mismatch_fails_for_build_mode(self) -> None:
+        selected = pathlib.Path("/Applications/Xcode.app/Contents/Developer")
+        disk_usage = mock.Mock(free=10_000_000_000)
+        discovered = subprocess.CompletedProcess(
+            [], 0, stdout="{ platform: macOS, arch: arm64 }", stderr=""
+        )
+        with mock.patch.object(verification, "xcode_version", return_value=("26.6", "Test")), mock.patch.object(
+            verification.shutil, "which", return_value="/usr/bin/tool"
+        ), mock.patch.object(verification.shutil, "disk_usage", return_value=disk_usage), mock.patch.object(
+            verification, "git_output", return_value=""
+        ), mock.patch.object(verification, "run", return_value=discovered):
+            payload = verification.doctor_payload(
+                "build", selected, "platform=macOS,arch=x86_64"
+            )
+
+        destination = next(check for check in payload["checks"] if check["name"] == "destination")
+        self.assertEqual(destination["status"], "failed")
+        self.assertEqual(payload["status"], "failed")
+
     def test_missing_supported_xcode_is_a_failed_check(self) -> None:
         with mock.patch.object(verification, "resolve_developer_dir", return_value=None), mock.patch.object(
             verification, "developer_dir_candidates", return_value=[]

@@ -100,7 +100,8 @@ scripts/xcodebuild.sh test address-undefined
 
 The correctness preset enforces current coverage floors and writes a
 non-mutating improvement proposal beside its xcresult. Apply an accepted
-proposal with `scripts/check_coverage.py --record-improvements`. Run pinned SwiftFormat and SwiftLint through
+proposal with `scripts/check_coverage.py artifacts/verification/<run-id>/Results/GitX.xcresult --record-improvements`.
+Run pinned SwiftFormat and SwiftLint through
 `scripts/run_pinned_tool.sh`, then run `scripts/verify_static.sh` and the Clang
 analyzer.
 
