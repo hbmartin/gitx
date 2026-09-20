@@ -1379,6 +1379,80 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertNotNil(error);
 }
 
+- (void)testCancelledExplicitLaunchOpenRecoversWelcomeWithDiagnosticScreenshot
+{
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id previousRestorePolicy = [defaults objectForKey:@"PBWindowRestorePolicy"];
+	id previousCleanShutdown = [defaults objectForKey:@"PBWindowSessionCleanShutdown"];
+	id previousSnapshot = [defaults objectForKey:@"PBWindowSessionSnapshot"];
+	NSDocumentController *previousDocumentController = NSDocumentController.sharedDocumentController;
+	SEL setSharedDocumentController = NSSelectorFromString(@"_setSharedDocumentController:");
+	((void (*)(id, SEL, id))objc_msgSend)(NSDocumentController.class, setSharedDocumentController, nil);
+	PBRepositoryDocumentController *controller = [[PBRepositoryDocumentController alloc] init];
+	XCTAssertTrue([controller isKindOfClass:PBRepositoryDocumentController.class]);
+	@try {
+		for (NSWindow *window in NSApp.windows.copy) {
+			if ([window.title isEqualToString:@"Welcome to GitX"]) [window close];
+		}
+		[defaults setInteger:2 forKey:@"PBWindowRestorePolicy"];
+		[defaults setBool:NO forKey:@"PBWindowSessionCleanShutdown"];
+		[defaults setObject:@[ @{@"path" : @"/tmp/GitX-cancelled-explicit-open"} ] forKey:@"PBWindowSessionSnapshot"];
+		[controller beginExplicitLaunchOpen];
+
+		[PBWindowSessionCoordinator.shared applicationDidFinishLaunching];
+		XCTAssertFalse([NSApp.windows indexOfObjectPassingTest:^BOOL(NSWindow *window, NSUInteger idx, BOOL *stop) {
+						   return [window.title isEqualToString:@"Welcome to GitX"] && window.visible;
+					   }] != NSNotFound);
+
+		[controller finishExplicitLaunchOpen];
+		NSPredicate *welcomeVisible = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+			return [NSApp.windows indexOfObjectPassingTest:^BOOL(NSWindow *window, NSUInteger idx, BOOL *stop) {
+					   return [window.title isEqualToString:@"Welcome to GitX"] && window.visible;
+				   }] != NSNotFound;
+		}];
+		XCTNSPredicateExpectation *shown = [[XCTNSPredicateExpectation alloc] initWithPredicate:welcomeVisible object:NSApp];
+		[self waitForExpectations:@[ shown ] timeout:2];
+
+		NSWindow *welcome = [NSApp.windows filteredArrayUsingPredicate:
+											   [NSPredicate predicateWithBlock:^BOOL(NSWindow *window, __unused NSDictionary *bindings) {
+												   return [window.title isEqualToString:@"Welcome to GitX"] && window.visible;
+											   }]]
+								.firstObject;
+		XCTAssertNotNil(welcome);
+		NSBitmapImageRep *representation = [welcome.contentView bitmapImageRepForCachingDisplayInRect:welcome.contentView.bounds];
+		XCTAssertNotNil(representation);
+		if (representation) {
+			[welcome.contentView cacheDisplayInRect:welcome.contentView.bounds toBitmapImageRep:representation];
+			NSImage *image = [[NSImage alloc] initWithSize:welcome.contentView.bounds.size];
+			[image addRepresentation:representation];
+			XCTAttachment *attachment = [XCTAttachment attachmentWithImage:image];
+			attachment.name = @"Welcome recovery after cancelled explicit open";
+			attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
+			[self addAttachment:attachment];
+		}
+		if (welcome.attachedSheet)
+			[welcome endSheet:welcome.attachedSheet returnCode:NSModalResponseCancel];
+		[welcome close];
+	} @finally {
+		((void (*)(id, SEL, id))objc_msgSend)(
+			NSDocumentController.class,
+			setSharedDocumentController,
+			previousDocumentController);
+		if (previousRestorePolicy)
+			[defaults setObject:previousRestorePolicy forKey:@"PBWindowRestorePolicy"];
+		else
+			[defaults removeObjectForKey:@"PBWindowRestorePolicy"];
+		if (previousCleanShutdown)
+			[defaults setObject:previousCleanShutdown forKey:@"PBWindowSessionCleanShutdown"];
+		else
+			[defaults removeObjectForKey:@"PBWindowSessionCleanShutdown"];
+		if (previousSnapshot)
+			[defaults setObject:previousSnapshot forKey:@"PBWindowSessionSnapshot"];
+		else
+			[defaults removeObjectForKey:@"PBWindowSessionSnapshot"];
+	}
+}
+
 - (void)testRepositoryDocumentControllerValidatesNewAndUnrelatedMenuItems
 {
 	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentController.class);

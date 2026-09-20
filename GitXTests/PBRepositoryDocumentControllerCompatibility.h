@@ -18,11 +18,13 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBRepositoryDocumentController : NSDocumentController
 
 + (NSOpenPanel *)newOpenPanel;
+- (void)beginExplicitLaunchOpen;
+- (void)finishExplicitLaunchOpen;
 - (void)beginOpenPanel:(NSOpenPanel *)openPanel
-              forTypes:(nullable NSArray<NSString *> *)types
-     completionHandler:(void (^)(NSInteger response))completionHandler;
+			  forTypes:(nullable NSArray<NSString *> *)types
+	 completionHandler:(void (^)(NSInteger response))completionHandler;
 - (nullable NSDocument *)makeUntitledDocumentOfType:(NSString *)typeName
-                                               error:(NSError *_Nullable *_Nullable)error;
+											  error:(NSError *_Nullable *_Nullable)error;
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem;
 
 @end

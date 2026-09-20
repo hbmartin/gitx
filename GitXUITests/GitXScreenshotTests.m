@@ -302,7 +302,9 @@
 {
 	XCTAssertTrue([self waitForWindow],
 				  @"Main window should appear within 30 seconds");
-	[self saveWindowScreenshotNamed:@"main-window"];
+	XCTAssertFalse(self.app.staticTexts[@"WelcomeTitle"].exists,
+				   @"A successful explicit repository open must suppress Welcome");
+	[self saveWindowScreenshotNamed:@"successful-explicit-open-suppresses-welcome"];
 }
 
 - (void)testHistoryTabScreenshot

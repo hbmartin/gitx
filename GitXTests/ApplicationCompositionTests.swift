@@ -188,6 +188,19 @@ final class ApplicationCompositionTests: XCTestCase {
     }
 
     @MainActor
+    func testWindowSessionCaptureRecordsAnEmptyDocumentTopology() {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        defer { restore(previousSnapshot, forKey: snapshotKey, in: standard) }
+
+        XCTAssertTrue(NSDocumentController.shared.documents.isEmpty)
+        PBWindowSessionCoordinator.shared.capture()
+
+        XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
+    }
+
+    @MainActor
     func testFollowSystemRestorePolicyUsesTheSystemDefaultWhenPreferenceIsAbsent() {
         let standard = UserDefaults.standard
         let snapshotKey = "PBWindowSessionSnapshot"
@@ -270,6 +283,10 @@ final class ApplicationCompositionTests: XCTestCase {
         let promptIsVisible = descendantText(in: restoreSheet.contentView)
             .contains("Restore Windows from the Previous Session?")
         XCTAssertTrue(promptIsVisible)
+        attachScreenshot(
+            of: welcome.contentView,
+            name: "Welcome restore prompt after launch recovery"
+        )
         welcome.endSheet(restoreSheet, returnCode: NSApplication.ModalResponse.alertSecondButtonReturn)
         let dismissalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
         while welcome.attachedSheet != nil, ContinuousClock.now < dismissalDeadline {
@@ -387,6 +404,23 @@ final class ApplicationCompositionTests: XCTestCase {
         guard let view else { return [] }
         let ownText = (view as? NSTextField).map { [$0.stringValue] } ?? []
         return ownText + view.subviews.flatMap { descendantText(in: $0) }
+    }
+
+    @MainActor
+    private func attachScreenshot(of view: NSView?, name: String) {
+        guard let view,
+              let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        else {
+            XCTFail("Diagnostic screenshot view is unavailable")
+            return
+        }
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(representation)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {
