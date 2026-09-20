@@ -1,7 +1,7 @@
 {
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
-    "Classes/Controllers/ApplicationController.m": 0.5107,
+    "Classes/Controllers/ApplicationController.m": 0.5231,
     "Classes/Controllers/ApplicationIcon.swift": 1.0,
     "Classes/Controllers/CommitControllerPolicies.swift": 1.0,
     "Classes/Controllers/CommitMenuPresenter.swift": 1.0,
@@ -18,7 +18,7 @@
     "Classes/Controllers/ForgeDeepLinkApplicationRouter.swift": 0.7162,
     "Classes/Controllers/ForgeDestinationScriptCommand.swift": 0.9585,
     "Classes/Controllers/ForgeExternalLinkRouting.swift": 0.9548,
-    "Classes/Controllers/ForgeMutationQuitCoordinator.swift": 0.9106,
+    "Classes/Controllers/ForgeMutationQuitCoordinator.swift": 0.9119,
     "Classes/Controllers/ForgeUnknownMutationOutcomeStore.swift": 0.9141,
     "Classes/Controllers/GitHubAnonymousReadSurfaceService.swift": 0.709,
     "Classes/Controllers/GitHubPullRequestComposition.swift": 0.844,
