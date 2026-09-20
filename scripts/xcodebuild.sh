@@ -25,7 +25,8 @@ Global options:
   --raw-output
   --stage-app
 
-Every invocation uses a new artifacts/verification/<run-id> directory and emits receipt.json.
+Every invocation emits a receipt under artifacts/verification/<run-id> while
+reusing the ignored build caches under build/.
 USAGE
 }
 
@@ -151,6 +152,8 @@ xcrun=$(command -v xcrun)
 run_id=$(python3 "$support" run-id "$requested_run_id") || exit $?
 artifact_root=$(config artifactRoot) || exit 2
 source_package_cache=$(config sourcePackageCache) || exit 2
+derived_data_cache=$(config derivedDataCache) || exit 2
+swiftpm_build_cache=$(config swiftPMBuildCache) || exit 2
 run_dir="$root/$artifact_root/$run_id"
 if [[ -e "$run_dir" ]]; then
 	echo "Verification run already exists: $run_dir" >&2
@@ -159,8 +162,9 @@ fi
 logs="$run_dir/Logs"
 results="$run_dir/Results"
 products="$run_dir/Products"
-derived_data="$run_dir/DerivedData"
-mkdir -p "$logs" "$results" "$products" "$derived_data" "$root/$source_package_cache"
+derived_data=${GITX_DERIVED_DATA:-"$root/$derived_data_cache"}
+swiftpm_build_root="$root/$swiftpm_build_cache"
+mkdir -p "$logs" "$results" "$products" "$derived_data" "$swiftpm_build_root" "$root/$source_package_cache"
 receipt="$run_dir/receipt.json"
 
 signing_allowed=YES
@@ -204,6 +208,22 @@ preset=$command
 if [[ -n "${command_arguments[0]:-}" ]]; then
 	preset="$preset:${command_arguments[0]}"
 fi
+coverage_gate=not-applicable
+if [[ "$command" == "test" ]]; then
+	case "${command_arguments[0]:-}" in
+		correctness) coverage_gate=enforced ;;
+		-testPlan)
+			[[ "${command_arguments[1]:-}" == "GitX" ]] && coverage_gate=enforced
+			;;
+	esac
+	if [[ "$coverage_gate" == "enforced" ]]; then
+		for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
+			case "$argument" in
+				-only-testing|-only-testing:*|-skip-testing|-skip-testing:*) coverage_gate=not-applicable-focused-selection ;;
+			esac
+		done
+	fi
+fi
 python3 "$support" receipt-init \
 	--run-id "$run_id" \
 	--preset "$preset" \
@@ -211,6 +231,7 @@ python3 "$support" receipt-init \
 	--destination "$destination" \
 	--developer-dir "$developer_dir" \
 	--signing-mode "$signing_mode" \
+	--coverage-gate "$coverage_gate" \
 	"$receipt" \
 	-- ${command_arguments[@]+"${command_arguments[@]}"} || exit 2
 
@@ -331,9 +352,9 @@ reject_managed_paths() {
 }
 
 xcode_test() {
-	test_preset=$1
-	plan=$2
-	result="$results/$plan.xcresult"
+	local test_preset=$1
+	local plan=$2
+	local result="$results/$plan.xcresult"
 	shift 2
 	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
 		"$xcodebuild" "${common[@]}" test -testPlan "$plan" -resultBundlePath "$result" \
@@ -341,22 +362,24 @@ xcode_test() {
 }
 
 stage_built_app() {
-	built_app=
-	while IFS= read -r candidate; do
-		if [[ -z "$built_app" ]]; then
-			built_app=$candidate
-		else
-			echo "More than one GitX.app was produced; refusing to stage an ambiguous bundle." >&2
-			return 3
-		fi
-	done < <(find "$derived_data/Build/Products" -maxdepth 3 -type d -name GitX.app -print 2>/dev/null)
+	built_products_dir=$(
+		"$xcodebuild" "${common[@]}" -showBuildSettings "$@" 2>/dev/null \
+			| awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{print $2; exit}'
+	)
+	built_app="$built_products_dir/GitX.app"
 	if [[ -z "$built_app" || ! -x "$built_app/Contents/MacOS/GitX" ]]; then
 		echo "Could not locate a valid GitX.app in $derived_data" >&2
 		return 3
 	fi
 	/usr/bin/codesign --verify --deep --strict "$built_app" || return 3
 	staged="$root/build/GitX.app"
-	running_pids=$(pgrep -x GitX 2>/dev/null || true)
+	running_pids=$(
+		pgrep -x GitX 2>/dev/null | while read -r pid; do
+			case "$(ps -p "$pid" -o comm= 2>/dev/null)" in
+				("$staged"/*) printf '%s ' "$pid" ;;
+			esac
+		done
+	)
 	if [[ -n "$running_pids" ]]; then
 		echo "GitX is running; stop it before replacing $staged." >&2
 		return 3
@@ -385,7 +408,7 @@ case "$command" in
 		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		run_step build "$logs/build.log" "" "$xcodebuild" "${common[@]}" build CODE_SIGN_IDENTITY=- ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		if (( stage_app )); then
-			stage_built_app || exit $?
+			stage_built_app ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		fi
 		;;
 	smoke)
@@ -433,9 +456,11 @@ case "$command" in
 			correctness)
 				plan=$(config testPlans.correctness)
 				xcode_test correctness "$plan" -enableCodeCoverage YES ${extra[@]+"${extra[@]}"} || exit $?
-				proposal="$results/coverage-proposal.json"
-				run_step coverage "$logs/coverage.log" "" scripts/check_coverage.py \
-					"$results/$plan.xcresult" --propose-improvements "$proposal" || exit $?
+				if [[ "$coverage_gate" == "enforced" ]]; then
+					proposal="$results/coverage-proposal.json"
+					run_step coverage "$logs/coverage.log" "" scripts/check_coverage.py \
+						"$results/$plan.xcresult" --propose-improvements "$proposal" || exit $?
+				fi
 				;;
 			ui)
 				preflight=$(config testPlans.ui-preflight)
@@ -443,8 +468,7 @@ case "$command" in
 				xcode_test ui-preflight "$preflight" \
 					-test-timeouts-enabled YES \
 					-default-test-execution-time-allowance 60 \
-					-maximum-test-execution-time-allowance 90 \
-					${extra[@]+"${extra[@]}"} || exit $?
+					-maximum-test-execution-time-allowance 90 || exit $?
 				xcode_test ui "$plan" ${extra[@]+"${extra[@]}"} || exit $?
 				;;
 			address-undefined|thread-sanitizer|performance)
@@ -453,14 +477,14 @@ case "$command" in
 				;;
 			core)
 				package=$(config packages.core)
-				scratch="$products/GitXCoreBuild"
+				scratch="$swiftpm_build_root/GitXCore"
 				run_step test:core "$logs/core.log" "" "$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
 				codecov=$("$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --show-codecov-path) || exit $?
 				run_step coverage:core "$logs/core-coverage.log" "$codecov" python3 scripts/check_core_coverage.py "$codecov" || exit $?
 				;;
 			forgekit)
 				package=$(config packages.forgekit)
-				scratch="$products/ForgeKitBuild"
+				scratch="$swiftpm_build_root/ForgeKit"
 				combined="$results/ForgeKitCombinedCoverage.json"
 				run_step test:forgekit "$logs/forgekit.log" "" "$xcrun" swift test --package-path "$package" --scratch-path "$scratch" --build-system swiftbuild --enable-code-coverage ${extra[@]+"${extra[@]}"} || exit $?
 				run_step coverage:forgekit "$logs/forgekit-coverage.log" "$combined" python3 scripts/check_forgekit_coverage.py --swiftpm-scratch-path "$scratch" --combined-output "$combined" || exit $?
@@ -479,16 +503,41 @@ case "$command" in
 			extra=("${extra[@]:1}")
 		fi
 		(( ${#extra[@]} )) || { echo "raw requires xcodebuild arguments" >&2; exit 2; }
-		reject_managed_paths "${extra[@]}" || exit $?
-		result_path=
+		has_workspace=0
+		has_project=0
+		has_scheme=0
+		has_destination=0
+		has_configuration=0
+		has_derived_data=0
+		has_package_cache=0
+		has_result_bundle=0
+		is_test_action=0
 		for argument in "${extra[@]}"; do
-			if [[ "$argument" == "test" || "$argument" == "test-without-building" ]]; then
-				result_path="$results/raw.xcresult"
-				extra+=( -resultBundlePath "$result_path" )
-				break
-			fi
+			case "$argument" in
+				-workspace|-workspace=*) has_workspace=1 ;;
+				-project|-project=*) has_project=1 ;;
+				-scheme|-scheme=*) has_scheme=1 ;;
+				-destination|-destination=*) has_destination=1 ;;
+				-configuration|-configuration=*) has_configuration=1 ;;
+				-derivedDataPath|-derivedDataPath=*) has_derived_data=1 ;;
+				-clonedSourcePackagesDirPath|-clonedSourcePackagesDirPath=*) has_package_cache=1 ;;
+				-resultBundlePath|-resultBundlePath=*) has_result_bundle=1 ;;
+				test|test-without-building) is_test_action=1 ;;
+			esac
 		done
-		run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" "${common[@]}" "${extra[@]}" || exit $?
+		raw_common=()
+		(( has_workspace || has_project )) || raw_common+=( -workspace "$workspace" )
+		(( has_scheme )) || raw_common+=( -scheme "$scheme" )
+		(( has_destination )) || raw_common+=( -destination "$destination" )
+		(( has_configuration )) || raw_common+=( -configuration "$configuration" )
+		(( has_derived_data )) || raw_common+=( -derivedDataPath "$derived_data" )
+		(( has_package_cache )) || raw_common+=( -clonedSourcePackagesDirPath "$root/$source_package_cache" )
+		result_path=
+		if (( is_test_action && ! has_result_bundle )); then
+			result_path="$results/raw.xcresult"
+			raw_common+=( -resultBundlePath "$result_path" )
+		fi
+		run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" "${raw_common[@]}" "${extra[@]}" || exit $?
 		;;
 esac
 

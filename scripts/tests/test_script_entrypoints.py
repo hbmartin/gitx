@@ -66,8 +66,10 @@ class ScriptEntrypointTests(unittest.TestCase):
             f"  printf 'Xcode {version}\\nBuild version Test\\n'\n"
             "  exit 0\n"
             "fi\n"
+            "printf '__INVOCATION__\\n' >>\"$CAPTURED_ARGUMENTS\"\n"
             "printf '%s\\n' \"$@\" >>\"$CAPTURED_ARGUMENTS\"\n"
             "arguments=(\"$@\")\n"
+            "derived=''\n"
             "for ((index = 0; index < ${#arguments[@]}; index++)); do\n"
             "  if [[ \"${arguments[$index]}\" == '-derivedDataPath' ]]; then\n"
             "    derived=${arguments[$((index + 1))]}\n"
@@ -82,6 +84,12 @@ class ScriptEntrypointTests(unittest.TestCase):
             "    /usr/bin/codesign --force --sign - \"$app\" >/dev/null 2>&1\n"
             "  fi\n"
             "done\n"
+            "if [[ \" $* \" == *' -showBuildSettings '* ]]; then\n"
+            "  printf '    BUILT_PRODUCTS_DIR = %s/Build/Products/Debug\\n' \"$derived\"\n"
+            "fi\n"
+            "if [[ \" $* \" == *' -showdestinations '* ]]; then\n"
+            "  printf '{ platform: macOS, arch: arm64 }\\n'\n"
+            "fi\n"
         )
         mock.chmod(0o755)
         self.environment["CAPTURED_ARGUMENTS"] = str(captured_arguments)
@@ -188,6 +196,110 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(len(set(result_bundles)), 2)
         logs = list((self.root / "artifacts" / "verification").glob("*/Logs/raw.log"))
         self.assertEqual(len(logs), 2)
+
+    def test_xcodebuild_wrapper_reuses_shared_derived_data(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+
+        for run_id in ("shared-cache-one", "shared-cache-two"):
+            subprocess.run(
+                [script, "--raw", "--run-id", run_id, "build"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=self.environment,
+            )
+
+        arguments = captured.read_text().splitlines()
+        derived_paths = [
+            arguments[index + 1]
+            for index, argument in enumerate(arguments[:-1])
+            if argument == "-derivedDataPath"
+        ]
+        self.assertEqual(set(derived_paths), {str(self.root / "build" / "DerivedData")})
+        self.assertFalse(any((self.root / "artifacts" / "verification").glob("*/DerivedData")))
+
+    def test_raw_respects_explicit_project_scheme_destination_configuration_and_derived_data(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        custom_derived = self.root / "custom-derived"
+
+        subprocess.run(
+            [
+                script,
+                "--raw",
+                "raw",
+                "--",
+                "-project",
+                "Other.xcodeproj",
+                "-scheme",
+                "Other",
+                "-destination",
+                "platform=macOS,arch=x86_64",
+                "-configuration",
+                "Release",
+                "-derivedDataPath",
+                str(custom_derived),
+                "build",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        arguments = captured.read_text().splitlines()
+        self.assertNotIn("-workspace", arguments)
+        self.assertEqual(arguments.count("-project"), 1)
+        self.assertEqual(arguments.count("-scheme"), 1)
+        self.assertEqual(arguments.count("-destination"), 1)
+        self.assertEqual(arguments.count("-configuration"), 1)
+        self.assertEqual(arguments.count("-derivedDataPath"), 1)
+
+    def test_focused_correctness_run_skips_the_whole_app_coverage_gate(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+
+        subprocess.run(
+            [
+                script,
+                "--raw",
+                "--run-id",
+                "focused-correctness",
+                "test",
+                "correctness",
+                "-only-testing:GitXTests/ExampleTests",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        receipt = self.receipt("focused-correctness")
+        self.assertEqual(
+            receipt["invocation"]["coverageGate"],
+            "not-applicable-focused-selection",
+        )
+        self.assertNotIn("coverage", [step["name"] for step in receipt["steps"]])
+
+    def test_ui_filters_are_not_forwarded_to_preflight(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+
+        subprocess.run(
+            [script, "--raw", "test", "ui", "-only-testing:GitXUITests/ExampleTests"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        invocations = captured.read_text().split("__INVOCATION__")
+        preflight = next(value for value in invocations if "GitXUIPreflight" in value)
+        full_ui = next(value for value in invocations if "GitXUI" in value and "GitXUIPreflight" not in value)
+        self.assertNotIn("-only-testing:GitXUITests/ExampleTests", preflight)
+        self.assertIn("-only-testing:GitXUITests/ExampleTests", full_ui)
 
     def test_xcodebuild_wrapper_records_effective_preset_signing_modes(self) -> None:
         script = self.install_script("xcodebuild.sh")

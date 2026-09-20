@@ -76,16 +76,11 @@ def version_at_least(actual: str, minimum: str) -> bool:
 
 def developer_dir_candidates(config: dict[str, Any]) -> list[pathlib.Path]:
     candidates: list[pathlib.Path] = []
-    for raw in (os.environ.get("GITX_DEVELOPER_DIR"), os.environ.get("DEVELOPER_DIR")):
-        if raw:
-            candidates.append(pathlib.Path(raw))
-    try:
-        selected = run(["xcode-select", "-p"], timeout=10)
-        if selected.returncode == 0 and selected.stdout.strip():
-            candidates.append(pathlib.Path(selected.stdout.strip()))
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    candidates.extend(pathlib.Path(path) for path in config["developerDirectoryCandidates"])
+    override = os.environ.get("GITX_DEVELOPER_DIR")
+    if override:
+        candidates.append(pathlib.Path(override))
+    else:
+        candidates.append(pathlib.Path(config["defaultDeveloperDirectory"]))
     unique: list[pathlib.Path] = []
     for candidate in candidates:
         candidate = candidate.expanduser()
@@ -277,9 +272,23 @@ def doctor_checks(mode: str, developer_dir: pathlib.Path | None = None) -> tuple
 
     if selected is not None and workspace.exists() and mode in {"test", "ui", "ci"}:
         executable = selected / "usr/bin/xcodebuild"
+        derived_data = ROOT / config["derivedDataCache"]
+        package_cache = ROOT / config["sourcePackageCache"]
         try:
             destinations = run(
-                [str(executable), "-workspace", config["workspace"], "-scheme", config["scheme"], "-showdestinations"],
+                [
+                    str(executable),
+                    "-workspace",
+                    config["workspace"],
+                    "-scheme",
+                    config["scheme"],
+                    "-derivedDataPath",
+                    str(derived_data),
+                    "-clonedSourcePackagesDirPath",
+                    str(package_cache),
+                    "-disableAutomaticPackageResolution",
+                    "-showdestinations",
+                ],
                 timeout=90,
             )
             output = destinations.stdout + destinations.stderr
@@ -368,6 +377,7 @@ def receipt_base(arguments: argparse.Namespace) -> dict[str, Any]:
             "configuration": arguments.configuration,
             "destination": arguments.destination,
             "signingMode": arguments.signing_mode,
+            "coverageGate": arguments.coverage_gate,
         },
         "steps": [],
         "artifacts": [],
@@ -562,6 +572,7 @@ def parser() -> argparse.ArgumentParser:
     receipt_init.add_argument("--destination", required=True)
     receipt_init.add_argument("--developer-dir", required=True)
     receipt_init.add_argument("--signing-mode", required=True)
+    receipt_init.add_argument("--coverage-gate", default="not-applicable")
     receipt_init.add_argument("arguments", nargs=argparse.REMAINDER)
     receipt_init.set_defaults(handler=command_receipt_init)
 

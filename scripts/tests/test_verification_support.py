@@ -29,6 +29,24 @@ class VersionTests(unittest.TestCase):
 
         self.assertEqual(verification.command_run_id(arguments), 2)
 
+    def test_default_developer_directory_ignores_xcode_select_and_beta(self) -> None:
+        config = {"defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer"}
+        with mock.patch.dict(verification.os.environ, {}, clear=True):
+            candidates = verification.developer_dir_candidates(config)
+
+        self.assertEqual(candidates, [pathlib.Path(config["defaultDeveloperDirectory"])])
+
+    def test_gitx_developer_directory_is_the_only_environment_override(self) -> None:
+        config = {"defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer"}
+        environment = {
+            "GITX_DEVELOPER_DIR": "/Applications/Explicit.app/Contents/Developer",
+            "DEVELOPER_DIR": "/Applications/SelectedBeta.app/Contents/Developer",
+        }
+        with mock.patch.dict(verification.os.environ, environment, clear=True):
+            candidates = verification.developer_dir_candidates(config)
+
+        self.assertEqual(candidates, [pathlib.Path(environment["GITX_DEVELOPER_DIR"])])
+
 
 class ReceiptTests(unittest.TestCase):
     def test_working_tree_fingerprint_includes_untracked_file_contents(self) -> None:

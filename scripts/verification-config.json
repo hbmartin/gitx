@@ -1,15 +1,14 @@
 {
   "schemaVersion": 1,
   "minimumXcodeVersion": "26.6",
-  "developerDirectoryCandidates": [
-    "/Applications/Xcode.app/Contents/Developer",
-    "/Applications/Xcode-beta.app/Contents/Developer"
-  ],
+  "defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer",
   "workspace": "GitX.xcworkspace",
   "scheme": "GitX",
   "destination": "platform=macOS,arch=arm64",
   "macOSDeploymentTarget": "15.0",
   "artifactRoot": "artifacts/verification",
+  "derivedDataCache": "build/DerivedData",
+  "swiftPMBuildCache": "build/SwiftPM",
   "sourcePackageCache": "artifacts/cache/SourcePackages",
   "testPlans": {
     "correctness": "GitX",
