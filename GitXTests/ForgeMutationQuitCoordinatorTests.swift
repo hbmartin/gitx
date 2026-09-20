@@ -136,6 +136,40 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(replies.values, [true])
     }
 
+    func testTimedOutRecordingCompletionCannotReplyToAcceptedTermination() async throws {
+        let persistence = PersistenceDouble(holdsRecords: true)
+        let timeouts = TimeoutSpy()
+        let replies = ReplySpy()
+        let coordinator = makeCoordinator(
+            persistence: persistence,
+            choices: ChoiceSpy(choice: .quitAnyway),
+            replies: replies,
+            timeouts: timeouts
+        )
+        let fixture = try Fixture()
+        _ = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest
+        )
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        for _ in 0 ..< 100 where persistence.pendingRecordCount == 0 {
+            await Task.yield()
+        }
+        XCTAssertEqual(persistence.pendingRecordCount, 1)
+
+        timeouts.fireAll()
+        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
+
+        persistence.resumeNextRecord()
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+        XCTAssertEqual(replies.values, [true])
+    }
+
     func testWaitDefersTerminationUntilEveryRegisteredMutationFinishes() async throws {
         let choices = ChoiceSpy(choice: .wait)
         let replies = ReplySpy()
@@ -612,18 +646,28 @@ private final class ReplySpy {
 private final class PersistenceDouble: ForgeUnknownMutationOutcomePersisting, @unchecked Sendable {
     private let error: Error?
     private let stalls: Bool
+    private let holdsRecords: Bool
     private let queue = DispatchQueue(label: "com.gitx.tests.forge-mutation-persistence")
     private var recorded: [ForgeUnknownMutationOutcomeRecord] = []
+    private var pendingRecordContinuations: [CheckedContinuation<Void, Never>] = []
 
-    init(error: Error? = nil, stalls: Bool = false) {
+    init(error: Error? = nil, stalls: Bool = false, holdsRecords: Bool = false) {
         self.error = error
         self.stalls = stalls
+        self.holdsRecords = holdsRecords
     }
 
     func record(_ records: [ForgeUnknownMutationOutcomeRecord]) async throws {
         if stalls {
             // Models a database provider that never resolves.
             try await Task.sleep(nanoseconds: .max)
+        }
+        if holdsRecords {
+            await withCheckedContinuation { continuation in
+                queue.sync {
+                    pendingRecordContinuations.append(continuation)
+                }
+            }
         }
         try queue.sync {
             if let error {
@@ -657,6 +701,17 @@ private final class PersistenceDouble: ForgeUnknownMutationOutcomePersisting, @u
 
     func recordedRecords() async -> [ForgeUnknownMutationOutcomeRecord] {
         queue.sync { recorded }
+    }
+
+    var pendingRecordCount: Int {
+        queue.sync { pendingRecordContinuations.count }
+    }
+
+    func resumeNextRecord() {
+        let continuation = queue.sync {
+            pendingRecordContinuations.isEmpty ? nil : pendingRecordContinuations.removeFirst()
+        }
+        continuation?.resume()
     }
 }
 

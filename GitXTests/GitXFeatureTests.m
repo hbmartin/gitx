@@ -893,6 +893,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	// else the suite does to that singleton.
 	PBAutoFetchScope previousScope = [PBGitDefaults autoFetchScope];
 	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
+	NSString *repositoryKey = @"/tmp/gitx-auto-fetch-reset";
+	[manager setValue:[@{repositoryKey : [NSDate dateWithTimeIntervalSinceNow:600]} mutableCopy]
+			  forKey:@"nextFetchDates"];
+	[manager setValue:[@{repositoryKey : @3} mutableCopy] forKey:@"failureCounts"];
 
 	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeNone];
 	[manager autoFetchPreferencesChanged:nil];
@@ -902,6 +906,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[manager autoFetchPreferencesChanged:nil];
 	XCTAssertEqual(manager.evaluationCount, (NSUInteger)1);
 	XCTAssertTrue(manager.lastEvaluationWasImmediate, @"re-enabling fetches immediately");
+	XCTAssertNil([[manager valueForKey:@"nextFetchDates"] objectForKey:repositoryKey]);
+	XCTAssertNil([[manager valueForKey:@"failureCounts"] objectForKey:repositoryKey]);
 
 	// Still enabled, so this is not a transition and must not fetch immediately.
 	[manager autoFetchPreferencesChanged:nil];
@@ -915,12 +921,23 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 {
 	PBAutoFetchManagerSpy *manager = [[PBAutoFetchManagerSpy alloc] init];
 	NSURL *repository = [NSURL fileURLWithPath:@"/tmp/gitx-auto-fetch-fixture" isDirectory:YES];
+	NSInteger previousInterval = [PBGitDefaults autoFetchIntervalMinutes];
+	[PBGitDefaults setAutoFetchIntervalMinutes:5];
+	[manager setValue:[@{repository.path : @4} mutableCopy] forKey:@"failureCounts"];
+	[manager setValue:[@{repository.path : [NSDate dateWithTimeIntervalSinceNow:900]} mutableCopy]
+			  forKey:@"nextFetchDates"];
+	NSDate *recordedAt = [NSDate date];
 
 	// A manual fetch counts as a success: it clears recorded failures so the next
 	// unattended attempt starts from the plain interval rather than a backoff.
 	[manager recordManualFetchSucceededForRepositoryURL:repository];
 
-	XCTAssertNoThrow([manager recordManualFetchSucceededForRepositoryURL:repository]);
+	XCTAssertNil([[manager valueForKey:@"failureCounts"] objectForKey:repository.path]);
+	NSDate *nextFetchDate = [[manager valueForKey:@"nextFetchDates"] objectForKey:repository.path];
+	XCTAssertNotNil(nextFetchDate);
+	XCTAssertGreaterThanOrEqual([nextFetchDate timeIntervalSinceDate:recordedAt], 299.0);
+	XCTAssertLessThanOrEqual([nextFetchDate timeIntervalSinceDate:recordedAt], 301.0);
+	[PBGitDefaults setAutoFetchIntervalMinutes:previousInterval];
 }
 
 - (void)testAutoFetchWakeAlwaysRequestsAnImmediateCatchUp
