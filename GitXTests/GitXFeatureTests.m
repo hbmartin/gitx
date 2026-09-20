@@ -409,6 +409,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 @interface ApplicationController (GitXFeatureTests)
 - (NSArray *)feedParametersForUpdater:(nullable id)updater sendingSystemProfile:(BOOL)sendingSystemProfile;
+- (BOOL)applicationOpenUntitledFile:(NSApplication *)application;
 - (void)applicationDidBecomeActive:(nullable NSNotification *)notification;
 - (void)applicationWillTerminate:(nullable NSNotification *)notification;
 @end
@@ -785,6 +786,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertTrue([controller isKindOfClass:ApplicationController.class]);
 	XCTAssertEqual([controller feedParametersForUpdater:nil sendingSystemProfile:NO].count, (NSUInteger)0);
 	XCTAssertGreaterThan([controller feedParametersForUpdater:nil sendingSystemProfile:YES].count, (NSUInteger)0);
+	XCTAssertTrue([controller applicationOpenUntitledFile:NSApp]);
 	(void)[controller applicationShouldOpenUntitledFile:NSApp];
 	[controller applicationDidBecomeActive:nil];
 }

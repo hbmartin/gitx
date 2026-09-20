@@ -16,6 +16,43 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(replies.values.isEmpty)
     }
 
+    func testReentrantTerminationRequestSharesTheExistingDeferredAttempt() async throws {
+        let replies = ReplySpy()
+        let replied = expectation(description: "shared deferred attempt completes")
+        replies.expectation = replied
+        let timeouts = TimeoutSpy()
+        var coordinator: ForgeMutationQuitCoordinator!
+        var didReenter = false
+        coordinator = ForgeMutationQuitCoordinator(
+            persistence: PersistenceDouble(),
+            choiceProvider: { _ in
+                if !didReenter {
+                    didReenter = true
+                    XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+                }
+                return .wait
+            },
+            terminationReply: { value in replies.record(value) },
+            terminationTimeout: 0,
+            scheduleTimeout: { _, body in timeouts.schedule(body) }
+        )
+        let fixture = try Fixture()
+        let registration = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .createPullRequest
+        )
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        XCTAssertTrue(coordinator.finish(registration))
+        await fulfillment(of: [replied], timeout: 1)
+        replies.expectation = nil
+        XCTAssertEqual(replies.values, [true])
+
+        timeouts.fireAll()
+        XCTAssertEqual(replies.values, [true])
+    }
+
     func testTerminationAcceptanceSealsTheCoordinator() throws {
         let choices = ChoiceSpy(choice: .wait)
         let replies = ReplySpy()
