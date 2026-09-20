@@ -84,6 +84,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         case waiting
         case recordingUnknownOutcomes
         case replyingToTermination
+        case terminationAccepted
     }
 
     static let defaultTerminationTimeout: TimeInterval = 10
@@ -225,36 +226,42 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
 
     @MainActor
     func applicationShouldTerminate() -> NSApplication.TerminateReply {
-        let initial = lock.withForgeMutationLock { () -> (pending: Bool, mutations: [ForgeInFlightMutation]) in
+        let initial = lock.withForgeMutationLock { () -> TerminationInitialDecision in
             switch terminationState {
             case .idle:
-                return (false, active.values.sorted(by: Self.sortsBefore))
-            case .waiting, .recordingUnknownOutcomes:
-                return (true, [])
-            case .replyingToTermination:
-                // Being asked again means the previous termination never happened:
-                // a sheet cancelled it, a debugger held the process, or the reply
-                // was answered but the app stayed alive. Deferring again would
-                // strand the quit forever, so start over from a clean state.
-                terminationState = .idle
+                let mutations = active.values.sorted(by: Self.sortsBefore)
+                guard mutations.isEmpty else { return .mutations(mutations) }
+                terminationState = .terminationAccepted
                 terminationWatchdogGeneration &+= 1
-                return (false, active.values.sorted(by: Self.sortsBefore))
+                return .now
+            case .waiting, .recordingUnknownOutcomes:
+                return .later
+            case .replyingToTermination:
+                terminationState = .terminationAccepted
+                terminationWatchdogGeneration &+= 1
+                return .now
+            case .terminationAccepted:
+                return .now
             }
         }
-        if initial.pending {
-            return .terminateLater
-        }
-        guard !initial.mutations.isEmpty else {
-            // Nothing is in flight and no reply is deferred, so leave the state
-            // idle. Marking it here would strand a quit that never completes.
+
+        let mutations: [ForgeInFlightMutation]
+        switch initial {
+        case .now:
             return .terminateNow
+        case .later:
+            return .terminateLater
+        case let .mutations(current):
+            mutations = current
         }
 
-        let choice = choiceProvider(initial.mutations)
+        let choice = choiceProvider(mutations)
         let transition = lock.withForgeMutationLock { () -> TerminationTransition in
             guard case .idle = terminationState else { return .later }
             let current = active.values.sorted(by: Self.sortsBefore)
             guard !current.isEmpty else {
+                terminationState = .terminationAccepted
+                terminationWatchdogGeneration &+= 1
                 return .now
             }
             switch choice {
@@ -315,7 +322,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
                 guard generation == terminationWatchdogGeneration else { return .none }
                 terminationWatchdogGeneration &+= 1
                 switch terminationState {
-                case .idle, .replyingToTermination:
+                case .idle, .replyingToTermination, .terminationAccepted:
                     return .none
                 case .waiting:
                     terminationState = .idle
@@ -356,6 +363,12 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         case later
         case cancel
         case record([ForgeUnknownMutationOutcomeRecord])
+    }
+
+    private enum TerminationInitialDecision {
+        case now
+        case later
+        case mutations([ForgeInFlightMutation])
     }
 
     private enum TerminationWatchdogAction {
