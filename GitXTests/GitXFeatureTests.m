@@ -502,11 +502,15 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @property (nonatomic) BOOL succeeds;
 @property (nullable, nonatomic) NSError *testError;
 @property (nonatomic, copy) NSString *testOutput;
+@property (nullable, nonatomic) XCTestExpectation *launchExpectation;
+@property (nullable, nonatomic) dispatch_semaphore_t launchGate;
 @end
 
 @implementation PBAutoFetchTaskSpy
 - (BOOL)launchTask:(NSError **)error
 {
+	[self.launchExpectation fulfill];
+	if (self.launchGate) dispatch_semaphore_wait(self.launchGate, DISPATCH_TIME_FOREVER);
 	if (!self.succeeds && error) *error = self.testError;
 	return self.succeeds;
 }
@@ -934,8 +938,11 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 {
 	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
 	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-failure" isDirectory:YES];
-	manager.testSnapshots = @[];
+	manager.testSnapshots = @[ @{ @"refs/remotes/origin/main" : @"old" } ];
 	manager.snapshotError = [NSError errorWithDomain:@"test" code:9 userInfo:nil];
+	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
+	manager.testTask.succeeds = NO;
+	manager.testTask.testError = manager.snapshotError;
 	[manager setValue:[NSMutableSet setWithObject:url.path] forKey:@"inFlightRepositories"];
 
 	manager.deliveryExpectation = [self expectationWithDescription:@"first failure delivered"];
@@ -952,6 +959,39 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[self waitForExpectations:@[ settled ] timeout:2];
 	XCTAssertEqual(manager.failureNotificationCount, (NSUInteger)1);
 	XCTAssertEqualObjects([[manager valueForKey:@"failureCounts"] objectForKey:url.path], @2);
+}
+
+- (void)testAutoFetchStopSuppressesStaleFetchDelivery
+{
+	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-cancelled-fetch" isDirectory:YES];
+	manager.testSnapshots = @[
+		@{ @"refs/remotes/origin/main" : @"old" },
+		@{ @"refs/remotes/origin/main" : @"new" },
+	];
+	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
+	manager.testTask.succeeds = YES;
+	manager.testTask.launchExpectation = [self expectationWithDescription:@"fetch launched"];
+	manager.testTask.launchGate = dispatch_semaphore_create(0);
+	manager.ancestorResult = YES;
+	manager.testCommitCount = 1;
+	manager.testTimestamp = 1234;
+	manager.deliveryExpectation = [self expectationWithDescription:@"cancelled delivery suppressed"];
+	manager.deliveryExpectation.inverted = YES;
+	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeNone];
+	[manager start];
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		[manager fetchRepositoryAtURL:url key:url.path];
+	});
+	[self waitForExpectations:@[ manager.testTask.launchExpectation ] timeout:2];
+	[manager stop];
+	dispatch_semaphore_signal(manager.testTask.launchGate);
+	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:0.25];
+
+	XCTAssertEqual(manager.refreshCount, (NSUInteger)0);
+	XCTAssertEqual(manager.failureNotificationCount, (NSUInteger)0);
+	XCTAssertEqual(manager.advanceNotificationCount, (NSUInteger)0);
 }
 
 - (void)testAutoFetchNotificationsDescribeFailuresAndMultipleAdvances

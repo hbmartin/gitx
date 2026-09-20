@@ -310,6 +310,59 @@ final class PBTaskLifecycleTests: XCTestCase {
         wait(for: [terminated], timeout: 10)
     }
 
+    func testGracefulTerminationAllowsTaskToFinishDuringGracePeriod() {
+        let task = PBTask(launchPath: "/bin/sleep", arguments: ["0.05"], inDirectory: nil)
+        let completed = expectation(description: "task completed normally")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            XCTAssertNil(error)
+            completed.fulfill()
+        }
+        task.terminate(afterGracePeriod: 0.2, forceKillAfter: 0.1)
+
+        wait(for: [completed], timeout: 2)
+    }
+
+    func testGracefulTerminationEscalatesForSameProcessIgnoringSIGTERM() throws {
+        let pidURL = temporaryFileURL(named: "graceful-termination-pid")
+        defer {
+            if let contents = try? String(contentsOf: pidURL, encoding: .utf8),
+               let processID = pid_t(contents)
+            {
+                _ = Darwin.kill(processID, SIGKILL)
+            }
+            try? FileManager.default.removeItem(at: pidURL)
+        }
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap '' TERM; while :; do :; done",
+            ],
+            inDirectory: nil
+        )
+        task.additionalEnvironment = ["PB_TASK_PID_FILE": pidURL.path]
+        task.timeout = 0
+        let completed = expectation(description: "force-killed task completed")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            let taskError = error as NSError?
+            XCTAssertEqual(taskError?.domain, PBTaskErrorDomain)
+            XCTAssertEqual(taskError?.code, Int(PBTaskErrorCode.caughtSignalError.rawValue))
+            completed.fulfill()
+        }
+        let launched = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: pidURL.path) },
+            object: pidURL as NSURL
+        )
+        wait(for: [launched], timeout: 2)
+        task.terminate(afterGracePeriod: 0.05, forceKillAfter: 0.1)
+        wait(for: [completed], timeout: 2)
+
+        let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
+        XCTAssertEqual(Darwin.kill(processID, 0), -1)
+    }
+
     func testLaunchUsesRequestedWorkingDirectory() throws {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("gitx-pbtask-directory-\(UUID().uuidString)", isDirectory: true)

@@ -85,6 +85,12 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 
 - (void)terminate;
 
+/// Cancels before launch, or gives a running process time to exit before sending
+/// SIGTERM and then SIGKILL to that same process if it remains alive.
+- (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod
+				forceKillAfter:(NSTimeInterval)forceKillDelay
+	NS_SWIFT_NAME(terminate(afterGracePeriod:forceKillAfter:));
+
 @end
 
 @interface PBTask (PBMainQueuePerform)
