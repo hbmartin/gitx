@@ -26,6 +26,8 @@
 #import "PBSourceViewBadge.h"
 
 static NSUInteger PBAutoFetchAuthorizationRequestCount;
+static UNNotificationRequest *PBAutoFetchLastNotificationRequest;
+static NSDocumentController *PBAutoFetchDocumentController;
 
 @interface PBRepositoryOpenPanelSpy : NSOpenPanel {
 	BOOL _testCanChooseFiles;
@@ -39,6 +41,19 @@ static NSUInteger PBAutoFetchAuthorizationRequestCount;
 @property (nonatomic) NSModalResponse response;
 @property (nullable, nonatomic) NSURL *selectedURL;
 
+@end
+
+@interface PBAutoFetchOutputSpy : PBAutoFetchManager
+@property (nonatomic, copy) NSString *testOutput;
+@property (nullable, nonatomic) NSError *testError;
+@end
+
+@implementation PBAutoFetchOutputSpy
+- (NSString *)outputForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments error:(NSError **)error
+{
+	if (self.testError && error) *error = self.testError;
+	return self.testOutput;
+}
 @end
 
 
@@ -111,6 +126,93 @@ static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacemen
 	method_exchangeImplementations(class_getInstanceMethod(cls, original), class_getInstanceMethod(cls, replacement));
 }
 
+static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
+{
+	method_exchangeImplementations(class_getClassMethod(cls, original), class_getClassMethod(cls, replacement));
+}
+
+@interface NSDocumentController (GitXFeatureTests)
++ (NSDocumentController *)pb_feature_sharedDocumentController;
+@end
+
+@implementation NSDocumentController (GitXFeatureTests)
++ (NSDocumentController *)pb_feature_sharedDocumentController { return PBAutoFetchDocumentController; }
+@end
+
+@interface PBAutoFetchDocumentControllerSpy : NSDocumentController
+@property (nonatomic, copy) NSArray<NSDocument *> *testDocuments;
+@property (nonatomic, copy) NSArray<NSURL *> *testRecentURLs;
+@property (nullable, nonatomic) NSDocument *testCurrentDocument;
+@property (nullable, nonatomic) NSDocument *testDocumentToOpen;
+@end
+
+@implementation PBAutoFetchDocumentControllerSpy
+- (NSArray<NSDocument *> *)documents { return self.testDocuments ?: @[]; }
+- (NSArray<NSURL *> *)recentDocumentURLs { return self.testRecentURLs ?: @[]; }
+- (NSDocument *)currentDocument { return self.testCurrentDocument; }
+- (void)openDocumentWithContentsOfURL:(NSURL *)url
+								  display:(BOOL)displayDocument
+						completionHandler:(void (^)(NSDocument *_Nullable document, BOOL documentWasAlreadyOpen, NSError *_Nullable error))completionHandler
+{
+	completionHandler(self.testDocumentToOpen, NO, nil);
+}
+@end
+
+@interface PBAutoFetchRepositorySpy : PBGitRepository
+@property (nonatomic, strong) NSURL *testWorkingDirectoryURL;
+@property (nonatomic) NSUInteger reloadCount;
+@property (nonatomic) NSUInteger forceUpdateCount;
+@property (nonatomic) NSInteger testBranchFilter;
+@property (nullable, nonatomic, strong) PBGitRevSpecifier *testCurrentBranch;
+@end
+
+@implementation PBAutoFetchRepositorySpy
+- (NSURL *)workingDirectoryURL { return self.testWorkingDirectoryURL; }
+- (void)reloadRefs { self.reloadCount++; }
+- (void)forceUpdateRevisions { self.forceUpdateCount++; }
+- (NSInteger)currentBranchFilter { return self.testBranchFilter; }
+- (void)setCurrentBranchFilter:(NSInteger)value { self.testBranchFilter = value; }
+- (BOOL)refExists:(PBGitRef *)ref { return YES; }
+- (PBGitRevSpecifier *)addBranch:(PBGitRevSpecifier *)rev { return rev; }
+- (PBGitRevSpecifier *)currentBranch { return self.testCurrentBranch; }
+- (void)setCurrentBranch:(PBGitRevSpecifier *)value { self.testCurrentBranch = value; }
+@end
+
+@interface PBAutoFetchWindowControllerSpy : PBGitWindowController
+@property (nonatomic) NSUInteger showHistoryCount;
+@end
+
+@implementation PBAutoFetchWindowControllerSpy
+- (void)showHistoryView:(id)sender { self.showHistoryCount++; }
+- (NSWindow *)window { return nil; }
+@end
+
+@interface PBAutoFetchRepositoryDocumentSpy : PBGitRepositoryDocument
+@property (nonatomic, strong) PBAutoFetchRepositorySpy *testRepository;
+@property (nonatomic, strong) PBAutoFetchWindowControllerSpy *testWindowController;
+@end
+
+@implementation PBAutoFetchRepositoryDocumentSpy
+- (PBGitRepository *)repository { return self.testRepository; }
+- (PBGitWindowController *)windowController { return self.testWindowController; }
+@end
+
+@interface PBAutoFetchNotificationSpy : UNNotification
+@property (nonatomic, strong) UNNotificationRequest *testRequest;
+@end
+
+@implementation PBAutoFetchNotificationSpy
+- (UNNotificationRequest *)request { return self.testRequest; }
+@end
+
+@interface PBAutoFetchNotificationResponseSpy : UNNotificationResponse
+@property (nonatomic, strong) PBAutoFetchNotificationSpy *testNotification;
+@end
+
+@implementation PBAutoFetchNotificationResponseSpy
+- (UNNotification *)notification { return self.testNotification; }
+@end
+
 @interface UNUserNotificationCenter (GitXFeatureTests)
 - (void)pb_feature_requestAuthorizationWithOptions:(__unused UNAuthorizationOptions)options
 								 completionHandler:(void (^)(BOOL granted, NSError *_Nullable error))completionHandler;
@@ -123,6 +225,22 @@ static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacemen
 {
 	PBAutoFetchAuthorizationRequestCount++;
 	completionHandler(YES, nil);
+}
+
+@end
+
+@interface UNUserNotificationCenter (GitXFeatureNotificationTests)
+- (void)pb_feature_addNotificationRequest:(UNNotificationRequest *)request
+						 completionHandler:(nullable void (^)(NSError *_Nullable error))completionHandler;
+@end
+
+@implementation UNUserNotificationCenter (GitXFeatureNotificationTests)
+
+- (void)pb_feature_addNotificationRequest:(UNNotificationRequest *)request
+						 completionHandler:(void (^)(NSError *_Nullable error))completionHandler
+{
+	PBAutoFetchLastNotificationRequest = request;
+	if (completionHandler) completionHandler(nil);
 }
 
 @end
@@ -341,6 +459,26 @@ static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacemen
 - (void)timerFired:(NSTimer *)timer;
 - (void)autoFetchPreferencesChanged:(nullable NSNotification *)notification;
 - (void)workspaceDidWake:(nullable NSNotification *)notification;
+- (NSString *)keyForURL:(NSURL *)url;
+- (NSDictionary<NSString *, NSURL *> *)candidateRepositoryURLs;
+- (void)evaluateRepositoriesForImmediateFetch:(BOOL)immediate;
+- (PBTask *)taskForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments;
+- (nullable NSString *)outputForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments error:(NSError **)error;
+- (nullable NSDictionary<NSString *, NSString *> *)remoteSnapshotForURL:(NSURL *)url error:(NSError **)error;
+- (BOOL)isAncestor:(NSString *)oldSHA of:(NSString *)newSHA repositoryURL:(NSURL *)url;
+- (NSInteger)commitCountFrom:(NSString *)oldSHA to:(NSString *)newSHA repositoryURL:(NSURL *)url;
+- (NSTimeInterval)commitTimestampForSHA:(NSString *)sha repositoryURL:(NSURL *)url;
+- (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key;
+- (nullable PBGitRepositoryDocument *)openDocumentForRepositoryURL:(NSURL *)url;
+- (void)refreshOpenRepositoryAtURL:(NSURL *)url;
+- (void)postFailureNotificationForURL:(NSURL *)url error:(NSError *)error;
+- (void)postAdvanceNotificationForURL:(NSURL *)url advances:(NSArray<NSDictionary *> *)advances;
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+		 willPresentNotification:(nullable UNNotification *)notification
+		   withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler;
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+	didReceiveNotificationResponse:(UNNotificationResponse *)response
+			 withCompletionHandler:(void (^)(void))completionHandler;
 @end
 
 @interface PBAutoFetchManagerSpy : PBAutoFetchManager
@@ -348,6 +486,83 @@ static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacemen
 @property (nonatomic) NSUInteger evaluationCount;
 @property (nonatomic) BOOL lastEvaluationWasImmediate;
 
+@end
+
+@interface PBAutoFetchTaskSpy : PBTask
+@property (nonatomic) BOOL succeeds;
+@property (nullable, nonatomic) NSError *testError;
+@property (nonatomic, copy) NSString *testOutput;
+@end
+
+@implementation PBAutoFetchTaskSpy
+- (BOOL)launchTask:(NSError **)error
+{
+	if (!self.succeeds && error) *error = self.testError;
+	return self.succeeds;
+}
+- (NSString *)standardOutputString { return self.testOutput; }
+@end
+
+@interface PBAutoFetchBehaviorSpy : PBAutoFetchManager
+@property (nonatomic, copy) NSDictionary<NSString *, NSURL *> *testCandidates;
+@property (nonatomic, copy) NSArray<NSDictionary<NSString *, NSString *> *> *testSnapshots;
+@property (nullable, nonatomic) NSError *snapshotError;
+@property (nonatomic) NSUInteger snapshotIndex;
+@property (nonatomic) BOOL ancestorResult;
+@property (nonatomic) NSInteger testCommitCount;
+@property (nonatomic) NSTimeInterval testTimestamp;
+@property (nonatomic, strong) PBAutoFetchTaskSpy *testTask;
+@property (nonatomic, copy) NSString *testOutput;
+@property (nonatomic) NSUInteger fetchCount;
+@property (nonatomic) NSUInteger refreshCount;
+@property (nonatomic) NSUInteger failureNotificationCount;
+@property (nonatomic) NSUInteger advanceNotificationCount;
+@property (nullable, nonatomic) XCTestExpectation *fetchExpectation;
+@property (nullable, nonatomic) XCTestExpectation *deliveryExpectation;
+@end
+
+@implementation PBAutoFetchBehaviorSpy
+- (NSDictionary<NSString *, NSURL *> *)candidateRepositoryURLs { return self.testCandidates ?: @{}; }
+- (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key
+{
+	if (self.fetchExpectation) {
+		self.fetchCount++;
+		[self.fetchExpectation fulfill];
+		return;
+	}
+	[super fetchRepositoryAtURL:url key:key];
+}
+- (NSDictionary<NSString *, NSString *> *)remoteSnapshotForURL:(NSURL *)url error:(NSError **)error
+{
+	if (self.snapshotIndex >= self.testSnapshots.count) {
+		if (error) *error = self.snapshotError;
+		return nil;
+	}
+	return self.testSnapshots[self.snapshotIndex++];
+}
+- (PBTask *)taskForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments { return self.testTask; }
+- (NSString *)outputForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments error:(NSError **)error
+{
+	if (self.snapshotError && error) *error = self.snapshotError;
+	return self.testOutput;
+}
+- (BOOL)isAncestor:(NSString *)oldSHA of:(NSString *)newSHA repositoryURL:(NSURL *)url { return self.ancestorResult; }
+- (NSInteger)commitCountFrom:(NSString *)oldSHA to:(NSString *)newSHA repositoryURL:(NSURL *)url { return self.testCommitCount; }
+- (NSTimeInterval)commitTimestampForSHA:(NSString *)sha repositoryURL:(NSURL *)url { return self.testTimestamp; }
+- (void)refreshOpenRepositoryAtURL:(NSURL *)url
+{
+	self.refreshCount++;
+	[self.deliveryExpectation fulfill];
+}
+- (void)postFailureNotificationForURL:(NSURL *)url error:(NSError *)error
+{
+	self.failureNotificationCount++;
+	[self.deliveryExpectation fulfill];
+}
+- (void)postAdvanceNotificationForURL:(NSURL *)url advances:(NSArray<NSDictionary *> *)advances
+{
+	self.advanceNotificationCount++;
+}
 @end
 
 @implementation PBAutoFetchManagerSpy
@@ -586,6 +801,307 @@ static void PBFeatureSwapInstanceMethods(Class cls, SEL original, SEL replacemen
 			UNUserNotificationCenter.class,
 			@selector(requestAuthorizationWithOptions:completionHandler:),
 			@selector(pb_feature_requestAuthorizationWithOptions:completionHandler:));
+	}
+}
+
+- (void)testAutoFetchKeysStandardizeRepositoryPaths
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-key/../gitx-key/repository" isDirectory:YES];
+
+	XCTAssertEqualObjects([manager keyForURL:url], @"/tmp/gitx-key/repository");
+}
+
+- (void)testAutoFetchDisabledScopeHasNoCandidates
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeNone];
+
+	XCTAssertEqual([manager candidateRepositoryURLs].count, (NSUInteger)0);
+}
+
+- (void)testAutoFetchEvaluationSchedulesCandidatesOnceAndHonorsInFlightAndFutureDates
+{
+	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-scheduled" isDirectory:YES];
+	manager.testCandidates = @{ url.path : url };
+	manager.fetchExpectation = [self expectationWithDescription:@"fetch scheduled"];
+	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
+
+	[manager evaluateRepositoriesForImmediateFetch:YES];
+	[self waitForExpectations:@[ manager.fetchExpectation ] timeout:2];
+	XCTAssertEqual(manager.fetchCount, (NSUInteger)1);
+
+	[manager evaluateRepositoriesForImmediateFetch:YES];
+	XCTAssertEqual(manager.fetchCount, (NSUInteger)1, @"an in-flight repository must not be scheduled twice");
+
+	[manager setValue:[NSMutableSet set] forKey:@"inFlightRepositories"];
+	[manager setValue:[@{ url.path : [NSDate dateWithTimeIntervalSinceNow:300] } mutableCopy] forKey:@"nextFetchDates"];
+	[manager evaluateRepositoriesForImmediateFetch:NO];
+	XCTAssertEqual(manager.fetchCount, (NSUInteger)1, @"a future due date must defer polling");
+}
+
+- (void)testAutoFetchTaskUsesNoninteractiveEnvironmentAndGitTimeout
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	PBTask *task = [manager taskForRepositoryURL:[NSURL fileURLWithPath:NSTemporaryDirectory()]
+										arguments:@[ @"--version" ]];
+
+	XCTAssertEqual(task.timeout, 10.0 * 60.0);
+	XCTAssertEqualObjects(task.additionalEnvironment[@"GIT_TERMINAL_PROMPT"], @"0");
+	XCTAssertEqualObjects(task.additionalEnvironment[@"GCM_INTERACTIVE"], @"never");
+	XCTAssertEqualObjects(task.additionalEnvironment[@"GIT_ASKPASS"], @"/usr/bin/false");
+	NSError *error = nil;
+	NSString *output = [manager outputForRepositoryURL:[NSURL fileURLWithPath:NSTemporaryDirectory()]
+													arguments:@[ @"--version" ]
+														 error:&error];
+	XCTAssertNotNil(output);
+	XCTAssertNil(error);
+}
+
+- (void)testAutoFetchParsesRemoteSnapshotAndNumericGitOutputs
+{
+	PBAutoFetchOutputSpy *manager = [[PBAutoFetchOutputSpy alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-output" isDirectory:YES];
+	manager.testOutput = @"refs/remotes/origin/main\tabc\nrefs/remotes/origin/HEAD\tdef\nmalformed\n";
+	NSError *error = nil;
+
+	XCTAssertEqualObjects([manager remoteSnapshotForURL:url error:&error], @{ @"refs/remotes/origin/main" : @"abc" });
+	manager.testOutput = @"7\n";
+	XCTAssertEqual([manager commitCountFrom:@"old" to:@"new" repositoryURL:url], 7);
+	manager.testOutput = @"1234\n";
+	XCTAssertEqual([manager commitTimestampForSHA:@"new" repositoryURL:url], 1234);
+	manager.testError = [NSError errorWithDomain:@"test" code:1 userInfo:nil];
+	XCTAssertEqual([manager commitTimestampForSHA:@"new" repositoryURL:url], 0);
+}
+
+- (void)testAutoFetchSuccessfulFetchRefreshesAndNotifiesOnlyFastForwardAdvances
+{
+	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-success" isDirectory:YES];
+	manager.testSnapshots = @[
+		@{ @"refs/remotes/origin/main" : @"old", @"refs/remotes/origin/stable" : @"same" },
+		@{ @"refs/remotes/origin/main" : @"new", @"refs/remotes/origin/stable" : @"same", @"refs/remotes/origin/new" : @"first" },
+	];
+	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
+	manager.testTask.succeeds = YES;
+	manager.ancestorResult = YES;
+	manager.testCommitCount = 3;
+	manager.testTimestamp = 1234;
+	manager.deliveryExpectation = [self expectationWithDescription:@"success delivered"];
+	[PBGitDefaults setAutoFetchIntervalMinutes:5];
+	[PBGitDefaults setNotifyAboutFetchedCommits:YES forRepositoryURL:url];
+	[manager setValue:[NSMutableSet setWithObject:url.path] forKey:@"inFlightRepositories"];
+
+	[manager fetchRepositoryAtURL:url key:url.path];
+	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:2];
+
+	XCTAssertEqual(manager.refreshCount, (NSUInteger)1);
+	XCTAssertEqual(manager.advanceNotificationCount, (NSUInteger)1);
+	NSDictionary *failureCounts = [manager valueForKey:@"failureCounts"];
+	XCTAssertNil(failureCounts[url.path]);
+}
+
+- (void)testAutoFetchFailureBacksOffAndNotifiesOnlyOnFirstFailure
+{
+	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-failure" isDirectory:YES];
+	manager.testSnapshots = @[];
+	manager.snapshotError = [NSError errorWithDomain:@"test" code:9 userInfo:nil];
+	[manager setValue:[NSMutableSet setWithObject:url.path] forKey:@"inFlightRepositories"];
+
+	manager.deliveryExpectation = [self expectationWithDescription:@"first failure delivered"];
+	[manager fetchRepositoryAtURL:url key:url.path];
+	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:2];
+	XCTAssertEqual(manager.failureNotificationCount, (NSUInteger)1);
+	XCTAssertEqualObjects([[manager valueForKey:@"failureCounts"] objectForKey:url.path], @1);
+
+	[manager setValue:[NSMutableSet setWithObject:url.path] forKey:@"inFlightRepositories"];
+	manager.deliveryExpectation = nil;
+	[manager fetchRepositoryAtURL:url key:url.path];
+	XCTestExpectation *settled = [self expectationWithDescription:@"second failure settled"];
+	dispatch_async(dispatch_get_main_queue(), ^{ [settled fulfill]; });
+	[self waitForExpectations:@[ settled ] timeout:2];
+	XCTAssertEqual(manager.failureNotificationCount, (NSUInteger)1);
+	XCTAssertEqualObjects([[manager valueForKey:@"failureCounts"] objectForKey:url.path], @2);
+}
+
+- (void)testAutoFetchNotificationsDescribeFailuresAndMultipleAdvances
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/example" isDirectory:YES];
+	PBAutoFetchLastNotificationRequest = nil;
+	PBFeatureSwapInstanceMethods(
+		UNUserNotificationCenter.class,
+		@selector(addNotificationRequest:withCompletionHandler:),
+		@selector(pb_feature_addNotificationRequest:completionHandler:));
+	@try {
+		NSError *error = [NSError errorWithDomain:@"test" code:4 userInfo:@{ NSLocalizedFailureReasonErrorKey : @"Offline" }];
+		[manager postFailureNotificationForURL:url error:error];
+		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.body containsString:@"Offline"]);
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"kind"], @"failure");
+
+		[manager postAdvanceNotificationForURL:url advances:@[
+			@{ @"ref" : @"refs/remotes/origin/main", @"sha" : @"a", @"count" : @1, @"timestamp" : @1 },
+			@{ @"ref" : @"refs/remotes/origin/next", @"sha" : @"b", @"count" : @2, @"timestamp" : @2 },
+		]];
+		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.title containsString:@"3 new commits"]);
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"sha"], @"b");
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"multipleBranches"], @YES);
+	} @finally {
+		PBFeatureSwapInstanceMethods(
+			UNUserNotificationCenter.class,
+			@selector(addNotificationRequest:withCompletionHandler:),
+			@selector(pb_feature_addNotificationRequest:completionHandler:));
+	}
+}
+
+- (void)testAutoFetchForegroundNotificationRequestsBannerAndSound
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	__block UNNotificationPresentationOptions options = 0;
+	[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
+			  willPresentNotification:(UNNotification *)nil
+				 withCompletionHandler:^(UNNotificationPresentationOptions value) { options = value; }];
+	XCTAssertTrue((options & UNNotificationPresentationOptionBanner) != 0);
+	XCTAssertTrue((options & UNNotificationPresentationOptionSound) != 0);
+}
+
+- (void)testAutoFetchCandidateSelectionCoversActiveOpenAndRecentScopes
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	PBAutoFetchDocumentControllerSpy *controller = class_createInstance(PBAutoFetchDocumentControllerSpy.class, 0);
+	PBAutoFetchRepositorySpy *repository = class_createInstance(PBAutoFetchRepositorySpy.class, 0);
+	repository.testWorkingDirectoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-open-repository" isDirectory:YES];
+	PBAutoFetchRepositoryDocumentSpy *document = class_createInstance(PBAutoFetchRepositoryDocumentSpy.class, 0);
+	document.testRepository = repository;
+	controller.testDocuments = @[ document, [[NSDocument alloc] init] ];
+	controller.testCurrentDocument = document;
+	NSURL *recent = [NSURL fileURLWithPath:@"/tmp/gitx-recent-repository" isDirectory:YES];
+	controller.testRecentURLs = @[ recent, [NSURL URLWithString:@"https://example.com/not-local"] ];
+	PBAutoFetchDocumentController = controller;
+	PBFeatureSwapClassMethods(NSDocumentController.class,
+		@selector(sharedDocumentController),
+		@selector(pb_feature_sharedDocumentController));
+	@try {
+		[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeActiveRepository];
+		XCTAssertEqualObjects([manager candidateRepositoryURLs].allValues, @[ repository.testWorkingDirectoryURL ]);
+
+		[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
+		XCTAssertEqualObjects([manager candidateRepositoryURLs].allValues, @[ repository.testWorkingDirectoryURL ]);
+
+		[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenAndRecentRepositories];
+		NSDictionary<NSString *, NSURL *> *candidates = [manager candidateRepositoryURLs];
+		XCTAssertEqual(candidates.count, (NSUInteger)2);
+		XCTAssertEqualObjects(candidates[recent.path], recent);
+	} @finally {
+		PBFeatureSwapClassMethods(NSDocumentController.class,
+			@selector(sharedDocumentController),
+			@selector(pb_feature_sharedDocumentController));
+		PBAutoFetchDocumentController = nil;
+	}
+}
+
+- (void)testAutoFetchFindsAndRefreshesMatchingOpenRepository
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	PBAutoFetchDocumentControllerSpy *controller = class_createInstance(PBAutoFetchDocumentControllerSpy.class, 0);
+	PBAutoFetchRepositorySpy *repository = class_createInstance(PBAutoFetchRepositorySpy.class, 0);
+	repository.testWorkingDirectoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-refresh/../gitx-refresh/repository" isDirectory:YES];
+	PBAutoFetchRepositoryDocumentSpy *document = class_createInstance(PBAutoFetchRepositoryDocumentSpy.class, 0);
+	document.testRepository = repository;
+	controller.testDocuments = @[ [[NSDocument alloc] init], document ];
+	PBAutoFetchDocumentController = controller;
+	PBFeatureSwapClassMethods(NSDocumentController.class,
+		@selector(sharedDocumentController),
+		@selector(pb_feature_sharedDocumentController));
+	@try {
+		NSURL *equivalent = [NSURL fileURLWithPath:@"/tmp/gitx-refresh/repository" isDirectory:YES];
+		XCTAssertEqual([manager openDocumentForRepositoryURL:equivalent], document);
+		[manager refreshOpenRepositoryAtURL:equivalent];
+		XCTAssertEqual(repository.reloadCount, (NSUInteger)1);
+		XCTAssertEqual(repository.forceUpdateCount, (NSUInteger)1);
+		XCTAssertNil([manager openDocumentForRepositoryURL:[NSURL fileURLWithPath:@"/tmp/missing"]]);
+	} @finally {
+		PBFeatureSwapClassMethods(NSDocumentController.class,
+			@selector(sharedDocumentController),
+			@selector(pb_feature_sharedDocumentController));
+		PBAutoFetchDocumentController = nil;
+	}
+}
+
+- (void)testAutoFetchAncestorProbeReturnsGitTaskResult
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	XCTAssertFalse([manager isAncestor:@"missing-old"
+									 of:@"missing-new"
+						 repositoryURL:[NSURL fileURLWithPath:NSTemporaryDirectory()]]);
+}
+
+- (void)testAutoFetchNotificationActivationHandlesMissingOpenAndExistingRepositories
+{
+	PBAutoFetchManager *manager = [[PBAutoFetchManager alloc] init];
+	PBAutoFetchDocumentControllerSpy *controller = class_createInstance(PBAutoFetchDocumentControllerSpy.class, 0);
+	PBAutoFetchRepositorySpy *repository = class_createInstance(PBAutoFetchRepositorySpy.class, 0);
+	NSURL *repositoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-notification" isDirectory:YES];
+	repository.testWorkingDirectoryURL = repositoryURL;
+	PBAutoFetchWindowControllerSpy *windowController = class_createInstance(PBAutoFetchWindowControllerSpy.class, 0);
+	PBAutoFetchRepositoryDocumentSpy *document = class_createInstance(PBAutoFetchRepositoryDocumentSpy.class, 0);
+	document.testRepository = repository;
+	document.testWindowController = windowController;
+	controller.testDocuments = @[];
+	controller.testDocumentToOpen = document;
+	PBAutoFetchDocumentController = controller;
+	PBFeatureSwapClassMethods(NSDocumentController.class,
+		@selector(sharedDocumentController),
+		@selector(pb_feature_sharedDocumentController));
+	@try {
+		PBAutoFetchNotificationSpy *notification = class_createInstance(PBAutoFetchNotificationSpy.class, 0);
+		PBAutoFetchNotificationResponseSpy *response = class_createInstance(PBAutoFetchNotificationResponseSpy.class, 0);
+		response.testNotification = notification;
+		__block NSUInteger completionCount = 0;
+
+		UNMutableNotificationContent *emptyContent = [[UNMutableNotificationContent alloc] init];
+		notification.testRequest = [UNNotificationRequest requestWithIdentifier:@"empty" content:emptyContent trigger:nil];
+		[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
+			didReceiveNotificationResponse:response
+					 withCompletionHandler:^{ completionCount++; }];
+		XCTAssertEqual(completionCount, (NSUInteger)1);
+
+		UNMutableNotificationContent *multipleContent = [[UNMutableNotificationContent alloc] init];
+		multipleContent.userInfo = @{ @"repository" : repositoryURL.path, @"multipleBranches" : @YES };
+		notification.testRequest = [UNNotificationRequest requestWithIdentifier:@"multiple" content:multipleContent trigger:nil];
+		[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
+			didReceiveNotificationResponse:response
+					 withCompletionHandler:^{ completionCount++; }];
+		XCTestExpectation *opened = [self expectationWithDescription:@"notification opened repository"];
+		dispatch_async(dispatch_get_main_queue(), ^{ [opened fulfill]; });
+		[self waitForExpectations:@[ opened ] timeout:2];
+		XCTAssertEqual(windowController.showHistoryCount, (NSUInteger)1);
+		XCTAssertEqual(repository.testBranchFilter, kGitXAllBranchesFilter);
+
+		controller.testDocuments = @[ document ];
+		UNMutableNotificationContent *branchContent = [[UNMutableNotificationContent alloc] init];
+		branchContent.userInfo = @{
+			@"repository" : repositoryURL.path,
+			@"multipleBranches" : @NO,
+			@"ref" : @"refs/remotes/origin/main",
+		};
+		notification.testRequest = [UNNotificationRequest requestWithIdentifier:@"branch" content:branchContent trigger:nil];
+		[manager userNotificationCenter:UNUserNotificationCenter.currentNotificationCenter
+			didReceiveNotificationResponse:response
+					 withCompletionHandler:^{ completionCount++; }];
+		XCTestExpectation *focused = [self expectationWithDescription:@"notification focused repository"];
+		dispatch_async(dispatch_get_main_queue(), ^{ [focused fulfill]; });
+		[self waitForExpectations:@[ focused ] timeout:2];
+		XCTAssertEqual(windowController.showHistoryCount, (NSUInteger)2);
+		XCTAssertEqual(repository.testBranchFilter, kGitXSelectedBranchFilter);
+		XCTAssertEqual(completionCount, (NSUInteger)3);
+	} @finally {
+		PBFeatureSwapClassMethods(NSDocumentController.class,
+			@selector(sharedDocumentController),
+			@selector(pb_feature_sharedDocumentController));
+		PBAutoFetchDocumentController = nil;
 	}
 }
 
