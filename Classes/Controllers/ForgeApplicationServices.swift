@@ -672,10 +672,14 @@ nonisolated enum ForgeApplicationServiceFactory {
         let forgeDirectory = applicationSupportURL
             .appendingPathComponent("GitX", isDirectory: true)
             .appendingPathComponent("Forge", isDirectory: true)
+        let keychainService = ProcessInfo.processInfo.environment["GITX_UITEST_REPO"] == nil
+            ? SecurityForgeCredentialKeychain.defaultService
+            : "com.gitx.gitx.ui-tests.forge-credentials.v1"
+        let keychain = SecurityForgeCredentialKeychain(service: keychainService)
         return try await make(
             forgeDirectory: forgeDirectory,
             bindingCleaner: bindingCleaner,
-            keychain: SecurityForgeCredentialKeychain(),
+            keychain: keychain,
             cliRunner: SystemForgeCLICommandRunner(),
             avatarLoader: avatarLoader,
             avatarLoadingEnabled: avatarLoadingEnabled,

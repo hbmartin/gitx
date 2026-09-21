@@ -3070,12 +3070,12 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 			PBApplicationSettings.openDisposition = disposition.integerValue;
 			XCTestExpectation *completion = [self expectationWithDescription:@"existing repository focused"];
 			[[PBRepositoryOpenCoordinator shared] openURLs:@[ self.repositoryURL ]
-									  sourceWindow:self.controller.window
-										completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
-				XCTAssertEqualObjects(documents, @[ document ]);
-				XCTAssertEqual(errors.count, (NSUInteger)0);
-				[completion fulfill];
-			}];
+											  sourceWindow:self.controller.window
+												completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+													XCTAssertEqualObjects(documents, @[ document ]);
+													XCTAssertEqual(errors.count, (NSUInteger)0);
+													[completion fulfill];
+												}];
 			[self waitForExpectations:@[ completion ] timeout:1.0];
 
 			XCTAssertEqual(repositoryWindow.tabbingMode, NSWindowTabbingModePreferred);
@@ -3569,6 +3569,23 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 
 	[toolbarController install];
 	XCTAssertEqual(self.controller.window.toolbar, historyToolbar);
+	[self.controller.window setContentSize:NSMakeSize(1800, self.controller.window.contentView.frame.size.height)];
+	[self.controller.window makeKeyAndOrderFront:nil];
+	[self pumpRunLoopFor:0.05];
+	id<NSAccessibility> viewRemoteAccessibilityElement = nil;
+	NSMutableArray<id<NSAccessibility>> *pendingToolbarViews =
+		[NSMutableArray arrayWithObject:self.controller.window.contentView.superview];
+	while (pendingToolbarViews.count > 0) {
+		id<NSAccessibility> view = pendingToolbarViews.firstObject;
+		[pendingToolbarViews removeObjectAtIndex:0];
+		if ([view.accessibilityIdentifier isEqualToString:@"GitX.Toolbar.ViewRemote"]) {
+			viewRemoteAccessibilityElement = view;
+			break;
+		}
+		[pendingToolbarViews addObjectsFromArray:view.accessibilityChildren ?: @[]];
+	}
+	XCTAssertNotNil(viewRemoteAccessibilityElement);
+	XCTAssertEqualObjects(viewRemoteAccessibilityElement.accessibilityRole, NSAccessibilityMenuButtonRole);
 }
 
 - (void)testRepositoryCommitMessageReplacementRulesAreOrderedAndMultiline
