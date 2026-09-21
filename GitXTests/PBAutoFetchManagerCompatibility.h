@@ -10,6 +10,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSTimeInterval)retryDelayForFailureCount:(NSUInteger)failureCount;
 - (void)start;
 - (void)stop;
+- (void)stopForApplicationTermination;
 - (void)recordManualFetchSucceededForRepositoryURL:(NSURL *)repositoryURL;
 @end
 

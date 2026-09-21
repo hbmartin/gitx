@@ -55,6 +55,7 @@ static BOOL PBApplicationAppleScriptSucceeds;
 static NSString *PBApplicationAlertMessage;
 static NSString *PBApplicationAlertInformation;
 static id PBApplicationProcessInfo;
+static NSUInteger PBApplicationAutoFetchTerminationStopCount;
 
 @interface PBRepositoryOpenCoordinator : NSObject
 + (instancetype)shared;
@@ -864,9 +865,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (NSInteger)commitCountFrom:(NSString *)oldSHA to:(NSString *)newSHA repositoryURL:(NSURL *)url;
 - (NSTimeInterval)commitTimestampForSHA:(NSString *)sha repositoryURL:(NSURL *)url;
 - (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key;
+- (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key generation:(NSUInteger)generation;
 - (nullable PBGitRepositoryDocument *)openDocumentForRepositoryURL:(NSURL *)url;
 - (void)refreshOpenRepositoryAtURL:(NSURL *)url;
-- (void)postFailureNotificationForURL:(NSURL *)url error:(NSError *)error;
+- (void)postFailureNotificationForURL:(NSURL *)url error:(nullable NSError *)error;
 - (void)postAdvanceNotificationForURL:(NSURL *)url advances:(NSArray<NSDictionary *> *)advances;
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
 	   willPresentNotification:(nullable UNNotification *)notification
@@ -874,6 +876,17 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
 	didReceiveNotificationResponse:(UNNotificationResponse *)response
 			 withCompletionHandler:(void (^)(void))completionHandler;
+@end
+
+@interface PBAutoFetchManager (GitXFeatureApplicationTests)
+- (void)pb_feature_stopForApplicationTermination;
+@end
+
+@implementation PBAutoFetchManager (GitXFeatureApplicationTests)
+- (void)pb_feature_stopForApplicationTermination
+{
+	PBApplicationAutoFetchTerminationStopCount++;
+}
 @end
 
 @interface PBAutoFetchManagerSpy : PBAutoFetchManager
@@ -889,6 +902,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @property (nonatomic, copy) NSString *testOutput;
 @property (nullable, nonatomic) XCTestExpectation *launchExpectation;
 @property (nullable, nonatomic) dispatch_semaphore_t launchGate;
+@property (nonatomic) NSUInteger immediateTerminationCount;
+@property (nonatomic) NSUInteger gracefulTerminationCount;
 @end
 
 @implementation PBAutoFetchTaskSpy
@@ -902,6 +917,14 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (NSString *)standardOutputString
 {
 	return self.testOutput;
+}
+- (void)terminate
+{
+	self.immediateTerminationCount++;
+}
+- (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(NSTimeInterval)forceKillDelay
+{
+	self.gracefulTerminationCount++;
 }
 @end
 
@@ -928,14 +951,14 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 {
 	return self.testCandidates ?: @{};
 }
-- (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key
+- (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key generation:(NSUInteger)generation
 {
 	if (self.fetchExpectation) {
 		self.fetchCount++;
 		[self.fetchExpectation fulfill];
 		return;
 	}
-	[super fetchRepositoryAtURL:url key:key];
+	[super fetchRepositoryAtURL:url key:key generation:generation];
 }
 - (NSDictionary<NSString *, NSString *> *)remoteSnapshotForURL:(NSURL *)url error:(NSError **)error
 {
@@ -971,7 +994,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	self.refreshCount++;
 	[self.deliveryExpectation fulfill];
 }
-- (void)postFailureNotificationForURL:(NSURL *)url error:(NSError *)error
+- (void)postFailureNotificationForURL:(NSURL *)url error:(nullable NSError *)error
 {
 	self.failureNotificationCount++;
 	[self.deliveryExpectation fulfill];
@@ -1081,13 +1104,21 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	id previousSnapshot = [defaults objectForKey:snapshotKey];
 	id previousCleanShutdown = [defaults objectForKey:cleanShutdownKey];
 	NSArray *sentinelSnapshot = @[ @{@"path" : @"/tmp/GitX-app-hosted-session-sentinel"} ];
+	PBApplicationAutoFetchTerminationStopCount = 0;
+	PBFeatureSwapInstanceMethods(PBAutoFetchManager.class,
+		@selector(stopForApplicationTermination),
+		@selector(pb_feature_stopForApplicationTermination));
 	@try {
 		[defaults setObject:sentinelSnapshot forKey:snapshotKey];
 		[defaults setBool:NO forKey:cleanShutdownKey];
 		[controller applicationWillTerminate:nil];
+		XCTAssertEqual(PBApplicationAutoFetchTerminationStopCount, (NSUInteger)1);
 		XCTAssertEqualObjects([defaults objectForKey:snapshotKey], sentinelSnapshot);
 		XCTAssertFalse([defaults boolForKey:cleanShutdownKey]);
 	} @finally {
+		PBFeatureSwapInstanceMethods(PBAutoFetchManager.class,
+			@selector(stopForApplicationTermination),
+			@selector(pb_feature_stopForApplicationTermination));
 		if (previousSnapshot)
 			[defaults setObject:previousSnapshot forKey:snapshotKey];
 		else
@@ -1508,10 +1539,29 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[manager evaluateRepositoriesForImmediateFetch:YES];
 	XCTAssertEqual(manager.fetchCount, (NSUInteger)1, @"an in-flight repository must not be scheduled twice");
 
-	[manager setValue:[NSMutableSet set] forKey:@"inFlightRepositories"];
+	[manager setValue:[NSMutableDictionary dictionary] forKey:@"inFlightRepositories"];
 	[manager setValue:[@{url.path : [NSDate dateWithTimeIntervalSinceNow:300]} mutableCopy] forKey:@"nextFetchDates"];
 	[manager evaluateRepositoriesForImmediateFetch:NO];
 	XCTAssertEqual(manager.fetchCount, (NSUInteger)1, @"a future due date must defer polling");
+}
+
+- (void)testAutoFetchStopStartReschedulesRepositoriesFromANewGeneration
+{
+	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-restarted-fetch" isDirectory:YES];
+	manager.testCandidates = @{url.path : url};
+	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeOpenRepositories];
+
+	manager.fetchExpectation = [self expectationWithDescription:@"initial generation scheduled"];
+	[manager start];
+	[self waitForExpectations:@[ manager.fetchExpectation ] timeout:2];
+	[manager stop];
+
+	manager.fetchExpectation = [self expectationWithDescription:@"restarted generation scheduled"];
+	[manager start];
+	[self waitForExpectations:@[ manager.fetchExpectation ] timeout:2];
+	XCTAssertEqual(manager.fetchCount, (NSUInteger)2);
+	[manager stop];
 }
 
 - (void)testAutoFetchTaskUsesNoninteractiveEnvironmentAndGitTimeout
@@ -1564,7 +1614,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	manager.deliveryExpectation = [self expectationWithDescription:@"success delivered"];
 	[PBGitDefaults setAutoFetchIntervalMinutes:5];
 	[PBGitDefaults setNotifyAboutFetchedCommits:YES forRepositoryURL:url];
-	[manager setValue:[NSMutableSet setWithObject:url.path] forKey:@"inFlightRepositories"];
+	[manager setValue:[@{url.path : @0} mutableCopy] forKey:@"inFlightRepositories"];
 
 	[manager fetchRepositoryAtURL:url key:url.path];
 	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:2];
@@ -1584,7 +1634,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
 	manager.testTask.succeeds = NO;
 	manager.testTask.testError = manager.snapshotError;
-	[manager setValue:[NSMutableSet setWithObject:url.path] forKey:@"inFlightRepositories"];
+	[manager setValue:[@{url.path : @0} mutableCopy] forKey:@"inFlightRepositories"];
 
 	manager.deliveryExpectation = [self expectationWithDescription:@"first failure delivered"];
 	[manager fetchRepositoryAtURL:url key:url.path];
@@ -1592,7 +1642,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqual(manager.failureNotificationCount, (NSUInteger)1);
 	XCTAssertEqualObjects([[manager valueForKey:@"failureCounts"] objectForKey:url.path], @1);
 
-	[manager setValue:[NSMutableSet setWithObject:url.path] forKey:@"inFlightRepositories"];
+	[manager setValue:[@{url.path : @0} mutableCopy] forKey:@"inFlightRepositories"];
 	manager.deliveryExpectation = nil;
 	[manager fetchRepositoryAtURL:url key:url.path];
 	XCTestExpectation *settled = [self expectationWithDescription:@"second failure settled"];
@@ -1623,18 +1673,46 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	manager.deliveryExpectation.inverted = YES;
 	[PBGitDefaults setAutoFetchScope:PBAutoFetchScopeNone];
 	[manager start];
+	[manager setValue:[@{url.path : @0} mutableCopy] forKey:@"inFlightRepositories"];
 
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		[manager fetchRepositoryAtURL:url key:url.path];
 	});
 	[self waitForExpectations:@[ manager.testTask.launchExpectation ] timeout:2];
 	[manager stop];
+	[manager setValue:[@{url.path : @1} mutableCopy] forKey:@"inFlightRepositories"];
 	dispatch_semaphore_signal(manager.testTask.launchGate);
 	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:0.25];
 
 	XCTAssertEqual(manager.refreshCount, (NSUInteger)0);
 	XCTAssertEqual(manager.failureNotificationCount, (NSUInteger)0);
 	XCTAssertEqual(manager.advanceNotificationCount, (NSUInteger)0);
+	XCTAssertEqual(manager.testTask.gracefulTerminationCount, (NSUInteger)1);
+	XCTAssertEqualObjects([[manager valueForKey:@"inFlightRepositories"] objectForKey:url.path], @1,
+		@"stale cleanup must not remove a restarted generation's fetch");
+}
+
+- (void)testAutoFetchApplicationTerminationImmediatelySignalsActiveTasks
+{
+	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
+	NSURL *url = [NSURL fileURLWithPath:@"/tmp/gitx-terminating-fetch" isDirectory:YES];
+	manager.testSnapshots = @[ @{@"refs/remotes/origin/main" : @"old"} ];
+	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
+	manager.testTask.succeeds = YES;
+	manager.testTask.launchExpectation = [self expectationWithDescription:@"fetch launched"];
+	manager.testTask.launchGate = dispatch_semaphore_create(0);
+	manager.deliveryExpectation = [self expectationWithDescription:@"termination suppresses delivery"];
+	manager.deliveryExpectation.inverted = YES;
+
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		[manager fetchRepositoryAtURL:url key:url.path];
+	});
+	[self waitForExpectations:@[ manager.testTask.launchExpectation ] timeout:2];
+	[manager stopForApplicationTermination];
+	XCTAssertEqual(manager.testTask.immediateTerminationCount, (NSUInteger)1);
+	XCTAssertEqual(manager.testTask.gracefulTerminationCount, (NSUInteger)0);
+	dispatch_semaphore_signal(manager.testTask.launchGate);
+	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:0.25];
 }
 
 - (void)testAutoFetchNotificationsDescribeFailuresAndMultipleAdvances
@@ -1651,6 +1729,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		[manager postFailureNotificationForURL:url error:error];
 		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.body containsString:@"Offline"]);
 		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"kind"], @"failure");
+		[manager postFailureNotificationForURL:url error:nil];
+		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.body containsString:@"Git could not refresh this repository."]);
 
 		[manager postAdvanceNotificationForURL:url
 									  advances:@[

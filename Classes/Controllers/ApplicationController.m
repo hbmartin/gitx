@@ -238,7 +238,7 @@
 	// Stop unattended fetching first: it outlives every window otherwise, and a
 	// termination that stalls would keep running git against recent repositories.
 	NSLog(@"[AutoFetch] Stopping automatic repository fetching for application termination");
-	[[PBAutoFetchManager sharedManager] stop];
+	[[PBAutoFetchManager sharedManager] stopForApplicationTermination];
 
 	if ([PBWindowSessionLaunchPolicy shouldManageSessionForEnvironment:NSProcessInfo.processInfo.environment])
 		[[PBWindowSessionCoordinator shared] applicationWillTerminate];
