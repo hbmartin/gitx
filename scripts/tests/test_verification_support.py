@@ -36,7 +36,7 @@ class VersionTests(unittest.TestCase):
 
         self.assertEqual(candidates, [pathlib.Path(config["defaultDeveloperDirectory"])])
 
-    def test_gitx_developer_directory_is_the_only_environment_override(self) -> None:
+    def test_developer_directory_environment_precedence_keeps_default_fallback(self) -> None:
         config = {"defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer"}
         environment = {
             "GITX_DEVELOPER_DIR": "/Applications/Explicit.app/Contents/Developer",
@@ -45,7 +45,25 @@ class VersionTests(unittest.TestCase):
         with mock.patch.dict(verification.os.environ, environment, clear=True):
             candidates = verification.developer_dir_candidates(config)
 
-        self.assertEqual(candidates, [pathlib.Path(environment["GITX_DEVELOPER_DIR"])])
+        self.assertEqual(
+            candidates,
+            [
+                pathlib.Path(environment["GITX_DEVELOPER_DIR"]),
+                pathlib.Path(environment["DEVELOPER_DIR"]),
+                pathlib.Path(config["defaultDeveloperDirectory"]),
+            ],
+        )
+
+    def test_standard_developer_directory_precedes_configured_default(self) -> None:
+        config = {"defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer"}
+        environment = {"DEVELOPER_DIR": "/Volumes/Tools/Xcode.app/Contents/Developer"}
+        with mock.patch.dict(verification.os.environ, environment, clear=True):
+            candidates = verification.developer_dir_candidates(config)
+
+        self.assertEqual(
+            candidates,
+            [pathlib.Path(environment["DEVELOPER_DIR"]), pathlib.Path(config["defaultDeveloperDirectory"])],
+        )
 
 
 class ReceiptTests(unittest.TestCase):

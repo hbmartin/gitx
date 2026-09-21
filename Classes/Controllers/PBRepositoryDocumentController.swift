@@ -62,10 +62,6 @@ final class RepositoryDocumentOpenStateModel: NSObject {
         state.explicitLaunchOpenSucceeded
     }
 
-    var successfulRepositoryURLs: Set<URL> {
-        state.successfulRepositoryURLs
-    }
-
     @objc func beginOpen() {
         state.beginOpen()
     }

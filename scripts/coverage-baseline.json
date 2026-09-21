@@ -85,7 +85,6 @@
     "Classes/NSAppearance+PBDarkMode.m": 0.9473,
     "Classes/NSColor+RGB.m": 1.0,
     "Classes/NSSplitView+GitX.m": 0.85,
-    "Classes/PBCLIProxy.m": 0.0,
     "Classes/PBChangedFile.m": 0.8636,
     "Classes/PBCommitList.swift": 0.5069,
     "Classes/PBGraphCellInfo.m": 1.0,

@@ -1,4 +1,5 @@
 #import <XCTest/XCTest.h>
+#import <ApplicationServices/ApplicationServices.h>
 #import <Security/Security.h>
 #import <dlfcn.h>
 #import <objc/message.h>
@@ -864,7 +865,6 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (BOOL)isAncestor:(NSString *)oldSHA of:(NSString *)newSHA repositoryURL:(NSURL *)url;
 - (NSInteger)commitCountFrom:(NSString *)oldSHA to:(NSString *)newSHA repositoryURL:(NSURL *)url;
 - (NSTimeInterval)commitTimestampForSHA:(NSString *)sha repositoryURL:(NSURL *)url;
-- (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key;
 - (void)fetchRepositoryAtURL:(NSURL *)url key:(NSString *)key generation:(NSUInteger)generation;
 - (nullable PBGitRepositoryDocument *)openDocumentForRepositoryURL:(NSURL *)url;
 - (void)refreshOpenRepositoryAtURL:(NSURL *)url;
@@ -1616,7 +1616,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[PBGitDefaults setNotifyAboutFetchedCommits:YES forRepositoryURL:url];
 	[manager setValue:[@{url.path : @0} mutableCopy] forKey:@"inFlightRepositories"];
 
-	[manager fetchRepositoryAtURL:url key:url.path];
+	[manager fetchRepositoryAtURL:url key:url.path generation:0];
 	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:2];
 
 	XCTAssertEqual(manager.refreshCount, (NSUInteger)1);
@@ -1637,14 +1637,14 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[manager setValue:[@{url.path : @0} mutableCopy] forKey:@"inFlightRepositories"];
 
 	manager.deliveryExpectation = [self expectationWithDescription:@"first failure delivered"];
-	[manager fetchRepositoryAtURL:url key:url.path];
+	[manager fetchRepositoryAtURL:url key:url.path generation:0];
 	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:2];
 	XCTAssertEqual(manager.failureNotificationCount, (NSUInteger)1);
 	XCTAssertEqualObjects([[manager valueForKey:@"failureCounts"] objectForKey:url.path], @1);
 
 	[manager setValue:[@{url.path : @0} mutableCopy] forKey:@"inFlightRepositories"];
 	manager.deliveryExpectation = nil;
-	[manager fetchRepositoryAtURL:url key:url.path];
+	[manager fetchRepositoryAtURL:url key:url.path generation:0];
 	XCTestExpectation *settled = [self expectationWithDescription:@"second failure settled"];
 	dispatch_async(dispatch_get_main_queue(), ^{
 		[settled fulfill];
@@ -1676,7 +1676,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[manager setValue:[@{url.path : @0} mutableCopy] forKey:@"inFlightRepositories"];
 
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		[manager fetchRepositoryAtURL:url key:url.path];
+		[manager fetchRepositoryAtURL:url key:url.path generation:0];
 	});
 	[self waitForExpectations:@[ manager.testTask.launchExpectation ] timeout:2];
 	[manager stop];
@@ -1705,7 +1705,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	manager.deliveryExpectation.inverted = YES;
 
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		[manager fetchRepositoryAtURL:url key:url.path];
+		[manager fetchRepositoryAtURL:url key:url.path generation:0];
 	});
 	[self waitForExpectations:@[ manager.testTask.launchExpectation ] timeout:2];
 	[manager stopForApplicationTermination];
@@ -2860,7 +2860,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)testQuickLookOutlineRoutesSpaceAndContextMenuToItsController
 {
 	PBQLOutlineHistorySpy *controller = [[PBQLOutlineHistorySpy alloc] init];
-	controller.testContextMenu = [[NSMenu alloc] initWithTitle:@"Tree"];
+	controller.testContextMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Tree", nil)];
 	PBQLOutlineViewSpy *outline = [[PBQLOutlineViewSpy alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
 	[outline setValue:controller forKey:@"controller"];
 
@@ -2896,7 +2896,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertTrue([outline outlineView:outline writeItems:items toPasteboard:pasteboard]);
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-	XCTAssertEqualObjects([pasteboard propertyListForType:NSFilesPromisePboardType], (@[ @"swift", @"md" ]));
+	NSPasteboardType promisedFileType = (__bridge NSPasteboardType)kPasteboardTypeFileURLPromise;
+	XCTAssertEqualObjects([pasteboard propertyListForType:promisedFileType], (@[ @"swift", @"md" ]));
 #pragma clang diagnostic pop
 
 	NSURL *destination = [NSURL fileURLWithPath:@"/tmp/gitx-promised-files" isDirectory:YES];

@@ -162,7 +162,11 @@ fi
 logs="$run_dir/Logs"
 results="$run_dir/Results"
 products="$run_dir/Products"
-derived_data=${GITX_DERIVED_DATA:-"$root/$derived_data_cache"}
+if [[ "$command" == "analyze" ]]; then
+	derived_data="$run_dir/DerivedData"
+else
+	derived_data=${GITX_DERIVED_DATA:-"$root/$derived_data_cache"}
+fi
 swiftpm_build_root="$root/$swiftpm_build_cache"
 mkdir -p "$logs" "$results" "$products" "$derived_data" "$swiftpm_build_root" "$root/$source_package_cache"
 receipt="$run_dir/receipt.json"
@@ -472,10 +476,29 @@ case "$command" in
 			ui)
 				preflight=$(config testPlans.ui-preflight)
 				plan=$(config testPlans.ui)
+				preflight_extra=()
+				index=0
+				while (( index < ${#extra[@]} )); do
+					argument=${extra[$index]}
+					case "$argument" in
+						-only-testing|-skip-testing)
+							(( index + 1 < ${#extra[@]} )) || { echo "$argument requires a value" >&2; exit 2; }
+							index=$((index + 2))
+							;;
+						-only-testing:*|-skip-testing:*)
+							index=$((index + 1))
+							;;
+						*)
+							preflight_extra+=("$argument")
+							index=$((index + 1))
+							;;
+					esac
+				done
 				xcode_test ui-preflight "$preflight" \
 					-test-timeouts-enabled YES \
 					-default-test-execution-time-allowance 60 \
-					-maximum-test-execution-time-allowance 90 || exit $?
+					-maximum-test-execution-time-allowance 90 \
+					${preflight_extra[@]+"${preflight_extra[@]}"} || exit $?
 				xcode_test ui "$plan" ${extra[@]+"${extra[@]}"} || exit $?
 				;;
 			address-undefined|thread-sanitizer|performance)
@@ -544,7 +567,10 @@ case "$command" in
 			result_path="$results/raw.xcresult"
 			raw_common+=( -resultBundlePath "$result_path" )
 		fi
-		run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" "${raw_common[@]}" "${extra[@]}" || exit $?
+		run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" \
+			${raw_common[@]+"${raw_common[@]}"} \
+			MACOSX_DEPLOYMENT_TARGET="$deployment_target" \
+			${extra[@]+"${extra[@]}"} || exit $?
 		;;
 esac
 

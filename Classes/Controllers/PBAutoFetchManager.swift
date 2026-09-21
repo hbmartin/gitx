@@ -289,11 +289,6 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
         return error == nil ? (output as NSString?)?.doubleValue ?? 0 : 0
     }
 
-    @objc(fetchRepositoryAtURL:key:)
-    dynamic func fetchRepository(at url: URL, key: String) {
-        fetchRepository(at: url, key: key, generation: currentGeneration())
-    }
-
     @objc(fetchRepositoryAtURL:key:generation:)
     dynamic func fetchRepository(at url: URL, key: String, generation: UInt) {
         defer {

@@ -644,11 +644,6 @@ private final class TimeoutSpy {
             body()
         }
     }
-
-    func fireNext() {
-        guard !pending.isEmpty else { return }
-        pending.removeFirst()()
-    }
 }
 
 @MainActor

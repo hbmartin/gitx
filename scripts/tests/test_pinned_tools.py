@@ -59,6 +59,18 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn('scripts/xcodebuild.sh --run-id "$UI_RUN_ID" test ui', build_workflow)
         self.assertNotIn("-only-testing:GitXUITests", build_workflow)
 
+    def test_verify_workflow_allows_cold_analyzer_and_full_ui_to_finish(self) -> None:
+        verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
+        unit_and_analyze = verify_workflow.split("  unit-and-analyze:\n", maxsplit=1)[1].split(
+            "  ui:\n", maxsplit=1
+        )[0]
+        ui = verify_workflow.split("  ui:\n", maxsplit=1)[1].split(
+            "  sanitizers:\n", maxsplit=1
+        )[0]
+
+        self.assertIn("timeout-minutes: 75", unit_and_analyze)
+        self.assertIn("timeout-minutes: 60", ui)
+
     def test_build_workflow_archives_unsigned_when_signing_secrets_are_unavailable(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
         build_step = build_workflow.split(
