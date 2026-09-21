@@ -85,6 +85,49 @@ final class ApplicationCompositionTests: XCTestCase {
         )
     }
 
+    func testRepositoryDocumentOpenStateBalancesNestedRequestsAndRecordsSuccess() {
+        let state = PBRepositoryDocumentOpenStateModel()
+        let repositoryURL = URL(fileURLWithPath: "/tmp/gitx-open-state")
+
+        state.beginOpen()
+        state.beginOpen()
+        XCTAssertTrue(state.hasPendingOpens)
+
+        state.finishOpen(withSuccessfulURL: repositoryURL)
+        XCTAssertTrue(state.hasPendingOpens)
+
+        state.finishOpen(withSuccessfulURL: nil)
+        XCTAssertFalse(state.hasPendingOpens)
+    }
+
+    func testRepositoryDocumentOpenStateSealsSuccessfulExplicitLaunchBeforeFinalSettlement() {
+        let state = PBRepositoryDocumentOpenStateModel()
+
+        state.beginExplicitLaunchOpen()
+        state.beginOpen()
+        state.finishOpen(withSuccessfulURL: URL(fileURLWithPath: "/tmp/gitx-explicit-open"))
+
+        XCTAssertTrue(state.explicitLaunchOpenSucceeded)
+        XCTAssertTrue(state.hasPendingExplicitLaunchOpens)
+        XCTAssertTrue(state.hasPendingOpens)
+
+        state.finishExplicitLaunchOpen()
+        XCTAssertFalse(state.hasPendingExplicitLaunchOpens)
+        XCTAssertFalse(state.hasPendingOpens)
+    }
+
+    func testRepositoryDocumentOpenStateLeavesFailedExplicitLaunchEligibleForRecovery() {
+        let state = PBRepositoryDocumentOpenStateModel()
+
+        state.beginExplicitLaunchOpen()
+        state.beginOpen()
+        state.finishOpen(withSuccessfulURL: nil)
+        state.finishExplicitLaunchOpen()
+
+        XCTAssertFalse(state.explicitLaunchOpenSucceeded)
+        XCTAssertFalse(state.hasPendingOpens)
+    }
+
     func testApplicationSettingsAndLegacyDefaultsUseInjectedPreferences() {
         PBApplicationSettings.diffContextLines = 99
         XCTAssertEqual(defaults.integer(forKey: "PBDiffContextLines"), 20)
@@ -141,6 +184,19 @@ final class ApplicationCompositionTests: XCTestCase {
         PBWindowSessionCoordinator.shared.applicationDidFinishLaunching()
 
         XCTAssertFalse(standard.bool(forKey: cleanShutdownKey))
+        XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
+    }
+
+    @MainActor
+    func testWindowSessionCaptureRecordsAnEmptyDocumentTopology() {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        defer { restore(previousSnapshot, forKey: snapshotKey, in: standard) }
+
+        XCTAssertTrue(NSDocumentController.shared.documents.isEmpty)
+        PBWindowSessionCoordinator.shared.capture()
+
         XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
     }
 
@@ -227,6 +283,10 @@ final class ApplicationCompositionTests: XCTestCase {
         let promptIsVisible = descendantText(in: restoreSheet.contentView)
             .contains("Restore Windows from the Previous Session?")
         XCTAssertTrue(promptIsVisible)
+        attachScreenshot(
+            of: welcome.contentView,
+            name: "Welcome restore prompt after launch recovery"
+        )
         welcome.endSheet(restoreSheet, returnCode: NSApplication.ModalResponse.alertSecondButtonReturn)
         let dismissalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
         while welcome.attachedSheet != nil, ContinuousClock.now < dismissalDeadline {
@@ -344,6 +404,23 @@ final class ApplicationCompositionTests: XCTestCase {
         guard let view else { return [] }
         let ownText = (view as? NSTextField).map { [$0.stringValue] } ?? []
         return ownText + view.subviews.flatMap { descendantText(in: $0) }
+    }
+
+    @MainActor
+    private func attachScreenshot(of view: NSView?, name: String) {
+        guard let view,
+              let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        else {
+            XCTFail("Diagnostic screenshot view is unavailable")
+            return
+        }
+        view.cacheDisplay(in: view.bounds, to: representation)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(representation)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {

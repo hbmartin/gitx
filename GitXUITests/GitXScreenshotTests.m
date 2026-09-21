@@ -18,6 +18,7 @@
 - (void)openPreferencesWaitingForElement:(XCUIElement *)element;
 - (void)launchWithStagingLayout:(NSInteger)layout;
 - (void)openStagingViewWaitingForTable:(NSString *)tableIdentifier;
+- (NSDictionary<NSString *, NSString *> *)launchEnvironmentForRepository:(NSString *)repositoryPath;
 @end
 
 @implementation GitXScreenshotTests
@@ -62,7 +63,7 @@
 	if (repoPath) {
 		// Passed to the app via applicationDidFinishLaunching: which opens
 		// the repo directly, giving the test a reliable document window.
-		self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repoPath};
+		self.app.launchEnvironment = [self launchEnvironmentForRepository:repoPath];
 	}
 
 	[self.app launch];
@@ -78,6 +79,24 @@
 }
 
 // MARK: - Helpers
+
+- (NSDictionary<NSString *, NSString *> *)launchEnvironmentForRepository:(NSString *)repositoryPath
+{
+	NSString *isolatedHome = [NSTemporaryDirectory() stringByAppendingPathComponent:
+														 [NSString stringWithFormat:@"gitx-screenshot-home-%@", NSUUID.UUID.UUIDString]];
+	NSError *error = nil;
+	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtPath:isolatedHome
+											withIntermediateDirectories:YES
+															 attributes:nil
+																  error:&error],
+				  @"Failed to create isolated preferences home: %@", error);
+	[self.temporaryRepositoryPaths addObject:isolatedHome];
+	return @{
+		@"CFFIXED_USER_HOME" : isolatedHome,
+		@"CFPREFERENCES_AVOID_DAEMON" : @"1",
+		@"GITX_UITEST_REPO" : repositoryPath,
+	};
+}
 
 - (BOOL)waitForWindow
 {
@@ -283,7 +302,9 @@
 {
 	XCTAssertTrue([self waitForWindow],
 				  @"Main window should appear within 30 seconds");
-	[self saveWindowScreenshotNamed:@"main-window"];
+	XCTAssertFalse(self.app.staticTexts[@"WelcomeTitle"].exists,
+				   @"A successful explicit repository open must suppress Welcome");
+	[self saveWindowScreenshotNamed:@"successful-explicit-open-suppresses-welcome"];
 }
 
 - (void)testHistoryTabScreenshot
@@ -350,15 +371,16 @@
 
 	XCUIElement *window = self.app.windows.firstMatch;
 	CGRect originalFrame = window.frame;
-	XCUICoordinate *titleBar = [[window coordinateWithNormalizedOffset:CGVectorMake(0, 0)]
+	[self.app activate];
+	XCUICoordinate *dragStart = [[window coordinateWithNormalizedOffset:CGVectorMake(0, 0)]
 		coordinateWithOffset:CGVectorMake(originalFrame.size.width * 0.5, 12)];
-	XCUICoordinate *destination = [titleBar coordinateWithOffset:CGVectorMake(80, 50)];
-	[titleBar pressForDuration:0.1 thenDragToCoordinate:destination];
+	XCUICoordinate *destination = [dragStart coordinateWithOffset:CGVectorMake(80, 50)];
+	[dragStart clickForDuration:0.2 thenDragToCoordinate:destination];
 	NSPredicate *frameChanged = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 		return !CGPointEqualToPoint(window.frame.origin, originalFrame.origin);
 	}];
 	XCTNSPredicateExpectation *moveExpectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:frameChanged object:window];
-	[self waitForExpectations:@[ moveExpectation ] timeout:5];
+	XCTAssertEqual([XCTWaiter waitForExpectations:@[ moveExpectation ] timeout:5], XCTWaiterResultCompleted);
 
 	XCTAssertTrue([[diff.value description] containsString:@"Hunk 1"]);
 	XCTAssertTrue(self.app.tables[@"PendingFiles"].hittable);
@@ -375,7 +397,7 @@
 	XCTAssertTrue([@"staged line\n" writeToFile:newPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
 	XCTAssertTrue(([self runGit:@[ @"add", @"partial.txt" ] inDirectory:fixture]));
 	XCTAssertTrue([@"staged line\nunstaged line\n" writeToFile:newPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self launchWithStagingLayout:1];
 	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
 
@@ -436,7 +458,7 @@
 	NSString *initialRemoteHead = [self gitOutput:@[ @"--git-dir", remotePath, @"rev-parse", @"refs/heads/main" ] inDirectory:repositoryPath];
 	XCTAssertEqualObjects(initialHead, initialRemoteHead);
 
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repositoryPath};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:repositoryPath];
 	[self launchWithStagingLayout:1];
 	[self openStagingViewWaitingForTable:@"UnstagedFiles"];
 
@@ -520,7 +542,7 @@
 {
 	[self.app terminate];
 	NSString *repositoryPath = [self makeDirtyRepositoryFixture];
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : repositoryPath};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:repositoryPath];
 	[self launchWithStagingLayout:0];
 	[self openStagingViewWaitingForTable:@"PendingFiles"];
 
@@ -550,7 +572,7 @@
 {
 	[self.app terminate];
 	NSString *fixture = [self makeDirtyRepositoryFixture];
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 	[self selectHistoryForCurrentBranch];
@@ -566,7 +588,7 @@
 	NSString *fixture = [self makeDirtyRepositoryFixture];
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 	XCUIElement *table = [self selectHistoryForCurrentBranch];
@@ -692,7 +714,7 @@
 	NSString *fixture = [self makeDirtyRepositoryFixture];
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"The context menu requires a repository window");
 	XCUIElement *table = [self selectHistoryForCurrentBranch];
@@ -723,18 +745,14 @@
 	NSString *fixture = [self makeDirtyRepositoryFixture];
 	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"origin", @"https://github.com/hbmartin/gitx.git" ]
 					inDirectory:fixture]));
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
 	[self selectHistoryForCurrentBranch];
 
-	XCUIElement *viewRemoteGroup =
-		[self.app.toolbars.groups containingType:XCUIElementTypeStaticText
-									  identifier:@"View Remote"]
-			.firstMatch;
-	XCTAssertTrue([viewRemoteGroup waitForExistenceWithTimeout:30],
-				  @"The repository toolbar should expose the View Remote item");
-	XCUIElement *viewRemote = viewRemoteGroup.menuButtons.firstMatch;
+	// NSMenuToolbarItem exposes its split control as a nested group on macOS 26+
+	// rather than publishing its toolbar label as an accessibility element.
+	XCUIElement *viewRemote = self.app.toolbars.groups.groups.menuButtons.firstMatch;
 	XCTAssertTrue([viewRemote waitForExistenceWithTimeout:10],
 				  @"The repository toolbar should expose the View Remote pull-down");
 	[viewRemote click];
@@ -796,7 +814,7 @@
 	NSString *fixture = [self makeDirtyRepositoryFixture];
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 	XCUIElement *currentBranch = [self.app.staticTexts matchingPredicate:[NSPredicate predicateWithFormat:@"value == 'main'"]].firstMatch;
@@ -820,7 +838,7 @@
 	NSString *remotePath = [fixture stringByAppendingString:@"-cli-added-remote.git"];
 	[self.temporaryRepositoryPaths addObject:remotePath];
 	XCTAssertTrue(([self runGit:@[ @"init", @"--bare", @"--quiet", remotePath ] inDirectory:fixture]));
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 
@@ -837,7 +855,7 @@
 	NSString *fixture = [self makeDirtyRepositoryFixture];
 	XCTAssertTrue(([self runGit:@[ @"reset", @"--hard", @"--quiet", @"HEAD" ] inDirectory:fixture]));
 	XCTAssertTrue(([self runGit:@[ @"clean", @"-fd", @"--quiet" ] inDirectory:fixture]));
-	self.app.launchEnvironment = @{@"GITX_UITEST_REPO" : fixture};
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow]);
 	[self selectHistoryForCurrentBranch];

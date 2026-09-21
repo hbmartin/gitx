@@ -243,8 +243,8 @@ def collapse_shared_failures(
     return shared, remaining
 
 
-def grouped_payload(failures: list[Failure]) -> dict[str, object]:
-    shared, remaining = collapse_shared_failures(failures)
+def grouped_payload(failures: list[Failure], *, show_all: bool = False) -> dict[str, object]:
+    shared, remaining = ([], failures) if show_all else collapse_shared_failures(failures)
     return {
         "schemaVersion": 1,
         "summary": {
@@ -371,7 +371,7 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.format == "json":
         print(json.dumps([failure._asdict() for failure in failures], indent=2))
     elif arguments.format == "grouped-json":
-        print(json.dumps(grouped_payload(failures), indent=2, sort_keys=True))
+        print(json.dumps(grouped_payload(failures, show_all=arguments.show_all), indent=2, sort_keys=True))
     else:
         print(format_report(failures, limit, show_all=arguments.show_all))
     if failures:

@@ -72,6 +72,16 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn('"${signing_settings[@]}"', build_step)
         self.assertIn('scripts/xcodebuild.sh --run-id "$ARCHIVE_RUN_ID" archive', build_step)
         self.assertNotIn("-archivePath", build_step)
+        guarded_branch = build_step.split('if [[ -z "$variableSet" ]]; then', maxsplit=1)[1].split(
+            "          fi", maxsplit=1
+        )[0]
+        for setting in (
+            "CODE_SIGNING_ALLOWED=NO",
+            "CODE_SIGNING_REQUIRED=NO",
+            'CODE_SIGN_IDENTITY=""',
+        ):
+            self.assertIn(setting, guarded_branch)
+            self.assertNotIn(setting, build_step.split('if [[ -z "$variableSet" ]]; then', maxsplit=1)[0])
 
     def test_screenshot_fixture_only_overrides_ui_fixture_when_comparison_enabled(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()

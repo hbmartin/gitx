@@ -143,6 +143,22 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         XCTAssertFalse(offMain.wasDecodedOnMainThread)
         XCTAssertEqual(offMain.size, NSSize(width: 12, height: 10))
 
+        let cancelledDecode = Task {
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+            return try await ForgeAvatarImageDecoder().decodeOffMain(
+                ForgeAvatarPayload(data: png, mediaType: .png),
+                maximumPixels: 120
+            )
+        }
+        do {
+            _ = try await cancelledDecode.value
+            XCTFail("Expected a cancelled decode to stop its detached work")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+
         XCTAssertThrowsError(try ForgeAvatarImageDecoder().decode(
             ForgeAvatarPayload(data: png, mediaType: .jpeg)
         )) {

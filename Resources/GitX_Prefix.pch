@@ -3,6 +3,7 @@
 #ifdef __OBJC__
     #import <Cocoa/Cocoa.h>
     #import <ObjectiveGit/ObjectiveGit.h>
+	#import <UserNotifications/UserNotifications.h>
 	#import "MAKVONotificationCenter.h"
 	#import "NSAppearance+PBDarkMode.h"
 	#import "PBMacros.h"

@@ -61,7 +61,6 @@
 #import "PBGitBinary.h"
 #import "ApplicationController.h"
 #import "PBAddRemoteSheet.h"
-#import "PBAutoFetchManager.h"
 #import "PBCreateBranchSheet.h"
 #import "PBCreateTagSheet.h"
 #import "PBDiffWindowController.h"

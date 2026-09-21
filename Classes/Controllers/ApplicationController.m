@@ -7,7 +7,6 @@
 //
 
 #import "ApplicationController.h"
-#import "PBRepositoryDocumentController.h"
 #import "PBGitRevisionCell.h"
 #import "PBGitWindowController.h"
 #import "PBServicesController.h"
@@ -18,7 +17,6 @@
 #import "PBCloneRepositoryPanel.h"
 #import "OpenRecentController.h"
 #import "PBGitBinary.h"
-#import "PBAutoFetchManager.h"
 #import "GitX-Swift.h"
 
 #import <Sparkle/SPUStandardUpdaterController.h>
@@ -124,9 +122,14 @@
 {
 	NSMutableArray<NSURL *> *URLs = [NSMutableArray arrayWithCapacity:filenames.count];
 	for (NSString *filename in filenames) [URLs addObject:[NSURL fileURLWithPath:filename]];
+	PBRepositoryDocumentController *documentController = (PBRepositoryDocumentController *)[PBRepositoryDocumentController sharedDocumentController];
+	if ([documentController isKindOfClass:PBRepositoryDocumentController.class])
+		[documentController beginExplicitLaunchOpen];
 	[[PBRepositoryOpenCoordinator shared] openURLs:URLs
 									  sourceWindow:NSApp.keyWindow
 										completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+											if ([documentController isKindOfClass:PBRepositoryDocumentController.class])
+												[documentController finishExplicitLaunchOpen];
 											if (errors.count > 0) {
 												BOOL isUnitTestHost = [NSProcessInfo.processInfo.environment objectForKey:@"XCTestConfigurationFilePath"] != nil;
 												for (NSError *error in errors) {
@@ -228,6 +231,7 @@
 {
 	// Stop unattended fetching first: it outlives every window otherwise, and a
 	// termination that stalls would keep running git against recent repositories.
+	NSLog(@"[AutoFetch] Stopping automatic repository fetching for application termination");
 	[[PBAutoFetchManager sharedManager] stop];
 
 	if ([PBWindowSessionLaunchPolicy shouldManageSessionForEnvironment:NSProcessInfo.processInfo.environment])

@@ -84,6 +84,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         case waiting
         case recordingUnknownOutcomes
         case replyingToTermination
+        case terminationAccepted
     }
 
     static let defaultTerminationTimeout: TimeInterval = 10
@@ -121,7 +122,8 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     private let lock = NSLock()
     private var active: [UUID: ForgeInFlightMutation] = [:]
     private var terminationState = TerminationState.idle
-    private var terminationWatchdogGeneration: UInt64 = 0
+    private var terminationAttemptGeneration: UInt64 = 0
+    private var activeTerminationAttemptID: UInt64?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "ForgeMutationQuit")
 
     init(
@@ -170,7 +172,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
             }
             if case .waiting = terminationState, active.isEmpty {
                 terminationState = .replyingToTermination
-                terminationWatchdogGeneration &+= 1
+                activeTerminationAttemptID = nil
                 return (true, true)
             }
             return (true, false)
@@ -225,42 +227,48 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
 
     @MainActor
     func applicationShouldTerminate() -> NSApplication.TerminateReply {
-        let initial = lock.withForgeMutationLock { () -> (pending: Bool, mutations: [ForgeInFlightMutation]) in
+        let initial = lock.withForgeMutationLock { () -> TerminationInitialDecision in
             switch terminationState {
             case .idle:
-                return (false, active.values.sorted(by: Self.sortsBefore))
+                let mutations = active.values.sorted(by: Self.sortsBefore)
+                guard mutations.isEmpty else { return .mutations(mutations) }
+                terminationState = .terminationAccepted
+                activeTerminationAttemptID = nil
+                return .now
             case .waiting, .recordingUnknownOutcomes:
-                return (true, [])
+                return .later
             case .replyingToTermination:
-                // Being asked again means the previous termination never happened:
-                // a sheet cancelled it, a debugger held the process, or the reply
-                // was answered but the app stayed alive. Deferring again would
-                // strand the quit forever, so start over from a clean state.
-                terminationState = .idle
-                terminationWatchdogGeneration &+= 1
-                return (false, active.values.sorted(by: Self.sortsBefore))
+                terminationState = .terminationAccepted
+                activeTerminationAttemptID = nil
+                return .now
+            case .terminationAccepted:
+                return .now
             }
         }
-        if initial.pending {
-            return .terminateLater
-        }
-        guard !initial.mutations.isEmpty else {
-            // Nothing is in flight and no reply is deferred, so leave the state
-            // idle. Marking it here would strand a quit that never completes.
+
+        let mutations: [ForgeInFlightMutation]
+        switch initial {
+        case .now:
             return .terminateNow
+        case .later:
+            return .terminateLater
+        case let .mutations(current):
+            mutations = current
         }
 
-        let choice = choiceProvider(initial.mutations)
+        let choice = choiceProvider(mutations)
         let transition = lock.withForgeMutationLock { () -> TerminationTransition in
-            guard case .idle = terminationState else { return .later }
+            guard case .idle = terminationState else { return .alreadyDeferred }
             let current = active.values.sorted(by: Self.sortsBefore)
             guard !current.isEmpty else {
+                terminationState = .terminationAccepted
+                activeTerminationAttemptID = nil
                 return .now
             }
             switch choice {
             case .wait:
                 terminationState = .waiting
-                return .later
+                return .later(beginTerminationAttemptLocked())
             case .quitAnyway:
                 do {
                     let recordedAt = Date()
@@ -268,7 +276,7 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
                         try ForgeUnknownMutationOutcomeRecord(mutation: $0, recordedAt: recordedAt)
                     }
                     terminationState = .recordingUnknownOutcomes
-                    return .record(records)
+                    return .record(records, beginTerminationAttemptLocked())
                 } catch {
                     logger.error("Could not prepare redacted Forge unknown-outcome records")
                     return .cancel
@@ -279,21 +287,23 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
         switch transition {
         case .now:
             return .terminateNow
-        case .later:
-            scheduleTerminationWatchdog()
+        case .alreadyDeferred:
+            return .terminateLater
+        case let .later(attemptID):
+            scheduleTerminationWatchdog(attemptID: attemptID)
             return .terminateLater
         case .cancel:
             return .terminateCancel
-        case let .record(records):
-            scheduleTerminationWatchdog()
+        case let .record(records, attemptID):
+            scheduleTerminationWatchdog(attemptID: attemptID)
             logger.notice("Recording \(records.count) in-flight Forge mutations as unknown outcomes before quit")
             Task { @MainActor [self, persistence] in
                 do {
                     try await persistence.record(records)
-                    completeUnknownOutcomeRecording(shouldTerminate: true)
+                    completeUnknownOutcomeRecording(attemptID: attemptID, shouldTerminate: true)
                 } catch {
                     logger.error("Could not durably record Forge unknown outcomes; cancelling termination")
-                    completeUnknownOutcomeRecording(shouldTerminate: false)
+                    completeUnknownOutcomeRecording(attemptID: attemptID, shouldTerminate: false)
                 }
             }
             return .terminateLater
@@ -305,23 +315,20 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     /// mutation. An expired `recordingUnknownOutcomes` attempt may terminate because
     /// the user already chose Quit Anyway.
     @MainActor
-    private func scheduleTerminationWatchdog() {
-        let generation = lock.withForgeMutationLock { () -> UInt64 in
-            terminationWatchdogGeneration &+= 1
-            return terminationWatchdogGeneration
-        }
+    private func scheduleTerminationWatchdog(attemptID: UInt64) {
         scheduleTimeout(terminationTimeout) { [self] in
             let action = lock.withForgeMutationLock { () -> TerminationWatchdogAction in
-                guard generation == terminationWatchdogGeneration else { return .none }
-                terminationWatchdogGeneration &+= 1
+                guard attemptID == activeTerminationAttemptID else { return .none }
                 switch terminationState {
-                case .idle, .replyingToTermination:
+                case .idle, .replyingToTermination, .terminationAccepted:
                     return .none
                 case .waiting:
                     terminationState = .idle
+                    activeTerminationAttemptID = nil
                     return .cancel
                 case .recordingUnknownOutcomes:
                     terminationState = .replyingToTermination
+                    activeTerminationAttemptID = nil
                     return .terminate
                 }
             }
@@ -339,11 +346,13 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
     }
 
     @MainActor
-    private func completeUnknownOutcomeRecording(shouldTerminate: Bool) {
+    private func completeUnknownOutcomeRecording(attemptID: UInt64, shouldTerminate: Bool) {
         let shouldReply = lock.withForgeMutationLock { () -> Bool in
-            guard case .recordingUnknownOutcomes = terminationState else { return false }
+            guard case .recordingUnknownOutcomes = terminationState,
+                  attemptID == activeTerminationAttemptID
+            else { return false }
             terminationState = shouldTerminate ? .replyingToTermination : .idle
-            terminationWatchdogGeneration &+= 1
+            activeTerminationAttemptID = nil
             return true
         }
         if shouldReply {
@@ -353,15 +362,28 @@ final nonisolated class ForgeMutationQuitCoordinator: ForgeMutationLifecycleCoor
 
     private enum TerminationTransition {
         case now
-        case later
+        case alreadyDeferred
+        case later(UInt64)
         case cancel
-        case record([ForgeUnknownMutationOutcomeRecord])
+        case record([ForgeUnknownMutationOutcomeRecord], UInt64)
+    }
+
+    private enum TerminationInitialDecision {
+        case now
+        case later
+        case mutations([ForgeInFlightMutation])
     }
 
     private enum TerminationWatchdogAction {
         case none
         case cancel
         case terminate
+    }
+
+    private func beginTerminationAttemptLocked() -> UInt64 {
+        terminationAttemptGeneration &+= 1
+        activeTerminationAttemptID = terminationAttemptGeneration
+        return terminationAttemptGeneration
     }
 
     private static func sortsBefore(_ lhs: ForgeInFlightMutation, _ rhs: ForgeInFlightMutation) -> Bool {

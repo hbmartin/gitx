@@ -3,7 +3,7 @@ import XCTest
 @MainActor
 // swift6-safety-justification: XCTest owns the test-case lifetime, while all mutable application and fixture state is confined to the main actor.
 final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
-    private var temporaryDirectories: [URL] = []
+    private let fixtureWorkspace = GitXUITestFixtureWorkspace(prefix: "gitx-ui-preflight")
     private var activeApplication: XCUIApplication?
 
     override func setUp() {
@@ -21,7 +21,7 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
                 hierarchy.lifetime = .keepAlways
                 add(hierarchy)
                 let state = XCTAttachment(
-                    string: "applicationState=\(app.state.rawValue)\nfixtures=\(temporaryDirectories.map(\.path).joined(separator: "\n"))"
+                    string: "applicationState=\(app.state.rawValue)\nfixtures=\(fixtureWorkspace.directories.map(\.path).joined(separator: "\n"))"
                 )
                 state.name = "UI-Activation-Preflight-State"
                 state.lifetime = .keepAlways
@@ -29,10 +29,7 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
             }
             activeApplication?.terminate()
             activeApplication = nil
-            for directory in temporaryDirectories {
-                try? FileManager.default.removeItem(at: directory)
-            }
-            temporaryDirectories.removeAll()
+            fixtureWorkspace.removeAll()
         }
         super.tearDown()
     }
@@ -40,11 +37,7 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
     func testRepositoryWindowActivates() throws {
         NSLog("[GitXUIActivationPreflightTests] preparing deterministic repository fixture")
         let repository = try makeRepositoryFixture()
-        let isolatedHome = try makeDirectory(named: "home")
-        try FileManager.default.createDirectory(
-            at: isolatedHome.appendingPathComponent("Library/Preferences", isDirectory: true),
-            withIntermediateDirectories: true
-        )
+        let isolatedHome = try fixtureWorkspace.makeIsolatedHome(named: "home")
 
         let app = XCUIApplication()
         app.launchArguments = [
@@ -75,8 +68,11 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
             object: app
         )
         XCTAssertEqual(XCTWaiter.wait(for: [foreground], timeout: 15), .completed)
-        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 20))
-        XCTAssertTrue(app.buttons["Uncommitted Changes"].waitForExistence(timeout: 15))
+        let repositoryWindow = app.windows["\(repository.lastPathComponent) (branch: main)"]
+        XCTAssertTrue(repositoryWindow.waitForExistence(timeout: 20))
+        let uncommittedChanges = repositoryWindow.buttons["Uncommitted Changes"]
+        XCTAssertTrue(uncommittedChanges.waitForExistence(timeout: 15))
+        XCTAssertTrue(uncommittedChanges.isHittable)
         NSLog("[GitXUIActivationPreflightTests] repository window is active and ready")
         retainScreenshot(named: "UI-Activation-Preflight")
     }
@@ -97,43 +93,12 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
     }
 
     private func makeDirectory(named name: String) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("gitx-ui-preflight-\(UUID().uuidString)-\(name)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        temporaryDirectories.append(directory)
-        return directory
+        try fixtureWorkspace.makeDirectory(named: name)
     }
 
     @discardableResult
     private func git(_ arguments: [String], in directory: URL) throws -> String {
-        let process = Process()
-        let developerDirectory = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
-            ?? "/Applications/Xcode.app/Contents/Developer"
-        let selectedGit = URL(fileURLWithPath: developerDirectory).appendingPathComponent("usr/bin/git")
-        process.executableURL = FileManager.default.isExecutableFile(atPath: selectedGit.path)
-            ? selectedGit
-            : URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
-        process.environment = ProcessInfo.processInfo.environment.merging([
-            "GCM_INTERACTIVE": "never",
-            "GIT_ASKPASS": "/usr/bin/false",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "LC_ALL": "C",
-        ]) { _, value in value }
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let result = String(decoding: data, as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw GitFixtureError.commandFailed(arguments, result)
-        }
-        return result
+        try fixtureWorkspace.git(arguments, in: directory)
     }
 
     private func retainScreenshot(named name: String) {
@@ -141,9 +106,5 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
-    }
-
-    private enum GitFixtureError: Error {
-        case commandFailed([String], String)
     }
 }

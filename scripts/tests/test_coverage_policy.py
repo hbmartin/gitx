@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from support import load_script
+from support import ROOT, load_script
 
 
 class CoveragePolicyTests(unittest.TestCase):
@@ -284,7 +284,7 @@ class CoveragePolicyTests(unittest.TestCase):
                         "lineCoverage": 0.6,
                         "files": [
                             {
-                                "path": str(self.module.pathlib.Path.cwd() / "Classes/A.m"),
+                                "path": str(ROOT / "Classes/A.m"),
                                 "lineCoverage": 0.8,
                                 "coveredLines": 8,
                                 "executableLines": 10,
@@ -313,6 +313,20 @@ class CoveragePolicyTests(unittest.TestCase):
         self.assertEqual(proposal["schemaVersion"], 1)
         self.assertEqual(proposal["candidatePolicy"]["minimumLineCoverage"], 0.6)
         self.assertEqual(proposal["candidatePolicy"]["files"]["Classes/A.m"], 0.8)
+
+    def test_atomic_policy_writes_preserve_or_create_readable_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            existing = root / "existing.json"
+            created = root / "created.json"
+            existing.write_text("{}\n")
+            existing.chmod(0o640)
+
+            self.module.write_json_atomic(existing, {"version": 1})
+            self.module.write_json_atomic(created, {"version": 1})
+
+            self.assertEqual(existing.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(created.stat().st_mode & 0o777, 0o644)
 
     def test_proposal_and_recording_are_mutually_exclusive(self) -> None:
         with self.assertRaises(SystemExit):

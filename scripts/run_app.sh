@@ -404,9 +404,10 @@ cat <<-SUMMARY
 	stdout     : $stdout_file
 	Session    : $session_file
 
-	Observe : peekaboo see --app PID:$app_pid --window-title '$repository_name' --annotate --path /tmp/gitx.png
-	Screens : peekaboo image --app PID:$app_pid --window-title '$repository_name' --path /tmp/gitx.png
-	Logs    : grep -i error $log_file
+	Observe : scripts/observe_app.sh see
+	Screens : scripts/observe_app.sh image
+	Tree    : scripts/observe_app.sh tree [pattern]
+	Logs    : scripts/observe_app.sh logs [pattern]
 	Stop    : scripts/run_app.sh --stop
 SUMMARY
 

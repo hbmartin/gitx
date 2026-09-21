@@ -6,7 +6,7 @@
 #import <stdatomic.h>
 
 #import "PBMacros.h"
-#import "PBAutoFetchManager.h"
+#import "PBAutoFetchManagerCompatibility.h"
 #import "PBAddRemoteSheet.h"
 #import "PBChangedFile.h"
 #import "PBCommitHookFailedSheet.h"
@@ -35,6 +35,7 @@
 #import "GLFileView.h"
 #import "PBNativeContentView.h"
 #import "PBRemoteProgressSheet.h"
+#import "PBRepositoryDocumentControllerCompatibility.h"
 #import "PBSourceViewBadge.h"
 #import "PBSourceViewItem.h"
 #import "PBSourceViewItems.h"
@@ -1314,9 +1315,19 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 @implementation WindowControllerTests
 
+static NSDocumentController *PBWindowPreviousDocumentController;
+static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
+
 + (void)setUp
 {
 	[super setUp];
+	PBWindowPreviousDocumentController = NSDocumentController.sharedDocumentController;
+	SEL setSharedDocumentController = NSSelectorFromString(@"_setSharedDocumentController:");
+	((void (*)(id, SEL, id))objc_msgSend)(NSDocumentController.class, setSharedDocumentController, nil);
+	PBWindowInstalledDocumentController = [[PBRepositoryDocumentController alloc] init];
+	NSAssert(
+		NSDocumentController.sharedDocumentController == PBWindowInstalledDocumentController,
+		@"Window controller tests require the repository document controller");
 	PBSwapClassMethods(PBRemoteProgressSheet.class, @selector(progressSheetWithTitle:description:windowController:), @selector(pb_window_progressSheetWithTitle:description:windowController:));
 	PBSwapClassMethods(PBAddRemoteSheet.class, @selector(beginSheetWithWindowController:completionHandler:), @selector(pb_window_beginSheetWithWindowController:completionHandler:));
 	PBSwapClassMethods(PBCreateBranchSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
@@ -1361,6 +1372,13 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBSwapClassMethods(PBCreateBranchSheet.class, @selector(beginSheetWithRefish:windowController:completionHandler:), @selector(pb_window_beginSheetWithRefish:windowController:completionHandler:));
 	PBSwapClassMethods(PBAddRemoteSheet.class, @selector(beginSheetWithWindowController:completionHandler:), @selector(pb_window_beginSheetWithWindowController:completionHandler:));
 	PBSwapClassMethods(PBRemoteProgressSheet.class, @selector(progressSheetWithTitle:description:windowController:), @selector(pb_window_progressSheetWithTitle:description:windowController:));
+	SEL setSharedDocumentController = NSSelectorFromString(@"_setSharedDocumentController:");
+	((void (*)(id, SEL, id))objc_msgSend)(
+		NSDocumentController.class,
+		setSharedDocumentController,
+		PBWindowPreviousDocumentController);
+	PBWindowInstalledDocumentController = nil;
+	PBWindowPreviousDocumentController = nil;
 	[super tearDown];
 }
 

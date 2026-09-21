@@ -486,6 +486,39 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	}
 }
 
+- (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(NSTimeInterval)forceKillDelay
+{
+	@synchronized(self) {
+		self.cancellationRequested = YES;
+	}
+
+	__weak PBTask *weakSelf = self;
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0, gracePeriod) * NSEC_PER_SEC)),
+				   dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+					   PBTask *strongSelf = weakSelf;
+					   if (!strongSelf) return;
+					   __block pid_t processIdentifier = 0;
+					   @synchronized(strongSelf) {
+						   if (!strongSelf.task.running) return;
+						   processIdentifier = strongSelf.task.processIdentifier;
+						   [strongSelf.task terminate];
+					   }
+					   PBTaskLog(@"task %p: graceful cancellation sent SIGTERM to %d", strongSelf, processIdentifier);
+
+					   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0, forceKillDelay) * NSEC_PER_SEC)),
+									  strongSelf.stateQueue, ^{
+										  BOOL shouldKill;
+										  @synchronized(strongSelf) {
+											  shouldKill = processIdentifier > 0 && strongSelf.task.running && strongSelf.task.processIdentifier == processIdentifier;
+										  }
+										  if (shouldKill) {
+											  PBTaskLog(@"task %p: graceful cancellation escalating to SIGKILL for %d", strongSelf, processIdentifier);
+											  kill(processIdentifier, SIGKILL);
+										  }
+									  });
+				   });
+}
+
 - (NSString *)description
 {
 	NSArray *taskArguments = [@[ self.task.launchPath ] arrayByAddingObjectsFromArray:self.task.arguments];

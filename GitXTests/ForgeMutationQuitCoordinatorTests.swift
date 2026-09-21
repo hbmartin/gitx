@@ -16,11 +16,44 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(replies.values.isEmpty)
     }
 
-    func testQuitStaysPossibleAfterATerminationThatNeverCompletes() throws {
-        // Returning .terminateNow does not guarantee the process exits: an unsaved
-        // document sheet, a cancelled quit, or a debugger pause all leave the app
-        // running. A later quit must still be honored rather than deferred forever
-        // with no reply, which would make the app impossible to quit.
+    func testReentrantTerminationRequestSharesTheExistingDeferredAttempt() async throws {
+        let replies = ReplySpy()
+        let replied = expectation(description: "shared deferred attempt completes")
+        replies.expectation = replied
+        let timeouts = TimeoutSpy()
+        var coordinator: ForgeMutationQuitCoordinator!
+        var didReenter = false
+        coordinator = ForgeMutationQuitCoordinator(
+            persistence: PersistenceDouble(),
+            choiceProvider: { _ in
+                if !didReenter {
+                    didReenter = true
+                    XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+                }
+                return .wait
+            },
+            terminationReply: { value in replies.record(value) },
+            terminationTimeout: 0,
+            scheduleTimeout: { _, body in timeouts.schedule(body) }
+        )
+        let fixture = try Fixture()
+        let registration = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .createPullRequest
+        )
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        XCTAssertTrue(coordinator.finish(registration))
+        await fulfillment(of: [replied], timeout: 1)
+        replies.expectation = nil
+        XCTAssertEqual(replies.values, [true])
+
+        timeouts.fireAll()
+        XCTAssertEqual(replies.values, [true])
+    }
+
+    func testTerminationAcceptanceSealsTheCoordinator() throws {
         let choices = ChoiceSpy(choice: .wait)
         let replies = ReplySpy()
         let coordinator = makeCoordinator(choices: choices, replies: replies)
@@ -30,14 +63,14 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(choices.requestCount, 0)
         XCTAssertTrue(replies.values.isEmpty)
 
-        // Forge mutations must keep working too; registration is refused while a
-        // termination is pending, so a stuck state would disable them for good.
         let fixture = try Fixture()
-        XCTAssertNoThrow(try coordinator.register(
+        XCTAssertThrowsError(try coordinator.register(
             accountID: fixture.accountID,
             repository: fixture.repository,
             operation: .createPullRequest
-        ))
+        )) {
+            XCTAssertEqual($0 as? ForgeMutationQuitCoordinatorError, .terminationPending)
+        }
     }
 
     func testWaitingForAMutationThatNeverFinishesCancelsThatQuitAttempt() throws {
@@ -78,7 +111,7 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(replies.values, [false, true])
     }
 
-    func testCompletedWaitWatchdogCannotCancelALaterQuitAttempt() async throws {
+    func testCompletedWaitWatchdogCannotCancelAcceptedTermination() async throws {
         let timeouts = TimeoutSpy()
         let replies = ReplySpy()
         let replied = expectation(description: "first wait completes")
@@ -103,19 +136,17 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(replies.values, [true])
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
 
-        _ = try coordinator.register(
+        XCTAssertThrowsError(try coordinator.register(
             accountID: fixture.accountID,
             repository: fixture.repository,
             operation: .editPullRequest
-        )
-        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        )) {
+            XCTAssertEqual($0 as? ForgeMutationQuitCoordinatorError, .terminationPending)
+        }
 
-        timeouts.fireNext()
+        timeouts.fireAll()
         XCTAssertEqual(replies.values, [true])
-        XCTAssertEqual(coordinator.activeMutations().count, 1)
-
-        timeouts.fireNext()
-        XCTAssertEqual(replies.values, [true, false])
+        XCTAssertTrue(coordinator.activeMutations().isEmpty)
     }
 
     func testRecordingThatNeverCompletesStillResolvesTheQuit() throws {
@@ -139,6 +170,40 @@ final class ForgeMutationQuitCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
         timeouts.fireAll()
 
+        XCTAssertEqual(replies.values, [true])
+    }
+
+    func testTimedOutRecordingCompletionCannotReplyToAcceptedTermination() async throws {
+        let persistence = PersistenceDouble(holdsRecords: true)
+        let timeouts = TimeoutSpy()
+        let replies = ReplySpy()
+        let coordinator = makeCoordinator(
+            persistence: persistence,
+            choices: ChoiceSpy(choice: .quitAnyway),
+            replies: replies,
+            timeouts: timeouts
+        )
+        let fixture = try Fixture()
+        _ = try coordinator.register(
+            accountID: fixture.accountID,
+            repository: fixture.repository,
+            operation: .editPullRequest
+        )
+
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateLater)
+        for _ in 0 ..< 100 where persistence.pendingRecordCount == 0 {
+            await Task.yield()
+        }
+        XCTAssertEqual(persistence.pendingRecordCount, 1)
+
+        timeouts.fireAll()
+        XCTAssertEqual(replies.values, [true])
+        XCTAssertEqual(coordinator.applicationShouldTerminate(), .terminateNow)
+
+        persistence.resumeNextRecord()
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
         XCTAssertEqual(replies.values, [true])
     }
 
@@ -618,18 +683,28 @@ private final class ReplySpy {
 private final class PersistenceDouble: ForgeUnknownMutationOutcomePersisting, @unchecked Sendable {
     private let error: Error?
     private let stalls: Bool
+    private let holdsRecords: Bool
     private let queue = DispatchQueue(label: "com.gitx.tests.forge-mutation-persistence")
     private var recorded: [ForgeUnknownMutationOutcomeRecord] = []
+    private var pendingRecordContinuations: [CheckedContinuation<Void, Never>] = []
 
-    init(error: Error? = nil, stalls: Bool = false) {
+    init(error: Error? = nil, stalls: Bool = false, holdsRecords: Bool = false) {
         self.error = error
         self.stalls = stalls
+        self.holdsRecords = holdsRecords
     }
 
     func record(_ records: [ForgeUnknownMutationOutcomeRecord]) async throws {
         if stalls {
             // Models a database provider that never resolves.
             try await Task.sleep(nanoseconds: .max)
+        }
+        if holdsRecords {
+            await withCheckedContinuation { continuation in
+                queue.sync {
+                    pendingRecordContinuations.append(continuation)
+                }
+            }
         }
         try queue.sync {
             if let error {
@@ -663,6 +738,17 @@ private final class PersistenceDouble: ForgeUnknownMutationOutcomePersisting, @u
 
     func recordedRecords() async -> [ForgeUnknownMutationOutcomeRecord] {
         queue.sync { recorded }
+    }
+
+    var pendingRecordCount: Int {
+        queue.sync { pendingRecordContinuations.count }
+    }
+
+    func resumeNextRecord() {
+        let continuation = queue.sync {
+            pendingRecordContinuations.isEmpty ? nil : pendingRecordContinuations.removeFirst()
+        }
+        continuation?.resume()
     }
 }
 

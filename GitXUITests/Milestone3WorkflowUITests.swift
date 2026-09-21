@@ -3,7 +3,7 @@ import XCTest
 @MainActor
 // swift6-safety-justification: XCTest owns the test-case lifetime, while all mutable application and fixture state is confined to the main actor.
 final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
-    private var temporaryDirectories: [URL] = []
+    private let fixtureWorkspace = GitXUITestFixtureWorkspace(prefix: "gitx-m3")
     private var activeApplication: XCUIApplication?
 
     override func setUp() {
@@ -250,11 +250,7 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
     }
 
     private func launch(repository: URL, scenario: String) throws -> XCUIApplication {
-        let isolatedHome = try makeDirectory(name: "isolated-home")
-        try FileManager.default.createDirectory(
-            at: isolatedHome.appendingPathComponent("Library/Preferences", isDirectory: true),
-            withIntermediateDirectories: true
-        )
+        let isolatedHome = try fixtureWorkspace.makeIsolatedHome()
         let app = XCUIApplication()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
@@ -317,51 +313,16 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
     }
 
     private func makeDirectory(name: String) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("gitx-m3-\(UUID().uuidString)-\(name)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        temporaryDirectories.append(directory)
-        return directory
+        try fixtureWorkspace.makeDirectory(named: name)
     }
 
     private func removeTemporaryDirectories() {
-        for directory in temporaryDirectories {
-            try? FileManager.default.removeItem(at: directory)
-        }
-        temporaryDirectories.removeAll()
+        fixtureWorkspace.removeAll()
     }
 
     @discardableResult
     private func git(_ arguments: [String], in directory: URL) throws -> String {
-        let process = Process()
-        let developerDirectory = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
-            ?? "/Applications/Xcode.app/Contents/Developer"
-        let selectedGit = URL(fileURLWithPath: developerDirectory)
-            .appendingPathComponent("usr/bin/git")
-        process.executableURL = FileManager.default.isExecutableFile(atPath: selectedGit.path)
-            ? selectedGit
-            : URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
-        process.environment = ProcessInfo.processInfo.environment.merging([
-            "GCM_INTERACTIVE": "never",
-            "GIT_ASKPASS": "/usr/bin/false",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "LC_ALL": "C",
-        ]) { _, value in value }
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let result = String(decoding: data, as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw GitFixtureError.commandFailed(arguments, result)
-        }
-        return result
+        try fixtureWorkspace.git(arguments, in: directory)
     }
 
     private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
@@ -643,10 +604,6 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
-    }
-
-    private enum GitFixtureError: Error {
-        case commandFailed([String], String)
     }
 
     private enum Milestone3UIError: Error {

@@ -28,6 +28,14 @@ class ReleaseTaskTests(unittest.TestCase):
         self.assertIn('verification_receipt="$root/artifacts/verification/', task)
         self.assertNotIn('-derivedDataPath "$derived_data_path"', task)
 
+    def test_release_exports_one_selected_developer_directory(self) -> None:
+        task = self.task.read_text()
+        selection = 'developer_dir=$(python3 scripts/verification_support.py developer-dir)'
+
+        self.assertIn(selection, task)
+        self.assertIn('export DEVELOPER_DIR="$developer_dir"', task)
+        self.assertLess(task.index(selection), task.index("xcodebuild \\\n"))
+
     def test_release_task_documents_the_single_command_and_artifacts(self) -> None:
         result = subprocess.run(
             [self.task, "--help"],
