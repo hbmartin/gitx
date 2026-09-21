@@ -293,6 +293,40 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(set(derived_paths), {str(self.root / "build" / "DerivedData")})
         self.assertFalse(any((self.root / "artifacts" / "verification").glob("*/DerivedData")))
 
+    def test_analyzer_uses_fresh_per_run_derived_data(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        pinned_tool = self.scripts / "run_pinned_tool.sh"
+        pinned_tool.write_text("#!/bin/bash\nexit 0\n")
+        pinned_tool.chmod(0o755)
+
+        for run_id in ("analyzer-clean-one", "analyzer-clean-two"):
+            subprocess.run(
+                [script, "--raw", "--run-id", run_id, "analyze"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=self.environment,
+            )
+
+        analyzer_invocations = [
+            invocation
+            for invocation in captured.read_text().split("__INVOCATION__")
+            if invocation.strip() and "analyze" in invocation.splitlines()
+        ]
+        derived_paths = []
+        for invocation in analyzer_invocations:
+            arguments = invocation.splitlines()
+            derived_paths.append(arguments[arguments.index("-derivedDataPath") + 1])
+        self.assertEqual(
+            set(derived_paths),
+            {
+                str(self.root / "artifacts" / "verification" / "analyzer-clean-one" / "DerivedData"),
+                str(self.root / "artifacts" / "verification" / "analyzer-clean-two" / "DerivedData"),
+            },
+        )
+
     def test_raw_respects_explicit_project_scheme_destination_configuration_and_derived_data(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
@@ -335,6 +369,48 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(arguments.count("-configuration"), 1)
         self.assertEqual(arguments.count("-derivedDataPath"), 1)
 
+    def test_raw_handles_empty_wrapper_defaults_and_allows_deployment_target_override(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        custom_derived = self.root / "custom-derived"
+
+        subprocess.run(
+            [
+                script,
+                "--raw",
+                "raw",
+                "--",
+                "-workspace",
+                "Other.xcworkspace",
+                "-scheme",
+                "Other",
+                "-destination",
+                "platform=macOS,arch=x86_64",
+                "-configuration",
+                "Release",
+                "-derivedDataPath",
+                str(custom_derived),
+                "-clonedSourcePackagesDirPath",
+                str(self.root / "custom-packages"),
+                "MACOSX_DEPLOYMENT_TARGET=14.0",
+                "build",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        raw_invocation = next(
+            invocation
+            for invocation in captured.read_text().split("__INVOCATION__")
+            if invocation.strip() and "-showdestinations" not in invocation
+        )
+        arguments = raw_invocation.splitlines()
+        configured = arguments.index("MACOSX_DEPLOYMENT_TARGET=15.0")
+        caller_override = arguments.index("MACOSX_DEPLOYMENT_TARGET=14.0")
+        self.assertLess(configured, caller_override)
+
     def test_focused_correctness_run_skips_the_whole_app_coverage_gate(self) -> None:
         script = self.install_script("xcodebuild.sh")
         self.install_mock_xcodebuild(self.root / "Products")
@@ -362,12 +438,23 @@ class ScriptEntrypointTests(unittest.TestCase):
         )
         self.assertNotIn("coverage", [step["name"] for step in receipt["steps"]])
 
-    def test_ui_filters_are_not_forwarded_to_preflight(self) -> None:
+    def test_ui_preflight_forwards_non_selection_extras_only(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
 
         subprocess.run(
-            [script, "--raw", "test", "ui", "-only-testing:GitXUITests/ExampleTests"],
+            [
+                script,
+                "--raw",
+                "test",
+                "ui",
+                "-only-testing",
+                "GitXUITests/ExampleTests",
+                "-skip-testing:GitXUITests/SkippedTests",
+                "CUSTOM_SETTING=YES",
+                "-parallel-testing-enabled",
+                "NO",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -377,8 +464,15 @@ class ScriptEntrypointTests(unittest.TestCase):
         invocations = captured.read_text().split("__INVOCATION__")
         preflight = next(value for value in invocations if "GitXUIPreflight" in value)
         full_ui = next(value for value in invocations if "GitXUI" in value and "GitXUIPreflight" not in value)
-        self.assertNotIn("-only-testing:GitXUITests/ExampleTests", preflight)
-        self.assertIn("-only-testing:GitXUITests/ExampleTests", full_ui)
+        self.assertNotIn("-only-testing", preflight)
+        self.assertNotIn("GitXUITests/ExampleTests", preflight)
+        self.assertNotIn("-skip-testing:GitXUITests/SkippedTests", preflight)
+        self.assertIn("CUSTOM_SETTING=YES", preflight)
+        self.assertIn("-parallel-testing-enabled", preflight)
+        self.assertIn("NO", preflight)
+        self.assertIn("-only-testing", full_ui)
+        self.assertIn("GitXUITests/ExampleTests", full_ui)
+        self.assertIn("-skip-testing:GitXUITests/SkippedTests", full_ui)
 
     def test_xcodebuild_wrapper_records_effective_preset_signing_modes(self) -> None:
         script = self.install_script("xcodebuild.sh")

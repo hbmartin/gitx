@@ -323,6 +323,42 @@ final class PBTaskLifecycleTests: XCTestCase {
         wait(for: [completed], timeout: 2)
     }
 
+    func testGracefulTerminationDoesNotEscalateAfterTaskFinishesFollowingSIGTERM() throws {
+        let pidURL = temporaryFileURL(named: "graceful-finished-pid")
+        defer { try? FileManager.default.removeItem(at: pidURL) }
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap 'exit 0' TERM; while :; do :; done",
+            ],
+            inDirectory: nil
+        )
+        task.additionalEnvironment = ["PB_TASK_PID_FILE": pidURL.path]
+        task.timeout = 0
+        let completed = expectation(description: "task exits during graceful termination")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            XCTAssertNil(error)
+            completed.fulfill()
+        }
+        let launched = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: pidURL.path) },
+            object: pidURL as NSURL
+        )
+        wait(for: [launched], timeout: 2)
+        task.terminate(afterGracePeriod: 0, forceKillAfter: 0.2)
+        wait(for: [completed], timeout: 2)
+
+        let escalationDeadlinePassed = expectation(description: "late escalation deadline passed")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) {
+            escalationDeadlinePassed.fulfill()
+        }
+        wait(for: [escalationDeadlinePassed], timeout: 1)
+        let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
+        XCTAssertEqual(Darwin.kill(processID, 0), -1)
+    }
+
     func testGracefulTerminationEscalatesForSameProcessIgnoringSIGTERM() throws {
         let pidURL = temporaryFileURL(named: "graceful-termination-pid")
         defer {

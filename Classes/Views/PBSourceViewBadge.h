@@ -8,6 +8,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+NS_ASSUME_NONNULL_BEGIN
 
 @interface PBSourceViewBadge : NSObject {
 }
@@ -16,3 +17,5 @@
 + (NSImage *)numericBadge:(NSInteger)number forCell:(NSTableCellView *)cell;
 
 @end
+
+NS_ASSUME_NONNULL_END

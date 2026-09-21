@@ -9,8 +9,13 @@
 #import <Cocoa/Cocoa.h>
 #import "PBGitHistoryController.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBQLOutlineView : NSOutlineView {
-	__weak IBOutlet PBGitHistoryController *controller;
+	__weak IBOutlet PBGitHistoryController *_Nullable controller;
 }
 
 @end
+
+
+NS_ASSUME_NONNULL_END

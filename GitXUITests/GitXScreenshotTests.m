@@ -739,7 +739,7 @@
 	[window typeKey:XCUIKeyboardKeyEscape modifierFlags:0];
 }
 
-- (void)testForgeNavigationMenusAndAmbiguousNumberChooserScreenshots
+- (void)testForgeNavigationToolbarMenuScreenshot
 {
 	[self.app terminate];
 	NSString *fixture = [self makeDirtyRepositoryFixture];
@@ -748,11 +748,20 @@
 	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
-	[self selectHistoryForCurrentBranch];
+	XCUIElement *history = [self selectHistoryForCurrentBranch];
+	XCUIElement *window = self.app.windows.firstMatch;
+	CGRect originalFrame = window.frame;
+	XCUIElement *resizeButton = window.buttons[XCUIIdentifierFullScreenWindow];
+	if (!resizeButton.exists) resizeButton = window.buttons[XCUIIdentifierZoomWindow];
+	XCTAssertTrue([resizeButton waitForExistenceWithTimeout:5]);
+	[resizeButton click];
+	NSPredicate *windowWidened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return window.frame.size.width > originalFrame.size.width;
+	}];
+	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened object:window] ]
+					  timeout:5];
 
-	// NSMenuToolbarItem exposes its split control as a nested group on macOS 26+
-	// rather than publishing its toolbar label as an accessibility element.
-	XCUIElement *viewRemote = self.app.toolbars.groups.groups.menuButtons.firstMatch;
+	XCUIElement *viewRemote = self.app.menuButtons[@"GitX.Toolbar.ViewRemote"];
 	XCTAssertTrue([viewRemote waitForExistenceWithTimeout:10],
 				  @"The repository toolbar should expose the View Remote pull-down");
 	[viewRemote click];
@@ -765,10 +774,22 @@
 	XCTAssertEqualObjects(toolbarRepository.label, @"View repository on GitHub");
 	XCTAssertEqualObjects(toolbarNumber.label, @"Open pull request or issue on GitHub");
 	[self saveScreenshotNamed:@"m0-forge-navigation-toolbar-menu"];
-	[self.app.windows.firstMatch typeKey:XCUIKeyboardKeyEscape modifierFlags:0];
+	[history click];
 	NSPredicate *menuDismissed = [NSPredicate predicateWithFormat:@"exists == NO"];
 	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:menuDismissed object:toolbarMenu] ]
 					  timeout:5];
+}
+
+- (void)testForgeNavigationRepositoryMenuAndAmbiguousNumberChooserScreenshots
+{
+	[self.app terminate];
+	NSString *fixture = [self makeDirtyRepositoryFixture];
+	XCTAssertTrue(([self runGit:@[ @"remote", @"add", @"origin", @"https://github.com/hbmartin/gitx.git" ]
+					inDirectory:fixture]));
+	self.app.launchEnvironment = [self launchEnvironmentForRepository:fixture];
+	[self.app launch];
+	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
+	[self selectHistoryForCurrentBranch];
 
 	XCUIElement *repositoryMenuBarItem = self.app.menuBars.menuBarItems[@"Repository"];
 	XCTAssertTrue([repositoryMenuBarItem waitForExistenceWithTimeout:5]);

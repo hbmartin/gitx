@@ -1,5 +1,3 @@
-import Foundation
-
 /// A framework-neutral view of one analysis diagnostic.
 public struct HistoryFlowDiagnosticInput: Equatable, Sendable {
     public enum Severity: Equatable, Sendable {

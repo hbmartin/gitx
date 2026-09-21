@@ -507,6 +507,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 					   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0, forceKillDelay) * NSEC_PER_SEC)),
 									  strongSelf.stateQueue, ^{
+										  if (strongSelf.operationFinished || strongSelf.taskFinished) return;
 										  BOOL shouldKill;
 										  @synchronized(strongSelf) {
 											  shouldKill = processIdentifier > 0 && strongSelf.task.running && strongSelf.task.processIdentifier == processIdentifier;

@@ -18,7 +18,7 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     private var timer: Timer?
     private let fetchQueue = DispatchQueue(label: "com.gitx.autofetch")
     @objc private dynamic var nextFetchDates = NSMutableDictionary()
-    @objc private dynamic var inFlightRepositories = NSMutableSet()
+    @objc private dynamic var inFlightRepositories = NSMutableDictionary()
     @objc private dynamic var failureCounts = NSMutableDictionary()
     private var lastScope: PBAutoFetchScope = .none
     private var started = false
@@ -68,9 +68,26 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     /// Safe to call when not started, and `start` may be called again afterwards.
     @MainActor @objc
     dynamic func stop() {
+        stop(immediately: false)
+    }
+
+    /// Stops polling and synchronously sends SIGTERM to active fetches before
+    /// application teardown can prevent delayed cancellation work from running.
+    @MainActor @objc
+    dynamic func stopForApplicationTermination() {
+        stop(immediately: true)
+    }
+
+    @MainActor
+    private func stop(immediately: Bool) {
         let tasks = invalidateCurrentGeneration()
+        inFlightRepositories.removeAllObjects()
         for task in tasks {
-            task.terminate(afterGracePeriod: 2, forceKillAfter: 5)
+            if immediately {
+                task.terminate()
+            } else {
+                task.terminate(afterGracePeriod: 2, forceKillAfter: 5)
+            }
         }
         guard started else { return }
         started = false
@@ -169,15 +186,14 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
         guard PBGitDefaults.autoFetchScope() != .none else { return }
         let now = Date()
         for (key, url) in candidateRepositoryURLs() {
-            guard !inFlightRepositories.contains(key) else { continue }
+            guard inFlightRepositories[key] == nil else { continue }
             if !immediate, let next = nextFetchDates[key] as? Date, next > now {
                 continue
             }
-            inFlightRepositories.add(key)
             let scheduledGeneration = currentGeneration()
+            inFlightRepositories[key] = NSNumber(value: scheduledGeneration)
             fetchQueue.async { [self] in
-                guard isCurrentGeneration(scheduledGeneration) else { return }
-                fetchRepository(at: url, key: key)
+                fetchRepository(at: url, key: key, generation: scheduledGeneration)
             }
         }
     }
@@ -273,12 +289,13 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
         return error == nil ? (output as NSString?)?.doubleValue ?? 0 : 0
     }
 
-    @objc(fetchRepositoryAtURL:key:)
-    dynamic func fetchRepository(at url: URL, key: String) {
-        fetchRepository(at: url, key: key, generation: currentGeneration())
-    }
-
-    private func fetchRepository(at url: URL, key: String, generation: UInt) {
+    @objc(fetchRepositoryAtURL:key:generation:)
+    dynamic func fetchRepository(at url: URL, key: String, generation: UInt) {
+        defer {
+            DispatchQueue.main.async { [self] in
+                completeInFlightRepository(key: key, generation: generation)
+            }
+        }
         guard isCurrentGeneration(generation) else { return }
         var error: NSError?
         var before = remoteSnapshot(for: url, error: &error)
@@ -313,7 +330,6 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
         }
 
         DispatchQueue.main.async { [self] in
-            inFlightRepositories.remove(key)
             guard isCurrentGeneration(generation) else { return }
             guard before != nil, after != nil else {
                 let failureCount = (failureCounts[key] as? NSNumber)?.uintValue ?? 0
@@ -323,7 +339,7 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
                     PBAutoFetchManager.retryDelay(forFailureCount: nextFailureCount)
                 )
                 if nextFailureCount == 1 {
-                    postFailureNotification(for: url, error: error ?? NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError))
+                    postFailureNotification(for: url, error: error)
                 }
                 return
             }
@@ -375,6 +391,12 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
         return tasks
     }
 
+    @MainActor
+    private func completeInFlightRepository(key: String, generation candidate: UInt) {
+        guard (inFlightRepositories[key] as? NSNumber)?.uintValue == candidate else { return }
+        inFlightRepositories.removeObject(forKey: key)
+    }
+
     @MainActor @objc(openDocumentForRepositoryURL:)
     dynamic func openDocument(forRepositoryURL url: URL) -> PBGitRepositoryDocument? {
         let repositoryKey = key(for: url)
@@ -396,11 +418,13 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     }
 
     @MainActor @objc(postFailureNotificationForURL:error:)
-    dynamic func postFailureNotification(for url: URL, error: Error) {
+    dynamic func postFailureNotification(for url: URL, error: Error?) {
         let content = UNMutableNotificationContent()
         content.title = "Auto-fetch failed for \(url.lastPathComponent)"
-        let nsError = error as NSError
-        let reason = nsError.localizedFailureReason ?? nsError.localizedDescription
+        let nsError = error as NSError?
+        let reason = nsError?.localizedFailureReason
+            ?? nsError?.localizedDescription
+            ?? "Git could not refresh this repository."
         content.body = reason + " GitX will retry automatically."
         content.sound = .default
         content.userInfo = ["repository": url.path, "kind": "failure"]

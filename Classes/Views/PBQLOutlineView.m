@@ -8,6 +8,12 @@
 
 #import "PBQLOutlineView.h"
 #import "PBGitTree.h"
+#import <ApplicationServices/ApplicationServices.h>
+
+static NSPasteboardType PBFileURLPromisePasteboardType(void)
+{
+	return (__bridge NSPasteboardType)kPasteboardTypeFileURLPromise;
+}
 
 @implementation PBQLOutlineView
 
@@ -15,7 +21,7 @@
 {
 	id a = [super initWithCoder:coder];
 	[a setDataSource:a];
-	[a registerForDraggedTypes:[NSArray arrayWithObject:NSFilesPromisePboardType]];
+	[a registerForDraggedTypes:@[ PBFileURLPromisePasteboardType() ]];
 	return a;
 }
 
@@ -41,8 +47,8 @@
 	for (id tree in items)
 		[fileNames addObject:[[[tree representedObject] path] pathExtension]];
 
-	[pb declareTypes:[NSArray arrayWithObject:NSFilesPromisePboardType] owner:self];
-	[pb setPropertyList:fileNames forType:NSFilesPromisePboardType];
+	[pb declareTypes:@[ PBFileURLPromisePasteboardType() ] owner:self];
+	[pb setPropertyList:fileNames forType:PBFileURLPromisePasteboardType()];
 
 	return YES;
 }
@@ -60,7 +66,7 @@
 
 - (NSMenu *)menuForEvent:(NSEvent *)theEvent
 {
-	if ([theEvent type] == NSRightMouseDown) {
+	if ([theEvent type] == NSEventTypeRightMouseDown) {
 		// get the current selections for the outline view.
 		NSIndexSet *selectedRowIndexes = [self selectedRowIndexes];
 

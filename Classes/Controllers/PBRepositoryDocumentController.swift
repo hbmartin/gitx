@@ -1,5 +1,6 @@
 import AppKit
 import ObjectiveGit
+import UniformTypeIdentifiers
 
 struct RepositoryDocumentOpenState {
     private(set) var pendingOpenCount = 0
@@ -59,10 +60,6 @@ final class RepositoryDocumentOpenStateModel: NSObject {
 
     @objc var explicitLaunchOpenSucceeded: Bool {
         state.explicitLaunchOpenSucceeded
-    }
-
-    var successfulRepositoryURLs: Set<URL> {
-        state.successfulRepositoryURLs
     }
 
     @objc func beginOpen() {
@@ -166,9 +163,11 @@ class PBRepositoryDocumentController: NSDocumentController {
         forTypes _: [String]?,
         completionHandler: @escaping (Int) -> Void
     ) {
+        if let gitContentType = UTType(filenameExtension: "git") {
+            openPanel.allowedContentTypes = [gitContentType]
+        }
         openPanel.canChooseFiles = true
         openPanel.canChooseDirectories = true
-        openPanel.perform(NSSelectorFromString("setAllowedFileTypes:"), with: ["git"])
         completionHandler(openPanel.runModal().rawValue)
     }
 
@@ -189,7 +188,9 @@ class PBRepositoryDocumentController: NSDocumentController {
             throw CocoaError(.userCancelled)
         }
 
-        let repositoryURL = openPanel.url!
+        guard let repositoryURL = openPanel.url else {
+            throw CocoaError(.fileReadUnknown)
+        }
         _ = try GTRepository.initializeEmpty(atFileURL: repositoryURL, options: nil)
         return try PBGitRepositoryDocument(contentsOf: repositoryURL, ofType: PBGitRepositoryDocumentType)
     }
