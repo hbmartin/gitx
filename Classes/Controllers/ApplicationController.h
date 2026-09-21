@@ -9,24 +9,28 @@
 #import <Cocoa/Cocoa.h>
 #import "PBGitRepository.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
 @class PBCloneRepositoryPanel;
 
 @interface ApplicationController : NSObject <NSApplicationDelegate> {
-	IBOutlet NSWindow *window;
-	IBOutlet id firstResponder;
+	IBOutlet NSWindow *_Nullable window;
+	IBOutlet id _Nullable firstResponder;
 
-	PBCloneRepositoryPanel *cloneRepositoryPanel;
+	PBCloneRepositoryPanel *_Nullable cloneRepositoryPanel;
 	bool started;
 }
 
-- (IBAction)openPreferencesWindow:(id)sender;
-- (IBAction)showAboutPanel:(id)sender;
+- (IBAction)openPreferencesWindow:(nullable id)sender;
+- (IBAction)showAboutPanel:(nullable id)sender;
 
-- (IBAction)installCliTool:(id)sender;
+- (IBAction)installCliTool:(nullable id)sender;
 
-- (IBAction)showHelp:(id)sender;
-- (IBAction)showChangeLog:(id)sender;
-- (IBAction)reportAProblem:(id)sender;
+- (IBAction)showHelp:(nullable id)sender;
+- (IBAction)showChangeLog:(nullable id)sender;
+- (IBAction)reportAProblem:(nullable id)sender;
 
-- (IBAction)showCloneRepository:(id)sender;
+- (IBAction)showCloneRepository:(nullable id)sender;
 @end
+
+NS_ASSUME_NONNULL_END

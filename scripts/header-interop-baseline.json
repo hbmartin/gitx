@@ -4,7 +4,6 @@
     "Classes/iTerm2GeneratedScriptingBridge.h"
   ],
   "unannotatedHeaders": [
-    "Classes/Controllers/ApplicationController.h",
     "Classes/Controllers/DBPrefsWindowController.h",
     "Classes/Controllers/OpenRecentController.h",
     "Classes/Controllers/PBHistorySearchController.h",
@@ -36,9 +35,7 @@
     "Classes/Views/PBCloneRepositoryPanel.h",
     "Classes/Views/PBGitGradientBarView.h",
     "Classes/Views/PBGitXMessageSheet.h",
-    "Classes/Views/PBQLOutlineView.h",
     "Classes/Views/PBQLTextView.h",
-    "Classes/Views/PBSourceViewBadge.h",
     "Classes/git/PBGitBinary.h",
     "Classes/git/PBGitGraphLine.h",
     "Classes/git/PBGitGrapher.h",

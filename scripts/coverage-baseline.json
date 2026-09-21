@@ -1,7 +1,7 @@
 {
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
-    "Classes/Controllers/ApplicationController.m": 0.5231,
+    "Classes/Controllers/ApplicationController.m": 0.9288,
     "Classes/Controllers/ApplicationIcon.swift": 1.0,
     "Classes/Controllers/CommitControllerPolicies.swift": 1.0,
     "Classes/Controllers/CommitMenuPresenter.swift": 1.0,
@@ -137,7 +137,7 @@
     "Classes/Views/PBGitXMessageSheet.m": 0.03,
     "Classes/Views/PBHighlighting.swift": 1.0,
     "Classes/Views/PBNativeContentView.m": 1.0,
-    "Classes/Views/PBQLOutlineView.m": 0.283,
+    "Classes/Views/PBQLOutlineView.m": 0.9622,
     "Classes/Views/PBQLTextView.m": 0.0,
     "Classes/Views/PBRemoteProgressSheet.m": 0.0,
     "Classes/Views/PBSidebarTableViewCell.m": 1.0,

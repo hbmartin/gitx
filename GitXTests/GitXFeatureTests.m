@@ -24,10 +24,197 @@
 #import "NSAppearance+PBDarkMode.h"
 #import "ApplicationController.h"
 #import "PBSourceViewBadge.h"
+#import "PBQLOutlineView.h"
+#import "PBGitTree.h"
+
+@interface PBQLOutlineView (GitXFeatureTests)
+- (BOOL)outlineView:(NSOutlineView *)outlineView writeItems:(NSArray *)items toPasteboard:(NSPasteboard *)pasteboard;
+- (NSArray<NSString *> *)outlineView:(NSOutlineView *)outlineView
+	namesOfPromisedFilesDroppedAtDestination:(NSURL *)dropDestination
+						 forDraggedItems:(NSArray *)items;
+- (BOOL)outlineView:(NSOutlineView *)outlineView isItemExpandable:(id)item;
+- (NSInteger)outlineView:(NSOutlineView *)outlineView numberOfChildrenOfItem:(nullable id)item;
+- (nullable id)outlineView:(NSOutlineView *)outlineView child:(NSInteger)index ofItem:(nullable id)item;
+- (nullable id)outlineView:(NSOutlineView *)outlineView
+	objectValueForTableColumn:(nullable NSTableColumn *)column
+					 byItem:(id)item;
+@end
 
 static NSUInteger PBAutoFetchAuthorizationRequestCount;
 static UNNotificationRequest *PBAutoFetchLastNotificationRequest;
 static NSDocumentController *PBAutoFetchDocumentController;
+static NSModalResponse PBApplicationOpenPanelResponse;
+static NSURL *PBApplicationOpenPanelURL;
+static NSArray<NSURL *> *PBApplicationOpenedRepositoryURLs;
+static NSArray<NSError *> *PBApplicationRepositoryOpenErrors;
+static NSApplicationDelegateReply PBApplicationOpenFilesReply;
+static NSDictionary<NSAboutPanelOptionKey, id> *PBApplicationAboutOptions;
+static NSURL *PBApplicationWorkspaceURL;
+static BOOL PBApplicationAppleScriptSucceeds;
+static NSString *PBApplicationAlertMessage;
+static NSString *PBApplicationAlertInformation;
+static id PBApplicationProcessInfo;
+
+@interface PBRepositoryOpenCoordinator : NSObject
++ (instancetype)shared;
+- (void)openURLs:(NSArray<NSURL *> *)urls
+	 sourceWindow:(nullable NSWindow *)sourceWindow
+	   completion:(void (^)(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors))completion;
+- (void)openKnownRepositoryURLs:(NSArray<NSURL *> *)urls
+				sourceWindow:(nullable NSWindow *)sourceWindow
+				  completion:(void (^)(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors))completion;
+@end
+
+@interface PBRepositoryOpenCoordinator (GitXApplicationControllerTests)
+- (void)pb_feature_openURLs:(NSArray<NSURL *> *)urls
+			 sourceWindow:(nullable NSWindow *)sourceWindow
+			   completion:(void (^)(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors))completion;
+- (void)pb_feature_openKnownRepositoryURLs:(NSArray<NSURL *> *)urls
+						  sourceWindow:(nullable NSWindow *)sourceWindow
+							completion:(void (^)(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors))completion;
+@end
+
+@implementation PBRepositoryOpenCoordinator (GitXApplicationControllerTests)
+- (void)pb_feature_openURLs:(NSArray<NSURL *> *)urls
+			 sourceWindow:(nullable NSWindow *)sourceWindow
+			   completion:(void (^)(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors))completion
+{
+	PBApplicationOpenedRepositoryURLs = [urls copy];
+	completion(@[], PBApplicationRepositoryOpenErrors ?: @[]);
+}
+- (void)pb_feature_openKnownRepositoryURLs:(NSArray<NSURL *> *)urls
+						  sourceWindow:(nullable NSWindow *)sourceWindow
+							completion:(void (^)(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors))completion
+{
+	PBApplicationOpenedRepositoryURLs = [urls copy];
+	completion(@[ [[NSDocument alloc] init] ], @[]);
+}
+@end
+
+@interface PBApplicationProcessInfoSpy : NSObject
+@property (nonatomic, copy) NSDictionary<NSString *, NSString *> *testEnvironment;
+@property (nonatomic, copy) NSArray<NSString *> *testArguments;
+@property (nonatomic, strong) NSProcessInfo *realProcessInfo;
+@end
+
+@implementation PBApplicationProcessInfoSpy
+- (NSDictionary<NSString *, NSString *> *)environment
+{
+	return self.testEnvironment;
+}
+- (NSArray<NSString *> *)arguments
+{
+	return self.testArguments;
+}
+- (id)forwardingTargetForSelector:(SEL)selector
+{
+	return self.realProcessInfo;
+}
+@end
+
+@interface NSProcessInfo (GitXApplicationControllerTests)
++ (NSProcessInfo *)pb_feature_processInfo;
+@end
+
+@implementation NSProcessInfo (GitXApplicationControllerTests)
++ (NSProcessInfo *)pb_feature_processInfo
+{
+	return PBApplicationProcessInfo;
+}
+@end
+
+@interface NSOpenPanel (GitXApplicationControllerTests)
+- (void)pb_feature_beginWithCompletionHandler:(void (^)(NSModalResponse result))handler;
+- (nullable NSURL *)pb_feature_URL;
+@end
+
+@implementation NSOpenPanel (GitXApplicationControllerTests)
+- (void)pb_feature_beginWithCompletionHandler:(void (^)(NSModalResponse result))handler
+{
+	handler(PBApplicationOpenPanelResponse);
+}
+- (NSURL *)pb_feature_URL
+{
+	return PBApplicationOpenPanelURL;
+}
+@end
+
+@interface NSApplication (GitXApplicationControllerTests)
+- (void)pb_feature_replyToOpenOrPrint:(NSApplicationDelegateReply)reply;
+- (void)pb_feature_orderFrontStandardAboutPanelWithOptions:(NSDictionary<NSAboutPanelOptionKey, id> *)options;
+@end
+
+@implementation NSApplication (GitXApplicationControllerTests)
+- (void)pb_feature_replyToOpenOrPrint:(NSApplicationDelegateReply)reply
+{
+	PBApplicationOpenFilesReply = reply;
+}
+- (void)pb_feature_orderFrontStandardAboutPanelWithOptions:(NSDictionary<NSAboutPanelOptionKey, id> *)options
+{
+	PBApplicationAboutOptions = [options copy];
+}
+@end
+
+@interface NSWorkspace (GitXApplicationControllerTests)
+- (BOOL)pb_feature_openURL:(NSURL *)url;
+@end
+
+@implementation NSWorkspace (GitXApplicationControllerTests)
+- (BOOL)pb_feature_openURL:(NSURL *)url
+{
+	PBApplicationWorkspaceURL = url;
+	return YES;
+}
+@end
+
+@interface NSAppleScript (GitXApplicationControllerTests)
+- (nullable NSAppleEventDescriptor *)pb_feature_executeAndReturnError:(NSDictionary<NSString *, id> *_Nullable *_Nullable)errorInfo;
+@end
+
+@implementation NSAppleScript (GitXApplicationControllerTests)
+- (NSAppleEventDescriptor *)pb_feature_executeAndReturnError:(NSDictionary<NSString *, id> **)errorInfo
+{
+	if (PBApplicationAppleScriptSucceeds)
+		return [NSAppleEventDescriptor descriptorWithBoolean:YES];
+	if (errorInfo) *errorInfo = @{NSLocalizedDescriptionKey : @"installation failed"};
+	return nil;
+}
+@end
+
+@interface NSAlert (GitXApplicationControllerTests)
+- (NSModalResponse)pb_feature_runModal;
+@end
+
+@implementation NSAlert (GitXApplicationControllerTests)
+- (NSModalResponse)pb_feature_runModal
+{
+	PBApplicationAlertMessage = self.messageText;
+	PBApplicationAlertInformation = self.informativeText;
+	return NSModalResponseOK;
+}
+@end
+
+@interface NSWindowController (GitXApplicationControllerTests)
+- (void)pb_feature_showWindow:(nullable id)sender;
+@end
+
+@implementation NSWindowController (GitXApplicationControllerTests)
+- (void)pb_feature_showWindow:(nullable id)sender
+{
+	objc_setAssociatedObject(self, @selector(pb_feature_showWindow:), @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+@end
+
+@interface PBApplicationResponderSpy : NSObject
+@property (nonatomic) NSUInteger terminateCount;
+@end
+
+@implementation PBApplicationResponderSpy
+- (void)terminate:(id)sender
+{
+	self.terminateCount++;
+}
+@end
 
 @interface PBRepositoryOpenPanelSpy : NSOpenPanel {
 	BOOL _testCanChooseFiles;
@@ -407,11 +594,88 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 @end
 
+@interface PBQLOutlineHistorySpy : PBGitHistoryController
+
+@property (nonatomic) NSUInteger quickLookToggleCount;
+@property (nonatomic, strong) NSMenu *testContextMenu;
+
+@end
+
+
+@implementation PBQLOutlineHistorySpy
+
+- (void)toggleQLPreviewPanel:(id)sender
+{
+	self.quickLookToggleCount++;
+}
+
+- (NSMenu *)contextMenuForTreeView
+{
+	return self.testContextMenu;
+}
+
+@end
+
+
+@interface PBQLOutlineViewSpy : PBQLOutlineView
+
+@property (nonatomic) NSInteger testRowAtPoint;
+@property (nonatomic, copy) NSIndexSet *testSelectedRows;
+@property (nonatomic, copy) NSIndexSet *lastSelectedRows;
+
+@end
+
+
+@implementation PBQLOutlineViewSpy
+
+- (NSInteger)rowAtPoint:(NSPoint)point
+{
+	return self.testRowAtPoint;
+}
+
+- (NSIndexSet *)selectedRowIndexes
+{
+	return self.testSelectedRows ?: NSIndexSet.indexSet;
+}
+
+- (void)selectRowIndexes:(NSIndexSet *)indexes byExtendingSelection:(BOOL)extend
+{
+	self.lastSelectedRows = indexes;
+	self.testSelectedRows = indexes;
+}
+
+@end
+
+
+@interface PBQLOutlineTreeSpy : PBGitTree
+
+@property (nonatomic, copy) NSString *savedDirectory;
+
+@end
+
+
+@implementation PBQLOutlineTreeSpy
+
+- (void)saveToFolder:(NSString *)directory
+{
+	self.savedDirectory = directory;
+}
+
+@end
+
 @interface ApplicationController (GitXFeatureTests)
 - (NSArray *)feedParametersForUpdater:(nullable id)updater sendingSystemProfile:(BOOL)sendingSystemProfile;
+- (void)applyAppearancePreference;
+- (void)appearancePreferenceChanged:(nullable NSNotification *)notification;
+- (void)applicationWillFinishLaunching:(nullable NSNotification *)notification;
+- (void)applicationDidFinishLaunching:(nullable NSNotification *)notification;
+- (void)registerServices;
+- (void)application:(NSApplication *)application openFiles:(NSArray<NSString *> *)filenames;
 - (BOOL)applicationOpenUntitledFile:(NSApplication *)application;
 - (void)applicationDidBecomeActive:(nullable NSNotification *)notification;
 - (void)applicationWillTerminate:(nullable NSNotification *)notification;
+- (void)windowWillClose:(nullable id)sender;
+- (IBAction)openDocument:(nullable id)sender;
 @end
 
 @interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
@@ -816,6 +1080,223 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 			[defaults setObject:previousCleanShutdown forKey:cleanShutdownKey];
 		else
 			[defaults removeObjectForKey:cleanShutdownKey];
+	}
+}
+
+- (void)testApplicationDelegateAppliesAppearanceAndRegistersLaunchServices
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	PBAppearancePreference originalPreference = [PBGitDefaults appearancePreference];
+	NSAppearance *originalAppearance = NSApp.appearance;
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id originalServicesVersion = [defaults objectForKey:@"Services Version"];
+	@try {
+		[PBGitDefaults setAppearancePreference:PBAppearancePreferenceDark];
+		[controller appearancePreferenceChanged:nil];
+		XCTAssertEqualObjects(NSApp.appearance.name, NSAppearanceNameDarkAqua);
+		[controller applicationWillFinishLaunching:nil];
+		XCTAssertEqualObjects(NSApp.appearance.name, NSAppearanceNameDarkAqua);
+
+		[defaults setInteger:1 forKey:@"Services Version"];
+		[controller registerServices];
+		XCTAssertEqual([defaults integerForKey:@"Services Version"], (NSInteger)2);
+	} @finally {
+		[PBGitDefaults setAppearancePreference:originalPreference];
+		NSApp.appearance = originalAppearance;
+		if (originalServicesVersion)
+			[defaults setObject:originalServicesVersion forKey:@"Services Version"];
+		else
+			[defaults removeObjectForKey:@"Services Version"];
+	}
+}
+
+- (void)testApplicationDelegateLaunchRoutesUITestRepositoryThroughCoordinator
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	PBApplicationProcessInfoSpy *processInfo = [[PBApplicationProcessInfoSpy alloc] init];
+	NSProcessInfo *realProcessInfo = NSProcessInfo.processInfo;
+	NSMutableDictionary<NSString *, NSString *> *environment = [realProcessInfo.environment mutableCopy];
+	environment[@"GITX_UITEST_REPO"] = @"/tmp/gitx-ui-launch-repository";
+	processInfo.testEnvironment = environment;
+	processInfo.testArguments = realProcessInfo.arguments;
+	processInfo.realProcessInfo = realProcessInfo;
+	PBApplicationProcessInfo = processInfo;
+	PBApplicationOpenedRepositoryURLs = nil;
+	PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
+	PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
+		@selector(openKnownRepositoryURLs:sourceWindow:completion:),
+		@selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
+	@try {
+		[controller applicationDidFinishLaunching:nil];
+		NSPredicate *opened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+			return PBApplicationOpenedRepositoryURLs.count == 1;
+		}];
+		[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:opened object:NSNull.null] ]
+						 timeout:2.0];
+		XCTAssertEqualObjects(PBApplicationOpenedRepositoryURLs.firstObject.path, @"/tmp/gitx-ui-launch-repository");
+	} @finally {
+		PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
+			@selector(openKnownRepositoryURLs:sourceWindow:completion:),
+			@selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
+		PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
+		PBApplicationProcessInfo = nil;
+		PBApplicationOpenedRepositoryURLs = nil;
+	}
+}
+
+- (void)testApplicationDelegateOpeningFilesRepliesForSuccessAndFailure
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
+		@selector(openURLs:sourceWindow:completion:),
+		@selector(pb_feature_openURLs:sourceWindow:completion:));
+	PBFeatureSwapInstanceMethods(NSApplication.class,
+		@selector(replyToOpenOrPrint:),
+		@selector(pb_feature_replyToOpenOrPrint:));
+	@try {
+		PBApplicationRepositoryOpenErrors = @[];
+		PBApplicationOpenFilesReply = NSApplicationDelegateReplyCancel;
+		[controller application:NSApp openFiles:@[ @"/tmp/first repo", @"/tmp/second.git" ]];
+		XCTAssertEqualObjects([PBApplicationOpenedRepositoryURLs valueForKey:@"path"],
+			(@[ @"/tmp/first repo", @"/tmp/second.git" ]));
+		XCTAssertEqual(PBApplicationOpenFilesReply, NSApplicationDelegateReplySuccess);
+
+		PBApplicationRepositoryOpenErrors = @[ [NSError errorWithDomain:@"GitXTests" code:1 userInfo:nil] ];
+		[controller application:NSApp openFiles:@[ @"/tmp/broken" ]];
+		XCTAssertEqual(PBApplicationOpenFilesReply, NSApplicationDelegateReplyFailure);
+	} @finally {
+		PBApplicationRepositoryOpenErrors = nil;
+		PBApplicationOpenedRepositoryURLs = nil;
+		PBFeatureSwapInstanceMethods(NSApplication.class,
+			@selector(replyToOpenOrPrint:),
+			@selector(pb_feature_replyToOpenOrPrint:));
+		PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
+			@selector(openURLs:sourceWindow:completion:),
+			@selector(pb_feature_openURLs:sourceWindow:completion:));
+	}
+}
+
+- (void)testApplicationDelegateUntitledAndWindowClosePolicies
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	NSNumber *originalStarted = [controller valueForKey:@"started"];
+	PBApplicationResponderSpy *responder = [[PBApplicationResponderSpy alloc] init];
+	id originalResponder = [controller valueForKey:@"firstResponder"];
+	@try {
+		[controller setValue:@NO forKey:@"started"];
+		XCTAssertFalse([controller applicationShouldOpenUntitledFile:NSApp]);
+		[controller setValue:@YES forKey:@"started"];
+		if (NSDocumentController.sharedDocumentController.documents.count == 0)
+			XCTAssertTrue([controller applicationShouldOpenUntitledFile:NSApp]);
+
+		[controller setValue:responder forKey:@"firstResponder"];
+		[controller windowWillClose:nil];
+		XCTAssertEqual(responder.terminateCount, (NSUInteger)1);
+	} @finally {
+		[controller setValue:originalStarted forKey:@"started"];
+		[controller setValue:originalResponder forKey:@"firstResponder"];
+	}
+}
+
+- (void)testApplicationDelegateOpenPanelRoutesOnlyAcceptedURLs
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	PBFeatureSwapInstanceMethods(NSOpenPanel.class,
+		@selector(beginWithCompletionHandler:),
+		@selector(pb_feature_beginWithCompletionHandler:));
+	PBFeatureSwapInstanceMethods(NSOpenPanel.class, @selector(URL), @selector(pb_feature_URL));
+	PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
+		@selector(openURLs:sourceWindow:completion:),
+		@selector(pb_feature_openURLs:sourceWindow:completion:));
+	@try {
+		PBApplicationOpenPanelResponse = NSModalResponseCancel;
+		PBApplicationOpenPanelURL = nil;
+		PBApplicationOpenedRepositoryURLs = nil;
+		[controller openDocument:nil];
+		XCTAssertNil(PBApplicationOpenedRepositoryURLs);
+
+		PBApplicationOpenPanelResponse = NSModalResponseOK;
+		PBApplicationOpenPanelURL = [NSURL fileURLWithPath:@"/tmp/accepted-repository"];
+		[controller openDocument:nil];
+		XCTAssertEqualObjects(PBApplicationOpenedRepositoryURLs, @[ PBApplicationOpenPanelURL ]);
+	} @finally {
+		PBApplicationOpenPanelURL = nil;
+		PBApplicationOpenedRepositoryURLs = nil;
+		PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
+			@selector(openURLs:sourceWindow:completion:),
+			@selector(pb_feature_openURLs:sourceWindow:completion:));
+		PBFeatureSwapInstanceMethods(NSOpenPanel.class, @selector(URL), @selector(pb_feature_URL));
+		PBFeatureSwapInstanceMethods(NSOpenPanel.class,
+			@selector(beginWithCompletionHandler:),
+			@selector(pb_feature_beginWithCompletionHandler:));
+	}
+}
+
+- (void)testApplicationDelegatePresentsWindowsAndAboutMetadata
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	NSWindowController *clonePanel = [[NSWindowController alloc] initWithWindow:nil];
+	id originalClonePanel = [controller valueForKey:@"cloneRepositoryPanel"];
+	PBFeatureSwapInstanceMethods(NSWindowController.class, @selector(showWindow:), @selector(pb_feature_showWindow:));
+	PBFeatureSwapInstanceMethods(NSApplication.class,
+		@selector(orderFrontStandardAboutPanelWithOptions:),
+		@selector(pb_feature_orderFrontStandardAboutPanelWithOptions:));
+	@try {
+		PBApplicationAboutOptions = nil;
+		[controller showAboutPanel:nil];
+		XCTAssertEqualObjects(PBApplicationAboutOptions[NSAboutPanelOptionApplicationName], @"GitX");
+
+		[controller openPreferencesWindow:nil];
+		[controller setValue:clonePanel forKey:@"cloneRepositoryPanel"];
+		[controller showCloneRepository:nil];
+		XCTAssertEqualObjects(objc_getAssociatedObject(clonePanel, @selector(pb_feature_showWindow:)), @YES);
+	} @finally {
+		[controller setValue:originalClonePanel forKey:@"cloneRepositoryPanel"];
+		PBFeatureSwapInstanceMethods(NSApplication.class,
+			@selector(orderFrontStandardAboutPanelWithOptions:),
+			@selector(pb_feature_orderFrontStandardAboutPanelWithOptions:));
+		PBFeatureSwapInstanceMethods(NSWindowController.class, @selector(showWindow:), @selector(pb_feature_showWindow:));
+	}
+}
+
+- (void)testApplicationDelegateReportsCommandLineInstallationResults
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	PBFeatureSwapInstanceMethods(NSAppleScript.class,
+		@selector(executeAndReturnError:),
+		@selector(pb_feature_executeAndReturnError:));
+	PBFeatureSwapInstanceMethods(NSAlert.class, @selector(runModal), @selector(pb_feature_runModal));
+	@try {
+		PBApplicationAppleScriptSucceeds = YES;
+		[controller installCliTool:nil];
+		XCTAssertEqualObjects(PBApplicationAlertMessage, @"Installation Complete");
+		XCTAssertTrue([PBApplicationAlertInformation containsString:@"/usr/local/bin/"]);
+
+		PBApplicationAppleScriptSucceeds = NO;
+		[controller installCliTool:nil];
+		XCTAssertEqualObjects(PBApplicationAlertMessage, @"Installation Failed");
+	} @finally {
+		PBFeatureSwapInstanceMethods(NSAlert.class, @selector(runModal), @selector(pb_feature_runModal));
+		PBFeatureSwapInstanceMethods(NSAppleScript.class,
+			@selector(executeAndReturnError:),
+			@selector(pb_feature_executeAndReturnError:));
+	}
+}
+
+- (void)testApplicationDelegateHelpActionsOpenExpectedURLs
+{
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	PBFeatureSwapInstanceMethods(NSWorkspace.class, @selector(openURL:), @selector(pb_feature_openURL:));
+	@try {
+		[controller showHelp:nil];
+		XCTAssertEqualObjects(PBApplicationWorkspaceURL.absoluteString, @"https://gitx.github.io");
+		[controller reportAProblem:nil];
+		XCTAssertEqualObjects(PBApplicationWorkspaceURL.absoluteString, @"https://github.com/gitx/gitx/issues");
+		[controller showChangeLog:nil];
+		XCTAssertEqualObjects(PBApplicationWorkspaceURL.absoluteString, @"https://github.com/gitx/gitx/releases");
+	} @finally {
+		PBApplicationWorkspaceURL = nil;
+		PBFeatureSwapInstanceMethods(NSWorkspace.class, @selector(openURL:), @selector(pb_feature_openURL:));
 	}
 }
 
@@ -2259,6 +2740,88 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	window.testKeyWindow = YES;
 	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], [PBSourceViewBadge badgeBackgroundColor]);
 	XCTAssertNotNil([PBSourceViewBadge checkedOutBadgeForCell:cell]);
+}
+
+- (void)testQuickLookOutlineRoutesSpaceAndContextMenuToItsController
+{
+	PBQLOutlineHistorySpy *controller = [[PBQLOutlineHistorySpy alloc] init];
+	controller.testContextMenu = [[NSMenu alloc] initWithTitle:@"Tree"];
+	PBQLOutlineViewSpy *outline = [[PBQLOutlineViewSpy alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	[outline setValue:controller forKey:@"controller"];
+
+	[outline keyDown:[self spaceKeyEventWithModifiers:0]];
+	XCTAssertEqual(controller.quickLookToggleCount, (NSUInteger)1);
+
+	outline.testRowAtPoint = 2;
+	outline.testSelectedRows = [NSIndexSet indexSetWithIndex:0];
+	XCTAssertEqualObjects([outline menuForEvent:[self rightMouseEventAtLocation:NSZeroPoint windowNumber:0]],
+					  controller.testContextMenu);
+	XCTAssertEqualObjects(outline.lastSelectedRows, [NSIndexSet indexSetWithIndex:2]);
+
+	outline.lastSelectedRows = nil;
+	outline.testSelectedRows = [NSIndexSet indexSetWithIndex:2];
+	XCTAssertEqualObjects([outline menuForEvent:[self rightMouseEventAtLocation:NSZeroPoint windowNumber:0]],
+					  controller.testContextMenu);
+	XCTAssertNil(outline.lastSelectedRows, @"A context click on the selection must preserve it");
+}
+
+- (void)testQuickLookOutlinePublishesPromisedFileTypesAndNames
+{
+	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	PBQLOutlineTreeSpy *first = [[PBQLOutlineTreeSpy alloc] init];
+	first.path = @"Sources/Café.swift";
+	PBQLOutlineTreeSpy *second = [[PBQLOutlineTreeSpy alloc] init];
+	second.path = @"Documentation/README.md";
+	NSArray *items = @[
+		[NSTreeNode treeNodeWithRepresentedObject:first],
+		[NSTreeNode treeNodeWithRepresentedObject:second],
+	];
+	NSPasteboard *pasteboard = [NSPasteboard pasteboardWithUniqueName];
+
+	XCTAssertTrue([outline outlineView:outline writeItems:items toPasteboard:pasteboard]);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+	XCTAssertEqualObjects([pasteboard propertyListForType:NSFilesPromisePboardType], (@[ @"swift", @"md" ]));
+#pragma clang diagnostic pop
+
+	NSURL *destination = [NSURL fileURLWithPath:@"/tmp/gitx-promised-files" isDirectory:YES];
+	XCTAssertEqualObjects([outline outlineView:outline
+					 namesOfPromisedFilesDroppedAtDestination:destination
+										forDraggedItems:items],
+					  (@[ @"Sources/Café.swift", @"Documentation/README.md" ]));
+	XCTAssertEqualObjects(first.savedDirectory, destination.path);
+	XCTAssertEqualObjects(second.savedDirectory, destination.path);
+	XCTAssertEqual([outline draggingSession:(id)[NSNull null]
+				 sourceOperationMaskForDraggingContext:NSDraggingContextOutsideApplication],
+				  NSDragOperationCopy);
+}
+
+- (void)testQuickLookOutlineEmptyDataSourceContract
+{
+	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	XCTAssertFalse([outline outlineView:outline isItemExpandable:@"item"]);
+	XCTAssertEqual([outline outlineView:outline numberOfChildrenOfItem:nil], (NSInteger)0);
+	XCTAssertNil([outline outlineView:outline child:0 ofItem:nil]);
+	XCTAssertNil([outline outlineView:outline objectValueForTableColumn:nil byItem:@"item"]);
+}
+
+- (void)testQuickLookOutlineRestoresItsSelfDataSourceWhenDecoded
+{
+	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	NSError *archiveError = nil;
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:outline
+							 requiringSecureCoding:NO
+									 error:&archiveError];
+	XCTAssertNotNil(data);
+	XCTAssertNil(archiveError);
+	NSError *decodeError = nil;
+	NSKeyedUnarchiver *unarchiver = [[NSKeyedUnarchiver alloc] initForReadingFromData:data error:&decodeError];
+	unarchiver.requiresSecureCoding = NO;
+	PBQLOutlineView *decoded = [unarchiver decodeObjectForKey:NSKeyedArchiveRootObjectKey];
+	[unarchiver finishDecoding];
+	XCTAssertNotNil(decoded);
+	XCTAssertNil(decodeError);
+	XCTAssertEqual((id)decoded.dataSource, (id)decoded);
 }
 
 @end
