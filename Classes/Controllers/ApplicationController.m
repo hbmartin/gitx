@@ -164,6 +164,12 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification
 {
+	NSDocumentController *documentController = NSDocumentController.sharedDocumentController;
+	NSCAssert(
+		[documentController isKindOfClass:PBRepositoryDocumentController.class],
+		@"MainMenu.xib must install exactly one PBRepositoryDocumentController as the shared document controller");
+	NSLog(@"[RepositoryOpening] Shared document controller invariant verified: %@", documentController.className);
+
 #if !DEBUG
 	// Only enable Sparkle updates in Release builds
 	// In Debug builds, skip updater to avoid EdDSA key validation errors

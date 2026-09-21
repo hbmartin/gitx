@@ -3,6 +3,7 @@
 #import <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <UserNotifications/UserNotifications.h>
 
 #import "GitXApplicationLocator.h"
@@ -220,14 +221,16 @@ static id PBApplicationProcessInfo;
 	BOOL _testCanChooseFiles;
 	BOOL _testCanChooseDirectories;
 	BOOL _testAllowsMultipleSelection;
-	NSArray<NSString *> *_testAllowedFileTypes;
+	NSArray<UTType *> *_testAllowedContentTypes;
+	NSMutableArray<NSString *> *_testConfigurationOrder;
 	NSString *_testMessage;
 	NSString *_testTitle;
 }
 
 @property (nonatomic) NSModalResponse response;
 @property (nullable, nonatomic) NSURL *selectedURL;
-@property (nullable, nonatomic, readonly) NSArray<NSString *> *testAllowedFileTypes;
+@property (nullable, nonatomic, readonly) NSArray<UTType *> *testAllowedContentTypes;
+@property (nonatomic, readonly) NSArray<NSString *> *testConfigurationOrder;
 
 @end
 
@@ -256,6 +259,8 @@ static id PBApplicationProcessInfo;
 - (void)setCanChooseFiles:(BOOL)value
 {
 	_testCanChooseFiles = value;
+	if (!_testConfigurationOrder) _testConfigurationOrder = [NSMutableArray array];
+	[_testConfigurationOrder addObject:@"canChooseFiles"];
 }
 - (BOOL)canChooseDirectories
 {
@@ -264,6 +269,8 @@ static id PBApplicationProcessInfo;
 - (void)setCanChooseDirectories:(BOOL)value
 {
 	_testCanChooseDirectories = value;
+	if (!_testConfigurationOrder) _testConfigurationOrder = [NSMutableArray array];
+	[_testConfigurationOrder addObject:@"canChooseDirectories"];
 }
 - (BOOL)allowsMultipleSelection
 {
@@ -273,17 +280,23 @@ static id PBApplicationProcessInfo;
 {
 	_testAllowsMultipleSelection = value;
 }
-- (NSArray<NSString *> *)allowedFileTypes
+- (NSArray<UTType *> *)allowedContentTypes
 {
-	return _testAllowedFileTypes;
+	return _testAllowedContentTypes;
 }
-- (NSArray<NSString *> *)testAllowedFileTypes
+- (NSArray<UTType *> *)testAllowedContentTypes
 {
-	return _testAllowedFileTypes;
+	return _testAllowedContentTypes;
 }
-- (void)setAllowedFileTypes:(NSArray<NSString *> *)value
+- (void)setAllowedContentTypes:(NSArray<UTType *> *)value
 {
-	_testAllowedFileTypes = [value copy];
+	_testAllowedContentTypes = [value copy];
+	if (!_testConfigurationOrder) _testConfigurationOrder = [NSMutableArray array];
+	[_testConfigurationOrder addObject:@"allowedContentTypes"];
+}
+- (NSArray<NSString *> *)testConfigurationOrder
+{
+	return [_testConfigurationOrder copy] ?: @[];
 }
 - (NSString *)message
 {
@@ -1048,6 +1061,9 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 {
 	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
 	XCTAssertTrue([controller isKindOfClass:ApplicationController.class]);
+	XCTAssertTrue([NSDocumentController.sharedDocumentController isKindOfClass:PBRepositoryDocumentController.class]);
+	XCTAssertEqual(NSDocumentController.sharedDocumentController,
+		[PBRepositoryDocumentController sharedDocumentController]);
 	XCTAssertEqual([controller feedParametersForUpdater:nil sendingSystemProfile:NO].count, (NSUInteger)0);
 	XCTAssertGreaterThan([controller feedParametersForUpdater:nil sendingSystemProfile:YES].count, (NSUInteger)0);
 	XCTAssertTrue([controller applicationOpenUntitledFile:NSApp]);
@@ -1832,7 +1848,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 	XCTAssertTrue(panel.canChooseFiles);
 	XCTAssertTrue(panel.canChooseDirectories);
-	XCTAssertEqualObjects(panel.testAllowedFileTypes, (@[ @"git" ]));
+	XCTAssertEqual(panel.testAllowedContentTypes.count, (NSUInteger)1);
+	XCTAssertEqualObjects(panel.testAllowedContentTypes.firstObject.preferredFilenameExtension, @"git");
+	XCTAssertEqualObjects(panel.testConfigurationOrder,
+		(@[ @"allowedContentTypes", @"canChooseFiles", @"canChooseDirectories" ]));
 	XCTAssertEqual(response, NSModalResponseOK);
 }
 
@@ -1870,6 +1889,22 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertTrue([[NSFileManager defaultManager] fileExistsAtPath:[folder.path stringByAppendingPathComponent:@".git"]]);
 	[document close];
 	[[NSFileManager defaultManager] removeItemAtURL:folder error:nil];
+}
+
+- (void)testRepositoryDocumentControllerReportsAcceptedPanelWithoutAURL
+{
+	PBRepositoryOpenPanelSpy *panel = PBNewRepositoryOpenPanelSpy();
+	panel.response = NSModalResponseOK;
+	panel.selectedURL = nil;
+	[PBRepositoryDocumentControllerSpy setTestOpenPanel:panel];
+	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentControllerSpy.class);
+	NSError *error = nil;
+
+	NSDocument *document = [controller makeUntitledDocumentOfType:PBGitRepositoryDocumentType error:&error];
+
+	XCTAssertNil(document);
+	XCTAssertEqualObjects(error.domain, NSCocoaErrorDomain);
+	XCTAssertEqual(error.code, NSFileReadUnknownError);
 }
 
 - (void)testRepositoryDocumentControllerReportsRepositoryCreationFailure

@@ -167,7 +167,13 @@
 - (void)splitView:(NSSplitView *)splitView resizeSubviewsWithOldSize:(NSSize)oldSize;
 @end
 
+typedef NS_ENUM(NSInteger, PBOpenDisposition) {
+	PBOpenDispositionAlwaysNewWindow,
+	PBOpenDispositionFollowSystem,
+	PBOpenDispositionPreferTab,
+};
 @interface PBApplicationSettings : NSObject
+@property (class) PBOpenDisposition openDisposition;
 @property (class) BOOL repositoryStatusBarVisible;
 + (BOOL)changedFilesOnly;
 + (void)setChangedFilesOnly:(BOOL)value;
@@ -441,6 +447,40 @@ static NSMutableArray<NSURL *> *PBWindowWorkspaceOpenedURLs;
 static NSUInteger PBWindowDocumentOpenCount;
 static NSMutableArray<NSURL *> *PBWindowDocumentOpenedURLs;
 static NSMutableDictionary<NSString *, NSError *> *PBWindowDocumentOpenErrorsByPath;
+static NSDocument *PBWindowDocumentToOpen;
+static BOOL PBWindowDocumentWasAlreadyOpen;
+
+@interface PBWindowTabStateSpy : NSWindow
+@property (nonatomic) NSWindowTabbingMode testTabbingMode;
+@property (nonatomic, copy) NSArray<NSWindow *> *testTabbedWindows;
+@property (nonatomic) NSUInteger tabbingModeMutationCount;
+@property (nonatomic) NSUInteger addTabbedWindowCount;
+@property (nonatomic) NSUInteger focusCount;
+@end
+
+@implementation PBWindowTabStateSpy
+- (NSWindowTabbingMode)tabbingMode
+{
+	return self.testTabbingMode;
+}
+- (void)setTabbingMode:(NSWindowTabbingMode)tabbingMode
+{
+	self.testTabbingMode = tabbingMode;
+	self.tabbingModeMutationCount++;
+}
+- (NSArray<NSWindow *> *)tabbedWindows
+{
+	return self.testTabbedWindows;
+}
+- (void)addTabbedWindow:(NSWindow *)window ordered:(NSWindowOrderingMode)ordered
+{
+	self.addTabbedWindowCount++;
+}
+- (void)makeKeyAndOrderFront:(id)sender
+{
+	self.focusCount++;
+}
+@end
 
 static NSString *PBWindowResolvedPath(NSURL *url)
 {
@@ -743,7 +783,10 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 {
 	PBWindowDocumentOpenCount++;
 	[PBWindowDocumentOpenedURLs addObject:url];
-	completionHandler(nil, NO, PBWindowDocumentOpenErrorsByPath[PBWindowResolvedPath(url)]);
+	completionHandler(
+		PBWindowDocumentToOpen,
+		PBWindowDocumentWasAlreadyOpen,
+		PBWindowDocumentOpenErrorsByPath[PBWindowResolvedPath(url)]);
 }
 
 @end
@@ -1452,6 +1495,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	PBWindowDocumentOpenCount = 0;
 	PBWindowDocumentOpenedURLs = [NSMutableArray array];
 	PBWindowDocumentOpenErrorsByPath = [NSMutableDictionary dictionary];
+	PBWindowDocumentToOpen = nil;
+	PBWindowDocumentWasAlreadyOpen = NO;
 	PBWindowMessageCount = 0;
 	PBWindowErrorMessageCount = 0;
 	PBWindowHookCount = 0;
@@ -1502,6 +1547,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	PBWindowSnapshotError = nil;
 	PBWindowDocumentOpenedURLs = nil;
 	PBWindowDocumentOpenErrorsByPath = nil;
+	PBWindowDocumentToOpen = nil;
+	PBWindowDocumentWasAlreadyOpen = NO;
 	PBWindowPresentedAlerts = nil;
 	PBWindowAlertPresentationHook = nil;
 	PBWindowWorkspaceOpenedURLs = nil;
@@ -2994,6 +3041,56 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertEqual(emptyCompletionCount, (NSUInteger)1);
 	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)0);
 	XCTAssertEqual(PBWindowDocumentOpenedURLs.count, (NSUInteger)0);
+}
+
+- (void)testRepositoryOpeningPreservesExistingDocumentTabGroupForEveryDisposition
+{
+	PBOpenDisposition previousDisposition = PBApplicationSettings.openDisposition;
+	NSDocument *document = [[NSDocument alloc] init];
+	PBWindowTabStateSpy *repositoryWindow = [[PBWindowTabStateSpy alloc]
+		initWithContentRect:NSMakeRect(0, 0, 500, 320)
+				  styleMask:NSWindowStyleMaskTitled
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	NSWindow *companionWindow = [[NSWindow alloc]
+		initWithContentRect:NSMakeRect(20, 20, 500, 320)
+				  styleMask:NSWindowStyleMaskTitled
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	NSWindowController *windowController = [[NSWindowController alloc] initWithWindow:repositoryWindow];
+	[document addWindowController:windowController];
+	repositoryWindow.testTabbedWindows = @[ repositoryWindow, companionWindow ];
+	repositoryWindow.testTabbingMode = NSWindowTabbingModePreferred;
+	NSSet<NSWindow *> *originalTabGroup = [NSSet setWithArray:repositoryWindow.tabbedWindows];
+	PBWindowDocumentToOpen = document;
+	PBWindowDocumentWasAlreadyOpen = YES;
+
+	@try {
+		for (NSNumber *disposition in @[ @(PBOpenDispositionAlwaysNewWindow), @(PBOpenDispositionPreferTab) ]) {
+			PBApplicationSettings.openDisposition = disposition.integerValue;
+			XCTestExpectation *completion = [self expectationWithDescription:@"existing repository focused"];
+			[[PBRepositoryOpenCoordinator shared] openURLs:@[ self.repositoryURL ]
+									  sourceWindow:self.controller.window
+										completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+				XCTAssertEqualObjects(documents, @[ document ]);
+				XCTAssertEqual(errors.count, (NSUInteger)0);
+				[completion fulfill];
+			}];
+			[self waitForExpectations:@[ completion ] timeout:1.0];
+
+			XCTAssertEqual(repositoryWindow.tabbingMode, NSWindowTabbingModePreferred);
+			XCTAssertEqualObjects([NSSet setWithArray:repositoryWindow.tabbedWindows], originalTabGroup);
+			XCTAssertEqual(repositoryWindow.tabbingModeMutationCount, (NSUInteger)0);
+			XCTAssertEqual(repositoryWindow.addTabbedWindowCount, (NSUInteger)0);
+		}
+		XCTAssertEqual(repositoryWindow.focusCount, (NSUInteger)2);
+	} @finally {
+		PBApplicationSettings.openDisposition = previousDisposition;
+		PBWindowDocumentToOpen = nil;
+		PBWindowDocumentWasAlreadyOpen = NO;
+		[document close];
+		[companionWindow close];
+	}
 }
 
 - (void)testRepositoryDocumentOpensUnbornRepository

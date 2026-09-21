@@ -335,11 +335,14 @@ final class RepositoryOpenCoordinator: NSObject {
             documentController.openDocument(
                 withContentsOf: url,
                 display: true
-            ) { document, _, error in
+            ) { document, documentWasAlreadyOpen, error in
                 if let document {
                     documents.append(document)
                     if let newWindow = document.windowControllers.first?.window {
-                        if self.shouldUseTab(disposition), let tabTarget, tabTarget != newWindow {
+                        if documentWasAlreadyOpen {
+                            newWindow.makeKeyAndOrderFront(nil)
+                            self.logger.info("Focused an already-open repository without changing its tab group")
+                        } else if self.shouldUseTab(disposition), let tabTarget, tabTarget != newWindow {
                             tabTarget.addTabbedWindow(newWindow, ordered: .above)
                             newWindow.makeKeyAndOrderFront(nil)
                             self.logger.info("Opened repository as a tab")

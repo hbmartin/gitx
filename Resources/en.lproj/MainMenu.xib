@@ -713,6 +713,5 @@ DQ
         </customObject>
         <userDefaultsController representsSharedInstance="YES" id="912"/>
         <customObject id="918" customClass="SUUpdater"/>
-        <customObject id="oqX-ct-wMx" userLabel="Document Controller" customClass="NSDocumentController"/>
     </objects>
 </document>
