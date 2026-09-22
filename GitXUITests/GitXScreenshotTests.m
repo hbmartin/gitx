@@ -95,6 +95,8 @@
 		@"CFFIXED_USER_HOME" : isolatedHome,
 		@"CFPREFERENCES_AVOID_DAEMON" : @"1",
 		@"GITX_UITEST_REPO" : repositoryPath,
+		@"GITX_UITEST_FORGE_STORAGE_ROOT" :
+			[isolatedHome stringByAppendingPathComponent:@"Library/Application Support/GitX/Forge"],
 	};
 }
 

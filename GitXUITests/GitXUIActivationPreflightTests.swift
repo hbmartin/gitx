@@ -57,6 +57,8 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_TERMINAL_PROMPT": "0",
             "GITX_UITEST_REPO": repository.path,
+            "GITX_UITEST_FORGE_STORAGE_ROOT": isolatedHome
+                .appendingPathComponent("Library/Application Support/GitX/Forge", isDirectory: true).path,
         ]
         activeApplication = app
 

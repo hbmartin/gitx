@@ -684,6 +684,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)appearancePreferenceChanged:(nullable NSNotification *)notification;
 - (void)applicationWillFinishLaunching:(nullable NSNotification *)notification;
 - (void)applicationDidFinishLaunching:(nullable NSNotification *)notification;
+- (void)openUITestRepositoryAtPath:(NSString *)path
+			documentController:(PBRepositoryDocumentController *)documentController;
 - (void)registerServices;
 - (void)application:(NSApplication *)application openFiles:(NSArray<NSString *> *)filenames;
 - (BOOL)applicationOpenUntitledFile:(NSApplication *)application;
@@ -1160,33 +1162,26 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)testApplicationDelegateLaunchRoutesUITestRepositoryThroughCoordinator
 {
 	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
-	PBApplicationProcessInfoSpy *processInfo = [[PBApplicationProcessInfoSpy alloc] init];
-	NSProcessInfo *realProcessInfo = NSProcessInfo.processInfo;
-	NSMutableDictionary<NSString *, NSString *> *environment = [realProcessInfo.environment mutableCopy];
-	environment[@"GITX_UITEST_REPO"] = @"/tmp/gitx-ui-launch-repository";
-	processInfo.testEnvironment = environment;
-	processInfo.testArguments = realProcessInfo.arguments;
-	processInfo.realProcessInfo = realProcessInfo;
-	PBApplicationProcessInfo = processInfo;
+	PBRepositoryDocumentController *isolatedDocumentController = [[PBRepositoryDocumentController alloc] init];
+	NSArray<NSDocument *> *liveDocuments = NSDocumentController.sharedDocumentController.documents.copy;
 	PBApplicationOpenedRepositoryURLs = nil;
-	PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
 	PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
 								 @selector(openKnownRepositoryURLs:sourceWindow:completion:),
 								 @selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
 	@try {
-		[controller applicationDidFinishLaunching:nil];
+		[controller openUITestRepositoryAtPath:@"/tmp/gitx-ui-launch-repository"
+						 documentController:isolatedDocumentController];
 		NSPredicate *opened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 			return PBApplicationOpenedRepositoryURLs.count == 1;
 		}];
 		[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:opened object:NSNull.null] ]
 						  timeout:2.0];
 		XCTAssertEqualObjects(PBApplicationOpenedRepositoryURLs.firstObject.path, @"/tmp/gitx-ui-launch-repository");
+		XCTAssertEqualObjects(NSDocumentController.sharedDocumentController.documents, liveDocuments);
 	} @finally {
 		PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
 									 @selector(openKnownRepositoryURLs:sourceWindow:completion:),
 									 @selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
-		PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
-		PBApplicationProcessInfo = nil;
 		PBApplicationOpenedRepositoryURLs = nil;
 	}
 }

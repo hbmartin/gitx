@@ -269,6 +269,8 @@ final class Milestone3WorkflowUITests: XCTestCase, @unchecked Sendable {
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_TERMINAL_PROMPT": "0",
             "GITX_UITEST_REPO": repository.path,
+            "GITX_UITEST_FORGE_STORAGE_ROOT": isolatedHome
+                .appendingPathComponent("Library/Application Support/GitX/Forge", isDirectory: true).path,
             "GITX_M3_UITEST": "1",
             "GITX_M3_SCENARIO": scenario,
         ]
