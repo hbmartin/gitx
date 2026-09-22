@@ -404,25 +404,19 @@ final class GitXSwiftFeatureTests: XCTestCase {
             toolbar,
             itemForItemIdentifier: NSToolbarItem.Identifier("GitX.Toolbar.ViewRemote"),
             willBeInsertedIntoToolbar: true
-        ))
-        let splitControl = try XCTUnwrap(item.view as? NSStackView)
-        let primaryButton = try XCTUnwrap(splitControl.arrangedSubviews.first as? NSButton)
-        let menuButton = try XCTUnwrap(splitControl.arrangedSubviews.last as? NSPopUpButton)
-        let menu = try XCTUnwrap(menuButton.menu)
+        ) as? NSMenuToolbarItem)
+        let menu = item.menu
 
         XCTAssertEqual(item.itemIdentifier.rawValue, "GitX.Toolbar.ViewRemote")
         XCTAssertEqual(item.label, "View Remote")
         XCTAssertEqual(item.paletteLabel, "View Remote")
         XCTAssertNotNil(item.image)
-        XCTAssertEqual(primaryButton.action, NSSelectorFromString("viewRemote:"))
-        XCTAssertTrue(primaryButton.target === windowController)
-        XCTAssertTrue(menuButton.target === toolbarController)
-        XCTAssertEqual(menuButton.action, NSSelectorFromString("performViewRemoteMenuAction:"))
-        XCTAssertFalse(menuButton.usesItemFromMenu)
-        XCTAssertEqual(menuButton.accessibilityIdentifier(), "GitX.Toolbar.ViewRemote")
-        XCTAssertEqual(menuButton.cell?.accessibilityIdentifier(), "GitX.Toolbar.ViewRemote")
+        XCTAssertEqual(item.action, NSSelectorFromString("viewRemote:"))
+        XCTAssertTrue(item.target === windowController)
+        XCTAssertNil(item.view)
         XCTAssertEqual(menu.identifier?.rawValue, "GitX.Toolbar.ViewRemote.Menu")
         XCTAssertTrue(menu.delegate === toolbarController)
+        XCTAssertTrue(item.menuFormRepresentation?.submenu === menu)
         XCTAssertEqual(
             menu.items.filter { !$0.isSeparatorItem }.compactMap(\.identifier?.rawValue),
             [
@@ -435,35 +429,8 @@ final class GitXSwiftFeatureTests: XCTestCase {
         toolbarController.menuNeedsUpdate(menu)
         XCTAssertEqual(menu.items.count, originalItems.count)
         XCTAssertTrue(zip(menu.items, originalItems).allSatisfy { $0 === $1 })
-
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
-            styleMask: .titled,
-            backing: .buffered,
-            defer: false
-        )
-        windowController.window = window
-        window.makeKeyAndOrderFront(nil)
-        menuButton.selectItem(withTitle: "View Repository")
-        XCTAssertTrue(try NSApp.sendAction(
-            XCTUnwrap(menuButton.action),
-            to: menuButton.target,
-            from: menuButton
-        ))
-
-        let invalidButton = NSPopUpButton()
-        invalidButton.addItem(withTitle: "Unknown")
-        XCTAssertTrue(NSApp.sendAction(
-            NSSelectorFromString("performViewRemoteMenuAction:"),
-            to: toolbarController,
-            from: invalidButton
-        ))
-        window.close()
-        XCTAssertTrue(try NSApp.sendAction(
-            XCTUnwrap(menuButton.action),
-            to: menuButton.target,
-            from: menuButton
-        ))
+        XCTAssertTrue(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.target == nil })
+        XCTAssertFalse(toolbarController.responds(to: NSSelectorFromString("performViewRemoteMenuAction:")))
     }
 
     func testForgeMenuValidationAndOrphanToolbarFallback() throws {

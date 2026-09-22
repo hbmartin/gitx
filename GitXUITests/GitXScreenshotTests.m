@@ -749,23 +749,41 @@
 	[self.app launch];
 	XCTAssertTrue([self waitForWindow], @"Forge navigation requires a repository window");
 	XCUIElement *history = [self selectHistoryForCurrentBranch];
-	XCUIElement *window = self.app.windows.firstMatch;
-	CGRect originalFrame = window.frame;
-	XCUIElement *resizeButton = window.buttons[XCUIIdentifierFullScreenWindow];
-	if (!resizeButton.exists) resizeButton = window.buttons[XCUIIdentifierZoomWindow];
-	XCTAssertTrue([resizeButton waitForExistenceWithTimeout:5]);
-	[resizeButton click];
-	NSPredicate *windowWidened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
-		return window.frame.size.width > originalFrame.size.width;
-	}];
-	[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened object:window] ]
-					  timeout:5];
+	void (^toggleZoom)(void) = ^{
+		XCUIElement *windowMenu = self.app.menuBars.menuBarItems[@"Window"];
+		XCTAssertTrue([windowMenu waitForExistenceWithTimeout:5]);
+		[windowMenu click];
+		XCUIElement *zoomItem = windowMenu.menus.menuItems[@"Zoom"];
+		XCTAssertTrue([zoomItem waitForExistenceWithTimeout:5]);
+		[zoomItem click];
+	};
+	toggleZoom();
 
-	XCUIElement *viewRemote = self.app.menuButtons[@"GitX.Toolbar.ViewRemote"];
-	XCTAssertTrue([viewRemote waitForExistenceWithTimeout:10],
-				  @"The repository toolbar should expose the View Remote pull-down");
-	[viewRemote click];
-	XCUIElement *toolbarMenu = viewRemote.menus.firstMatch;
+	XCUIElement *viewRemotePrimary = self.app.toolbars.firstMatch.buttons[@"View Remote"];
+	if (![viewRemotePrimary waitForExistenceWithTimeout:2]) {
+		// A persisted zoomed frame may make the first toggle narrower. Toggle it back without entering full screen.
+		toggleZoom();
+	}
+	XCTAssertTrue([viewRemotePrimary waitForExistenceWithTimeout:10],
+				  @"The repository toolbar should expose the View Remote primary action");
+	XCUIElement *viewRemoteMenuButton = nil;
+	CGRect primaryFrame = viewRemotePrimary.frame;
+	XCUIElementQuery *toolbarMenuButtons =
+		[self.app.toolbars.firstMatch descendantsMatchingType:XCUIElementTypeMenuButton];
+	for (XCUIElement *menuButton in toolbarMenuButtons.allElementsBoundByIndex) {
+		CGRect menuFrame = menuButton.frame;
+		BOOL isAdjacent = fabs(CGRectGetMidY(menuFrame) - CGRectGetMidY(primaryFrame)) < 2.0 &&
+			CGRectGetMinX(menuFrame) >= CGRectGetMaxX(primaryFrame) - 2.0 &&
+			CGRectGetMinX(menuFrame) - CGRectGetMaxX(primaryFrame) < 16.0;
+		if (isAdjacent) {
+			viewRemoteMenuButton = menuButton;
+			break;
+		}
+	}
+	XCTAssertNotNil(viewRemoteMenuButton,
+				  @"The native View Remote toolbar item should expose an adjacent pull-down button");
+	[viewRemoteMenuButton click];
+	XCUIElement *toolbarMenu = viewRemoteMenuButton.menus.firstMatch;
 	XCTAssertTrue([toolbarMenu waitForExistenceWithTimeout:5]);
 	XCUIElement *toolbarRepository = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.Repository"];
 	XCUIElement *toolbarNumber = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.PullRequestOrIssue"];

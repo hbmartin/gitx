@@ -454,67 +454,25 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     }
 
     private func viewRemoteItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
-        let item = NSToolbarItem(itemIdentifier: identifier)
+        let item = NSMenuToolbarItem(itemIdentifier: identifier)
         item.label = "View Remote"
         item.paletteLabel = "View Remote"
         item.toolTip = "Open this repository or a contextual revision on its Git host"
-        let image = ToolbarIconFactory.image(
+        item.image = ToolbarIconFactory.image(
             symbol: "safari",
             topColor: NSColor(calibratedRed: 0.43, green: 0.72, blue: 0.96, alpha: 1),
             bottomColor: NSColor(calibratedRed: 0.12, green: 0.36, blue: 0.70, alpha: 1)
         )
-        image.accessibilityDescription = "View Remote"
-        item.image = image
+        item.image?.accessibilityDescription = "View Remote"
         item.target = windowController
         item.action = NSSelectorFromString("viewRemote:")
 
         let menu = NSMenu(title: "View Remote")
         menu.identifier = NSUserInterfaceItemIdentifier("GitX.Toolbar.ViewRemote.Menu")
         menu.delegate = self
+        item.menu = menu
         updateForgeLinkMenu(menu)
-
-        let primaryButton = NSButton(image: image, target: windowController, action: item.action)
-        primaryButton.bezelStyle = .texturedRounded
-        primaryButton.imagePosition = .imageOnly
-        primaryButton.toolTip = item.toolTip
-        primaryButton.setAccessibilityLabel("View Remote")
-
-        let menuButton = NSPopUpButton(frame: .zero, pullsDown: true)
-        menuButton.bezelStyle = .texturedRounded
-        menuButton.usesItemFromMenu = false
-        menuButton.menu = menu
-        menuButton.target = self
-        menuButton.action = #selector(performViewRemoteMenuAction(_:))
-        menuButton.toolTip = "Choose a repository or revision to view on its Git host"
-        menuButton.setAccessibilityIdentifier(Item.viewRemote.rawValue)
-        menuButton.cell?.setAccessibilityIdentifier(Item.viewRemote.rawValue)
-        menuButton.cell?.setAccessibilityLabel("View Remote menu")
-
-        let splitControl = NSStackView(views: [primaryButton, menuButton])
-        splitControl.orientation = .horizontal
-        splitControl.alignment = .centerY
-        splitControl.spacing = 0
-        NSLayoutConstraint.activate([
-            primaryButton.widthAnchor.constraint(equalToConstant: 42),
-            primaryButton.heightAnchor.constraint(equalToConstant: 32),
-            menuButton.widthAnchor.constraint(equalToConstant: 28),
-            menuButton.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        item.view = splitControl
         return item
-    }
-
-    @objc private func performViewRemoteMenuAction(_ sender: NSPopUpButton) {
-        guard let action = RepositoryForgeLinkAction(
-            accessibilityIdentifier: sender.selectedItem?.identifier?.rawValue
-        ) else {
-            logger.error("View Remote toolbar selection has no Forge action")
-            return
-        }
-        let delivered = NSApp.sendAction(action.selector, to: nil, from: sender.selectedItem)
-        if !delivered {
-            logger.error("View Remote toolbar action was not handled action=\(action.rawValue, privacy: .public)")
-        }
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

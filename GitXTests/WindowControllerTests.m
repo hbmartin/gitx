@@ -3569,23 +3569,14 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 
 	[toolbarController install];
 	XCTAssertEqual(self.controller.window.toolbar, historyToolbar);
-	[self.controller.window setContentSize:NSMakeSize(1800, self.controller.window.contentView.frame.size.height)];
-	[self.controller.window makeKeyAndOrderFront:nil];
-	[self pumpRunLoopFor:0.05];
-	id<NSAccessibility> viewRemoteAccessibilityElement = nil;
-	NSMutableArray<id<NSAccessibility>> *pendingToolbarViews =
-		[NSMutableArray arrayWithObject:self.controller.window.contentView.superview];
-	while (pendingToolbarViews.count > 0) {
-		id<NSAccessibility> view = pendingToolbarViews.firstObject;
-		[pendingToolbarViews removeObjectAtIndex:0];
-		if ([view.accessibilityIdentifier isEqualToString:@"GitX.Toolbar.ViewRemote"]) {
-			viewRemoteAccessibilityElement = view;
-			break;
-		}
-		[pendingToolbarViews addObjectsFromArray:view.accessibilityChildren ?: @[]];
-	}
-	XCTAssertNotNil(viewRemoteAccessibilityElement);
-	XCTAssertEqualObjects(viewRemoteAccessibilityElement.accessibilityRole, NSAccessibilityMenuButtonRole);
+	NSToolbarItem *installedViewRemoteItem = [historyToolbar.items filteredArrayUsingPredicate:
+		[NSPredicate predicateWithBlock:^BOOL(NSToolbarItem *item, __unused NSDictionary *bindings) {
+			return [item.itemIdentifier isEqualToString:@"GitX.Toolbar.ViewRemote"];
+		}]].firstObject;
+	XCTAssertTrue([installedViewRemoteItem isKindOfClass:NSMenuToolbarItem.class]);
+	NSMenuToolbarItem *viewRemoteMenuItem = (NSMenuToolbarItem *)installedViewRemoteItem;
+	XCTAssertEqualObjects(viewRemoteMenuItem.label, @"View Remote");
+	XCTAssertEqual(viewRemoteMenuItem.menuFormRepresentation.submenu, viewRemoteMenuItem.menu);
 }
 
 - (void)testRepositoryCommitMessageReplacementRulesAreOrderedAndMultiline
