@@ -326,6 +326,7 @@
 		C0D5D0000000000000000002 /* HistoryForgeOverlayPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5D0000000000000000011 /* HistoryForgeOverlayPresentation.swift */; };
 		C0D5D0000000000000000003 /* HistoryForgeOverlayPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */; };
 		C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */; };
+		C0DE5C000000000000000001 /* XCTestCase+DiagnosticScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */; };
 		F0B100000000000000000001 /* ForgeCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */; };
 		F0B100000000000000000002 /* ForgeCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000012 /* ForgeCredentialStore.swift */; };
 		F0B100000000000000000003 /* ForgeAccountLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000013 /* ForgeAccountLifecycle.swift */; };
@@ -1005,6 +1006,7 @@
 		C0D5D0000000000000000011 /* HistoryForgeOverlayPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryForgeOverlayPresentation.swift; sourceTree = "<group>"; };
 		C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryForgeOverlayPresentationTests.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationCompositionTests.swift; sourceTree = "<group>"; };
+		C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "XCTestCase+DiagnosticScreenshot.swift"; sourceTree = "<group>"; };
 		F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeCredentialStoreTests.swift; sourceTree = "<group>"; };
 		F0B100000000000000000012 /* ForgeCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeCredentialStore.swift; sourceTree = "<group>"; };
 		F0B100000000000000000013 /* ForgeAccountLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountLifecycle.swift; sourceTree = "<group>"; };
@@ -1707,6 +1709,7 @@
 				C0DE30000000000000000002 /* GitXCoreTests.m */,
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
+				C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */,
 				C0DE90000000000000000017 /* RepositoryServiceTests.swift */,
 				C0DF20000000000000000011 /* ForgeScriptingTests.swift */,
 				C05900000000000000000012 /* RepositoryIgnoreTestSupport.h */,
@@ -2443,6 +2446,7 @@
 				C01400000000000000000004 /* CommitProgressSheetControllerTests.swift in Sources */,
 				C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */,
 				C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */,
+				C0DE5C000000000000000001 /* XCTestCase+DiagnosticScreenshot.swift in Sources */,
 				F0B100000000000000000001 /* ForgeCredentialStoreTests.swift in Sources */,
 				F0B100000000000000000005 /* ForgeAccountLifecycleTests.swift in Sources */,
 				F0B100000000000000000006 /* ForgeApplicationCompositionTests.swift in Sources */,

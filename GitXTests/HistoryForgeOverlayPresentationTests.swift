@@ -228,16 +228,4 @@ final class HistoryForgeOverlayPresentationTests: XCTestCase {
             reviewRollup: .unavailable(.notRequested)
         )
     }
-
-    private func attachScreenshot(of view: NSView, named name: String) throws {
-        view.layoutSubtreeIfNeeded()
-        let representation = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: representation)
-        let screenshot = NSImage(size: view.bounds.size)
-        screenshot.addRepresentation(representation)
-        let attachment = XCTAttachment(image: screenshot)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
 }

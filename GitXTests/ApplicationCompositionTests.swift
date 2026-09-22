@@ -285,7 +285,7 @@ final class ApplicationCompositionTests: XCTestCase {
         XCTAssertTrue(promptIsVisible)
         attachScreenshot(
             of: welcome.contentView,
-            name: "Welcome restore prompt after launch recovery"
+            named: "Welcome restore prompt after launch recovery"
         )
         welcome.endSheet(restoreSheet, returnCode: NSApplication.ModalResponse.alertSecondButtonReturn)
         let dismissalDeadline = ContinuousClock.now.advanced(by: .seconds(2))
@@ -404,23 +404,6 @@ final class ApplicationCompositionTests: XCTestCase {
         guard let view else { return [] }
         let ownText = (view as? NSTextField).map { [$0.stringValue] } ?? []
         return ownText + view.subviews.flatMap { descendantText(in: $0) }
-    }
-
-    @MainActor
-    private func attachScreenshot(of view: NSView?, name: String) {
-        guard let view,
-              let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds)
-        else {
-            XCTFail("Diagnostic screenshot view is unavailable")
-            return
-        }
-        view.cacheDisplay(in: view.bounds, to: representation)
-        let image = NSImage(size: view.bounds.size)
-        image.addRepresentation(representation)
-        let attachment = XCTAttachment(image: image)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
     }
 
     func testAttentionSettingsPersistValidatedPollingAlertsAndViewState() {

@@ -3789,18 +3789,6 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         RunLoop.main.run(until: Date().addingTimeInterval(interval))
     }
 
-    private func attachScreenshot(of view: NSView, named name: String) throws {
-        view.layoutSubtreeIfNeeded()
-        let representation = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: representation)
-        let image = NSImage(size: view.bounds.size)
-        image.addRepresentation(representation)
-        let attachment = XCTAttachment(image: image)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
-
     private func installCancellableGitWrapper(started: URL, terminated: URL) throws -> URL {
         let wrapper = testArtifactDirectory.appendingPathComponent("git-flow-wrapper")
         let startedPath = shellSingleQuoted(started.path)
