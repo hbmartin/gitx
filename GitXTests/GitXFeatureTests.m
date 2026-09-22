@@ -25,7 +25,7 @@
 #import "PBWebController.h"
 #import "NSAppearance+PBDarkMode.h"
 #import "ApplicationController.h"
-#import "PBSourceViewBadge.h"
+#import "PBSourceViewBadgeCompatibility.h"
 #import "PBQLOutlineView.h"
 #import "PBGitTree.h"
 
@@ -561,15 +561,6 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	PBAutoFetchLastNotificationRequest = request;
 	if (completionHandler) completionHandler(nil);
 }
-
-@end
-
-@interface PBSourceViewBadge (GitXFeatureTests)
-
-+ (NSColor *)badgeHighlightColor;
-+ (NSColor *)badgeBackgroundColor;
-+ (NSColor *)badgeColorForCell:(NSTableCellView *)cell;
-+ (NSColor *)badgeTextColorForCell:(NSTableCellView *)cell;
 
 @end
 

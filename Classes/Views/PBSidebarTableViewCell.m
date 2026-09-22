@@ -6,7 +6,7 @@
 //
 
 #import "PBSidebarTableViewCell.h"
-#import "PBSourceViewBadge.h"
+#import "GitX-Swift.h"
 
 NS_ASSUME_NONNULL_BEGIN
 

@@ -36,7 +36,7 @@
 #import "PBNativeContentView.h"
 #import "PBRemoteProgressSheet.h"
 #import "PBRepositoryDocumentControllerCompatibility.h"
-#import "PBSourceViewBadge.h"
+#import "PBSourceViewBadgeCompatibility.h"
 #import "PBSourceViewItem.h"
 #import "PBSourceViewItems.h"
 #import "PBSidebarList.h"
@@ -214,14 +214,6 @@ typedef NS_ENUM(NSInteger, PBOpenDisposition) {
 @property (nonatomic) BOOL pushAfterCommit;
 @property (nonatomic) BOOL hideContainedBranches;
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *sidebarVisibility;
-@end
-
-@interface PBSourceViewBadge (WindowControllerTests)
-+ (NSColor *)badgeHighlightColor;
-+ (NSColor *)badgeBackgroundColor;
-+ (NSColor *)badgeColorForCell:(NSTableCellView *)cell;
-+ (NSColor *)badgeTextColorForCell:(NSTableCellView *)cell;
-+ (NSImage *)badge:(NSString *)badge forCell:(NSTableCellView *)cell;
 @end
 
 @interface PBSourceViewBadgeTestWindow : NSWindow

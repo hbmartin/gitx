@@ -140,7 +140,7 @@
     "Classes/Views/PBQLTextView.m": 0.0,
     "Classes/Views/PBRemoteProgressSheet.m": 0.0,
     "Classes/Views/PBSidebarTableViewCell.m": 1.0,
-    "Classes/Views/PBSourceViewBadge.m": 1.0,
+    "Classes/Views/PBSourceViewBadge.swift": 1.0,
     "Classes/Views/PBSourceViewItem.m": 0.899,
     "Classes/Views/RepositoryPullRequestReviewOverlayController.swift": 0.9282,
     "Classes/Views/StagingFileCellView.swift": 1.0,
