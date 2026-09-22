@@ -27,6 +27,10 @@
 @property (nonatomic, strong) SPUStandardUpdaterController *updaterController;
 @property (nonatomic, strong) PBApplicationComposition *composition;
 - (void)applyAppearancePreference;
+- (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
+						 documentController:(PBRepositoryDocumentController *)documentController;
+- (void)openUITestRepositoryAtPath:(NSString *)path
+				documentController:(PBRepositoryDocumentController *)documentController;
 @end
 
 @implementation ApplicationController
@@ -202,30 +206,41 @@
 	// UI-test hook: open a repo path passed via environment variable so that
 	// XCUITests always get a document window without relying on recents or
 	// Launch Services registration.
-	NSString *uitestRepo = env[@"GITX_UITEST_REPO"];
-	if (uitestRepo.length > 0) {
-		NSURL *repoURL = [NSURL fileURLWithPath:uitestRepo];
-		PBRepositoryDocumentController *controller = [PBRepositoryDocumentController sharedDocumentController];
-		// UI tests request one deterministic document. Remove any windows that
-		// AppKit restored from an earlier test process before opening it.
-		for (NSDocument *document in controller.documents.copy) {
-			if (![document.fileURL isEqual:repoURL])
-				[document close];
-		}
-		// Route through the open coordinator rather than the document controller.
-		// The coordinator dismisses the Welcome window, records the repository as
-		// recent, and reuses an already-open document; opening the document
-		// directly skips all of that, which is how a Welcome window shown during
-		// launch used to survive for the rest of the session.
-		dispatch_async(dispatch_get_main_queue(), ^{
-			[[PBRepositoryOpenCoordinator shared] openKnownRepositoryURLs:@[ repoURL ]
-															 sourceWindow:nil
-															   completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
-																   if (documents.count == 0)
-																	   NSLog(@"[UITest] Failed to open repo %@: %@", uitestRepo, errors.firstObject);
-															   }];
-		});
+	[self openUITestRepositoryFromEnvironment:env
+						   documentController:(PBRepositoryDocumentController *)documentController];
+}
+
+- (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
+						 documentController:(PBRepositoryDocumentController *)documentController
+{
+	NSString *repositoryPath = environment[@"GITX_UITEST_REPO"];
+	if (repositoryPath.length > 0)
+		[self openUITestRepositoryAtPath:repositoryPath documentController:documentController];
+}
+
+- (void)openUITestRepositoryAtPath:(NSString *)path
+				documentController:(PBRepositoryDocumentController *)documentController
+{
+	NSURL *repoURL = [NSURL fileURLWithPath:path];
+	// UI tests request one deterministic document. Remove any windows that
+	// AppKit restored from an earlier test process before opening it.
+	for (NSDocument *document in documentController.documents.copy) {
+		if (![document.fileURL isEqual:repoURL])
+			[document close];
 	}
+	// Route through the open coordinator rather than the document controller.
+	// The coordinator dismisses the Welcome window, records the repository as
+	// recent, and reuses an already-open document; opening the document
+	// directly skips all of that, which is how a Welcome window shown during
+	// launch used to survive for the rest of the session.
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[[PBRepositoryOpenCoordinator shared] openKnownRepositoryURLs:@[ repoURL ]
+														 sourceWindow:nil
+														   completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+															   if (documents.count == 0)
+																   NSLog(@"[UITest] Failed to open repo %@: %@", path, errors.firstObject);
+														   }];
+	});
 }
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification

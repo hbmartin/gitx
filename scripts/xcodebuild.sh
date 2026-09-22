@@ -162,8 +162,11 @@ fi
 logs="$run_dir/Logs"
 results="$run_dir/Results"
 products="$run_dir/Products"
+analyzer_derived_data=
+mkdir -p "$root/build"
 if [[ "$command" == "analyze" ]]; then
-	derived_data="$run_dir/DerivedData"
+	analyzer_derived_data=$(mktemp -d "$root/build/AnalyzerDerivedData.XXXXXX") || exit 2
+	derived_data="$analyzer_derived_data"
 else
 	derived_data=${GITX_DERIVED_DATA:-"$root/$derived_data_cache"}
 fi
@@ -244,13 +247,20 @@ python3 "$support" receipt-init \
 	--signing-mode "$signing_mode" \
 	--coverage-gate "$coverage_gate" \
 	"$receipt" \
-	-- ${command_arguments[@]+"${command_arguments[@]}"} || exit 2
+	-- ${command_arguments[@]+"${command_arguments[@]}"} || {
+		receipt_status=$?
+		[[ -z "$analyzer_derived_data" ]] || rm -rf -- "$analyzer_derived_data"
+		exit "$receipt_status"
+	}
 
 overall_status=failed
 interrupted=0
 finish_receipt() {
 	exit_code=$?
 	trap - EXIT INT TERM
+	if [[ -n "$analyzer_derived_data" && -d "$analyzer_derived_data" ]]; then
+		rm -rf -- "$analyzer_derived_data" || true
+	fi
 	if (( interrupted )); then
 		overall_status=interrupted
 	elif (( exit_code == 0 )); then
@@ -354,7 +364,9 @@ common=(
 reject_managed_paths() {
 	for argument in "$@"; do
 		case "$argument" in
-			-derivedDataPath|-resultBundlePath|-clonedSourcePackagesDirPath|-archivePath)
+			-workspace|-workspace=*|-project|-project=*|-scheme|-scheme=*|-testPlan|-testPlan=*|\
+			-derivedDataPath|-derivedDataPath=*|-resultBundlePath|-resultBundlePath=*|\
+			-clonedSourcePackagesDirPath|-clonedSourcePackagesDirPath=*|-archivePath|-archivePath=*)
 				echo "$argument is managed by scripts/xcodebuild.sh" >&2
 				return 2
 				;;
@@ -481,11 +493,15 @@ case "$command" in
 				while (( index < ${#extra[@]} )); do
 					argument=${extra[$index]}
 					case "$argument" in
-						-only-testing|-skip-testing)
+						-only-testing|-skip-testing|\
+						-test-timeouts-enabled|-default-test-execution-time-allowance|\
+						-maximum-test-execution-time-allowance)
 							(( index + 1 < ${#extra[@]} )) || { echo "$argument requires a value" >&2; exit 2; }
 							index=$((index + 2))
 							;;
-						-only-testing:*|-skip-testing:*)
+						-only-testing:*|-skip-testing:*|\
+						-test-timeouts-enabled=*|-default-test-execution-time-allowance=*|\
+						-maximum-test-execution-time-allowance=*)
 							index=$((index + 1))
 							;;
 						*)

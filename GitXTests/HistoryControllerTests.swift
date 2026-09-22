@@ -731,16 +731,40 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testHistoryFlowCancelsRunningGitWorkWhenTheSelectionMoves() throws {
+        let defaults = UserDefaults.standard
+        let previousWatcherPreference = defaults.object(forKey: "PBUseRepositoryWatcher")
+        defaults.set(false, forKey: "PBUseRepositoryWatcher")
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        defer {
+            if let previousWatcherPreference {
+                defaults.set(previousWatcherPreference, forKey: "PBUseRepositoryWatcher")
+            } else {
+                defaults.removeObject(forKey: "PBUseRepositoryWatcher")
+            }
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
         let originalGit = try XCTUnwrap(PBGitBinary.path())
         defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
         let processStarted = testArtifactDirectory.appendingPathComponent("flow-git-started")
         let processTerminated = testArtifactDirectory.appendingPathComponent("flow-git-terminated")
+        for marker in [processStarted, processTerminated] {
+            try? FileManager.default.removeItem(at: marker)
+        }
         let wrapper = try installCancellableGitWrapper(started: processStarted, terminated: processTerminated)
         XCTAssertTrue(PBGitBinary.accept(wrapper.path))
 
         try fixture.write("let cancelled = true\n", to: "Cancelled.swift")
         try fixture.git(["add", "Cancelled.swift"])
         let bulkSHA = try commitAndReloadHistory("add a cancellable source file")
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                guard self.repository.revisionList?.isUpdating == false,
+                      let arrangedCommits = self.historyController.commitController.arrangedObjects as? [PBGitCommit]
+                else { return false }
+                return arrangedCommits.contains { $0.sha == bulkSHA }
+            },
+            "History did not finish arranging the cancellable commit before the cancellation scenario began"
+        )
         let mainSHA = try fixture.git(["rev-parse", "main~1"]).trimmingCharacters(in: .whitespacesAndNewlines)
         selectCommitForFlowAnalysis(revision: "HEAD")
         historyController.selectedCommitDetailsIndex = 2
@@ -3544,7 +3568,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     private func flowLabels(in flowView: NSView) -> [String] {
-        controls(in: flowView).compactMap { ($0 as? NSTextField)?.stringValue }
+        controls(in: flowView).compactMap { control in
+            guard let label = control as? NSTextField,
+                  !label.isHiddenOrHasHiddenAncestor
+            else { return nil }
+            return label.stringValue
+        }
     }
 
     private func searchResultRows(

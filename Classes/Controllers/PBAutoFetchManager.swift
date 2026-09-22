@@ -1,11 +1,13 @@
 import AppKit
 import Foundation
 import ObjectiveGit
+import OSLog // swiftlint:disable:this unused_import -- Logger requires OSLog despite the analyzer's false positive.
 import UserNotifications
 
 private let autoFetchTimerResolution: TimeInterval = 30
 private let autoFetchRetryBaseInterval: TimeInterval = 60
 private let autoFetchRetryMaximumInterval: TimeInterval = 15 * 60
+private let autoFetchApplicationTerminationGrace: TimeInterval = 0.2
 
 /// Coordinates unattended remote refreshes for the repositories selected by
 /// the global auto-fetch preference. Failures retry with bounded exponential
@@ -26,6 +28,7 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     private let lifecycleLock = NSLock()
     private var generation: UInt = 0
     private var activeTasks: [String: PBTask] = [:]
+    private let logger = Logger(subsystem: "com.gitx.gitx", category: "AutoFetch")
 
     @objc(sharedManager)
     class func shared() -> PBAutoFetchManager {
@@ -82,10 +85,15 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     private func stop(immediately: Bool) {
         let tasks = invalidateCurrentGeneration()
         inFlightRepositories.removeAllObjects()
-        for task in tasks {
-            if immediately {
-                task.terminate()
-            } else {
+        if immediately {
+            logger.info("Stopping \(tasks.count) active auto-fetch task(s) for application termination")
+            tasks.forEach { $0.terminate() }
+            if !tasks.isEmpty {
+                Thread.sleep(forTimeInterval: autoFetchApplicationTerminationGrace)
+                tasks.forEach { $0.forceTerminateIfRunning() }
+            }
+        } else {
+            for task in tasks {
                 task.terminate(afterGracePeriod: 2, forceKillAfter: 5)
             }
         }

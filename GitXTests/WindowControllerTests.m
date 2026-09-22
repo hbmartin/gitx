@@ -36,7 +36,7 @@
 #import "PBNativeContentView.h"
 #import "PBRemoteProgressSheet.h"
 #import "PBRepositoryDocumentControllerCompatibility.h"
-#import "PBSourceViewBadge.h"
+#import "PBSourceViewBadgeCompatibility.h"
 #import "PBSourceViewItem.h"
 #import "PBSourceViewItems.h"
 #import "PBSidebarList.h"
@@ -214,14 +214,6 @@ typedef NS_ENUM(NSInteger, PBOpenDisposition) {
 @property (nonatomic) BOOL pushAfterCommit;
 @property (nonatomic) BOOL hideContainedBranches;
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *sidebarVisibility;
-@end
-
-@interface PBSourceViewBadge (WindowControllerTests)
-+ (NSColor *)badgeHighlightColor;
-+ (NSColor *)badgeBackgroundColor;
-+ (NSColor *)badgeColorForCell:(NSTableCellView *)cell;
-+ (NSColor *)badgeTextColorForCell:(NSTableCellView *)cell;
-+ (NSImage *)badge:(NSString *)badge forCell:(NSTableCellView *)cell;
 @end
 
 @interface PBSourceViewBadgeTestWindow : NSWindow
@@ -3093,6 +3085,51 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	}
 }
 
+- (void)testRepositoryOpeningAddsOnlyNewDocumentsToTheRequestedTabGroup
+{
+	PBOpenDisposition previousDisposition = PBApplicationSettings.openDisposition;
+	NSWindow *originalWindow = self.controller.window;
+	PBWindowTabStateSpy *sourceWindow = [[PBWindowTabStateSpy alloc]
+		initWithContentRect:NSMakeRect(0, 0, 500, 320)
+				  styleMask:NSWindowStyleMaskTitled
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	self.controller.window = sourceWindow;
+	NSDocument *document = [[NSDocument alloc] init];
+	PBWindowTabStateSpy *newWindow = [[PBWindowTabStateSpy alloc]
+		initWithContentRect:NSMakeRect(20, 20, 500, 320)
+				  styleMask:NSWindowStyleMaskTitled
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	[document addWindowController:[[NSWindowController alloc] initWithWindow:newWindow]];
+	PBWindowDocumentToOpen = document;
+	PBWindowDocumentWasAlreadyOpen = NO;
+	PBApplicationSettings.openDisposition = PBOpenDispositionPreferTab;
+
+	@try {
+		XCTestExpectation *completion = [self expectationWithDescription:@"new repository tab opened"];
+		[[PBRepositoryOpenCoordinator shared] openURLs:@[ self.repositoryURL ]
+										  sourceWindow:sourceWindow
+											completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+												XCTAssertEqualObjects(documents, @[ document ]);
+												XCTAssertEqual(errors.count, (NSUInteger)0);
+												[completion fulfill];
+											}];
+		[self waitForExpectations:@[ completion ] timeout:1.0];
+
+		XCTAssertEqual(sourceWindow.addTabbedWindowCount, (NSUInteger)1);
+		XCTAssertEqual(newWindow.focusCount, (NSUInteger)1);
+		XCTAssertEqual(newWindow.tabbingModeMutationCount, (NSUInteger)0);
+	} @finally {
+		PBApplicationSettings.openDisposition = previousDisposition;
+		PBWindowDocumentToOpen = nil;
+		PBWindowDocumentWasAlreadyOpen = NO;
+		[document close];
+		self.controller.window = originalWindow;
+		[sourceWindow close];
+	}
+}
+
 - (void)testRepositoryDocumentOpensUnbornRepository
 {
 	NSString *name = [NSString stringWithFormat:@"GitXUnbornOpening-%@", NSUUID.UUID.UUIDString];
@@ -3569,23 +3606,15 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 
 	[toolbarController install];
 	XCTAssertEqual(self.controller.window.toolbar, historyToolbar);
-	[self.controller.window setContentSize:NSMakeSize(1800, self.controller.window.contentView.frame.size.height)];
-	[self.controller.window makeKeyAndOrderFront:nil];
-	[self pumpRunLoopFor:0.05];
-	id<NSAccessibility> viewRemoteAccessibilityElement = nil;
-	NSMutableArray<id<NSAccessibility>> *pendingToolbarViews =
-		[NSMutableArray arrayWithObject:self.controller.window.contentView.superview];
-	while (pendingToolbarViews.count > 0) {
-		id<NSAccessibility> view = pendingToolbarViews.firstObject;
-		[pendingToolbarViews removeObjectAtIndex:0];
-		if ([view.accessibilityIdentifier isEqualToString:@"GitX.Toolbar.ViewRemote"]) {
-			viewRemoteAccessibilityElement = view;
-			break;
-		}
-		[pendingToolbarViews addObjectsFromArray:view.accessibilityChildren ?: @[]];
-	}
-	XCTAssertNotNil(viewRemoteAccessibilityElement);
-	XCTAssertEqualObjects(viewRemoteAccessibilityElement.accessibilityRole, NSAccessibilityMenuButtonRole);
+	NSToolbarItem *installedViewRemoteItem = [historyToolbar.items filteredArrayUsingPredicate:
+																	   [NSPredicate predicateWithBlock:^BOOL(NSToolbarItem *item, __unused NSDictionary *bindings) {
+																		   return [item.itemIdentifier isEqualToString:@"GitX.Toolbar.ViewRemote"];
+																	   }]]
+												 .firstObject;
+	XCTAssertTrue([installedViewRemoteItem isKindOfClass:NSMenuToolbarItem.class]);
+	NSMenuToolbarItem *viewRemoteMenuItem = (NSMenuToolbarItem *)installedViewRemoteItem;
+	XCTAssertEqualObjects(viewRemoteMenuItem.label, @"View Remote");
+	XCTAssertEqual(viewRemoteMenuItem.menuFormRepresentation.submenu, viewRemoteMenuItem.menu);
 }
 
 - (void)testRepositoryCommitMessageReplacementRulesAreOrderedAndMultiline

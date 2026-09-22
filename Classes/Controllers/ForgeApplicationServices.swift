@@ -1,3 +1,4 @@
+import CryptoKit
 import ForgeKit
 import Foundation
 import GitHubForgeAdapter
@@ -58,6 +59,52 @@ nonisolated enum ForgeApplicationRecoveryError: Error, LocalizedError, Sendable 
         case .sessionDisabled:
             "Forge features are disabled for the current application session."
         }
+    }
+}
+
+nonisolated enum ForgeApplicationStorageConfigurationError: Error, Equatable, LocalizedError, Sendable {
+    case uiTestStorageRootMustBeAbsolute(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .uiTestStorageRootMustBeAbsolute(path):
+            "GITX_UITEST_FORGE_STORAGE_ROOT must be an absolute path, not \"\(path)\"."
+        }
+    }
+}
+
+nonisolated struct ForgeApplicationStorageConfiguration: Equatable, Sendable {
+    static let uiTestStorageRootEnvironmentKey = "GITX_UITEST_FORGE_STORAGE_ROOT"
+
+    let forgeDirectory: URL
+    let keychainService: String
+
+    static func resolve(
+        applicationSupportDirectory: URL,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws -> ForgeApplicationStorageConfiguration {
+        guard let uiTestStorageRoot = environment[uiTestStorageRootEnvironmentKey],
+              !uiTestStorageRoot.isEmpty
+        else {
+            return ForgeApplicationStorageConfiguration(
+                forgeDirectory: applicationSupportDirectory
+                    .appendingPathComponent("GitX", isDirectory: true)
+                    .appendingPathComponent("Forge", isDirectory: true),
+                keychainService: SecurityForgeCredentialKeychain.defaultService
+            )
+        }
+        guard NSString(string: uiTestStorageRoot).isAbsolutePath else {
+            throw ForgeApplicationStorageConfigurationError.uiTestStorageRootMustBeAbsolute(uiTestStorageRoot)
+        }
+        let forgeDirectory = URL(fileURLWithPath: uiTestStorageRoot, isDirectory: true).standardizedFileURL
+        let storageIdentity = SHA256.hash(data: Data(forgeDirectory.path.utf8))
+            .prefix(12)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return ForgeApplicationStorageConfiguration(
+            forgeDirectory: forgeDirectory,
+            keychainService: "com.gitx.gitx.ui-tests.forge-credentials.v1.\(storageIdentity)"
+        )
     }
 }
 
@@ -669,15 +716,12 @@ nonisolated enum ForgeApplicationServiceFactory {
         now: @escaping @Sendable () -> Date = Date.init
     ) async throws -> ForgeApplicationServices {
         let applicationSupportURL = try applicationSupportDirectory()
-        let forgeDirectory = applicationSupportURL
-            .appendingPathComponent("GitX", isDirectory: true)
-            .appendingPathComponent("Forge", isDirectory: true)
-        let keychainService = ProcessInfo.processInfo.environment["GITX_UITEST_REPO"] == nil
-            ? SecurityForgeCredentialKeychain.defaultService
-            : "com.gitx.gitx.ui-tests.forge-credentials.v1"
-        let keychain = SecurityForgeCredentialKeychain(service: keychainService)
+        let storage = try ForgeApplicationStorageConfiguration.resolve(
+            applicationSupportDirectory: applicationSupportURL
+        )
+        let keychain = SecurityForgeCredentialKeychain(service: storage.keychainService)
         return try await make(
-            forgeDirectory: forgeDirectory,
+            forgeDirectory: storage.forgeDirectory,
             bindingCleaner: bindingCleaner,
             keychain: keychain,
             cliRunner: SystemForgeCLICommandRunner(),

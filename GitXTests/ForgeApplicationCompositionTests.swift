@@ -200,6 +200,44 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         _ = services
     }
 
+    func testDefaultForgeStorageIgnoresRepositoryHooksAndRequiresAnExplicitAbsoluteUITestRoot() throws {
+        let applicationSupport = URL(fileURLWithPath: "/tmp/GitX Application Support", isDirectory: true)
+        let production = try ForgeApplicationStorageConfiguration.resolve(
+            applicationSupportDirectory: applicationSupport,
+            environment: ["GITX_UITEST_REPO": "/tmp/repository"]
+        )
+        XCTAssertEqual(
+            production.forgeDirectory,
+            applicationSupport
+                .appendingPathComponent("GitX", isDirectory: true)
+                .appendingPathComponent("Forge", isDirectory: true)
+        )
+        XCTAssertEqual(production.keychainService, SecurityForgeCredentialKeychain.defaultService)
+
+        let uiTestRoot = "/tmp/GitX UI Tests/Forge"
+        let uiTest = try ForgeApplicationStorageConfiguration.resolve(
+            applicationSupportDirectory: applicationSupport,
+            environment: [ForgeApplicationStorageConfiguration.uiTestStorageRootEnvironmentKey: uiTestRoot]
+        )
+        XCTAssertEqual(uiTest.forgeDirectory.path, uiTestRoot)
+        XCTAssertTrue(uiTest.keychainService.hasPrefix("com.gitx.gitx.ui-tests.forge-credentials.v1."))
+        XCTAssertNotEqual(uiTest.keychainService, production.keychainService)
+
+        XCTAssertThrowsError(try ForgeApplicationStorageConfiguration.resolve(
+            applicationSupportDirectory: applicationSupport,
+            environment: [ForgeApplicationStorageConfiguration.uiTestStorageRootEnvironmentKey: "relative/Forge"]
+        )) { error in
+            XCTAssertEqual(
+                error as? ForgeApplicationStorageConfigurationError,
+                .uiTestStorageRootMustBeAbsolute("relative/Forge")
+            )
+            XCTAssertEqual(
+                error.localizedDescription,
+                "GITX_UITEST_FORGE_STORAGE_ROOT must be an absolute path, not \"relative/Forge\"."
+            )
+        }
+    }
+
     func testDefaultLoaderCanCaptureTheSystemDirectoryProviderWithoutInitializingServices() throws {
         let defaults = try makeDefaults()
         let bindingCleaner = ForgeRepositoryBindingAccountCleaner(userDefaults: defaults)

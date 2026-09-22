@@ -25,7 +25,7 @@
 #import "PBWebController.h"
 #import "NSAppearance+PBDarkMode.h"
 #import "ApplicationController.h"
-#import "PBSourceViewBadge.h"
+#import "PBSourceViewBadgeCompatibility.h"
 #import "PBQLOutlineView.h"
 #import "PBGitTree.h"
 
@@ -564,15 +564,6 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 @end
 
-@interface PBSourceViewBadge (GitXFeatureTests)
-
-+ (NSColor *)badgeHighlightColor;
-+ (NSColor *)badgeBackgroundColor;
-+ (NSColor *)badgeColorForCell:(NSTableCellView *)cell;
-+ (NSColor *)badgeTextColorForCell:(NSTableCellView *)cell;
-
-@end
-
 @interface PBSourceViewBadgeWindow : NSWindow
 
 @property (nonatomic) BOOL testMainWindow;
@@ -684,6 +675,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)appearancePreferenceChanged:(nullable NSNotification *)notification;
 - (void)applicationWillFinishLaunching:(nullable NSNotification *)notification;
 - (void)applicationDidFinishLaunching:(nullable NSNotification *)notification;
+- (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
+						 documentController:(PBRepositoryDocumentController *)documentController;
+- (void)openUITestRepositoryAtPath:(NSString *)path
+				documentController:(PBRepositoryDocumentController *)documentController;
 - (void)registerServices;
 - (void)application:(NSApplication *)application openFiles:(NSArray<NSString *> *)filenames;
 - (BOOL)applicationOpenUntitledFile:(NSApplication *)application;
@@ -903,6 +898,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @property (nullable, nonatomic) XCTestExpectation *launchExpectation;
 @property (nullable, nonatomic) dispatch_semaphore_t launchGate;
 @property (nonatomic) NSUInteger immediateTerminationCount;
+@property (nonatomic) NSUInteger forcedTerminationCount;
 @property (nonatomic) NSUInteger gracefulTerminationCount;
 @end
 
@@ -921,6 +917,10 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)terminate
 {
 	self.immediateTerminationCount++;
+}
+- (void)forceTerminateIfRunning
+{
+	self.forcedTerminationCount++;
 }
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(NSTimeInterval)forceKillDelay
 {
@@ -1160,33 +1160,26 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)testApplicationDelegateLaunchRoutesUITestRepositoryThroughCoordinator
 {
 	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
-	PBApplicationProcessInfoSpy *processInfo = [[PBApplicationProcessInfoSpy alloc] init];
-	NSProcessInfo *realProcessInfo = NSProcessInfo.processInfo;
-	NSMutableDictionary<NSString *, NSString *> *environment = [realProcessInfo.environment mutableCopy];
-	environment[@"GITX_UITEST_REPO"] = @"/tmp/gitx-ui-launch-repository";
-	processInfo.testEnvironment = environment;
-	processInfo.testArguments = realProcessInfo.arguments;
-	processInfo.realProcessInfo = realProcessInfo;
-	PBApplicationProcessInfo = processInfo;
+	PBRepositoryDocumentController *isolatedDocumentController = [[PBRepositoryDocumentController alloc] init];
+	NSArray<NSDocument *> *liveDocuments = NSDocumentController.sharedDocumentController.documents.copy;
 	PBApplicationOpenedRepositoryURLs = nil;
-	PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
 	PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
 								 @selector(openKnownRepositoryURLs:sourceWindow:completion:),
 								 @selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
 	@try {
-		[controller applicationDidFinishLaunching:nil];
+		[controller openUITestRepositoryFromEnvironment:@{@"GITX_UITEST_REPO" : @"/tmp/gitx-ui-launch-repository"}
+									 documentController:isolatedDocumentController];
 		NSPredicate *opened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 			return PBApplicationOpenedRepositoryURLs.count == 1;
 		}];
 		[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:opened object:NSNull.null] ]
 						  timeout:2.0];
 		XCTAssertEqualObjects(PBApplicationOpenedRepositoryURLs.firstObject.path, @"/tmp/gitx-ui-launch-repository");
+		XCTAssertEqualObjects(NSDocumentController.sharedDocumentController.documents, liveDocuments);
 	} @finally {
 		PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
 									 @selector(openKnownRepositoryURLs:sourceWindow:completion:),
 									 @selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
-		PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
-		PBApplicationProcessInfo = nil;
 		PBApplicationOpenedRepositoryURLs = nil;
 	}
 }
@@ -1722,6 +1715,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[self waitForExpectations:@[ manager.testTask.launchExpectation ] timeout:2];
 	[manager stopForApplicationTermination];
 	XCTAssertEqual(manager.testTask.immediateTerminationCount, (NSUInteger)1);
+	XCTAssertEqual(manager.testTask.forcedTerminationCount, (NSUInteger)1);
 	XCTAssertEqual(manager.testTask.gracefulTerminationCount, (NSUInteger)0);
 	dispatch_semaphore_signal(manager.testTask.launchGate);
 	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:0.25];
@@ -1927,6 +1921,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 - (void)testRepositoryDocumentControllerConfiguresAndCompletesTheOpenPanel
 {
+	XCTAssertTrue([[PBRepositoryDocumentController newOpenPanel] isKindOfClass:NSOpenPanel.class]);
 	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentController.class);
 	PBRepositoryOpenPanelSpy *panel = PBNewRepositoryOpenPanelSpy();
 	panel.response = NSModalResponseOK;
@@ -2908,9 +2903,12 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertTrue([outline outlineView:outline writeItems:items toPasteboard:pasteboard]);
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-	NSPasteboardType promisedFileType = (__bridge NSPasteboardType)kPasteboardTypeFileURLPromise;
+	NSPasteboardType promisedFileType = NSFilesPromisePboardType;
 	XCTAssertEqualObjects([pasteboard propertyListForType:promisedFileType], (@[ @"swift", @"md" ]));
 #pragma clang diagnostic pop
+	NSPasteboardType URLPromiseType = (__bridge NSPasteboardType)kPasteboardTypeFileURLPromise;
+	XCTAssertNil([pasteboard propertyListForType:URLPromiseType],
+				 @"The legacy outline-view delegate requires NSFilesPromisePboardType's extension-list contract");
 
 	NSURL *destination = [NSURL fileURLWithPath:@"/tmp/gitx-promised-files" isDirectory:YES];
 	XCTAssertEqualObjects([outline outlineView:outline
