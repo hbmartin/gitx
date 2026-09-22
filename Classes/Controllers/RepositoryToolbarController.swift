@@ -842,7 +842,6 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
                 NotificationCenter.default.post(name: .forgeAccountsDidChange, object: repository)
                 self.logger.notice("Changed the repository's contextual Forge account")
             } catch is CancellationError {
-                return
             } catch {
                 self?.windowController?.showErrorSheet(error)
             }
