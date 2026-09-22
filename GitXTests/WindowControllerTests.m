@@ -3562,9 +3562,10 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	[toolbarController install];
 	XCTAssertEqual(self.controller.window.toolbar, historyToolbar);
 	NSToolbarItem *installedViewRemoteItem = [historyToolbar.items filteredArrayUsingPredicate:
-		[NSPredicate predicateWithBlock:^BOOL(NSToolbarItem *item, __unused NSDictionary *bindings) {
-			return [item.itemIdentifier isEqualToString:@"GitX.Toolbar.ViewRemote"];
-		}]].firstObject;
+																	   [NSPredicate predicateWithBlock:^BOOL(NSToolbarItem *item, __unused NSDictionary *bindings) {
+																		   return [item.itemIdentifier isEqualToString:@"GitX.Toolbar.ViewRemote"];
+																	   }]]
+												 .firstObject;
 	XCTAssertTrue([installedViewRemoteItem isKindOfClass:NSMenuToolbarItem.class]);
 	NSMenuToolbarItem *viewRemoteMenuItem = (NSMenuToolbarItem *)installedViewRemoteItem;
 	XCTAssertEqualObjects(viewRemoteMenuItem.label, @"View Remote");

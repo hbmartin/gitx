@@ -676,7 +676,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)applicationWillFinishLaunching:(nullable NSNotification *)notification;
 - (void)applicationDidFinishLaunching:(nullable NSNotification *)notification;
 - (void)openUITestRepositoryAtPath:(NSString *)path
-			documentController:(PBRepositoryDocumentController *)documentController;
+				documentController:(PBRepositoryDocumentController *)documentController;
 - (void)registerServices;
 - (void)application:(NSApplication *)application openFiles:(NSArray<NSString *> *)filenames;
 - (BOOL)applicationOpenUntitledFile:(NSApplication *)application;
@@ -1166,7 +1166,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 								 @selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
 	@try {
 		[controller openUITestRepositoryAtPath:@"/tmp/gitx-ui-launch-repository"
-						 documentController:isolatedDocumentController];
+							documentController:isolatedDocumentController];
 		NSPredicate *opened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 			return PBApplicationOpenedRepositoryURLs.count == 1;
 		}];

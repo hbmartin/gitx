@@ -28,7 +28,7 @@
 @property (nonatomic, strong) PBApplicationComposition *composition;
 - (void)applyAppearancePreference;
 - (void)openUITestRepositoryAtPath:(NSString *)path
-			documentController:(PBRepositoryDocumentController *)documentController;
+				documentController:(PBRepositoryDocumentController *)documentController;
 @end
 
 @implementation ApplicationController
@@ -207,12 +207,12 @@
 	NSString *uitestRepo = env[@"GITX_UITEST_REPO"];
 	if (uitestRepo.length > 0) {
 		[self openUITestRepositoryAtPath:uitestRepo
-					documentController:(PBRepositoryDocumentController *)documentController];
+					  documentController:(PBRepositoryDocumentController *)documentController];
 	}
 }
 
 - (void)openUITestRepositoryAtPath:(NSString *)path
-			documentController:(PBRepositoryDocumentController *)documentController
+				documentController:(PBRepositoryDocumentController *)documentController
 {
 	NSURL *repoURL = [NSURL fileURLWithPath:path];
 	// UI tests request one deterministic document. Remove any windows that
@@ -228,11 +228,11 @@
 	// launch used to survive for the rest of the session.
 	dispatch_async(dispatch_get_main_queue(), ^{
 		[[PBRepositoryOpenCoordinator shared] openKnownRepositoryURLs:@[ repoURL ]
-											 sourceWindow:nil
-											   completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
-												   if (documents.count == 0)
-													   NSLog(@"[UITest] Failed to open repo %@: %@", path, errors.firstObject);
-											   }];
+														 sourceWindow:nil
+														   completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+															   if (documents.count == 0)
+																   NSLog(@"[UITest] Failed to open repo %@: %@", path, errors.firstObject);
+														   }];
 	});
 }
 

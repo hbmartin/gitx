@@ -783,7 +783,7 @@
 		}
 	}
 	XCTAssertNotNil(viewRemoteMenuButton,
-				  @"The native View Remote toolbar item should expose an adjacent pull-down button");
+					@"The native View Remote toolbar item should expose an adjacent pull-down button");
 	[viewRemoteMenuButton click];
 	XCUIElement *toolbarMenu = viewRemoteMenuButton.menus.firstMatch;
 	XCTAssertTrue([toolbarMenu waitForExistenceWithTimeout:5]);
