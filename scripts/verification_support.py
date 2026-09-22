@@ -75,18 +75,13 @@ def version_at_least(actual: str, minimum: str) -> bool:
 
 
 def developer_dir_candidates(config: dict[str, Any]) -> list[pathlib.Path]:
-    candidates: list[pathlib.Path] = []
-    for environment_variable in ("GITX_DEVELOPER_DIR", "DEVELOPER_DIR"):
-        override = os.environ.get(environment_variable)
-        if override:
-            candidates.append(pathlib.Path(override))
-    candidates.append(pathlib.Path(config["defaultDeveloperDirectory"]))
-    unique: list[pathlib.Path] = []
-    for candidate in candidates:
-        candidate = candidate.expanduser()
-        if candidate not in unique:
-            unique.append(candidate)
-    return unique
+    explicit = os.environ.get("GITX_DEVELOPER_DIR")
+    if explicit:
+        return [pathlib.Path(explicit).expanduser()]
+    standard = os.environ.get("DEVELOPER_DIR")
+    if standard:
+        return [pathlib.Path(standard).expanduser()]
+    return [pathlib.Path(config["defaultDeveloperDirectory"]).expanduser()]
 
 
 def resolve_developer_dir(config: dict[str, Any]) -> pathlib.Path | None:

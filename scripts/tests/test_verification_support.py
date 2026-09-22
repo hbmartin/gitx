@@ -36,7 +36,7 @@ class VersionTests(unittest.TestCase):
 
         self.assertEqual(candidates, [pathlib.Path(config["defaultDeveloperDirectory"])])
 
-    def test_developer_directory_environment_precedence_keeps_default_fallback(self) -> None:
+    def test_explicit_developer_directory_is_authoritative(self) -> None:
         config = {"defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer"}
         environment = {
             "GITX_DEVELOPER_DIR": "/Applications/Explicit.app/Contents/Developer",
@@ -45,25 +45,33 @@ class VersionTests(unittest.TestCase):
         with mock.patch.dict(verification.os.environ, environment, clear=True):
             candidates = verification.developer_dir_candidates(config)
 
-        self.assertEqual(
-            candidates,
-            [
-                pathlib.Path(environment["GITX_DEVELOPER_DIR"]),
-                pathlib.Path(environment["DEVELOPER_DIR"]),
-                pathlib.Path(config["defaultDeveloperDirectory"]),
-            ],
-        )
+        self.assertEqual(candidates, [pathlib.Path(environment["GITX_DEVELOPER_DIR"])])
 
-    def test_standard_developer_directory_precedes_configured_default(self) -> None:
+    def test_standard_developer_directory_is_authoritative_without_explicit_pin(self) -> None:
         config = {"defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer"}
         environment = {"DEVELOPER_DIR": "/Volumes/Tools/Xcode.app/Contents/Developer"}
         with mock.patch.dict(verification.os.environ, environment, clear=True):
             candidates = verification.developer_dir_candidates(config)
 
-        self.assertEqual(
-            candidates,
-            [pathlib.Path(environment["DEVELOPER_DIR"]), pathlib.Path(config["defaultDeveloperDirectory"])],
-        )
+        self.assertEqual(candidates, [pathlib.Path(environment["DEVELOPER_DIR"])])
+
+    def test_unusable_explicit_developer_directory_does_not_fall_back(self) -> None:
+        config = {
+            "defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer",
+            "minimumXcodeVersion": "26.6",
+        }
+        explicit = pathlib.Path("/Applications/Broken.app/Contents/Developer")
+        environment = {
+            "GITX_DEVELOPER_DIR": str(explicit),
+            "DEVELOPER_DIR": "/Applications/Usable.app/Contents/Developer",
+        }
+        with mock.patch.dict(verification.os.environ, environment, clear=True), mock.patch.object(
+            verification, "xcode_version", return_value=None
+        ) as version:
+            selected = verification.resolve_developer_dir(config)
+
+        self.assertIsNone(selected)
+        version.assert_called_once_with(explicit)
 
 
 class ReceiptTests(unittest.TestCase):

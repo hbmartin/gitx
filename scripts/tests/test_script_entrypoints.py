@@ -319,13 +319,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         for invocation in analyzer_invocations:
             arguments = invocation.splitlines()
             derived_paths.append(arguments[arguments.index("-derivedDataPath") + 1])
-        self.assertEqual(
-            set(derived_paths),
-            {
-                str(self.root / "artifacts" / "verification" / "analyzer-clean-one" / "DerivedData"),
-                str(self.root / "artifacts" / "verification" / "analyzer-clean-two" / "DerivedData"),
-            },
-        )
+        self.assertEqual(len(set(derived_paths)), 2)
+        for derived_path in map(pathlib.Path, derived_paths):
+            self.assertEqual(derived_path.parent, self.root / "build")
+            self.assertTrue(derived_path.name.startswith("AnalyzerDerivedData."))
+            self.assertFalse(derived_path.exists())
 
     def test_raw_respects_explicit_project_scheme_destination_configuration_and_derived_data(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -454,6 +452,11 @@ class ScriptEntrypointTests(unittest.TestCase):
                 "CUSTOM_SETTING=YES",
                 "-parallel-testing-enabled",
                 "NO",
+                "-test-timeouts-enabled",
+                "CALLER_TIMEOUTS",
+                "-default-test-execution-time-allowance=777",
+                "-maximum-test-execution-time-allowance",
+                "888",
             ],
             check=True,
             capture_output=True,
@@ -470,9 +473,38 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertIn("CUSTOM_SETTING=YES", preflight)
         self.assertIn("-parallel-testing-enabled", preflight)
         self.assertIn("NO", preflight)
+        self.assertNotIn("CALLER_TIMEOUTS", preflight)
+        self.assertNotIn("-default-test-execution-time-allowance=777", preflight)
+        self.assertNotIn("888", preflight)
+        self.assertIn("-test-timeouts-enabled\nYES", preflight)
+        self.assertIn("-default-test-execution-time-allowance\n60", preflight)
+        self.assertIn("-maximum-test-execution-time-allowance\n90", preflight)
         self.assertIn("-only-testing", full_ui)
         self.assertIn("GitXUITests/ExampleTests", full_ui)
         self.assertIn("-skip-testing:GitXUITests/SkippedTests", full_ui)
+        self.assertIn("CALLER_TIMEOUTS", full_ui)
+        self.assertIn("-default-test-execution-time-allowance=777", full_ui)
+        self.assertIn("888", full_ui)
+
+    def test_wrapper_rejects_caller_owned_workspace_scheme_and_test_plan(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+
+        for index, (flag, value) in enumerate((
+            ("-workspace", "Other.xcworkspace"),
+            ("-scheme", "Other"),
+            ("-testPlan", "OtherTests"),
+        )):
+            result = subprocess.run(
+                [script, "--raw", "--run-id", f"managed-argument-{index}", "test", "ui", flag, value],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=self.environment,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f"{flag} is managed by scripts/xcodebuild.sh", result.stderr)
 
     def test_xcodebuild_wrapper_records_effective_preset_signing_modes(self) -> None:
         script = self.install_script("xcodebuild.sh")
