@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 import ObjectiveGit
-import OSLog
+import OSLog // swiftlint:disable:this unused_import -- Logger requires OSLog despite the analyzer's false positive.
 import UserNotifications
 
 private let autoFetchTimerResolution: TimeInterval = 30

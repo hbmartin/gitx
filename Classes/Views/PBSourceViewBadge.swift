@@ -2,6 +2,8 @@ import AppKit
 
 @MainActor
 @objc(PBSourceViewBadge)
+// Objective-C callers resolve this class through its preserved runtime name.
+// swiftlint:disable:next unused_declaration
 final class SourceViewBadge: NSObject {
     /// This immutable base is shared across draws; each badge adds its state-specific
     /// foreground color to a value-semantic dictionary copy.
@@ -76,11 +78,15 @@ final class SourceViewBadge: NSObject {
     }
 
     @objc(checkedOutBadgeForCell:)
+    // Objective-C source-view cells call this preserved selector.
+    // swiftlint:disable:next unused_declaration
     class func checkedOutBadge(for cell: NSTableCellView) -> NSImage {
         badge("✔", for: cell)
     }
 
     @objc(numericBadge:forCell:)
+    // Objective-C source-view cells call this preserved selector.
+    // swiftlint:disable:next unused_declaration
     class func numericBadge(_ number: Int, for cell: NSTableCellView) -> NSImage {
         badge(String(number), for: cell)
     }
