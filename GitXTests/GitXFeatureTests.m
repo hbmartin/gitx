@@ -57,6 +57,19 @@ static NSString *PBApplicationAlertMessage;
 static NSString *PBApplicationAlertInformation;
 static id PBApplicationProcessInfo;
 static NSUInteger PBApplicationAutoFetchTerminationStopCount;
+static NSUInteger PBWelcomePresentationCount;
+
+@interface NSWindow (GitXFeatureTests)
+- (void)pb_feature_center;
+@end
+
+@implementation NSWindow (GitXFeatureTests)
+- (void)pb_feature_center
+{
+	if ([self.title isEqualToString:@"Welcome to GitX"]) PBWelcomePresentationCount += 1;
+	[self pb_feature_center];
+}
+@end
 
 @interface PBRepositoryOpenCoordinator : NSObject
 + (instancetype)shared;
@@ -2064,6 +2077,72 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 			[welcome endSheet:welcome.attachedSheet returnCode:NSModalResponseCancel];
 		[welcome close];
 	} @finally {
+		((void (*)(id, SEL, id))objc_msgSend)(
+			NSDocumentController.class,
+			setSharedDocumentController,
+			previousDocumentController);
+		if (previousRestorePolicy)
+			[defaults setObject:previousRestorePolicy forKey:@"PBWindowRestorePolicy"];
+		else
+			[defaults removeObjectForKey:@"PBWindowRestorePolicy"];
+		if (previousCleanShutdown)
+			[defaults setObject:previousCleanShutdown forKey:@"PBWindowSessionCleanShutdown"];
+		else
+			[defaults removeObjectForKey:@"PBWindowSessionCleanShutdown"];
+		if (previousSnapshot)
+			[defaults setObject:previousSnapshot forKey:@"PBWindowSessionSnapshot"];
+		else
+			[defaults removeObjectForKey:@"PBWindowSessionSnapshot"];
+	}
+}
+
+- (void)testDuplicateExplicitLaunchSettlementEvaluatesPresentationOnce
+{
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id previousRestorePolicy = [defaults objectForKey:@"PBWindowRestorePolicy"];
+	id previousCleanShutdown = [defaults objectForKey:@"PBWindowSessionCleanShutdown"];
+	id previousSnapshot = [defaults objectForKey:@"PBWindowSessionSnapshot"];
+	NSDocumentController *previousDocumentController = NSDocumentController.sharedDocumentController;
+	SEL setSharedDocumentController = NSSelectorFromString(@"_setSharedDocumentController:");
+	((void (*)(id, SEL, id))objc_msgSend)(NSDocumentController.class, setSharedDocumentController, nil);
+	PBRepositoryDocumentController *controller = [[PBRepositoryDocumentController alloc] init];
+	NSMutableDictionary<NSString *, NSString *> *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+	[environment removeObjectForKey:@"GITX_UITEST_REPO"];
+	[environment removeObjectForKey:@"XCTestConfigurationFilePath"];
+	PBApplicationProcessInfoSpy *processInfo = [[PBApplicationProcessInfoSpy alloc] init];
+	processInfo.testEnvironment = environment;
+	processInfo.testArguments = NSProcessInfo.processInfo.arguments;
+	processInfo.realProcessInfo = NSProcessInfo.processInfo;
+	PBApplicationProcessInfo = processInfo;
+	PBWelcomePresentationCount = 0;
+	PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
+	PBFeatureSwapInstanceMethods(NSWindow.class, @selector(center), @selector(pb_feature_center));
+	@try {
+		[defaults setInteger:2 forKey:@"PBWindowRestorePolicy"];
+		[defaults setBool:YES forKey:@"PBWindowSessionCleanShutdown"];
+		[defaults removeObjectForKey:@"PBWindowSessionSnapshot"];
+		[controller beginExplicitLaunchOpen];
+
+		[PBWindowSessionCoordinator.shared applicationDidFinishLaunching];
+		[controller finishExplicitLaunchOpen];
+		[NSNotificationCenter.defaultCenter postNotificationName:@"PBRepositoryDocumentControllerOpensDidSettle"
+														  object:controller];
+
+		XCTestExpectation *drained = [self expectationWithDescription:@"Main actor launch evaluation drained"];
+		dispatch_async(dispatch_get_main_queue(), ^{
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[drained fulfill];
+			});
+		});
+		[self waitForExpectations:@[ drained ] timeout:2];
+		XCTAssertEqual(PBWelcomePresentationCount, (NSUInteger)1);
+	} @finally {
+		PBFeatureSwapInstanceMethods(NSWindow.class, @selector(center), @selector(pb_feature_center));
+		PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
+		PBApplicationProcessInfo = nil;
+		for (NSWindow *window in NSApp.windows.copy) {
+			if ([window.title isEqualToString:@"Welcome to GitX"]) [window close];
+		}
 		((void (*)(id, SEL, id))objc_msgSend)(
 			NSDocumentController.class,
 			setSharedDocumentController,
