@@ -85,7 +85,7 @@ final class ApplicationCompositionTests: XCTestCase {
         )
     }
 
-    func testRepositoryDocumentOpenStateBalancesNestedRequestsAndRecordsSuccess() {
+    func testRepositoryDocumentOpenStateBalancesNestedRequests() {
         let state = PBRepositoryDocumentOpenStateModel()
         let repositoryURL = URL(fileURLWithPath: "/tmp/gitx-open-state")
 

@@ -4,7 +4,6 @@ import UniformTypeIdentifiers
 
 struct RepositoryDocumentOpenState {
     private(set) var pendingOpenCount = 0
-    private(set) var successfulRepositoryURLs: Set<URL> = []
     private(set) var explicitLaunchRequestCount = 0
     private(set) var explicitLaunchOpenSucceeded = false
 
@@ -28,9 +27,7 @@ struct RepositoryDocumentOpenState {
     mutating func finishOpen(successfulURL: URL? = nil) {
         precondition(pendingOpenCount > 0, "Repository open accounting must remain balanced")
         pendingOpenCount -= 1
-        guard let successfulURL else { return }
-        successfulRepositoryURLs.insert(successfulURL.standardizedFileURL)
-        if explicitLaunchRequestCount > 0 {
+        if successfulURL != nil, explicitLaunchRequestCount > 0 {
             explicitLaunchOpenSucceeded = true
         }
     }
