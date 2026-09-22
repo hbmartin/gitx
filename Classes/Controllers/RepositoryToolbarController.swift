@@ -123,14 +123,17 @@ final class RepositoryForgeLinkMenuPresenter: NSObject {
 
     static func menuItems(context: RepositoryForgeLinkContext) -> [NSMenuItem] {
         let models = itemModels(context: context).filter { !$0.isHidden }
+        return menuItems(models: models)
+    }
+
+    static func menuItems(models: [RepositoryForgeLinkMenuItemModel]) -> [NSMenuItem] {
         var items: [NSMenuItem] = []
         for model in models {
             if model.action == .numberedItem, !items.isEmpty {
                 items.append(.separator())
             }
-            let item = NSMenuItem(title: model.title, action: model.action.selector, keyEquivalent: "")
+            let item = NSMenuItem()
             apply(model: model, to: item)
-            item.target = nil
             items.append(item)
         }
         return items
@@ -138,11 +141,15 @@ final class RepositoryForgeLinkMenuPresenter: NSObject {
 
     static func apply(model: RepositoryForgeLinkMenuItemModel, to item: NSMenuItem) {
         item.title = model.title
+        item.action = model.action.selector
+        item.target = nil
         item.isEnabled = model.isEnabled
         item.isHidden = model.isHidden
         item.identifier = NSUserInterfaceItemIdentifier(model.action.accessibilityIdentifier)
         item.setAccessibilityIdentifier(model.action.accessibilityIdentifier)
         item.setAccessibilityLabel(model.accessibilityLabel)
+        item.keyEquivalent = ""
+        item.representedObject = nil
     }
 
     /// Objective-C-visible decision seam for app-hosted tests.
@@ -478,7 +485,8 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             checkedOutRevision: nil,
             selectedCommitIdentifiers: []
         )
-        let updatedItems = RepositoryForgeLinkMenuPresenter.menuItems(context: context)
+        let models = RepositoryForgeLinkMenuPresenter.itemModels(context: context).filter { !$0.isHidden }
+        let updatedItems = RepositoryForgeLinkMenuPresenter.menuItems(models: models)
         let canUpdateInPlace = menu.items.count == updatedItems.count
             && zip(menu.items, updatedItems).allSatisfy { existing, updated in
                 if existing.isSeparatorItem || updated.isSeparatorItem {
@@ -487,14 +495,10 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
                 return existing.identifier == updated.identifier
             }
         if canUpdateInPlace {
-            for (existing, updated) in zip(menu.items, updatedItems) where !existing.isSeparatorItem {
-                existing.title = updated.title
-                existing.action = updated.action
-                existing.target = updated.target
-                existing.isEnabled = updated.isEnabled
-                existing.isHidden = updated.isHidden
-                existing.setAccessibilityIdentifier(updated.accessibilityIdentifier())
-                existing.setAccessibilityLabel(updated.accessibilityLabel())
+            var modelIndex = 0
+            for existing in menu.items where !existing.isSeparatorItem {
+                RepositoryForgeLinkMenuPresenter.apply(model: models[modelIndex], to: existing)
+                modelIndex += 1
             }
             return
         }
