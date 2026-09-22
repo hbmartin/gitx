@@ -3085,6 +3085,51 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	}
 }
 
+- (void)testRepositoryOpeningAddsOnlyNewDocumentsToTheRequestedTabGroup
+{
+	PBOpenDisposition previousDisposition = PBApplicationSettings.openDisposition;
+	NSWindow *originalWindow = self.controller.window;
+	PBWindowTabStateSpy *sourceWindow = [[PBWindowTabStateSpy alloc]
+		initWithContentRect:NSMakeRect(0, 0, 500, 320)
+				  styleMask:NSWindowStyleMaskTitled
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	self.controller.window = sourceWindow;
+	NSDocument *document = [[NSDocument alloc] init];
+	PBWindowTabStateSpy *newWindow = [[PBWindowTabStateSpy alloc]
+		initWithContentRect:NSMakeRect(20, 20, 500, 320)
+				  styleMask:NSWindowStyleMaskTitled
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	[document addWindowController:[[NSWindowController alloc] initWithWindow:newWindow]];
+	PBWindowDocumentToOpen = document;
+	PBWindowDocumentWasAlreadyOpen = NO;
+	PBApplicationSettings.openDisposition = PBOpenDispositionPreferTab;
+
+	@try {
+		XCTestExpectation *completion = [self expectationWithDescription:@"new repository tab opened"];
+		[[PBRepositoryOpenCoordinator shared] openURLs:@[ self.repositoryURL ]
+										  sourceWindow:sourceWindow
+											completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+												XCTAssertEqualObjects(documents, @[ document ]);
+												XCTAssertEqual(errors.count, (NSUInteger)0);
+												[completion fulfill];
+											}];
+		[self waitForExpectations:@[ completion ] timeout:1.0];
+
+		XCTAssertEqual(sourceWindow.addTabbedWindowCount, (NSUInteger)1);
+		XCTAssertEqual(newWindow.focusCount, (NSUInteger)1);
+		XCTAssertEqual(newWindow.tabbingModeMutationCount, (NSUInteger)0);
+	} @finally {
+		PBApplicationSettings.openDisposition = previousDisposition;
+		PBWindowDocumentToOpen = nil;
+		PBWindowDocumentWasAlreadyOpen = NO;
+		[document close];
+		self.controller.window = originalWindow;
+		[sourceWindow close];
+	}
+}
+
 - (void)testRepositoryDocumentOpensUnbornRepository
 {
 	NSString *name = [NSString stringWithFormat:@"GitXUnbornOpening-%@", NSUUID.UUID.UUIDString];

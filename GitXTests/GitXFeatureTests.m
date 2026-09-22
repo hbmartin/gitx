@@ -675,6 +675,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)appearancePreferenceChanged:(nullable NSNotification *)notification;
 - (void)applicationWillFinishLaunching:(nullable NSNotification *)notification;
 - (void)applicationDidFinishLaunching:(nullable NSNotification *)notification;
+- (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
+						 documentController:(PBRepositoryDocumentController *)documentController;
 - (void)openUITestRepositoryAtPath:(NSString *)path
 				documentController:(PBRepositoryDocumentController *)documentController;
 - (void)registerServices;
@@ -1165,8 +1167,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 								 @selector(openKnownRepositoryURLs:sourceWindow:completion:),
 								 @selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
 	@try {
-		[controller openUITestRepositoryAtPath:@"/tmp/gitx-ui-launch-repository"
-							documentController:isolatedDocumentController];
+		[controller openUITestRepositoryFromEnvironment:@{@"GITX_UITEST_REPO" : @"/tmp/gitx-ui-launch-repository"}
+									 documentController:isolatedDocumentController];
 		NSPredicate *opened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 			return PBApplicationOpenedRepositoryURLs.count == 1;
 		}];
@@ -1919,6 +1921,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 - (void)testRepositoryDocumentControllerConfiguresAndCompletesTheOpenPanel
 {
+	XCTAssertTrue([[PBRepositoryDocumentController newOpenPanel] isKindOfClass:NSOpenPanel.class]);
 	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentController.class);
 	PBRepositoryOpenPanelSpy *panel = PBNewRepositoryOpenPanelSpy();
 	panel.response = NSModalResponseOK;

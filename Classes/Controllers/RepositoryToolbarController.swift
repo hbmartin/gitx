@@ -29,14 +29,6 @@ enum RepositoryForgeLinkAction: String, CaseIterable {
         self.init(rawValue: NSStringFromSelector(selector))
     }
 
-    init?(accessibilityIdentifier: String?) {
-        guard let accessibilityIdentifier else { return nil }
-        guard let action = Self.allCases.first(where: {
-            $0.accessibilityIdentifier == accessibilityIdentifier
-        }) else { return nil }
-        self = action
-    }
-
     var selector: Selector {
         NSSelectorFromString(rawValue)
     }

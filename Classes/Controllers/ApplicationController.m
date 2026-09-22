@@ -27,6 +27,8 @@
 @property (nonatomic, strong) SPUStandardUpdaterController *updaterController;
 @property (nonatomic, strong) PBApplicationComposition *composition;
 - (void)applyAppearancePreference;
+- (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
+						 documentController:(PBRepositoryDocumentController *)documentController;
 - (void)openUITestRepositoryAtPath:(NSString *)path
 				documentController:(PBRepositoryDocumentController *)documentController;
 @end
@@ -204,11 +206,16 @@
 	// UI-test hook: open a repo path passed via environment variable so that
 	// XCUITests always get a document window without relying on recents or
 	// Launch Services registration.
-	NSString *uitestRepo = env[@"GITX_UITEST_REPO"];
-	if (uitestRepo.length > 0) {
-		[self openUITestRepositoryAtPath:uitestRepo
-					  documentController:(PBRepositoryDocumentController *)documentController];
-	}
+	[self openUITestRepositoryFromEnvironment:env
+						   documentController:(PBRepositoryDocumentController *)documentController];
+}
+
+- (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
+						 documentController:(PBRepositoryDocumentController *)documentController
+{
+	NSString *repositoryPath = environment[@"GITX_UITEST_REPO"];
+	if (repositoryPath.length > 0)
+		[self openUITestRepositoryAtPath:repositoryPath documentController:documentController];
 }
 
 - (void)openUITestRepositoryAtPath:(NSString *)path

@@ -231,6 +231,10 @@ final class ForgeApplicationCompositionTests: XCTestCase {
                 error as? ForgeApplicationStorageConfigurationError,
                 .uiTestStorageRootMustBeAbsolute("relative/Forge")
             )
+            XCTAssertEqual(
+                error.localizedDescription,
+                "GITX_UITEST_FORGE_STORAGE_ROOT must be an absolute path, not \"relative/Forge\"."
+            )
         }
     }
 
