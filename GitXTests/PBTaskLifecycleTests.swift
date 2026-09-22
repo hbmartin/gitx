@@ -357,6 +357,7 @@ final class PBTaskLifecycleTests: XCTestCase {
         wait(for: [escalationDeadlinePassed], timeout: 1)
         let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
         XCTAssertEqual(Darwin.kill(processID, 0), -1)
+        XCTAssertEqual((task.value(forKey: "forceKillAttemptCount") as? NSNumber)?.uintValue, 0)
     }
 
     func testGracefulTerminationEscalatesForSameProcessIgnoringSIGTERM() throws {
@@ -397,6 +398,49 @@ final class PBTaskLifecycleTests: XCTestCase {
 
         let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
         XCTAssertEqual(Darwin.kill(processID, 0), -1)
+        XCTAssertEqual((task.value(forKey: "forceKillAttemptCount") as? NSNumber)?.uintValue, 1)
+    }
+
+    func testImmediateForceTerminationKillsTaskIgnoringSIGTERM() throws {
+        let pidURL = temporaryFileURL(named: "immediate-force-termination-pid")
+        defer {
+            if let contents = try? String(contentsOf: pidURL, encoding: .utf8),
+               let processID = pid_t(contents)
+            {
+                _ = Darwin.kill(processID, SIGKILL)
+            }
+            try? FileManager.default.removeItem(at: pidURL)
+        }
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap '' TERM; while :; do :; done",
+            ],
+            inDirectory: nil
+        )
+        task.additionalEnvironment = ["PB_TASK_PID_FILE": pidURL.path]
+        task.timeout = 0
+        let completed = expectation(description: "force-killed task completed")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            let taskError = error as NSError?
+            XCTAssertEqual(taskError?.domain, PBTaskErrorDomain)
+            XCTAssertEqual(taskError?.code, Int(PBTaskErrorCode.caughtSignalError.rawValue))
+            completed.fulfill()
+        }
+        let launched = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: pidURL.path) },
+            object: pidURL as NSURL
+        )
+        wait(for: [launched], timeout: 2)
+        task.terminate()
+        task.forceTerminateIfRunning()
+        wait(for: [completed], timeout: 2)
+
+        let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
+        XCTAssertEqual(Darwin.kill(processID, 0), -1)
+        XCTAssertEqual((task.value(forKey: "forceKillAttemptCount") as? NSNumber)?.uintValue, 1)
     }
 
     func testLaunchUsesRequestedWorkingDirectory() throws {

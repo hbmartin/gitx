@@ -85,6 +85,10 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 
 - (void)terminate;
 
+/// Synchronously sends SIGKILL when the originally launched process is still
+/// running. Intended for the bounded final step of application shutdown.
+- (void)forceTerminateIfRunning;
+
 /// Cancels before launch, or gives a running process time to exit before sending
 /// SIGTERM and then SIGKILL to that same process if it remains alive.
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod
