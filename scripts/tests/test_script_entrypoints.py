@@ -221,6 +221,37 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("26.6", result.stdout + result.stderr)
 
+    def test_xcodebuild_receipt_records_selected_developer_directory_for_doctor(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+
+        subprocess.run(
+            [
+                script,
+                "--raw",
+                "--run-id",
+                "doctor-toolchain-receipt",
+                "--developer-dir",
+                str(self.developer_directory),
+                "build",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        doctor_step = next(
+            step
+            for step in self.receipt("doctor-toolchain-receipt")["steps"]
+            if step["name"] == "doctor"
+        )
+        command = doctor_step["command"]
+        self.assertEqual(
+            command[command.index("--developer-dir") + 1],
+            str(self.developer_directory),
+        )
+
     def test_xcodebuild_wrapper_matches_options_as_exact_arguments(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
