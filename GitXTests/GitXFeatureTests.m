@@ -1107,6 +1107,29 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[controller applicationDidBecomeActive:nil];
 }
 
+- (void)testApplicationDelegateDebugRejectsPlainSharedDocumentController
+{
+#if DEBUG
+	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
+	NSDocumentController *previousDocumentController = NSDocumentController.sharedDocumentController;
+	SEL setSharedDocumentController = NSSelectorFromString(@"_setSharedDocumentController:");
+	((void (*)(id, SEL, id))objc_msgSend)(NSDocumentController.class, setSharedDocumentController, nil);
+	NSDocumentController *plainDocumentController = [[NSDocumentController alloc] init];
+	@try {
+		XCTAssertEqual(NSDocumentController.sharedDocumentController, plainDocumentController);
+		XCTAssertThrowsSpecificNamed(
+			[controller applicationDidFinishLaunching:nil],
+			NSException,
+			NSInternalInconsistencyException);
+	} @finally {
+		((void (*)(id, SEL, id))objc_msgSend)(
+			NSDocumentController.class,
+			setSharedDocumentController,
+			previousDocumentController);
+	}
+#endif
+}
+
 - (void)testApplicationDelegateSuppressesWindowSessionCaptureForAppHostedTests
 {
 	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
