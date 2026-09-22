@@ -1,7 +1,7 @@
 {
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
-    "Classes/Controllers/ApplicationController.m": 0.9312,
+    "Classes/Controllers/ApplicationController.m": 0.9328,
     "Classes/Controllers/ApplicationIcon.swift": 1.0,
     "Classes/Controllers/CommitControllerPolicies.swift": 1.0,
     "Classes/Controllers/CommitMenuPresenter.swift": 1.0,
@@ -60,7 +60,7 @@
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
     "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8807,
     "Classes/Controllers/RepositoryForgeRemoteDescriptorLoader.swift": 0.9871,
-    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7428,
+    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7442,
     "Classes/Controllers/RepositoryPullRequestGitOperations.swift": 0.9403,
     "Classes/Controllers/RepositoryPullRequestMutationPreferenceStore.swift": 0.9492,
     "Classes/Controllers/RepositoryPullRequestReviewComposition.swift": 0.903,
@@ -208,7 +208,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9094,
+  "minimumLineCoverage": 0.9095,
   "target": "GitX.app",
   "version": 1
 }
