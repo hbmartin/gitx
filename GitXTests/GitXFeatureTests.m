@@ -2908,9 +2908,12 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertTrue([outline outlineView:outline writeItems:items toPasteboard:pasteboard]);
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-	NSPasteboardType promisedFileType = (__bridge NSPasteboardType)kPasteboardTypeFileURLPromise;
+	NSPasteboardType promisedFileType = NSFilesPromisePboardType;
 	XCTAssertEqualObjects([pasteboard propertyListForType:promisedFileType], (@[ @"swift", @"md" ]));
 #pragma clang diagnostic pop
+	NSPasteboardType URLPromiseType = (__bridge NSPasteboardType)kPasteboardTypeFileURLPromise;
+	XCTAssertNil([pasteboard propertyListForType:URLPromiseType],
+				 @"The legacy outline-view delegate requires NSFilesPromisePboardType's extension-list contract");
 
 	NSURL *destination = [NSURL fileURLWithPath:@"/tmp/gitx-promised-files" isDirectory:YES];
 	XCTAssertEqualObjects([outline outlineView:outline

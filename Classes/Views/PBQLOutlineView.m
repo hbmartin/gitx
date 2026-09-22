@@ -10,9 +10,12 @@
 #import "PBGitTree.h"
 #import <ApplicationServices/ApplicationServices.h>
 
-static NSPasteboardType PBFileURLPromisePasteboardType(void)
+static NSPasteboardType PBFilesPromisePasteboardType(void)
 {
-	return (__bridge NSPasteboardType)kPasteboardTypeFileURLPromise;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+	return NSFilesPromisePboardType;
+#pragma clang diagnostic pop
 }
 
 @implementation PBQLOutlineView
@@ -21,7 +24,7 @@ static NSPasteboardType PBFileURLPromisePasteboardType(void)
 {
 	id a = [super initWithCoder:coder];
 	[a setDataSource:a];
-	[a registerForDraggedTypes:@[ PBFileURLPromisePasteboardType() ]];
+	[a registerForDraggedTypes:@[ PBFilesPromisePasteboardType() ]];
 	return a;
 }
 
@@ -47,8 +50,8 @@ static NSPasteboardType PBFileURLPromisePasteboardType(void)
 	for (id tree in items)
 		[fileNames addObject:[[[tree representedObject] path] pathExtension]];
 
-	[pb declareTypes:@[ PBFileURLPromisePasteboardType() ] owner:self];
-	[pb setPropertyList:fileNames forType:PBFileURLPromisePasteboardType()];
+	[pb declareTypes:@[ PBFilesPromisePasteboardType() ] owner:self];
+	[pb setPropertyList:fileNames forType:PBFilesPromisePasteboardType()];
 
 	return YES;
 }
