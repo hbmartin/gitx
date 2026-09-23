@@ -225,6 +225,20 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
     }
 
+    func testExitPollingRecoversWhenExitMonitorDoesNotDeliver() throws {
+        let system = FakeProcessSystem()
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "poll observed the leader exit")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0) }
+        system.setLeaderExited(true)
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
+    }
+
     func testExitBeforeTerminationDeadlineIsNeverSignalled() throws {
         let system = FakeProcessSystem()
         let owner = PBChildProcessOwner(system: system, queueLabel: #function)

@@ -101,7 +101,9 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 	_standardOutputData = [NSData data];
 	_standardOutputBuffer = [NSMutableData data];
-	_stateQueue = dispatch_queue_create("org.gitx.PBTask.state", DISPATCH_QUEUE_SERIAL);
+	dispatch_queue_attr_t stateQueueAttributes =
+		dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
+	_stateQueue = dispatch_queue_create("org.gitx.PBTask.state", stateQueueAttributes);
 
 	PBTaskLog(@"task %p: init", self);
 
@@ -464,7 +466,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 	__block NSError *taskError = nil;
 
-	[self performTaskOnQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)
+	[self performTaskOnQueue:dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0)
 		  outputChunkHandler:outputChunkHandler
 		   completionHandler:^(NSData *readData, NSError *error) {
 			   taskError = error;

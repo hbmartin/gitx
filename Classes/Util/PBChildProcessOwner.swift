@@ -76,6 +76,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         var leaderExitWasObserved = false
         var terminationTimerGeneration = 0
         var forceKillTimerGeneration = 0
+        var exitPollGeneration = 0
         var groupPollGeneration = 0
     }
 
@@ -85,7 +86,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         case finished
     }
 
-    private static let groupPollInterval: TimeInterval = 0.05
+    private static let pollInterval: TimeInterval = 0.05
     private static let logger = Logger(subsystem: "net.phere.GitX", category: "PBChildProcess")
 
     private let queue: DispatchQueue
@@ -136,6 +137,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             // becoming active. It remains a zombie until this owner reaps it, so this
             // immediate non-reaping probe closes that notification-registration race.
             observeLeaderExit()
+            scheduleExitPoll()
         }
     }
 
@@ -301,6 +303,25 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         }
     }
 
+    private func scheduleExitPoll() {
+        guard case var .running(process) = state,
+              !process.leaderExitWasObserved
+        else { return }
+
+        process.exitPollGeneration += 1
+        let generation = process.exitPollGeneration
+        state = .running(process)
+        queue.asyncAfter(deadline: .now() + Self.pollInterval) { [weak self] in
+            guard let self,
+                  case let .running(current) = state,
+                  current.exitPollGeneration == generation,
+                  !current.leaderExitWasObserved
+            else { return }
+            observeLeaderExit()
+            scheduleExitPoll()
+        }
+    }
+
     private func groupHasNoDescendants(_ process: RunningProcess) -> Bool {
         do {
             let members = try system.processGroupMembers(processGroup: process.processGroup)
@@ -322,7 +343,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         process.groupPollGeneration += 1
         let generation = process.groupPollGeneration
         state = .running(process)
-        queue.asyncAfter(deadline: .now() + Self.groupPollInterval) { [weak self] in
+        queue.asyncAfter(deadline: .now() + Self.pollInterval) { [weak self] in
             guard let self,
                   case let .running(current) = state,
                   current.groupPollGeneration == generation,
