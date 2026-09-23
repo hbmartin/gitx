@@ -4,6 +4,75 @@ import XCTest
 
 @MainActor
 final class PBQLOutlineViewTests: XCTestCase {
+    private final class GitFixture {
+        let directory: URL
+        let repository: PBGitRepository
+        let revision: String
+        private var retainedRoots: [PBGitTree] = []
+
+        init() throws {
+            directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("GitXQuickLookCharacterization-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            try Self.runGit(["init", "--quiet", "--initial-branch=main"], in: directory)
+            try Self.runGit(["config", "user.name", "GitX Tests"], in: directory)
+            try Self.runGit(["config", "user.email", "gitx-tests@example.invalid"], in: directory)
+            try Data([0x00, 0x7F, 0xFF]).write(to: directory.appendingPathComponent("binary.dat"))
+            let nested = directory.appendingPathComponent("Documentation/Café.txt")
+            try FileManager.default.createDirectory(at: nested.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("promised directory contents\n".utf8).write(to: nested)
+            try Self.runGit(["add", "--all"], in: directory)
+            try Self.runGit(["commit", "--quiet", "-m", "Quick Look fixture"], in: directory)
+            revision = try Self.runGit(["rev-parse", "HEAD"], in: directory)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            repository = try PBGitRepository(url: directory)
+        }
+
+        deinit {
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        func tree(path: String, leaf: Bool) -> PBGitTree {
+            let root = PBGitTree()
+            root.path = ""
+            root.leaf = false
+            root.sha = revision
+            root.repository = repository
+            let tree = PBGitTree()
+            tree.path = path
+            tree.leaf = leaf
+            tree.sha = revision
+            tree.repository = repository
+            tree.parent = root
+            retainedRoots.append(root)
+            return tree
+        }
+
+        @discardableResult
+        private static func runGit(_ arguments: [String], in directory: URL) throws -> String {
+            let process = Process()
+            let output = Pipe()
+            let errors = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.currentDirectoryURL = directory
+            process.arguments = arguments
+            process.standardOutput = output
+            process.standardError = errors
+            try process.run()
+            process.waitUntilExit()
+            let outputData = output.fileHandleForReading.readDataToEndOfFile()
+            guard process.terminationStatus == 0 else {
+                let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+                throw NSError(
+                    domain: "PBQLOutlineViewTests.GitFixture",
+                    code: Int(process.terminationStatus),
+                    userInfo: [NSLocalizedDescriptionKey: String(decoding: errorData, as: UTF8.self)]
+                )
+            }
+            return String(decoding: outputData, as: UTF8.self)
+        }
+    }
+
     // swift6-safety-justification: The lock protects every read and write of the captured asynchronous error.
     private final class ErrorBox: @unchecked Sendable {
         private let lock = NSLock()
@@ -86,6 +155,33 @@ final class PBQLOutlineViewTests: XCTestCase {
             "Documentation"
         )
         XCTAssertFalse(fileProvider === directoryProvider)
+    }
+
+    func testRealCommittedRootFilePromisePreservesBinaryContents() throws {
+        let fixture = try GitFixture()
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let provider = try provider(for: fixture.tree(path: "binary.dat", leaf: true), in: outline)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("binary.dat")
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination), Data([0x00, 0x7F, 0xFF]))
+    }
+
+    func testRealCommittedDirectoryPromisePreservesNestedContents() throws {
+        let fixture = try GitFixture()
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let provider = try provider(for: fixture.tree(path: "Documentation", leaf: false), in: outline)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Documentation", isDirectory: true)
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("Café.txt")),
+            Data("promised directory contents\n".utf8)
+        )
     }
 
     func testPromiseQueueIsDedicatedSerialAndUserInitiated() throws {

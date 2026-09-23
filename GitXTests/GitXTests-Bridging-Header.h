@@ -1015,8 +1015,11 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @end
 
 @interface PBGitTree : NSObject
+@property (nonatomic, copy) NSString *sha;
 @property (nonatomic, copy) NSString *path;
 @property (nonatomic) BOOL leaf;
+@property (nonatomic, weak) PBGitRepository *repository;
+@property (nonatomic, weak) PBGitTree *parent;
 @property (nonatomic, readonly) NSArray<PBGitTree *> *children;
 @property (nonatomic, readonly) NSString *contents;
 @property (nonatomic, readonly) NSString *fullPath;
