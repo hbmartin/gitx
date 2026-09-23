@@ -343,8 +343,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	if (self.standardInputData) {
 		self.inputPipe = [NSPipe pipe];
 		NSFileHandle *inputHandle = self.inputPipe.fileHandleForWriting;
-		if (fcntl(inputHandle.fileDescriptor, F_SETNOSIGPIPE, 1) == -1)
-			PBTaskLog(@"task %p: could not suppress SIGPIPE for stdin", self);
+		(void)fcntl(inputHandle.fileDescriptor, F_SETNOSIGPIPE, 1);
 
 		inputHandle.writeabilityHandler = ^(NSFileHandle *handle) {
 			PBTask *strongSelf = weakSelf;

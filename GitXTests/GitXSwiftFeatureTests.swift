@@ -462,6 +462,10 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertEqual(repositoryItem.accessibilityIdentifier(), "GitX.Repository.ForgeLinks.Repository")
         XCTAssertEqual(repositoryItem.accessibilityLabel(), "View repository")
         XCTAssertFalse(toolbarController.responds(to: NSSelectorFromString("performViewRemoteMenuAction:")))
+
+        let replacementRepresentation = NSMenuItem(title: "Replacement", action: nil, keyEquivalent: "")
+        item.menuFormRepresentation = replacementRepresentation
+        XCTAssertEqual(item.menuFormRepresentation?.title, "View Remote")
     }
 
     func testForgeMenuValidationAndOrphanToolbarFallback() throws {
