@@ -746,28 +746,44 @@ final class WindowSessionCoordinator: NSObject {
     private static let cleanShutdownKey = "PBWindowSessionCleanShutdown"
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "WindowSession")
     private var launchOpenObserver: NSObjectProtocol?
+    private var launchOpenObserverGeneration = 0
+    private var launchPresentationWasEvaluated = false
 
     @objc func applicationDidFinishLaunching() {
+        removeLaunchOpenObserver()
+        launchOpenObserverGeneration += 1
+        launchPresentationWasEvaluated = false
         let defaults = UserDefaults.standard
         let previousRunWasClean = defaults.object(forKey: Self.cleanShutdownKey) == nil || defaults.bool(forKey: Self.cleanShutdownKey)
         defaults.set(false, forKey: Self.cleanShutdownKey)
         guard ProcessInfo.processInfo.environment["GITX_UITEST_REPO"] == nil else { return }
         guard NSDocumentController.shared.documents.isEmpty else { return }
         guard let documentController = NSDocumentController.shared as? PBRepositoryDocumentController else {
-            evaluateLaunchPresentation(previousRunWasClean: previousRunWasClean, documentController: nil)
+            evaluateLaunchPresentationOnce(previousRunWasClean: previousRunWasClean, documentController: nil)
             return
         }
+        continueLaunchPresentationWhenSettled(
+            previousRunWasClean: previousRunWasClean,
+            documentController: documentController
+        )
+    }
+
+    private func continueLaunchPresentationWhenSettled(
+        previousRunWasClean: Bool,
+        documentController: PBRepositoryDocumentController
+    ) {
+        guard !launchPresentationWasEvaluated else { return }
         guard documentController.hasPendingExplicitLaunchOpens else {
-            evaluateLaunchPresentation(
+            evaluateLaunchPresentationOnce(
                 previousRunWasClean: previousRunWasClean,
                 documentController: documentController
             )
             return
         }
 
-        if let launchOpenObserver {
-            NotificationCenter.default.removeObserver(launchOpenObserver)
-        }
+        removeLaunchOpenObserver()
+        launchOpenObserverGeneration += 1
+        let generation = launchOpenObserverGeneration
         logger.info("Deferring window-session restoration until explicit launch opens settle")
         launchOpenObserver = NotificationCenter.default.addObserver(
             forName: PBRepositoryDocumentController.opensDidSettleNotification,
@@ -777,20 +793,43 @@ final class WindowSessionCoordinator: NSObject {
             // swift6-safety-justification: NotificationCenter delivers this observer on the explicitly selected main queue.
             MainActor.assumeIsolated {
                 guard let self, let documentController,
-                      !documentController.hasPendingExplicitLaunchOpens,
+                      generation == self.launchOpenObserverGeneration,
                       let launchOpenObserver = self.launchOpenObserver
                 else { return }
                 NotificationCenter.default.removeObserver(launchOpenObserver)
                 self.launchOpenObserver = nil
                 Task { @MainActor [weak self, weak documentController] in
-                    guard let self, let documentController else { return }
-                    self.evaluateLaunchPresentation(
+                    guard let self, let documentController,
+                          generation == self.launchOpenObserverGeneration,
+                          !self.launchPresentationWasEvaluated
+                    else { return }
+                    self.continueLaunchPresentationWhenSettled(
                         previousRunWasClean: previousRunWasClean,
                         documentController: documentController
                     )
                 }
             }
         }
+    }
+
+    private func removeLaunchOpenObserver() {
+        if let launchOpenObserver {
+            NotificationCenter.default.removeObserver(launchOpenObserver)
+            self.launchOpenObserver = nil
+        }
+    }
+
+    private func evaluateLaunchPresentationOnce(
+        previousRunWasClean: Bool,
+        documentController: PBRepositoryDocumentController?
+    ) {
+        guard !launchPresentationWasEvaluated else { return }
+        launchPresentationWasEvaluated = true
+        removeLaunchOpenObserver()
+        evaluateLaunchPresentation(
+            previousRunWasClean: previousRunWasClean,
+            documentController: documentController
+        )
     }
 
     private func evaluateLaunchPresentation(

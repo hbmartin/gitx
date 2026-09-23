@@ -2191,6 +2191,83 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	}
 }
 
+- (void)testSecondExplicitLaunchOpenRearmsPresentationSettlement
+{
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id previousRestorePolicy = [defaults objectForKey:@"PBWindowRestorePolicy"];
+	id previousCleanShutdown = [defaults objectForKey:@"PBWindowSessionCleanShutdown"];
+	id previousSnapshot = [defaults objectForKey:@"PBWindowSessionSnapshot"];
+	NSDocumentController *previousDocumentController = NSDocumentController.sharedDocumentController;
+	SEL setSharedDocumentController = NSSelectorFromString(@"_setSharedDocumentController:");
+	((void (*)(id, SEL, id))objc_msgSend)(NSDocumentController.class, setSharedDocumentController, nil);
+	PBRepositoryDocumentController *controller = [[PBRepositoryDocumentController alloc] init];
+	NSMutableDictionary<NSString *, NSString *> *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+	[environment removeObjectForKey:@"GITX_UITEST_REPO"];
+	[environment removeObjectForKey:@"XCTestConfigurationFilePath"];
+	PBApplicationProcessInfoSpy *processInfo = [[PBApplicationProcessInfoSpy alloc] init];
+	processInfo.testEnvironment = environment;
+	processInfo.testArguments = NSProcessInfo.processInfo.arguments;
+	processInfo.realProcessInfo = NSProcessInfo.processInfo;
+	PBApplicationProcessInfo = processInfo;
+	PBWelcomePresentationCount = 0;
+	PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
+	PBFeatureSwapInstanceMethods(NSWindow.class, @selector(center), @selector(pb_feature_center));
+	@try {
+		[defaults setInteger:2 forKey:@"PBWindowRestorePolicy"];
+		[defaults setBool:YES forKey:@"PBWindowSessionCleanShutdown"];
+		[defaults removeObjectForKey:@"PBWindowSessionSnapshot"];
+		[controller beginExplicitLaunchOpen];
+
+		[PBWindowSessionCoordinator.shared applicationDidFinishLaunching];
+		[controller finishExplicitLaunchOpen];
+		[controller beginExplicitLaunchOpen];
+
+		XCTestExpectation *firstEvaluationDrained = [self expectationWithDescription:@"First launch evaluation drained"];
+		dispatch_async(dispatch_get_main_queue(), ^{
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[firstEvaluationDrained fulfill];
+			});
+		});
+		[self waitForExpectations:@[ firstEvaluationDrained ] timeout:2];
+		XCTAssertEqual(PBWelcomePresentationCount, (NSUInteger)0);
+
+		[controller finishExplicitLaunchOpen];
+		[NSNotificationCenter.defaultCenter postNotificationName:@"PBRepositoryDocumentControllerOpensDidSettle"
+												  object:controller];
+		XCTestExpectation *secondEvaluationDrained = [self expectationWithDescription:@"Second launch evaluation drained"];
+		dispatch_async(dispatch_get_main_queue(), ^{
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[secondEvaluationDrained fulfill];
+			});
+		});
+		[self waitForExpectations:@[ secondEvaluationDrained ] timeout:2];
+		XCTAssertEqual(PBWelcomePresentationCount, (NSUInteger)1);
+	} @finally {
+		PBFeatureSwapInstanceMethods(NSWindow.class, @selector(center), @selector(pb_feature_center));
+		PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
+		PBApplicationProcessInfo = nil;
+		for (NSWindow *window in NSApp.windows.copy) {
+			if ([window.title isEqualToString:@"Welcome to GitX"]) [window close];
+		}
+		((void (*)(id, SEL, id))objc_msgSend)(
+			NSDocumentController.class,
+			setSharedDocumentController,
+			previousDocumentController);
+		if (previousRestorePolicy)
+			[defaults setObject:previousRestorePolicy forKey:@"PBWindowRestorePolicy"];
+		else
+			[defaults removeObjectForKey:@"PBWindowRestorePolicy"];
+		if (previousCleanShutdown)
+			[defaults setObject:previousCleanShutdown forKey:@"PBWindowSessionCleanShutdown"];
+		else
+			[defaults removeObjectForKey:@"PBWindowSessionCleanShutdown"];
+		if (previousSnapshot)
+			[defaults setObject:previousSnapshot forKey:@"PBWindowSessionSnapshot"];
+		else
+			[defaults removeObjectForKey:@"PBWindowSessionSnapshot"];
+	}
+}
+
 - (void)testRepositoryDocumentControllerValidatesNewAndUnrelatedMenuItems
 {
 	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentController.class);
