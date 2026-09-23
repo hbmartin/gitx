@@ -1032,6 +1032,10 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (void)saveToFolder:(NSString *)directory;
 @end
 
+@interface PBWorkingTree : PBGitTree
++ (instancetype)rootForRepository:(PBGitRepository *)repository;
+@end
+
 @interface PBQLTextView : NSTextView
 @end
 

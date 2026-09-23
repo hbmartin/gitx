@@ -12,17 +12,14 @@ private nonisolated let quickLookFilePromiseLogger = Logger(
 
 // swift6-safety-justification: The payload is immutable after construction and AppKit reads it only on the delegate's serial promise queue.
 private final class QuickLookFilePromisePayload: NSObject, @unchecked Sendable {
-    /// AppKit invokes promise writes on the delegate's operation queue. The tree
-    /// is immutable for the lifetime of a drag and is retained by this payload.
-    // swift6-safety-justification: The retained tree snapshot is immutable for the drag lifetime and is accessed only on the serial promise queue.
-    nonisolated(unsafe) let tree: PBGitTree
+    nonisolated let descriptor: QuickLookExportDescriptor
 
-    init(tree: PBGitTree) {
-        self.tree = tree
+    init(descriptor: QuickLookExportDescriptor) {
+        self.descriptor = descriptor
     }
 
     nonisolated var fileName: String {
-        (tree.path as NSString).lastPathComponent
+        descriptor.fileName
     }
 }
 
@@ -32,13 +29,15 @@ private final class QuickLookFilePromisePayload: NSObject, @unchecked Sendable {
 class QuickLookOutlineView: NSOutlineView, NSOutlineViewDataSource, NSFilePromiseProviderDelegate {
     @IBOutlet weak var controller: PBGitHistoryController?
 
-    private let filePromiseQueue: OperationQueue = {
+    private nonisolated let filePromiseQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "com.gitx.gitx.quick-look-file-promises"
         queue.qualityOfService = .userInitiated
         queue.maxConcurrentOperationCount = 1
         return queue
     }()
+
+    private nonisolated let filePromiseExporter = QuickLookFilePromiseExporter()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -78,7 +77,7 @@ class QuickLookOutlineView: NSOutlineView, NSOutlineViewDataSource, NSFilePromis
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let tree = (item as? NSTreeNode)?.representedObject as? PBGitTree else { return nil }
-        let payload = QuickLookFilePromisePayload(tree: tree)
+        let payload = QuickLookFilePromisePayload(descriptor: QuickLookExportDescriptor.make(tree: tree))
         let provider = NSFilePromiseProvider(fileType: promisedFileType(for: tree), delegate: self)
         provider.userInfo = payload
         return provider
@@ -106,30 +105,10 @@ class QuickLookOutlineView: NSOutlineView, NSOutlineViewDataSource, NSFilePromis
             return
         }
 
-        let fileManager = FileManager.default
-        let stagingURL = url.deletingLastPathComponent()
-            .appendingPathComponent(".gitx-file-promise-\(UUID().uuidString)", isDirectory: true)
         do {
-            try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: false)
-            defer { try? fileManager.removeItem(at: stagingURL) }
-
-            payload.tree.save(toFolder: stagingURL.path)
-            let stagedOutputURL = stagingURL.appendingPathComponent(payload.tree.path)
-            guard fileManager.fileExists(atPath: stagedOutputURL.path) else {
-                throw NSError(
-                    domain: NSCocoaErrorDomain,
-                    code: NSFileNoSuchFileError,
-                    userInfo: [
-                        NSFilePathErrorKey: stagedOutputURL.path,
-                        NSLocalizedDescriptionKey: "GitX did not produce the promised file \(payload.fileName).",
-                    ]
-                )
-            }
-            try fileManager.moveItem(at: stagedOutputURL, to: url)
-            quickLookFilePromiseLogger.info("Exported promised item to \(url.path, privacy: .public)")
+            try filePromiseExporter.export(payload.descriptor, to: url)
             completionHandler(nil)
         } catch {
-            try? fileManager.removeItem(at: stagingURL)
             quickLookFilePromiseLogger.error(
                 "Failed to export promised item to \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
@@ -137,7 +116,7 @@ class QuickLookOutlineView: NSOutlineView, NSOutlineViewDataSource, NSFilePromis
         }
     }
 
-    func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue {
+    nonisolated func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue {
         filePromiseQueue
     }
 

@@ -48,6 +48,24 @@ final class PBQLOutlineViewTests: XCTestCase {
             return tree
         }
 
+        func write(_ data: Data, to relativePath: String) throws {
+            let url = directory.appendingPathComponent(relativePath)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url)
+        }
+
+        func commit(_ message: String) throws {
+            try Self.runGit(["add", "--all"], in: directory)
+            try Self.runGit(["commit", "--quiet", "-m", message], in: directory)
+        }
+
+        func addSubmoduleEntry(path: String) throws -> String {
+            try Self.runGit(["update-index", "--add", "--cacheinfo", "160000,\(revision),\(path)"], in: directory)
+            try Self.runGit(["commit", "--quiet", "-m", "Add gitlink"], in: directory)
+            return try Self.runGit(["rev-parse", "HEAD"], in: directory)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
         @discardableResult
         private static func runGit(_ arguments: [String], in directory: URL) throws -> String {
             let process = Process()
@@ -91,35 +109,20 @@ final class PBQLOutlineViewTests: XCTestCase {
         }
     }
 
-    // swift6-safety-justification: Tests finish configuring the spy before queueing work, and the lock protects its only cross-queue result.
-    private final class TreeSpy: PBGitTree, @unchecked Sendable {
-        private let exportLock = NSLock()
-        private var exportedOnMainThreadStorage: Bool?
-        var shouldExport = true
-        var exportedContents = Data("promised contents".utf8)
+    private final class BoolBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storedValue: Bool?
 
-        var exportedOnMainThread: Bool? {
-            exportLock.lock()
-            defer { exportLock.unlock() }
-            return exportedOnMainThreadStorage
+        var value: Bool? {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedValue
         }
 
-        override func save(toFolder directory: String) {
-            exportLock.lock()
-            exportedOnMainThreadStorage = Thread.isMainThread
-            exportLock.unlock()
-            guard shouldExport else { return }
-            let outputURL = URL(fileURLWithPath: directory).appendingPathComponent(path)
-            if leaf {
-                try? FileManager.default.createDirectory(
-                    at: outputURL.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                try? exportedContents.write(to: outputURL)
-            } else {
-                try? FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
-                try? exportedContents.write(to: outputURL.appendingPathComponent("child.txt"))
-            }
+        func store(_ value: Bool) {
+            lock.lock()
+            storedValue = value
+            lock.unlock()
         }
     }
 
@@ -196,20 +199,23 @@ final class PBQLOutlineViewTests: XCTestCase {
     }
 
     func testPromiseQueuePerformsExportOffMainThread() throws {
+        let fixture = try GitFixture()
         let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
-        let promisedTree = tree(path: "background.txt", leaf: true)
+        let promisedTree = fixture.tree(path: "binary.dat", leaf: true)
         let provider = try provider(for: promisedTree, in: outline)
         let parent = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: parent) }
         let context = PromiseWriteContext(
             outline: outline,
             provider: provider,
-            destination: parent.appendingPathComponent("background.txt")
+            destination: parent.appendingPathComponent("binary.dat")
         )
         let completed = expectation(description: "The file promise completed")
         let result = ErrorBox()
+        let callbackThread = BoolBox()
 
         outline.operationQueue(for: provider).addOperation {
+            callbackThread.store(Thread.isMainThread)
             context.outline.filePromiseProvider(context.provider, writePromiseTo: context.destination) { error in
                 result.store(error)
                 completed.fulfill()
@@ -218,12 +224,13 @@ final class PBQLOutlineViewTests: XCTestCase {
 
         wait(for: [completed], timeout: 2)
         XCTAssertNil(result.error)
-        XCTAssertEqual(promisedTree.exportedOnMainThread, false)
+        XCTAssertEqual(callbackThread.value, false)
     }
 
     func testFilePromiseWritesToExactDestinationAndRemovesStagingDirectory() throws {
+        let fixture = try GitFixture()
         let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
-        let promisedTree = tree(path: "nested/original-name.txt", leaf: true)
+        let promisedTree = fixture.tree(path: "binary.dat", leaf: true)
         let provider = try provider(for: promisedTree, in: outline)
         let parent = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: parent) }
@@ -232,13 +239,14 @@ final class PBQLOutlineViewTests: XCTestCase {
         let error = write(provider: provider, with: outline, to: destination)
 
         XCTAssertNil(error)
-        XCTAssertEqual(try Data(contentsOf: destination), promisedTree.exportedContents)
+        XCTAssertEqual(try Data(contentsOf: destination), Data([0x00, 0x7F, 0xFF]))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [destination.lastPathComponent])
     }
 
     func testDirectoryPromiseMovesExportedTreeToExactDestination() throws {
+        let fixture = try GitFixture()
         let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
-        let promisedTree = tree(path: "Original Folder", leaf: false)
+        let promisedTree = fixture.tree(path: "Documentation", leaf: false)
         let provider = try provider(for: promisedTree, in: outline)
         let parent = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: parent) }
@@ -248,25 +256,24 @@ final class PBQLOutlineViewTests: XCTestCase {
 
         XCTAssertNil(error)
         XCTAssertEqual(
-            try Data(contentsOf: destination.appendingPathComponent("child.txt")),
-            promisedTree.exportedContents
+            try Data(contentsOf: destination.appendingPathComponent("Café.txt")),
+            Data("promised directory contents\n".utf8)
         )
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [destination.lastPathComponent])
     }
 
     func testMissingExportReportsErrorAndCleansStagingDirectory() throws {
+        let fixture = try GitFixture()
         let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
-        let promisedTree = tree(path: "missing.txt", leaf: true)
-        promisedTree.shouldExport = false
+        let promisedTree = fixture.tree(path: "missing.txt", leaf: true)
         let provider = try provider(for: promisedTree, in: outline)
         let parent = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: parent) }
         let destination = parent.appendingPathComponent("missing.txt")
 
-        let error = write(provider: provider, with: outline, to: destination) as NSError?
+        let error = write(provider: provider, with: outline, to: destination)
 
-        XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
-        XCTAssertEqual(error?.code, NSFileNoSuchFileError)
+        XCTAssertTrue(error?.localizedDescription.contains("missing.txt") == true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
     }
@@ -291,11 +298,146 @@ final class PBQLOutlineViewTests: XCTestCase {
         XCTAssertEqual(error?.code, NSFileWriteUnknownError)
     }
 
-    private func tree(path: String, leaf: Bool) -> TreeSpy {
-        let tree = TreeSpy()
+    func testNestedCommittedFileUsesExactDestinationWithoutRecreatingRepositoryFolders() throws {
+        let fixture = try GitFixture()
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let provider = try provider(for: fixture.tree(path: "Documentation/Café.txt", leaf: true), in: outline)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Renamed.txt")
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination), Data("promised directory contents\n".utf8))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), ["Renamed.txt"])
+    }
+
+    func testCommittedPromiseRetainsRevisionAndPathsAfterTreeReleaseAndNewCommit() throws {
+        let fixture = try GitFixture()
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        weak var releasedTree: PBGitTree?
+        let provider: NSFilePromiseProvider
+        do {
+            let tree = fixture.tree(path: "binary.dat", leaf: true)
+            releasedTree = tree
+            provider = try self.provider(for: tree, in: outline)
+        }
+        XCTAssertNil(releasedTree)
+        try fixture.write(Data("new revision".utf8), to: "binary.dat")
+        try fixture.commit("Replace binary")
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("binary.dat")
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination), Data([0x00, 0x7F, 0xFF]))
+    }
+
+    func testWorkingFilePromiseUsesFilesystemContents() throws {
+        let fixture = try GitFixture()
+        try fixture.write(Data("working contents\n".utf8), to: "Documentation/Café.txt")
+        let root = PBWorkingTree.root(for: fixture.repository)
+        let workingFile = try XCTUnwrap(findTree(path: "Documentation/Café.txt", below: root))
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let provider = try provider(for: workingFile, in: outline)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("working.txt")
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination), Data("working contents\n".utf8))
+    }
+
+    func testWorkingDirectoryPromiseCopiesCapturedDescendants() throws {
+        let fixture = try GitFixture()
+        try fixture.write(Data("working contents\n".utf8), to: "Documentation/Café.txt")
+        try fixture.write(Data("untracked\n".utf8), to: "Documentation/New.txt")
+        let root = PBWorkingTree.root(for: fixture.repository)
+        let workingDirectory = try XCTUnwrap(findTree(path: "Documentation", below: root))
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let provider = try provider(for: workingDirectory, in: outline)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("Café.txt")), Data("working contents\n".utf8))
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("New.txt")), Data("untracked\n".utf8))
+    }
+
+    func testCommittedSubmodulePromiseReportsFailureWithoutDestination() throws {
+        let fixture = try GitFixture()
+        let revision = try fixture.addSubmoduleEntry(path: "Vendor")
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Vendor",
+            isDirectory: true,
+            source: .committedDirectory(
+                repository: repositoryDescriptor(for: fixture),
+                revision: revision,
+                path: "Vendor"
+            )
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Vendor", isDirectory: true)
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("submodule"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testTimedOutGitExportReportsFailureWithoutDestination() throws {
+        let fixture = try GitFixture()
+        let script = fixture.directory.appendingPathComponent("slow-git.sh")
+        try "#!/bin/sh\nsleep 1\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let repository = QuickLookGitRepositoryDescriptor(
+            executablePath: script.path,
+            gitDirectoryPath: fixture.directory.appendingPathComponent(".git").path,
+            workingDirectoryPath: fixture.directory.path
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "slow.txt",
+            isDirectory: false,
+            source: .committedFile(repository: repository, revision: fixture.revision, path: "binary.dat")
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("slow.txt")
+
+        XCTAssertThrowsError(
+            try QuickLookFilePromiseExporter(commandTimeout: 0.01).export(descriptor, to: destination)
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    private func tree(path: String, leaf: Bool) -> PBGitTree {
+        let tree = PBGitTree()
         tree.path = path
         tree.leaf = leaf
         return tree
+    }
+
+    private func findTree(path: String, below tree: PBGitTree) -> PBGitTree? {
+        if tree.fullPath == path {
+            return tree
+        }
+        for child in tree.children {
+            if let match = findTree(path: path, below: child) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private func repositoryDescriptor(for fixture: GitFixture) -> QuickLookGitRepositoryDescriptor {
+        QuickLookGitRepositoryDescriptor(
+            executablePath: PBGitBinary.path() ?? "/usr/bin/git",
+            gitDirectoryPath: fixture.repository.gitURL()?.path ?? "",
+            workingDirectoryPath: fixture.directory.path
+        )
     }
 
     private func provider(for tree: PBGitTree, in outline: PBQLOutlineView) throws -> NSFilePromiseProvider {

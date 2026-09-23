@@ -73,6 +73,7 @@
 #import "PBSidebarTableViewCell.h"
 #import "NSOutlineViewExt.h"
 #import "PBGitTree.h"
+#import "PBWorkingTree.h"
 #import "PBCommitHookFailedSheet.h"
 #import "PBGitXMessageSheet.h"
 // StagingViewController.swift needs these:

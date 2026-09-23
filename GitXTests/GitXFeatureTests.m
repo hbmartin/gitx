@@ -2983,6 +2983,22 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertNil([outline outlineView:outline objectValueForTableColumn:nil byItem:@"item"]);
 }
 
+- (void)testQuickLookFilePromiseQueueMayBeRequestedOffMainThread
+{
+	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	NSFilePromiseProvider *provider = [[NSFilePromiseProvider alloc] initWithFileType:@"public.data" delegate:outline];
+	XCTestExpectation *requested = [self expectationWithDescription:@"AppKit requested the file-promise queue off main"];
+	__block NSOperationQueue *promiseQueue = nil;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		promiseQueue = [outline operationQueueForFilePromiseProvider:provider];
+		XCTAssertFalse(NSThread.isMainThread);
+		[requested fulfill];
+	});
+	[self waitForExpectations:@[ requested ] timeout:2];
+	XCTAssertNotNil(promiseQueue);
+	XCTAssertEqual(promiseQueue.maxConcurrentOperationCount, (NSInteger)1);
+}
+
 - (void)testQuickLookOutlineRoutesSpaceAndContextMenuToItsController
 {
 	PBQLOutlineHistorySpy *controller = [[PBQLOutlineHistorySpy alloc] init];
