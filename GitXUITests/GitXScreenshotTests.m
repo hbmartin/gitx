@@ -770,7 +770,11 @@
 	}
 
 	@try {
-		XCUIElement *viewRemoteMenuButton = self.app.toolbars.firstMatch.menuButtons[@"GitX.Toolbar.ViewRemote"];
+		XCUIElementQuery *toolbarMenuButtons =
+			[self.app.toolbars.firstMatch descendantsMatchingType:XCUIElementTypeMenuButton];
+		XCUIElement *viewRemoteMenuButton =
+			[toolbarMenuButtons matchingPredicate:[NSPredicate predicateWithFormat:@"label == %@", @"View Remote menu"]]
+				.firstMatch;
 		XCTAssertTrue([viewRemoteMenuButton waitForExistenceWithTimeout:10],
 					  @"The native View Remote toolbar item should expose its labelled pull-down button");
 		XCTAssertEqualObjects(viewRemoteMenuButton.label, @"View Remote menu");
