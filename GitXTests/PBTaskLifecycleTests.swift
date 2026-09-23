@@ -39,6 +39,31 @@ final class PBTaskLifecycleTests: XCTestCase {
             .appendingPathComponent("gitx-pbtask-\(UUID().uuidString)-\(name)")
     }
 
+    private func waitForProcessesToExit(_ processIdentifiers: [pid_t], timeout: TimeInterval = 2) {
+        let exited = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                processIdentifiers.allSatisfy(self.processHasTerminated)
+            },
+            object: nil
+        )
+        wait(for: [exited], timeout: timeout)
+    }
+
+    private func processHasTerminated(_ processIdentifier: pid_t) -> Bool {
+        var information = proc_bsdinfo()
+        let informationSize = MemoryLayout<proc_bsdinfo>.size
+        let returnedSize = withUnsafeMutablePointer(to: &information) { pointer in
+            proc_pidinfo(
+                processIdentifier,
+                PROC_PIDTBSDINFO,
+                0,
+                pointer,
+                Int32(informationSize)
+            )
+        }
+        return returnedSize <= 0 || information.pbi_status == SZOMB
+    }
+
     func testDebugLoggingPreferenceStillRunsTask() throws {
         let defaults = UserDefaults.standard
         let key = "Show Debug Messages"
@@ -416,6 +441,110 @@ final class PBTaskLifecycleTests: XCTestCase {
 
         let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
         XCTAssertEqual(Darwin.kill(processID, 0), -1)
+    }
+
+    func testTerminateSignalsTheEntireCooperativeProcessGroup() throws {
+        let leaderPIDURL = temporaryFileURL(named: "cooperative-group-leader")
+        let descendantPIDURL = temporaryFileURL(named: "cooperative-group-descendant")
+        defer {
+            for url in [leaderPIDURL, descendantPIDURL] {
+                if let contents = try? String(contentsOf: url, encoding: .utf8),
+                   let processID = pid_t(contents)
+                {
+                    _ = Darwin.kill(processID, SIGKILL)
+                }
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
+                    "/bin/sleep 30 & child=$!; " +
+                    "printf '%d' \"$child\" > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
+                    "trap 'wait \"$child\"; exit 0' TERM; " +
+                    "while :; do wait \"$child\"; done",
+            ],
+            inDirectory: nil
+        )
+        task.additionalEnvironment = [
+            "PB_TASK_LEADER_PID_FILE": leaderPIDURL.path,
+            "PB_TASK_DESCENDANT_PID_FILE": descendantPIDURL.path,
+        ]
+        task.timeout = 0
+        let completed = expectation(description: "cooperative process group terminated")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            XCTAssertNil(error)
+            completed.fulfill()
+        }
+        let launched = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                FileManager.default.fileExists(atPath: leaderPIDURL.path) &&
+                    FileManager.default.fileExists(atPath: descendantPIDURL.path)
+            },
+            object: nil
+        )
+        wait(for: [launched], timeout: 2)
+        task.terminate()
+        wait(for: [completed], timeout: 2)
+
+        let leaderPID = try XCTUnwrap(pid_t(String(contentsOf: leaderPIDURL, encoding: .utf8)))
+        let descendantPID = try XCTUnwrap(pid_t(String(contentsOf: descendantPIDURL, encoding: .utf8)))
+        waitForProcessesToExit([leaderPID, descendantPID])
+    }
+
+    func testGracefulTerminationRetainsLeaderUntilIgnoringDescendantIsForceKilled() throws {
+        let leaderPIDURL = temporaryFileURL(named: "escalating-group-leader")
+        let descendantPIDURL = temporaryFileURL(named: "escalating-group-descendant")
+        defer {
+            for url in [leaderPIDURL, descendantPIDURL] {
+                if let contents = try? String(contentsOf: url, encoding: .utf8),
+                   let processID = pid_t(contents)
+                {
+                    _ = Darwin.kill(processID, SIGKILL)
+                }
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
+                    "/bin/sh -c 'trap \"\" TERM; while :; do /bin/sleep 1; done' & child=$!; " +
+                    "printf '%d' \"$child\" > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
+                    "trap 'exit 0' TERM; " +
+                    "while :; do wait \"$child\"; done",
+            ],
+            inDirectory: nil
+        )
+        task.additionalEnvironment = [
+            "PB_TASK_LEADER_PID_FILE": leaderPIDURL.path,
+            "PB_TASK_DESCENDANT_PID_FILE": descendantPIDURL.path,
+        ]
+        task.timeout = 0
+        let completed = expectation(description: "process group force-killed")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            XCTAssertNil(error)
+            completed.fulfill()
+        }
+        let launched = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                FileManager.default.fileExists(atPath: leaderPIDURL.path) &&
+                    FileManager.default.fileExists(atPath: descendantPIDURL.path)
+            },
+            object: nil
+        )
+        wait(for: [launched], timeout: 2)
+        task.terminate(afterGracePeriod: 0, forceKillAfter: 0.2)
+        wait(for: [completed], timeout: 2)
+
+        let leaderPID = try XCTUnwrap(pid_t(String(contentsOf: leaderPIDURL, encoding: .utf8)))
+        let descendantPID = try XCTUnwrap(pid_t(String(contentsOf: descendantPIDURL, encoding: .utf8)))
+        waitForProcessesToExit([leaderPID, descendantPID])
     }
 
     func testLaunchUsesRequestedWorkingDirectory() throws {

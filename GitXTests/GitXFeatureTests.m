@@ -1634,6 +1634,9 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqual([manager commitCountFrom:@"old" to:@"new" repositoryURL:url], 7);
 	manager.testOutput = @"1234\n";
 	XCTAssertEqual([manager commitTimestampForSHA:@"new" repositoryURL:url], 1234);
+	manager.testOutput = nil;
+	XCTAssertEqual([manager commitCountFrom:@"old" to:@"new" repositoryURL:url], 0);
+	XCTAssertEqual([manager commitTimestampForSHA:@"new" repositoryURL:url], 0);
 	manager.testError = [NSError errorWithDomain:@"test" code:1 userInfo:nil];
 	XCTAssertEqual([manager commitTimestampForSHA:@"new" repositoryURL:url], 0);
 }
@@ -1780,6 +1783,11 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.title containsString:@"3 new commits"]);
 		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"sha"], @"b");
 		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"multipleBranches"], @YES);
+
+		[manager postAdvanceNotificationForURL:url advances:@[ @{} ]];
+		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.title containsString:@"0 new commits"]);
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"sha"], @"");
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"ref"], @"");
 	} @finally {
 		PBFeatureSwapInstanceMethods(
 			UNUserNotificationCenter.class,

@@ -7,10 +7,11 @@
 //
 
 #import "PBTask.h"
-#import "PBProcessEnvironment.h"
+#import "GitX-Swift.h"
 
 #import <fcntl.h>
 #import <signal.h>
+#import <sys/wait.h>
 
 NSString *const PBTaskErrorDomain = @"PBTaskErrorDomain";
 NSString *const PBTaskUnderlyingExceptionKey = @"PBTaskUnderlyingExceptionKey";
@@ -28,7 +29,11 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 @interface PBTask ()
 
-@property (retain) NSTask *task;
+@property (copy) NSString *launchPath;
+@property (copy) NSArray<NSString *> *arguments;
+@property (copy) NSDictionary<NSString *, NSString *> *environment;
+@property (nullable, copy) NSString *currentDirectoryPath;
+@property (nullable, strong) PBChildProcessSupervisor *processSupervisor;
 @property (retain) NSData *standardOutputData;
 @property (retain) NSMutableData *standardOutputBuffer;
 @property (retain) NSPipe *outputPipe;
@@ -70,10 +75,9 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	self = [super init];
 	if (!self) return nil;
 
-	_task = [[NSTask alloc] init];
 	_timeout = 30.0;
-	[_task setLaunchPath:launchPath];
-	[_task setArguments:args];
+	_launchPath = [launchPath copy];
+	_arguments = [args copy] ?: @[];
 
 	// Prepare ourselves a nicer environment
 	NSMutableDictionary *env = [[PBProcessEnvironment
@@ -84,10 +88,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		@"MallocGuardEdges", @"MallocNanoZone", @"MallocScribble", @"MallocStackLogging", @"MallocStackLoggingNoCompact",
 		@"NSZombieEnabled"
 	]];
-	[_task setEnvironment:env];
-
-	if (directory)
-		[_task setCurrentDirectoryPath:directory];
+	_environment = [env copy];
+	_currentDirectoryPath = [directory copy];
 
 	if ([[NSUserDefaults standardUserDefaults] boolForKey:@"Show Debug Messages"])
 		NSLog(@"Starting command `%@ %@` in dir %@", launchPath, [args componentsJoinedByString:@" "], directory);
@@ -96,12 +98,12 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 #endif
 
 	_outputPipe = [NSPipe pipe];
-	[_task setStandardOutput:_outputPipe];
-	[_task setStandardError:_outputPipe];
 
 	_standardOutputData = [NSData data];
 	_standardOutputBuffer = [NSMutableData data];
-	_stateQueue = dispatch_queue_create("org.gitx.PBTask.state", DISPATCH_QUEUE_SERIAL);
+	dispatch_queue_attr_t stateQueueAttributes =
+		dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
+	_stateQueue = dispatch_queue_create("org.gitx.PBTask.state", stateQueueAttributes);
 
 	PBTaskLog(@"task %p: init", self);
 
@@ -117,8 +119,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 - (NSArray<NSString *> *)taskArguments
 {
 	NSMutableArray<NSString *> *arguments = [NSMutableArray array];
-	if (self.task.launchPath) [arguments addObject:self.task.launchPath];
-	if (self.task.arguments) [arguments addObjectsFromArray:self.task.arguments];
+	if (self.launchPath) [arguments addObject:self.launchPath];
+	if (self.arguments) [arguments addObjectsFromArray:self.arguments];
 	return arguments;
 }
 
@@ -185,9 +187,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 	[self stopOutputReaderAndCloseWhenSafe];
 	self.inputPipe.fileHandleForWriting.writeabilityHandler = nil;
-	@synchronized(self) {
-		self.task.terminationHandler = nil;
-	}
+	self.processSupervisor = nil;
 	self.resultHandler = nil;
 	self.outputChunkHandler = nil;
 	self.callbackQueue = nil;
@@ -290,6 +290,37 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	};
 }
 
+- (NSDictionary<NSString *, NSString *> *)environmentForLaunch
+{
+	NSMutableDictionary<NSString *, NSString *> *environment = [self.environment mutableCopy];
+	[self.additionalEnvironment enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+		if (![key isKindOfClass:[NSString class]] || ![value isKindOfClass:[NSString class]]) {
+			[NSException raise:NSInvalidArgumentException format:@"PBTask environment keys and values must be strings"];
+		}
+		environment[key] = value;
+	}];
+	return environment;
+}
+
+- (NSError *)launchErrorForException:(NSException *)exception underlyingError:(NSError *)underlyingError
+{
+	NSString *desc = @"Exception raised while launching task";
+	NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" failed to launch", self.launchPath];
+	NSMutableDictionary *info = [@{
+		NSLocalizedDescriptionKey : desc,
+		NSLocalizedFailureReasonErrorKey : failureReason,
+		PBTaskUnderlyingExceptionKey : exception,
+	} mutableCopy];
+	if (underlyingError) info[NSUnderlyingErrorKey] = underlyingError;
+	return [NSError errorWithDomain:PBTaskErrorDomain code:PBTaskLaunchError userInfo:info];
+}
+
+- (void)closeChildPipeEnds
+{
+	[self.outputPipe.fileHandleForWriting closeFile];
+	[self.inputPipe.fileHandleForReading closeFile];
+}
+
 - (void)performTaskOnQueue:(dispatch_queue_t)queue
 		outputChunkHandler:(PBTaskOutputChunkHandler)outputChunkHandler
 			 resultHandler:(void (^)(NSData *_Nullable, NSError *_Nullable))resultHandler
@@ -307,43 +338,12 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	});
 	[self configureOutputReader];
 
-	// additionalEnvironment is intentionally mutable until launch time. A
-	// number of callers configure a task after creating it, so folding these
-	// values into NSTask's environment in the initializer is too early.
-	if (self.additionalEnvironment.count) {
-		NSMutableDictionary *environment = [self.task.environment mutableCopy] ?: [NSMutableDictionary dictionary];
-		[environment addEntriesFromDictionary:self.additionalEnvironment];
-		self.task.environment = environment;
-	}
-
 	__weak PBTask *weakSelf = self;
-	@synchronized(self) {
-		self.task.terminationHandler = ^(NSTask *task) {
-			PBTask *strongSelf = weakSelf;
-			if (!strongSelf) return;
-			NSTaskTerminationReason reason;
-			int status;
-			@synchronized(strongSelf) {
-				reason = task.terminationReason;
-				status = task.terminationStatus;
-			}
-			dispatch_async(strongSelf.stateQueue, ^{
-				if (strongSelf.operationFinished) return;
-				strongSelf.terminationReason = reason;
-				strongSelf.terminationStatus = status;
-				strongSelf.taskFinished = YES;
-				[strongSelf finishIfReady];
-				[strongSelf scheduleOutputDrainAfterTaskExit];
-			});
-		};
-	}
 
 	if (self.standardInputData) {
 		self.inputPipe = [NSPipe pipe];
-		self.task.standardInput = self.inputPipe;
 		NSFileHandle *inputHandle = self.inputPipe.fileHandleForWriting;
-		if (fcntl(inputHandle.fileDescriptor, F_SETNOSIGPIPE, 1) == -1)
-			PBTaskLog(@"task %p: could not suppress SIGPIPE for stdin", self);
+		(void)fcntl(inputHandle.fileDescriptor, F_SETNOSIGPIPE, 1);
 
 		inputHandle.writeabilityHandler = ^(NSFileHandle *handle) {
 			PBTask *strongSelf = weakSelf;
@@ -368,63 +368,65 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	@try {
 		PBTaskLog(@"task %p: launching", self);
 		__block BOOL cancelled = NO;
+		__block NSError *launchError = nil;
 		@synchronized(self) {
 			cancelled = self.cancellationRequested;
-			if (!cancelled) [self.task launch];
+			if (!cancelled) {
+				NSNumber *inputFileDescriptor = self.inputPipe ? @(self.inputPipe.fileHandleForReading.fileDescriptor) : nil;
+				self.processSupervisor = [[PBChildProcessSupervisor alloc]
+							  initWithLaunchPath:self.launchPath
+									   arguments:self.arguments
+									 environment:[self environmentForLaunch]
+								workingDirectory:self.currentDirectoryPath
+					 standardInputFileDescriptor:inputFileDescriptor
+					standardOutputFileDescriptor:self.outputPipe.fileHandleForWriting.fileDescriptor
+							  terminationHandler:^(int32_t rawWaitStatus) {
+								  PBTask *strongSelf = weakSelf;
+								  if (!strongSelf) return;
+								  dispatch_async(strongSelf.stateQueue, ^{
+									  if (strongSelf.operationFinished) return;
+									  if (WIFSIGNALED(rawWaitStatus)) {
+										  strongSelf.terminationReason = NSTaskTerminationReasonUncaughtSignal;
+										  strongSelf.terminationStatus = WTERMSIG(rawWaitStatus);
+									  } else {
+										  strongSelf.terminationReason = NSTaskTerminationReasonExit;
+										  strongSelf.terminationStatus = WIFEXITED(rawWaitStatus) ? WEXITSTATUS(rawWaitStatus) : rawWaitStatus;
+									  }
+									  strongSelf.taskFinished = YES;
+									  [strongSelf finishIfReady];
+									  [strongSelf scheduleOutputDrainAfterTaskExit];
+								  });
+							  }];
+				if (![self.processSupervisor launchAndReturnError:&launchError])
+					self.processSupervisor = nil;
+			}
 		}
+		[self closeChildPipeEnds];
 		if (cancelled) {
 			NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain
 												 code:NSUserCancelledError
 											 userInfo:@{NSLocalizedDescriptionKey : @"Task cancelled before launch"}];
 			[self finishWithError:error];
+		} else if (launchError) {
+			NSException *exception = [NSException exceptionWithName:@"PBTaskLaunchException"
+															 reason:launchError.localizedDescription
+														   userInfo:@{NSUnderlyingErrorKey : launchError}];
+			[self finishWithError:[self launchErrorForException:exception underlyingError:launchError]];
 		} else if (self.timeout > 0) {
 			NSTimeInterval timeout = self.timeout;
-			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)), self.stateQueue, ^{
 				PBTask *strongSelf = weakSelf;
 				if (!strongSelf) return;
-				dispatch_async(strongSelf.stateQueue, ^{
-					if (strongSelf.operationFinished || strongSelf.taskFinished) return;
-					BOOL taskWasRunning;
-					pid_t processIdentifier = 0;
-					@synchronized(strongSelf) {
-						taskWasRunning = strongSelf.task.running;
-						if (taskWasRunning) processIdentifier = strongSelf.task.processIdentifier;
-					}
-					if (!taskWasRunning) return;
-					strongSelf.forcedError = [strongSelf timeoutError];
-					@synchronized(strongSelf) {
-						if (strongSelf.task.running) [strongSelf.task terminate];
-					}
-					PBTaskLog(@"task %p: timeout sent SIGTERM to %d", strongSelf, processIdentifier);
-
-					dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(PBTaskTerminationGrace * NSEC_PER_SEC)), strongSelf.stateQueue, ^{
-						if (strongSelf.operationFinished || strongSelf.taskFinished) return;
-						BOOL shouldKill;
-						@synchronized(strongSelf) {
-							shouldKill = processIdentifier > 0 && strongSelf.task.running && strongSelf.task.processIdentifier == processIdentifier;
-						}
-						if (shouldKill) {
-							PBTaskLog(@"task %p: timeout escalating to SIGKILL for %d", strongSelf, processIdentifier);
-							kill(processIdentifier, SIGKILL);
-						}
-					});
-				});
+				if (strongSelf.operationFinished || strongSelf.taskFinished) return;
+				strongSelf.forcedError = [strongSelf timeoutError];
+				[strongSelf.processSupervisor requestTerminationAfterGracePeriod:0
+																  forceKillAfter:@(PBTaskTerminationGrace)];
 			});
 		}
 	}
 	@catch (NSException *exception) {
-		NSString *desc = @"Exception raised while launching task";
-		NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" failed to launch", self.task.launchPath];
-		NSDictionary *info = @{
-			NSLocalizedDescriptionKey : desc,
-			NSLocalizedFailureReasonErrorKey : failureReason,
-			PBTaskUnderlyingExceptionKey : exception,
-		};
-		NSError *error = [NSError errorWithDomain:PBTaskErrorDomain
-											 code:PBTaskLaunchError
-										 userInfo:info];
-
-		[self finishWithError:error];
+		[self closeChildPipeEnds];
+		[self finishWithError:[self launchErrorForException:exception underlyingError:nil]];
 	}
 }
 
@@ -463,7 +465,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 	__block NSError *taskError = nil;
 
-	[self performTaskOnQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)
+	[self performTaskOnQueue:dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0)
 		  outputChunkHandler:outputChunkHandler
 		   completionHandler:^(NSData *readData, NSError *error) {
 			   taskError = error;
@@ -480,49 +482,28 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 - (void)terminate
 {
+	PBChildProcessSupervisor *supervisor;
 	@synchronized(self) {
 		self.cancellationRequested = YES;
-		if (self.task.running) [self.task terminate];
+		supervisor = self.processSupervisor;
 	}
+	[supervisor requestTerminationAfterGracePeriod:0 forceKillAfter:nil];
 }
 
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(NSTimeInterval)forceKillDelay
 {
+	PBChildProcessSupervisor *supervisor;
 	@synchronized(self) {
 		self.cancellationRequested = YES;
+		supervisor = self.processSupervisor;
 	}
-
-	__weak PBTask *weakSelf = self;
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0, gracePeriod) * NSEC_PER_SEC)),
-				   dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-					   PBTask *strongSelf = weakSelf;
-					   if (!strongSelf) return;
-					   __block pid_t processIdentifier = 0;
-					   @synchronized(strongSelf) {
-						   if (!strongSelf.task.running) return;
-						   processIdentifier = strongSelf.task.processIdentifier;
-						   [strongSelf.task terminate];
-					   }
-					   PBTaskLog(@"task %p: graceful cancellation sent SIGTERM to %d", strongSelf, processIdentifier);
-
-					   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0, forceKillDelay) * NSEC_PER_SEC)),
-									  strongSelf.stateQueue, ^{
-										  if (strongSelf.operationFinished || strongSelf.taskFinished) return;
-										  BOOL shouldKill;
-										  @synchronized(strongSelf) {
-											  shouldKill = processIdentifier > 0 && strongSelf.task.running && strongSelf.task.processIdentifier == processIdentifier;
-										  }
-										  if (shouldKill) {
-											  PBTaskLog(@"task %p: graceful cancellation escalating to SIGKILL for %d", strongSelf, processIdentifier);
-											  kill(processIdentifier, SIGKILL);
-										  }
-									  });
-				   });
+	[supervisor requestTerminationAfterGracePeriod:MAX(0, gracePeriod)
+									forceKillAfter:@(MAX(0, forceKillDelay))];
 }
 
 - (NSString *)description
 {
-	NSArray *taskArguments = [@[ self.task.launchPath ] arrayByAddingObjectsFromArray:self.task.arguments];
+	NSArray *taskArguments = [@[ self.launchPath ] arrayByAddingObjectsFromArray:self.arguments];
 	return [NSString stringWithFormat:@"<%@ %p command: %@ stdin: %@>", NSStringFromClass([self class]), self,
 									  [taskArguments componentsJoinedByString:@" "],
 									  (self.standardInputData ? @"YES" : @"NO")];

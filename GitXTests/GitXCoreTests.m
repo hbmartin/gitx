@@ -3243,6 +3243,19 @@
 	XCTAssertEqualObjects(task.standardOutputString, @"héllo from stdin\n");
 }
 
+- (void)testInvalidAdditionalEnvironmentReturnsLaunchError
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+	task.additionalEnvironment = (NSDictionary *)@{@"VALID_KEY" : @42};
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	NSException *exception = error.userInfo[PBTaskUnderlyingExceptionKey];
+	XCTAssertEqualObjects(exception.name, NSInvalidArgumentException);
+}
+
 - (void)testNonZeroExitIncludesStatusAndCombinedOutput
 {
 	NSError *error = nil;

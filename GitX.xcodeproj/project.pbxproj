@@ -135,6 +135,8 @@
 		4D3FB3E7198AEAAF000B4A58 /* PBGitRepositoryDocument.m in Sources */ = {isa = PBXBuildFile; fileRef = 4D3FB3E6198AEAAF000B4A58 /* PBGitRepositoryDocument.m */; };
 		4D6E4F7A1E56851A004C3A6F /* PBMacros.m in Sources */ = {isa = PBXBuildFile; fileRef = 4D6E4F781E56851A004C3A6F /* PBMacros.m */; };
 		4D843B1F1E5D27C3004C3A6F /* PBTask.m in Sources */ = {isa = PBXBuildFile; fileRef = 4D843B1E1E5D27C3004C3A6F /* PBTask.m */; };
+		C0DEB1000000000000000002 /* PBChildProcessOwner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB1000000000000000001 /* PBChildProcessOwner.swift */; };
+		C0DEB1000000000000000003 /* PBChildProcessOwner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB1000000000000000001 /* PBChildProcessOwner.swift */; };
 		4D843B401E5E3939004C3A6F /* PBGitRepository_PBGitBinarySupport.m in Sources */ = {isa = PBXBuildFile; fileRef = 4D843B3F1E5E3939004C3A6F /* PBGitRepository_PBGitBinarySupport.m */; };
 		4DECFBB21E662962004C3A6F /* ObjectiveGit+PBCategories.m in Sources */ = {isa = PBXBuildFile; fileRef = 4DECFBB11E662962004C3A6F /* ObjectiveGit+PBCategories.m */; };
 		4DF173E621A1A67C003CD3CE /* MAKVONotificationCenter.m in Sources */ = {isa = PBXBuildFile; fileRef = 4DF173E521A1A67A003CD3CE /* MAKVONotificationCenter.m */; };
@@ -389,6 +391,7 @@
 		F0B200000000000000000005 /* GitHubReadCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B200000000000000000012 /* GitHubReadCompositionTests.swift */; };
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
+		C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */; };
 		C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE81000000000000000002 /* GitBinaryTests.swift */; };
 		C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */; };
 		C0DE84000000000000000001 /* StagingDiffPaneControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */; };
@@ -834,6 +837,7 @@
 		4D6E4F791E56851A004C3A6F /* PBMacros.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBMacros.h; sourceTree = "<group>"; };
 		4D843B1D1E5D27C3004C3A6F /* PBTask.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBTask.h; sourceTree = "<group>"; };
 		4D843B1E1E5D27C3004C3A6F /* PBTask.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBTask.m; sourceTree = "<group>"; };
+		C0DEB1000000000000000001 /* PBChildProcessOwner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBChildProcessOwner.swift; sourceTree = "<group>"; };
 		4D843B3E1E5E3939004C3A6F /* PBGitRepository_PBGitBinarySupport.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitRepository_PBGitBinarySupport.h; sourceTree = "<group>"; };
 		4D843B3F1E5E3939004C3A6F /* PBGitRepository_PBGitBinarySupport.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitRepository_PBGitBinarySupport.m; sourceTree = "<group>"; };
 		4DC1853818E6F93200E8DB8F /* Info-gitx.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; name = "Info-gitx.plist"; path = "../Resources/Info-gitx.plist"; sourceTree = "<group>"; };
@@ -1066,6 +1070,7 @@
 		C0DEC4000000000000000011 /* RepositoryOpeningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryOpeningCoordinator.swift; sourceTree = "<group>"; };
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
+		C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBChildProcessOwnerTests.swift; sourceTree = "<group>"; };
 		C0DE81000000000000000002 /* GitBinaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryTests.swift; sourceTree = "<group>"; };
 		C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffLoadCoordinatorTests.swift; sourceTree = "<group>"; };
 		C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffPaneControllerTests.swift; sourceTree = "<group>"; };
@@ -1577,6 +1582,7 @@
 				4DECFBB11E662962004C3A6F /* ObjectiveGit+PBCategories.m */,
 				4D843B1D1E5D27C3004C3A6F /* PBTask.h */,
 				4D843B1E1E5D27C3004C3A6F /* PBTask.m */,
+				C0DEB1000000000000000001 /* PBChildProcessOwner.swift */,
 				C01400000000000000000011 /* IncrementalUTF8Decoder.swift */,
 				C0DE44300000000000000002 /* PBProcessEnvironment.h */,
 				C0DE44300000000000000003 /* PBProcessEnvironment.swift */,
@@ -1736,6 +1742,7 @@
 				C0DEC0000000000000000002 /* WindowControllerTests.m */,
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
 				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
+				C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */,
 				C0DE81000000000000000002 /* GitBinaryTests.swift */,
 				C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */,
 				C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */,
@@ -2342,6 +2349,7 @@
 				4A5D76FD14A9A9CC00DF6C68 /* PBGitLane.mm in Sources */,
 				4A5D76FE14A9A9CC00DF6C68 /* PBGitRef.m in Sources */,
 				4D843B1F1E5D27C3004C3A6F /* PBTask.m in Sources */,
+				C0DEB1000000000000000002 /* PBChildProcessOwner.swift in Sources */,
 				4A5D76FF14A9A9CC00DF6C68 /* PBGitRepository.m in Sources */,
 				4A5D770014A9A9CC00DF6C68 /* PBGitRepositoryWatcher.m in Sources */,
 				4A5D770214A9A9CC00DF6C68 /* PBGitRevList.m in Sources */,
@@ -2443,6 +2451,8 @@
 				C0DEC0000000000000000001 /* WindowControllerTests.m in Sources */,
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
 				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
+				C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */,
+				C0DEB1000000000000000003 /* PBChildProcessOwner.swift in Sources */,
 				C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */,
 				C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */,
 				C0DE84000000000000000001 /* StagingDiffPaneControllerTests.swift in Sources */,

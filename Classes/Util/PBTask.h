@@ -24,8 +24,8 @@ typedef NS_ENUM(NSUInteger, PBTaskErrorCode) {
 
 typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 
-/// PBTask is a wrapper around NSTask that uses blocks to report when the
-/// executable exits, and should be used whenever we need to shell out to git.
+/// PBTask owns a child process and uses blocks to report when the executable
+/// exits. It should be used whenever GitX needs to shell out to git.
 @interface PBTask : NSObject
 
 ///
@@ -85,8 +85,8 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 
 - (void)terminate;
 
-/// Cancels before launch, or gives a running process time to exit before sending
-/// SIGTERM and then SIGKILL to that same process if it remains alive.
+/// Cancels before launch, or gives a running process group time to exit before
+/// sending SIGTERM and then SIGKILL if it remains alive.
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod
 				   forceKillAfter:(NSTimeInterval)forceKillDelay
 	NS_SWIFT_NAME(terminate(afterGracePeriod:forceKillAfter:));
