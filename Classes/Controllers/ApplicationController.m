@@ -23,14 +23,18 @@
 #import <Sparkle/SPUUpdater.h>
 #import <Sparkle/SPUUpdaterDelegate.h>
 
+@protocol PBApplicationDocumentSource <NSObject>
+@property (nonatomic, copy, readonly) NSArray<NSDocument *> *documents;
+@end
+
 @interface ApplicationController () <SPUUpdaterDelegate>
 @property (nonatomic, strong) SPUStandardUpdaterController *updaterController;
 @property (nonatomic, strong) PBApplicationComposition *composition;
 - (void)applyAppearancePreference;
 - (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
-						 documentController:(PBRepositoryDocumentController *)documentController;
+						 documentSource:(id<PBApplicationDocumentSource>)documentSource;
 - (void)openUITestRepositoryAtPath:(NSString *)path
-				documentController:(PBRepositoryDocumentController *)documentController;
+					documentSource:(id<PBApplicationDocumentSource>)documentSource;
 @end
 
 @implementation ApplicationController
@@ -214,24 +218,24 @@
 	// XCUITests always get a document window without relying on recents or
 	// Launch Services registration.
 	[self openUITestRepositoryFromEnvironment:env
-						   documentController:(PBRepositoryDocumentController *)documentController];
+						   documentSource:(id<PBApplicationDocumentSource>)documentController];
 }
 
 - (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
-						 documentController:(PBRepositoryDocumentController *)documentController
+						 documentSource:(id<PBApplicationDocumentSource>)documentSource
 {
 	NSString *repositoryPath = environment[@"GITX_UITEST_REPO"];
 	if (repositoryPath.length > 0)
-		[self openUITestRepositoryAtPath:repositoryPath documentController:documentController];
+		[self openUITestRepositoryAtPath:repositoryPath documentSource:documentSource];
 }
 
 - (void)openUITestRepositoryAtPath:(NSString *)path
-				documentController:(PBRepositoryDocumentController *)documentController
+					documentSource:(id<PBApplicationDocumentSource>)documentSource
 {
 	NSURL *repoURL = [NSURL fileURLWithPath:path];
 	// UI tests request one deterministic document. Remove any windows that
 	// AppKit restored from an earlier test process before opening it.
-	for (NSDocument *document in documentController.documents.copy) {
+	for (NSDocument *document in documentSource.documents.copy) {
 		if (![document.fileURL isEqual:repoURL])
 			[document close];
 	}

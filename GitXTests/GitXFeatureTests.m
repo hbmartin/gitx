@@ -689,9 +689,9 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)applicationWillFinishLaunching:(nullable NSNotification *)notification;
 - (void)applicationDidFinishLaunching:(nullable NSNotification *)notification;
 - (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
-						 documentController:(PBRepositoryDocumentController *)documentController;
+						 documentSource:(id)documentSource;
 - (void)openUITestRepositoryAtPath:(NSString *)path
-				documentController:(PBRepositoryDocumentController *)documentController;
+					documentSource:(id)documentSource;
 - (void)registerServices;
 - (void)application:(NSApplication *)application openFiles:(NSArray<NSString *> *)filenames;
 - (BOOL)applicationOpenUntitledFile:(NSApplication *)application;
@@ -699,6 +699,29 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)applicationWillTerminate:(nullable NSNotification *)notification;
 - (void)windowWillClose:(nullable id)sender;
 - (IBAction)openDocument:(nullable id)sender;
+@end
+
+@interface PBApplicationDocumentSourceSpy : NSObject
+@property (nonatomic, copy) NSArray<NSDocument *> *documents;
+@end
+
+@implementation PBApplicationDocumentSourceSpy
+@end
+
+@interface PBApplicationDocumentSpy : NSDocument
+@property (nonatomic, strong) NSURL *testFileURL;
+@property (nonatomic) NSUInteger closeCount;
+@end
+
+@implementation PBApplicationDocumentSpy
+- (NSURL *)fileURL
+{
+	return self.testFileURL;
+}
+- (void)close
+{
+	self.closeCount++;
+}
 @end
 
 @interface PBFileChangesActionTarget : NSObject <NSTableViewDataSource, NSTableViewDelegate, PBFileChangesTableViewStagingDelegate>
@@ -1191,7 +1214,12 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)testApplicationDelegateLaunchRoutesUITestRepositoryThroughCoordinator
 {
 	ApplicationController *controller = (ApplicationController *)NSApp.delegate;
-	PBRepositoryDocumentController *isolatedDocumentController = [[PBRepositoryDocumentController alloc] init];
+	PBApplicationDocumentSpy *unrelatedDocument = [[PBApplicationDocumentSpy alloc] init];
+	unrelatedDocument.testFileURL = [NSURL fileURLWithPath:@"/tmp/gitx-unrelated-repository"];
+	PBApplicationDocumentSpy *requestedDocument = [[PBApplicationDocumentSpy alloc] init];
+	requestedDocument.testFileURL = [NSURL fileURLWithPath:@"/tmp/gitx-ui-launch-repository"];
+	PBApplicationDocumentSourceSpy *isolatedDocumentSource = [[PBApplicationDocumentSourceSpy alloc] init];
+	isolatedDocumentSource.documents = @[ unrelatedDocument, requestedDocument ];
 	NSArray<NSDocument *> *liveDocuments = NSDocumentController.sharedDocumentController.documents.copy;
 	PBApplicationOpenedRepositoryURLs = nil;
 	PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
@@ -1199,13 +1227,15 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 								 @selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
 	@try {
 		[controller openUITestRepositoryFromEnvironment:@{@"GITX_UITEST_REPO" : @"/tmp/gitx-ui-launch-repository"}
-									 documentController:isolatedDocumentController];
+									 documentSource:isolatedDocumentSource];
 		NSPredicate *opened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 			return PBApplicationOpenedRepositoryURLs.count == 1;
 		}];
 		[self waitForExpectations:@[ [[XCTNSPredicateExpectation alloc] initWithPredicate:opened object:NSNull.null] ]
 						  timeout:2.0];
 		XCTAssertEqualObjects(PBApplicationOpenedRepositoryURLs.firstObject.path, @"/tmp/gitx-ui-launch-repository");
+		XCTAssertEqual(unrelatedDocument.closeCount, (NSUInteger)1);
+		XCTAssertEqual(requestedDocument.closeCount, (NSUInteger)0);
 		XCTAssertEqualObjects(NSDocumentController.sharedDocumentController.documents, liveDocuments);
 	} @finally {
 		PBFeatureSwapInstanceMethods(PBRepositoryOpenCoordinator.class,
