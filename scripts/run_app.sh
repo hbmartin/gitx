@@ -322,6 +322,7 @@ isolated_home=$(mktemp -d "$temporary_root/gitx-run-app-home.XXXXXX") || {
 	exit 1
 }
 session_recorded=0
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
 cleanup_unrecorded_home() {
 	local exit_status=$?
 	trap - EXIT
