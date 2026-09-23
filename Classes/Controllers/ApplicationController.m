@@ -32,7 +32,7 @@
 @property (nonatomic, strong) PBApplicationComposition *composition;
 - (void)applyAppearancePreference;
 - (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
-						 documentSource:(id<PBApplicationDocumentSource>)documentSource;
+							 documentSource:(id<PBApplicationDocumentSource>)documentSource;
 - (void)openUITestRepositoryAtPath:(NSString *)path
 					documentSource:(id<PBApplicationDocumentSource>)documentSource;
 @end
@@ -218,11 +218,11 @@
 	// XCUITests always get a document window without relying on recents or
 	// Launch Services registration.
 	[self openUITestRepositoryFromEnvironment:env
-						   documentSource:(id<PBApplicationDocumentSource>)documentController];
+							   documentSource:(id<PBApplicationDocumentSource>)documentController];
 }
 
 - (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
-						 documentSource:(id<PBApplicationDocumentSource>)documentSource
+							 documentSource:(id<PBApplicationDocumentSource>)documentSource
 {
 	NSString *repositoryPath = environment[@"GITX_UITEST_REPO"];
 	if (repositoryPath.length > 0)

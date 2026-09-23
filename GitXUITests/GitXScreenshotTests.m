@@ -760,11 +760,12 @@
 		XCUICoordinate *widerRightEdge = [rightEdge coordinateWithOffset:CGVectorMake(requestedGrowth, 0)];
 		[rightEdge clickForDuration:0.2 thenDragToCoordinate:widerRightEdge];
 		NSPredicate *windowWidened = [NSPredicate predicateWithBlock:^BOOL(__unused id object,
-																	 __unused NSDictionary *bindings) {
+																		   __unused NSDictionary *bindings) {
 			return window.frame.size.width > originalFrame.size.width + 100;
 		}];
 		XCTNSPredicateExpectation *resizeExpectation =
-			[[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened object:window];
+			[[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened
+														  object:window];
 		XCTAssertEqual([XCTWaiter waitForExpectations:@[ resizeExpectation ] timeout:5], XCTWaiterResultCompleted);
 	}
 
@@ -802,7 +803,8 @@
 					return fabs(window.frame.size.width - originalFrame.size.width) < 2;
 				}];
 			XCTNSPredicateExpectation *restoreExpectation =
-				[[XCTNSPredicateExpectation alloc] initWithPredicate:windowRestored object:window];
+				[[XCTNSPredicateExpectation alloc] initWithPredicate:windowRestored
+															  object:window];
 			XCTAssertEqual([XCTWaiter waitForExpectations:@[ restoreExpectation ] timeout:5], XCTWaiterResultCompleted);
 		}
 	}

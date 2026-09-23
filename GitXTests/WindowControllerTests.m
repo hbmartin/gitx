@@ -3618,7 +3618,7 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertEqualObjects(viewRemoteMenuItem.menu.accessibilityIdentifier, @"GitX.Toolbar.ViewRemote");
 	XCTAssertEqualObjects(viewRemoteMenuItem.menu.accessibilityLabel, @"View Remote menu");
 	XCTAssertEqualObjects(viewRemoteMenuItem.menuFormRepresentation.accessibilityIdentifier,
-					  @"GitX.Toolbar.ViewRemote");
+						  @"GitX.Toolbar.ViewRemote");
 	NSMenuItem *viewRemotePrimary = [viewRemoteMenuItem.menu itemWithTitle:@"View Remote"];
 	XCTAssertEqualObjects(viewRemotePrimary.identifier, @"GitX.Toolbar.ViewRemote.Primary");
 	XCTAssertEqual(viewRemotePrimary.target, self.controller);

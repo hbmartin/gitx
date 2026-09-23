@@ -663,7 +663,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)applicationWillFinishLaunching:(nullable NSNotification *)notification;
 - (void)applicationDidFinishLaunching:(nullable NSNotification *)notification;
 - (void)openUITestRepositoryFromEnvironment:(NSDictionary<NSString *, NSString *> *)environment
-						 documentSource:(id)documentSource;
+							 documentSource:(id)documentSource;
 - (void)openUITestRepositoryAtPath:(NSString *)path
 					documentSource:(id)documentSource;
 - (void)registerServices;
@@ -1201,7 +1201,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 								 @selector(pb_feature_openKnownRepositoryURLs:sourceWindow:completion:));
 	@try {
 		[controller openUITestRepositoryFromEnvironment:@{@"GITX_UITEST_REPO" : @"/tmp/gitx-ui-launch-repository"}
-									 documentSource:isolatedDocumentSource];
+										 documentSource:isolatedDocumentSource];
 		NSPredicate *opened = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 			return PBApplicationOpenedRepositoryURLs.count == 1;
 		}];
@@ -3011,15 +3011,15 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqualObjects([outline menuForEvent:event], controller.testContextMenu);
 	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
 	NSEvent *letterEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown
-									 location:NSZeroPoint
-								modifierFlags:0
-									timestamp:0
-								 windowNumber:window.windowNumber
-									  context:nil
-								   characters:@"a"
-						  charactersIgnoringModifiers:@"a"
-									  isARepeat:NO
-										keyCode:0];
+											location:NSZeroPoint
+									   modifierFlags:0
+										   timestamp:0
+										windowNumber:window.windowNumber
+											 context:nil
+										  characters:@"a"
+						 charactersIgnoringModifiers:@"a"
+										   isARepeat:NO
+											 keyCode:0];
 	[outline keyDown:letterEvent];
 	[window close];
 }
