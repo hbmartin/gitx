@@ -62,6 +62,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
     private final class FakeProcessSystem: PBChildProcessSystem, @unchecked Sendable {
         enum Failure: Error {
             case spawn
+            case signal
         }
 
         private let lock = NSLock()
@@ -71,6 +72,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
         private var leaderExited = false
         private var members: [pid_t] = [4321]
         private var shouldFailSpawn = false
+        private var shouldFailSignal = false
         private var signalExpectation: XCTestExpectation?
         var leaderExitsOnTermination = false
 
@@ -95,6 +97,12 @@ final class PBChildProcessOwnerTests: XCTestCase {
         func failNextSpawn() {
             lock.lock()
             shouldFailSpawn = true
+            lock.unlock()
+        }
+
+        func failNextSignal() {
+            lock.lock()
+            shouldFailSignal = true
             lock.unlock()
         }
 
@@ -159,8 +167,13 @@ final class PBChildProcessOwnerTests: XCTestCase {
                 members = [processIdentifier]
             }
             let expectation = signalExpectation
+            let shouldFail = shouldFailSignal
+            shouldFailSignal = false
             lock.unlock()
             expectation?.fulfill()
+            if shouldFail {
+                throw Failure.signal
+            }
         }
 
         func processGroupMembers(processGroup: pid_t) throws -> [pid_t] {
@@ -247,6 +260,42 @@ final class PBChildProcessOwnerTests: XCTestCase {
         wait(for: [completed], timeout: 1)
 
         XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
+    }
+
+    func testSecondLaunchIsRejectedAfterOwnerLeavesIdleState() throws {
+        let system = FakeProcessSystem()
+        system.setLeaderExited(true)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "first child reaped")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0) }
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertThrowsError(try owner.launch(configuration: configuration()) { _ in }) { error in
+            let error = error as NSError
+            XCTAssertEqual(error.domain, NSPOSIXErrorDomain)
+            XCTAssertEqual(error.code, Int(EALREADY))
+        }
+    }
+
+    func testSignalFailureDoesNotPreventLaterExitObservation() throws {
+        let system = FakeProcessSystem()
+        system.failNextSignal()
+        let signalAttempted = expectation(description: "termination signal attempted")
+        system.expectSignal(signalAttempted)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "leader reaped after signal failure")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0) }
+        owner.requestTermination(gracePeriod: 0, forceKillDelay: nil)
+        wait(for: [signalAttempted], timeout: 1)
+        system.setLeaderExited(true)
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(system.events.filter { $0 == "signal:\(SIGTERM)" }, ["signal:\(SIGTERM)"])
         XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
     }
 

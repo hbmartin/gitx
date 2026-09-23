@@ -4,6 +4,17 @@ import XCTest
 
 @MainActor
 final class PBQLOutlineViewTests: XCTestCase {
+    // swift6-safety-justification: This immutable test double only replaces cleanup with a deterministic error.
+    private final class CleanupFailingFileManager: FileManager, @unchecked Sendable {
+        override func removeItem(at URL: URL) throws {
+            throw NSError(
+                domain: NSCocoaErrorDomain,
+                code: NSFileWriteUnknownError,
+                userInfo: [NSLocalizedDescriptionKey: "simulated staging cleanup failure"]
+            )
+        }
+    }
+
     private final class GitFixture {
         let directory: URL
         let repository: PBGitRepository
@@ -244,6 +255,32 @@ final class PBQLOutlineViewTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [destination.lastPathComponent])
     }
 
+    func testSuccessfulExportSurvivesStagingCleanupFailure() throws {
+        let fixture = try GitFixture()
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "binary.dat",
+            isDirectory: false,
+            source: .committedFile(
+                repository: repositoryDescriptor(for: fixture),
+                revision: fixture.revision,
+                path: "binary.dat"
+            )
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("binary.dat")
+
+        XCTAssertNoThrow(
+            try QuickLookFilePromiseExporter(fileManager: CleanupFailingFileManager())
+                .export(descriptor, to: destination)
+        )
+        XCTAssertEqual(try Data(contentsOf: destination), Data([0x00, 0x7F, 0xFF]))
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(atPath: parent.path)
+                .contains { $0.hasPrefix(".gitx-file-promise-") }
+        )
+    }
+
     func testDirectoryPromiseMovesExportedTreeToExactDestination() throws {
         let fixture = try GitFixture()
         let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
@@ -299,6 +336,24 @@ final class PBQLOutlineViewTests: XCTestCase {
         XCTAssertEqual(error?.code, NSFileWriteUnknownError)
     }
 
+    func testDescriptorReportsMissingNameAndRevisionWithoutRetainingTreeState() throws {
+        let unnamedDescriptor = QuickLookExportDescriptor.make(tree: tree(path: "", leaf: true))
+        XCTAssertEqual(unnamedDescriptor.fileName, "GitX Export")
+        guard case let .unavailable(unnamedMessage) = unnamedDescriptor.source else {
+            return XCTFail("An unnamed tree should produce an unavailable export")
+        }
+        XCTAssertTrue(unnamedMessage.contains("name"))
+
+        let fixture = try GitFixture()
+        let revisionlessTree = fixture.tree(path: "binary.dat", leaf: true)
+        revisionlessTree.sha = ""
+        let revisionlessDescriptor = QuickLookExportDescriptor.make(tree: revisionlessTree)
+        guard case let .unavailable(revisionMessage) = revisionlessDescriptor.source else {
+            return XCTFail("A revisionless tree should produce an unavailable export")
+        }
+        XCTAssertTrue(revisionMessage.contains("revision"))
+    }
+
     func testNestedCommittedFileUsesExactDestinationWithoutRecreatingRepositoryFolders() throws {
         let fixture = try GitFixture()
         let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
@@ -348,10 +403,26 @@ final class PBQLOutlineViewTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: destination), Data("working contents\n".utf8))
     }
 
+    func testWorkingFilePromiseFallsBackToCapturedIndexPathWhenCheckoutFileDisappears() throws {
+        let fixture = try GitFixture()
+        try FileManager.default.removeItem(at: fixture.directory.appendingPathComponent("binary.dat"))
+        let root = PBWorkingTree.root(for: fixture.repository)
+        let workingFile = try XCTUnwrap(findTree(path: "binary.dat", below: root))
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let provider = try provider(for: workingFile, in: outline)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("restored.dat")
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination), Data([0x00, 0x7F, 0xFF]))
+    }
+
     func testWorkingDirectoryPromiseCopiesCapturedDescendants() throws {
         let fixture = try GitFixture()
         try fixture.write(Data("working contents\n".utf8), to: "Documentation/Café.txt")
         try fixture.write(Data("untracked\n".utf8), to: "Documentation/New.txt")
+        try fixture.write(Data("nested\n".utf8), to: "Documentation/Guides/Nested.txt")
         let root = PBWorkingTree.root(for: fixture.repository)
         let workingDirectory = try XCTUnwrap(findTree(path: "Documentation", below: root))
         let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
@@ -363,6 +434,10 @@ final class PBQLOutlineViewTests: XCTestCase {
         XCTAssertNil(write(provider: provider, with: outline, to: destination))
         XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("Café.txt")), Data("working contents\n".utf8))
         XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("New.txt")), Data("untracked\n".utf8))
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("Guides/Nested.txt")),
+            Data("nested\n".utf8)
+        )
     }
 
     func testCommittedSubmodulePromiseReportsFailureWithoutDestination() throws {
@@ -386,6 +461,168 @@ final class PBQLOutlineViewTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testMissingCommittedDirectoryReportsFailureWithoutPartialDestination() throws {
+        let fixture = try GitFixture()
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Missing",
+            isDirectory: true,
+            source: .committedDirectory(
+                repository: repositoryDescriptor(for: fixture),
+                revision: fixture.revision,
+                path: "Missing"
+            )
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Missing", isDirectory: true)
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("find any files"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testUnsafeCommittedPathIsRejectedBeforeGitRuns() throws {
+        let fixture = try GitFixture()
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "escape.txt",
+            isDirectory: false,
+            source: .committedFile(
+                repository: repositoryDescriptor(for: fixture),
+                revision: fixture.revision,
+                path: "../escape.txt"
+            )
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("escape.txt")
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("unsafe repository path"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testUnavailableSourceReportsItsCapturedMessageWithoutCreatingDestination() throws {
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Unavailable.txt",
+            isDirectory: false,
+            source: .unavailable("captured unavailable reason")
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Unavailable.txt")
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertEqual(error.localizedDescription, "captured unavailable reason")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testMalformedGitTreeOutputReportsFailureWithoutPartialDestination() throws {
+        let fixture = try GitFixture()
+        let script = fixture.directory.appendingPathComponent("malformed-tree-git.sh")
+        try "#!/bin/sh\nprintf 'malformed\\0'\n".write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let repository = QuickLookGitRepositoryDescriptor(
+            executablePath: script.path,
+            gitDirectoryPath: fixture.directory.appendingPathComponent(".git").path,
+            workingDirectoryPath: fixture.directory.path
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Malformed",
+            isDirectory: true,
+            source: .committedDirectory(repository: repository, revision: fixture.revision, path: "Documentation")
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Malformed", isDirectory: true)
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("invalid tree entry"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testSelectedSubmoduleDetectedAfterEmptyRecursiveListing() throws {
+        let fixture = try GitFixture()
+        let script = fixture.directory.appendingPathComponent("selected-submodule-git.sh")
+        try """
+        #!/bin/sh
+        for argument in "$@"; do
+          [ "$argument" = "-r" ] && exit 0
+        done
+        printf '160000 commit deadbeef\\tVendor\\0'
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let repository = QuickLookGitRepositoryDescriptor(
+            executablePath: script.path,
+            gitDirectoryPath: fixture.directory.appendingPathComponent(".git").path,
+            workingDirectoryPath: fixture.directory.path
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Vendor",
+            isDirectory: true,
+            source: .committedDirectory(repository: repository, revision: fixture.revision, path: "Vendor")
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Vendor", isDirectory: true)
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("submodule"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testUnexpectedRecursiveTreeEntryTypeIsRejected() throws {
+        let fixture = try GitFixture()
+        let script = fixture.directory.appendingPathComponent("unexpected-tree-type-git.sh")
+        try "#!/bin/sh\nprintf '040000 tree deadbeef\\tDocumentation/Nested\\0'\n"
+            .write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let repository = QuickLookGitRepositoryDescriptor(
+            executablePath: script.path,
+            gitDirectoryPath: fixture.directory.appendingPathComponent(".git").path,
+            workingDirectoryPath: fixture.directory.path
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Documentation",
+            isDirectory: true,
+            source: .committedDirectory(
+                repository: repository,
+                revision: fixture.revision,
+                path: "Documentation"
+            )
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Documentation", isDirectory: true)
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("invalid tree entry"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testQuickLookExportErrorsDescribeEveryFailureClass() {
+        XCTAssertEqual(
+            QuickLookExportError.unavailable("unavailable").localizedDescription,
+            "unavailable"
+        )
+        XCTAssertTrue(QuickLookExportError.unsafePath("../escape").localizedDescription.contains("unsafe"))
+        XCTAssertTrue(
+            QuickLookExportError.commandFailed(path: "file", detail: "failure").localizedDescription.contains("failure")
+        )
+        XCTAssertTrue(QuickLookExportError.malformedTreeEntry.localizedDescription.contains("invalid tree entry"))
+        XCTAssertTrue(QuickLookExportError.unsupportedSubmodule("Vendor").localizedDescription.contains("submodule"))
+        XCTAssertTrue(QuickLookExportError.missingTree("Missing").localizedDescription.contains("find any files"))
     }
 
     func testTimedOutGitExportReportsFailureWithoutDestination() throws {
