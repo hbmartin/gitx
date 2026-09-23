@@ -5,6 +5,20 @@ import ForgeKit
 // swiftlint:disable:next unused_import
 import OSLog
 
+private final class ViewRemoteMenuToolbarItem: NSMenuToolbarItem {
+    override var menuFormRepresentation: NSMenuItem? {
+        get {
+            let representation = super.menuFormRepresentation
+            representation?.setAccessibilityIdentifier("GitX.Toolbar.ViewRemote")
+            representation?.setAccessibilityLabel("View Remote menu")
+            return representation
+        }
+        set {
+            super.menuFormRepresentation = newValue
+        }
+    }
+}
+
 enum RepositoryForgeLinkRevision: Equatable {
     case branch(String)
     case commit(String)
@@ -453,7 +467,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     }
 
     private func viewRemoteItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
-        let item = NSMenuToolbarItem(itemIdentifier: identifier)
+        let item = ViewRemoteMenuToolbarItem(itemIdentifier: identifier)
         item.label = "View Remote"
         item.paletteLabel = "View Remote"
         item.toolTip = "Open this repository or a contextual revision on its Git host"
@@ -472,9 +486,9 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         menu.setAccessibilityLabel("View Remote menu")
         menu.delegate = self
         item.menu = menu
+        updateForgeLinkMenu(menu)
         item.menuFormRepresentation?.setAccessibilityIdentifier("GitX.Toolbar.ViewRemote")
         item.menuFormRepresentation?.setAccessibilityLabel("View Remote menu")
-        updateForgeLinkMenu(menu)
         return item
     }
 
@@ -527,7 +541,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         item.title = "View Remote"
         item.action = NSSelectorFromString("viewRemote:")
         item.target = windowController
-        item.isEnabled = true
+        item.isEnabled = windowController != nil
         item.isHidden = false
         item.identifier = NSUserInterfaceItemIdentifier("GitX.Toolbar.ViewRemote.Primary")
         item.setAccessibilityIdentifier("GitX.Toolbar.ViewRemote.Primary")

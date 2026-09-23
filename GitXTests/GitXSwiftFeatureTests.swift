@@ -489,7 +489,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         try XCTUnwrap(toolbarController).menuNeedsUpdate(menu)
         XCTAssertEqual(
             menu.items.filter { !$0.isSeparatorItem }.map(\.title),
-            ["View Repository", "Pull Request or Issue…"]
+            ["View Remote", "View Repository", "Pull Request or Issue…"]
         )
         XCTAssertTrue(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
     }
