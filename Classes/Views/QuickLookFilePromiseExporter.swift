@@ -177,6 +177,7 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
     }
 }
 
+// swift6-safety-justification: Configuration is immutable, and each export confines mutable filesystem state to its unique staging directory.
 final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
     private struct GitTreeEntry {
         let type: String

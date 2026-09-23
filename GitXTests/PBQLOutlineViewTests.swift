@@ -109,6 +109,7 @@ final class PBQLOutlineViewTests: XCTestCase {
         }
     }
 
+    // swift6-safety-justification: The lock protects every read and write of the captured asynchronous value.
     private final class BoolBox: @unchecked Sendable {
         private let lock = NSLock()
         private var storedValue: Bool?
