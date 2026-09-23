@@ -3246,7 +3246,7 @@
 - (void)testInvalidAdditionalEnvironmentReturnsLaunchError
 {
 	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
-	task.additionalEnvironment = (NSDictionary *)@{ @"VALID_KEY" : @42 };
+	task.additionalEnvironment = (NSDictionary *)@{@"VALID_KEY" : @42};
 	NSError *error = nil;
 
 	XCTAssertFalse([task launchTask:&error]);

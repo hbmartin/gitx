@@ -62,6 +62,7 @@ nonisolated struct PBChildProcessTerminationSchedule: Equatable, Sendable {
     }
 }
 
+// swift6-safety-justification: Mutable lifecycle state is confined to the private serial queue.
 final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     typealias TerminationHandler = @Sendable (Int32) -> Void
 
@@ -373,6 +374,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     }
 }
 
+// swift6-safety-justification: The immutable dispatch source is thread-safe and owns its handler.
 private final nonisolated class PBDispatchProcessExitMonitor: PBChildProcessExitMonitoring, @unchecked Sendable {
     private let source: DispatchSourceProcess
 
@@ -617,6 +619,8 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
 }
 
 #if GITX_APP_TARGET
+    // This bridge is referenced only by Objective-C PBTask.m.
+    // swiftlint:disable unused_declaration
     @objc(PBChildProcessSupervisor)
     final nonisolated class PBChildProcessSupervisor: NSObject {
         private let configuration: PBChildProcessConfiguration
@@ -659,4 +663,5 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
             )
         }
     }
+    // swiftlint:enable unused_declaration
 #endif

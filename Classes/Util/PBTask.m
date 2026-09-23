@@ -374,29 +374,29 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 			if (!cancelled) {
 				NSNumber *inputFileDescriptor = self.inputPipe ? @(self.inputPipe.fileHandleForReading.fileDescriptor) : nil;
 				self.processSupervisor = [[PBChildProcessSupervisor alloc]
-					initWithLaunchPath:self.launchPath
-					arguments:self.arguments
-					environment:[self environmentForLaunch]
-					workingDirectory:self.currentDirectoryPath
-					standardInputFileDescriptor:inputFileDescriptor
+							  initWithLaunchPath:self.launchPath
+									   arguments:self.arguments
+									 environment:[self environmentForLaunch]
+								workingDirectory:self.currentDirectoryPath
+					 standardInputFileDescriptor:inputFileDescriptor
 					standardOutputFileDescriptor:self.outputPipe.fileHandleForWriting.fileDescriptor
-					terminationHandler:^(int32_t rawWaitStatus) {
-						PBTask *strongSelf = weakSelf;
-						if (!strongSelf) return;
-						dispatch_async(strongSelf.stateQueue, ^{
-							if (strongSelf.operationFinished) return;
-							if (WIFSIGNALED(rawWaitStatus)) {
-								strongSelf.terminationReason = NSTaskTerminationReasonUncaughtSignal;
-								strongSelf.terminationStatus = WTERMSIG(rawWaitStatus);
-							} else {
-								strongSelf.terminationReason = NSTaskTerminationReasonExit;
-								strongSelf.terminationStatus = WIFEXITED(rawWaitStatus) ? WEXITSTATUS(rawWaitStatus) : rawWaitStatus;
-							}
-							strongSelf.taskFinished = YES;
-							[strongSelf finishIfReady];
-							[strongSelf scheduleOutputDrainAfterTaskExit];
-						});
-					}];
+							  terminationHandler:^(int32_t rawWaitStatus) {
+								  PBTask *strongSelf = weakSelf;
+								  if (!strongSelf) return;
+								  dispatch_async(strongSelf.stateQueue, ^{
+									  if (strongSelf.operationFinished) return;
+									  if (WIFSIGNALED(rawWaitStatus)) {
+										  strongSelf.terminationReason = NSTaskTerminationReasonUncaughtSignal;
+										  strongSelf.terminationStatus = WTERMSIG(rawWaitStatus);
+									  } else {
+										  strongSelf.terminationReason = NSTaskTerminationReasonExit;
+										  strongSelf.terminationStatus = WIFEXITED(rawWaitStatus) ? WEXITSTATUS(rawWaitStatus) : rawWaitStatus;
+									  }
+									  strongSelf.taskFinished = YES;
+									  [strongSelf finishIfReady];
+									  [strongSelf scheduleOutputDrainAfterTaskExit];
+								  });
+							  }];
 				if (![self.processSupervisor launchAndReturnError:&launchError])
 					self.processSupervisor = nil;
 			}
@@ -404,13 +404,13 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		[self closeChildPipeEnds];
 		if (cancelled) {
 			NSError *error = [NSError errorWithDomain:NSCocoaErrorDomain
-										 code:NSUserCancelledError
-									 userInfo:@{NSLocalizedDescriptionKey : @"Task cancelled before launch"}];
+												 code:NSUserCancelledError
+											 userInfo:@{NSLocalizedDescriptionKey : @"Task cancelled before launch"}];
 			[self finishWithError:error];
 		} else if (launchError) {
 			NSException *exception = [NSException exceptionWithName:@"PBTaskLaunchException"
-													  reason:launchError.localizedDescription
-													userInfo:@{NSUnderlyingErrorKey : launchError}];
+															 reason:launchError.localizedDescription
+														   userInfo:@{NSUnderlyingErrorKey : launchError}];
 			[self finishWithError:[self launchErrorForException:exception underlyingError:launchError]];
 		} else if (self.timeout > 0) {
 			NSTimeInterval timeout = self.timeout;
@@ -420,7 +420,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 				if (strongSelf.operationFinished || strongSelf.taskFinished) return;
 				strongSelf.forcedError = [strongSelf timeoutError];
 				[strongSelf.processSupervisor requestTerminationAfterGracePeriod:0
-														  forceKillAfter:@(PBTaskTerminationGrace)];
+																  forceKillAfter:@(PBTaskTerminationGrace)];
 			});
 		}
 	}

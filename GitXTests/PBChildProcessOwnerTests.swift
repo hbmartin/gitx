@@ -1,7 +1,7 @@
-import Darwin
 import XCTest
 
 final class PBChildProcessOwnerTests: XCTestCase {
+    // swift6-safety-justification: The lock protects every access to mutable recorded state.
     private final class CompletionRecorder: @unchecked Sendable {
         private let lock = NSLock()
         private let expectation: XCTestExpectation
@@ -25,6 +25,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
         }
     }
 
+    // swift6-safety-justification: The lock protects the fake monitor's mutable flags.
     private final class FakeExitMonitor: PBChildProcessExitMonitoring, @unchecked Sendable {
         private let lock = NSLock()
         private let handler: @Sendable () -> Void
@@ -57,6 +58,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
         }
     }
 
+    // swift6-safety-justification: The lock protects all mutable fake process-system state.
     private final class FakeProcessSystem: PBChildProcessSystem, @unchecked Sendable {
         enum Failure: Error {
             case spawn
