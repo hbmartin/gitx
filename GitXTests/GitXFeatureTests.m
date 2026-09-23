@@ -2233,7 +2233,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 		[controller finishExplicitLaunchOpen];
 		[NSNotificationCenter.defaultCenter postNotificationName:@"PBRepositoryDocumentControllerOpensDidSettle"
-												  object:controller];
+														  object:controller];
 		XCTestExpectation *secondEvaluationDrained = [self expectationWithDescription:@"Second launch evaluation drained"];
 		dispatch_async(dispatch_get_main_queue(), ^{
 			dispatch_async(dispatch_get_main_queue(), ^{
@@ -3113,8 +3113,8 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 	NSPoint unselectedPoint = NSMakePoint(NSMidX([outline rectOfRow:1]), NSMidY([outline rectOfRow:1]));
 	NSPoint unselectedWindowPoint = [outline convertPoint:unselectedPoint toView:nil];
-	NSEvent *unselectedEvent =
-		[self rightMouseEventAtLocation:unselectedWindowPoint windowNumber:window.windowNumber];
+	NSEvent *unselectedEvent = [self rightMouseEventAtLocation:unselectedWindowPoint
+												  windowNumber:window.windowNumber];
 	XCTAssertEqualObjects([outline menuForEvent:unselectedEvent], controller.testContextMenu);
 	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:1]);
 	NSEvent *letterEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown
