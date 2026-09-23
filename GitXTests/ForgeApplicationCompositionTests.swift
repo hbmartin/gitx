@@ -236,6 +236,18 @@ final class ForgeApplicationCompositionTests: XCTestCase {
                 "GITX_UITEST_FORGE_STORAGE_ROOT must be an absolute path, not \"relative/Forge\"."
             )
         }
+
+        for invalidRoot in ["~", "~/Forge", "~someone/Forge"] {
+            XCTAssertThrowsError(try ForgeApplicationStorageConfiguration.resolve(
+                applicationSupportDirectory: applicationSupport,
+                environment: [ForgeApplicationStorageConfiguration.uiTestStorageRootEnvironmentKey: invalidRoot]
+            )) { error in
+                XCTAssertEqual(
+                    error as? ForgeApplicationStorageConfigurationError,
+                    .uiTestStorageRootMustBeAbsolute(invalidRoot)
+                )
+            }
+        }
     }
 
     func testDefaultLoaderCanCaptureTheSystemDirectoryProviderWithoutInitializingServices() throws {

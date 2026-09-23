@@ -335,6 +335,14 @@ class WrapperContractTests(unittest.TestCase):
 
         self.assertIn("xcodebuild.sh\" build --configuration Debug --stage-app", script)
 
+    def test_run_app_isolates_forge_storage_with_the_harness_home(self) -> None:
+        script = (ROOT / "scripts" / "run_app.sh").read_text()
+
+        self.assertIn(
+            '"GITX_UITEST_FORGE_STORAGE_ROOT=$isolated_home/Library/Application Support/GitX/Forge"',
+            script,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
