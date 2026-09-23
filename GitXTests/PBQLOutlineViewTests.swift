@@ -4,6 +4,7 @@ import XCTest
 
 @MainActor
 final class PBQLOutlineViewTests: XCTestCase {
+    // swift6-safety-justification: The lock protects every read and write of the captured asynchronous error.
     private final class ErrorBox: @unchecked Sendable {
         private let lock = NSLock()
         private var storedError: Error?
@@ -21,6 +22,7 @@ final class PBQLOutlineViewTests: XCTestCase {
         }
     }
 
+    // swift6-safety-justification: Tests finish configuring the spy before queueing work, and the lock protects its only cross-queue result.
     private final class TreeSpy: PBGitTree, @unchecked Sendable {
         private let exportLock = NSLock()
         private var exportedOnMainThreadStorage: Bool?
@@ -52,6 +54,7 @@ final class PBQLOutlineViewTests: XCTestCase {
         }
     }
 
+    // swift6-safety-justification: The immutable context transfers AppKit references to one serial test operation and keeps them alive through completion.
     private final class PromiseWriteContext: @unchecked Sendable {
         let outline: PBQLOutlineView
         let provider: NSFilePromiseProvider

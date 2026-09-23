@@ -7,9 +7,11 @@ private nonisolated let quickLookFilePromiseLogger = Logger(
     category: "QuickLookFilePromise"
 )
 
+// swift6-safety-justification: The payload is immutable after construction and AppKit reads it only on the delegate's serial promise queue.
 private final class QuickLookFilePromisePayload: NSObject, @unchecked Sendable {
     /// AppKit invokes promise writes on the delegate's operation queue. The tree
     /// is immutable for the lifetime of a drag and is retained by this payload.
+    // swift6-safety-justification: The retained tree snapshot is immutable for the drag lifetime and is accessed only on the serial promise queue.
     nonisolated(unsafe) let tree: PBGitTree
 
     init(tree: PBGitTree) {
