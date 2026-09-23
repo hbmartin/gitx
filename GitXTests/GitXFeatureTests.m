@@ -911,7 +911,6 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @property (nullable, nonatomic) XCTestExpectation *launchExpectation;
 @property (nullable, nonatomic) dispatch_semaphore_t launchGate;
 @property (nonatomic) NSUInteger immediateTerminationCount;
-@property (nonatomic) NSUInteger forcedTerminationCount;
 @property (nonatomic) NSUInteger gracefulTerminationCount;
 @end
 
@@ -930,10 +929,6 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 - (void)terminate
 {
 	self.immediateTerminationCount++;
-}
-- (void)forceTerminateIfRunning
-{
-	self.forcedTerminationCount++;
 }
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(NSTimeInterval)forceKillDelay
 {
@@ -1751,7 +1746,6 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[self waitForExpectations:@[ manager.testTask.launchExpectation ] timeout:2];
 	[manager stopForApplicationTermination];
 	XCTAssertEqual(manager.testTask.immediateTerminationCount, (NSUInteger)1);
-	XCTAssertEqual(manager.testTask.forcedTerminationCount, (NSUInteger)1);
 	XCTAssertEqual(manager.testTask.gracefulTerminationCount, (NSUInteger)0);
 	dispatch_semaphore_signal(manager.testTask.launchGate);
 	[self waitForExpectations:@[ manager.deliveryExpectation ] timeout:0.25];

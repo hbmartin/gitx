@@ -7,7 +7,6 @@ import UserNotifications
 private let autoFetchTimerResolution: TimeInterval = 30
 private let autoFetchRetryBaseInterval: TimeInterval = 60
 private let autoFetchRetryMaximumInterval: TimeInterval = 15 * 60
-private let autoFetchApplicationTerminationGrace: TimeInterval = 0.2
 
 /// Coordinates unattended remote refreshes for the repositories selected by
 /// the global auto-fetch preference. Failures retry with bounded exponential
@@ -76,6 +75,7 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
 
     /// Stops polling and synchronously sends SIGTERM to active fetches before
     /// application teardown can prevent delayed cancellation work from running.
+    /// This path is deliberately nonblocking and does not escalate to SIGKILL.
     @MainActor @objc
     dynamic func stopForApplicationTermination() {
         stop(immediately: true)
@@ -88,10 +88,6 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
         if immediately {
             logger.info("Stopping \(tasks.count) active auto-fetch task(s) for application termination")
             tasks.forEach { $0.terminate() }
-            if !tasks.isEmpty {
-                Thread.sleep(forTimeInterval: autoFetchApplicationTerminationGrace)
-                tasks.forEach { $0.forceTerminateIfRunning() }
-            }
         } else {
             for task in tasks {
                 task.terminate(afterGracePeriod: 2, forceKillAfter: 5)
