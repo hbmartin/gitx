@@ -2936,7 +2936,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqual([PBAutoFetchManager retryDelayForFailureCount:20], 900);
 }
 
-- (void)testSourceViewBadgeCoversHighlightedAndNumericVariants
+- (void)testSourceViewBadgeCoversHighlightedAndCheckedOutVariants
 {
 	PBSourceViewBadgeCell *cell = [[PBSourceViewBadgeCell alloc] initWithFrame:NSMakeRect(0, 0, 80, 22)];
 	PBSourceViewBadgeWindow *window = [[PBSourceViewBadgeWindow alloc]
@@ -2949,7 +2949,6 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	cell.backgroundStyle = NSBackgroundStyleNormal;
 	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], [PBSourceViewBadge badgeBackgroundColor]);
 	XCTAssertEqualObjects([PBSourceViewBadge badgeTextColorForCell:cell], NSColor.whiteColor);
-	XCTAssertNotNil([PBSourceViewBadge numericBadge:42 forCell:cell]);
 
 	window.testMainWindow = YES;
 	XCTAssertEqualObjects([PBSourceViewBadge badgeColorForCell:cell], [PBSourceViewBadge badgeHighlightColor]);

@@ -12,7 +12,6 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSColor *)badgeTextColorForCell:(NSTableCellView *)cell;
 + (NSImage *)badge:(NSString *)badge forCell:(NSTableCellView *)cell;
 + (NSImage *)checkedOutBadgeForCell:(NSTableCellView *)cell;
-+ (NSImage *)numericBadge:(NSInteger)number forCell:(NSTableCellView *)cell;
 
 @end
 
