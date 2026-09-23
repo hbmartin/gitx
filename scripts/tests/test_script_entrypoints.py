@@ -262,6 +262,62 @@ class ScriptEntrypointTests(unittest.TestCase):
             str(self.developer_directory),
         )
 
+    def test_explicit_xcode_bundle_path_is_normalized_case_insensitively(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        bundle = self.root / "Pinned-Xcode.APP"
+        developer_directory = bundle / "Contents" / "Developer"
+        (developer_directory / "usr" / "bin").mkdir(parents=True)
+        shutil.copy2(
+            self.developer_directory / "usr" / "bin" / "xcodebuild",
+            developer_directory / "usr" / "bin" / "xcodebuild",
+        )
+
+        subprocess.run(
+            [
+                script,
+                "--raw",
+                "--run-id",
+                "mixed-case-bundle",
+                "--developer-dir",
+                str(bundle),
+                "build",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        receipt = self.receipt("mixed-case-bundle")
+        self.assertEqual(receipt["toolchain"]["developerDir"], str(developer_directory))
+
+    def test_invalid_explicit_xcode_pin_does_not_fall_back_to_environment(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+
+        result = subprocess.run(
+            [
+                script,
+                "--raw",
+                "--run-id",
+                "invalid-explicit-toolchain",
+                "--developer-dir",
+                str(self.root / "Missing-Xcode.app"),
+                "build",
+            ],
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        receipt = self.receipt("invalid-explicit-toolchain")
+        self.assertEqual(
+            receipt["toolchain"]["developerDir"],
+            str(self.root / "Missing-Xcode.app" / "Contents" / "Developer"),
+        )
+
     def test_xcodebuild_wrapper_matches_options_as_exact_arguments(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
@@ -384,6 +440,7 @@ class ScriptEntrypointTests(unittest.TestCase):
                 / "report.plist"
             )
             self.assertEqual(report.read_text(), "analyzer report\n")
+            self.assertEqual(self.receipt(run_id)["invocation"]["signingMode"], "disabled")
 
     def test_failed_analyzer_preserves_path_reports(self) -> None:
         script = self.install_script("xcodebuild.sh")

@@ -76,7 +76,7 @@ def version_at_least(actual: str, minimum: str) -> bool:
 
 def normalize_developer_directory(path: str) -> pathlib.Path:
     candidate = pathlib.Path(path).expanduser()
-    if candidate.suffix == ".app":
+    if candidate.suffix.lower() == ".app":
         return candidate / "Contents" / "Developer"
     return candidate
 
@@ -604,6 +604,11 @@ def command_developer_dir(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def command_normalize_developer_dir(arguments: argparse.Namespace) -> int:
+    print(normalize_developer_directory(arguments.path))
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     subparsers = result.add_subparsers(dest="command", required=True)
@@ -624,6 +629,10 @@ def parser() -> argparse.ArgumentParser:
 
     developer_dir = subparsers.add_parser("developer-dir")
     developer_dir.set_defaults(handler=command_developer_dir)
+
+    normalize_developer_dir = subparsers.add_parser("normalize-developer-dir")
+    normalize_developer_dir.add_argument("path")
+    normalize_developer_dir.set_defaults(handler=command_normalize_developer_dir)
 
     receipt_init = subparsers.add_parser("receipt-init")
     receipt_init.add_argument("path", type=pathlib.Path)

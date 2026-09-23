@@ -145,6 +145,7 @@ fi
 if [[ -z "$developer_dir" ]]; then
 	developer_dir=$(python3 "$support" developer-dir) || exit $?
 fi
+developer_dir=$(python3 "$support" normalize-developer-dir "$developer_dir") || exit $?
 export DEVELOPER_DIR="$developer_dir"
 xcodebuild="$developer_dir/usr/bin/xcodebuild"
 xcrun=$(command -v xcrun)
@@ -178,11 +179,11 @@ signing_allowed=YES
 signing_required=YES
 signing_identity=
 case "$command" in
-	smoke)
+	smoke|analyze)
 		signing_allowed=NO
 		signing_required=NO
 		;;
-	build|analyze)
+	build)
 		signing_identity=-
 		;;
 	test)
