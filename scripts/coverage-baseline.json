@@ -136,7 +136,7 @@
     "Classes/Views/PBGitXMessageSheet.m": 0.03,
     "Classes/Views/PBHighlighting.swift": 1.0,
     "Classes/Views/PBNativeContentView.m": 1.0,
-    "Classes/Views/PBQLOutlineView.m": 1.0,
+    "Classes/Views/PBQLOutlineView.swift": 1.0,
     "Classes/Views/PBQLTextView.m": 0.0,
     "Classes/Views/PBRemoteProgressSheet.m": 0.0,
     "Classes/Views/PBSidebarTableViewCell.m": 1.0,

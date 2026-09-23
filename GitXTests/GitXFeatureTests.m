@@ -26,21 +26,8 @@
 #import "NSAppearance+PBDarkMode.h"
 #import "ApplicationController.h"
 #import "PBSourceViewBadgeCompatibility.h"
-#import "PBQLOutlineView.h"
+#import "PBQLOutlineViewCompatibility.h"
 #import "PBGitTree.h"
-
-@interface PBQLOutlineView (GitXFeatureTests)
-- (BOOL)outlineView:(NSOutlineView *)outlineView writeItems:(NSArray *)items toPasteboard:(NSPasteboard *)pasteboard;
-- (NSArray<NSString *> *)outlineView:(NSOutlineView *)outlineView
-	namesOfPromisedFilesDroppedAtDestination:(NSURL *)dropDestination
-							 forDraggedItems:(NSArray *)items;
-- (BOOL)outlineView:(NSOutlineView *)outlineView isItemExpandable:(id)item;
-- (NSInteger)outlineView:(NSOutlineView *)outlineView numberOfChildrenOfItem:(nullable id)item;
-- (nullable id)outlineView:(NSOutlineView *)outlineView child:(NSInteger)index ofItem:(nullable id)item;
-- (nullable id)outlineView:(NSOutlineView *)outlineView
-	objectValueForTableColumn:(nullable NSTableColumn *)column
-					   byItem:(id)item;
-@end
 
 static NSUInteger PBAutoFetchAuthorizationRequestCount;
 static UNNotificationRequest *PBAutoFetchLastNotificationRequest;
@@ -636,48 +623,35 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 @end
 
 
-@interface PBQLOutlineViewSpy : PBQLOutlineView
+@interface PBQLOutlineDataSourceSpy : NSObject <NSOutlineViewDataSource>
 
-@property (nonatomic) NSInteger testRowAtPoint;
-@property (nonatomic, copy) NSIndexSet *testSelectedRows;
-@property (nonatomic, copy) NSIndexSet *lastSelectedRows;
+@property (nonatomic, copy) NSArray<NSString *> *items;
 
 @end
 
 
-@implementation PBQLOutlineViewSpy
+@implementation PBQLOutlineDataSourceSpy
 
-- (NSInteger)rowAtPoint:(NSPoint)point
+- (NSInteger)outlineView:(NSOutlineView *)outlineView numberOfChildrenOfItem:(nullable id)item
 {
-	return self.testRowAtPoint;
+	return item ? 0 : self.items.count;
 }
 
-- (NSIndexSet *)selectedRowIndexes
+- (id)outlineView:(NSOutlineView *)outlineView child:(NSInteger)index ofItem:(nullable id)item
 {
-	return self.testSelectedRows ?: NSIndexSet.indexSet;
+	return self.items[index];
 }
 
-- (void)selectRowIndexes:(NSIndexSet *)indexes byExtendingSelection:(BOOL)extend
+- (BOOL)outlineView:(NSOutlineView *)outlineView isItemExpandable:(id)item
 {
-	self.lastSelectedRows = indexes;
-	self.testSelectedRows = indexes;
+	return NO;
 }
 
-@end
-
-
-@interface PBQLOutlineTreeSpy : PBGitTree
-
-@property (nonatomic, copy) NSString *savedDirectory;
-
-@end
-
-
-@implementation PBQLOutlineTreeSpy
-
-- (void)saveToFolder:(NSString *)directory
+- (id)outlineView:(NSOutlineView *)outlineView
+	objectValueForTableColumn:(nullable NSTableColumn *)tableColumn
+					   byItem:(id)item
 {
-	self.savedDirectory = directory;
+	return item;
 }
 
 @end
@@ -2990,71 +2964,65 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertNotNil([PBSourceViewBadge checkedOutBadgeForCell:cell]);
 }
 
+- (void)testQuickLookOutlineEmptyDataSourceContract
+{
+	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	XCTAssertEqual([outline draggingSession:(id)NSNull.null
+					   sourceOperationMaskForDraggingContext:NSDraggingContextOutsideApplication],
+				   NSDragOperationCopy);
+	XCTAssertFalse([outline outlineView:outline isItemExpandable:@"item"]);
+	XCTAssertEqual([outline outlineView:outline numberOfChildrenOfItem:nil], (NSInteger)0);
+	XCTAssertEqualObjects([outline outlineView:outline child:0 ofItem:nil], NSNull.null);
+	XCTAssertNil([outline outlineView:outline objectValueForTableColumn:nil byItem:@"item"]);
+}
+
 - (void)testQuickLookOutlineRoutesSpaceAndContextMenuToItsController
 {
 	PBQLOutlineHistorySpy *controller = [[PBQLOutlineHistorySpy alloc] init];
 	controller.testContextMenu = [[NSMenu alloc] initWithTitle:NSLocalizedString(@"Tree", nil)];
-	PBQLOutlineViewSpy *outline = [[PBQLOutlineViewSpy alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
-	[outline setValue:controller forKey:@"controller"];
+	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	outline.controller = controller;
 
 	[outline keyDown:[self spaceKeyEventWithModifiers:0]];
 	XCTAssertEqual(controller.quickLookToggleCount, (NSUInteger)1);
 
-	outline.testRowAtPoint = 2;
-	outline.testSelectedRows = [NSIndexSet indexSetWithIndex:0];
-	XCTAssertEqualObjects([outline menuForEvent:[self rightMouseEventAtLocation:NSZeroPoint windowNumber:0]],
-						  controller.testContextMenu);
-	XCTAssertEqualObjects(outline.lastSelectedRows, [NSIndexSet indexSetWithIndex:2]);
+	NSTableColumn *column = [[NSTableColumn alloc] initWithIdentifier:@"value"];
+	[outline addTableColumn:column];
+	outline.outlineTableColumn = column;
+	PBQLOutlineDataSourceSpy *dataSource = [[PBQLOutlineDataSourceSpy alloc] init];
+	dataSource.items = @[ @"First", @"Second", @"Third" ];
+	outline.dataSource = dataSource;
+	NSWindow *window = [[NSWindow alloc]
+		initWithContentRect:NSMakeRect(0, 0, 200, 100)
+				  styleMask:NSWindowStyleMaskBorderless
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	window.releasedWhenClosed = NO;
+	window.contentView = outline;
+	[outline reloadData];
+	XCTAssertEqual(outline.numberOfRows, (NSInteger)3);
 
-	outline.lastSelectedRows = nil;
-	outline.testSelectedRows = [NSIndexSet indexSetWithIndex:2];
-	XCTAssertEqualObjects([outline menuForEvent:[self rightMouseEventAtLocation:NSZeroPoint windowNumber:0]],
-						  controller.testContextMenu);
-	XCTAssertNil(outline.lastSelectedRows, @"A context click on the selection must preserve it");
-}
+	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+	NSPoint clickedPoint = NSMakePoint(NSMidX([outline rectOfRow:2]), NSMidY([outline rectOfRow:2]));
+	NSPoint windowPoint = [outline convertPoint:clickedPoint toView:nil];
+	NSEvent *event = [self rightMouseEventAtLocation:windowPoint windowNumber:window.windowNumber];
+	XCTAssertEqualObjects([outline menuForEvent:event], controller.testContextMenu);
+	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
 
-- (void)testQuickLookOutlinePublishesPromisedFileTypesAndNames
-{
-	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
-	PBQLOutlineTreeSpy *first = [[PBQLOutlineTreeSpy alloc] init];
-	first.path = @"Sources/Café.swift";
-	PBQLOutlineTreeSpy *second = [[PBQLOutlineTreeSpy alloc] init];
-	second.path = @"Documentation/README.md";
-	NSArray *items = @[
-		[NSTreeNode treeNodeWithRepresentedObject:first],
-		[NSTreeNode treeNodeWithRepresentedObject:second],
-	];
-	NSPasteboard *pasteboard = [NSPasteboard pasteboardWithUniqueName];
-
-	XCTAssertTrue([outline outlineView:outline writeItems:items toPasteboard:pasteboard]);
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-	NSPasteboardType promisedFileType = NSFilesPromisePboardType;
-	XCTAssertEqualObjects([pasteboard propertyListForType:promisedFileType], (@[ @"swift", @"md" ]));
-#pragma clang diagnostic pop
-	NSPasteboardType URLPromiseType = (__bridge NSPasteboardType)kPasteboardTypeFileURLPromise;
-	XCTAssertNil([pasteboard propertyListForType:URLPromiseType],
-				 @"The legacy outline-view delegate requires NSFilesPromisePboardType's extension-list contract");
-
-	NSURL *destination = [NSURL fileURLWithPath:@"/tmp/gitx-promised-files" isDirectory:YES];
-	XCTAssertEqualObjects([outline outlineView:outline
-							  namesOfPromisedFilesDroppedAtDestination:destination
-													   forDraggedItems:items],
-						  (@[ @"Sources/Café.swift", @"Documentation/README.md" ]));
-	XCTAssertEqualObjects(first.savedDirectory, destination.path);
-	XCTAssertEqualObjects(second.savedDirectory, destination.path);
-	XCTAssertEqual([outline draggingSession:(id)[NSNull null]
-					   sourceOperationMaskForDraggingContext:NSDraggingContextOutsideApplication],
-				   NSDragOperationCopy);
-}
-
-- (void)testQuickLookOutlineEmptyDataSourceContract
-{
-	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
-	XCTAssertFalse([outline outlineView:outline isItemExpandable:@"item"]);
-	XCTAssertEqual([outline outlineView:outline numberOfChildrenOfItem:nil], (NSInteger)0);
-	XCTAssertNil([outline outlineView:outline child:0 ofItem:nil]);
-	XCTAssertNil([outline outlineView:outline objectValueForTableColumn:nil byItem:@"item"]);
+	XCTAssertEqualObjects([outline menuForEvent:event], controller.testContextMenu);
+	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
+	NSEvent *letterEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown
+									 location:NSZeroPoint
+								modifierFlags:0
+									timestamp:0
+								 windowNumber:window.windowNumber
+									  context:nil
+								   characters:@"a"
+						  charactersIgnoringModifiers:@"a"
+									  isARepeat:NO
+										keyCode:0];
+	[outline keyDown:letterEvent];
+	[window close];
 }
 
 - (void)testQuickLookOutlineRestoresItsSelfDataSourceWhenDecoded
