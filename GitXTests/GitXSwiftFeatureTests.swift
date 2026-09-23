@@ -415,18 +415,29 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(item.target === windowController)
         XCTAssertNil(item.view)
         XCTAssertEqual(menu.identifier?.rawValue, "GitX.Toolbar.ViewRemote.Menu")
+        XCTAssertEqual(menu.accessibilityIdentifier(), "GitX.Toolbar.ViewRemote")
+        XCTAssertEqual(menu.accessibilityLabel(), "View Remote menu")
         XCTAssertTrue(menu.delegate === toolbarController)
         XCTAssertTrue(item.menuFormRepresentation?.submenu === menu)
+        XCTAssertEqual(item.menuFormRepresentation?.accessibilityIdentifier(), "GitX.Toolbar.ViewRemote")
+        XCTAssertEqual(item.menuFormRepresentation?.accessibilityLabel(), "View Remote menu")
         XCTAssertEqual(
             menu.items.filter { !$0.isSeparatorItem }.compactMap(\.identifier?.rawValue),
             [
+                "GitX.Toolbar.ViewRemote.Primary",
                 "GitX.Repository.ForgeLinks.Repository",
                 "GitX.Repository.ForgeLinks.PullRequestOrIssue",
             ]
         )
+        let primaryItem = try XCTUnwrap(menu.item(withTitle: "View Remote"))
+        XCTAssertEqual(primaryItem.action, NSSelectorFromString("viewRemote:"))
+        XCTAssertTrue(primaryItem.target === windowController)
+        XCTAssertEqual(primaryItem.accessibilityIdentifier(), "GitX.Toolbar.ViewRemote.Primary")
 
         let originalItems = menu.items
-        let repositoryItem = try XCTUnwrap(originalItems.first { !$0.isSeparatorItem })
+        let repositoryItem = try XCTUnwrap(
+            originalItems.first { $0.identifier?.rawValue == "GitX.Repository.ForgeLinks.Repository" }
+        )
         let staleTarget = NSObject()
         repositoryItem.title = "Stale repository title"
         repositoryItem.action = NSSelectorFromString("copy:")
