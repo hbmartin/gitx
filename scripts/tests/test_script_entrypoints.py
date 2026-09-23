@@ -360,6 +360,9 @@ class ScriptEntrypointTests(unittest.TestCase):
         for invocation in analyzer_invocations:
             arguments = invocation.splitlines()
             derived_paths.append(arguments[arguments.index("-derivedDataPath") + 1])
+            self.assertIn("CODE_SIGNING_ALLOWED=NO", arguments)
+            self.assertIn("CODE_SIGNING_REQUIRED=NO", arguments)
+            self.assertIn("COMPILER_INDEX_STORE_ENABLE=NO", arguments)
         self.assertEqual(len(set(derived_paths)), 2)
         for derived_path in map(pathlib.Path, derived_paths):
             self.assertEqual(derived_path.parent, self.root / "build")

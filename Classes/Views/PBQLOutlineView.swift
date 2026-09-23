@@ -1,4 +1,7 @@
 import AppKit
+
+// SwiftLint analyze misclassifies this import; Logger and privacy interpolation require it at compile time.
+// swiftlint:disable:next unused_import
 import OSLog
 import UniformTypeIdentifiers
 
@@ -24,6 +27,8 @@ private final class QuickLookFilePromisePayload: NSObject, @unchecked Sendable {
 }
 
 @objc(PBQLOutlineView)
+// The Quick Look outline is instantiated by MainMenu.xib through its Objective-C runtime name.
+// swiftlint:disable:next unused_declaration
 class QuickLookOutlineView: NSOutlineView, NSOutlineViewDataSource, NSFilePromiseProviderDelegate {
     @IBOutlet weak var controller: PBGitHistoryController?
 
