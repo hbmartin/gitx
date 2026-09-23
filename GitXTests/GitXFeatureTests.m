@@ -3102,15 +3102,21 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[outline reloadData];
 	XCTAssertEqual(outline.numberOfRows, (NSInteger)3);
 
-	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+	NSMutableIndexSet *multiSelection = [NSMutableIndexSet indexSetWithIndex:0];
+	[multiSelection addIndex:2];
+	[outline selectRowIndexes:multiSelection byExtendingSelection:NO];
 	NSPoint clickedPoint = NSMakePoint(NSMidX([outline rectOfRow:2]), NSMidY([outline rectOfRow:2]));
 	NSPoint windowPoint = [outline convertPoint:clickedPoint toView:nil];
 	NSEvent *event = [self rightMouseEventAtLocation:windowPoint windowNumber:window.windowNumber];
 	XCTAssertEqualObjects([outline menuForEvent:event], controller.testContextMenu);
-	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
+	XCTAssertEqualObjects(outline.selectedRowIndexes, multiSelection);
 
-	XCTAssertEqualObjects([outline menuForEvent:event], controller.testContextMenu);
-	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
+	NSPoint unselectedPoint = NSMakePoint(NSMidX([outline rectOfRow:1]), NSMidY([outline rectOfRow:1]));
+	NSPoint unselectedWindowPoint = [outline convertPoint:unselectedPoint toView:nil];
+	NSEvent *unselectedEvent =
+		[self rightMouseEventAtLocation:unselectedWindowPoint windowNumber:window.windowNumber];
+	XCTAssertEqualObjects([outline menuForEvent:unselectedEvent], controller.testContextMenu);
+	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:1]);
 	NSEvent *letterEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown
 											location:NSZeroPoint
 									   modifierFlags:0
