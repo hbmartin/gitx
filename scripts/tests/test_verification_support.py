@@ -55,6 +55,26 @@ class VersionTests(unittest.TestCase):
 
         self.assertEqual(candidates, [pathlib.Path(environment["DEVELOPER_DIR"])])
 
+    def test_xcode_application_bundle_paths_are_normalized_to_developer_directories(self) -> None:
+        config = {"defaultDeveloperDirectory": "/Applications/Xcode.app"}
+        with mock.patch.dict(
+            verification.os.environ,
+            {"DEVELOPER_DIR": "/Volumes/Tools/Xcode Beta.app"},
+            clear=True,
+        ):
+            standard = verification.developer_dir_candidates(config)
+        with mock.patch.dict(verification.os.environ, {}, clear=True):
+            configured = verification.developer_dir_candidates(config)
+
+        self.assertEqual(
+            standard,
+            [pathlib.Path("/Volumes/Tools/Xcode Beta.app/Contents/Developer")],
+        )
+        self.assertEqual(
+            configured,
+            [pathlib.Path("/Applications/Xcode.app/Contents/Developer")],
+        )
+
     def test_unusable_explicit_developer_directory_does_not_fall_back(self) -> None:
         config = {
             "defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer",
@@ -341,6 +361,18 @@ class WrapperContractTests(unittest.TestCase):
         self.assertIn(
             '"GITX_UITEST_FORGE_STORAGE_ROOT=$isolated_home/Library/Application Support/GitX/Forge"',
             script,
+        )
+
+    def test_analyzer_receipt_finishes_before_temporary_derived_data_cleanup(self) -> None:
+        wrapper = (ROOT / "scripts" / "xcodebuild.sh").read_text()
+        finish_receipt = wrapper.split("finish_receipt() {", maxsplit=1)[1].split(
+            "\n}\ntrap finish_receipt",
+            maxsplit=1,
+        )[0]
+
+        self.assertLess(
+            finish_receipt.index('receipt-finish "$receipt"'),
+            finish_receipt.index('rm -rf -- "$analyzer_derived_data"'),
         )
 
 
