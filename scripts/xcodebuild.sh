@@ -258,15 +258,15 @@ interrupted=0
 finish_receipt() {
 	exit_code=$?
 	trap - EXIT INT TERM
-	if [[ -n "$analyzer_derived_data" && -d "$analyzer_derived_data" ]]; then
-		rm -rf -- "$analyzer_derived_data" || true
-	fi
 	if (( interrupted )); then
 		overall_status=interrupted
 	elif (( exit_code == 0 )); then
 		overall_status=passed
 	fi
 	python3 "$support" receipt-finish "$receipt" --status "$overall_status" --exit-code "$exit_code" >/dev/null 2>&1 || true
+	if [[ -n "$analyzer_derived_data" && -d "$analyzer_derived_data" ]]; then
+		rm -rf -- "$analyzer_derived_data" || true
+	fi
 	echo "Verification receipt: $receipt"
 	exit "$exit_code"
 }
@@ -345,7 +345,7 @@ else
 	doctor_result=blocked
 	overall_status=blocked
 fi
-record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --destination "$destination"
+record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --developer-dir "$developer_dir" --destination "$destination"
 (( doctor_status == 0 )) || exit "$doctor_status"
 
 workspace=$(config workspace)
@@ -450,10 +450,13 @@ case "$command" in
 	analyze)
 		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		analyzer_log="$logs/analyze.log"
+		analyzer_output="$results/Analyzer"
+		mkdir -p "$analyzer_output"
 		run_step analyze "$analyzer_log" "" "$xcodebuild" "${common[@]}" analyze \
 			ARCHS=arm64 CLANG_STATIC_ANALYZER_MODE_ON_ANALYZE_ACTION=deep \
+			"CLANG_ANALYZER_OUTPUT_DIR=$analyzer_output" \
 			CLANG_WARN_NULLABILITY_COMPLETENESS=YES CLANG_WARN_NULLABILITY_COMPLETENESS_ON_ARRAYS=YES \
-			CODE_SIGN_IDENTITY=- \
+			CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO \
 			${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		run_step analyzer-policy "$logs/analyzer-policy.log" "" python3 scripts/check_analyzer_diagnostics.py "$analyzer_log" || exit $?
 		run_step swiftlint-analyze "$logs/swiftlint-analyze.log" "" scripts/run_pinned_tool.sh swiftlint analyze --strict --config .swiftlint.yml --baseline .swiftlint-baseline.json --compiler-log-path "$analyzer_log" || exit $?

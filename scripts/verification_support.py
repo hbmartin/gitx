@@ -74,14 +74,21 @@ def version_at_least(actual: str, minimum: str) -> bool:
     return left + (0,) * (width - len(left)) >= right + (0,) * (width - len(right))
 
 
+def normalize_developer_directory(path: str) -> pathlib.Path:
+    candidate = pathlib.Path(path).expanduser()
+    if candidate.suffix == ".app":
+        return candidate / "Contents" / "Developer"
+    return candidate
+
+
 def developer_dir_candidates(config: dict[str, Any]) -> list[pathlib.Path]:
     explicit = os.environ.get("GITX_DEVELOPER_DIR")
     if explicit:
-        return [pathlib.Path(explicit).expanduser()]
+        return [normalize_developer_directory(explicit)]
     standard = os.environ.get("DEVELOPER_DIR")
     if standard:
-        return [pathlib.Path(standard).expanduser()]
-    return [pathlib.Path(config["defaultDeveloperDirectory"]).expanduser()]
+        return [normalize_developer_directory(standard)]
+    return [normalize_developer_directory(config["defaultDeveloperDirectory"])]
 
 
 def resolve_developer_dir(config: dict[str, Any]) -> pathlib.Path | None:

@@ -3615,6 +3615,14 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	NSMenuToolbarItem *viewRemoteMenuItem = (NSMenuToolbarItem *)installedViewRemoteItem;
 	XCTAssertEqualObjects(viewRemoteMenuItem.label, @"View Remote");
 	XCTAssertEqual(viewRemoteMenuItem.menuFormRepresentation.submenu, viewRemoteMenuItem.menu);
+	XCTAssertEqualObjects(viewRemoteMenuItem.menu.accessibilityIdentifier, @"GitX.Toolbar.ViewRemote");
+	XCTAssertEqualObjects(viewRemoteMenuItem.menu.accessibilityLabel, @"View Remote menu");
+	XCTAssertEqualObjects(viewRemoteMenuItem.menuFormRepresentation.accessibilityIdentifier,
+						  @"GitX.Toolbar.ViewRemote");
+	NSMenuItem *viewRemotePrimary = [viewRemoteMenuItem.menu itemWithTitle:@"View Remote"];
+	XCTAssertEqualObjects(viewRemotePrimary.identifier, @"GitX.Toolbar.ViewRemote.Primary");
+	XCTAssertEqual(viewRemotePrimary.target, self.controller);
+	XCTAssertEqual(viewRemotePrimary.action, @selector(viewRemote:));
 }
 
 - (void)testRepositoryCommitMessageReplacementRulesAreOrderedAndMultiline
@@ -4099,15 +4107,15 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 						  [PBSourceViewBadge badgeHighlightColor]);
 
 	NSImage *checkedBadge = [PBSourceViewBadge checkedOutBadgeForCell:cell];
-	NSImage *numericBadge = [PBSourceViewBadge numericBadge:123456 forCell:cell];
+	NSImage *wideBadge = [PBSourceViewBadge badge:@"123456" forCell:cell];
 	NSImage *directBadge = [PBSourceViewBadge badge:@"7" forCell:cell];
 	XCTAssertGreaterThan(checkedBadge.size.width, (CGFloat)0);
-	XCTAssertGreaterThan(numericBadge.size.width, checkedBadge.size.width);
+	XCTAssertGreaterThan(wideBadge.size.width, checkedBadge.size.width);
 	XCTAssertGreaterThan(directBadge.size.height, (CGFloat)0);
 	NSImageView *checkedPreview = [NSImageView imageViewWithImage:checkedBadge];
-	NSImageView *numericPreview = [NSImageView imageViewWithImage:numericBadge];
+	NSImageView *widePreview = [NSImageView imageViewWithImage:wideBadge];
 	NSImageView *directPreview = [NSImageView imageViewWithImage:directBadge];
-	NSStackView *badgePreview = [NSStackView stackViewWithViews:@[ checkedPreview, numericPreview, directPreview ]];
+	NSStackView *badgePreview = [NSStackView stackViewWithViews:@[ checkedPreview, widePreview, directPreview ]];
 	badgePreview.orientation = NSUserInterfaceLayoutOrientationHorizontal;
 	badgePreview.spacing = 8;
 	badgePreview.frame = NSMakeRect(0, 0, 260, 40);

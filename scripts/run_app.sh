@@ -302,6 +302,7 @@ environment=(
 	"GIT_CONFIG_GLOBAL=/dev/null"
 	"GIT_CONFIG_NOSYSTEM=1"
 	"GIT_TERMINAL_PROMPT=0"
+	"GITX_UITEST_FORGE_STORAGE_ROOT=$isolated_home/Library/Application Support/GitX/Forge"
 	"GITX_UITEST_REPO=$repository"
 )
 

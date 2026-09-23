@@ -116,7 +116,8 @@
 		4A5D772F14A9A9CC00DF6C68 /* PBGitGradientBarView.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76CB14A9A9CC00DF6C68 /* PBGitGradientBarView.m */; };
 		4A5D773014A9A9CC00DF6C68 /* PBGitRevisionCell.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76CD14A9A9CC00DF6C68 /* PBGitRevisionCell.m */; };
 		4A5D773114A9A9CC00DF6C68 /* PBGitXMessageSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76CF14A9A9CC00DF6C68 /* PBGitXMessageSheet.m */; };
-		4A5D773414A9A9CC00DF6C68 /* PBQLOutlineView.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.m */; };
+		4A5D773414A9A9CC00DF6C68 /* PBQLOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.swift */; };
+		C0DE91000000000000000001 /* PBQLOutlineViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE91000000000000000002 /* PBQLOutlineViewTests.swift */; };
 		4A5D773514A9A9CC00DF6C68 /* PBQLTextView.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76D714A9A9CC00DF6C68 /* PBQLTextView.m */; };
 		4A5D773714A9A9CC00DF6C68 /* PBRemoteProgressSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76DB14A9A9CC00DF6C68 /* PBRemoteProgressSheet.m */; };
 		4A5D773914A9A9CC00DF6C68 /* PBSourceViewItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76DF14A9A9CC00DF6C68 /* PBSourceViewItem.m */; };
@@ -326,6 +327,7 @@
 		C0D5D0000000000000000002 /* HistoryForgeOverlayPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5D0000000000000000011 /* HistoryForgeOverlayPresentation.swift */; };
 		C0D5D0000000000000000003 /* HistoryForgeOverlayPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */; };
 		C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */; };
+		C0DE5C000000000000000001 /* XCTestCase+DiagnosticScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */; };
 		F0B100000000000000000001 /* ForgeCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */; };
 		F0B100000000000000000002 /* ForgeCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000012 /* ForgeCredentialStore.swift */; };
 		F0B100000000000000000003 /* ForgeAccountLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0B100000000000000000013 /* ForgeAccountLifecycle.swift */; };
@@ -797,8 +799,9 @@
 		4A5D76CD14A9A9CC00DF6C68 /* PBGitRevisionCell.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = PBGitRevisionCell.m; sourceTree = "<group>"; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
 		4A5D76CE14A9A9CC00DF6C68 /* PBGitXMessageSheet.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitXMessageSheet.h; sourceTree = "<group>"; };
 		4A5D76CF14A9A9CC00DF6C68 /* PBGitXMessageSheet.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitXMessageSheet.m; sourceTree = "<group>"; };
-		4A5D76D414A9A9CC00DF6C68 /* PBQLOutlineView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBQLOutlineView.h; sourceTree = "<group>"; };
-		4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBQLOutlineView.m; sourceTree = "<group>"; };
+		4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBQLOutlineView.swift; sourceTree = "<group>"; };
+		C0DE91000000000000000002 /* PBQLOutlineViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBQLOutlineViewTests.swift; sourceTree = "<group>"; };
+		C0DE91000000000000000003 /* PBQLOutlineViewCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBQLOutlineViewCompatibility.h; sourceTree = "<group>"; };
 		4A5D76D614A9A9CC00DF6C68 /* PBQLTextView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBQLTextView.h; sourceTree = "<group>"; };
 		4A5D76D714A9A9CC00DF6C68 /* PBQLTextView.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBQLTextView.m; sourceTree = "<group>"; };
 		4A5D76DA14A9A9CC00DF6C68 /* PBRemoteProgressSheet.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBRemoteProgressSheet.h; sourceTree = "<group>"; };
@@ -1005,6 +1008,7 @@
 		C0D5D0000000000000000011 /* HistoryForgeOverlayPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryForgeOverlayPresentation.swift; sourceTree = "<group>"; };
 		C0D5D0000000000000000012 /* HistoryForgeOverlayPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryForgeOverlayPresentationTests.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000019 /* ApplicationCompositionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationCompositionTests.swift; sourceTree = "<group>"; };
+		C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "XCTestCase+DiagnosticScreenshot.swift"; sourceTree = "<group>"; };
 		F0B100000000000000000011 /* ForgeCredentialStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeCredentialStoreTests.swift; sourceTree = "<group>"; };
 		F0B100000000000000000012 /* ForgeCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeCredentialStore.swift; sourceTree = "<group>"; };
 		F0B100000000000000000013 /* ForgeAccountLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForgeAccountLifecycle.swift; sourceTree = "<group>"; };
@@ -1634,8 +1638,7 @@
 				4A5D76CF14A9A9CC00DF6C68 /* PBGitXMessageSheet.m */,
 				508E268B1FD317FC00CE9FE0 /* PBSidebarTableViewCell.h */,
 				508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m */,
-				4A5D76D414A9A9CC00DF6C68 /* PBQLOutlineView.h */,
-				4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.m */,
+				4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.swift */,
 				4A5D76D614A9A9CC00DF6C68 /* PBQLTextView.h */,
 				4A5D76D714A9A9CC00DF6C68 /* PBQLTextView.m */,
 				4A5D76DA14A9A9CC00DF6C68 /* PBRemoteProgressSheet.h */,
@@ -1699,6 +1702,7 @@
 			isa = PBXGroup;
 			children = (
 				C0DE60000000000000000003 /* GitXTests-Bridging-Header.h */,
+				C0DE91000000000000000003 /* PBQLOutlineViewCompatibility.h */,
 				C0DEC0000000000000000003 /* PBGitWindowControllerCompatibility.h */,
 				C0DEC0000000000000000004 /* PBGitSidebarControllerCompatibility.h */,
 				C0DEC0000000000000000005 /* PBWebHistoryControllerCompatibility.h */,
@@ -1707,6 +1711,8 @@
 				C0DE30000000000000000002 /* GitXCoreTests.m */,
 				C0DE20000000000000000003 /* GitXFeatureTests.m */,
 				C0DE60000000000000000002 /* GitXSwiftFeatureTests.swift */,
+				C0DE91000000000000000002 /* PBQLOutlineViewTests.swift */,
+				C0DE5C000000000000000011 /* XCTestCase+DiagnosticScreenshot.swift */,
 				C0DE90000000000000000017 /* RepositoryServiceTests.swift */,
 				C0DF20000000000000000011 /* ForgeScriptingTests.swift */,
 				C05900000000000000000012 /* RepositoryIgnoreTestSupport.h */,
@@ -2380,7 +2386,7 @@
 				4A5D773014A9A9CC00DF6C68 /* PBGitRevisionCell.m in Sources */,
 				4A5D773114A9A9CC00DF6C68 /* PBGitXMessageSheet.m in Sources */,
 				4D843B401E5E3939004C3A6F /* PBGitRepository_PBGitBinarySupport.m in Sources */,
-				4A5D773414A9A9CC00DF6C68 /* PBQLOutlineView.m in Sources */,
+				4A5D773414A9A9CC00DF6C68 /* PBQLOutlineView.swift in Sources */,
 				4A5D773514A9A9CC00DF6C68 /* PBQLTextView.m in Sources */,
 				4A5D773714A9A9CC00DF6C68 /* PBRemoteProgressSheet.m in Sources */,
 				373F9A201EAF97A200A77B4C /* NSSplitView+GitX.m in Sources */,
@@ -2414,6 +2420,7 @@
 				C0DE30000000000000000001 /* GitXCoreTests.m in Sources */,
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
+				C0DE91000000000000000001 /* PBQLOutlineViewTests.swift in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
 				C0CAC4000000000000000002 /* RepositoryForgeRemoteDescriptorLoader.swift in Sources */,
 				C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */,
@@ -2443,6 +2450,7 @@
 				C01400000000000000000004 /* CommitProgressSheetControllerTests.swift in Sources */,
 				C0DE50000000000000000001 /* GitXPerformanceTests.swift in Sources */,
 				C0D0C0A00000000000000008 /* ApplicationCompositionTests.swift in Sources */,
+				C0DE5C000000000000000001 /* XCTestCase+DiagnosticScreenshot.swift in Sources */,
 				F0B100000000000000000001 /* ForgeCredentialStoreTests.swift in Sources */,
 				F0B100000000000000000005 /* ForgeAccountLifecycleTests.swift in Sources */,
 				F0B100000000000000000006 /* ForgeApplicationCompositionTests.swift in Sources */,

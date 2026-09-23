@@ -52,11 +52,9 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 @property NSTaskTerminationReason terminationReason;
 @property int terminationStatus;
 @property (retain) NSError *forcedError;
-@property NSUInteger forceKillAttemptCount;
 
 - (void)stopOutputReaderAndCloseWhenSafe;
 - (void)scheduleOutputDrainAfterTaskExit;
-- (BOOL)forceKillRunningProcessWithExpectedIdentifier:(pid_t)expectedProcessIdentifier;
 
 @end
 
@@ -400,8 +398,14 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 					PBTaskLog(@"task %p: timeout sent SIGTERM to %d", strongSelf, processIdentifier);
 
 					dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(PBTaskTerminationGrace * NSEC_PER_SEC)), strongSelf.stateQueue, ^{
-						if ([strongSelf forceKillRunningProcessWithExpectedIdentifier:processIdentifier]) {
+						if (strongSelf.operationFinished || strongSelf.taskFinished) return;
+						BOOL shouldKill;
+						@synchronized(strongSelf) {
+							shouldKill = processIdentifier > 0 && strongSelf.task.running && strongSelf.task.processIdentifier == processIdentifier;
+						}
+						if (shouldKill) {
 							PBTaskLog(@"task %p: timeout escalating to SIGKILL for %d", strongSelf, processIdentifier);
+							kill(processIdentifier, SIGKILL);
 						}
 					});
 				});
@@ -482,31 +486,6 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	}
 }
 
-- (BOOL)forceKillRunningProcessWithExpectedIdentifier:(pid_t)expectedProcessIdentifier
-{
-	if (self.operationFinished || self.taskFinished) return NO;
-	@synchronized(self) {
-		if (!self.task.running) return NO;
-		pid_t processIdentifier = self.task.processIdentifier;
-		if (processIdentifier <= 0) return NO;
-		if (expectedProcessIdentifier > 0 && processIdentifier != expectedProcessIdentifier) return NO;
-		self.forceKillAttemptCount++;
-		kill(processIdentifier, SIGKILL);
-		return YES;
-	}
-}
-
-- (void)forceTerminateIfRunning
-{
-	@synchronized(self) {
-		self.cancellationRequested = YES;
-	}
-	dispatch_sync(self.stateQueue, ^{
-		if ([self forceKillRunningProcessWithExpectedIdentifier:0])
-			PBTaskLog(@"task %p: application shutdown sent SIGKILL", self);
-	});
-}
-
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(NSTimeInterval)forceKillDelay
 {
 	@synchronized(self) {
@@ -528,8 +507,14 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 					   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(MAX(0, forceKillDelay) * NSEC_PER_SEC)),
 									  strongSelf.stateQueue, ^{
-										  if ([strongSelf forceKillRunningProcessWithExpectedIdentifier:processIdentifier]) {
+										  if (strongSelf.operationFinished || strongSelf.taskFinished) return;
+										  BOOL shouldKill;
+										  @synchronized(strongSelf) {
+											  shouldKill = processIdentifier > 0 && strongSelf.task.running && strongSelf.task.processIdentifier == processIdentifier;
+										  }
+										  if (shouldKill) {
 											  PBTaskLog(@"task %p: graceful cancellation escalating to SIGKILL for %d", strongSelf, processIdentifier);
+											  kill(processIdentifier, SIGKILL);
 										  }
 									  });
 				   });

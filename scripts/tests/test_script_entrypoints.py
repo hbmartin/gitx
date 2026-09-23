@@ -83,12 +83,22 @@ class ScriptEntrypointTests(unittest.TestCase):
             "    /usr/bin/plutil -insert CFBundleIdentifier -string com.gitx.test \"$app/Contents/Info.plist\"\n"
             "    /usr/bin/codesign --force --sign - \"$app\" >/dev/null 2>&1\n"
             "  fi\n"
+            "  case \"${arguments[$index]}\" in\n"
+            "    CLANG_ANALYZER_OUTPUT_DIR=*)\n"
+            "      analyzer_output=${arguments[$index]#*=}\n"
+            "      mkdir -p \"$analyzer_output/StaticAnalyzer/GitX/GitX/normal/arm64\"\n"
+            "      printf 'analyzer report\\n' >\"$analyzer_output/StaticAnalyzer/GitX/GitX/normal/arm64/report.plist\"\n"
+            "      ;;\n"
+            "  esac\n"
             "done\n"
             "if [[ \" $* \" == *' -showBuildSettings '* ]]; then\n"
             "  printf '    BUILT_PRODUCTS_DIR = %s/Build/Products/Debug\\n' \"$derived\"\n"
             "fi\n"
             "if [[ \" $* \" == *' -showdestinations '* ]]; then\n"
             "  printf '{ platform: macOS, arch: arm64 }\\n'\n"
+            "fi\n"
+            "if [[ \"${MOCK_XCODEBUILD_EXIT_STATUS:-0}\" != 0 && \" $* \" == *' analyze '* ]]; then\n"
+            "  exit \"$MOCK_XCODEBUILD_EXIT_STATUS\"\n"
             "fi\n"
         )
         mock.chmod(0o755)
@@ -221,6 +231,37 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("26.6", result.stdout + result.stderr)
 
+    def test_xcodebuild_receipt_records_selected_developer_directory_for_doctor(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+
+        subprocess.run(
+            [
+                script,
+                "--raw",
+                "--run-id",
+                "doctor-toolchain-receipt",
+                "--developer-dir",
+                str(self.developer_directory),
+                "build",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        doctor_step = next(
+            step
+            for step in self.receipt("doctor-toolchain-receipt")["steps"]
+            if step["name"] == "doctor"
+        )
+        command = doctor_step["command"]
+        self.assertEqual(
+            command[command.index("--developer-dir") + 1],
+            str(self.developer_directory),
+        )
+
     def test_xcodebuild_wrapper_matches_options_as_exact_arguments(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
@@ -319,11 +360,60 @@ class ScriptEntrypointTests(unittest.TestCase):
         for invocation in analyzer_invocations:
             arguments = invocation.splitlines()
             derived_paths.append(arguments[arguments.index("-derivedDataPath") + 1])
+            self.assertIn("CODE_SIGNING_ALLOWED=NO", arguments)
+            self.assertIn("CODE_SIGNING_REQUIRED=NO", arguments)
+            self.assertIn("COMPILER_INDEX_STORE_ENABLE=NO", arguments)
         self.assertEqual(len(set(derived_paths)), 2)
         for derived_path in map(pathlib.Path, derived_paths):
             self.assertEqual(derived_path.parent, self.root / "build")
             self.assertTrue(derived_path.name.startswith("AnalyzerDerivedData."))
             self.assertFalse(derived_path.exists())
+        for run_id in ("analyzer-clean-one", "analyzer-clean-two"):
+            report = (
+                self.root
+                / "artifacts"
+                / "verification"
+                / run_id
+                / "Results"
+                / "Analyzer"
+                / "StaticAnalyzer"
+                / "GitX"
+                / "GitX"
+                / "normal"
+                / "arm64"
+                / "report.plist"
+            )
+            self.assertEqual(report.read_text(), "analyzer report\n")
+
+    def test_failed_analyzer_preserves_path_reports(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        environment = self.environment | {"MOCK_XCODEBUILD_EXIT_STATUS": "65"}
+
+        result = subprocess.run(
+            [script, "--raw", "--run-id", "analyzer-failure", "analyze"],
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        report = (
+            self.root
+            / "artifacts"
+            / "verification"
+            / "analyzer-failure"
+            / "Results"
+            / "Analyzer"
+            / "StaticAnalyzer"
+            / "GitX"
+            / "GitX"
+            / "normal"
+            / "arm64"
+            / "report.plist"
+        )
+        self.assertEqual(result.returncode, 65)
+        self.assertEqual(report.read_text(), "analyzer report\n")
+        self.assertEqual(self.receipt("analyzer-failure")["status"], "failed")
 
     def test_raw_respects_explicit_project_scheme_destination_configuration_and_derived_data(self) -> None:
         script = self.install_script("xcodebuild.sh")

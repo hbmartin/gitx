@@ -2213,19 +2213,6 @@ final class ForgeReadSurfaceViewControllerTests: XCTestCase {
         }
         XCTFail("Timed out waiting for \(description)")
     }
-
-    private func attachScreenshot(of window: NSWindow, named name: String) throws {
-        let contentView = try XCTUnwrap(window.contentView)
-        contentView.layoutSubtreeIfNeeded()
-        let representation = try XCTUnwrap(contentView.bitmapImageRepForCachingDisplay(in: contentView.bounds))
-        contentView.cacheDisplay(in: contentView.bounds, to: representation)
-        let screenshot = NSImage(size: contentView.bounds.size)
-        screenshot.addRepresentation(representation)
-        let attachment = XCTAttachment(image: screenshot)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
 }
 
 private struct StubPullRequestChangesProvider: RepositoryPullRequestChangesProviding {

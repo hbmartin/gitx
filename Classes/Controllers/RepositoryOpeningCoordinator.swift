@@ -774,18 +774,21 @@ final class WindowSessionCoordinator: NSObject {
             object: documentController,
             queue: .main
         ) { [weak self, weak documentController] _ in
-            Task { @MainActor in
+            // swift6-safety-justification: NotificationCenter delivers this observer on the explicitly selected main queue.
+            MainActor.assumeIsolated {
                 guard let self, let documentController,
-                      !documentController.hasPendingExplicitLaunchOpens
+                      !documentController.hasPendingExplicitLaunchOpens,
+                      let launchOpenObserver = self.launchOpenObserver
                 else { return }
-                if let launchOpenObserver = self.launchOpenObserver {
-                    NotificationCenter.default.removeObserver(launchOpenObserver)
-                    self.launchOpenObserver = nil
+                NotificationCenter.default.removeObserver(launchOpenObserver)
+                self.launchOpenObserver = nil
+                Task { @MainActor [weak self, weak documentController] in
+                    guard let self, let documentController else { return }
+                    self.evaluateLaunchPresentation(
+                        previousRunWasClean: previousRunWasClean,
+                        documentController: documentController
+                    )
                 }
-                self.evaluateLaunchPresentation(
-                    previousRunWasClean: previousRunWasClean,
-                    documentController: documentController
-                )
             }
         }
     }

@@ -760,41 +760,30 @@
 		XCUICoordinate *widerRightEdge = [rightEdge coordinateWithOffset:CGVectorMake(requestedGrowth, 0)];
 		[rightEdge clickForDuration:0.2 thenDragToCoordinate:widerRightEdge];
 		NSPredicate *windowWidened = [NSPredicate predicateWithBlock:^BOOL(__unused id object,
-																	 __unused NSDictionary *bindings) {
+																		   __unused NSDictionary *bindings) {
 			return window.frame.size.width > originalFrame.size.width + 100;
 		}];
 		XCTNSPredicateExpectation *resizeExpectation =
-			[[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened object:window];
+			[[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened
+														  object:window];
 		XCTAssertEqual([XCTWaiter waitForExpectations:@[ resizeExpectation ] timeout:5], XCTWaiterResultCompleted);
 	}
 
 	@try {
-		XCUIElement *viewRemotePrimary = self.app.toolbars.firstMatch.buttons[@"View Remote"];
-		XCTAssertTrue([viewRemotePrimary waitForExistenceWithTimeout:10],
-					  @"The widened repository toolbar should expose the View Remote primary action");
-		XCUIElement *viewRemoteMenuButton = nil;
-		CGRect primaryFrame = viewRemotePrimary.frame;
-		XCUIElementQuery *toolbarMenuButtons =
-			[self.app.toolbars.firstMatch descendantsMatchingType:XCUIElementTypeMenuButton];
-		for (XCUIElement *menuButton in toolbarMenuButtons.allElementsBoundByIndex) {
-			CGRect menuFrame = menuButton.frame;
-			BOOL isAdjacent = fabs(CGRectGetMidY(menuFrame) - CGRectGetMidY(primaryFrame)) < 2.0 &&
-				CGRectGetMinX(menuFrame) >= CGRectGetMaxX(primaryFrame) - 2.0 &&
-				CGRectGetMinX(menuFrame) - CGRectGetMaxX(primaryFrame) < 16.0;
-			if (isAdjacent) {
-				viewRemoteMenuButton = menuButton;
-				break;
-			}
-		}
-		XCTAssertNotNil(viewRemoteMenuButton,
-						@"The native View Remote toolbar item should expose an adjacent pull-down button");
+		XCUIElement *viewRemoteMenuButton = self.app.toolbars.firstMatch.menuButtons[@"GitX.Toolbar.ViewRemote"];
+		XCTAssertTrue([viewRemoteMenuButton waitForExistenceWithTimeout:10],
+					  @"The native View Remote toolbar item should expose its labelled pull-down button");
+		XCTAssertEqualObjects(viewRemoteMenuButton.label, @"View Remote menu");
 		[viewRemoteMenuButton click];
 		XCUIElement *toolbarMenu = viewRemoteMenuButton.menus.firstMatch;
 		XCTAssertTrue([toolbarMenu waitForExistenceWithTimeout:5]);
+		XCUIElement *toolbarPrimary = toolbarMenu.menuItems[@"GitX.Toolbar.ViewRemote.Primary"];
 		XCUIElement *toolbarRepository = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.Repository"];
 		XCUIElement *toolbarNumber = toolbarMenu.menuItems[@"GitX.Repository.ForgeLinks.PullRequestOrIssue"];
+		XCTAssertTrue([toolbarPrimary waitForExistenceWithTimeout:5]);
 		XCTAssertTrue([toolbarRepository waitForExistenceWithTimeout:5]);
 		XCTAssertTrue([toolbarNumber waitForExistenceWithTimeout:5]);
+		XCTAssertEqualObjects(toolbarPrimary.label, @"View Remote");
 		XCTAssertEqualObjects(toolbarRepository.label, @"View repository on GitHub");
 		XCTAssertEqualObjects(toolbarNumber.label, @"Open pull request or issue on GitHub");
 		[self saveScreenshotNamed:@"m0-forge-navigation-toolbar-menu"];
@@ -814,7 +803,8 @@
 					return fabs(window.frame.size.width - originalFrame.size.width) < 2;
 				}];
 			XCTNSPredicateExpectation *restoreExpectation =
-				[[XCTNSPredicateExpectation alloc] initWithPredicate:windowRestored object:window];
+				[[XCTNSPredicateExpectation alloc] initWithPredicate:windowRestored
+															  object:window];
 			XCTAssertEqual([XCTWaiter waitForExpectations:@[ restoreExpectation ] timeout:5], XCTWaiterResultCompleted);
 		}
 	}

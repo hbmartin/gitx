@@ -27,6 +27,7 @@
 #import "PBRepositoryDocumentControllerCompatibility.h"
 #import "PBAutoFetchManagerCompatibility.h"
 #import "PBWebHistoryControllerCompatibility.h"
+#import "PBQLOutlineViewCompatibility.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -1014,7 +1015,8 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @end
 
 @interface PBGitTree : NSObject
-@property (nonatomic, readonly) BOOL leaf;
+@property (nonatomic, copy) NSString *path;
+@property (nonatomic) BOOL leaf;
 @property (nonatomic, readonly) NSArray<PBGitTree *> *children;
 @property (nonatomic, readonly) NSString *contents;
 @property (nonatomic, readonly) NSString *fullPath;
@@ -1024,6 +1026,7 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (NSString *)blame;
 - (NSString *)log:(NSString *)format;
 - (NSString *)tmpFileNameForContents;
+- (void)saveToFolder:(NSString *)directory;
 @end
 
 @interface PBQLTextView : NSTextView

@@ -732,7 +732,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     func testHistoryFlowCancelsRunningGitWorkWhenTheSelectionMoves() throws {
         let defaults = UserDefaults.standard
-        let previousWatcherPreference = defaults.object(forKey: "PBUseRepositoryWatcher")
+        let defaultsDomain = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let previousWatcherPreference = defaults.persistentDomain(forName: defaultsDomain)?["PBUseRepositoryWatcher"]
         defaults.set(false, forKey: "PBUseRepositoryWatcher")
         NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
         defer {
@@ -756,15 +757,6 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try fixture.write("let cancelled = true\n", to: "Cancelled.swift")
         try fixture.git(["add", "Cancelled.swift"])
         let bulkSHA = try commitAndReloadHistory("add a cancellable source file")
-        XCTAssertTrue(
-            waitForCondition(timeout: 10) {
-                guard self.repository.revisionList?.isUpdating == false,
-                      let arrangedCommits = self.historyController.commitController.arrangedObjects as? [PBGitCommit]
-                else { return false }
-                return arrangedCommits.contains { $0.sha == bulkSHA }
-            },
-            "History did not finish arranging the cancellable commit before the cancellation scenario began"
-        )
         let mainSHA = try fixture.git(["rev-parse", "main~1"]).trimmingCharacters(in: .whitespacesAndNewlines)
         selectCommitForFlowAnalysis(revision: "HEAD")
         historyController.selectedCommitDetailsIndex = 2
@@ -3558,9 +3550,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.refresh(self)
         XCTAssertTrue(
             waitForCondition(timeout: 10) {
-                self.repository.revisionList?.commits.contains(where: { ($0 as? PBGitCommit)?.sha == sha }) == true
+                let revisionIsVisible = self.repository.revisionList?.commits.contains {
+                    ($0 as? PBGitCommit)?.sha == sha
+                } == true
+                let arrangedCommitIsVisible = (self.historyController.commitController.arrangedObjects as? [PBGitCommit])?
+                    .contains { $0.sha == sha } == true
+                return revisionIsVisible && arrangedCommitIsVisible
             },
-            "History did not list the commit \"\(message)\"",
+            "History did not list and arrange the commit \"\(message)\"",
             file: file,
             line: line
         )
@@ -3787,18 +3784,6 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     private func pumpRunLoop(for interval: TimeInterval) {
         RunLoop.main.run(until: Date().addingTimeInterval(interval))
-    }
-
-    private func attachScreenshot(of view: NSView, named name: String) throws {
-        view.layoutSubtreeIfNeeded()
-        let representation = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: representation)
-        let image = NSImage(size: view.bounds.size)
-        image.addRepresentation(representation)
-        let attachment = XCTAttachment(image: image)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
     }
 
     private func installCancellableGitWrapper(started: URL, terminated: URL) throws -> URL {

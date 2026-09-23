@@ -662,16 +662,4 @@ final class RepositoryStatusBarTests: XCTestCase {
         task.timeout = 10
         try task.launch()
     }
-
-    private func attachScreenshot(of view: NSView, named name: String) throws {
-        view.layoutSubtreeIfNeeded()
-        let representation = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-        view.cacheDisplay(in: view.bounds, to: representation)
-        let screenshot = NSImage(size: view.bounds.size)
-        screenshot.addRepresentation(representation)
-        let attachment = XCTAttachment(image: screenshot)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
-    }
 }

@@ -374,7 +374,7 @@ final class ForgeAccountLifecycleTests: XCTestCase {
             retry: { retryCount += 1 }
         ))
         let browserSheet = try XCTUnwrap(window.sheets.first)
-        let browserContentView = try XCTUnwrap(browserSheet.contentView)
+        let browserContentView: NSView? = try XCTUnwrap(browserSheet.contentView)
         attachScreenshot(
             of: browserContentView,
             named: "M1-Accounts-03-Typed-Authorization-Recovery"
@@ -1761,31 +1761,6 @@ final class ForgeAccountLifecycleTests: XCTestCase {
             file: file,
             line: line
         )
-    }
-
-    @MainActor
-    private func attachScreenshot(
-        of view: NSView?,
-        named name: String,
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) {
-        guard let view else {
-            XCTFail("Diagnostic screenshot view is unavailable", file: file, line: line)
-            return
-        }
-        view.layoutSubtreeIfNeeded()
-        guard let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
-            XCTFail("Diagnostic screenshot could not allocate a bitmap", file: file, line: line)
-            return
-        }
-        view.cacheDisplay(in: view.bounds, to: representation)
-        let image = NSImage(size: view.bounds.size)
-        image.addRepresentation(representation)
-        let attachment = XCTAttachment(image: image)
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
     }
 
     @MainActor

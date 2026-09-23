@@ -83,11 +83,4 @@ final class SourceViewBadge: NSObject {
     class func checkedOutBadge(for cell: NSTableCellView) -> NSImage {
         badge("✔", for: cell)
     }
-
-    @objc(numericBadge:forCell:)
-    // Objective-C source-view cells call this preserved selector.
-    // swiftlint:disable:next unused_declaration
-    class func numericBadge(_ number: Int, for cell: NSTableCellView) -> NSImage {
-        badge(String(number), for: cell)
-    }
 }

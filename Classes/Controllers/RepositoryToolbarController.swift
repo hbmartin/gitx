@@ -5,6 +5,20 @@ import ForgeKit
 // swiftlint:disable:next unused_import
 import OSLog
 
+private final class ViewRemoteMenuToolbarItem: NSMenuToolbarItem {
+    override var menuFormRepresentation: NSMenuItem? {
+        get {
+            let representation = super.menuFormRepresentation
+            representation?.setAccessibilityIdentifier("GitX.Toolbar.ViewRemote")
+            representation?.setAccessibilityLabel("View Remote menu")
+            return representation
+        }
+        set {
+            super.menuFormRepresentation = newValue
+        }
+    }
+}
+
 enum RepositoryForgeLinkRevision: Equatable {
     case branch(String)
     case commit(String)
@@ -123,14 +137,17 @@ final class RepositoryForgeLinkMenuPresenter: NSObject {
 
     static func menuItems(context: RepositoryForgeLinkContext) -> [NSMenuItem] {
         let models = itemModels(context: context).filter { !$0.isHidden }
+        return menuItems(models: models)
+    }
+
+    static func menuItems(models: [RepositoryForgeLinkMenuItemModel]) -> [NSMenuItem] {
         var items: [NSMenuItem] = []
         for model in models {
             if model.action == .numberedItem, !items.isEmpty {
                 items.append(.separator())
             }
-            let item = NSMenuItem(title: model.title, action: model.action.selector, keyEquivalent: "")
+            let item = NSMenuItem()
             apply(model: model, to: item)
-            item.target = nil
             items.append(item)
         }
         return items
@@ -138,11 +155,15 @@ final class RepositoryForgeLinkMenuPresenter: NSObject {
 
     static func apply(model: RepositoryForgeLinkMenuItemModel, to item: NSMenuItem) {
         item.title = model.title
+        item.action = model.action.selector
+        item.target = nil
         item.isEnabled = model.isEnabled
         item.isHidden = model.isHidden
         item.identifier = NSUserInterfaceItemIdentifier(model.action.accessibilityIdentifier)
         item.setAccessibilityIdentifier(model.action.accessibilityIdentifier)
         item.setAccessibilityLabel(model.accessibilityLabel)
+        item.keyEquivalent = ""
+        item.representedObject = nil
     }
 
     /// Objective-C-visible decision seam for app-hosted tests.
@@ -446,7 +467,7 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
     }
 
     private func viewRemoteItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {
-        let item = NSMenuToolbarItem(itemIdentifier: identifier)
+        let item = ViewRemoteMenuToolbarItem(itemIdentifier: identifier)
         item.label = "View Remote"
         item.paletteLabel = "View Remote"
         item.toolTip = "Open this repository or a contextual revision on its Git host"
@@ -461,9 +482,13 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
 
         let menu = NSMenu(title: "View Remote")
         menu.identifier = NSUserInterfaceItemIdentifier("GitX.Toolbar.ViewRemote.Menu")
+        menu.setAccessibilityIdentifier("GitX.Toolbar.ViewRemote")
+        menu.setAccessibilityLabel("View Remote menu")
         menu.delegate = self
         item.menu = menu
         updateForgeLinkMenu(menu)
+        item.menuFormRepresentation?.setAccessibilityIdentifier("GitX.Toolbar.ViewRemote")
+        item.menuFormRepresentation?.setAccessibilityLabel("View Remote menu")
         return item
     }
 
@@ -478,7 +503,8 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
             checkedOutRevision: nil,
             selectedCommitIdentifiers: []
         )
-        let updatedItems = RepositoryForgeLinkMenuPresenter.menuItems(context: context)
+        let models = RepositoryForgeLinkMenuPresenter.itemModels(context: context).filter { !$0.isHidden }
+        let updatedItems = viewRemoteMenuItems(models: models)
         let canUpdateInPlace = menu.items.count == updatedItems.count
             && zip(menu.items, updatedItems).allSatisfy { existing, updated in
                 if existing.isSeparatorItem || updated.isSeparatorItem {
@@ -487,14 +513,11 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
                 return existing.identifier == updated.identifier
             }
         if canUpdateInPlace {
-            for (existing, updated) in zip(menu.items, updatedItems) where !existing.isSeparatorItem {
-                existing.title = updated.title
-                existing.action = updated.action
-                existing.target = updated.target
-                existing.isEnabled = updated.isEnabled
-                existing.isHidden = updated.isHidden
-                existing.setAccessibilityIdentifier(updated.accessibilityIdentifier())
-                existing.setAccessibilityLabel(updated.accessibilityLabel())
+            applyViewRemotePrimary(to: menu.items[0])
+            var modelIndex = 0
+            for existing in menu.items.dropFirst(2) where !existing.isSeparatorItem {
+                RepositoryForgeLinkMenuPresenter.apply(model: models[modelIndex], to: existing)
+                modelIndex += 1
             }
             return
         }
@@ -506,6 +529,25 @@ final class RepositoryToolbarController: NSObject, NSToolbarDelegate, NSMenuDele
         let updateDescription = "Updated Forge link menu provider=\(context.providerName ?? "unresolved") "
             + "itemCount=\(menu.items.count)"
         logger.debug("\(updateDescription, privacy: .public)")
+    }
+
+    private func viewRemoteMenuItems(models: [RepositoryForgeLinkMenuItemModel]) -> [NSMenuItem] {
+        let primary = NSMenuItem()
+        applyViewRemotePrimary(to: primary)
+        return [primary, .separator()] + RepositoryForgeLinkMenuPresenter.menuItems(models: models)
+    }
+
+    private func applyViewRemotePrimary(to item: NSMenuItem) {
+        item.title = "View Remote"
+        item.action = NSSelectorFromString("viewRemote:")
+        item.target = windowController
+        item.isEnabled = windowController != nil
+        item.isHidden = false
+        item.identifier = NSUserInterfaceItemIdentifier("GitX.Toolbar.ViewRemote.Primary")
+        item.setAccessibilityIdentifier("GitX.Toolbar.ViewRemote.Primary")
+        item.setAccessibilityLabel("View Remote")
+        item.keyEquivalent = ""
+        item.representedObject = nil
     }
 
     private func actionsItem(identifier: NSToolbarItem.Identifier) -> NSToolbarItem {

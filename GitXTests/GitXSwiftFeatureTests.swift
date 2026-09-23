@@ -415,21 +415,52 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(item.target === windowController)
         XCTAssertNil(item.view)
         XCTAssertEqual(menu.identifier?.rawValue, "GitX.Toolbar.ViewRemote.Menu")
+        XCTAssertEqual(menu.accessibilityIdentifier(), "GitX.Toolbar.ViewRemote")
+        XCTAssertEqual(menu.accessibilityLabel(), "View Remote menu")
         XCTAssertTrue(menu.delegate === toolbarController)
         XCTAssertTrue(item.menuFormRepresentation?.submenu === menu)
+        XCTAssertEqual(item.menuFormRepresentation?.accessibilityIdentifier(), "GitX.Toolbar.ViewRemote")
+        XCTAssertEqual(item.menuFormRepresentation?.accessibilityLabel(), "View Remote menu")
         XCTAssertEqual(
             menu.items.filter { !$0.isSeparatorItem }.compactMap(\.identifier?.rawValue),
             [
+                "GitX.Toolbar.ViewRemote.Primary",
                 "GitX.Repository.ForgeLinks.Repository",
                 "GitX.Repository.ForgeLinks.PullRequestOrIssue",
             ]
         )
+        let primaryItem = try XCTUnwrap(menu.item(withTitle: "View Remote"))
+        XCTAssertEqual(primaryItem.action, NSSelectorFromString("viewRemote:"))
+        XCTAssertTrue(primaryItem.target === windowController)
+        XCTAssertEqual(primaryItem.accessibilityIdentifier(), "GitX.Toolbar.ViewRemote.Primary")
 
         let originalItems = menu.items
+        let repositoryItem = try XCTUnwrap(
+            originalItems.first { $0.identifier?.rawValue == "GitX.Repository.ForgeLinks.Repository" }
+        )
+        let staleTarget = NSObject()
+        repositoryItem.title = "Stale repository title"
+        repositoryItem.action = NSSelectorFromString("copy:")
+        repositoryItem.target = staleTarget
+        repositoryItem.keyEquivalent = "x"
+        repositoryItem.representedObject = "stale represented object"
+        repositoryItem.isEnabled = true
+        repositoryItem.isHidden = true
+        repositoryItem.setAccessibilityIdentifier("Stale.Accessibility.Identifier")
+        repositoryItem.setAccessibilityLabel("Stale accessibility label")
         toolbarController.menuNeedsUpdate(menu)
         XCTAssertEqual(menu.items.count, originalItems.count)
         XCTAssertTrue(zip(menu.items, originalItems).allSatisfy { $0 === $1 })
-        XCTAssertTrue(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.target == nil })
+        XCTAssertEqual(repositoryItem.title, "View Repository")
+        XCTAssertEqual(repositoryItem.action, NSSelectorFromString("viewForgeRepository:"))
+        XCTAssertNil(repositoryItem.target)
+        XCTAssertEqual(repositoryItem.keyEquivalent, "")
+        XCTAssertNil(repositoryItem.representedObject)
+        XCTAssertFalse(repositoryItem.isEnabled)
+        XCTAssertFalse(repositoryItem.isHidden)
+        XCTAssertEqual(repositoryItem.identifier?.rawValue, "GitX.Repository.ForgeLinks.Repository")
+        XCTAssertEqual(repositoryItem.accessibilityIdentifier(), "GitX.Repository.ForgeLinks.Repository")
+        XCTAssertEqual(repositoryItem.accessibilityLabel(), "View repository")
         XCTAssertFalse(toolbarController.responds(to: NSSelectorFromString("performViewRemoteMenuAction:")))
     }
 
@@ -458,7 +489,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         try XCTUnwrap(toolbarController).menuNeedsUpdate(menu)
         XCTAssertEqual(
             menu.items.filter { !$0.isSeparatorItem }.map(\.title),
-            ["View Repository", "Pull Request or Issue…"]
+            ["View Remote", "View Repository", "Pull Request or Issue…"]
         )
         XCTAssertTrue(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
     }

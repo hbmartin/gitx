@@ -93,7 +93,7 @@ nonisolated struct ForgeApplicationStorageConfiguration: Equatable, Sendable {
                 keychainService: SecurityForgeCredentialKeychain.defaultService
             )
         }
-        guard NSString(string: uiTestStorageRoot).isAbsolutePath else {
+        guard uiTestStorageRoot.hasPrefix("/") else {
             throw ForgeApplicationStorageConfigurationError.uiTestStorageRootMustBeAbsolute(uiTestStorageRoot)
         }
         let forgeDirectory = URL(fileURLWithPath: uiTestStorageRoot, isDirectory: true).standardizedFileURL
