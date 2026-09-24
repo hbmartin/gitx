@@ -68,15 +68,6 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
             try contents.write(to: destination, atomically: true, encoding: .utf8)
         }
 
-        func write(_ data: Data, to path: String) throws {
-            let destination = url.appendingPathComponent(path)
-            try FileManager.default.createDirectory(
-                at: destination.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try data.write(to: destination)
-        }
-
         @discardableResult
         func commit(_ message: String) throws -> String {
             _ = try git(["add", "-A"])
