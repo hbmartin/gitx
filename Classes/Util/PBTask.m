@@ -62,6 +62,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 - (void)scheduleOutputDrainAfterTaskExit;
 - (NSPipe *)makePipe;
 - (NSArray<NSString *> *)validatedArgumentsForLaunch;
+- (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
+									 supervisionError:(nullable NSError *)supervisionError;
 
 @end
 
@@ -325,6 +327,24 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	return [NSError errorWithDomain:PBTaskErrorDomain code:PBTaskLaunchError userInfo:info];
 }
 
+- (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
+									 supervisionError:(nullable NSError *)supervisionError
+{
+	if (supervisionError) {
+		NSException *exception = [NSException exceptionWithName:@"PBTaskProcessSupervisionException"
+											 reason:supervisionError.localizedDescription
+										   userInfo:@{ NSUnderlyingErrorKey : supervisionError }];
+		self.forcedError = [self launchErrorForException:exception underlyingError:supervisionError];
+	} else if (WIFSIGNALED(rawWaitStatus)) {
+		self.terminationReason = NSTaskTerminationReasonUncaughtSignal;
+		self.terminationStatus = WTERMSIG(rawWaitStatus);
+	} else {
+		self.terminationReason = NSTaskTerminationReasonExit;
+		self.terminationStatus = WIFEXITED(rawWaitStatus) ? WEXITSTATUS(rawWaitStatus) : rawWaitStatus;
+	}
+	return self.forcedError;
+}
+
 - (void)closeChildPipeEnds
 {
 	[self.outputPipe.fileHandleForWriting closeFile];
@@ -404,18 +424,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 								  if (!strongSelf) return;
 								  dispatch_async(strongSelf.stateQueue, ^{
 									  if (strongSelf.operationFinished) return;
-									  if (supervisionError) {
-										  NSException *exception = [NSException exceptionWithName:@"PBTaskProcessSupervisionException"
-																		 reason:supervisionError.localizedDescription
-																	   userInfo:@{ NSUnderlyingErrorKey : supervisionError }];
-										  strongSelf.forcedError = [strongSelf launchErrorForException:exception underlyingError:supervisionError];
-									  } else if (WIFSIGNALED(rawWaitStatus)) {
-										  strongSelf.terminationReason = NSTaskTerminationReasonUncaughtSignal;
-										  strongSelf.terminationStatus = WTERMSIG(rawWaitStatus);
-									  } else {
-										  strongSelf.terminationReason = NSTaskTerminationReasonExit;
-										  strongSelf.terminationStatus = WIFEXITED(rawWaitStatus) ? WEXITSTATUS(rawWaitStatus) : rawWaitStatus;
-									  }
+									  [strongSelf recordProcessCompletionWithRawWaitStatus:rawWaitStatus supervisionError:supervisionError];
 									  strongSelf.taskFinished = YES;
 									  [strongSelf finishIfReady];
 									  [strongSelf scheduleOutputDrainAfterTaskExit];

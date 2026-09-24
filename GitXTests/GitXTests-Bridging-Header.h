@@ -35,6 +35,22 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)acceptBinary:(nullable NSString *)path;
 @end
 
+@class PBHistoryFlowRevisionProviderTestOperation;
+
+@interface PBHistoryFlowRevisionProviderTestOperation : NSObject
+- (void)cancel;
+@end
+
+@interface PBHistoryFlowRevisionProviderTestHarness : NSObject
++ (PBHistoryFlowRevisionProviderTestOperation *)compareRepositoryAtURL:(NSURL *)repositoryURL
+											  gitExecutableURL:(NSURL *)gitExecutableURL
+														base:(NSString *)base
+													  target:(NSString *)target
+									 maximumChangedFiles:(NSInteger)maximumChangedFiles
+										maximumBlobBytes:(NSInteger)maximumBlobBytes
+										 completionHandler:(void (^)(NSData *_Nullable data, NSString *_Nullable errorDescription))completionHandler;
+@end
+
 typedef NS_ENUM(NSInteger, PBOpenDisposition) {
 	PBOpenDispositionAlwaysNewWindow,
 	PBOpenDispositionFollowSystem,

@@ -301,6 +301,7 @@
 		C0D0C0A00000000000000001 /* GitXCore in Frameworks */ = {isa = PBXBuildFile; productRef = C0D0C0A00000000000000018 /* GitXCore */; };
 		FD2000000000000000000001 /* FlowDeltaAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD2000000000000000000011 /* FlowDeltaAdapters.swift */; };
 		FD2100000000000000000001 /* HistoryFlowRevisionProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD2100000000000000000011 /* HistoryFlowRevisionProvider.swift */; };
+		FD2200000000000000000001 /* HistoryFlowRevisionProviderTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD2200000000000000000011 /* HistoryFlowRevisionProviderTestSupport.swift */; };
 		FD2000000000000000000002 /* FlowDeltaCore in Frameworks */ = {isa = PBXBuildFile; productRef = FD2000000000000000000018 /* FlowDeltaCore */; };
 		FD2000000000000000000003 /* FlowDeltaAnalysis in Frameworks */ = {isa = PBXBuildFile; productRef = FD2000000000000000000019 /* FlowDeltaAnalysis */; };
 		FD2000000000000000000004 /* FlowDeltaGit in Frameworks */ = {isa = PBXBuildFile; productRef = FD200000000000000000001A /* FlowDeltaGit */; };
@@ -394,6 +395,7 @@
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */; };
+		C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */; };
 		C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE81000000000000000002 /* GitBinaryTests.swift */; };
 		C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */; };
 		C0DE84000000000000000001 /* StagingDiffPaneControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */; };
@@ -998,6 +1000,7 @@
 		C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXCoreAdapters.swift; sourceTree = "<group>"; };
 		FD2000000000000000000011 /* FlowDeltaAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowDeltaAdapters.swift; sourceTree = "<group>"; };
 		FD2100000000000000000011 /* HistoryFlowRevisionProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFlowRevisionProvider.swift; sourceTree = "<group>"; };
+		FD2200000000000000000011 /* HistoryFlowRevisionProviderTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFlowRevisionProviderTestSupport.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationPreferencesUI.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000014 /* TerminalIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalIntegration.swift; sourceTree = "<group>"; };
 		C0D0C0A00000000000000015 /* RepositorySettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsStore.swift; sourceTree = "<group>"; };
@@ -1074,6 +1077,7 @@
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
 		C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBChildProcessOwnerTests.swift; sourceTree = "<group>"; };
+		C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFlowRevisionProviderTests.swift; sourceTree = "<group>"; };
 		C0DE81000000000000000002 /* GitBinaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryTests.swift; sourceTree = "<group>"; };
 		C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffLoadCoordinatorTests.swift; sourceTree = "<group>"; };
 		C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffPaneControllerTests.swift; sourceTree = "<group>"; };
@@ -1387,6 +1391,7 @@
 				C0D0C0A00000000000000012 /* GitXCoreAdapters.swift */,
 				FD2000000000000000000011 /* FlowDeltaAdapters.swift */,
 				FD2100000000000000000011 /* HistoryFlowRevisionProvider.swift */,
+				FD2200000000000000000011 /* HistoryFlowRevisionProviderTestSupport.swift */,
 				C0DEC1000000000000000011 /* ApplicationSettings.swift */,
 				C0D1C0A00000000000000011 /* ApplicationIcon.swift */,
 				C0D0C0A00000000000000013 /* ApplicationPreferencesUI.swift */,
@@ -1747,6 +1752,7 @@
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
 				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
 				C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */,
+				C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */,
 				C0DE81000000000000000002 /* GitBinaryTests.swift */,
 				C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */,
 				C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */,
@@ -2309,6 +2315,7 @@
 				C0D0C0A00000000000000003 /* GitXCoreAdapters.swift in Sources */,
 				FD2000000000000000000001 /* FlowDeltaAdapters.swift in Sources */,
 				FD2100000000000000000001 /* HistoryFlowRevisionProvider.swift in Sources */,
+				FD2200000000000000000001 /* HistoryFlowRevisionProviderTestSupport.swift in Sources */,
 				C0D0C0A00000000000000004 /* ApplicationPreferencesUI.swift in Sources */,
 				C0D0C0A00000000000000005 /* TerminalIntegration.swift in Sources */,
 				C0D0C0A00000000000000006 /* RepositorySettingsStore.swift in Sources */,
@@ -2458,6 +2465,7 @@
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
 				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
 				C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */,
+				C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */,
 				C0DEB1000000000000000003 /* PBChildProcessOwner.swift in Sources */,
 				C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */,
 				C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */,

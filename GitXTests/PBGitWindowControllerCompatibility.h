@@ -156,6 +156,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBWindowSessionCoordinator : NSObject
 @property (class, nonatomic, readonly, strong) PBWindowSessionCoordinator *shared;
 - (void)applicationDidFinishLaunching;
+- (void)applicationWillTerminate;
 - (void)capture;
 @end
 
