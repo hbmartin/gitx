@@ -224,6 +224,7 @@ nonisolated struct HistoryFlowRevisionProvider: RevisionProvider {
 }
 
 #if DEBUG
+    // swift6-safety-justification: The mutex protects the only mutable task reference shared with cancellation callers.
     @objc(PBHistoryFlowRevisionProviderTestOperation)
     final nonisolated class HistoryFlowRevisionProviderTestOperation: NSObject, @unchecked Sendable {
         private let task = Mutex<Task<Void, Never>?>(nil)

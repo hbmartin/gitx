@@ -3,12 +3,14 @@ import FlowDeltaCore
 import Foundation
 import XCTest
 
+// swift6-safety-justification: XCTest owns the case lifetime; cross-task result state lives in the locked ResultBox.
 final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
     private enum InvocationResult {
         case success(RevisionComparison)
         case failure(String)
     }
 
+    // swift6-safety-justification: NSLock protects every read and mutation of the result and continuation.
     private final class ResultBox: @unchecked Sendable {
         private let lock = NSLock()
         private var result: InvocationResult?
