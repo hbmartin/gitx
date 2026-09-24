@@ -25,7 +25,6 @@
     "Classes/Controllers/GitHubReadComposition.swift": 0.9973,
     "Classes/Controllers/GitXCoreAdapters.swift": 1.0,
     "Classes/Controllers/HistoryFlowRevisionProvider.swift": 0.97,
-    "Classes/Controllers/HistoryFlowRevisionProviderTestSupport.swift": 1.0,
     "Classes/Controllers/HistoryForgeOverlayPresentation.swift": 0.9448,
     "Classes/Controllers/HistoryMenuBuilder.swift": 0.9666,
     "Classes/Controllers/HistoryStateCoordinator.swift": 1.0,
