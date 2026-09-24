@@ -679,4 +679,52 @@ final class PBTaskLifecycleTests: XCTestCase {
         let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
         XCTAssertEqual(Darwin.kill(processID, 0), -1, "PBTask must reap the timed-out child before completion")
     }
+
+    func testStoppedChildStillTimesOutAndIsForceKilled() throws {
+        let pidURL = temporaryFileURL(named: "stopped-pid")
+        let readyURL = temporaryFileURL(named: "stopped-ready")
+        defer {
+            if let contents = try? String(contentsOf: pidURL, encoding: .utf8),
+               let processID = pid_t(contents)
+            {
+                _ = Darwin.kill(processID, SIGKILL)
+            }
+            try? FileManager.default.removeItem(at: pidURL)
+            try? FileManager.default.removeItem(at: readyURL)
+        }
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "trap '' TERM; " +
+                    "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; " +
+                    "printf ready > \"$PB_TASK_READY_FILE\"; " +
+                    "while :; do /bin/sleep 1; done",
+            ],
+            inDirectory: nil
+        )
+        task.additionalEnvironment = [
+            "PB_TASK_PID_FILE": pidURL.path,
+            "PB_TASK_READY_FILE": readyURL.path,
+        ]
+        task.timeout = 2
+        let completed = expectation(description: "stopped process timed out")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            let taskError = error as NSError?
+            XCTAssertEqual(taskError?.domain, PBTaskErrorDomain)
+            XCTAssertEqual(taskError?.code, Int(PBTaskErrorCode.timeoutError.rawValue))
+            completed.fulfill()
+        }
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: readyURL.path) },
+            object: nil
+        )
+        wait(for: [ready], timeout: 2)
+        let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
+        XCTAssertEqual(Darwin.kill(processID, SIGSTOP), 0)
+
+        wait(for: [completed], timeout: 5)
+        waitForProcessesToExit([processID])
+    }
 }

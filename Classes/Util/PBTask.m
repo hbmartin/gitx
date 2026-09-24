@@ -380,12 +380,17 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 								workingDirectory:self.currentDirectoryPath
 					 standardInputFileDescriptor:inputFileDescriptor
 					standardOutputFileDescriptor:self.outputPipe.fileHandleForWriting.fileDescriptor
-							  terminationHandler:^(int32_t rawWaitStatus) {
+							  terminationHandler:^(int32_t rawWaitStatus, NSError *supervisionError) {
 								  PBTask *strongSelf = weakSelf;
 								  if (!strongSelf) return;
 								  dispatch_async(strongSelf.stateQueue, ^{
 									  if (strongSelf.operationFinished) return;
-									  if (WIFSIGNALED(rawWaitStatus)) {
+									  if (supervisionError) {
+										  NSException *exception = [NSException exceptionWithName:@"PBTaskProcessSupervisionException"
+																		 reason:supervisionError.localizedDescription
+																	   userInfo:@{ NSUnderlyingErrorKey : supervisionError }];
+										  strongSelf.forcedError = [strongSelf launchErrorForException:exception underlyingError:supervisionError];
+									  } else if (WIFSIGNALED(rawWaitStatus)) {
 										  strongSelf.terminationReason = NSTaskTerminationReasonUncaughtSignal;
 										  strongSelf.terminationStatus = WTERMSIG(rawWaitStatus);
 									  } else {

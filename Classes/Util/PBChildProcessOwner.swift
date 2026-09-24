@@ -17,6 +17,11 @@ nonisolated protocol PBChildProcessExitMonitoring: AnyObject, Sendable {
     func cancel()
 }
 
+nonisolated enum PBChildProcessExitState: Equatable, Sendable {
+    case running
+    case terminal
+}
+
 nonisolated protocol PBChildProcessSystem: Sendable {
     func spawn(configuration: PBChildProcessConfiguration) throws -> pid_t
     func makeExitMonitor(
@@ -24,8 +29,8 @@ nonisolated protocol PBChildProcessSystem: Sendable {
         queue: DispatchQueue,
         handler: @escaping @Sendable () -> Void
     ) -> any PBChildProcessExitMonitoring
-    func hasExitedWithoutReaping(processIdentifier: pid_t) throws -> Bool
-    func reap(processIdentifier: pid_t) throws -> Int32
+    func exitStateWithoutReaping(processIdentifier: pid_t) throws -> PBChildProcessExitState
+    func reapIfExited(processIdentifier: pid_t) throws -> Int32?
     func send(signal: Int32, toProcessGroup processGroup: pid_t) throws
     func processGroupMembers(processGroup: pid_t) throws -> [pid_t]
 }
@@ -64,7 +69,7 @@ nonisolated struct PBChildProcessTerminationSchedule: Equatable, Sendable {
 
 // swift6-safety-justification: Mutable lifecycle state is confined to the private serial queue.
 final nonisolated class PBChildProcessOwner: @unchecked Sendable {
-    typealias TerminationHandler = @Sendable (Int32) -> Void
+    typealias TerminationHandler = @Sendable (Int32, NSError?) -> Void
 
     private struct RunningProcess {
         let processIdentifier: pid_t
@@ -77,8 +82,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         var leaderExitWasObserved = false
         var terminationTimerGeneration = 0
         var forceKillTimerGeneration = 0
-        var exitPollGeneration = 0
-        var groupPollGeneration = 0
+        var reapRetryGeneration = 0
     }
 
     private enum State {
@@ -87,8 +91,8 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         case finished
     }
 
-    private static let pollInterval: TimeInterval = 0.05
-    private static let logger = Logger(subsystem: "net.phere.GitX", category: "PBChildProcess")
+    private static let reapRetryInterval: TimeInterval = 0.01
+    private static let logger = Logger(subsystem: "com.gitx.gitx", category: "PBChildProcess")
 
     private let queue: DispatchQueue
     private let system: any PBChildProcessSystem
@@ -138,7 +142,6 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             // becoming active. It remains a zombie until this owner reaps it, so this
             // immediate non-reaping probe closes that notification-registration race.
             observeLeaderExit()
-            scheduleExitPoll()
         }
     }
 
@@ -232,7 +235,6 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         guard case var .running(current) = state else { return }
         current.forceKillWasSent = true
         current.forceKillTimerGeneration += 1
-        current.groupPollGeneration += 1
         state = .running(current)
         signalProcessGroup(SIGKILL, label: "SIGKILL")
         observeLeaderExit()
@@ -275,7 +277,9 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     private func observeLeaderExit() {
         guard case var .running(process) = state else { return }
         do {
-            guard try system.hasExitedWithoutReaping(processIdentifier: process.processIdentifier) else { return }
+            guard try system.exitStateWithoutReaping(processIdentifier: process.processIdentifier) == .terminal else {
+                return
+            }
             if !process.leaderExitWasObserved {
                 process.leaderExitWasObserved = true
                 state = .running(process)
@@ -294,32 +298,9 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
 
             if groupHasNoDescendants(process) {
                 reapLeader(process)
-            } else {
-                scheduleGroupPoll()
             }
         } catch {
-            Self.logger.error(
-                "Could not observe child pid=\(process.processIdentifier, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
-        }
-    }
-
-    private func scheduleExitPoll() {
-        guard case var .running(process) = state,
-              !process.leaderExitWasObserved
-        else { return }
-
-        process.exitPollGeneration += 1
-        let generation = process.exitPollGeneration
-        state = .running(process)
-        queue.asyncAfter(deadline: .now() + Self.pollInterval) { [weak self] in
-            guard let self,
-                  case let .running(current) = state,
-                  current.exitPollGeneration == generation,
-                  !current.leaderExitWasObserved
-            else { return }
-            observeLeaderExit()
-            scheduleExitPoll()
+            finishWithSupervisionError(error, operation: "observe", process: process)
         }
     }
 
@@ -335,42 +316,53 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         }
     }
 
-    private func scheduleGroupPoll() {
-        guard case var .running(process) = state,
-              process.leaderExitWasObserved,
-              !process.forceKillWasSent
-        else { return }
-
-        process.groupPollGeneration += 1
-        let generation = process.groupPollGeneration
-        state = .running(process)
-        queue.asyncAfter(deadline: .now() + Self.pollInterval) { [weak self] in
-            guard let self,
-                  case let .running(current) = state,
-                  current.groupPollGeneration == generation,
-                  current.leaderExitWasObserved,
-                  !current.forceKillWasSent
-            else { return }
-            if groupHasNoDescendants(current) {
-                reapLeader(current)
-            } else {
-                scheduleGroupPoll()
+    private func reapLeader(_ process: RunningProcess) {
+        do {
+            guard let rawWaitStatus = try system.reapIfExited(processIdentifier: process.processIdentifier) else {
+                scheduleReapRetry(process)
+                return
             }
+            Self.logger.info("Reaped child pid=\(process.processIdentifier, privacy: .public)")
+            finish(process: process, rawWaitStatus: rawWaitStatus, error: nil)
+        } catch {
+            finishWithSupervisionError(error, operation: "reap", process: process)
         }
     }
 
-    private func reapLeader(_ process: RunningProcess) {
-        do {
-            let rawWaitStatus = try system.reap(processIdentifier: process.processIdentifier)
-            process.exitMonitor?.cancel()
-            state = .finished
-            Self.logger.info("Reaped child pid=\(process.processIdentifier, privacy: .public)")
-            process.terminationHandler(rawWaitStatus)
-        } catch {
-            Self.logger.error(
-                "Could not reap child pid=\(process.processIdentifier, privacy: .public): \(error.localizedDescription, privacy: .public)"
-            )
+    private func scheduleReapRetry(_ process: RunningProcess) {
+        guard case var .running(current) = state,
+              current.processIdentifier == process.processIdentifier,
+              current.leaderExitWasObserved
+        else { return }
+
+        current.reapRetryGeneration += 1
+        let generation = current.reapRetryGeneration
+        state = .running(current)
+        queue.asyncAfter(deadline: .now() + Self.reapRetryInterval) { [weak self] in
+            guard let self,
+                  case let .running(latest) = state,
+                  latest.reapRetryGeneration == generation,
+                  latest.leaderExitWasObserved
+            else { return }
+            reapLeader(latest)
         }
+    }
+
+    private func finishWithSupervisionError(_ error: Error, operation: String, process: RunningProcess) {
+        let error = error as NSError
+        Self.logger.error(
+            "Could not \(operation, privacy: .public) child pid=\(process.processIdentifier, privacy: .public): \(error.localizedDescription, privacy: .public)"
+        )
+        finish(process: process, rawWaitStatus: 0, error: error)
+    }
+
+    private func finish(process: RunningProcess, rawWaitStatus: Int32, error: NSError?) {
+        guard case let .running(current) = state,
+              current.processIdentifier == process.processIdentifier
+        else { return }
+        current.exitMonitor?.cancel()
+        state = .finished
+        current.terminationHandler(rawWaitStatus, error)
     }
 }
 
@@ -522,11 +514,17 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         return PBDispatchProcessExitMonitor(source: source, handler: handler)
     }
 
-    func hasExitedWithoutReaping(processIdentifier: pid_t) throws -> Bool {
+    func exitStateWithoutReaping(processIdentifier: pid_t) throws -> PBChildProcessExitState {
         var information = siginfo_t()
         while true {
             if waitid(P_PID, id_t(processIdentifier), &information, WEXITED | WNOHANG | WNOWAIT) == 0 {
-                return information.si_pid == processIdentifier
+                guard information.si_pid == processIdentifier else { return .running }
+                switch information.si_code {
+                case CLD_EXITED, CLD_KILLED, CLD_DUMPED:
+                    return .terminal
+                default:
+                    return .running
+                }
             }
             if errno != EINTR {
                 throw posixError(errno, operation: "observe child exit")
@@ -534,12 +532,15 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         }
     }
 
-    func reap(processIdentifier: pid_t) throws -> Int32 {
+    func reapIfExited(processIdentifier: pid_t) throws -> Int32? {
         var status: Int32 = 0
         while true {
-            let result = waitpid(processIdentifier, &status, 0)
+            let result = waitpid(processIdentifier, &status, WNOHANG)
             if result == processIdentifier {
                 return status
+            }
+            if result == 0 {
+                return nil
             }
             if result == -1, errno != EINTR {
                 throw posixError(errno, operation: "reap child process")
@@ -607,12 +608,13 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
     }
 
     private func posixError(_ code: Int32, operation: String) -> NSError {
-        NSError(
+        let reason = String(cString: strerror(code))
+        return NSError(
             domain: NSPOSIXErrorDomain,
             code: Int(code),
             userInfo: [
-                NSLocalizedDescriptionKey: operation,
-                NSLocalizedFailureReasonErrorKey: String(cString: strerror(code)),
+                NSLocalizedDescriptionKey: "\(operation): \(reason)",
+                NSLocalizedFailureReasonErrorKey: reason,
             ]
         )
     }
@@ -637,7 +639,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
             workingDirectory: String?,
             standardInputFileDescriptor: NSNumber?,
             standardOutputFileDescriptor: Int32,
-            terminationHandler: @escaping PBChildProcessOwner.TerminationHandler
+            terminationHandler: @escaping @Sendable (Int32, NSError?) -> Void
         ) {
             configuration = PBChildProcessConfiguration(
                 launchPath: launchPath,
