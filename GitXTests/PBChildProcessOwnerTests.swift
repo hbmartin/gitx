@@ -592,6 +592,43 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertEqual(String(data: output, encoding: .utf8), "no-input")
     }
 
+    func testPosixSpawnDoesNotInheritInteractiveStandardInput() throws {
+        let inputPipe = try makePOSIXPipe()
+        let outputPipe = try makePOSIXPipe()
+        defer { Darwin.close(outputPipe.read) }
+        let savedStandardInput = try duplicateStandardInput()
+        var standardInputWasRestored = false
+        defer {
+            if !standardInputWasRestored {
+                restoreStandardInput(from: savedStandardInput)
+            }
+        }
+        let inheritedInput = Data("inherited-input\n".utf8)
+        try FileHandle(fileDescriptor: inputPipe.write, closeOnDealloc: false).write(contentsOf: inheritedInput)
+        XCTAssertEqual(Darwin.close(inputPipe.write), 0)
+        XCTAssertEqual(dup2(inputPipe.read, STDIN_FILENO), STDIN_FILENO)
+        XCTAssertEqual(Darwin.close(inputPipe.read), 0)
+
+        let processIdentifier = try PBPosixChildProcessSystem().spawn(
+            configuration: PBChildProcessConfiguration(
+                launchPath: "/bin/sh",
+                arguments: ["-c", "read value && printf inherited || printf no-input"],
+                environment: ProcessInfo.processInfo.environment,
+                workingDirectory: nil,
+                standardInputFileDescriptor: nil,
+                standardOutputFileDescriptor: outputPipe.write
+            )
+        )
+        restoreStandardInput(from: savedStandardInput)
+        standardInputWasRestored = true
+        XCTAssertEqual(Darwin.close(outputPipe.write), 0)
+        let status = try waitForProcess(processIdentifier)
+        let output = FileHandle(fileDescriptor: outputPipe.read, closeOnDealloc: false).readDataToEndOfFile()
+
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(String(data: output, encoding: .utf8), "no-input")
+    }
+
     func testPosixSpawnPreservesOutputWhenItsSourceOccupiesStandardInput() throws {
         let outputPipe = try makePOSIXPipe()
         defer { Darwin.close(outputPipe.read) }

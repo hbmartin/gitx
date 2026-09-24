@@ -459,20 +459,10 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
                 operation: "configure child standard input"
             )
         } else {
-            errno = 0
-            if fcntl(STDIN_FILENO, F_GETFD) == -1 {
-                let code = errno
-                guard code == EBADF else { throw posixError(code, operation: "inspect child standard input") }
-                try "/dev/null".withCString { path in
-                    try check(
-                        posix_spawn_file_actions_addopen(&fileActions, STDIN_FILENO, path, O_RDONLY, 0),
-                        operation: "open null child standard input"
-                    )
-                }
-            } else {
+            try "/dev/null".withCString { path in
                 try check(
-                    posix_spawn_file_actions_addinherit_np(&fileActions, STDIN_FILENO),
-                    operation: "inherit child standard input"
+                    posix_spawn_file_actions_addopen(&fileActions, STDIN_FILENO, path, O_RDONLY, 0),
+                    operation: "open null child standard input"
                 )
             }
         }
