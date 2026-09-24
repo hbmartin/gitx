@@ -65,9 +65,12 @@ final class PBQLOutlineViewTests: XCTestCase {
             try data.write(to: url)
         }
 
-        func commit(_ message: String) throws {
+        @discardableResult
+        func commit(_ message: String) throws -> String {
             try Self.runGit(["add", "--all"], in: directory)
             try Self.runGit(["commit", "--quiet", "-m", message], in: directory)
+            return try Self.runGit(["rev-parse", "HEAD"], in: directory)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         func addSubmoduleEntry(path: String) throws -> String {
@@ -193,6 +196,35 @@ final class PBQLOutlineViewTests: XCTestCase {
         let destination = parent.appendingPathComponent("Documentation", isDirectory: true)
 
         XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("Café.txt")),
+            Data("promised directory contents\n".utf8)
+        )
+    }
+
+    func testCommittedDirectoryExportMapsRepeatedBinaryBlobsToTheirPaths() throws {
+        let fixture = try GitFixture()
+        let binary = Data([0x00, 0x7F, 0xFF, 0x0A])
+        try fixture.write(binary, to: "Documentation/Alpha.dat")
+        try fixture.write(binary, to: "Documentation/Guides/Beta.dat")
+        let revision = try fixture.commit("Add repeated binary blobs")
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Documentation",
+            isDirectory: true,
+            source: .committedDirectory(
+                repository: repositoryDescriptor(for: fixture),
+                revision: revision,
+                path: "Documentation"
+            )
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Documentation", isDirectory: true)
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("Alpha.dat")), binary)
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("Guides/Beta.dat")), binary)
         XCTAssertEqual(
             try Data(contentsOf: destination.appendingPathComponent("Café.txt")),
             Data("promised directory contents\n".utf8)
