@@ -143,6 +143,34 @@ final class PBTaskLifecycleTests: XCTestCase {
         wait(for: [completion], timeout: 5)
     }
 
+    func testTaskRetainsProcessOwnershipUntilCompletionAfterCallerReleasesIt() {
+        let completion = expectation(description: "retained task completion")
+        weak var releasedTask: PBTask?
+
+        autoreleasepool {
+            var task: PBTask? = PBTask(
+                launchPath: "/bin/sh",
+                arguments: ["-c", "sleep 0.05; printf retained"],
+                inDirectory: nil
+            )
+            releasedTask = task
+            task?.perform(on: DispatchQueue.global(qos: .userInitiated)) { data, error in
+                XCTAssertNil(error)
+                XCTAssertEqual(data, Data("retained".utf8))
+                completion.fulfill()
+            }
+            task = nil
+            XCTAssertNotNil(releasedTask)
+        }
+
+        wait(for: [completion], timeout: 5)
+        let released = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in releasedTask == nil },
+            object: nil
+        )
+        wait(for: [released], timeout: 2)
+    }
+
     func testCompletionObservesMergedOutputInWriteOrderIncludingFinalByte() {
         let completion = expectation(description: "output callback")
         let queue = DispatchQueue(label: "org.gitx.tests.pbtask-output")

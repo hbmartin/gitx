@@ -28,11 +28,19 @@ final class PBChildProcessOwnerTests: XCTestCase {
     // swift6-safety-justification: The lock protects the fake monitor's mutable flags.
     private final class FakeExitMonitor: PBChildProcessExitMonitoring, @unchecked Sendable {
         private let lock = NSLock()
+        private let queue: DispatchQueue
         private let handler: @Sendable () -> Void
+        private let enqueueEventOnActivation: Bool
         private var isActive = false
         private var isCancelled = false
 
-        init(handler: @escaping @Sendable () -> Void) {
+        init(
+            queue: DispatchQueue,
+            enqueueEventOnActivation: Bool,
+            handler: @escaping @Sendable () -> Void
+        ) {
+            self.queue = queue
+            self.enqueueEventOnActivation = enqueueEventOnActivation
             self.handler = handler
         }
 
@@ -40,6 +48,9 @@ final class PBChildProcessOwnerTests: XCTestCase {
             lock.lock()
             isActive = true
             lock.unlock()
+            if enqueueEventOnActivation {
+                queue.async(execute: handler)
+            }
         }
 
         func cancel() {
@@ -48,12 +59,12 @@ final class PBChildProcessOwnerTests: XCTestCase {
             lock.unlock()
         }
 
-        func triggerEvenIfCancelled() {
+        func trigger() {
             lock.lock()
-            let shouldTrigger = isActive
+            let shouldTrigger = isActive && !isCancelled
             lock.unlock()
             if shouldTrigger {
-                handler()
+                queue.async(execute: handler)
             }
         }
     }
@@ -74,6 +85,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
         private var shouldFailSpawn = false
         private var shouldFailSignal = false
         private var signalExpectation: XCTestExpectation?
+        var enqueueExitEventOnActivation = false
         var leaderExitsOnTermination = false
 
         var events: [String] {
@@ -116,7 +128,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
             lock.lock()
             let monitor = storedMonitor
             lock.unlock()
-            monitor?.triggerEvenIfCancelled()
+            monitor?.trigger()
         }
 
         func spawn(configuration: PBChildProcessConfiguration) throws -> pid_t {
@@ -135,7 +147,11 @@ final class PBChildProcessOwnerTests: XCTestCase {
             queue: DispatchQueue,
             handler: @escaping @Sendable () -> Void
         ) -> any PBChildProcessExitMonitoring {
-            let monitor = FakeExitMonitor(handler: handler)
+            let monitor = FakeExitMonitor(
+                queue: queue,
+                enqueueEventOnActivation: enqueueExitEventOnActivation,
+                handler: handler
+            )
             lock.lock()
             storedMonitor = monitor
             storedEvents.append("monitor")
@@ -237,6 +253,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
     func testFastExitDuringMonitorRegistrationIsReapedExactlyOnce() throws {
         let system = FakeProcessSystem()
         system.setLeaderExited(true)
+        system.enqueueExitEventOnActivation = true
         let owner = PBChildProcessOwner(system: system, queueLabel: #function)
         let completed = expectation(description: "leader reaped")
         let recorder = CompletionRecorder(expectation: completed)
