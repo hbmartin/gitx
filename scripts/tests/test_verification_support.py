@@ -75,6 +75,12 @@ class VersionTests(unittest.TestCase):
             [pathlib.Path("/Applications/Xcode.app/Contents/Developer")],
         )
 
+    def test_xcode_application_bundle_suffix_is_case_insensitive(self) -> None:
+        self.assertEqual(
+            verification.normalize_developer_directory("/Applications/Xcode.BETA.APP"),
+            pathlib.Path("/Applications/Xcode.BETA.APP/Contents/Developer"),
+        )
+
     def test_unusable_explicit_developer_directory_does_not_fall_back(self) -> None:
         config = {
             "defaultDeveloperDirectory": "/Applications/Xcode.app/Contents/Developer",

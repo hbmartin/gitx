@@ -36,8 +36,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 @property (nullable, strong) PBChildProcessSupervisor *processSupervisor;
 @property (retain) NSData *standardOutputData;
 @property (retain) NSMutableData *standardOutputBuffer;
-@property (retain) NSPipe *outputPipe;
-@property (retain) NSPipe *inputPipe;
+@property (nullable, retain) NSPipe *outputPipe;
+@property (nullable, retain) NSPipe *inputPipe;
 @property (strong) dispatch_queue_t stateQueue;
 @property (strong) dispatch_queue_t callbackQueue;
 @property (copy) void (^resultHandler)(NSData *_Nullable data, NSError *_Nullable error);
@@ -60,6 +60,10 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 - (void)stopOutputReaderAndCloseWhenSafe;
 - (void)scheduleOutputDrainAfterTaskExit;
+- (NSPipe *)makePipe;
+- (NSArray<NSString *> *)validatedArgumentsForLaunch;
+- (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
+											  supervisionError:(nullable NSError *)supervisionError;
 
 @end
 
@@ -91,14 +95,6 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	_environment = [env copy];
 	_currentDirectoryPath = [directory copy];
 
-	if ([[NSUserDefaults standardUserDefaults] boolForKey:@"Show Debug Messages"])
-		NSLog(@"Starting command `%@ %@` in dir %@", launchPath, [args componentsJoinedByString:@" "], directory);
-#ifdef CLI
-	NSLog(@"Starting command `%@ %@` in dir %@", launchPath, [args componentsJoinedByString:@" "], directory);
-#endif
-
-	_outputPipe = [NSPipe pipe];
-
 	_standardOutputData = [NSData data];
 	_standardOutputBuffer = [NSMutableData data];
 	dispatch_queue_attr_t stateQueueAttributes =
@@ -113,6 +109,11 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 - (void)dealloc
 {
 	PBTaskLog(@"task %p: dealloc", self);
+}
+
+- (NSPipe *)makePipe
+{
+	return [NSPipe pipe];
 }
 
 
@@ -302,6 +303,17 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	return environment;
 }
 
+- (NSArray<NSString *> *)validatedArgumentsForLaunch
+{
+	NSMutableArray<NSString *> *validatedArguments = [NSMutableArray arrayWithCapacity:self.arguments.count];
+	for (id argument in (NSArray *)self.arguments) {
+		if (![argument isKindOfClass:[NSString class]])
+			[NSException raise:NSInvalidArgumentException format:@"PBTask arguments must be strings"];
+		[validatedArguments addObject:argument];
+	}
+	return validatedArguments;
+}
+
 - (NSError *)launchErrorForException:(NSException *)exception underlyingError:(NSError *)underlyingError
 {
 	NSString *desc = @"Exception raised while launching task";
@@ -313,6 +325,24 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	} mutableCopy];
 	if (underlyingError) info[NSUnderlyingErrorKey] = underlyingError;
 	return [NSError errorWithDomain:PBTaskErrorDomain code:PBTaskLaunchError userInfo:info];
+}
+
+- (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
+											  supervisionError:(nullable NSError *)supervisionError
+{
+	if (supervisionError) {
+		NSException *exception = [NSException exceptionWithName:@"PBTaskProcessSupervisionException"
+														 reason:supervisionError.localizedDescription
+													   userInfo:@{NSUnderlyingErrorKey : supervisionError}];
+		self.forcedError = [self launchErrorForException:exception underlyingError:supervisionError];
+	} else if (WIFSIGNALED(rawWaitStatus)) {
+		self.terminationReason = NSTaskTerminationReasonUncaughtSignal;
+		self.terminationStatus = WTERMSIG(rawWaitStatus);
+	} else {
+		self.terminationReason = NSTaskTerminationReasonExit;
+		self.terminationStatus = WIFEXITED(rawWaitStatus) ? WEXITSTATUS(rawWaitStatus) : rawWaitStatus;
+	}
+	return self.forcedError;
 }
 
 - (void)closeChildPipeEnds
@@ -336,36 +366,45 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		self.outputChunkHandler = outputChunkHandler;
 		self.operationRetainer = self;
 	});
-	[self configureOutputReader];
 
 	__weak PBTask *weakSelf = self;
 
-	if (self.standardInputData) {
-		self.inputPipe = [NSPipe pipe];
-		NSFileHandle *inputHandle = self.inputPipe.fileHandleForWriting;
-		(void)fcntl(inputHandle.fileDescriptor, F_SETNOSIGPIPE, 1);
-
-		inputHandle.writeabilityHandler = ^(NSFileHandle *handle) {
-			PBTask *strongSelf = weakSelf;
-			if (!strongSelf) return;
-			PBTaskLog(@"task %p: can write %d", strongSelf, handle.fileDescriptor);
-
-			@try {
-				[handle writeData:strongSelf.standardInputData];
-			} @catch (NSException *exception) {
-				// A child that exits without draining stdin (e.g. a fast-failing `git update-index --stdin`
-				// on a locked index, or a hook that closes stdin) makes writeData: raise
-				// NSFileHandleOperationException on EPIPE. It fires on a GCD thread where nothing catches it,
-				// so swallow it here and still close the descriptor below to avoid leaking it.
-				PBTaskLog(@"task %p: stdin write failed: %@", strongSelf, exception);
-			} @finally {
-				handle.writeabilityHandler = nil;
-				[handle closeFile];
-			}
-		};
-	}
-
 	@try {
+		NSArray<NSString *> *validatedArguments = [self validatedArgumentsForLaunch];
+		self.outputPipe = [self makePipe];
+		[self configureOutputReader];
+
+		if (self.standardInputData) {
+			self.inputPipe = [self makePipe];
+			NSFileHandle *inputHandle = self.inputPipe.fileHandleForWriting;
+			(void)fcntl(inputHandle.fileDescriptor, F_SETNOSIGPIPE, 1);
+
+			inputHandle.writeabilityHandler = ^(NSFileHandle *handle) {
+				PBTask *strongSelf = weakSelf;
+				if (!strongSelf) return;
+				PBTaskLog(@"task %p: can write %d", strongSelf, handle.fileDescriptor);
+
+				@try {
+					[handle writeData:strongSelf.standardInputData];
+				} @catch (NSException *exception) {
+					// A child that exits without draining stdin (e.g. a fast-failing `git update-index --stdin`
+					// on a locked index, or a hook that closes stdin) makes writeData: raise
+					// NSFileHandleOperationException on EPIPE. It fires on a GCD thread where nothing catches it,
+					// so swallow it here and still close the descriptor below to avoid leaking it.
+					PBTaskLog(@"task %p: stdin write failed: %@", strongSelf, exception);
+				} @finally {
+					handle.writeabilityHandler = nil;
+					[handle closeFile];
+				}
+			};
+		}
+
+		if ([[NSUserDefaults standardUserDefaults] boolForKey:@"Show Debug Messages"])
+			NSLog(@"Starting command `%@ %@` in dir %@", self.launchPath, [validatedArguments componentsJoinedByString:@" "], self.currentDirectoryPath);
+#ifdef CLI
+		NSLog(@"Starting command `%@ %@` in dir %@", self.launchPath, [validatedArguments componentsJoinedByString:@" "], self.currentDirectoryPath);
+#endif
+
 		PBTaskLog(@"task %p: launching", self);
 		__block BOOL cancelled = NO;
 		__block NSError *launchError = nil;
@@ -375,23 +414,17 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 				NSNumber *inputFileDescriptor = self.inputPipe ? @(self.inputPipe.fileHandleForReading.fileDescriptor) : nil;
 				self.processSupervisor = [[PBChildProcessSupervisor alloc]
 							  initWithLaunchPath:self.launchPath
-									   arguments:self.arguments
+									   arguments:validatedArguments
 									 environment:[self environmentForLaunch]
 								workingDirectory:self.currentDirectoryPath
 					 standardInputFileDescriptor:inputFileDescriptor
 					standardOutputFileDescriptor:self.outputPipe.fileHandleForWriting.fileDescriptor
-							  terminationHandler:^(int32_t rawWaitStatus) {
+							  terminationHandler:^(int32_t rawWaitStatus, NSError *supervisionError) {
 								  PBTask *strongSelf = weakSelf;
 								  if (!strongSelf) return;
 								  dispatch_async(strongSelf.stateQueue, ^{
 									  if (strongSelf.operationFinished) return;
-									  if (WIFSIGNALED(rawWaitStatus)) {
-										  strongSelf.terminationReason = NSTaskTerminationReasonUncaughtSignal;
-										  strongSelf.terminationStatus = WTERMSIG(rawWaitStatus);
-									  } else {
-										  strongSelf.terminationReason = NSTaskTerminationReasonExit;
-										  strongSelf.terminationStatus = WIFEXITED(rawWaitStatus) ? WEXITSTATUS(rawWaitStatus) : rawWaitStatus;
-									  }
+									  [strongSelf recordProcessCompletionWithRawWaitStatus:rawWaitStatus supervisionError:supervisionError];
 									  strongSelf.taskFinished = YES;
 									  [strongSelf finishIfReady];
 									  [strongSelf scheduleOutputDrainAfterTaskExit];
@@ -418,9 +451,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 				PBTask *strongSelf = weakSelf;
 				if (!strongSelf) return;
 				if (strongSelf.operationFinished || strongSelf.taskFinished) return;
-				strongSelf.forcedError = [strongSelf timeoutError];
-				[strongSelf.processSupervisor requestTerminationAfterGracePeriod:0
-																  forceKillAfter:@(PBTaskTerminationGrace)];
+				if ([strongSelf.processSupervisor requestTimeoutTerminationWithForceKillAfter:PBTaskTerminationGrace])
+					strongSelf.forcedError = [strongSelf timeoutError];
 			});
 		}
 	}
@@ -487,7 +519,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		self.cancellationRequested = YES;
 		supervisor = self.processSupervisor;
 	}
-	[supervisor requestTerminationAfterGracePeriod:0 forceKillAfter:nil];
+	[supervisor requestImmediateTermination];
 }
 
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(NSTimeInterval)forceKillDelay

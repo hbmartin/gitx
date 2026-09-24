@@ -201,6 +201,28 @@ final class ApplicationCompositionTests: XCTestCase {
     }
 
     @MainActor
+    func testWindowSessionTerminationCapturesAndMarksTheRunClean() {
+        let standard = UserDefaults.standard
+        let snapshotKey = "PBWindowSessionSnapshot"
+        let cleanShutdownKey = "PBWindowSessionCleanShutdown"
+        let previousSnapshot = standard.object(forKey: snapshotKey)
+        let previousCleanShutdown = standard.object(forKey: cleanShutdownKey)
+        defer {
+            restore(previousSnapshot, forKey: snapshotKey, in: standard)
+            restore(previousCleanShutdown, forKey: cleanShutdownKey, in: standard)
+        }
+
+        XCTAssertTrue(NSDocumentController.shared.documents.isEmpty)
+        standard.removeObject(forKey: snapshotKey)
+        standard.set(false, forKey: cleanShutdownKey)
+
+        PBWindowSessionCoordinator.shared.applicationWillTerminate()
+
+        XCTAssertEqual(standard.array(forKey: snapshotKey)?.count, 0)
+        XCTAssertTrue(standard.bool(forKey: cleanShutdownKey))
+    }
+
+    @MainActor
     func testFollowSystemRestorePolicyUsesTheSystemDefaultWhenPreferenceIsAbsent() {
         let standard = UserDefaults.standard
         let snapshotKey = "PBWindowSessionSnapshot"

@@ -36,6 +36,9 @@ stdout_file=$session_dir/gitx-stdout.txt
 app_pid_file=$session_dir/app.pid
 log_pid_file=$session_dir/logstream.pid
 session_file=$session_dir/session.txt
+temporary_root=${TMPDIR:-/tmp}
+temporary_root=${temporary_root%/}
+[[ -n "$temporary_root" ]] || temporary_root=/
 
 repository=
 fixture_name=gitx-fixture
@@ -152,8 +155,32 @@ stop_pid_file() {
 	return 2
 }
 
+recorded_isolated_home() {
+	[[ -f "$session_file" ]] || return 1
+	awk '
+		index($0, "isolated_home=") == 1 {
+			print substr($0, length("isolated_home=") + 1)
+			found = 1
+			exit
+		}
+		END { if (!found) exit 1 }
+	' "$session_file"
+}
+
+remove_isolated_home() {
+	local candidate=$1 parent name
+	[[ -n "$candidate" ]] || return 1
+	parent=$(dirname "$candidate")
+	name=$(basename "$candidate")
+	if [[ "$parent" != "$temporary_root" || ! "$name" =~ ^gitx-run-app-home\.[A-Za-z0-9._-]+$ ]]; then
+		echo "Refusing to remove unvalidated runtime home: $candidate" >&2
+		return 1
+	fi
+	rm -rf -- "$candidate"
+}
+
 stop_session() {
-	local stopped=0 failed=0 result
+	local stopped=0 failed=0 result isolated_home
 	if stop_pid_file "$app_pid_file" GitX; then
 		stopped=1
 	else
@@ -168,6 +195,12 @@ stop_session() {
 	fi
 	if (( stopped )); then
 		echo "Stopped the previous GitX session."
+	fi
+	if (( failed == 0 )); then
+		if isolated_home=$(recorded_isolated_home); then
+			remove_isolated_home "$isolated_home" || true
+		fi
+		rm -f -- "$session_file"
 	fi
 	(( failed == 0 ))
 }
@@ -284,8 +317,21 @@ elif ! git -C "$repository" rev-parse --git-dir >/dev/null 2>&1; then
 	exit 2
 fi
 
-isolated_home=${TMPDIR:-/tmp}/gitx-run-app-home
-rm -rf "$isolated_home"
+isolated_home=$(mktemp -d "$temporary_root/gitx-run-app-home.XXXXXX") || {
+	echo "Could not create an isolated runtime home." >&2
+	exit 1
+}
+session_recorded=0
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
+cleanup_unrecorded_home() {
+	local exit_status=$?
+	trap - EXIT
+	if (( ! session_recorded )); then
+		remove_isolated_home "$isolated_home" || true
+	fi
+	exit "$exit_status"
+}
+trap cleanup_unrecorded_home EXIT
 mkdir -p "$isolated_home/Library/Preferences"
 
 # -ApplePersistenceIgnoreState redirects saved window state into $TMPDIR rather
@@ -385,6 +431,7 @@ done
 	echo "os_log=$log_file"
 	echo "stdout=$stdout_file"
 } >"$session_file"
+session_recorded=1
 
 launch_status=0
 if (( ready )); then

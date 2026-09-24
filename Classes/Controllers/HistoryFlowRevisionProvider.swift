@@ -223,6 +223,62 @@ nonisolated struct HistoryFlowRevisionProvider: RevisionProvider {
     }
 }
 
+#if DEBUG
+    // swift6-safety-justification: The mutex protects the only mutable task reference shared with cancellation callers.
+    @objc(PBHistoryFlowRevisionProviderTestOperation)
+    final nonisolated class HistoryFlowRevisionProviderTestOperation: NSObject, @unchecked Sendable {
+        private let task = Mutex<Task<Void, Never>?>(nil)
+
+        fileprivate func install(_ task: Task<Void, Never>) {
+            self.task.withLock { $0 = task }
+        }
+
+        @objc func cancel() {
+            task.withLock { $0?.cancel() }
+        }
+    }
+
+    @objc(PBHistoryFlowRevisionProviderTestHarness)
+    // swiftlint:disable:next unused_declaration -- Objective-C XCTest reaches this DEBUG-only bridge by runtime name.
+    final nonisolated class HistoryFlowRevisionProviderTestHarness: NSObject {
+        @objc(
+            compareRepositoryAtURL:gitExecutableURL:base:target:maximumChangedFiles:maximumBlobBytes:completionHandler:
+        )
+        // swiftlint:disable:next unused_declaration -- The manual XCTest compatibility declaration invokes this selector.
+        static func compare(
+            repositoryURL: URL,
+            gitExecutableURL: URL,
+            base: String,
+            target: String,
+            maximumChangedFiles: Int,
+            maximumBlobBytes: Int,
+            completionHandler: @escaping @Sendable (Data?, String?) -> Void
+        ) -> HistoryFlowRevisionProviderTestOperation {
+            let operation = HistoryFlowRevisionProviderTestOperation()
+            let task = Task.detached {
+                do {
+                    let comparison = try await HistoryFlowRevisionProvider(gitExecutableURL: gitExecutableURL)
+                        .comparison(
+                            repositoryURL: repositoryURL,
+                            base: base,
+                            target: target,
+                            limits: AnalysisLimits(
+                                maximumChangedFiles: maximumChangedFiles,
+                                maximumBlobBytes: maximumBlobBytes
+                            )
+                        )
+                    let data = try JSONEncoder().encode(comparison)
+                    completionHandler(data, nil)
+                } catch {
+                    completionHandler(nil, String(describing: error))
+                }
+            }
+            operation.install(task)
+            return operation
+        }
+    }
+#endif
+
 /// One git invocation whose process can be terminated from a cancellation
 /// handler. The blocking launch, read and wait run on a dispatch queue so they
 /// never pin a thread of the Swift cooperative pool.

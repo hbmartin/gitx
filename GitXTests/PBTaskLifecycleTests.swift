@@ -106,6 +106,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             inDirectory: nil
         )
         task.setValue(true, forKey: "outputDrainExpired")
+        task.setValue(Pipe(), forKey: "outputPipe")
         task.perform(NSSelectorFromString("configureOutputReader"))
         let outputPipe = try XCTUnwrap(task.value(forKey: "outputPipe") as? Pipe)
 
@@ -141,6 +142,34 @@ final class PBTaskLifecycleTests: XCTestCase {
         }
 
         wait(for: [completion], timeout: 5)
+    }
+
+    func testTaskRetainsProcessOwnershipUntilCompletionAfterCallerReleasesIt() {
+        let completion = expectation(description: "retained task completion")
+        weak var releasedTask: PBTask?
+
+        autoreleasepool {
+            var task: PBTask? = PBTask(
+                launchPath: "/bin/sh",
+                arguments: ["-c", "sleep 0.05; printf retained"],
+                inDirectory: nil
+            )
+            releasedTask = task
+            task?.perform(on: DispatchQueue.global(qos: .userInitiated)) { data, error in
+                XCTAssertNil(error)
+                XCTAssertEqual(data, Data("retained".utf8))
+                completion.fulfill()
+            }
+            task = nil
+            XCTAssertNotNil(releasedTask)
+        }
+
+        wait(for: [completion], timeout: 5)
+        let released = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in releasedTask == nil },
+            object: nil
+        )
+        wait(for: [released], timeout: 2)
     }
 
     func testCompletionObservesMergedOutputInWriteOrderIncludingFinalByte() {
@@ -379,7 +408,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap 'exit 0' TERM; while :; do :; done",
+                "trap 'exit 0' TERM; printf '%d' $$ > \"$PB_TASK_PID_FILE\"; while :; do :; done",
             ],
             inDirectory: nil
         )
@@ -417,7 +446,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap '' TERM; while :; do :; done",
+                "trap '' TERM; printf '%d' $$ > \"$PB_TASK_PID_FILE\"; while :; do :; done",
             ],
             inDirectory: nil
         )
@@ -460,10 +489,10 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
-                    "/bin/sleep 30 & child=$!; " +
-                    "printf '%d' \"$child\" > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
+                "/bin/sleep 30 & child=$!; " +
                     "trap 'wait \"$child\"; exit 0' TERM; " +
+                    "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
+                    "printf '%d' \"$child\" > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
                     "while :; do wait \"$child\"; done",
             ],
             inDirectory: nil
@@ -512,10 +541,10 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
-                    "/bin/sh -c 'trap \"\" TERM; while :; do /bin/sleep 1; done' & child=$!; " +
-                    "printf '%d' \"$child\" > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
+                "/bin/sh -c 'trap \"\" TERM; printf \"%d\" $$ > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
+                    "while :; do /bin/sleep 1; done' & child=$!; " +
                     "trap 'exit 0' TERM; " +
+                    "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
                     "while :; do wait \"$child\"; done",
             ],
             inDirectory: nil
@@ -631,7 +660,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap '' TERM; while :; do :; done",
+                "trap '' TERM; printf '%d' $$ > \"$PB_TASK_PID_FILE\"; while :; do :; done",
             ],
             inDirectory: nil
         )
@@ -650,5 +679,53 @@ final class PBTaskLifecycleTests: XCTestCase {
         XCTAssertLessThan(elapsed, task.timeout + 2.0)
         let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
         XCTAssertEqual(Darwin.kill(processID, 0), -1, "PBTask must reap the timed-out child before completion")
+    }
+
+    func testStoppedChildStillTimesOutAndIsForceKilled() throws {
+        let pidURL = temporaryFileURL(named: "stopped-pid")
+        let readyURL = temporaryFileURL(named: "stopped-ready")
+        defer {
+            if let contents = try? String(contentsOf: pidURL, encoding: .utf8),
+               let processID = pid_t(contents)
+            {
+                _ = Darwin.kill(processID, SIGKILL)
+            }
+            try? FileManager.default.removeItem(at: pidURL)
+            try? FileManager.default.removeItem(at: readyURL)
+        }
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: [
+                "-c",
+                "trap '' TERM; " +
+                    "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; " +
+                    "printf ready > \"$PB_TASK_READY_FILE\"; " +
+                    "while :; do /bin/sleep 1; done",
+            ],
+            inDirectory: nil
+        )
+        task.additionalEnvironment = [
+            "PB_TASK_PID_FILE": pidURL.path,
+            "PB_TASK_READY_FILE": readyURL.path,
+        ]
+        task.timeout = 2
+        let completed = expectation(description: "stopped process timed out")
+
+        task.perform(on: DispatchQueue.global(qos: .userInitiated)) { _, error in
+            let taskError = error as NSError?
+            XCTAssertEqual(taskError?.domain, PBTaskErrorDomain)
+            XCTAssertEqual(taskError?.code, Int(PBTaskErrorCode.timeoutError.rawValue))
+            completed.fulfill()
+        }
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: readyURL.path) },
+            object: nil
+        )
+        wait(for: [ready], timeout: 2)
+        let processID = try XCTUnwrap(pid_t(String(contentsOf: pidURL, encoding: .utf8)))
+        XCTAssertEqual(Darwin.kill(processID, SIGSTOP), 0)
+
+        wait(for: [completed], timeout: 5)
+        waitForProcessesToExit([processID])
     }
 }

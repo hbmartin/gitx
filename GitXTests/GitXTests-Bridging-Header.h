@@ -35,6 +35,22 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)acceptBinary:(nullable NSString *)path;
 @end
 
+@class PBHistoryFlowRevisionProviderTestOperation;
+
+@interface PBHistoryFlowRevisionProviderTestOperation : NSObject
+- (void)cancel;
+@end
+
+@interface PBHistoryFlowRevisionProviderTestHarness : NSObject
++ (PBHistoryFlowRevisionProviderTestOperation *)compareRepositoryAtURL:(NSURL *)repositoryURL
+											  gitExecutableURL:(NSURL *)gitExecutableURL
+														base:(NSString *)base
+													  target:(NSString *)target
+									 maximumChangedFiles:(NSInteger)maximumChangedFiles
+										maximumBlobBytes:(NSInteger)maximumBlobBytes
+										 completionHandler:(void (^)(NSData *_Nullable data, NSString *_Nullable errorDescription))completionHandler;
+@end
+
 typedef NS_ENUM(NSInteger, PBOpenDisposition) {
 	PBOpenDispositionAlwaysNewWindow,
 	PBOpenDispositionFollowSystem,
@@ -1015,8 +1031,11 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @end
 
 @interface PBGitTree : NSObject
+@property (nonatomic, copy) NSString *sha;
 @property (nonatomic, copy) NSString *path;
 @property (nonatomic) BOOL leaf;
+@property (nonatomic, weak) PBGitRepository *repository;
+@property (nonatomic, weak) PBGitTree *parent;
 @property (nonatomic, readonly) NSArray<PBGitTree *> *children;
 @property (nonatomic, readonly) NSString *contents;
 @property (nonatomic, readonly) NSString *fullPath;
@@ -1027,6 +1046,10 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 - (NSString *)log:(NSString *)format;
 - (NSString *)tmpFileNameForContents;
 - (void)saveToFolder:(NSString *)directory;
+@end
+
+@interface PBWorkingTree : PBGitTree
++ (instancetype)rootForRepository:(PBGitRepository *)repository;
 @end
 
 @interface PBQLTextView : NSTextView

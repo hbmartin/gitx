@@ -2191,6 +2191,83 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	}
 }
 
+- (void)testSecondExplicitLaunchOpenRearmsPresentationSettlement
+{
+	NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+	id previousRestorePolicy = [defaults objectForKey:@"PBWindowRestorePolicy"];
+	id previousCleanShutdown = [defaults objectForKey:@"PBWindowSessionCleanShutdown"];
+	id previousSnapshot = [defaults objectForKey:@"PBWindowSessionSnapshot"];
+	NSDocumentController *previousDocumentController = NSDocumentController.sharedDocumentController;
+	SEL setSharedDocumentController = NSSelectorFromString(@"_setSharedDocumentController:");
+	((void (*)(id, SEL, id))objc_msgSend)(NSDocumentController.class, setSharedDocumentController, nil);
+	PBRepositoryDocumentController *controller = [[PBRepositoryDocumentController alloc] init];
+	NSMutableDictionary<NSString *, NSString *> *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+	[environment removeObjectForKey:@"GITX_UITEST_REPO"];
+	[environment removeObjectForKey:@"XCTestConfigurationFilePath"];
+	PBApplicationProcessInfoSpy *processInfo = [[PBApplicationProcessInfoSpy alloc] init];
+	processInfo.testEnvironment = environment;
+	processInfo.testArguments = NSProcessInfo.processInfo.arguments;
+	processInfo.realProcessInfo = NSProcessInfo.processInfo;
+	PBApplicationProcessInfo = processInfo;
+	PBWelcomePresentationCount = 0;
+	PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
+	PBFeatureSwapInstanceMethods(NSWindow.class, @selector(center), @selector(pb_feature_center));
+	@try {
+		[defaults setInteger:2 forKey:@"PBWindowRestorePolicy"];
+		[defaults setBool:YES forKey:@"PBWindowSessionCleanShutdown"];
+		[defaults removeObjectForKey:@"PBWindowSessionSnapshot"];
+		[controller beginExplicitLaunchOpen];
+
+		[PBWindowSessionCoordinator.shared applicationDidFinishLaunching];
+		[controller finishExplicitLaunchOpen];
+		[controller beginExplicitLaunchOpen];
+
+		XCTestExpectation *firstEvaluationDrained = [self expectationWithDescription:@"First launch evaluation drained"];
+		dispatch_async(dispatch_get_main_queue(), ^{
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[firstEvaluationDrained fulfill];
+			});
+		});
+		[self waitForExpectations:@[ firstEvaluationDrained ] timeout:2];
+		XCTAssertEqual(PBWelcomePresentationCount, (NSUInteger)0);
+
+		[controller finishExplicitLaunchOpen];
+		[NSNotificationCenter.defaultCenter postNotificationName:@"PBRepositoryDocumentControllerOpensDidSettle"
+														  object:controller];
+		XCTestExpectation *secondEvaluationDrained = [self expectationWithDescription:@"Second launch evaluation drained"];
+		dispatch_async(dispatch_get_main_queue(), ^{
+			dispatch_async(dispatch_get_main_queue(), ^{
+				[secondEvaluationDrained fulfill];
+			});
+		});
+		[self waitForExpectations:@[ secondEvaluationDrained ] timeout:2];
+		XCTAssertEqual(PBWelcomePresentationCount, (NSUInteger)1);
+	} @finally {
+		PBFeatureSwapInstanceMethods(NSWindow.class, @selector(center), @selector(pb_feature_center));
+		PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
+		PBApplicationProcessInfo = nil;
+		for (NSWindow *window in NSApp.windows.copy) {
+			if ([window.title isEqualToString:@"Welcome to GitX"]) [window close];
+		}
+		((void (*)(id, SEL, id))objc_msgSend)(
+			NSDocumentController.class,
+			setSharedDocumentController,
+			previousDocumentController);
+		if (previousRestorePolicy)
+			[defaults setObject:previousRestorePolicy forKey:@"PBWindowRestorePolicy"];
+		else
+			[defaults removeObjectForKey:@"PBWindowRestorePolicy"];
+		if (previousCleanShutdown)
+			[defaults setObject:previousCleanShutdown forKey:@"PBWindowSessionCleanShutdown"];
+		else
+			[defaults removeObjectForKey:@"PBWindowSessionCleanShutdown"];
+		if (previousSnapshot)
+			[defaults setObject:previousSnapshot forKey:@"PBWindowSessionSnapshot"];
+		else
+			[defaults removeObjectForKey:@"PBWindowSessionSnapshot"];
+	}
+}
+
 - (void)testRepositoryDocumentControllerValidatesNewAndUnrelatedMenuItems
 {
 	PBRepositoryDocumentController *controller = PBNewRepositoryDocumentController(PBRepositoryDocumentController.class);
@@ -2983,6 +3060,22 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertNil([outline outlineView:outline objectValueForTableColumn:nil byItem:@"item"]);
 }
 
+- (void)testQuickLookFilePromiseQueueMayBeRequestedOffMainThread
+{
+	PBQLOutlineView *outline = [[PBQLOutlineView alloc] initWithFrame:NSMakeRect(0, 0, 200, 100)];
+	NSFilePromiseProvider *provider = [[NSFilePromiseProvider alloc] initWithFileType:@"public.data" delegate:outline];
+	XCTestExpectation *requested = [self expectationWithDescription:@"AppKit requested the file-promise queue off main"];
+	__block NSOperationQueue *promiseQueue = nil;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		promiseQueue = [outline operationQueueForFilePromiseProvider:provider];
+		XCTAssertFalse(NSThread.isMainThread);
+		[requested fulfill];
+	});
+	[self waitForExpectations:@[ requested ] timeout:2];
+	XCTAssertNotNil(promiseQueue);
+	XCTAssertEqual(promiseQueue.maxConcurrentOperationCount, (NSInteger)1);
+}
+
 - (void)testQuickLookOutlineRoutesSpaceAndContextMenuToItsController
 {
 	PBQLOutlineHistorySpy *controller = [[PBQLOutlineHistorySpy alloc] init];
@@ -3009,15 +3102,21 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	[outline reloadData];
 	XCTAssertEqual(outline.numberOfRows, (NSInteger)3);
 
-	[outline selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+	NSMutableIndexSet *multiSelection = [NSMutableIndexSet indexSetWithIndex:0];
+	[multiSelection addIndex:2];
+	[outline selectRowIndexes:multiSelection byExtendingSelection:NO];
 	NSPoint clickedPoint = NSMakePoint(NSMidX([outline rectOfRow:2]), NSMidY([outline rectOfRow:2]));
 	NSPoint windowPoint = [outline convertPoint:clickedPoint toView:nil];
 	NSEvent *event = [self rightMouseEventAtLocation:windowPoint windowNumber:window.windowNumber];
 	XCTAssertEqualObjects([outline menuForEvent:event], controller.testContextMenu);
-	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
+	XCTAssertEqualObjects(outline.selectedRowIndexes, multiSelection);
 
-	XCTAssertEqualObjects([outline menuForEvent:event], controller.testContextMenu);
-	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
+	NSPoint unselectedPoint = NSMakePoint(NSMidX([outline rectOfRow:1]), NSMidY([outline rectOfRow:1]));
+	NSPoint unselectedWindowPoint = [outline convertPoint:unselectedPoint toView:nil];
+	NSEvent *unselectedEvent = [self rightMouseEventAtLocation:unselectedWindowPoint
+												  windowNumber:window.windowNumber];
+	XCTAssertEqualObjects([outline menuForEvent:unselectedEvent], controller.testContextMenu);
+	XCTAssertEqualObjects(outline.selectedRowIndexes, [NSIndexSet indexSetWithIndex:1]);
 	NSEvent *letterEvent = [NSEvent keyEventWithType:NSEventTypeKeyDown
 											location:NSZeroPoint
 									   modifierFlags:0

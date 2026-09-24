@@ -1,5 +1,6 @@
 import AppKit
 import ForgeKit
+import ObjectiveC.runtime
 import XCTest
 
 @MainActor
@@ -11,6 +12,21 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         init(_ value: Value) {
             self.value = value
         }
+    }
+
+    @objc(gitx_testFailingGitExecutablePath)
+    private nonisolated class func failingGitExecutablePath() -> String {
+        "/usr/bin/false"
+    }
+
+    private func withFailingGitExecutable(_ body: () -> Void) throws {
+        let original = try XCTUnwrap(class_getClassMethod(PBGitBinary.self, NSSelectorFromString("path")))
+        let replacement = try XCTUnwrap(
+            class_getClassMethod(Self.self, #selector(Self.failingGitExecutablePath))
+        )
+        method_exchangeImplementations(original, replacement)
+        defer { method_exchangeImplementations(original, replacement) }
+        body()
     }
 
     /// AppKit creates KVO notifying subclasses while presenting sheets. The
@@ -514,6 +530,23 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 self.flowLabels(in: flowView).contains { $0.hasPrefix("Flow analysis failed.\n") }
             },
             "Flow labels after analysis failure: \(flowLabels(in: flowView))"
+        )
+    }
+
+    func testHistoryFlowReportsGitExitFailure() throws {
+        selectCommitForFlowAnalysis()
+        try withFailingGitExecutable {
+            historyController.selectedCommitDetailsIndex = 2
+        }
+        let flowView = try XCTUnwrap(descendant(identifier: "History.Flow.View", in: historyController.view))
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 10) {
+                self.flowLabels(in: flowView).contains {
+                    $0.contains("failed with status 1")
+                }
+            },
+            "Flow labels after git failure: \(flowLabels(in: flowView))"
         )
     }
 

@@ -24,7 +24,7 @@
     "Classes/Controllers/GitHubPullRequestComposition.swift": 0.844,
     "Classes/Controllers/GitHubReadComposition.swift": 0.9973,
     "Classes/Controllers/GitXCoreAdapters.swift": 1.0,
-    "Classes/Controllers/HistoryFlowRevisionProvider.swift": 0.9291,
+    "Classes/Controllers/HistoryFlowRevisionProvider.swift": 0.9736,
     "Classes/Controllers/HistoryForgeOverlayPresentation.swift": 0.9448,
     "Classes/Controllers/HistoryMenuBuilder.swift": 0.9666,
     "Classes/Controllers/HistoryStateCoordinator.swift": 1.0,
@@ -60,7 +60,7 @@
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
     "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8807,
     "Classes/Controllers/RepositoryForgeRemoteDescriptorLoader.swift": 0.9871,
-    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.75,
+    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7603,
     "Classes/Controllers/RepositoryPullRequestGitOperations.swift": 0.9403,
     "Classes/Controllers/RepositoryPullRequestMutationPreferenceStore.swift": 0.9492,
     "Classes/Controllers/RepositoryPullRequestReviewComposition.swift": 0.903,
@@ -99,7 +99,7 @@
     "Classes/Util/NSOutlineViewExt.m": 1.0,
     "Classes/Util/NSString_Truncate.m": 0.0,
     "Classes/Util/ObjectiveGit+PBCategories.m": 1.0,
-    "Classes/Util/PBChildProcessOwner.swift": 0.9218,
+    "Classes/Util/PBChildProcessOwner.swift": 0.9337,
     "Classes/Util/PBEasyFS.m": 1.0,
     "Classes/Util/PBError.m": 1.0,
     "Classes/Util/PBProcessEnvironment.swift": 1.0,
@@ -143,6 +143,7 @@
     "Classes/Views/PBSidebarTableViewCell.m": 1.0,
     "Classes/Views/PBSourceViewBadge.swift": 1.0,
     "Classes/Views/PBSourceViewItem.m": 0.899,
+    "Classes/Views/QuickLookFilePromiseExporter.swift": 0.9067,
     "Classes/Views/RepositoryPullRequestReviewOverlayController.swift": 0.9282,
     "Classes/Views/StagingFileCellView.swift": 1.0,
     "Classes/git/GitCommandRunning.swift": 1.0,
@@ -209,7 +210,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9099,
+  "minimumLineCoverage": 0.9104,
   "target": "GitX.app",
   "version": 1
 }

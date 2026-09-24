@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import plistlib
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 from support import ROOT
@@ -262,6 +265,62 @@ class ScriptEntrypointTests(unittest.TestCase):
             str(self.developer_directory),
         )
 
+    def test_explicit_xcode_bundle_path_is_normalized_case_insensitively(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        bundle = self.root / "Pinned-Xcode.APP"
+        developer_directory = bundle / "Contents" / "Developer"
+        (developer_directory / "usr" / "bin").mkdir(parents=True)
+        shutil.copy2(
+            self.developer_directory / "usr" / "bin" / "xcodebuild",
+            developer_directory / "usr" / "bin" / "xcodebuild",
+        )
+
+        subprocess.run(
+            [
+                script,
+                "--raw",
+                "--run-id",
+                "mixed-case-bundle",
+                "--developer-dir",
+                str(bundle),
+                "build",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        receipt = self.receipt("mixed-case-bundle")
+        self.assertEqual(receipt["toolchain"]["developerDir"], str(developer_directory))
+
+    def test_invalid_explicit_xcode_pin_does_not_fall_back_to_environment(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+
+        result = subprocess.run(
+            [
+                script,
+                "--raw",
+                "--run-id",
+                "invalid-explicit-toolchain",
+                "--developer-dir",
+                str(self.root / "Missing-Xcode.app"),
+                "build",
+            ],
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        receipt = self.receipt("invalid-explicit-toolchain")
+        self.assertEqual(
+            receipt["toolchain"]["developerDir"],
+            str(self.root / "Missing-Xcode.app" / "Contents" / "Developer"),
+        )
+
     def test_xcodebuild_wrapper_matches_options_as_exact_arguments(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
@@ -384,6 +443,7 @@ class ScriptEntrypointTests(unittest.TestCase):
                 / "report.plist"
             )
             self.assertEqual(report.read_text(), "analyzer report\n")
+            self.assertEqual(self.receipt(run_id)["invocation"]["signingMode"], "disabled")
 
     def test_failed_analyzer_preserves_path_reports(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -695,6 +755,154 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertIsNone(process.poll())
         self.assertFalse((session_directory / "app.pid").exists())
         self.assertIn("process identity cannot be verified", result.stderr)
+
+    def test_run_app_stop_removes_validated_home_and_session_metadata(self) -> None:
+        script = self.install_script("run_app.sh")
+        process, session_directory = self.create_live_run_app_session()
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        isolated_home = pathlib.Path(tempfile.mkdtemp(prefix="gitx-run-app-home.", dir=temporary_root))
+        session = session_directory / "session.txt"
+        session.write_text(session.read_text() + f"isolated_home={isolated_home}\n")
+        environment = self.environment | {"TMPDIR": str(temporary_root)}
+
+        subprocess.run(
+            [script, "--stop"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertEqual(process.wait(timeout=2), -signal.SIGTERM)
+        self.assertFalse(isolated_home.exists())
+        self.assertFalse(session.exists())
+
+    def test_run_app_stop_preserves_an_unvalidated_recorded_home(self) -> None:
+        script = self.install_script("run_app.sh")
+        process, session_directory = self.create_live_run_app_session()
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        unvalidated_home = self.root / "do-not-delete"
+        unvalidated_home.mkdir()
+        session = session_directory / "session.txt"
+        session.write_text(session.read_text() + f"isolated_home={unvalidated_home}\n")
+        environment = self.environment | {"TMPDIR": str(temporary_root)}
+
+        result = subprocess.run(
+            [script, "--stop"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertEqual(process.wait(timeout=2), -signal.SIGTERM)
+        self.assertTrue(unvalidated_home.exists())
+        self.assertFalse(session.exists())
+        self.assertIn("Refusing to remove unvalidated runtime home", result.stderr)
+
+    def test_run_app_launches_use_unique_forge_storage_roots(self) -> None:
+        script = self.install_script("run_app.sh")
+        self.install_mock_peekaboo()
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        repository = self.root / "fixture-repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary.parent.mkdir(parents=True)
+        with (app_contents / "Info.plist").open("wb") as handle:
+            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+        forge_roots = self.root / "forge-roots.txt"
+        app_binary.write_text(
+            "#!/bin/bash\n"
+            f"printf '%s\\n' \"$GITX_UITEST_FORGE_STORAGE_ROOT\" >>'{forge_roots}'\n"
+            "exec /bin/sleep 60\n"
+        )
+        app_binary.chmod(0o755)
+        log = self.bin / "log"
+        log.write_text("#!/bin/bash\nexec /bin/sleep 60\n")
+        log.chmod(0o755)
+        environment = self.environment | {"TMPDIR": str(temporary_root)}
+        sessions: list[dict[str, str]] = []
+
+        try:
+            for _ in range(2):
+                subprocess.run(
+                    [script, "--no-build", "--repo", str(repository), "--timeout", "2"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=environment,
+                    timeout=10,
+                )
+                session = dict(
+                    line.split("=", maxsplit=1)
+                    for line in (self.root / "build" / "Logs" / "run-app" / "session.txt")
+                    .read_text()
+                    .splitlines()
+                )
+                sessions.append(session)
+                os.kill(int(session["app_pid"]), signal.SIGTERM)
+                os.kill(int(session["log_pid"]), signal.SIGTERM)
+                time.sleep(0.1)
+        finally:
+            subprocess.run(
+                [script, "--stop"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            for session in sessions:
+                for key in ("app_pid", "log_pid"):
+                    try:
+                        os.kill(int(session[key]), signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+
+        homes = [session["isolated_home"] for session in sessions]
+        roots = forge_roots.read_text().splitlines()
+        self.assertEqual(len(set(homes)), 2)
+        self.assertEqual(len(set(roots)), 2)
+        self.assertEqual(
+            roots,
+            [f"{home}/Library/Application Support/GitX/Forge" for home in homes],
+        )
+        self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
+
+    def test_run_app_cleans_an_isolated_home_when_launch_fails(self) -> None:
+        script = self.install_script("run_app.sh")
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        repository = self.root / "fixture-repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary.parent.mkdir(parents=True)
+        with (app_contents / "Info.plist").open("wb") as handle:
+            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+        app_binary.write_text("#!/bin/bash\nexit 1\n")
+        app_binary.chmod(0o755)
+        log = self.bin / "log"
+        log.write_text("#!/bin/bash\nexec /bin/sleep 60\n")
+        log.chmod(0o755)
+        environment = self.environment | {"TMPDIR": str(temporary_root)}
+
+        result = subprocess.run(
+            [script, "--no-build", "--repo", str(repository), "--timeout", "1"],
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=10,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])
+        self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 
     def test_observe_app_logs_remain_available_after_the_app_exits(self) -> None:
         script = self.install_script("observe_app.sh")

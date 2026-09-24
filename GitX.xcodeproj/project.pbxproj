@@ -117,6 +117,8 @@
 		4A5D773014A9A9CC00DF6C68 /* PBGitRevisionCell.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76CD14A9A9CC00DF6C68 /* PBGitRevisionCell.m */; };
 		4A5D773114A9A9CC00DF6C68 /* PBGitXMessageSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76CF14A9A9CC00DF6C68 /* PBGitXMessageSheet.m */; };
 		4A5D773414A9A9CC00DF6C68 /* PBQLOutlineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.swift */; };
+		C0DE92000000000000000001 /* QuickLookFilePromiseExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE92000000000000000002 /* QuickLookFilePromiseExporter.swift */; };
+		C0DE92000000000000000003 /* QuickLookFilePromiseExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE92000000000000000002 /* QuickLookFilePromiseExporter.swift */; };
 		C0DE91000000000000000001 /* PBQLOutlineViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE91000000000000000002 /* PBQLOutlineViewTests.swift */; };
 		4A5D773514A9A9CC00DF6C68 /* PBQLTextView.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76D714A9A9CC00DF6C68 /* PBQLTextView.m */; };
 		4A5D773714A9A9CC00DF6C68 /* PBRemoteProgressSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 4A5D76DB14A9A9CC00DF6C68 /* PBRemoteProgressSheet.m */; };
@@ -392,6 +394,7 @@
 		C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */ = {isa = PBXBuildFile; fileRef = C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */; };
 		C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */; };
 		C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */; };
+		C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */; };
 		C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE81000000000000000002 /* GitBinaryTests.swift */; };
 		C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */; };
 		C0DE84000000000000000001 /* StagingDiffPaneControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */; };
@@ -803,6 +806,7 @@
 		4A5D76CE14A9A9CC00DF6C68 /* PBGitXMessageSheet.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBGitXMessageSheet.h; sourceTree = "<group>"; };
 		4A5D76CF14A9A9CC00DF6C68 /* PBGitXMessageSheet.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBGitXMessageSheet.m; sourceTree = "<group>"; };
 		4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBQLOutlineView.swift; sourceTree = "<group>"; };
+		C0DE92000000000000000002 /* QuickLookFilePromiseExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLookFilePromiseExporter.swift; sourceTree = "<group>"; };
 		C0DE91000000000000000002 /* PBQLOutlineViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBQLOutlineViewTests.swift; sourceTree = "<group>"; };
 		C0DE91000000000000000003 /* PBQLOutlineViewCompatibility.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PBQLOutlineViewCompatibility.h; sourceTree = "<group>"; };
 		4A5D76D614A9A9CC00DF6C68 /* PBQLTextView.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBQLTextView.h; sourceTree = "<group>"; };
@@ -1071,6 +1075,7 @@
 		C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RepositoryRefreshCoordinatorTests.m; sourceTree = "<group>"; };
 		C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskLifecycleTests.swift; sourceTree = "<group>"; };
 		C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBChildProcessOwnerTests.swift; sourceTree = "<group>"; };
+		C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFlowRevisionProviderTests.swift; sourceTree = "<group>"; };
 		C0DE81000000000000000002 /* GitBinaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBinaryTests.swift; sourceTree = "<group>"; };
 		C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffLoadCoordinatorTests.swift; sourceTree = "<group>"; };
 		C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingDiffPaneControllerTests.swift; sourceTree = "<group>"; };
@@ -1645,6 +1650,7 @@
 				508E268B1FD317FC00CE9FE0 /* PBSidebarTableViewCell.h */,
 				508E268C1FD317FC00CE9FE0 /* PBSidebarTableViewCell.m */,
 				4A5D76D514A9A9CC00DF6C68 /* PBQLOutlineView.swift */,
+				C0DE92000000000000000002 /* QuickLookFilePromiseExporter.swift */,
 				4A5D76D614A9A9CC00DF6C68 /* PBQLTextView.h */,
 				4A5D76D714A9A9CC00DF6C68 /* PBQLTextView.m */,
 				4A5D76DA14A9A9CC00DF6C68 /* PBRemoteProgressSheet.h */,
@@ -1743,6 +1749,7 @@
 				C0DE70000000000000000004 /* RepositoryRefreshCoordinatorTests.m */,
 				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
 				C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */,
+				C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */,
 				C0DE81000000000000000002 /* GitBinaryTests.swift */,
 				C0DE82000000000000000002 /* StagingDiffLoadCoordinatorTests.swift */,
 				C0DE84000000000000000002 /* StagingDiffPaneControllerTests.swift */,
@@ -2395,6 +2402,7 @@
 				4A5D773114A9A9CC00DF6C68 /* PBGitXMessageSheet.m in Sources */,
 				4D843B401E5E3939004C3A6F /* PBGitRepository_PBGitBinarySupport.m in Sources */,
 				4A5D773414A9A9CC00DF6C68 /* PBQLOutlineView.swift in Sources */,
+				C0DE92000000000000000001 /* QuickLookFilePromiseExporter.swift in Sources */,
 				4A5D773514A9A9CC00DF6C68 /* PBQLTextView.m in Sources */,
 				4A5D773714A9A9CC00DF6C68 /* PBRemoteProgressSheet.m in Sources */,
 				373F9A201EAF97A200A77B4C /* NSSplitView+GitX.m in Sources */,
@@ -2429,6 +2437,7 @@
 				C0DE20000000000000000001 /* GitXFeatureTests.m in Sources */,
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
 				C0DE91000000000000000001 /* PBQLOutlineViewTests.swift in Sources */,
+				C0DE92000000000000000003 /* QuickLookFilePromiseExporter.swift in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
 				C0CAC4000000000000000002 /* RepositoryForgeRemoteDescriptorLoader.swift in Sources */,
 				C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */,
@@ -2452,6 +2461,7 @@
 				C0DE70000000000000000002 /* RepositoryRefreshCoordinatorTests.m in Sources */,
 				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
 				C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */,
+				C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */,
 				C0DEB1000000000000000003 /* PBChildProcessOwner.swift in Sources */,
 				C0DE81000000000000000001 /* GitBinaryTests.swift in Sources */,
 				C0DE82000000000000000001 /* StagingDiffLoadCoordinatorTests.swift in Sources */,

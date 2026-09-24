@@ -3186,6 +3186,27 @@
 @end
 
 
+@interface PBTask (GitXCoreTests)
+- (NSPipe *)makePipe;
+- (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
+											  supervisionError:(nullable NSError *)supervisionError;
+@end
+
+@interface PBFailingPipeTask : PBTask
+@end
+
+@implementation PBFailingPipeTask
+
+- (NSPipe *)makePipe
+{
+	@throw [NSException exceptionWithName:NSInternalInconsistencyException
+								   reason:@"forced pipe allocation failure"
+								 userInfo:nil];
+}
+
+@end
+
+
 @interface PBTaskCoreTests : XCTestCase
 @end
 
@@ -3256,6 +3277,33 @@
 	XCTAssertEqualObjects(exception.name, NSInvalidArgumentException);
 }
 
+- (void)testInvalidArgumentElementReturnsLaunchError
+{
+	NSArray *invalidArguments = @[ @"-c", @42 ];
+	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/sh"
+									arguments:(NSArray<NSString *> *)invalidArguments
+								  inDirectory:nil];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	NSException *exception = error.userInfo[PBTaskUnderlyingExceptionKey];
+	XCTAssertEqualObjects(exception.name, NSInvalidArgumentException);
+}
+
+- (void)testPipeAllocationExceptionReturnsLaunchError
+{
+	PBTask *task = [PBFailingPipeTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	NSException *exception = error.userInfo[PBTaskUnderlyingExceptionKey];
+	XCTAssertEqualObjects(exception.name, NSInternalInconsistencyException);
+}
+
 - (void)testNonZeroExitIncludesStatusAndCombinedOutput
 {
 	NSError *error = nil;
@@ -3308,6 +3356,38 @@
 	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
 	XCTAssertEqual(error.code, PBTaskLaunchError);
 	XCTAssertNotNil(error.userInfo[PBTaskUnderlyingExceptionKey]);
+	NSError *underlyingError = error.userInfo[NSUnderlyingErrorKey];
+	XCTAssertTrue([underlyingError.localizedDescription containsString:@"spawn child process"]);
+}
+
+- (void)testMissingWorkingDirectoryReturnsDistinctLaunchError
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true"
+									arguments:@[]
+								  inDirectory:@"/path/that/does/not/exist"];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	NSError *underlyingError = error.userInfo[NSUnderlyingErrorKey];
+	XCTAssertTrue([underlyingError.localizedDescription containsString:@"validate child working directory"]);
+}
+
+- (void)testProcessSupervisionFailureMapsToLaunchError
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+	NSError *supervisionError = [NSError errorWithDomain:NSPOSIXErrorDomain
+													code:EIO
+												userInfo:@{NSLocalizedDescriptionKey : @"forced supervision failure"}];
+
+	NSError *error = [task recordProcessCompletionWithRawWaitStatus:0 supervisionError:supervisionError];
+
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	XCTAssertEqualObjects(error.userInfo[NSUnderlyingErrorKey], supervisionError);
+	NSException *exception = error.userInfo[PBTaskUnderlyingExceptionKey];
+	XCTAssertEqualObjects(exception.name, @"PBTaskProcessSupervisionException");
 }
 
 - (void)testAsyncCompletionUsesRequestedQueueAndCapturesLargeOutput
