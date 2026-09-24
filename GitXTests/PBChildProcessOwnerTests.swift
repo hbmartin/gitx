@@ -86,6 +86,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
             case observation
             case reap
             case signal
+            case groupInspection
         }
 
         private let lock = NSLock()
@@ -98,6 +99,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
         private var shouldFailObservation = false
         private var shouldFailReap = false
         private var shouldFailSignal = false
+        private var shouldFailGroupInspection = false
         private var reapReady = true
         private var signalExpectation: XCTestExpectation?
         var enqueueExitEventOnActivation = false
@@ -130,6 +132,12 @@ final class PBChildProcessOwnerTests: XCTestCase {
         func failNextSignal() {
             lock.lock()
             shouldFailSignal = true
+            lock.unlock()
+        }
+
+        func failGroupInspection() {
+            lock.lock()
+            shouldFailGroupInspection = true
             lock.unlock()
         }
 
@@ -238,6 +246,9 @@ final class PBChildProcessOwnerTests: XCTestCase {
             lock.lock()
             defer { lock.unlock() }
             storedEvents.append("members")
+            if shouldFailGroupInspection {
+                throw Failure.groupInspection
+            }
             return members
         }
     }
@@ -406,10 +417,37 @@ final class PBChildProcessOwnerTests: XCTestCase {
         owner.requestTermination(gracePeriod: 0, forceKillDelay: nil)
         wait(for: [signalAttempted], timeout: 1)
         system.setLeaderExited(true)
+        system.triggerExitMonitor()
         wait(for: [completed], timeout: 1)
 
         XCTAssertEqual(system.events.filter { $0 == "signal:\(SIGTERM)" }, ["signal:\(SIGTERM)"])
         XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
+    }
+
+    func testImmediateTerminationAttemptsSIGTERMBeforeReturning() throws {
+        let system = FakeProcessSystem()
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+
+        try owner.launch(configuration: configuration()) { _, _ in }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0, forceKillDelay: nil))
+
+        XCTAssertEqual(system.events.filter { $0 == "signal:\(SIGTERM)" }, ["signal:\(SIGTERM)"])
+    }
+
+    func testTimeoutRequestDoesNotOverrideAChildThatAlreadyExited() throws {
+        let system = FakeProcessSystem()
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "already exited child completed")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        system.setLeaderExited(true)
+        let didRequestTermination = owner.requestTermination(gracePeriod: 0, forceKillDelay: 0.1)
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertFalse(didRequestTermination)
+        XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
+        XCTAssertTrue(recorder.errors.isEmpty)
     }
 
     func testExitBeforeTerminationDeadlineIsNeverSignalled() throws {
@@ -450,6 +488,43 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertLessThan(termIndex, killIndex)
         XCTAssertLessThan(killIndex, reapIndex)
         XCTAssertTrue(events[termIndex ..< killIndex].contains("members"))
+    }
+
+    func testLeaderExitDuringGraceRetainsOwnershipUntilDescendantEscalation() throws {
+        let system = FakeProcessSystem()
+        system.setProcessGroupMembers([4321, 4322])
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "descendant escalation completed")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0.03, forceKillDelay: 0.03))
+        system.setLeaderExited(true)
+        system.triggerExitMonitor()
+        wait(for: [completed], timeout: 1)
+
+        let events = system.events
+        let termIndex = try XCTUnwrap(events.firstIndex(of: "signal:\(SIGTERM)"))
+        let killIndex = try XCTUnwrap(events.firstIndex(of: "signal:\(SIGKILL)"))
+        let reapIndex = try XCTUnwrap(events.firstIndex(of: "reap"))
+        XCTAssertLessThan(termIndex, killIndex)
+        XCTAssertLessThan(killIndex, reapIndex)
+    }
+
+    func testGroupInspectionFailureDoesNotSuppressForceKill() throws {
+        let system = FakeProcessSystem()
+        system.leaderExitsOnTermination = true
+        system.failGroupInspection()
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "force kill followed inspection failure")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0, forceKillDelay: 0.03))
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertTrue(system.events.contains("members"))
+        XCTAssertTrue(system.events.contains("signal:\(SIGKILL)"))
     }
 
     func testSpawnFailureLeavesOwnerAvailableForALaterLaunch() throws {

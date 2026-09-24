@@ -407,7 +407,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap 'exit 0' TERM; while :; do :; done",
+                "trap 'exit 0' TERM; printf '%d' $$ > \"$PB_TASK_PID_FILE\"; while :; do :; done",
             ],
             inDirectory: nil
         )
@@ -445,7 +445,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap '' TERM; while :; do :; done",
+                "trap '' TERM; printf '%d' $$ > \"$PB_TASK_PID_FILE\"; while :; do :; done",
             ],
             inDirectory: nil
         )
@@ -488,10 +488,10 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
-                    "/bin/sleep 30 & child=$!; " +
-                    "printf '%d' \"$child\" > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
+                "/bin/sleep 30 & child=$!; " +
                     "trap 'wait \"$child\"; exit 0' TERM; " +
+                    "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
+                    "printf '%d' \"$child\" > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
                     "while :; do wait \"$child\"; done",
             ],
             inDirectory: nil
@@ -540,10 +540,10 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
-                    "/bin/sh -c 'trap \"\" TERM; while :; do /bin/sleep 1; done' & child=$!; " +
-                    "printf '%d' \"$child\" > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
+                "/bin/sh -c 'trap \"\" TERM; printf \"%d\" $$ > \"$PB_TASK_DESCENDANT_PID_FILE\"; " +
+                    "while :; do /bin/sleep 1; done' & child=$!; " +
                     "trap 'exit 0' TERM; " +
+                    "printf '%d' $$ > \"$PB_TASK_LEADER_PID_FILE\"; " +
                     "while :; do wait \"$child\"; done",
             ],
             inDirectory: nil
@@ -659,7 +659,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             launchPath: "/bin/sh",
             arguments: [
                 "-c",
-                "printf '%d' $$ > \"$PB_TASK_PID_FILE\"; trap '' TERM; while :; do :; done",
+                "trap '' TERM; printf '%d' $$ > \"$PB_TASK_PID_FILE\"; while :; do :; done",
             ],
             inDirectory: nil
         )

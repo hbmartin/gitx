@@ -95,6 +95,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "PBChildProcess")
 
     private let queue: DispatchQueue
+    private let queueKey = DispatchSpecificKey<Bool>()
     private let system: any PBChildProcessSystem
     private var state: State = .idle
 
@@ -104,6 +105,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     ) {
         self.system = system
         queue = DispatchQueue(label: queueLabel, qos: .userInitiated)
+        queue.setSpecific(key: queueKey, value: true)
     }
 
     func launch(
@@ -145,9 +147,10 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         }
     }
 
-    func requestTermination(gracePeriod: TimeInterval, forceKillDelay: TimeInterval?) {
-        queue.async { [weak self] in
-            guard let self, case var .running(process) = state else { return }
+    @discardableResult
+    func requestTermination(gracePeriod: TimeInterval, forceKillDelay: TimeInterval?) -> Bool {
+        syncOnQueue {
+            guard case var .running(process) = state else { return false }
             process.schedule.mergeRequest(
                 now: DispatchTime.now().uptimeNanoseconds,
                 gracePeriod: gracePeriod,
@@ -155,9 +158,19 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 terminationWasSent: process.terminationWasSent
             )
             state = .running(process)
+            observeLeaderExit()
+            guard case .running = state else { return false }
             scheduleTerminationTimer()
             scheduleForceKillTimer()
+            return true
         }
+    }
+
+    private func syncOnQueue<Result>(_ body: () -> Result) -> Result {
+        if DispatchQueue.getSpecific(key: queueKey) == true {
+            return body()
+        }
+        return queue.sync(execute: body)
     }
 
     private func scheduleTerminationTimer() {
@@ -165,6 +178,11 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
               !process.terminationWasSent,
               let deadline = process.schedule.terminationDeadline
         else { return }
+
+        if deadline <= DispatchTime.now().uptimeNanoseconds {
+            sendTerminationSignal()
+            return
+        }
 
         process.terminationTimerGeneration += 1
         let generation = process.terminationTimerGeneration
@@ -184,6 +202,11 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
               !process.forceKillWasSent,
               let deadline = process.schedule.forceKillDeadline
         else { return }
+
+        if deadline <= DispatchTime.now().uptimeNanoseconds {
+            sendForceKillSignal()
+            return
+        }
 
         process.forceKillTimerGeneration += 1
         let generation = process.forceKillTimerGeneration
@@ -263,7 +286,9 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             Self.logger.info(
                 "Sent \(label, privacy: .public) to pgid=\(process.processGroup, privacy: .public)"
             )
-        } catch let error as NSError where error.domain == NSPOSIXErrorDomain && error.code == Int(ESRCH) {
+        } catch let error as NSError where error.domain == NSPOSIXErrorDomain &&
+            (error.code == Int(ESRCH) || (error.code == Int(EPERM) && process.leaderExitWasObserved))
+        {
             Self.logger.info(
                 "Process group pgid=\(process.processGroup, privacy: .public) was gone before \(label, privacy: .public)"
             )
@@ -288,20 +313,21 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 )
             }
 
-            guard process.terminationWasSent,
-                  process.schedule.forceKillDeadline != nil,
-                  !process.forceKillWasSent
-            else {
-                reapLeader(process)
-                return
-            }
-
-            if groupHasNoDescendants(process) {
-                reapLeader(process)
-            }
+            if shouldRetainLeaderForScheduledGroup(process) { return }
+            reapLeader(process)
         } catch {
             finishWithSupervisionError(error, operation: "observe", process: process)
         }
+    }
+
+    private func shouldRetainLeaderForScheduledGroup(_ process: RunningProcess) -> Bool {
+        guard process.schedule.terminationDeadline != nil,
+              !groupHasNoDescendants(process)
+        else { return false }
+        if !process.terminationWasSent {
+            return true
+        }
+        return process.schedule.forceKillDeadline != nil && !process.forceKillWasSent
     }
 
     private func groupHasNoDescendants(_ process: RunningProcess) -> Bool {
@@ -558,6 +584,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         var capacity = 16
         while true {
             var processIdentifiers = [pid_t](repeating: 0, count: capacity)
+            errno = 0
             let processCount = processIdentifiers.withUnsafeMutableBytes { buffer in
                 proc_listpgrppids(
                     processGroup,
@@ -565,7 +592,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
                     Int32(buffer.count)
                 )
             }
-            guard processCount >= 0 else {
+            guard processCount >= 0, processCount != 0 || errno == 0 else {
                 throw posixError(errno, operation: "inspect child process group")
             }
             let count = Int(processCount)
@@ -663,6 +690,16 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
                 gracePeriod: gracePeriod,
                 forceKillDelay: forceKillDelay?.doubleValue
             )
+        }
+
+        @objc(requestImmediateTermination)
+        func requestImmediateTermination() {
+            owner.requestTermination(gracePeriod: 0, forceKillDelay: nil)
+        }
+
+        @objc(requestTimeoutTerminationWithForceKillAfter:)
+        func requestTimeoutTermination(forceKillDelay: TimeInterval) -> Bool {
+            owner.requestTermination(gracePeriod: 0, forceKillDelay: forceKillDelay)
         }
     }
     // swiftlint:enable unused_declaration

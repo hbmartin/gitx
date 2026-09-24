@@ -83,10 +83,12 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 @property (nullable, retain) NSData *standardInputData;
 @property (nullable, retain) NSDictionary<NSString *, id> *additionalEnvironment;
 
+/// Requests SIGTERM for the running process group before returning.
 - (void)terminate;
 
-/// Cancels before launch, or gives a running process group time to exit before
-/// sending SIGTERM and then SIGKILL if it remains alive.
+/// Cancels before launch, or preserves ownership of the running process group
+/// while allowing the grace period, then sends SIGTERM and finally SIGKILL to
+/// any surviving members after the force-kill delay.
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod
 				   forceKillAfter:(NSTimeInterval)forceKillDelay
 	NS_SWIFT_NAME(terminate(afterGracePeriod:forceKillAfter:));

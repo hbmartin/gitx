@@ -423,9 +423,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 				PBTask *strongSelf = weakSelf;
 				if (!strongSelf) return;
 				if (strongSelf.operationFinished || strongSelf.taskFinished) return;
-				strongSelf.forcedError = [strongSelf timeoutError];
-				[strongSelf.processSupervisor requestTerminationAfterGracePeriod:0
-																  forceKillAfter:@(PBTaskTerminationGrace)];
+				if ([strongSelf.processSupervisor requestTimeoutTerminationWithForceKillAfter:PBTaskTerminationGrace])
+					strongSelf.forcedError = [strongSelf timeoutError];
 			});
 		}
 	}
@@ -492,7 +491,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		self.cancellationRequested = YES;
 		supervisor = self.processSupervisor;
 	}
-	[supervisor requestTerminationAfterGracePeriod:0 forceKillAfter:nil];
+	[supervisor requestImmediateTermination];
 }
 
 - (void)terminateAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(NSTimeInterval)forceKillDelay
