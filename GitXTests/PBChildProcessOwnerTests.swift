@@ -320,7 +320,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
     }
 
-    func testLiveChildIsNotContinuouslyPolledWhileExitMonitorIsQuiet() throws {
+    func testLiveChildReceivesOnlyTheOneShotRegistrationProbeWhileExitMonitorIsQuiet() throws {
         let system = FakeProcessSystem()
         let owner = PBChildProcessOwner(system: system, queueLabel: #function)
         let completed = expectation(description: "exit monitor observed the leader exit")
@@ -330,13 +330,28 @@ final class PBChildProcessOwnerTests: XCTestCase {
         let unexpectedlyCompleted = expectation(description: "live child stayed running")
         unexpectedlyCompleted.isInverted = true
         wait(for: [unexpectedlyCompleted], timeout: 0.15)
-        XCTAssertEqual(system.events.filter { $0 == "observe" }.count, 1)
+        XCTAssertEqual(system.events.filter { $0 == "observe" }.count, 2)
 
         system.setLeaderExited(true)
         system.triggerExitMonitor()
         wait(for: [completed], timeout: 1)
 
         XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
+    }
+
+    func testOneShotRegistrationProbeReapsAnExitMissedByTheMonitor() throws {
+        let system = FakeProcessSystem()
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "deferred registration probe observed the leader exit")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        system.setLeaderExited(true)
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertEqual(system.events.filter { $0 == "observe" }.count, 2)
         XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
     }
 

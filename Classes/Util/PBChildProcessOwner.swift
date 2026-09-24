@@ -92,6 +92,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     }
 
     private static let reapRetryInterval: TimeInterval = 0.01
+    private static let monitorRegistrationProbeDelay: TimeInterval = 0.02
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "PBChildProcess")
 
     private let queue: DispatchQueue
@@ -144,6 +145,14 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             // becoming active. It remains a zombie until this owner reaps it, so this
             // immediate non-reaping probe closes that notification-registration race.
             observeLeaderExit()
+
+            // Dispatch may not finish registering a newly activated process source
+            // before a very short-lived child exits. Probe once more after activation
+            // has had a queue turn; this is deliberately one-shot rather than lifetime
+            // polling, so long-running children remain entirely event driven.
+            queue.asyncAfter(deadline: .now() + Self.monitorRegistrationProbeDelay) { [weak self] in
+                self?.observeLeaderExit()
+            }
         }
     }
 
