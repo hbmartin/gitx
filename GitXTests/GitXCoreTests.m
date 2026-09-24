@@ -3189,7 +3189,7 @@
 @interface PBTask (GitXCoreTests)
 - (NSPipe *)makePipe;
 - (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
-									 supervisionError:(nullable NSError *)supervisionError;
+											  supervisionError:(nullable NSError *)supervisionError;
 @end
 
 @interface PBFailingPipeTask : PBTask
@@ -3200,8 +3200,8 @@
 - (NSPipe *)makePipe
 {
 	@throw [NSException exceptionWithName:NSInternalInconsistencyException
-								 reason:@"forced pipe allocation failure"
-							   userInfo:nil];
+								   reason:@"forced pipe allocation failure"
+								 userInfo:nil];
 }
 
 @end
@@ -3281,8 +3281,8 @@
 {
 	NSArray *invalidArguments = @[ @"-c", @42 ];
 	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/sh"
-								arguments:(NSArray<NSString *> *)invalidArguments
-							  inDirectory:nil];
+									arguments:(NSArray<NSString *> *)invalidArguments
+								  inDirectory:nil];
 	NSError *error = nil;
 
 	XCTAssertFalse([task launchTask:&error]);
@@ -3363,8 +3363,8 @@
 - (void)testMissingWorkingDirectoryReturnsDistinctLaunchError
 {
 	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true"
-								arguments:@[]
-							  inDirectory:@"/path/that/does/not/exist"];
+									arguments:@[]
+								  inDirectory:@"/path/that/does/not/exist"];
 	NSError *error = nil;
 
 	XCTAssertFalse([task launchTask:&error]);
@@ -3378,8 +3378,8 @@
 {
 	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
 	NSError *supervisionError = [NSError errorWithDomain:NSPOSIXErrorDomain
-												 code:EIO
-											 userInfo:@{NSLocalizedDescriptionKey : @"forced supervision failure"}];
+													code:EIO
+												userInfo:@{NSLocalizedDescriptionKey : @"forced supervision failure"}];
 
 	NSError *error = [task recordProcessCompletionWithRawWaitStatus:0 supervisionError:supervisionError];
 

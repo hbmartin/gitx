@@ -63,7 +63,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 - (NSPipe *)makePipe;
 - (NSArray<NSString *> *)validatedArgumentsForLaunch;
 - (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
-									 supervisionError:(nullable NSError *)supervisionError;
+											  supervisionError:(nullable NSError *)supervisionError;
 
 @end
 
@@ -328,12 +328,12 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 }
 
 - (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
-									 supervisionError:(nullable NSError *)supervisionError
+											  supervisionError:(nullable NSError *)supervisionError
 {
 	if (supervisionError) {
 		NSException *exception = [NSException exceptionWithName:@"PBTaskProcessSupervisionException"
-											 reason:supervisionError.localizedDescription
-										   userInfo:@{ NSUnderlyingErrorKey : supervisionError }];
+														 reason:supervisionError.localizedDescription
+													   userInfo:@{NSUnderlyingErrorKey : supervisionError}];
 		self.forcedError = [self launchErrorForException:exception underlyingError:supervisionError];
 	} else if (WIFSIGNALED(rawWaitStatus)) {
 		self.terminationReason = NSTaskTerminationReasonUncaughtSignal;
