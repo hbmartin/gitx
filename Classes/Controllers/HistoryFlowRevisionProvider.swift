@@ -239,10 +239,12 @@ nonisolated struct HistoryFlowRevisionProvider: RevisionProvider {
     }
 
     @objc(PBHistoryFlowRevisionProviderTestHarness)
+    // swiftlint:disable:next unused_declaration -- Objective-C XCTest reaches this DEBUG-only bridge by runtime name.
     final nonisolated class HistoryFlowRevisionProviderTestHarness: NSObject {
         @objc(
             compareRepositoryAtURL:gitExecutableURL:base:target:maximumChangedFiles:maximumBlobBytes:completionHandler:
         )
+        // swiftlint:disable:next unused_declaration -- The manual XCTest compatibility declaration invokes this selector.
         static func compare(
             repositoryURL: URL,
             gitExecutableURL: URL,
