@@ -313,7 +313,9 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 )
             }
 
-            if shouldRetainLeaderForScheduledGroup(process) { return }
+            if shouldRetainLeaderForScheduledGroup(process) {
+                return
+            }
             reapLeader(process)
         } catch {
             finishWithSupervisionError(error, operation: "observe", process: process)
@@ -411,8 +413,16 @@ private final nonisolated class PBDispatchProcessExitMonitor: PBChildProcessExit
 }
 
 nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
+    private struct PreparedDescriptors {
+        let standardInput: Int32?
+        let standardOutput: Int32
+        let duplicatedDescriptors: [Int32]
+    }
+
     func spawn(configuration: PBChildProcessConfiguration) throws -> pid_t {
         try validate(configuration: configuration)
+        let descriptors = try prepareDescriptors(configuration: configuration)
+        defer { descriptors.duplicatedDescriptors.forEach { Darwin.close($0) } }
 
         var fileActions: posix_spawn_file_actions_t?
         try check(posix_spawn_file_actions_init(&fileActions), operation: "initialize spawn file actions")
@@ -434,26 +444,34 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
             }
         }
 
-        if let inputFileDescriptor = configuration.standardInputFileDescriptor {
+        if let inputFileDescriptor = descriptors.standardInput {
             try check(
                 posix_spawn_file_actions_adddup2(&fileActions, inputFileDescriptor, STDIN_FILENO),
                 operation: "configure child standard input"
             )
-            try check(
-                posix_spawn_file_actions_addclose(&fileActions, inputFileDescriptor),
-                operation: "close child input pipe source"
-            )
         } else {
-            try check(
-                posix_spawn_file_actions_addinherit_np(&fileActions, STDIN_FILENO),
-                operation: "inherit child standard input"
-            )
+            errno = 0
+            if fcntl(STDIN_FILENO, F_GETFD) == -1 {
+                let code = errno
+                guard code == EBADF else { throw posixError(code, operation: "inspect child standard input") }
+                try "/dev/null".withCString { path in
+                    try check(
+                        posix_spawn_file_actions_addopen(&fileActions, STDIN_FILENO, path, O_RDONLY, 0),
+                        operation: "open null child standard input"
+                    )
+                }
+            } else {
+                try check(
+                    posix_spawn_file_actions_addinherit_np(&fileActions, STDIN_FILENO),
+                    operation: "inherit child standard input"
+                )
+            }
         }
 
         try check(
             posix_spawn_file_actions_adddup2(
                 &fileActions,
-                configuration.standardOutputFileDescriptor,
+                descriptors.standardOutput,
                 STDOUT_FILENO
             ),
             operation: "configure child standard output"
@@ -461,18 +479,18 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         try check(
             posix_spawn_file_actions_adddup2(
                 &fileActions,
-                configuration.standardOutputFileDescriptor,
+                descriptors.standardOutput,
                 STDERR_FILENO
             ),
             operation: "configure child standard error"
         )
-        try check(
-            posix_spawn_file_actions_addclose(
-                &fileActions,
-                configuration.standardOutputFileDescriptor
-            ),
-            operation: "close child output pipe source"
-        )
+        let childSourceDescriptors = Set([descriptors.standardInput, descriptors.standardOutput].compactMap { $0 })
+        for descriptor in childSourceDescriptors {
+            try check(
+                posix_spawn_file_actions_addclose(&fileActions, descriptor),
+                operation: "close child pipe source"
+            )
+        }
 
         var attributes: posix_spawnattr_t?
         try check(posix_spawnattr_init(&attributes), operation: "initialize spawn attributes")
@@ -610,6 +628,53 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         if strings.contains(where: { $0.utf8.contains(0) }) {
             throw posixError(EINVAL, operation: "validate child process configuration")
         }
+        if let workingDirectory = configuration.workingDirectory {
+            try workingDirectory.withCString { path in
+                guard access(path, F_OK) == 0 else {
+                    throw posixError(errno, operation: "validate child working directory")
+                }
+            }
+        }
+    }
+
+    private func prepareDescriptors(configuration: PBChildProcessConfiguration) throws -> PreparedDescriptors {
+        var duplicatedDescriptors: [Int32] = []
+        do {
+            let standardInput = try configuration.standardInputFileDescriptor.map {
+                try prepareSourceDescriptor($0, operation: "prepare child standard input", owned: &duplicatedDescriptors)
+            }
+            let standardOutput = try prepareSourceDescriptor(
+                configuration.standardOutputFileDescriptor,
+                operation: "prepare child standard output",
+                owned: &duplicatedDescriptors
+            )
+            return PreparedDescriptors(
+                standardInput: standardInput,
+                standardOutput: standardOutput,
+                duplicatedDescriptors: duplicatedDescriptors
+            )
+        } catch {
+            duplicatedDescriptors.forEach { Darwin.close($0) }
+            throw error
+        }
+    }
+
+    private func prepareSourceDescriptor(
+        _ descriptor: Int32,
+        operation: String,
+        owned duplicatedDescriptors: inout [Int32]
+    ) throws -> Int32 {
+        errno = 0
+        guard fcntl(descriptor, F_GETFD) != -1 else {
+            throw posixError(errno == 0 ? EBADF : errno, operation: operation)
+        }
+        guard descriptor <= STDERR_FILENO else { return descriptor }
+        let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
+        guard duplicate != -1 else {
+            throw posixError(errno, operation: operation)
+        }
+        duplicatedDescriptors.append(duplicate)
+        return duplicate
     }
 
     private func withCStringArray<Result>(

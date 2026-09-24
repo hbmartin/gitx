@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 
 final class PBChildProcessOwnerTests: XCTestCase {
@@ -542,5 +543,101 @@ final class PBChildProcessOwnerTests: XCTestCase {
 
         XCTAssertEqual(recorder.statuses, [0])
         XCTAssertEqual(system.events.filter { $0 == "spawn" }.count, 2)
+    }
+
+    func testPosixSpawnAttachesNullInputWhenStandardInputIsClosed() throws {
+        let outputPipe = try makePOSIXPipe()
+        defer { Darwin.close(outputPipe.read) }
+        let savedStandardInput = try duplicateStandardInput()
+        var standardInputWasRestored = false
+        defer {
+            if !standardInputWasRestored {
+                restoreStandardInput(from: savedStandardInput)
+            }
+        }
+        XCTAssertEqual(Darwin.close(STDIN_FILENO), 0)
+
+        let processIdentifier = try PBPosixChildProcessSystem().spawn(
+            configuration: PBChildProcessConfiguration(
+                launchPath: "/bin/sh",
+                arguments: ["-c", "read value || printf no-input"],
+                environment: ProcessInfo.processInfo.environment,
+                workingDirectory: nil,
+                standardInputFileDescriptor: nil,
+                standardOutputFileDescriptor: outputPipe.write
+            )
+        )
+        restoreStandardInput(from: savedStandardInput)
+        standardInputWasRestored = true
+        XCTAssertEqual(Darwin.close(outputPipe.write), 0)
+        let status = try waitForProcess(processIdentifier)
+        let output = FileHandle(fileDescriptor: outputPipe.read, closeOnDealloc: false).readDataToEndOfFile()
+
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(String(data: output, encoding: .utf8), "no-input")
+    }
+
+    func testPosixSpawnPreservesOutputWhenItsSourceOccupiesStandardInput() throws {
+        let outputPipe = try makePOSIXPipe()
+        defer { Darwin.close(outputPipe.read) }
+        let savedStandardInput = try duplicateStandardInput()
+        var standardInputWasRestored = false
+        defer {
+            if !standardInputWasRestored {
+                restoreStandardInput(from: savedStandardInput)
+            }
+        }
+        XCTAssertEqual(dup2(outputPipe.write, STDIN_FILENO), STDIN_FILENO)
+        XCTAssertEqual(Darwin.close(outputPipe.write), 0)
+
+        let processIdentifier = try PBPosixChildProcessSystem().spawn(
+            configuration: PBChildProcessConfiguration(
+                launchPath: "/usr/bin/printf",
+                arguments: ["descriptor-zero-output"],
+                environment: ProcessInfo.processInfo.environment,
+                workingDirectory: nil,
+                standardInputFileDescriptor: nil,
+                standardOutputFileDescriptor: STDIN_FILENO
+            )
+        )
+        restoreStandardInput(from: savedStandardInput)
+        standardInputWasRestored = true
+        let status = try waitForProcess(processIdentifier)
+        let output = FileHandle(fileDescriptor: outputPipe.read, closeOnDealloc: false).readDataToEndOfFile()
+
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(String(data: output, encoding: .utf8), "descriptor-zero-output")
+    }
+
+    private func makePOSIXPipe() throws -> (read: Int32, write: Int32) {
+        var descriptors: [Int32] = [-1, -1]
+        guard pipe(&descriptors) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        return (descriptors[0], descriptors[1])
+    }
+
+    private func duplicateStandardInput() throws -> Int32 {
+        let descriptor = fcntl(STDIN_FILENO, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
+        guard descriptor != -1 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        return descriptor
+    }
+
+    private func restoreStandardInput(from savedDescriptor: Int32) {
+        guard savedDescriptor >= 0 else { return }
+        XCTAssertEqual(dup2(savedDescriptor, STDIN_FILENO), STDIN_FILENO)
+        XCTAssertEqual(Darwin.close(savedDescriptor), 0)
+    }
+
+    private func waitForProcess(_ processIdentifier: pid_t) throws -> Int32 {
+        var status: Int32 = 0
+        while waitpid(processIdentifier, &status, 0) == -1 {
+            guard errno == EINTR else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+        }
+        return status
     }
 }

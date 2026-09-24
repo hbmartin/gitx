@@ -106,6 +106,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             inDirectory: nil
         )
         task.setValue(true, forKey: "outputDrainExpired")
+        task.setValue(Pipe(), forKey: "outputPipe")
         task.perform(NSSelectorFromString("configureOutputReader"))
         let outputPipe = try XCTUnwrap(task.value(forKey: "outputPipe") as? Pipe)
 

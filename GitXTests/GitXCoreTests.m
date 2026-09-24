@@ -3186,6 +3186,25 @@
 @end
 
 
+@interface PBTask (GitXCoreTests)
+- (NSPipe *)makePipe;
+@end
+
+@interface PBFailingPipeTask : PBTask
+@end
+
+@implementation PBFailingPipeTask
+
+- (NSPipe *)makePipe
+{
+	@throw [NSException exceptionWithName:NSInternalInconsistencyException
+								 reason:@"forced pipe allocation failure"
+							   userInfo:nil];
+}
+
+@end
+
+
 @interface PBTaskCoreTests : XCTestCase
 @end
 
@@ -3256,6 +3275,33 @@
 	XCTAssertEqualObjects(exception.name, NSInvalidArgumentException);
 }
 
+- (void)testInvalidArgumentElementReturnsLaunchError
+{
+	NSArray *invalidArguments = @[ @"-c", @42 ];
+	PBTask *task = [PBTask taskWithLaunchPath:@"/bin/sh"
+								arguments:(NSArray<NSString *> *)invalidArguments
+							  inDirectory:nil];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	NSException *exception = error.userInfo[PBTaskUnderlyingExceptionKey];
+	XCTAssertEqualObjects(exception.name, NSInvalidArgumentException);
+}
+
+- (void)testPipeAllocationExceptionReturnsLaunchError
+{
+	PBTask *task = [PBFailingPipeTask taskWithLaunchPath:@"/usr/bin/true" arguments:@[] inDirectory:nil];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	NSException *exception = error.userInfo[PBTaskUnderlyingExceptionKey];
+	XCTAssertEqualObjects(exception.name, NSInternalInconsistencyException);
+}
+
 - (void)testNonZeroExitIncludesStatusAndCombinedOutput
 {
 	NSError *error = nil;
@@ -3308,6 +3354,22 @@
 	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
 	XCTAssertEqual(error.code, PBTaskLaunchError);
 	XCTAssertNotNil(error.userInfo[PBTaskUnderlyingExceptionKey]);
+	NSError *underlyingError = error.userInfo[NSUnderlyingErrorKey];
+	XCTAssertTrue([underlyingError.localizedDescription containsString:@"spawn child process"]);
+}
+
+- (void)testMissingWorkingDirectoryReturnsDistinctLaunchError
+{
+	PBTask *task = [PBTask taskWithLaunchPath:@"/usr/bin/true"
+								arguments:@[]
+							  inDirectory:@"/path/that/does/not/exist"];
+	NSError *error = nil;
+
+	XCTAssertFalse([task launchTask:&error]);
+	XCTAssertEqualObjects(error.domain, PBTaskErrorDomain);
+	XCTAssertEqual(error.code, PBTaskLaunchError);
+	NSError *underlyingError = error.userInfo[NSUnderlyingErrorKey];
+	XCTAssertTrue([underlyingError.localizedDescription containsString:@"validate child working directory"]);
 }
 
 - (void)testAsyncCompletionUsesRequestedQueueAndCapturesLargeOutput
