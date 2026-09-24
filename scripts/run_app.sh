@@ -123,36 +123,63 @@ write_pid_file() {
 stop_pid_file() {
 	local pid_file=$1 expected=$2 pid recorded_start_time executable current_start_time
 	[[ -f "$pid_file" ]] || return 1
-	IFS=$'\t' read -r pid recorded_start_time <"$pid_file" || return 1
-	if [[ ! "$pid" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null; then
-		rm -f "$pid_file"
+	IFS=$'\t' read -r pid recorded_start_time <"$pid_file" || return 3
+	if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+		echo "Cannot verify malformed process identity in $pid_file." >&2
+		return 3
+	fi
+	if ! kill -0 "$pid" 2>/dev/null; then
+		if ps -p "$pid" -o pid= 2>/dev/null | grep -q '[0-9]'; then
+			echo "Cannot verify whether process $pid can be stopped." >&2
+			return 3
+		fi
 		return 1
 	fi
 	if [[ -z "$recorded_start_time" ]]; then
 		echo "Ignoring legacy PID-only record $pid_file; process identity cannot be verified." >&2
-		rm -f "$pid_file"
-		return 1
+		return 3
 	fi
 	executable=$(ps -p "$pid" -o comm= 2>/dev/null)
+	[[ -n "$executable" ]] || return 3
 	case "$executable" in
 		"$expected" | */"$expected") ;;
-		*) rm -f "$pid_file"; return 1 ;;
+		*) return 1 ;;
 	esac
-	current_start_time=$(process_start_time "$pid") || { rm -f "$pid_file"; return 1; }
+	current_start_time=$(process_start_time "$pid") || return 3
+	[[ -n "$current_start_time" ]] || return 3
 	if [[ "$current_start_time" != "$recorded_start_time" ]]; then
-		rm -f "$pid_file"
 		return 1
 	fi
 	kill "$pid" 2>/dev/null || return 2
 	for _ in {1..20}; do
 		if ! kill -0 "$pid" 2>/dev/null || [[ "$(ps -p "$pid" -o stat= 2>/dev/null)" == *Z* ]]; then
-			rm -f "$pid_file"
 			return 0
 		fi
 		sleep 0.25
 	done
 	echo "Process $pid ($expected) did not exit after SIGTERM; leaving $pid_file for retry." >&2
 	return 2
+}
+
+recorded_process_is_absent() {
+	local key=$1 pid
+	[[ -f "$session_file" ]] || return 0
+	if ! pid=$(awk -F= -v wanted="$key" '$1 == wanted { print $2; found = 1; exit } END { if (!found) exit 1 }' "$session_file"); then
+		if [[ "$key" == log_pid ]]; then
+			return 0
+		fi
+		echo "Cannot verify GitX without an app_pid in $session_file." >&2
+		return 1
+	fi
+	if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+		echo "Cannot verify malformed $key in $session_file." >&2
+		return 1
+	fi
+	if kill -0 "$pid" 2>/dev/null || ps -p "$pid" -o pid= 2>/dev/null | grep -q '[0-9]'; then
+		echo "Cannot verify the recorded $key process $pid without its PID identity file." >&2
+		return 1
+	fi
+	return 0
 }
 
 recorded_isolated_home() {
@@ -176,7 +203,10 @@ remove_isolated_home() {
 		echo "Refusing to remove unvalidated runtime home: $candidate" >&2
 		return 1
 	fi
-	rm -rf -- "$candidate"
+	rm -rf -- "$candidate" || {
+		echo "Could not remove validated runtime home: $candidate" >&2
+		return 2
+	}
 }
 
 stop_session() {
@@ -185,22 +215,30 @@ stop_session() {
 		stopped=1
 	else
 		result=$?
-		(( result == 2 )) && failed=1
+		if (( result == 2 || result == 3 )) || { (( result == 1 )) && [[ ! -f "$app_pid_file" ]] && ! recorded_process_is_absent app_pid; }; then
+			failed=1
+		fi
 	fi
 	if stop_pid_file "$log_pid_file" log; then
 		stopped=1
 	else
 		result=$?
-		(( result == 2 )) && failed=1
+		if (( result == 2 || result == 3 )) || { (( result == 1 )) && [[ ! -f "$log_pid_file" ]] && ! recorded_process_is_absent log_pid; }; then
+			failed=1
+		fi
 	fi
 	if (( stopped )); then
 		echo "Stopped the previous GitX session."
 	fi
 	if (( failed == 0 )); then
 		if isolated_home=$(recorded_isolated_home); then
-			remove_isolated_home "$isolated_home" || true
+			remove_isolated_home "$isolated_home"
+			result=$?
+			(( result == 2 )) && failed=1
 		fi
-		rm -f -- "$session_file"
+		if (( failed == 0 )); then
+			rm -f -- "$session_file" "$app_pid_file" "$log_pid_file" || failed=1
+		fi
 	fi
 	(( failed == 0 ))
 }

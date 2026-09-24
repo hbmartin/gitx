@@ -97,6 +97,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 	_standardOutputData = [NSData data];
 	_standardOutputBuffer = [NSMutableData data];
+	_capturesStandardOutput = YES;
 	dispatch_queue_attr_t stateQueueAttributes =
 		dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
 	_stateQueue = dispatch_queue_create("org.gitx.PBTask.state", stateQueueAttributes);
@@ -274,7 +275,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 				return;
 			}
 			if (data.length) {
-				[strongSelf.standardOutputBuffer appendData:data];
+				if (strongSelf.capturesStandardOutput)
+					[strongSelf.standardOutputBuffer appendData:data];
 				PBTaskOutputChunkHandler outputChunkHandler = strongSelf.outputChunkHandler;
 				if (outputChunkHandler) outputChunkHandler(data);
 			} else if (!data.length) {

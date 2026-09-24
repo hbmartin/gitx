@@ -159,6 +159,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     @discardableResult
     func requestTermination(gracePeriod: TimeInterval, forceKillDelay: TimeInterval?) -> Bool {
         syncOnQueue {
+            observeLeaderExit()
             guard case var .running(process) = state else { return false }
             process.schedule.mergeRequest(
                 now: DispatchTime.now().uptimeNanoseconds,
@@ -167,8 +168,6 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 terminationWasSent: process.terminationWasSent
             )
             state = .running(process)
-            observeLeaderExit()
-            guard case .running = state else { return false }
             scheduleTerminationTimer()
             scheduleForceKillTimer()
             return true
