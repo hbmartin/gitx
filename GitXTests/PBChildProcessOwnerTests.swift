@@ -466,6 +466,24 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertTrue(recorder.errors.isEmpty)
     }
 
+    func testTimeoutRequestDoesNotOverrideExitedLeaderWithDescendants() throws {
+        let system = FakeProcessSystem()
+        system.setProcessGroupMembers([4321, 4322])
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "exited leader completed normally")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        system.setLeaderExited(true)
+        let didRequestTermination = owner.requestTermination(gracePeriod: 0, forceKillDelay: 0.1)
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertFalse(didRequestTermination)
+        XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertTrue(recorder.errors.isEmpty)
+    }
+
     func testExitBeforeTerminationDeadlineIsNeverSignalled() throws {
         let system = FakeProcessSystem()
         let owner = PBChildProcessOwner(system: system, queueLabel: #function)

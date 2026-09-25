@@ -734,6 +734,35 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(process.wait(timeout=2), -15)
         self.assertFalse((session_directory / "app.pid").exists())
 
+    def test_run_app_stop_without_a_session_is_a_noop(self) -> None:
+        script = self.install_script("run_app.sh")
+
+        subprocess.run([script, "--stop"], check=True, capture_output=True, text=True, env=self.environment)
+
+    def test_run_app_stop_cleans_a_stale_pid_and_its_home(self) -> None:
+        script = self.install_script("run_app.sh")
+        session_directory = self.root / "build" / "Logs" / "run-app"
+        session_directory.mkdir(parents=True)
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        isolated_home = pathlib.Path(tempfile.mkdtemp(prefix="gitx-run-app-home.", dir=temporary_root))
+        pid_record = session_directory / "app.pid"
+        pid_record.write_text("999999\tThu Jan  1 00:00:00 1970\n")
+        session = session_directory / "session.txt"
+        session.write_text(f"app_pid=999999\nisolated_home={isolated_home}\n")
+
+        subprocess.run(
+            [script, "--stop"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment | {"TMPDIR": str(temporary_root)},
+        )
+
+        self.assertFalse(isolated_home.exists())
+        self.assertFalse(pid_record.exists())
+        self.assertFalse(session.exists())
+
     def test_run_app_stop_refuses_an_unverifiable_legacy_pid_only_record(self) -> None:
         script = self.install_script("run_app.sh")
         session_directory = self.root / "build" / "Logs" / "run-app"
@@ -742,19 +771,49 @@ class ScriptEntrypointTests(unittest.TestCase):
         executable.symlink_to("/bin/sleep")
         process = subprocess.Popen([executable, "60"])
         self.addCleanup(self._terminate_process, process)
-        (session_directory / "app.pid").write_text(f"{process.pid}\n")
+        pid_record = session_directory / "app.pid"
+        pid_record.write_text(f"{process.pid}\n")
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        isolated_home = pathlib.Path(tempfile.mkdtemp(prefix="gitx-run-app-home.", dir=temporary_root))
+        session = session_directory / "session.txt"
+        session.write_text(f"app_pid={process.pid}\nisolated_home={isolated_home}\n")
 
         result = subprocess.run(
             [script, "--stop"],
-            check=True,
             capture_output=True,
             text=True,
-            env=self.environment,
+            env=self.environment | {"TMPDIR": str(temporary_root)},
         )
 
+        self.assertNotEqual(result.returncode, 0)
         self.assertIsNone(process.poll())
-        self.assertFalse((session_directory / "app.pid").exists())
+        self.assertTrue(pid_record.exists())
+        self.assertTrue(isolated_home.exists())
+        self.assertTrue(session.exists())
         self.assertIn("process identity cannot be verified", result.stderr)
+
+    def test_run_app_stop_preserves_a_live_session_when_app_pid_record_is_missing(self) -> None:
+        script = self.install_script("run_app.sh")
+        process, session_directory = self.create_live_run_app_session()
+        (session_directory / "app.pid").unlink()
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        isolated_home = pathlib.Path(tempfile.mkdtemp(prefix="gitx-run-app-home.", dir=temporary_root))
+        session = session_directory / "session.txt"
+        session.write_text(session.read_text() + f"isolated_home={isolated_home}\n")
+
+        result = subprocess.run(
+            [script, "--stop"],
+            capture_output=True,
+            text=True,
+            env=self.environment | {"TMPDIR": str(temporary_root)},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(process.poll())
+        self.assertTrue(isolated_home.exists())
+        self.assertTrue(session.exists())
 
     def test_run_app_stop_removes_validated_home_and_session_metadata(self) -> None:
         script = self.install_script("run_app.sh")
@@ -801,6 +860,44 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertTrue(unvalidated_home.exists())
         self.assertFalse(session.exists())
         self.assertIn("Refusing to remove unvalidated runtime home", result.stderr)
+
+    def test_run_app_stop_retains_session_until_validated_home_removal_succeeds(self) -> None:
+        script = self.install_script("run_app.sh")
+        process, session_directory = self.create_live_run_app_session()
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        isolated_home = pathlib.Path(tempfile.mkdtemp(prefix="gitx-run-app-home.", dir=temporary_root))
+        session = session_directory / "session.txt"
+        session.write_text(session.read_text() + f"isolated_home={isolated_home}\n")
+        mock_rm = self.bin / "rm"
+        mock_rm.write_text(
+            "#!/bin/bash\n"
+            "for arg in \"$@\"; do\n"
+            "  [[ \"$arg\" == \"${FAIL_REMOVAL_PATH:-}\" ]] && exit 73\n"
+            "done\n"
+            "exec /bin/rm \"$@\"\n"
+        )
+        mock_rm.chmod(0o755)
+        environment = self.environment | {"TMPDIR": str(temporary_root)}
+
+        failed = subprocess.run(
+            [script, "--stop"],
+            capture_output=True,
+            text=True,
+            env=environment | {"FAIL_REMOVAL_PATH": str(isolated_home)},
+        )
+
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(process.wait(timeout=2), -signal.SIGTERM)
+        self.assertTrue(isolated_home.exists())
+        self.assertTrue(session.exists())
+        self.assertTrue((session_directory / "app.pid").exists())
+
+        subprocess.run([script, "--stop"], check=True, capture_output=True, text=True, env=environment)
+
+        self.assertFalse(isolated_home.exists())
+        self.assertFalse(session.exists())
+        self.assertFalse((session_directory / "app.pid").exists())
 
     def test_run_app_launches_use_unique_forge_storage_roots(self) -> None:
         script = self.install_script("run_app.sh")

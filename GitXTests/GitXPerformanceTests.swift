@@ -187,6 +187,54 @@ final class GitXPerformanceTests: XCTestCase {
         return task.standardOutputString() ?? ""
     }
 
+    func testCommittedDirectoryExportPerformance() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gitx-quick-look-performance-\(UUID().uuidString)", isDirectory: true)
+        let repository = root.appendingPathComponent("repository", isDirectory: true)
+        let outputs = root.appendingPathComponent("outputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outputs, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try gitOutput(["init", "--quiet"], in: repository)
+        _ = try gitOutput(["config", "user.name", "GitX Performance"], in: repository)
+        _ = try gitOutput(["config", "user.email", "gitx-performance@example.invalid"], in: repository)
+        let folder = repository.appendingPathComponent("Documentation", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for index in 0 ..< 128 {
+            try Data("Small file \(index)\n".utf8).write(
+                to: folder.appendingPathComponent(String(format: "File-%03d.txt", index))
+            )
+        }
+        _ = try gitOutput(["add", "--all"], in: repository)
+        _ = try gitOutput(["commit", "--quiet", "-m", "Quick Look performance fixture"], in: repository)
+        let revision = try gitOutput(["rev-parse", "HEAD"], in: repository)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Documentation",
+            isDirectory: true,
+            source: .committedDirectory(
+                repository: QuickLookGitRepositoryDescriptor(
+                    executablePath: "/usr/bin/git",
+                    gitDirectoryPath: repository.appendingPathComponent(".git").path,
+                    workingDirectoryPath: repository.path
+                ),
+                revision: revision,
+                path: "Documentation"
+            )
+        )
+        let exporter = QuickLookFilePromiseExporter()
+        let coldOutput = outputs.appendingPathComponent("cold", isDirectory: true)
+        let cold = try elapsedThrowing { try exporter.export(descriptor, to: coldOutput) }
+        try FileManager.default.removeItem(at: coldOutput)
+        let samples = try (0 ..< 3).map { index in
+            let output = outputs.appendingPathComponent("sample-\(index)", isDirectory: true)
+            let duration = try elapsedThrowing { try exporter.export(descriptor, to: output) }
+            try FileManager.default.removeItem(at: output)
+            return duration
+        }
+        attachMeasurements("committed-directory-export-128-files", cold: cold, samples: samples)
+    }
+
     func testRepositoryStatusBarOverlayApplicationStaysWithinMainThreadBudget() throws {
         let records = [
             "# branch.oid 0123456789abcdef",

@@ -45,8 +45,10 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
 
     private final class RepositoryFixture {
         let url: URL
+        private let inheritedEnvironment: [String: String]
 
-        init() throws {
+        init(inheritedEnvironment: [String: String] = ProcessInfo.processInfo.environment) throws {
+            self.inheritedEnvironment = inheritedEnvironment
             url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("gitx-history-flow-provider-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -79,7 +81,15 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         func git(_ arguments: [String]) throws -> String {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = ["-C", url.path] + arguments
+            process.arguments = [
+                "-C", url.path,
+                "-c", "commit.gpgsign=false",
+                "-c", "core.hooksPath=/dev/null",
+            ] + arguments
+            var environment = inheritedEnvironment.filter { !$0.key.hasPrefix("GIT_") }
+            environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+            environment["GIT_CONFIG_NOSYSTEM"] = "1"
+            process.environment = environment
             let output = Pipe()
             process.standardOutput = output
             process.standardError = output
@@ -96,6 +106,39 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
             }
             return text
         }
+    }
+
+    func testFixtureGitIgnoresInheritedRepositorySelectors() throws {
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_DIR"] = "/nonexistent/gitx-fixture-git-dir"
+        environment["GIT_WORK_TREE"] = "/nonexistent/gitx-fixture-work-tree"
+        environment["GIT_INDEX_FILE"] = "/nonexistent/gitx-fixture-index"
+        let fixture = try RepositoryFixture(inheritedEnvironment: environment)
+        defer { fixture.remove() }
+
+        try fixture.write("fixture\n", to: "File.txt")
+        XCTAssertFalse(try fixture.commit("Commit under poisoned repository environment").isEmpty)
+    }
+
+    func testFixtureGitIgnoresInheritedSigningAndHooks() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gitx-history-flow-poison-\(UUID().uuidString)", isDirectory: true)
+        let hooks = root.appendingPathComponent("hooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hook = hooks.appendingPathComponent("pre-commit")
+        try "#!/bin/sh\nexit 55\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        let globalConfig = root.appendingPathComponent("config")
+        try "[commit]\n\tgpgsign = true\n[core]\n\thooksPath = \(hooks.path)\n"
+            .write(to: globalConfig, atomically: true, encoding: .utf8)
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_CONFIG_GLOBAL"] = globalConfig.path
+        let fixture = try RepositoryFixture(inheritedEnvironment: environment)
+        defer { fixture.remove() }
+
+        try fixture.write("fixture\n", to: "File.txt")
+        XCTAssertFalse(try fixture.commit("Commit without inherited signing or hooks").isEmpty)
     }
 
     func testRealRepositoryComparisonLoadsAddedDeletedModifiedAndRenamedFiles() async throws {

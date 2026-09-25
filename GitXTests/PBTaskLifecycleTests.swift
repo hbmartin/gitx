@@ -267,6 +267,21 @@ final class PBTaskLifecycleTests: XCTestCase {
         XCTAssertTrue(recorder.events.dropLast().allSatisfy { $0 == "chunk" })
     }
 
+    func testStreamingCanAvoidAccumulatingStandardOutput() throws {
+        let recorder = EventRecorder()
+        let task = PBTask(
+            launchPath: "/usr/bin/printf",
+            arguments: ["streamed-data"],
+            inDirectory: nil
+        )
+        task.capturesStandardOutput = false
+
+        try task.launch(outputChunkHandler: recorder.recordChunk)
+
+        XCTAssertEqual(recorder.data, Data("streamed-data".utf8))
+        XCTAssertEqual(task.standardOutputData, Data())
+    }
+
     func testSynchronousStreamingPreservesNonZeroExitErrorAndOutput() {
         let recorder = EventRecorder()
         let task = PBTask(

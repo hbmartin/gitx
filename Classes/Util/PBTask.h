@@ -77,6 +77,8 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 
 /// The standard output of the command
 @property (readonly, retain) NSData *standardOutputData;
+/// Set to NO when an output chunk handler consumes a large stream. Defaults to YES.
+@property BOOL capturesStandardOutput;
 /// Maximum synchronous execution time in seconds. Defaults to 30; values at or below zero disable the timeout.
 @property NSTimeInterval timeout;
 /// Set this if you want to pass data to the command on its standard input
