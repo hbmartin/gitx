@@ -647,6 +647,33 @@ final class PBQLOutlineViewTests: XCTestCase {
         )
     }
 
+    func testWorkingDirectoryPromisePreservesAnExistingRelativeSymbolicLink() throws {
+        let fixture = try GitFixture()
+        try FileManager.default.createSymbolicLink(
+            atPath: fixture.directory.appendingPathComponent("Documentation/Current.txt").path,
+            withDestinationPath: "Café.txt"
+        )
+        let root = PBWorkingTree.root(for: fixture.repository)
+        let workingDirectory = try XCTUnwrap(findTree(path: "Documentation", below: root))
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let provider = try provider(for: workingDirectory, in: outline)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(
+            try FileManager.default.destinationOfSymbolicLink(
+                atPath: destination.appendingPathComponent("Current.txt").path
+            ),
+            "Café.txt"
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("Café.txt")),
+            Data("promised directory contents\n".utf8)
+        )
+    }
+
     func testCommittedSubmodulePromiseReportsFailureWithoutDestination() throws {
         let fixture = try GitFixture()
         let revision = try fixture.addSubmoduleEntry(path: "Vendor")
