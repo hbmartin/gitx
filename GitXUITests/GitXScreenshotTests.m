@@ -917,6 +917,20 @@
 
 	XCUIElement *window = self.app.windows.firstMatch;
 	[self.app activate];
+	CGRect originalFrame = window.frame;
+	if (originalFrame.size.width < 1200) {
+		XCUIElement *resizeButton = window.buttons[XCUIIdentifierFullScreenWindow];
+		XCTAssertTrue([resizeButton waitForExistenceWithTimeout:5]);
+		[resizeButton click];
+		NSPredicate *windowWidened = [NSPredicate predicateWithBlock:^BOOL(__unused id object,
+																		   __unused NSDictionary *bindings) {
+			return window.frame.size.width > originalFrame.size.width + 100;
+		}];
+		XCTNSPredicateExpectation *resizeExpectation =
+			[[XCTNSPredicateExpectation alloc] initWithPredicate:windowWidened
+														  object:window];
+		XCTAssertEqual([XCTWaiter waitForExpectations:@[ resizeExpectation ] timeout:5], XCTWaiterResultCompleted);
+	}
 	XCUIElement *button = self.app.buttons[@"Current Branch"];
 	XCTAssertTrue([button waitForExistenceWithTimeout:30], @"The repository toolbar should expose the checked-out branch action");
 	XCTAssertTrue([self.app.menuItems[@"Jump to Checked-Out Branch"] waitForExistenceWithTimeout:5], @"The View menu should expose the checked-out branch hotkey");

@@ -2,6 +2,18 @@ import Darwin
 import XCTest
 
 final class PBTaskLifecycleTests: XCTestCase {
+    private final class MissingPipeTask: PBTask {
+        private var pipeCount = 0
+        var failedPipeNumber = 0
+
+        @objc(makePipe)
+        func makePipe() -> Pipe? { // swiftlint:disable:this unused_declaration
+            // PBTask invokes this hook through Objective-C dispatch.
+            pipeCount += 1
+            return pipeCount == failedPipeNumber ? nil : Pipe()
+        }
+    }
+
     // swift6-safety-justification: `lock` protects every access to recorded events and output data.
     private final class EventRecorder: @unchecked Sendable {
         private let lock = NSLock()
@@ -122,6 +134,34 @@ final class PBTaskLifecycleTests: XCTestCase {
         outputPipe.fileHandleForReading.readabilityHandler = nil
         try outputPipe.fileHandleForWriting.close()
         try outputPipe.fileHandleForReading.close()
+    }
+
+    func testExpiredErrorDrainFinishesAfterInFlightReadCompletes() throws {
+        let task = PBTask(
+            launchPath: "/usr/bin/true",
+            arguments: [],
+            inDirectory: nil
+        )
+        task.separatesStandardError = true
+        task.setValue(false, forKey: "errorFinished")
+        task.setValue(true, forKey: "outputDrainExpired")
+        task.setValue(Pipe(), forKey: "errorPipe")
+        task.perform(NSSelectorFromString("configureErrorReader"))
+        let errorPipe = try XCTUnwrap(task.value(forKey: "errorPipe") as? Pipe)
+
+        try errorPipe.fileHandleForWriting.write(contentsOf: Data("drained diagnostic".utf8))
+        let drainFinished = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (task.value(forKey: "errorFinished") as? Bool) == true
+            },
+            object: nil
+        )
+        wait(for: [drainFinished], timeout: 2)
+        XCTAssertEqual(task.value(forKey: "standardErrorBuffer") as? Data, Data("drained diagnostic".utf8))
+
+        errorPipe.fileHandleForReading.readabilityHandler = nil
+        try errorPipe.fileHandleForWriting.close()
+        try errorPipe.fileHandleForReading.close()
     }
 
     func testTerminationHandlerUsesRequestedQueue() {
@@ -267,6 +307,39 @@ final class PBTaskLifecycleTests: XCTestCase {
         XCTAssertTrue(recorder.events.dropLast().allSatisfy { $0 == "chunk" })
     }
 
+    func testSeparateStandardErrorNeverEntersOutputChunks() throws {
+        let recorder = EventRecorder()
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "printf '\\000\\377'; printf 'diagnostic' >&2"],
+            inDirectory: nil
+        )
+        task.separatesStandardError = true
+
+        try task.launch(outputChunkHandler: recorder.recordChunk)
+
+        XCTAssertEqual(recorder.data, Data([0x00, 0xFF]))
+        XCTAssertEqual(task.standardOutputData, Data([0x00, 0xFF]))
+        XCTAssertEqual(task.standardErrorData, Data("diagnostic".utf8))
+    }
+
+    func testSeparateStandardErrorIsBoundedAndUsedForFailureDiagnostics() {
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "head -c 70000 /dev/zero >&2; printf 'output'; exit 7"],
+            inDirectory: nil
+        )
+        task.separatesStandardError = true
+
+        XCTAssertThrowsError(try task.launch()) { error in
+            let taskError = error as NSError
+            XCTAssertEqual(taskError.userInfo[PBTaskTerminationStatusKey] as? NSNumber, 7)
+            XCTAssertEqual((taskError.userInfo[PBTaskTerminationOutputKey] as? String)?.utf8.count, 65536)
+        }
+        XCTAssertEqual(task.standardOutputData, Data("output".utf8))
+        XCTAssertEqual(task.standardErrorData.count, 65536)
+    }
+
     func testStreamingCanAvoidAccumulatingStandardOutput() throws {
         let recorder = EventRecorder()
         let task = PBTask(
@@ -280,6 +353,39 @@ final class PBTaskLifecycleTests: XCTestCase {
 
         XCTAssertEqual(recorder.data, Data("streamed-data".utf8))
         XCTAssertEqual(task.standardOutputData, Data())
+    }
+
+    func testMissingInputPipeFailsBeforeLaunchingChild() {
+        let task = MissingPipeTask(
+            launchPath: "/usr/bin/cat",
+            arguments: [],
+            inDirectory: nil
+        )
+        task.failedPipeNumber = 2
+        task.standardInputData = Data("payload".utf8)
+
+        XCTAssertThrowsError(try task.launch()) { error in
+            let taskError = error as NSError
+            XCTAssertEqual(taskError.domain, PBTaskErrorDomain)
+            XCTAssertEqual(taskError.code, Int(PBTaskErrorCode.launchError.rawValue))
+            let exception = taskError.userInfo[PBTaskUnderlyingExceptionKey] as? NSException
+            XCTAssertTrue(exception?.reason?.contains("standard input pipe") == true)
+        }
+    }
+
+    func testMissingOutputAndErrorPipesFailClearly() {
+        for (number, expected) in [(1, "standard output pipe"), (2, "standard error pipe")] {
+            let task = MissingPipeTask(launchPath: "/usr/bin/true", arguments: [], inDirectory: nil)
+            task.failedPipeNumber = number
+            task.separatesStandardError = true
+
+            XCTAssertThrowsError(try task.launch()) { error in
+                let taskError = error as NSError
+                XCTAssertEqual(taskError.code, Int(PBTaskErrorCode.launchError.rawValue))
+                let exception = taskError.userInfo[PBTaskUnderlyingExceptionKey] as? NSException
+                XCTAssertTrue(exception?.reason?.contains(expected) == true)
+            }
+        }
     }
 
     func testSynchronousStreamingPreservesNonZeroExitErrorAndOutput() {

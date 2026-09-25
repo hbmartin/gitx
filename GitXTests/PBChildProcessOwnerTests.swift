@@ -100,6 +100,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
         private var shouldFailObservation = false
         private var shouldFailReap = false
         private var shouldFailSignal = false
+        private var nextSignalPOSIXError: Int32?
         private var shouldFailGroupInspection = false
         private var reapReady = true
         private var signalExpectation: XCTestExpectation?
@@ -133,6 +134,12 @@ final class PBChildProcessOwnerTests: XCTestCase {
         func failNextSignal() {
             lock.lock()
             shouldFailSignal = true
+            lock.unlock()
+        }
+
+        func failNextSignal(withPOSIXError code: Int32) {
+            lock.lock()
+            nextSignalPOSIXError = code
             lock.unlock()
         }
 
@@ -236,8 +243,13 @@ final class PBChildProcessOwnerTests: XCTestCase {
             let expectation = signalExpectation
             let shouldFail = shouldFailSignal
             shouldFailSignal = false
+            let posixError = nextSignalPOSIXError
+            nextSignalPOSIXError = nil
             lock.unlock()
             expectation?.fulfill()
+            if let posixError {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(posixError))
+            }
             if shouldFail {
                 throw Failure.signal
             }
@@ -440,6 +452,26 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
     }
 
+    func testDisappearingProcessGroupIsBenignDuringTermination() throws {
+        let system = FakeProcessSystem()
+        system.failNextSignal(withPOSIXError: ESRCH)
+        let signalAttempted = expectation(description: "termination signal attempted")
+        system.expectSignal(signalAttempted)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "leader eventually reaped")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0, forceKillDelay: nil))
+        wait(for: [signalAttempted], timeout: 1)
+        system.setLeaderExited(true)
+        system.triggerExitMonitor()
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses.count, 1)
+        XCTAssertTrue(recorder.errors.isEmpty)
+    }
+
     func testImmediateTerminationAttemptsSIGTERMBeforeReturning() throws {
         let system = FakeProcessSystem()
         let owner = PBChildProcessOwner(system: system, queueLabel: #function)
@@ -482,6 +514,43 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
         XCTAssertEqual(recorder.statuses, [0])
         XCTAssertTrue(recorder.errors.isEmpty)
+    }
+
+    func testExitEventBeforeTerminalStateEventuallyReapsLeader() throws {
+        let system = FakeProcessSystem()
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "leader becomes terminal after its exit event")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        system.triggerExitMonitor()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.06) {
+            system.setLeaderExited(true)
+        }
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertTrue(recorder.errors.isEmpty)
+    }
+
+    func testExitedLeaderCompletesWhenDescendantsLeaveBeforeGraceDeadline() throws {
+        let system = FakeProcessSystem()
+        system.setProcessGroupMembers([4321, 4322])
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "process group empties during grace period")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 2, forceKillDelay: 2))
+        system.setLeaderExited(true)
+        system.triggerExitMonitor()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            system.setProcessGroupMembers([4321])
+        }
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
     }
 
     func testExitBeforeTerminationDeadlineIsNeverSignalled() throws {

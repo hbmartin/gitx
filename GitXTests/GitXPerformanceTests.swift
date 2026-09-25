@@ -235,6 +235,51 @@ final class GitXPerformanceTests: XCTestCase {
         attachMeasurements("committed-directory-export-128-files", cold: cold, samples: samples)
     }
 
+    func testLargeWorkingDirectoryDragPreparationPerformance() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gitx-drag-performance-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+        _ = try gitOutput(["init", "--quiet"], in: rootURL)
+        let repository = try PBGitRepository(url: rootURL)
+        let root = PBWorkingTree()
+        root.path = ""
+        root.leaf = false
+        let selected = PBWorkingTree()
+        selected.path = "Documentation"
+        selected.parent = root
+        selected.repository = repository
+        selected.leaf = false
+        root.setValue([selected], forKey: "workingChildren")
+        var parent = selected
+        for depth in 0 ..< 7 {
+            let directory = PBWorkingTree()
+            directory.path = "Level\(depth)"
+            directory.parent = parent
+            directory.leaf = false
+            parent.setValue([directory], forKey: "workingChildren")
+            parent = directory
+        }
+        let leaves = (0 ..< 10000).map { index -> PBWorkingTree in
+            let leaf = PBWorkingTree()
+            leaf.path = "File-\(index).txt"
+            leaf.parent = parent
+            leaf.leaf = true
+            return leaf
+        }
+        parent.setValue(leaves, forKey: "workingChildren")
+
+        let samples = (0 ..< 3).map { _ in
+            elapsed {
+                autoreleasepool {
+                    let descriptor = QuickLookExportDescriptor.make(tree: selected)
+                    XCTAssertEqual(descriptor.fileName, "Documentation")
+                }
+            }
+        }
+        attachMeasurements("working-directory-drag-preparation-10000-files", samples: samples)
+    }
+
     func testRepositoryStatusBarOverlayApplicationStaysWithinMainThreadBudget() throws {
         let records = [
             "# branch.oid 0123456789abcdef",

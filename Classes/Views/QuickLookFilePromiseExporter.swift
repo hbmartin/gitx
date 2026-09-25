@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // SwiftLint analyze misclassifies this import; Logger and privacy interpolation require it at compile time.
@@ -12,7 +13,7 @@ private nonisolated let quickLookExportLogger = Logger(
 nonisolated struct QuickLookGitRepositoryDescriptor: Sendable {
     let executablePath: String
     let gitDirectoryPath: String
-    let workingDirectoryPath: String
+    let workingDirectoryPath: String?
 }
 
 nonisolated struct QuickLookWorkingTreeEntry: Sendable, Equatable {
@@ -25,7 +26,7 @@ nonisolated enum QuickLookExportSource: Sendable {
     case committedFile(repository: QuickLookGitRepositoryDescriptor, revision: String, path: String)
     case committedDirectory(repository: QuickLookGitRepositoryDescriptor, revision: String, path: String)
     case workingFile(repository: QuickLookGitRepositoryDescriptor, entry: QuickLookWorkingTreeEntry)
-    case workingDirectory(repository: QuickLookGitRepositoryDescriptor, entries: [QuickLookWorkingTreeEntry])
+    case workingDirectory(repository: QuickLookGitRepositoryDescriptor, rootPath: String)
     case unavailable(String)
 }
 
@@ -48,8 +49,7 @@ nonisolated struct QuickLookExportDescriptor: Sendable {
         }
         guard let repository = tree.value(forKey: "repository") as? PBGitRepository,
               let executablePath = PBGitBinary.path(),
-              let gitDirectoryPath = repository.gitURL()?.path,
-              let workingDirectoryURL = repository.workingDirectoryURL()
+              let gitDirectoryPath = repository.gitURL()?.path
         else {
             return QuickLookExportDescriptor(
                 fileName: fileName,
@@ -61,9 +61,16 @@ nonisolated struct QuickLookExportDescriptor: Sendable {
         let repositoryDescriptor = QuickLookGitRepositoryDescriptor(
             executablePath: executablePath,
             gitDirectoryPath: gitDirectoryPath,
-            workingDirectoryPath: workingDirectoryURL.path
+            workingDirectoryPath: repository.workingDirectoryURL()?.path
         )
         if tree is PBWorkingTree {
+            guard let workingDirectoryURL = repository.workingDirectoryURL() else {
+                return QuickLookExportDescriptor(
+                    fileName: fileName,
+                    isDirectory: isDirectory,
+                    source: .unavailable("GitX could not locate the working directory for export.")
+                )
+            }
             if tree.leaf {
                 let entry = workingEntry(
                     repositoryPath: fullPath,
@@ -76,15 +83,10 @@ nonisolated struct QuickLookExportDescriptor: Sendable {
                     source: .workingFile(repository: repositoryDescriptor, entry: entry)
                 )
             }
-            let entries = workingEntries(
-                below: tree,
-                rootPath: fullPath,
-                workingDirectoryURL: workingDirectoryURL
-            )
             return QuickLookExportDescriptor(
                 fileName: fileName,
                 isDirectory: true,
-                source: .workingDirectory(repository: repositoryDescriptor, entries: entries)
+                source: .workingDirectory(repository: repositoryDescriptor, rootPath: fullPath)
             )
         }
 
@@ -101,41 +103,6 @@ nonisolated struct QuickLookExportDescriptor: Sendable {
             .committedFile(repository: repositoryDescriptor, revision: revision, path: fullPath)
         }
         return QuickLookExportDescriptor(fileName: fileName, isDirectory: isDirectory, source: source)
-    }
-
-    @MainActor
-    private static func workingEntries(
-        below tree: PBGitTree,
-        rootPath: String,
-        workingDirectoryURL: URL
-    ) -> [QuickLookWorkingTreeEntry] {
-        var entries: [QuickLookWorkingTreeEntry] = []
-        let children = tree.value(forKey: "children") as? [PBGitTree] ?? []
-        for child in children {
-            if child.leaf {
-                let repositoryPath = child.value(forKey: "fullPath") as? String ?? ""
-                let relativePath: String
-                if rootPath.isEmpty {
-                    relativePath = repositoryPath
-                } else {
-                    let prefix = rootPath + "/"
-                    guard repositoryPath.hasPrefix(prefix) else { continue }
-                    relativePath = String(repositoryPath.dropFirst(prefix.count))
-                }
-                entries.append(workingEntry(
-                    repositoryPath: repositoryPath,
-                    relativePath: relativePath,
-                    workingDirectoryURL: workingDirectoryURL
-                ))
-            } else {
-                entries.append(contentsOf: workingEntries(
-                    below: child,
-                    rootPath: rootPath,
-                    workingDirectoryURL: workingDirectoryURL
-                ))
-            }
-        }
-        return entries
     }
 
     private static func workingEntry(
@@ -159,6 +126,8 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
     case malformedBlobResponse(String)
     case invalidSymbolicLink(String)
     case unsupportedSubmodule(String)
+    case unsupportedNestedRepository(String)
+    case unrepresentablePath
     case missingTree(String)
 
     var errorDescription: String? {
@@ -177,6 +146,10 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
             "Git returned an invalid symbolic link while exporting \(path)."
         case let .unsupportedSubmodule(path):
             "GitX cannot export the submodule at \(path) as a promised file."
+        case let .unsupportedNestedRepository(path):
+            "GitX cannot export the nested repository at \(path) as a promised directory."
+        case .unrepresentablePath:
+            "Git returned a file name that GitX cannot represent as Unicode."
         case let .missingTree(path):
             "Git could not find any files below \(path)."
         }
@@ -409,7 +382,20 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         switch source {
         case let .committedFile(repository, revision, path):
             try validate(path: path)
-            let data = try runGit(repository: repository, arguments: ["cat-file", "blob", "\(revision):\(path)"], path: path)
+            let data: Data
+            do {
+                data = try runGit(repository: repository, arguments: ["cat-file", "blob", "\(revision):\(path)"], path: path)
+            } catch {
+                if let treeData = try? runGit(
+                    repository: repository,
+                    arguments: ["ls-tree", "-z", revision, "--", path],
+                    path: path
+                ), let entries = try? parseTreeEntries(treeData),
+                entries.contains(where: { $0.path == path && $0.type == "commit" }) {
+                    throw QuickLookExportError.unsupportedSubmodule(path)
+                }
+                throw error
+            }
             try createParentAndWrite(data, to: outputURL)
         case let .committedDirectory(repository, revision, path):
             try validate(path: path)
@@ -457,14 +443,20 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             let links = targets.filter { $0.mode == "120000" }
             try exportCommittedBlobs(regular + links, repository: repository, path: path)
         case let .workingFile(repository, entry):
-            try exportWorkingEntry(entry, repository: repository, to: outputURL)
-        case let .workingDirectory(repository, entries):
+            let modes = try workingIndexModes(repository: repository, rootPath: entry.repositoryPath)
+            try exportWorkingEntry(entry, repository: repository, indexMode: modes[entry.repositoryPath], to: outputURL)
+        case let .workingDirectory(repository, rootPath):
+            try validate(path: rootPath)
+            let modes = try workingIndexModes(repository: repository, rootPath: rootPath)
+            let entries = try workingEntries(repository: repository, rootPath: rootPath)
             try fileManager.createDirectory(at: outputURL, withIntermediateDirectories: false)
-            for entry in entries {
-                try validate(path: entry.relativePath)
+            let regular = try entries.filter { try !isSymbolicLink(at: $0.fileURL, indexMode: modes[$0.repositoryPath]) }
+            let links = try entries.filter { try isSymbolicLink(at: $0.fileURL, indexMode: modes[$0.repositoryPath]) }
+            for entry in regular + links {
                 try exportWorkingEntry(
                     entry,
                     repository: repository,
+                    indexMode: modes[entry.repositoryPath],
                     to: outputURL.appendingPathComponent(entry.relativePath)
                 )
             }
@@ -476,14 +468,21 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
     private func exportWorkingEntry(
         _ entry: QuickLookWorkingTreeEntry,
         repository: QuickLookGitRepositoryDescriptor,
+        indexMode: String?,
         to outputURL: URL
     ) throws {
         try validate(path: entry.relativePath)
+        if indexMode == "160000" {
+            throw QuickLookExportError.unsupportedSubmodule(entry.repositoryPath)
+        }
         try fileManager.createDirectory(
             at: outputURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        if fileManager.fileExists(atPath: entry.fileURL.path) {
+        if let mode = try fileType(at: entry.fileURL) {
+            guard mode != S_IFDIR else {
+                throw QuickLookExportError.unsupportedNestedRepository(entry.repositoryPath)
+            }
             try fileManager.copyItem(at: entry.fileURL, to: outputURL)
             return
         }
@@ -492,7 +491,106 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             arguments: ["cat-file", "blob", ":\(entry.repositoryPath)"],
             path: entry.repositoryPath
         )
+        if indexMode == "120000" {
+            guard !data.isEmpty, data.count <= 4096, !data.contains(0),
+                  let destination = String(data: data, encoding: .utf8)
+            else { throw QuickLookExportError.invalidSymbolicLink(entry.repositoryPath) }
+            try fileManager.createSymbolicLink(atPath: outputURL.path, withDestinationPath: destination)
+            return
+        }
         try data.write(to: outputURL, options: .atomic)
+    }
+
+    private func workingEntries(
+        repository: QuickLookGitRepositoryDescriptor,
+        rootPath: String
+    ) throws -> [QuickLookWorkingTreeEntry] {
+        guard let workingDirectoryPath = repository.workingDirectoryPath else {
+            throw QuickLookExportError.unavailable("GitX could not locate the working directory for export.")
+        }
+        let visible = try runGit(
+            repository: repository,
+            arguments: ["ls-files", "-co", "--exclude-standard", "-z", "--", rootPath],
+            path: rootPath
+        )
+        let deleted = try runGit(
+            repository: repository,
+            arguments: ["ls-files", "--deleted", "-z", "--", rootPath],
+            path: rootPath
+        )
+        var seen = Set<String>()
+        var entries: [QuickLookWorkingTreeEntry] = []
+        for record in try nulRecords(visible) + nulRecords(deleted) {
+            guard let path = String(data: record, encoding: .utf8) else {
+                throw QuickLookExportError.unrepresentablePath
+            }
+            if path.hasSuffix("/") {
+                throw QuickLookExportError.unsupportedNestedRepository(String(path.dropLast()))
+            }
+            guard path.hasPrefix(rootPath + "/") else {
+                throw QuickLookExportError.unsafePath(path)
+            }
+            let relativePath = String(path.dropFirst(rootPath.count + 1))
+            try validate(path: relativePath)
+            guard seen.insert(path).inserted else { continue }
+            entries.append(QuickLookWorkingTreeEntry(
+                relativePath: relativePath,
+                repositoryPath: path,
+                fileURL: URL(fileURLWithPath: workingDirectoryPath).appendingPathComponent(path)
+            ))
+        }
+        guard !entries.isEmpty else { throw QuickLookExportError.missingTree(rootPath) }
+        return entries
+    }
+
+    private func workingIndexModes(
+        repository: QuickLookGitRepositoryDescriptor,
+        rootPath: String
+    ) throws -> [String: String] {
+        let data = try runGit(
+            repository: repository,
+            arguments: ["ls-files", "--stage", "-z", "--", rootPath],
+            path: rootPath
+        )
+        var modes: [String: String] = [:]
+        for record in try nulRecords(data) {
+            guard let tab = record.firstIndex(of: 9),
+                  let header = String(data: record[..<tab], encoding: .utf8),
+                  let path = String(data: record[record.index(after: tab)...], encoding: .utf8)
+            else { throw QuickLookExportError.unrepresentablePath }
+            let parts = header.split(separator: " ")
+            guard parts.count == 3 else { throw QuickLookExportError.malformedTreeEntry }
+            modes[path] = String(parts[0])
+        }
+        return modes
+    }
+
+    private func nulRecords(_ data: Data) throws -> [Data] {
+        guard data.isEmpty || data.last == 0 else { throw QuickLookExportError.malformedTreeEntry }
+        let records = data.split(separator: 0, omittingEmptySubsequences: false)
+        guard data.isEmpty || records.dropLast().allSatisfy({ !$0.isEmpty }) else {
+            throw QuickLookExportError.malformedTreeEntry
+        }
+        return data.isEmpty ? [] : records.dropLast().map(Data.init)
+    }
+
+    private func fileType(at url: URL) throws -> mode_t? {
+        var status = stat()
+        let result = url.path.withCString { lstat($0, &status) }
+        if result == 0 {
+            return status.st_mode & mode_t(S_IFMT)
+        }
+        if errno == ENOENT {
+            return nil
+        }
+        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+
+    private func isSymbolicLink(at url: URL, indexMode: String?) throws -> Bool {
+        if let type = try fileType(at: url) {
+            return type == mode_t(S_IFLNK)
+        }
+        return indexMode == "120000"
     }
 
     private func createParentAndWrite(_ data: Data, to outputURL: URL) throws {
@@ -511,9 +609,10 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         let task = makeGitTask(repository: repository, arguments: arguments)
         do {
             try task.launch()
+            logGitDiagnostics(task.standardErrorData, path: path)
             return task.standardOutputData
         } catch {
-            throw QuickLookExportError.commandFailed(path: path, detail: error.localizedDescription)
+            throw QuickLookExportError.commandFailed(path: path, detail: commandFailureDetail(task, error: error))
         }
     }
 
@@ -529,10 +628,24 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         quickLookExportLogger.info("Streaming \(targets.count) committed blobs for \(path, privacy: .public)")
         do {
             try task.launch(outputChunkHandler: { writer.consume($0) })
+            logGitDiagnostics(task.standardErrorData, path: path)
         } catch {
-            throw QuickLookExportError.commandFailed(path: path, detail: error.localizedDescription)
+            throw QuickLookExportError.commandFailed(path: path, detail: commandFailureDetail(task, error: error))
         }
         try writer.finish()
+    }
+
+    private func commandFailureDetail(_ task: PBTask, error: Error) -> String {
+        let diagnostics = String(decoding: task.standardErrorData, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return diagnostics.isEmpty ? error.localizedDescription : "\(error.localizedDescription) \(diagnostics)"
+    }
+
+    private func logGitDiagnostics(_ data: Data, path: String) {
+        guard !data.isEmpty else { return }
+        let diagnostics = String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        quickLookExportLogger.info("Git reported diagnostics while exporting \(path, privacy: .public): \(diagnostics, privacy: .public)")
     }
 
     private func makeGitTask(
@@ -545,10 +658,12 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             inDirectory: repository.workingDirectoryPath
         )
         task.timeout = commandTimeout
+        task.separatesStandardError = true
         task.additionalEnvironment = [
             "GCM_INTERACTIVE": "never",
             "GIT_ASKPASS": "/usr/bin/false",
             "GIT_TERMINAL_PROMPT": "0",
+            "GIT_LITERAL_PATHSPECS": "1",
         ]
         return task
     }
@@ -556,9 +671,10 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
     private func parseTreeEntries(_ data: Data) throws -> [GitTreeEntry] {
         try data.split(separator: 0).map { rawRecord in
             guard let tab = rawRecord.firstIndex(of: 9),
-                  let header = String(data: Data(rawRecord[..<tab]), encoding: .utf8),
-                  let path = String(data: Data(rawRecord[rawRecord.index(after: tab)...]), encoding: .utf8)
+                  let header = String(data: Data(rawRecord[..<tab]), encoding: .utf8)
             else { throw QuickLookExportError.malformedTreeEntry }
+            guard let path = String(data: Data(rawRecord[rawRecord.index(after: tab)...]), encoding: .utf8)
+            else { throw QuickLookExportError.unrepresentablePath }
             let headerComponents = header.split(separator: " ")
             guard headerComponents.count == 3 else { throw QuickLookExportError.malformedTreeEntry }
             return GitTreeEntry(
