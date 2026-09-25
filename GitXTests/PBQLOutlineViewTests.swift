@@ -840,6 +840,24 @@ final class PBQLOutlineViewTests: XCTestCase {
         )
     }
 
+    func testDeletedTrackedFileIsRestoredFromIndex() throws {
+        let fixture = try GitFixture()
+        try FileManager.default.removeItem(at: fixture.directory.appendingPathComponent("Documentation/Café.txt"))
+        let root = PBWorkingTree.root(for: fixture.repository)
+        let workingDirectory = try XCTUnwrap(findTree(path: "Documentation", below: root))
+        let outline = PBQLOutlineView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
+        let provider = try provider(for: workingDirectory, in: outline)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("Café.txt")),
+            Data("promised directory contents\n".utf8)
+        )
+    }
+
     func testNestedUntrackedRepositoryPromiseFailsExplicitly() throws {
         let fixture = try GitFixture()
         let nested = fixture.directory.appendingPathComponent("Documentation/NestedRepo", isDirectory: true)
@@ -981,6 +999,91 @@ final class PBQLOutlineViewTests: XCTestCase {
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testWorkingDirectoryPromiseWithoutWorkingDirectoryFailsAndCleansStaging() throws {
+        let fixture = try GitFixture()
+        let repository = QuickLookGitRepositoryDescriptor(
+            executablePath: PBGitBinary.path() ?? "/usr/bin/git",
+            gitDirectoryPath: fixture.directory.appendingPathComponent(".git").path,
+            workingDirectoryPath: nil
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Documentation",
+            isDirectory: true,
+            source: .workingDirectory(repository: repository, rootPath: "Documentation")
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Documentation", isDirectory: true)
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("working directory"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testWorkingDirectoryPromiseRejectsNonUTF8VisibleNameAndCleansStaging() throws {
+        let fixture = try GitFixture()
+        let script = fixture.directory.appendingPathComponent("non-utf8-working-git.sh")
+        try "#!/bin/sh\ncase \"$*\" in *--stage*) exit 0;; esac\nprintf 'Documentation/\\377\\000'\n"
+            .write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let repository = QuickLookGitRepositoryDescriptor(
+            executablePath: script.path,
+            gitDirectoryPath: fixture.directory.appendingPathComponent(".git").path,
+            workingDirectoryPath: fixture.directory.path
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Documentation",
+            isDirectory: true,
+            source: .workingDirectory(repository: repository, rootPath: "Documentation")
+        )
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Documentation", isDirectory: true)
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Unicode"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testWorkingDirectoryPromiseRejectsUnsafeAndMalformedVisibleListings() throws {
+        let fixture = try GitFixture()
+        let cases: [(name: String, output: String, expectedError: String)] = [
+            ("outside-root", "printf 'Outside.txt\\000'", "unsafe repository path"),
+            ("missing-nul", "printf 'Documentation/File.txt'", "invalid tree entry"),
+            ("empty-record", "printf 'Documentation/File.txt\\000\\000'", "invalid tree entry"),
+        ]
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        for testCase in cases {
+            let script = fixture.directory.appendingPathComponent("\(testCase.name)-working-git.sh")
+            try "#!/bin/sh\ncase \"$*\" in *--stage*) exit 0;; esac\n\(testCase.output)\n"
+                .write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+            let repository = QuickLookGitRepositoryDescriptor(
+                executablePath: script.path,
+                gitDirectoryPath: fixture.directory.appendingPathComponent(".git").path,
+                workingDirectoryPath: fixture.directory.path
+            )
+            let descriptor = QuickLookExportDescriptor(
+                fileName: testCase.name,
+                isDirectory: true,
+                source: .workingDirectory(repository: repository, rootPath: "Documentation")
+            )
+            let destination = parent.appendingPathComponent(testCase.name, isDirectory: true)
+
+            XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination)) { error in
+                XCTAssertTrue(error.localizedDescription.contains(testCase.expectedError), testCase.name)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+        }
     }
 
     func testMalformedGitTreeOutputReportsFailureWithoutPartialDestination() throws {

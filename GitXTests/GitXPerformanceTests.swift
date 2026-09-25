@@ -269,7 +269,12 @@ final class GitXPerformanceTests: XCTestCase {
         }
         parent.setValue(leaves, forKey: "workingChildren")
 
-        let samples = (0 ..< 3).map { _ in
+        autoreleasepool {
+            let descriptor = QuickLookExportDescriptor.make(tree: selected)
+            XCTAssertEqual(descriptor.fileName, "Documentation")
+        }
+
+        let samples = (0 ..< 20).map { _ in
             elapsed {
                 autoreleasepool {
                     let descriptor = QuickLookExportDescriptor.make(tree: selected)
@@ -278,6 +283,7 @@ final class GitXPerformanceTests: XCTestCase {
             }
         }
         attachMeasurements("working-directory-drag-preparation-10000-files", samples: samples)
+        XCTAssertLessThanOrEqual(percentile95(samples), PBPerformanceBudgets.mainThreadBlockSeconds)
     }
 
     func testRepositoryStatusBarOverlayApplicationStaysWithinMainThreadBudget() throws {

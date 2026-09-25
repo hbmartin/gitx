@@ -513,14 +513,9 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             arguments: ["ls-files", "-co", "--exclude-standard", "-z", "--", rootPath],
             path: rootPath
         )
-        let deleted = try runGit(
-            repository: repository,
-            arguments: ["ls-files", "--deleted", "-z", "--", rootPath],
-            path: rootPath
-        )
         var seen = Set<String>()
         var entries: [QuickLookWorkingTreeEntry] = []
-        for record in try nulRecords(visible) + nulRecords(deleted) {
+        for record in try nulRecords(visible) {
             guard let path = String(data: record, encoding: .utf8) else {
                 throw QuickLookExportError.unrepresentablePath
             }

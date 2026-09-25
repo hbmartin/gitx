@@ -356,8 +356,12 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 			if (data.length) {
 				[strongSelf.standardErrorBuffer appendData:data];
 				if (strongSelf.standardErrorBuffer.length > PBTaskStandardErrorLimit) {
-					NSUInteger excess = strongSelf.standardErrorBuffer.length - PBTaskStandardErrorLimit;
-					[strongSelf.standardErrorBuffer replaceBytesInRange:NSMakeRange(0, excess) withBytes:NULL length:0];
+					NSUInteger cut = strongSelf.standardErrorBuffer.length - PBTaskStandardErrorLimit;
+					const uint8_t *bytes = strongSelf.standardErrorBuffer.bytes;
+					while (cut < strongSelf.standardErrorBuffer.length && (bytes[cut] & 0xC0) == 0x80)
+						cut += 1;
+					PBTaskLog(@"task %p: trimming %lu standard error bytes at a UTF-8 boundary", strongSelf, (unsigned long)cut);
+					[strongSelf.standardErrorBuffer replaceBytesInRange:NSMakeRange(0, cut) withBytes:NULL length:0];
 				}
 			} else {
 				strongSelf.errorFinished = YES;

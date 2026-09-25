@@ -679,6 +679,42 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertEqual(String(data: output, encoding: .utf8), "no-input")
     }
 
+    func testPosixReapWaitsForExitAndReportsAlreadyReapedChild() throws {
+        let system = PBPosixChildProcessSystem()
+        let processIdentifier = try system.spawn(configuration: PBChildProcessConfiguration(
+            launchPath: "/bin/sleep",
+            arguments: ["60"],
+            environment: ProcessInfo.processInfo.environment,
+            workingDirectory: nil,
+            standardInputFileDescriptor: nil,
+            standardOutputFileDescriptor: STDOUT_FILENO
+        ))
+        var wasReaped = false
+        defer {
+            if !wasReaped {
+                _ = kill(processIdentifier, SIGKILL)
+                var status: Int32 = 0
+                _ = waitpid(processIdentifier, &status, 0)
+            }
+        }
+
+        XCTAssertNil(try system.reapIfExited(processIdentifier: processIdentifier))
+        XCTAssertEqual(kill(processIdentifier, SIGTERM), 0)
+        var status: Int32?
+        for _ in 0 ..< 200 {
+            status = try system.reapIfExited(processIdentifier: processIdentifier)
+            if status != nil {
+                break
+            }
+            usleep(10000)
+        }
+        XCTAssertNotNil(status)
+        wasReaped = status != nil
+        XCTAssertThrowsError(try system.reapIfExited(processIdentifier: processIdentifier)) { error in
+            XCTAssertEqual((error as NSError).code, Int(ECHILD))
+        }
+    }
+
     func testPosixSpawnDoesNotInheritInteractiveStandardInput() throws {
         let inputPipe = try makePOSIXPipe()
         let outputPipe = try makePOSIXPipe()
