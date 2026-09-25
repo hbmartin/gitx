@@ -14,6 +14,7 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 session_dir=$root/build/Logs/run-app
 session_file=$session_dir/session.txt
+last_session_file=$session_dir/last-session.txt
 app_pid_file=$session_dir/app.pid
 
 usage() {
@@ -21,8 +22,9 @@ usage() {
 }
 
 load_session() {
-	[[ -f "$session_file" ]] || {
-		echo "No run-app session found at $session_file." >&2
+	local record=${1:-$session_file}
+	[[ -f "$record" ]] || {
+		echo "No run-app session found at $record." >&2
 		return 1
 	}
 	app_pid=
@@ -36,7 +38,7 @@ load_session() {
 		os_log) os_log=$value ;;
 		stdout) stdout=$value ;;
 		esac
-	done <"$session_file"
+	done <"$record"
 }
 
 process_start_time() {
@@ -112,7 +114,11 @@ print("{}\t{}".format(window["windowID"], title))
 
 show_logs() {
 	local pattern=${1:-} found=0 file label
-	load_session || return 1
+	if [[ -f "$session_file" ]]; then
+		load_session "$session_file" || return 1
+	else
+		load_session "$last_session_file" || return 1
+	fi
 	for label in os_log stdout; do
 		if [[ "$label" == os_log ]]; then file=$os_log; else file=$stdout; fi
 		[[ -n "$file" && -f "$file" ]] || continue

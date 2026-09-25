@@ -1001,6 +1001,63 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])
         self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 
+    def test_run_app_interrupt_during_startup_stops_app_before_removing_home(self) -> None:
+        script = self.install_script("run_app.sh")
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        repository = self.root / "fixture-repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary.parent.mkdir(parents=True)
+        with (app_contents / "Info.plist").open("wb") as handle:
+            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+        app_binary.write_text("#!/bin/bash\nexec /bin/sleep 60\n")
+        app_binary.chmod(0o755)
+        log = self.bin / "log"
+        log.write_text("#!/bin/bash\nexec /bin/sleep 60\n")
+        log.chmod(0o755)
+        peekaboo = self.bin / "peekaboo"
+        peekaboo.write_text("#!/bin/bash\nexit 1\n")
+        peekaboo.chmod(0o755)
+        session_directory = self.root / "build" / "Logs" / "run-app"
+        environment = self.environment | {"TMPDIR": str(temporary_root)}
+        process = subprocess.Popen(
+            [script, "--no-build", "--repo", str(repository), "--timeout", "30"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+        app_pid = None
+        try:
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                pid_record = session_directory / "app.pid"
+                if pid_record.exists():
+                    app_pid = int(pid_record.read_text().split("\t", maxsplit=1)[0])
+                    break
+                time.sleep(0.02)
+            self.assertIsNotNone(app_pid)
+            process.send_signal(signal.SIGINT)
+            process.communicate(timeout=10)
+
+            status = subprocess.run(
+                ["ps", "-p", str(app_pid), "-o", "stat="], capture_output=True, text=True
+            ).stdout.strip()
+            self.assertTrue(not status or "Z" in status)
+            self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])
+            self.assertFalse((session_directory / "session.txt").exists())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+            if app_pid is not None:
+                try:
+                    os.kill(app_pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+
     def test_observe_app_logs_remain_available_after_the_app_exits(self) -> None:
         script = self.install_script("observe_app.sh")
         process, _ = self.create_live_run_app_session()
@@ -1009,6 +1066,24 @@ class ScriptEntrypointTests(unittest.TestCase):
 
         result = subprocess.run(
             [script, "logs", "error"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.environment,
+        )
+
+        self.assertIn("runtime error marker", result.stdout)
+        self.assertNotIn("standard output marker", result.stdout)
+
+    def test_observe_app_logs_remain_available_after_stop(self) -> None:
+        stop_script = self.install_script("run_app.sh")
+        observe_script = self.install_script("observe_app.sh")
+        process, _ = self.create_live_run_app_session()
+
+        subprocess.run([stop_script, "--stop"], check=True, capture_output=True, text=True, env=self.environment)
+        self.assertEqual(process.wait(timeout=2), -signal.SIGTERM)
+        result = subprocess.run(
+            [observe_script, "logs", "error"],
             check=True,
             capture_output=True,
             text=True,

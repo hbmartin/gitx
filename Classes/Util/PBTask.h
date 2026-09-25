@@ -77,6 +77,10 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 
 /// The standard output of the command
 @property (readonly, retain) NSData *standardOutputData;
+/// The separate standard error stream, or empty data when streams are merged.
+@property (readonly, retain) NSData *standardErrorData;
+/// Keep standard error out of standard output. Defaults to NO for existing callers.
+@property BOOL separatesStandardError;
 /// Set to NO when an output chunk handler consumes a large stream. Defaults to YES.
 @property BOOL capturesStandardOutput;
 /// Maximum synchronous execution time in seconds. Defaults to 30; values at or below zero disable the timeout.

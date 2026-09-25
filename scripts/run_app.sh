@@ -31,11 +31,12 @@ cd "$root" || exit 2
 
 app_bundle=$root/build/GitX.app
 session_dir=$root/build/Logs/run-app
-log_file=$session_dir/gitx-oslog.txt
-stdout_file=$session_dir/gitx-stdout.txt
+log_file=
+stdout_file=
 app_pid_file=$session_dir/app.pid
 log_pid_file=$session_dir/logstream.pid
 session_file=$session_dir/session.txt
+last_session_file=$session_dir/last-session.txt
 temporary_root=${TMPDIR:-/tmp}
 temporary_root=${temporary_root%/}
 [[ -n "$temporary_root" ]] || temporary_root=/
@@ -122,7 +123,7 @@ write_pid_file() {
 
 stop_pid_file() {
 	local pid_file=$1 expected=$2 pid recorded_start_time executable current_start_time
-	[[ -f "$pid_file" ]] || return 1
+	[[ -f "$pid_file" ]] || return 4
 	IFS=$'\t' read -r pid recorded_start_time <"$pid_file" || return 3
 	if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
 		echo "Cannot verify malformed process identity in $pid_file." >&2
@@ -215,17 +216,21 @@ stop_session() {
 		stopped=1
 	else
 		result=$?
-		if (( result == 2 || result == 3 )) || { (( result == 1 )) && [[ ! -f "$app_pid_file" ]] && ! recorded_process_is_absent app_pid; }; then
-			failed=1
-		fi
+		case "$result" in
+			1) ;; # The recorded identity is proven stale.
+			4) recorded_process_is_absent app_pid || failed=1 ;;
+			*) failed=1 ;;
+		esac
 	fi
 	if stop_pid_file "$log_pid_file" log; then
 		stopped=1
 	else
 		result=$?
-		if (( result == 2 || result == 3 )) || { (( result == 1 )) && [[ ! -f "$log_pid_file" ]] && ! recorded_process_is_absent log_pid; }; then
-			failed=1
-		fi
+		case "$result" in
+			1) ;; # The recorded identity is proven stale.
+			4) recorded_process_is_absent log_pid || failed=1 ;;
+			*) failed=1 ;;
+		esac
 	fi
 	if (( stopped )); then
 		echo "Stopped the previous GitX session."
@@ -237,7 +242,12 @@ stop_session() {
 			(( result == 2 )) && failed=1
 		fi
 		if (( failed == 0 )); then
-			rm -f -- "$session_file" "$app_pid_file" "$log_pid_file" || failed=1
+			if [[ -f "$session_file" ]]; then
+				cp "$session_file" "$last_session_file" || failed=1
+			fi
+			if (( failed == 0 )); then
+				rm -f -- "$session_file" "$app_pid_file" "$log_pid_file" || failed=1
+			fi
 		fi
 	fi
 	(( failed == 0 ))
@@ -360,16 +370,61 @@ isolated_home=$(mktemp -d "$temporary_root/gitx-run-app-home.XXXXXX") || {
 	exit 1
 }
 session_recorded=0
+launch_finished=0
+log_pid=
+app_pid=
+write_session_record() {
+	{
+		echo "app_pid=$app_pid"
+		echo "log_pid=$log_pid"
+		echo "bundle_identifier=$bundle_identifier"
+		echo "repository=$repository"
+		echo "isolated_home=$isolated_home"
+		echo "os_log=$log_file"
+		echo "stdout=$stdout_file"
+	} >"$session_file"
+}
 # shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
-cleanup_unrecorded_home() {
+cleanup_unfinished_launch() {
 	local exit_status=$?
 	trap - EXIT
-	if (( ! session_recorded )); then
-		remove_isolated_home "$isolated_home" || true
+	if (( ! launch_finished )); then
+		[[ -z "$app_pid" ]] || kill "$app_pid" 2>/dev/null || true
+		[[ -z "$log_pid" ]] || kill "$log_pid" 2>/dev/null || true
+		if [[ -n "$app_pid" ]] && (( ! session_recorded )); then
+			if write_session_record; then session_recorded=1; fi
+		fi
+		if (( session_recorded )); then
+			stop_session || echo "Launch cleanup could not verify GitX; preserving session and isolated home for retry." >&2
+		else
+			local log_stopped=1
+			if [[ -n "$log_pid" ]]; then
+				if [[ -f "$log_pid_file" ]]; then
+					stop_pid_file "$log_pid_file" log
+					local result=$?
+					(( result == 0 || result == 1 )) || log_stopped=0
+				else
+					kill "$log_pid" 2>/dev/null || true
+					for _ in {1..20}; do
+						if ! kill -0 "$log_pid" 2>/dev/null; then break; fi
+						sleep 0.25
+					done
+					kill -0 "$log_pid" 2>/dev/null && log_stopped=0
+				fi
+			fi
+			if (( log_stopped )); then
+				remove_isolated_home "$isolated_home" || true
+				rm -f -- "$log_pid_file"
+			else
+				echo "Launch cleanup could not verify the log process; preserving isolated home." >&2
+			fi
+		fi
 	fi
 	exit "$exit_status"
 }
-trap cleanup_unrecorded_home EXIT
+trap cleanup_unfinished_launch EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 mkdir -p "$isolated_home/Library/Preferences"
 
 # -ApplePersistenceIgnoreState redirects saved window state into $TMPDIR rather
@@ -407,6 +462,10 @@ arguments=(
 )
 
 # Start streaming before launch so application startup logging is captured.
+run_identifier="$(date +%Y%m%d%H%M%S)-$$"
+log_file=$session_dir/gitx-oslog-$run_identifier.txt
+stdout_file=$session_dir/gitx-stdout-$run_identifier.txt
+printf 'os_log=%s\nstdout=%s\n' "$log_file" "$stdout_file" >"$last_session_file"
 : >"$log_file"
 log stream \
 	--predicate 'subsystem BEGINSWITH "com.gitx"' \
@@ -423,10 +482,10 @@ fi
 : >"$stdout_file"
 env "${environment[@]}" "$app_binary" "${arguments[@]}" >>"$stdout_file" 2>&1 &
 app_pid=$!
+write_session_record
+session_recorded=1
 if ! write_pid_file "$app_pid_file" "$app_pid"; then
 	echo "Could not record the GitX process identity." >&2
-	kill "$app_pid" 2>/dev/null
-	stop_pid_file "$log_pid_file" log >/dev/null
 	exit 1
 fi
 
@@ -449,7 +508,6 @@ fi
 while (( SECONDS < deadline )); do
 	if ! kill -0 "$app_pid" 2>/dev/null; then
 		echo "GitX exited during launch. See $stdout_file" >&2
-		kill "$log_pid" 2>/dev/null
 		exit 1
 	fi
 	if (( can_observe )) && peekaboo list windows --app "PID:$app_pid" 2>/dev/null \
@@ -459,17 +517,6 @@ while (( SECONDS < deadline )); do
 	fi
 	sleep 0.5
 done
-
-{
-	echo "app_pid=$app_pid"
-	echo "log_pid=$log_pid"
-	echo "bundle_identifier=$bundle_identifier"
-	echo "repository=$repository"
-	echo "isolated_home=$isolated_home"
-	echo "os_log=$log_file"
-	echo "stdout=$stdout_file"
-} >"$session_file"
-session_recorded=1
 
 launch_status=0
 if (( ready )); then
@@ -482,6 +529,7 @@ else
 	echo "appeared within ${ready_timeout}s. Check $stdout_file and $log_file." >&2
 	launch_status=1
 fi
+launch_finished=1
 
 cat <<-SUMMARY
 

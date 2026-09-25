@@ -10,6 +10,25 @@ nonisolated struct PBChildProcessConfiguration: Sendable {
     let workingDirectory: String?
     let standardInputFileDescriptor: Int32?
     let standardOutputFileDescriptor: Int32
+    let standardErrorFileDescriptor: Int32?
+
+    init(
+        launchPath: String,
+        arguments: [String],
+        environment: [String: String],
+        workingDirectory: String?,
+        standardInputFileDescriptor: Int32?,
+        standardOutputFileDescriptor: Int32,
+        standardErrorFileDescriptor: Int32? = nil
+    ) {
+        self.launchPath = launchPath
+        self.arguments = arguments
+        self.environment = environment
+        self.workingDirectory = workingDirectory
+        self.standardInputFileDescriptor = standardInputFileDescriptor
+        self.standardOutputFileDescriptor = standardOutputFileDescriptor
+        self.standardErrorFileDescriptor = standardErrorFileDescriptor
+    }
 }
 
 nonisolated protocol PBChildProcessExitMonitoring: AnyObject, Sendable {
@@ -83,6 +102,10 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         var terminationTimerGeneration = 0
         var forceKillTimerGeneration = 0
         var reapRetryGeneration = 0
+        var exitEventWasObserved = false
+        var observationRetryScheduled = false
+        var observationRetryDelay: TimeInterval = 0.01
+        var groupRecheckScheduled = false
     }
 
     private enum State {
@@ -92,6 +115,8 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     }
 
     private static let reapRetryInterval: TimeInterval = 0.01
+    private static let maximumObservationRetryInterval: TimeInterval = 0.1
+    private static let groupRecheckInterval: TimeInterval = 0.05
     private static let monitorRegistrationProbeDelay: TimeInterval = 0.02
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "PBChildProcess")
 
@@ -132,7 +157,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 processIdentifier: processIdentifier,
                 queue: queue
             ) { [weak self] in
-                self?.observeLeaderExit()
+                self?.observeLeaderExit(fromExitEvent: true)
             }
             process.exitMonitor = exitMonitor
             state = .running(process)
@@ -307,10 +332,17 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         }
     }
 
-    private func observeLeaderExit() {
+    private func observeLeaderExit(fromExitEvent: Bool = false) {
         guard case var .running(process) = state else { return }
         do {
+            if fromExitEvent {
+                process.exitEventWasObserved = true
+                state = .running(process)
+            }
             guard try system.exitStateWithoutReaping(processIdentifier: process.processIdentifier) == .terminal else {
+                if process.exitEventWasObserved {
+                    scheduleObservationRetry()
+                }
                 return
             }
             if !process.leaderExitWasObserved {
@@ -322,11 +354,53 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             }
 
             if shouldRetainLeaderForScheduledGroup(process) {
+                scheduleGroupRecheck()
                 return
             }
             reapLeader(process)
         } catch {
             finishWithSupervisionError(error, operation: "observe", process: process)
+        }
+    }
+
+    private func scheduleObservationRetry() {
+        guard case var .running(process) = state,
+              process.exitEventWasObserved,
+              !process.leaderExitWasObserved,
+              !process.observationRetryScheduled
+        else { return }
+        process.observationRetryScheduled = true
+        let delay = process.observationRetryDelay
+        process.observationRetryDelay = min(delay * 2, Self.maximumObservationRetryInterval)
+        state = .running(process)
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self,
+                  case var .running(current) = state,
+                  current.observationRetryScheduled,
+                  !current.leaderExitWasObserved
+            else { return }
+            current.observationRetryScheduled = false
+            state = .running(current)
+            observeLeaderExit()
+        }
+    }
+
+    private func scheduleGroupRecheck() {
+        guard case var .running(process) = state,
+              process.leaderExitWasObserved,
+              !process.groupRecheckScheduled
+        else { return }
+        process.groupRecheckScheduled = true
+        state = .running(process)
+        queue.asyncAfter(deadline: .now() + Self.groupRecheckInterval) { [weak self] in
+            guard let self,
+                  case var .running(current) = state,
+                  current.groupRecheckScheduled,
+                  current.leaderExitWasObserved
+            else { return }
+            current.groupRecheckScheduled = false
+            state = .running(current)
+            observeLeaderExit()
         }
     }
 
@@ -424,6 +498,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
     private struct PreparedDescriptors {
         let standardInput: Int32?
         let standardOutput: Int32
+        let standardError: Int32
         let duplicatedDescriptors: [Int32]
     }
 
@@ -477,12 +552,16 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         try check(
             posix_spawn_file_actions_adddup2(
                 &fileActions,
-                descriptors.standardOutput,
+                descriptors.standardError,
                 STDERR_FILENO
             ),
             operation: "configure child standard error"
         )
-        let childSourceDescriptors = Set([descriptors.standardInput, descriptors.standardOutput].compactMap { $0 })
+        let childSourceDescriptors = Set([
+            descriptors.standardInput,
+            descriptors.standardOutput,
+            descriptors.standardError,
+        ].compactMap { $0 })
         for descriptor in childSourceDescriptors {
             try check(
                 posix_spawn_file_actions_addclose(&fileActions, descriptor),
@@ -646,9 +725,13 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
                 operation: "prepare child standard output",
                 owned: &duplicatedDescriptors
             )
+            let standardError = try configuration.standardErrorFileDescriptor.map {
+                try prepareSourceDescriptor($0, operation: "prepare child standard error", owned: &duplicatedDescriptors)
+            } ?? standardOutput
             return PreparedDescriptors(
                 standardInput: standardInput,
                 standardOutput: standardOutput,
+                standardError: standardError,
                 duplicatedDescriptors: duplicatedDescriptors
             )
         } catch {
@@ -720,7 +803,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         private let owner = PBChildProcessOwner()
 
         @objc(
-            initWithLaunchPath:arguments:environment:workingDirectory:standardInputFileDescriptor:standardOutputFileDescriptor:terminationHandler:
+            initWithLaunchPath:arguments:environment:workingDirectory:standardInputFileDescriptor:standardOutputFileDescriptor:standardErrorFileDescriptor:terminationHandler:
         )
         init(
             launchPath: String,
@@ -729,6 +812,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
             workingDirectory: String?,
             standardInputFileDescriptor: NSNumber?,
             standardOutputFileDescriptor: Int32,
+            standardErrorFileDescriptor: NSNumber?,
             terminationHandler: @escaping @Sendable (Int32, NSError?) -> Void
         ) {
             configuration = PBChildProcessConfiguration(
@@ -737,7 +821,8 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
                 environment: environment,
                 workingDirectory: workingDirectory,
                 standardInputFileDescriptor: standardInputFileDescriptor?.int32Value,
-                standardOutputFileDescriptor: standardOutputFileDescriptor
+                standardOutputFileDescriptor: standardOutputFileDescriptor,
+                standardErrorFileDescriptor: standardErrorFileDescriptor?.int32Value
             )
             self.terminationHandler = terminationHandler
         }

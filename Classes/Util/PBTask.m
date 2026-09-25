@@ -21,6 +21,7 @@ NSString *const PBTaskTerminationOutputKey = @"PBTaskTerminationOutputKey";
 const BOOL PBTaskDebugEnable = NO;
 static const NSTimeInterval PBTaskOutputDrainGrace = 0.1;
 static const NSTimeInterval PBTaskTerminationGrace = 0.2;
+static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 
 #define PBTaskLog(...)                             \
 	do {                                           \
@@ -36,7 +37,10 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 @property (nullable, strong) PBChildProcessSupervisor *processSupervisor;
 @property (retain) NSData *standardOutputData;
 @property (retain) NSMutableData *standardOutputBuffer;
+@property (retain) NSData *standardErrorData;
+@property (retain) NSMutableData *standardErrorBuffer;
 @property (nullable, retain) NSPipe *outputPipe;
+@property (nullable, retain) NSPipe *errorPipe;
 @property (nullable, retain) NSPipe *inputPipe;
 @property (strong) dispatch_queue_t stateQueue;
 @property (strong) dispatch_queue_t callbackQueue;
@@ -47,6 +51,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 @property BOOL operationStarted;
 @property BOOL taskFinished;
 @property BOOL outputFinished;
+@property BOOL errorFinished;
 @property BOOL operationFinished;
 @property BOOL outputReaderStopped;
 @property BOOL outputDrainScheduled;
@@ -54,13 +59,18 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 @property NSUInteger outputReadsInFlight;
 @property BOOL outputHandleClosePending;
 @property BOOL outputHandleClosed;
+@property BOOL errorReaderStopped;
+@property NSUInteger errorReadsInFlight;
+@property BOOL errorHandleClosePending;
+@property BOOL errorHandleClosed;
 @property NSTaskTerminationReason terminationReason;
 @property int terminationStatus;
 @property (retain) NSError *forcedError;
 
 - (void)stopOutputReaderAndCloseWhenSafe;
+- (void)stopErrorReaderAndCloseWhenSafe;
 - (void)scheduleOutputDrainAfterTaskExit;
-- (NSPipe *)makePipe;
+- (nullable NSPipe *)makePipe;
 - (NSArray<NSString *> *)validatedArgumentsForLaunch;
 - (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
 											  supervisionError:(nullable NSError *)supervisionError;
@@ -97,7 +107,10 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 	_standardOutputData = [NSData data];
 	_standardOutputBuffer = [NSMutableData data];
+	_standardErrorData = [NSData data];
+	_standardErrorBuffer = [NSMutableData data];
 	_capturesStandardOutput = YES;
+	_errorFinished = YES;
 	dispatch_queue_attr_t stateQueueAttributes =
 		dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
 	_stateQueue = dispatch_queue_create("org.gitx.PBTask.state", stateQueueAttributes);
@@ -112,7 +125,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	PBTaskLog(@"task %p: dealloc", self);
 }
 
-- (NSPipe *)makePipe
+- (nullable NSPipe *)makePipe
 {
 	return [NSPipe pipe];
 }
@@ -154,7 +167,8 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	if (self.terminationReason == NSTaskTerminationReasonExit && self.terminationStatus != 0) {
 		PBTaskLog(@"task %p: exit != 0", self);
 
-		NSString *outputString = [[NSString alloc] initWithData:output encoding:NSUTF8StringEncoding] ?: @"";
+		NSData *diagnosticOutput = self.separatesStandardError && self.standardErrorData.length ? self.standardErrorData : output;
+		NSString *outputString = [[NSString alloc] initWithData:diagnosticOutput encoding:NSUTF8StringEncoding] ?: @"";
 		NSString *desc = @"Task exited unsuccessfully";
 		NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" returned a non-zero return code", [[self taskArguments] componentsJoinedByString:@" "]];
 		int status = self.terminationStatus;
@@ -177,17 +191,20 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 {
 	if (self.operationFinished) return;
 	if (!self.taskFinished) return;
-	if (!self.forcedError && !self.outputFinished) return;
+	if (!self.forcedError && (!self.outputFinished || !self.errorFinished)) return;
 
 	self.operationFinished = YES;
 	NSData *output = [self.standardOutputBuffer copy] ?: [NSData data];
 	self.standardOutputData = output;
 	self.standardOutputBuffer = nil;
+	self.standardErrorData = [self.standardErrorBuffer copy] ?: [NSData data];
+	self.standardErrorBuffer = nil;
 	NSError *error = self.forcedError ?: [self terminationErrorForOutput:output];
 	dispatch_queue_t callbackQueue = self.callbackQueue;
 	void (^resultHandler)(NSData *, NSError *) = self.resultHandler;
 
 	[self stopOutputReaderAndCloseWhenSafe];
+	[self stopErrorReaderAndCloseWhenSafe];
 	self.inputPipe.fileHandleForWriting.writeabilityHandler = nil;
 	self.processSupervisor = nil;
 	self.resultHandler = nil;
@@ -198,6 +215,21 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	dispatch_async(callbackQueue, ^{
 		resultHandler(error ? nil : output, error);
 	});
+}
+
+- (void)stopErrorReaderAndCloseWhenSafe
+{
+	NSFileHandle *errorHandle = self.errorPipe.fileHandleForReading;
+	if (!errorHandle) return;
+	BOOL closeNow;
+	@synchronized(self) {
+		self.errorReaderStopped = YES;
+		self.errorHandleClosePending = YES;
+		closeNow = self.errorReadsInFlight == 0 && !self.errorHandleClosed;
+		if (closeNow) self.errorHandleClosed = YES;
+	}
+	errorHandle.readabilityHandler = nil;
+	if (closeNow) [errorHandle closeFile];
 }
 
 - (void)stopOutputReaderAndCloseWhenSafe
@@ -216,24 +248,26 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 
 - (void)scheduleOutputDrainAfterTaskExit
 {
-	if (self.outputFinished || self.outputDrainScheduled) return;
+	if ((self.outputFinished && self.errorFinished) || self.outputDrainScheduled) return;
 	self.outputDrainScheduled = YES;
 
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(PBTaskOutputDrainGrace * NSEC_PER_SEC)), self.stateQueue, ^{
-		if (self.operationFinished || self.outputFinished) return;
+		if (self.operationFinished || (self.outputFinished && self.errorFinished)) return;
 
 		@synchronized(self) {
 			self.outputDrainExpired = YES;
 		}
 		[self stopOutputReaderAndCloseWhenSafe];
+		[self stopErrorReaderAndCloseWhenSafe];
 		NSUInteger readsInFlight;
+		NSUInteger errorReadsInFlight;
 		@synchronized(self) {
 			readsInFlight = self.outputReadsInFlight;
+			errorReadsInFlight = self.errorReadsInFlight;
 		}
-		if (readsInFlight == 0) {
-			self.outputFinished = YES;
-			[self finishIfReady];
-		}
+		if (readsInFlight == 0) self.outputFinished = YES;
+		if (errorReadsInFlight == 0) self.errorFinished = YES;
+		[self finishIfReady];
 	});
 }
 
@@ -244,6 +278,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		self.forcedError = error;
 		self.taskFinished = YES;
 		self.outputFinished = YES;
+		self.errorFinished = YES;
 		[self finishIfReady];
 	});
 }
@@ -289,6 +324,49 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 				[strongSelf finishIfReady];
 			}
 			if (closeOutputHandle) [handle closeFile];
+		});
+	};
+}
+
+- (void)configureErrorReader
+{
+	__weak PBTask *weakSelf = self;
+	self.errorPipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle *handle) {
+		PBTask *strongSelf = weakSelf;
+		if (!strongSelf) return;
+		@synchronized(strongSelf) {
+			if (strongSelf.errorReaderStopped) return;
+			strongSelf.errorReadsInFlight += 1;
+		}
+		NSData *data = handle.availableData;
+		dispatch_async(strongSelf.stateQueue, ^{
+			BOOL shouldFinishAfterDrain;
+			BOOL closeErrorHandle;
+			@synchronized(strongSelf) {
+				strongSelf.errorReadsInFlight -= 1;
+				shouldFinishAfterDrain = strongSelf.outputDrainExpired && strongSelf.errorReadsInFlight == 0;
+				closeErrorHandle = strongSelf.errorHandleClosePending && strongSelf.errorReadsInFlight == 0 && !strongSelf.errorHandleClosed;
+				if (closeErrorHandle) strongSelf.errorHandleClosed = YES;
+			}
+			if (strongSelf.operationFinished) {
+				if (closeErrorHandle) [handle closeFile];
+				return;
+			}
+			if (data.length) {
+				[strongSelf.standardErrorBuffer appendData:data];
+				if (strongSelf.standardErrorBuffer.length > PBTaskStandardErrorLimit) {
+					NSUInteger excess = strongSelf.standardErrorBuffer.length - PBTaskStandardErrorLimit;
+					[strongSelf.standardErrorBuffer replaceBytesInRange:NSMakeRange(0, excess) withBytes:NULL length:0];
+				}
+			} else {
+				strongSelf.errorFinished = YES;
+				[strongSelf finishIfReady];
+			}
+			if (shouldFinishAfterDrain && !strongSelf.errorFinished) {
+				strongSelf.errorFinished = YES;
+				[strongSelf finishIfReady];
+			}
+			if (closeErrorHandle) [handle closeFile];
 		});
 	};
 }
@@ -350,6 +428,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 - (void)closeChildPipeEnds
 {
 	[self.outputPipe.fileHandleForWriting closeFile];
+	[self.errorPipe.fileHandleForWriting closeFile];
 	[self.inputPipe.fileHandleForReading closeFile];
 }
 
@@ -367,6 +446,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 		self.resultHandler = resultHandler;
 		self.outputChunkHandler = outputChunkHandler;
 		self.operationRetainer = self;
+		self.errorFinished = !self.separatesStandardError;
 	});
 
 	__weak PBTask *weakSelf = self;
@@ -374,10 +454,20 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 	@try {
 		NSArray<NSString *> *validatedArguments = [self validatedArgumentsForLaunch];
 		self.outputPipe = [self makePipe];
+		if (!self.outputPipe)
+			[NSException raise:@"PBTaskPipeCreationException" format:@"Could not create standard output pipe"];
 		[self configureOutputReader];
+		if (self.separatesStandardError) {
+			self.errorPipe = [self makePipe];
+			if (!self.errorPipe)
+				[NSException raise:@"PBTaskPipeCreationException" format:@"Could not create standard error pipe"];
+			[self configureErrorReader];
+		}
 
 		if (self.standardInputData) {
 			self.inputPipe = [self makePipe];
+			if (!self.inputPipe)
+				[NSException raise:@"PBTaskPipeCreationException" format:@"Could not create standard input pipe"];
 			NSFileHandle *inputHandle = self.inputPipe.fileHandleForWriting;
 			(void)fcntl(inputHandle.fileDescriptor, F_SETNOSIGPIPE, 1);
 
@@ -421,6 +511,7 @@ static const NSTimeInterval PBTaskTerminationGrace = 0.2;
 								workingDirectory:self.currentDirectoryPath
 					 standardInputFileDescriptor:inputFileDescriptor
 					standardOutputFileDescriptor:self.outputPipe.fileHandleForWriting.fileDescriptor
+					 standardErrorFileDescriptor:self.errorPipe ? @(self.errorPipe.fileHandleForWriting.fileDescriptor) : nil
 							  terminationHandler:^(int32_t rawWaitStatus, NSError *supervisionError) {
 								  PBTask *strongSelf = weakSelf;
 								  if (!strongSelf) return;

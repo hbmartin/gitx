@@ -484,6 +484,43 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertTrue(recorder.errors.isEmpty)
     }
 
+    func testExitEventBeforeTerminalStateEventuallyReapsLeader() throws {
+        let system = FakeProcessSystem()
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "leader becomes terminal after its exit event")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        system.triggerExitMonitor()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.06) {
+            system.setLeaderExited(true)
+        }
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertTrue(recorder.errors.isEmpty)
+    }
+
+    func testExitedLeaderCompletesWhenDescendantsLeaveBeforeGraceDeadline() throws {
+        let system = FakeProcessSystem()
+        system.setProcessGroupMembers([4321, 4322])
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "process group empties during grace period")
+        let recorder = CompletionRecorder(expectation: completed)
+
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 2, forceKillDelay: 2))
+        system.setLeaderExited(true)
+        system.triggerExitMonitor()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            system.setProcessGroupMembers([4321])
+        }
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
+    }
+
     func testExitBeforeTerminationDeadlineIsNeverSignalled() throws {
         let system = FakeProcessSystem()
         let owner = PBChildProcessOwner(system: system, queueLabel: #function)
