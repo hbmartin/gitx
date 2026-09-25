@@ -410,6 +410,7 @@ final class PBQLOutlineViewTests: XCTestCase {
             Data("\(String(repeating: "b", count: 40)) blob 0\n\n".utf8),
             Data("\(identifier) blob 3\nab".utf8),
             Data(repeating: 0x61, count: 257),
+            Data("\(identifier) blob 3\nabc!".utf8),
         ] {
             let writer = GitBatchBlobWriter(targets: [target], fileManager: .default)
             writer.consume(response)
