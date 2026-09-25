@@ -338,6 +338,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 			if (strongSelf.errorReaderStopped) return;
 			strongSelf.errorReadsInFlight += 1;
 		}
+		PBTaskLog(@"task %p: can read standard error %d", strongSelf, handle.fileDescriptor);
 		NSData *data = handle.availableData;
 		dispatch_async(strongSelf.stateQueue, ^{
 			BOOL shouldFinishAfterDrain;

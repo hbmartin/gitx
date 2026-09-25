@@ -135,6 +135,34 @@ final class PBTaskLifecycleTests: XCTestCase {
         try outputPipe.fileHandleForReading.close()
     }
 
+    func testExpiredErrorDrainFinishesAfterInFlightReadCompletes() throws {
+        let task = PBTask(
+            launchPath: "/usr/bin/true",
+            arguments: [],
+            inDirectory: nil
+        )
+        task.separatesStandardError = true
+        task.setValue(false, forKey: "errorFinished")
+        task.setValue(true, forKey: "outputDrainExpired")
+        task.setValue(Pipe(), forKey: "errorPipe")
+        task.perform(NSSelectorFromString("configureErrorReader"))
+        let errorPipe = try XCTUnwrap(task.value(forKey: "errorPipe") as? Pipe)
+
+        try errorPipe.fileHandleForWriting.write(contentsOf: Data("drained diagnostic".utf8))
+        let drainFinished = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (task.value(forKey: "errorFinished") as? Bool) == true
+            },
+            object: nil
+        )
+        wait(for: [drainFinished], timeout: 2)
+        XCTAssertEqual(task.value(forKey: "standardErrorBuffer") as? Data, Data("drained diagnostic".utf8))
+
+        errorPipe.fileHandleForReading.readabilityHandler = nil
+        try errorPipe.fileHandleForWriting.close()
+        try errorPipe.fileHandleForReading.close()
+    }
+
     func testTerminationHandlerUsesRequestedQueue() {
         let completion = expectation(description: "termination callback")
         let queue = DispatchQueue(label: "org.gitx.tests.pbtask-termination")
