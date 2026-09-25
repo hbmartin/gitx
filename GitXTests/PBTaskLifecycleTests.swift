@@ -7,7 +7,8 @@ final class PBTaskLifecycleTests: XCTestCase {
         var failedPipeNumber = 0
 
         @objc(makePipe)
-        func makePipe() -> Pipe? {
+        func makePipe() -> Pipe? { // swiftlint:disable:this unused_declaration
+            // PBTask invokes this hook through Objective-C dispatch.
             pipeCount += 1
             return pipeCount == failedPipeNumber ? nil : Pipe()
         }
