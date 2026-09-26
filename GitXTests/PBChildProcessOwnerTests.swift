@@ -749,6 +749,41 @@ final class PBChildProcessOwnerTests: XCTestCase {
         }
     }
 
+    func testPosixSpawnRejectsInvalidConfigurationBeforeLaunching() {
+        let system = PBPosixChildProcessSystem()
+        let base = PBChildProcessConfiguration(
+            launchPath: "/bin/echo",
+            arguments: [],
+            environment: ProcessInfo.processInfo.environment,
+            workingDirectory: nil,
+            standardInputFileDescriptor: nil,
+            standardOutputFileDescriptor: STDOUT_FILENO
+        )
+        let invalidPath = PBChildProcessConfiguration(
+            launchPath: "/bin/echo\0invalid",
+            arguments: base.arguments,
+            environment: base.environment,
+            workingDirectory: nil,
+            standardInputFileDescriptor: nil,
+            standardOutputFileDescriptor: base.standardOutputFileDescriptor
+        )
+        XCTAssertThrowsError(try system.spawn(configuration: invalidPath)) { error in
+            XCTAssertEqual((error as NSError).code, Int(EINVAL))
+        }
+
+        let invalidDescriptor = PBChildProcessConfiguration(
+            launchPath: base.launchPath,
+            arguments: base.arguments,
+            environment: base.environment,
+            workingDirectory: nil,
+            standardInputFileDescriptor: nil,
+            standardOutputFileDescriptor: -1
+        )
+        XCTAssertThrowsError(try system.spawn(configuration: invalidDescriptor)) { error in
+            XCTAssertEqual((error as NSError).code, Int(EBADF))
+        }
+    }
+
     func testPosixSpawnDoesNotInheritInteractiveStandardInput() throws {
         let inputPipe = try makePOSIXPipe()
         let outputPipe = try makePOSIXPipe()
