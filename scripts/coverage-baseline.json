@@ -99,7 +99,7 @@
     "Classes/Util/NSOutlineViewExt.m": 1.0,
     "Classes/Util/NSString_Truncate.m": 0.0,
     "Classes/Util/ObjectiveGit+PBCategories.m": 1.0,
-    "Classes/Util/PBChildProcessOwner.swift": 0.9584,
+    "Classes/Util/PBChildProcessOwner.swift": 0.9685,
     "Classes/Util/PBEasyFS.m": 1.0,
     "Classes/Util/PBError.m": 1.0,
     "Classes/Util/PBProcessEnvironment.swift": 1.0,
@@ -210,7 +210,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9115,
+  "minimumLineCoverage": 0.9117,
   "target": "GitX.app",
   "version": 1
 }

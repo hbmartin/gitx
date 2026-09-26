@@ -438,7 +438,7 @@ cleanup_unfinished_launch() {
 					1) [[ -z "$log_pid" ]] || process_is_absent "$log_pid" || log_stopped=0 ;;
 					*) log_stopped=0 ;;
 				esac
-			elif [[ -n "$log_pid" ]]; then
+			elif [[ -n "$log_pid" ]] && ! process_is_absent "$log_pid"; then
 				log_stopped=0
 			fi
 			if [[ -n "$app_pid" ]] && ! process_is_absent "$app_pid"; then
