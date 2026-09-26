@@ -715,6 +715,40 @@ final class PBChildProcessOwnerTests: XCTestCase {
         }
     }
 
+    func testPosixSpawnRunsInConfiguredWorkingDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outputPipe = try makePOSIXPipe()
+        defer { Darwin.close(outputPipe.read) }
+
+        let processIdentifier = try PBPosixChildProcessSystem().spawn(configuration: PBChildProcessConfiguration(
+            launchPath: "/bin/pwd",
+            arguments: [],
+            environment: ProcessInfo.processInfo.environment,
+            workingDirectory: directory.path,
+            standardInputFileDescriptor: nil,
+            standardOutputFileDescriptor: outputPipe.write
+        ))
+        XCTAssertEqual(Darwin.close(outputPipe.write), 0)
+        XCTAssertEqual(try waitForProcess(processIdentifier), 0)
+        let output = FileHandle(fileDescriptor: outputPipe.read, closeOnDealloc: false).readDataToEndOfFile()
+        let outputPath = try XCTUnwrap(String(data: output, encoding: .utf8))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var actual: stat = .init()
+        var expected: stat = .init()
+        XCTAssertEqual(Darwin.lstat(outputPath, &actual), 0)
+        XCTAssertEqual(Darwin.lstat(directory.path, &expected), 0)
+        XCTAssertEqual(actual.st_dev, expected.st_dev)
+        XCTAssertEqual(actual.st_ino, expected.st_ino)
+    }
+
+    func testPosixSignalReportsMissingProcessGroup() {
+        XCTAssertThrowsError(try PBPosixChildProcessSystem().send(signal: SIGTERM, toProcessGroup: Int32.max)) { error in
+            XCTAssertEqual((error as NSError).code, Int(ESRCH))
+        }
+    }
+
     func testPosixSpawnDoesNotInheritInteractiveStandardInput() throws {
         let inputPipe = try makePOSIXPipe()
         let outputPipe = try makePOSIXPipe()
