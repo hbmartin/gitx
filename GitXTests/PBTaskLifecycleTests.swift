@@ -340,6 +340,30 @@ final class PBTaskLifecycleTests: XCTestCase {
         XCTAssertEqual(task.standardErrorData.count, 65536)
     }
 
+    func testSeparateStandardErrorRetainsDecodableMultibyteFailureDiagnostics() throws {
+        let stderrFile = temporaryFileURL(named: "multibyte-stderr")
+        defer { try? FileManager.default.removeItem(at: stderrFile) }
+        let character = "€"
+        let output = String(repeating: character, count: 23334)
+        try Data(output.utf8).write(to: stderrFile)
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "cat \"$1\" >&2; exit 7", "sh", stderrFile.path],
+            inDirectory: nil
+        )
+        task.separatesStandardError = true
+
+        XCTAssertThrowsError(try task.launch()) { error in
+            let taskError = error as NSError
+            XCTAssertEqual(taskError.userInfo[PBTaskTerminationStatusKey] as? NSNumber, 7)
+            let diagnostic = taskError.userInfo[PBTaskTerminationOutputKey] as? String
+            let expectedSuffix = String(repeating: character, count: 21845)
+            XCTAssertTrue(diagnostic == expectedSuffix, "Retained stderr should be an exact, decodable suffix")
+        }
+        XCTAssertLessThanOrEqual(task.standardErrorData.count, 65536)
+        XCTAssertEqual(String(data: task.standardErrorData, encoding: .utf8)?.count, 21845)
+    }
+
     func testStreamingCanAvoidAccumulatingStandardOutput() throws {
         let recorder = EventRecorder()
         let task = PBTask(

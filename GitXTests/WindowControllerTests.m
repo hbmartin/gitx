@@ -3429,6 +3429,42 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	}
 }
 
+- (void)testRepositoryOpeningRejectsUnreadableFolderWithoutOfferingCreation
+{
+	NSString *name = [NSString stringWithFormat:@"GitXUnreadableOpening-%@", NSUUID.UUID.UUIDString];
+	NSURL *folderURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]
+								  isDirectory:YES];
+	NSFileManager *fileManager = NSFileManager.defaultManager;
+	XCTAssertTrue([fileManager createDirectoryAtURL:folderURL
+						withIntermediateDirectories:NO
+										 attributes:nil
+											  error:NULL]);
+	XCTAssertTrue([fileManager setAttributes:@{NSFilePosixPermissions : @0}
+								ofItemAtPath:folderURL.path
+									   error:NULL]);
+	@try {
+		XCTestExpectation *completion = [self expectationWithDescription:@"unreadable folder rejected"];
+		__block NSArray<NSError *> *openingErrors = nil;
+		[[PBRepositoryOpenCoordinator shared] openURLs:@[ folderURL ]
+										  sourceWindow:self.controller.window
+											completion:^(__unused NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+												openingErrors = errors;
+												[completion fulfill];
+											}];
+		[self waitForExpectations:@[ completion ] timeout:2.0];
+
+		XCTAssertEqual(openingErrors.count, (NSUInteger)1);
+		XCTAssertEqualObjects(openingErrors.firstObject.domain, @"PBRepositoryOpeningErrorDomain");
+		XCTAssertEqual(openingErrors.firstObject.code, 4);
+		XCTAssertNotNil(openingErrors.firstObject.userInfo[NSUnderlyingErrorKey]);
+		XCTAssertEqual(PBWindowPresentedAlerts.count, (NSUInteger)0);
+		XCTAssertEqual(PBWindowDocumentOpenedURLs.count, (NSUInteger)0);
+	} @finally {
+		[fileManager setAttributes:@{NSFilePosixPermissions : @0700} ofItemAtPath:folderURL.path error:NULL];
+		[fileManager removeItemAtURL:folderURL error:NULL];
+	}
+}
+
 - (void)testRepositoryOpeningReportsInitializationFailureAndContinues
 {
 	NSString *name = [NSString stringWithFormat:@"GitXFailedInitialization-%@", NSUUID.UUID.UUIDString];

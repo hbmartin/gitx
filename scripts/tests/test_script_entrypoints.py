@@ -177,6 +177,76 @@ class ScriptEntrypointTests(unittest.TestCase):
         )
         return process, session_directory
 
+    def install_sleeping_executable(self, path: pathlib.Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["/usr/bin/clang", "-x", "c", "-o", str(path), "-"],
+            input=(
+                "#include <stdio.h>\n"
+                "#include <stdlib.h>\n"
+                "#include <string.h>\n"
+                "#include <unistd.h>\n"
+                "int main(int argc, char **argv) {\n"
+                "  (void)argc;\n"
+                "  const char *pid_file = getenv(strstr(argv[0], \"GitX\") ? \"GITX_TEST_APP_PID_FILE\" : \"GITX_TEST_PROCESS_PID_FILE\");\n"
+                "  if (pid_file) {\n"
+                "    FILE *file = fopen(pid_file, \"w\");\n"
+                "    if (file) { fprintf(file, \"%d\\n\", getpid()); fclose(file); }\n"
+                "  }\n"
+                "  sleep(60);\n"
+                "  return 0;\n"
+                "}\n"
+            ),
+            text=True,
+            check=True,
+            capture_output=True,
+        )
+
+    def start_pending_run_app_launch(self) -> tuple[subprocess.Popen[bytes], pathlib.Path, pathlib.Path]:
+        script = self.install_script("run_app.sh")
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        repository = self.root / "fixture-repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
+        with (app_contents / "Info.plist").open("wb") as handle:
+            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+        self.install_sleeping_executable(self.bin / "log")
+        peekaboo = self.bin / "peekaboo"
+        peekaboo.write_text("#!/bin/bash\nexit 1\n")
+        peekaboo.chmod(0o755)
+        session_directory = self.root / "build" / "Logs" / "run-app"
+        process = subprocess.Popen(
+            [script, "--no-build", "--repo", str(repository), "--timeout", "30"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.environment | {"TMPDIR": str(temporary_root)},
+        )
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if (session_directory / "app.pid").exists() and (session_directory / "logstream.pid").exists():
+                return process, session_directory, temporary_root
+            time.sleep(0.02)
+        process.kill()
+        process.communicate(timeout=2)
+        self.fail("run_app.sh did not start both test processes")
+
+    @staticmethod
+    def process_is_running(pid: int) -> bool:
+        status = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True
+        ).stdout.strip()
+        return bool(status) and "Z" not in status
+
+    @staticmethod
+    def terminate_pid(pid: int) -> None:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
     def test_xcodebuild_wrapper_injects_the_documented_defaults(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
@@ -793,6 +863,92 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertTrue(session.exists())
         self.assertIn("process identity cannot be verified", result.stderr)
 
+    def test_run_app_stop_preserves_home_when_recorded_identity_is_stale_but_pid_is_live(self) -> None:
+        script = self.install_script("run_app.sh")
+        process, session_directory = self.create_live_run_app_session()
+        (session_directory / "app.pid").write_text(f"{process.pid}\tThu Jan  1 00:00:00 1970\n")
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        isolated_home = pathlib.Path(tempfile.mkdtemp(prefix="gitx-run-app-home.", dir=temporary_root))
+        session = session_directory / "session.txt"
+        session.write_text(session.read_text() + f"isolated_home={isolated_home}\n")
+
+        result = subprocess.run(
+            [script, "--stop"],
+            capture_output=True,
+            text=True,
+            env=self.environment | {"TMPDIR": str(temporary_root)},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIsNone(process.poll())
+        self.assertTrue(isolated_home.exists())
+        self.assertTrue(session.exists())
+
+    def test_run_app_stop_preserves_home_when_identity_file_names_another_live_app(self) -> None:
+        script = self.install_script("run_app.sh")
+        identity_process, session_directory = self.create_live_run_app_session()
+        recorded_process = subprocess.Popen([self.root / "GitX", "60"])
+        self.addCleanup(self._terminate_process, recorded_process)
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        isolated_home = pathlib.Path(tempfile.mkdtemp(prefix="gitx-run-app-home.", dir=temporary_root))
+        session = session_directory / "session.txt"
+        session.write_text(
+            session.read_text().replace(f"app_pid={identity_process.pid}", f"app_pid={recorded_process.pid}")
+            + f"isolated_home={isolated_home}\n"
+        )
+
+        result = subprocess.run(
+            [script, "--stop"],
+            capture_output=True,
+            text=True,
+            env=self.environment | {"TMPDIR": str(temporary_root)},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(identity_process.wait(timeout=2), -signal.SIGTERM)
+        self.assertIsNone(recorded_process.poll())
+        self.assertTrue(isolated_home.exists())
+        self.assertTrue(session.exists())
+
+    def test_run_app_stop_preserves_home_when_identity_file_names_another_live_log(self) -> None:
+        script = self.install_script("run_app.sh")
+        _, session_directory = self.create_live_run_app_session()
+        executable = self.root / "log"
+        executable.symlink_to("/bin/sleep")
+        identity_process = subprocess.Popen([executable, "60"])
+        recorded_process = subprocess.Popen([executable, "60"])
+        self.addCleanup(self._terminate_process, identity_process)
+        self.addCleanup(self._terminate_process, recorded_process)
+        start_time = subprocess.run(
+            ["ps", "-p", str(identity_process.pid), "-o", "lstart="],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        (session_directory / "logstream.pid").write_text(f"{identity_process.pid}\t{start_time}\n")
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        isolated_home = pathlib.Path(tempfile.mkdtemp(prefix="gitx-run-app-home.", dir=temporary_root))
+        session = session_directory / "session.txt"
+        session.write_text(
+            session.read_text() + f"log_pid={recorded_process.pid}\nisolated_home={isolated_home}\n"
+        )
+
+        result = subprocess.run(
+            [script, "--stop"],
+            capture_output=True,
+            text=True,
+            env=self.environment | {"TMPDIR": str(temporary_root)},
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(identity_process.wait(timeout=2), -signal.SIGTERM)
+        self.assertIsNone(recorded_process.poll())
+        self.assertTrue(isolated_home.exists())
+        self.assertTrue(session.exists())
+
     def test_run_app_stop_preserves_a_live_session_when_app_pid_record_is_missing(self) -> None:
         script = self.install_script("run_app.sh")
         process, session_directory = self.create_live_run_app_session()
@@ -984,10 +1140,12 @@ class ScriptEntrypointTests(unittest.TestCase):
             plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
         app_binary.write_text("#!/bin/bash\nexit 1\n")
         app_binary.chmod(0o755)
-        log = self.bin / "log"
-        log.write_text("#!/bin/bash\nexec /bin/sleep 60\n")
-        log.chmod(0o755)
-        environment = self.environment | {"TMPDIR": str(temporary_root)}
+        self.install_sleeping_executable(self.bin / "log")
+        recorded_pid = self.root / "log-process.pid"
+        environment = self.environment | {
+            "TMPDIR": str(temporary_root),
+            "GITX_TEST_PROCESS_PID_FILE": str(recorded_pid),
+        }
 
         result = subprocess.run(
             [script, "--no-build", "--repo", str(repository), "--timeout", "1"],
@@ -998,10 +1156,119 @@ class ScriptEntrypointTests(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
+        log_pid = int(recorded_pid.read_text())
+        self.addCleanup(self.terminate_pid, log_pid)
+        self.assertFalse(self.process_is_running(log_pid))
         self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])
         self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 
     def test_run_app_interrupt_during_startup_stops_app_before_removing_home(self) -> None:
+        process, session_directory, temporary_root = self.start_pending_run_app_launch()
+        app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
+        log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
+        self.addCleanup(self.terminate_pid, app_pid)
+        self.addCleanup(self.terminate_pid, log_pid)
+        try:
+            process.send_signal(signal.SIGINT)
+            process.communicate(timeout=10)
+
+            self.assertFalse(self.process_is_running(app_pid))
+            self.assertFalse(self.process_is_running(log_pid))
+            self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])
+            self.assertFalse((session_directory / "session.txt").exists())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+
+    def test_run_app_concurrent_invocations_cannot_take_over_pending_session(self) -> None:
+        process, session_directory, temporary_root = self.start_pending_run_app_launch()
+        script = self.scripts / "run_app.sh"
+        app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
+        log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
+        session = (session_directory / "session.txt").read_text()
+        self.addCleanup(self.terminate_pid, app_pid)
+        self.addCleanup(self.terminate_pid, log_pid)
+        try:
+            for arguments in [
+                ["--stop"],
+                ["--no-build", "--repo", str(self.root / "fixture-repo")],
+            ]:
+                result = subprocess.run(
+                    [script, *arguments],
+                    capture_output=True,
+                    text=True,
+                    env=self.environment | {"TMPDIR": str(temporary_root)},
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode, 75)
+                self.assertIn("owns the runtime session", result.stderr)
+                self.assertTrue(self.process_is_running(app_pid))
+                self.assertTrue(self.process_is_running(log_pid))
+                self.assertEqual((session_directory / "session.txt").read_text(), session)
+                self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
+        finally:
+            process.send_signal(signal.SIGINT)
+            process.communicate(timeout=10)
+
+    def test_run_app_interrupt_preserves_home_when_app_pid_record_is_missing(self) -> None:
+        process, session_directory, temporary_root = self.start_pending_run_app_launch()
+        app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
+        log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
+        self.addCleanup(self.terminate_pid, app_pid)
+        self.addCleanup(self.terminate_pid, log_pid)
+        (session_directory / "app.pid").unlink()
+
+        try:
+            process.send_signal(signal.SIGINT)
+            process.communicate(timeout=10)
+            self.assertTrue(self.process_is_running(app_pid))
+            self.assertTrue((session_directory / "session.txt").exists())
+            self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+
+    def test_run_app_interrupt_preserves_home_when_app_pid_record_is_unverifiable(self) -> None:
+        process, session_directory, temporary_root = self.start_pending_run_app_launch()
+        app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
+        log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
+        self.addCleanup(self.terminate_pid, app_pid)
+        self.addCleanup(self.terminate_pid, log_pid)
+        (session_directory / "app.pid").write_text(f"{app_pid}\n")
+
+        try:
+            process.send_signal(signal.SIGINT)
+            process.communicate(timeout=10)
+            self.assertTrue(self.process_is_running(app_pid))
+            self.assertTrue((session_directory / "session.txt").exists())
+            self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+
+    def test_run_app_interrupt_preserves_home_when_log_pid_record_is_missing(self) -> None:
+        process, session_directory, temporary_root = self.start_pending_run_app_launch()
+        app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
+        log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
+        self.addCleanup(self.terminate_pid, app_pid)
+        self.addCleanup(self.terminate_pid, log_pid)
+        (session_directory / "logstream.pid").unlink()
+
+        try:
+            process.send_signal(signal.SIGINT)
+            process.communicate(timeout=10)
+            self.assertTrue(self.process_is_running(log_pid))
+            self.assertTrue((session_directory / "session.txt").exists())
+            self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=2)
+
+    def test_run_app_preserves_home_when_log_pid_identity_cannot_be_recorded(self) -> None:
         script = self.install_script("run_app.sh")
         temporary_root = self.root / "runtime-tmp"
         temporary_root.mkdir()
@@ -1009,54 +1276,84 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        app_binary = app_contents / "MacOS" / "GitX"
-        app_binary.parent.mkdir(parents=True)
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
-        app_binary.write_text("#!/bin/bash\nexec /bin/sleep 60\n")
-        app_binary.chmod(0o755)
-        log = self.bin / "log"
-        log.write_text("#!/bin/bash\nexec /bin/sleep 60\n")
-        log.chmod(0o755)
-        peekaboo = self.bin / "peekaboo"
-        peekaboo.write_text("#!/bin/bash\nexit 1\n")
-        peekaboo.chmod(0o755)
-        session_directory = self.root / "build" / "Logs" / "run-app"
-        environment = self.environment | {"TMPDIR": str(temporary_root)}
-        process = subprocess.Popen(
-            [script, "--no-build", "--repo", str(repository), "--timeout", "30"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=environment,
-        )
-        app_pid = None
-        try:
-            deadline = time.monotonic() + 8
-            while time.monotonic() < deadline:
-                pid_record = session_directory / "app.pid"
-                if pid_record.exists():
-                    app_pid = int(pid_record.read_text().split("\t", maxsplit=1)[0])
-                    break
-                time.sleep(0.02)
-            self.assertIsNotNone(app_pid)
-            process.send_signal(signal.SIGINT)
-            process.communicate(timeout=10)
+        self.install_sleeping_executable(self.bin / "log")
+        recorded_pid = self.root / "log-process.pid"
+        ps = self.bin / "ps"
+        ps.write_text("#!/bin/bash\n[[ \"$*\" == *'lstart='* ]] && exit 1\nexec /bin/ps \"$@\"\n")
+        ps.chmod(0o755)
 
-            status = subprocess.run(
-                ["ps", "-p", str(app_pid), "-o", "stat="], capture_output=True, text=True
-            ).stdout.strip()
-            self.assertTrue(not status or "Z" in status)
-            self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])
-            self.assertFalse((session_directory / "session.txt").exists())
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.communicate(timeout=2)
-            if app_pid is not None:
-                try:
-                    os.kill(app_pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
+        result = subprocess.run(
+            [script, "--no-build", "--repo", str(repository)],
+            capture_output=True,
+            text=True,
+            env=self.environment | {
+                "TMPDIR": str(temporary_root),
+                "GITX_TEST_PROCESS_PID_FILE": str(recorded_pid),
+            },
+            timeout=10,
+        )
+        deadline = time.monotonic() + 2
+        while not recorded_pid.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        log_pid = int(recorded_pid.read_text())
+        self.addCleanup(self.terminate_pid, log_pid)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.process_is_running(log_pid))
+        self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
+        self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
+
+    def test_run_app_preserves_home_when_session_record_cannot_be_written(self) -> None:
+        script = self.install_script("run_app.sh")
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        repository = self.root / "fixture-repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
+        with (app_contents / "Info.plist").open("wb") as handle:
+            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+        self.install_sleeping_executable(self.bin / "log")
+        session_directory = self.root / "build" / "Logs" / "run-app"
+        mkdir = self.bin / "mkdir"
+        mkdir.write_text(
+            "#!/bin/bash\n"
+            "/bin/mkdir \"$@\" || exit $?\n"
+            "if [[ \"${1:-}\" == '-p' && \"${2:-}\" == \"$GITX_TEST_SESSION_DIR\" ]]; then\n"
+            "  /bin/mkdir \"$GITX_TEST_SESSION_DIR/session.txt\"\n"
+            "fi\n"
+        )
+        mkdir.chmod(0o755)
+        recorded_pid = self.root / "app-process.pid"
+
+        result = subprocess.run(
+            [script, "--no-build", "--repo", str(repository)],
+            capture_output=True,
+            text=True,
+            env=self.environment | {
+                "TMPDIR": str(temporary_root),
+                "GITX_TEST_APP_PID_FILE": str(recorded_pid),
+                "GITX_TEST_SESSION_DIR": str(session_directory),
+            },
+            timeout=10,
+        )
+        deadline = time.monotonic() + 2
+        while not recorded_pid.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(recorded_pid.exists(), result.stdout + result.stderr)
+        app_pid = int(recorded_pid.read_text())
+        self.addCleanup(self.terminate_pid, app_pid)
+        log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
+        self.addCleanup(self.terminate_pid, log_pid)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.process_is_running(app_pid))
+        self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
+        self.assertTrue((session_directory / "session.txt").is_dir())
 
     def test_observe_app_logs_remain_available_after_the_app_exits(self) -> None:
         script = self.install_script("observe_app.sh")

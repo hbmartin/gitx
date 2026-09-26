@@ -2106,7 +2106,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             ],
             forType: dragType
         )
-        XCTAssertEqual(validate(mixedPasteboard, targetRow: 0), .copy)
+        XCTAssertTrue(waitForCondition { validate(mixedPasteboard, targetRow: 0) == .copy })
         waitForIndexUpdate {
             XCTAssertTrue(accept(mixedPasteboard, targetRow: 0))
         }

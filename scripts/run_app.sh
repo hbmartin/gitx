@@ -162,6 +162,18 @@ stop_pid_file() {
 	return 2
 }
 
+process_is_absent() {
+	local pid=$1 process_state
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
+	if kill -0 "$pid" 2>/dev/null; then
+		process_state=$(ps -p "$pid" -o stat= 2>/dev/null) || return 1
+		[[ "$process_state" == *Z* ]]
+		return
+	fi
+	if ps -p "$pid" -o pid= 2>/dev/null | grep -q '[0-9]'; then return 1; fi
+	return 0
+}
+
 recorded_process_is_absent() {
 	local key=$1 pid
 	[[ -f "$session_file" ]] || return 0
@@ -176,8 +188,8 @@ recorded_process_is_absent() {
 		echo "Cannot verify malformed $key in $session_file." >&2
 		return 1
 	fi
-	if kill -0 "$pid" 2>/dev/null || ps -p "$pid" -o pid= 2>/dev/null | grep -q '[0-9]'; then
-		echo "Cannot verify the recorded $key process $pid without its PID identity file." >&2
+	if ! process_is_absent "$pid"; then
+		echo "Cannot verify the recorded $key process $pid is stopped." >&2
 		return 1
 	fi
 	return 0
@@ -217,7 +229,7 @@ stop_session() {
 	else
 		result=$?
 		case "$result" in
-			1) ;; # The recorded identity is proven stale.
+			1) recorded_process_is_absent app_pid || failed=1 ;;
 			4) recorded_process_is_absent app_pid || failed=1 ;;
 			*) failed=1 ;;
 		esac
@@ -227,7 +239,7 @@ stop_session() {
 	else
 		result=$?
 		case "$result" in
-			1) ;; # The recorded identity is proven stale.
+			1) recorded_process_is_absent log_pid || failed=1 ;;
 			4) recorded_process_is_absent log_pid || failed=1 ;;
 			*) failed=1 ;;
 		esac
@@ -235,6 +247,8 @@ stop_session() {
 	if (( stopped )); then
 		echo "Stopped the previous GitX session."
 	fi
+	recorded_process_is_absent app_pid || failed=1
+	recorded_process_is_absent log_pid || failed=1
 	if (( failed == 0 )); then
 		if isolated_home=$(recorded_isolated_home); then
 			remove_isolated_home "$isolated_home"
@@ -252,6 +266,15 @@ stop_session() {
 	fi
 	(( failed == 0 ))
 }
+
+# Keep the shared PID and session records owned by one invocation at a time.
+# The lock is held by this shell's open descriptor through its EXIT trap.
+/bin/mkdir -p "$session_dir" || exit 2
+exec 9>"$session_dir/session.lock" || exit 2
+if ! /usr/bin/lockf -t 0 9; then
+	echo "Another run_app.sh invocation owns the runtime session; retry after it finishes." >&2
+	exit 75
+fi
 
 stop_session
 stop_status=$?
@@ -389,34 +412,46 @@ cleanup_unfinished_launch() {
 	local exit_status=$?
 	trap - EXIT
 	if (( ! launch_finished )); then
-		[[ -z "$app_pid" ]] || kill "$app_pid" 2>/dev/null || true
-		[[ -z "$log_pid" ]] || kill "$log_pid" 2>/dev/null || true
 		if [[ -n "$app_pid" ]] && (( ! session_recorded )); then
 			if write_session_record; then session_recorded=1; fi
 		fi
 		if (( session_recorded )); then
 			stop_session || echo "Launch cleanup could not verify GitX; preserving session and isolated home for retry." >&2
 		else
-			local log_stopped=1
-			if [[ -n "$log_pid" ]]; then
-				if [[ -f "$log_pid_file" ]]; then
-					stop_pid_file "$log_pid_file" log
-					local result=$?
-					(( result == 0 || result == 1 )) || log_stopped=0
-				else
-					kill "$log_pid" 2>/dev/null || true
-					for _ in {1..20}; do
-						if ! kill -0 "$log_pid" 2>/dev/null; then break; fi
-						sleep 0.25
-					done
-					kill -0 "$log_pid" 2>/dev/null && log_stopped=0
-				fi
+			local app_stopped=1 log_stopped=1 result
+			if [[ -f "$app_pid_file" ]]; then
+				stop_pid_file "$app_pid_file" GitX
+				result=$?
+				case "$result" in
+					0) ;;
+					1) [[ -z "$app_pid" ]] || process_is_absent "$app_pid" || app_stopped=0 ;;
+					*) app_stopped=0 ;;
+				esac
+			elif [[ -n "$app_pid" ]] && ! process_is_absent "$app_pid"; then
+				app_stopped=0
 			fi
-			if (( log_stopped )); then
+			if [[ -f "$log_pid_file" ]]; then
+				stop_pid_file "$log_pid_file" log
+				result=$?
+				case "$result" in
+					0) ;;
+					1) [[ -z "$log_pid" ]] || process_is_absent "$log_pid" || log_stopped=0 ;;
+					*) log_stopped=0 ;;
+				esac
+			elif [[ -n "$log_pid" ]]; then
+				log_stopped=0
+			fi
+			if [[ -n "$app_pid" ]] && ! process_is_absent "$app_pid"; then
+				app_stopped=0
+			fi
+			if [[ -n "$log_pid" ]] && ! process_is_absent "$log_pid"; then
+				log_stopped=0
+			fi
+			if (( app_stopped && log_stopped )); then
 				remove_isolated_home "$isolated_home" || true
-				rm -f -- "$log_pid_file"
+				rm -f -- "$app_pid_file" "$log_pid_file"
 			else
-				echo "Launch cleanup could not verify the log process; preserving isolated home." >&2
+				echo "Launch cleanup could not verify both processes stopped; preserving isolated home: $isolated_home" >&2
 			fi
 		fi
 	fi
@@ -471,18 +506,20 @@ log stream \
 	--predicate 'subsystem BEGINSWITH "com.gitx"' \
 	--style compact \
 	--level "$log_level" \
-	>>"$log_file" 2>&1 &
+	>>"$log_file" 2>&1 9>&- &
 log_pid=$!
 if ! write_pid_file "$log_pid_file" "$log_pid"; then
 	echo "Could not record the log stream process identity." >&2
-	kill "$log_pid" 2>/dev/null
 	exit 1
 fi
 
 : >"$stdout_file"
-env "${environment[@]}" "$app_binary" "${arguments[@]}" >>"$stdout_file" 2>&1 &
+env "${environment[@]}" "$app_binary" "${arguments[@]}" >>"$stdout_file" 2>&1 9>&- &
 app_pid=$!
-write_session_record
+if ! write_session_record; then
+	echo "Could not record the GitX session." >&2
+	exit 1
+fi
 session_recorded=1
 if ! write_pid_file "$app_pid_file" "$app_pid"; then
 	echo "Could not record the GitX process identity." >&2
