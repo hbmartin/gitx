@@ -39,6 +39,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 @property (retain) NSMutableData *standardOutputBuffer;
 @property (retain) NSData *standardErrorData;
 @property (retain) NSMutableData *standardErrorBuffer;
+@property BOOL didLogStandardErrorTruncation;
 @property (nullable, retain) NSPipe *outputPipe;
 @property (nullable, retain) NSPipe *errorPipe;
 @property (nullable, retain) NSPipe *inputPipe;
@@ -360,7 +361,10 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 					const uint8_t *bytes = strongSelf.standardErrorBuffer.bytes;
 					while (cut < strongSelf.standardErrorBuffer.length && (bytes[cut] & 0xC0) == 0x80)
 						cut += 1;
-					PBTaskLog(@"task %p: trimming %lu standard error bytes at a UTF-8 boundary", strongSelf, (unsigned long)cut);
+					if (!strongSelf.didLogStandardErrorTruncation) {
+						strongSelf.didLogStandardErrorTruncation = YES;
+						NSLog(@"[GitX] PBTask %p began truncating standard error at the 64 KiB cap; first discarded segment: %lu bytes at a UTF-8 boundary", strongSelf, (unsigned long)cut);
+					}
 					[strongSelf.standardErrorBuffer replaceBytesInRange:NSMakeRange(0, cut) withBytes:NULL length:0];
 				}
 			} else {
