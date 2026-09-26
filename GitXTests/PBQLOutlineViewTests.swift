@@ -80,6 +80,18 @@ final class PBQLOutlineViewTests: XCTestCase {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
+        func writeObject(type: String, data: Data) throws -> String {
+            let task = PBTask(
+                launchPath: "/usr/bin/git",
+                arguments: ["hash-object", "-w", "-t", type, "--literally", "--stdin"],
+                inDirectory: directory.path
+            )
+            task.standardInputData = data
+            try task.launch()
+            return String(decoding: task.standardOutputData, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
         @discardableResult
         private static func runGit(_ arguments: [String], in directory: URL) throws -> String {
             let process = Process()
@@ -190,7 +202,7 @@ final class PBQLOutlineViewTests: XCTestCase {
     func testCommittedFilePromiseExcludesGitDiagnosticsFromBinaryContents() throws {
         let fixture = try GitFixture()
         let script = fixture.directory.appendingPathComponent("diagnostic-git.sh")
-        try "#!/bin/sh\nprintf 'git warning\\n' >&2\nprintf '\\000\\377'\n"
+        try "#!/bin/sh\nprintf 'git warning\\n' >&2\nexec /usr/bin/git \"$@\"\n"
             .write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
         let repository = QuickLookGitRepositoryDescriptor(
@@ -209,7 +221,7 @@ final class PBQLOutlineViewTests: XCTestCase {
 
         try QuickLookFilePromiseExporter().export(descriptor, to: destination)
 
-        XCTAssertEqual(try Data(contentsOf: destination), Data([0x00, 0xFF]))
+        XCTAssertEqual(try Data(contentsOf: destination), Data([0x00, 0x7F, 0xFF]))
     }
 
     func testCommittedDirectoryPromiseIgnoresGitTraceOnStandardError() throws {
@@ -378,9 +390,9 @@ final class PBQLOutlineViewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: parent) }
         let identifier = String(repeating: "a", count: 40)
         let output = parent.appendingPathComponent("binary.dat")
-        let writer = GitBatchBlobWriter(
-            targets: [.init(mode: "100644", objectIdentifier: identifier, path: "binary.dat", outputURL: output)],
-            fileManager: .default
+        let writer = try GitBatchBlobWriter(
+            targets: [.init(mode: "100644", objectIdentifier: identifier, path: "binary.dat", outputPath: "binary.dat")],
+            writer: StagedFileWriter(rootURL: parent)
         )
         let binary = Data([0x00, 0x0A, 0xFF, 0x7F])
         var response = Data("\(identifier) blob \(binary.count)\n".utf8)
@@ -403,7 +415,7 @@ final class PBQLOutlineViewTests: XCTestCase {
             mode: "100644",
             objectIdentifier: identifier,
             path: "missing.txt",
-            outputURL: parent.appendingPathComponent("missing.txt")
+            outputPath: "missing.txt"
         )
         for response in [
             Data("\(identifier) missing\n".utf8),
@@ -412,12 +424,12 @@ final class PBQLOutlineViewTests: XCTestCase {
             Data(repeating: 0x61, count: 257),
             Data("\(identifier) blob 3\nabc!".utf8),
         ] {
-            let writer = GitBatchBlobWriter(targets: [target], fileManager: .default)
+            let writer = try GitBatchBlobWriter(targets: [target], writer: StagedFileWriter(rootURL: parent))
             writer.consume(response)
             XCTAssertThrowsError(try writer.finish()) { error in
                 XCTAssertTrue(error.localizedDescription.contains("invalid blob data"))
             }
-            try? FileManager.default.removeItem(at: target.outputURL)
+            try? FileManager.default.removeItem(at: parent.appendingPathComponent(target.outputPath))
         }
     }
 
@@ -430,10 +442,10 @@ final class PBQLOutlineViewTests: XCTestCase {
             mode: "120000",
             objectIdentifier: identifier,
             path: "Link",
-            outputURL: output
+            outputPath: "Link"
         )
         for payload in [Data(), Data([0]), Data([0xFF]), Data(repeating: 0x61, count: 4097)] {
-            let writer = GitBatchBlobWriter(targets: [target], fileManager: .default)
+            let writer = try GitBatchBlobWriter(targets: [target], writer: StagedFileWriter(rootURL: parent))
             var response = Data("\(identifier) blob \(payload.count)\n".utf8)
             response.append(payload)
             response.append(0x0A)
@@ -858,7 +870,7 @@ final class PBQLOutlineViewTests: XCTestCase {
         )
     }
 
-    func testNestedUntrackedRepositoryPromiseFailsExplicitly() throws {
+    func testNestedUntrackedRepositoryPromiseCopiesFullContents() throws {
         let fixture = try GitFixture()
         let nested = fixture.directory.appendingPathComponent("Documentation/NestedRepo", isDirectory: true)
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
@@ -873,11 +885,237 @@ final class PBQLOutlineViewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: parent) }
         let destination = parent.appendingPathComponent("NestedRepo", isDirectory: true)
 
-        let error = write(provider: provider, with: outline, to: destination)
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("README.md")), Data("nested\n".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.appendingPathComponent(".git").path))
+    }
 
-        XCTAssertTrue(error?.localizedDescription.contains("nested repository") == true)
+    func testCommittedTreeRejectsLinkWithDescendantBeforeWritingOutsideStaging() throws {
+        let fixture = try GitFixture()
+        let link = try fixture.writeObject(type: "blob", data: Data("../../outside".utf8))
+        let childLink = try fixture.writeObject(type: "blob", data: Data("target".utf8))
+        let child = try fixture.writeObject(type: "tree", data: rawTreeEntry("120000", "b", childLink))
+        var directoryData = rawTreeEntry("120000", "a", link)
+        directoryData.append(rawTreeEntry("40000", "a", child))
+        let directory = try fixture.writeObject(type: "tree", data: directoryData)
+        let root = try fixture.writeObject(type: "tree", data: rawTreeEntry("40000", "Documentation", directory))
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let outside = parent.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+        let destination = parent.appendingPathComponent("Documentation", isDirectory: true)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Documentation", isDirectory: true,
+            source: .committedDirectory(repository: repositoryDescriptor(for: fixture), revision: root, path: "Documentation")
+        )
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: destination))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.appendingPathComponent("b").path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: parent.path), [])
+    }
+
+    func testWorkingDirectoryLinkAncestorCannotWriteOutsideStaging() throws {
+        let fixture = try GitFixture()
+        let original = fixture.directory.appendingPathComponent("Documentation/a", isDirectory: true)
+        try FileManager.default.createDirectory(at: original, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(atPath: original.appendingPathComponent("b").path, withDestinationPath: "target")
+        _ = try fixture.commit("Track link below directory")
+        try FileManager.default.removeItem(at: original)
+        let sourceOutside = fixture.directory.deletingLastPathComponent()
+            .appendingPathComponent("gitx-source-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: sourceOutside) }
+        try FileManager.default.createDirectory(at: sourceOutside, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(atPath: sourceOutside.appendingPathComponent("b").path, withDestinationPath: "target")
+        let relativeTarget = "../../\(sourceOutside.lastPathComponent)"
+        try FileManager.default.createSymbolicLink(atPath: original.path, withDestinationPath: relativeTarget)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let outside = parent.appendingPathComponent(sourceOutside.lastPathComponent, isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Working", isDirectory: true,
+            source: .workingDirectory(repository: repositoryDescriptor(for: fixture), rootPath: "Documentation")
+        )
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: destination.appendingPathComponent("a").path), relativeTarget)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.appendingPathComponent("b").path))
+    }
+
+    func testDeletedColonPrefixedIndexPathUsesItsOwnBlob() throws {
+        let fixture = try GitFixture()
+        try fixture.write(Data("correct".utf8), to: "Documentation/0:foo")
+        try fixture.write(Data("wrong".utf8), to: "Documentation/foo")
+        _ = try fixture.commit("Track ambiguous index names")
+        try FileManager.default.removeItem(at: fixture.directory.appendingPathComponent("Documentation/0:foo"))
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Working", isDirectory: true,
+            source: .workingDirectory(repository: repositoryDescriptor(for: fixture), rootPath: "Documentation")
+        )
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("0:foo")), Data("correct".utf8))
+    }
+
+    func testCommittedSingleFilePromisePreservesLinkAndExecutableMode() throws {
+        let fixture = try GitFixture()
+        let link = fixture.directory.appendingPathComponent("Documentation/Run Link")
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "Run.sh")
+        let script = fixture.directory.appendingPathComponent("Documentation/Run.sh")
+        try Data("#!/bin/sh\n".utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let revision = try fixture.commit("Track executable and link")
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        for name in ["Run Link", "Run.sh"] {
+            let descriptor = QuickLookExportDescriptor(
+                fileName: name, isDirectory: false,
+                source: .committedFile(
+                    repository: repositoryDescriptor(for: fixture), revision: revision, path: "Documentation/\(name)"
+                )
+            )
+            try QuickLookFilePromiseExporter().export(descriptor, to: parent.appendingPathComponent(name))
+        }
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: parent.appendingPathComponent("Run Link").path), "Run.sh")
+        let attributes = try FileManager.default.attributesOfItem(atPath: parent.appendingPathComponent("Run.sh").path)
+        XCTAssertEqual(((attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o777, 0o755)
+    }
+
+    func testDeletedExecutableRetainsIndexMode() throws {
+        let fixture = try GitFixture()
+        let script = fixture.directory.appendingPathComponent("Documentation/Run.sh")
+        try Data("#!/bin/sh\n".utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        _ = try fixture.commit("Track executable")
+        try FileManager.default.removeItem(at: script)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Working", isDirectory: true,
+            source: .workingDirectory(repository: repositoryDescriptor(for: fixture), rootPath: "Documentation")
+        )
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+        let attributes = try FileManager.default.attributesOfItem(atPath: destination.appendingPathComponent("Run.sh").path)
+        XCTAssertEqual(((attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0) & 0o777, 0o755)
+    }
+
+    func testWorkingFolderCopiesDescendantSubmoduleCheckout() throws {
+        let fixture = try GitFixture()
+        _ = try fixture.addSubmoduleEntry(path: "Documentation/Vendor")
+        let vendor = fixture.directory.appendingPathComponent("Documentation/Vendor", isDirectory: true)
+        try FileManager.default.createDirectory(at: vendor, withIntermediateDirectories: false)
+        try Data("checkout".utf8).write(to: vendor.appendingPathComponent("README.md"))
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Working", isDirectory: true,
+            source: .workingDirectory(repository: repositoryDescriptor(for: fixture), rootPath: "Documentation")
+        )
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("Vendor/README.md")), Data("checkout".utf8))
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("Café.txt")), Data("promised directory contents\n".utf8))
+    }
+
+    func testWorkingFolderUsesCurrentTypesWhenIndexPathsAreStale() throws {
+        let fixture = try GitFixture()
+        try fixture.write(Data("indexed file".utf8), to: "Documentation/BecomesDirectory")
+        try fixture.write(Data("indexed child".utf8), to: "Documentation/BecomesFile/Old.txt")
+        _ = try fixture.commit("Track both original types")
+        let first = fixture.directory.appendingPathComponent("Documentation/BecomesDirectory")
+        let second = fixture.directory.appendingPathComponent("Documentation/BecomesFile", isDirectory: true)
+        try FileManager.default.removeItem(at: first)
+        try FileManager.default.createDirectory(at: first, withIntermediateDirectories: false)
+        try Data("new child".utf8).write(to: first.appendingPathComponent("New.txt"))
+        try FileManager.default.removeItem(at: second)
+        try Data("new file".utf8).write(to: second)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Working", isDirectory: true,
+            source: .workingDirectory(repository: repositoryDescriptor(for: fixture), rootPath: "Documentation")
+        )
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("BecomesDirectory/New.txt")), Data("new child".utf8))
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("BecomesFile")), Data("new file".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.appendingPathComponent("BecomesFile/Old.txt").path))
+    }
+
+    func testWorkingFolderPreservesNameWhoseGraphemeCrossesSeparator() throws {
+        let fixture = try GitFixture()
+        let name = "\u{301}note.txt"
+        try fixture.write(Data("unicode".utf8), to: "e/\(name)")
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Exported", isDirectory: true)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Exported", isDirectory: true,
+            source: .workingDirectory(repository: repositoryDescriptor(for: fixture), rootPath: "e")
+        )
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent(name)), Data("unicode".utf8))
+    }
+
+    func testExportNeutralizesInheritedGitPathspecModes() throws {
+        let fixture = try GitFixture()
+        let oldGlob = getenv("GIT_GLOB_PATHSPECS").map { String(cString: $0) }
+        let oldCase = getenv("GIT_ICASE_PATHSPECS").map { String(cString: $0) }
+        defer {
+            if let oldGlob {
+                setenv("GIT_GLOB_PATHSPECS", oldGlob, 1)
+            } else {
+                unsetenv("GIT_GLOB_PATHSPECS")
+            }
+            if let oldCase {
+                setenv("GIT_ICASE_PATHSPECS", oldCase, 1)
+            } else {
+                unsetenv("GIT_ICASE_PATHSPECS")
+            }
+        }
+        setenv("GIT_GLOB_PATHSPECS", "1", 1)
+        setenv("GIT_ICASE_PATHSPECS", "1", 1)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Working", isDirectory: true)
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Working", isDirectory: true,
+            source: .workingDirectory(repository: repositoryDescriptor(for: fixture), rootPath: "Documentation")
+        )
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("Café.txt")), Data("promised directory contents\n".utf8))
+    }
+
+    func testInaccessibleWorkingFileFallsBackToItsIndexBlob() throws {
+        let fixture = try GitFixture()
+        let documentation = fixture.directory.appendingPathComponent("Documentation", isDirectory: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: documentation.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: documentation.path) }
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let destination = parent.appendingPathComponent("Café.txt")
+        let entry = QuickLookWorkingTreeEntry(
+            relativePath: "Café.txt", repositoryPath: "Documentation/Café.txt",
+            fileURL: documentation.appendingPathComponent("Café.txt")
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Café.txt", isDirectory: false,
+            source: .workingFile(repository: repositoryDescriptor(for: fixture), entry: entry)
+        )
+
+        try QuickLookFilePromiseExporter().export(descriptor, to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination), Data("promised directory contents\n".utf8))
     }
 
     func testCommittedSubmodulePromiseReportsFailureWithoutDestination() throws {
@@ -920,7 +1158,7 @@ final class PBQLOutlineViewTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
-    func testSelectedWorkingSubmoduleLeafFailsInsteadOfCopyingDirectory() throws {
+    func testSelectedWorkingSubmoduleLeafCopiesCheckout() throws {
         let fixture = try GitFixture()
         _ = try fixture.addSubmoduleEntry(path: "Vendor")
         let vendor = fixture.directory.appendingPathComponent("Vendor", isDirectory: true)
@@ -934,10 +1172,8 @@ final class PBQLOutlineViewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: parent) }
         let destination = parent.appendingPathComponent("Vendor")
 
-        let error = write(provider: provider, with: outline, to: destination)
-
-        XCTAssertTrue(error?.localizedDescription.contains("submodule") == true)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertNil(write(provider: provider, with: outline, to: destination))
+        XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("README.md")), Data("working submodule\n".utf8))
     }
 
     func testMissingCommittedDirectoryReportsFailureWithoutPartialDestination() throws {
@@ -1246,6 +1482,18 @@ final class PBQLOutlineViewTests: XCTestCase {
         tree.path = path
         tree.leaf = leaf
         return tree
+    }
+
+    private func rawTreeEntry(_ mode: String, _ name: String, _ identifier: String) -> Data {
+        var data = Data("\(mode) \(name)".utf8)
+        data.append(0)
+        let bytes = Array(identifier.utf8)
+        for index in stride(from: 0, to: bytes.count, by: 2) {
+            let high = UInt8(String(decoding: bytes[index ... index], as: UTF8.self), radix: 16) ?? 0
+            let low = UInt8(String(decoding: bytes[index + 1 ... index + 1], as: UTF8.self), radix: 16) ?? 0
+            data.append(high << 4 | low)
+        }
+        return data
     }
 
     private func findTree(path: String, below tree: PBGitTree) -> PBGitTree? {

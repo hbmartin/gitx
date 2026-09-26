@@ -1181,6 +1181,36 @@ class ScriptEntrypointTests(unittest.TestCase):
                 process.kill()
                 process.communicate(timeout=2)
 
+    def test_run_app_concurrent_invocations_cannot_take_over_pending_session(self) -> None:
+        process, session_directory, temporary_root = self.start_pending_run_app_launch()
+        script = self.scripts / "run_app.sh"
+        app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
+        log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
+        session = (session_directory / "session.txt").read_text()
+        self.addCleanup(self.terminate_pid, app_pid)
+        self.addCleanup(self.terminate_pid, log_pid)
+        try:
+            for arguments in [
+                ["--stop"],
+                ["--no-build", "--repo", str(self.root / "fixture-repo")],
+            ]:
+                result = subprocess.run(
+                    [script, *arguments],
+                    capture_output=True,
+                    text=True,
+                    env=self.environment | {"TMPDIR": str(temporary_root)},
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode, 75)
+                self.assertIn("owns the runtime session", result.stderr)
+                self.assertTrue(self.process_is_running(app_pid))
+                self.assertTrue(self.process_is_running(log_pid))
+                self.assertEqual((session_directory / "session.txt").read_text(), session)
+                self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
+        finally:
+            process.send_signal(signal.SIGINT)
+            process.communicate(timeout=10)
+
     def test_run_app_interrupt_preserves_home_when_app_pid_record_is_missing(self) -> None:
         process, session_directory, temporary_root = self.start_pending_run_app_launch()
         app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])

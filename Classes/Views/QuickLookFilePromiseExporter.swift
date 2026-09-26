@@ -129,6 +129,7 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
     case unsupportedNestedRepository(String)
     case unrepresentablePath
     case missingTree(String)
+    case filesystem(path: String, code: Int32)
 
     var errorDescription: String? {
         switch self {
@@ -152,6 +153,106 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
             "Git returned a file name that GitX cannot represent as Unicode."
         case let .missingTree(path):
             "Git could not find any files below \(path)."
+        case let .filesystem(path, code):
+            "GitX could not access \(path): \(NSError(domain: NSPOSIXErrorDomain, code: Int(code)).localizedDescription)."
+        }
+    }
+}
+
+/// All destination paths are resolved from this directory descriptor. In particular,
+/// openat with O_NOFOLLOW prevents a repository link from becoming a parent of a write.
+// swift6-safety-justification: The descriptor is immutable and used serially by one export and its PBTask chunk callback.
+final nonisolated class StagedFileWriter: @unchecked Sendable {
+    private let root: Int32
+
+    init(rootURL: URL) throws {
+        root = open(rootURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        if root < 0 {
+            throw QuickLookExportError.filesystem(path: rootURL.path, code: errno)
+        }
+    }
+
+    deinit { close(root) }
+
+    private func components(_ path: String) throws -> [String] {
+        let pieces = path.utf8.split(separator: 47, omittingEmptySubsequences: false)
+        guard !pieces.isEmpty else { throw QuickLookExportError.unsafePath(path) }
+        return try pieces.map { bytes in
+            guard !bytes.isEmpty, !bytes.elementsEqual([UInt8(46)]),
+                  !bytes.elementsEqual([UInt8(46), 46]), !bytes.contains(0),
+                  let component = String(bytes: bytes, encoding: .utf8)
+            else { throw QuickLookExportError.unsafePath(path) }
+            return component
+        }
+    }
+
+    private func parent(of path: String, create: Bool) throws -> (Int32, String) {
+        let parts = try components(path)
+        var directory = dup(root)
+        if directory < 0 {
+            throw QuickLookExportError.filesystem(path: path, code: errno)
+        }
+        do {
+            for component in parts.dropLast() {
+                var next = openat(directory, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                if next < 0 && errno == ENOENT && create {
+                    if mkdirat(directory, component, 0o755) != 0 && errno != EEXIST {
+                        throw QuickLookExportError.filesystem(path: path, code: errno)
+                    }
+                    next = openat(directory, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+                }
+                if next < 0 {
+                    throw QuickLookExportError.filesystem(path: path, code: errno)
+                }
+                close(directory)
+                directory = next
+            }
+            return (directory, parts[parts.count - 1])
+        } catch {
+            close(directory)
+            throw error
+        }
+    }
+
+    func createDirectory(_ path: String) throws {
+        let (directory, name) = try parent(of: path, create: true)
+        defer { close(directory) }
+        if mkdirat(directory, name, 0o755) != 0 && errno != EEXIST {
+            throw QuickLookExportError.filesystem(path: path, code: errno)
+        }
+        let descriptor = openat(directory, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        if descriptor < 0 {
+            throw QuickLookExportError.filesystem(path: path, code: errno)
+        }
+        close(descriptor)
+    }
+
+    func openFile(_ path: String, permissions: mode_t = 0o644) throws -> FileHandle {
+        let (directory, name) = try parent(of: path, create: true)
+        defer { close(directory) }
+        let descriptor = openat(directory, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        if descriptor < 0 {
+            throw QuickLookExportError.filesystem(path: path, code: errno)
+        }
+        if fchmod(descriptor, permissions) != 0 {
+            let code = errno
+            close(descriptor)
+            throw QuickLookExportError.filesystem(path: path, code: code)
+        }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    }
+
+    func write(_ data: Data, to path: String, permissions: mode_t = 0o644) throws {
+        let handle = try openFile(path, permissions: permissions)
+        try handle.write(contentsOf: data)
+        try handle.close()
+    }
+
+    func createSymbolicLink(_ path: String, destination: String) throws {
+        let (directory, name) = try parent(of: path, create: true)
+        defer { close(directory) }
+        if symlinkat(destination, directory, name) != 0 {
+            throw QuickLookExportError.filesystem(path: path, code: errno)
         }
     }
 }
@@ -162,7 +263,7 @@ final nonisolated class GitBatchBlobWriter: @unchecked Sendable {
         let mode: String
         let objectIdentifier: String
         let path: String
-        let outputURL: URL
+        let outputPath: String
     }
 
     private enum State {
@@ -175,7 +276,7 @@ final nonisolated class GitBatchBlobWriter: @unchecked Sendable {
     private static let maximumSymbolicLinkBytes = 4096
 
     private let targets: [Target]
-    private let fileManager: FileManager
+    private let writer: StagedFileWriter
     private var buffer = Data()
     private var state: State = .header
     private var targetIndex = 0
@@ -183,9 +284,9 @@ final nonisolated class GitBatchBlobWriter: @unchecked Sendable {
     private var symbolicLinkData = Data()
     private var failure: Error?
 
-    init(targets: [Target], fileManager: FileManager) {
+    init(targets: [Target], writer: StagedFileWriter) {
         self.targets = targets
-        self.fileManager = fileManager
+        self.writer = writer
     }
 
     func consume(_ chunk: Data) {
@@ -284,14 +385,7 @@ final nonisolated class GitBatchBlobWriter: @unchecked Sendable {
     }
 
     private func beginRegularFile(_ target: Target) throws {
-        try fileManager.createDirectory(
-            at: target.outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        guard !fileManager.fileExists(atPath: target.outputURL.path),
-              fileManager.createFile(atPath: target.outputURL.path, contents: nil)
-        else { throw QuickLookExportError.malformedTreeEntry }
-        outputHandle = try FileHandle(forWritingTo: target.outputURL)
+        outputHandle = try writer.openFile(target.outputPath, permissions: target.mode == "100755" ? 0o755 : 0o644)
     }
 
     private func finishTarget(_ target: Target) throws {
@@ -300,23 +394,13 @@ final nonisolated class GitBatchBlobWriter: @unchecked Sendable {
                   !symbolicLinkData.contains(0),
                   let destination = String(data: symbolicLinkData, encoding: .utf8)
             else { throw QuickLookExportError.invalidSymbolicLink(target.path) }
-            try fileManager.createDirectory(
-                at: target.outputURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try fileManager.createSymbolicLink(
-                atPath: target.outputURL.path,
-                withDestinationPath: destination
-            )
+            try writer.createSymbolicLink(target.outputPath, destination: destination)
             symbolicLinkData.removeAll(keepingCapacity: true)
             return
         }
         guard let outputHandle else { throw QuickLookExportError.malformedBlobResponse(target.path) }
         try outputHandle.close()
         self.outputHandle = nil
-        if target.mode == "100755" {
-            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target.outputURL.path)
-        }
     }
 }
 
@@ -327,6 +411,11 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         let type: String
         let objectIdentifier: String
         let path: String
+    }
+
+    private struct IndexEntry {
+        let mode: String
+        let objectIdentifier: String
     }
 
     private let fileManager: FileManager
@@ -349,7 +438,8 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
 
         do {
             try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: false)
-            try exportSource(descriptor.source, to: stagedOutputURL)
+            let writer = try StagedFileWriter(rootURL: stagingURL)
+            try exportSource(descriptor.source, writer: writer, outputPath: "promised-output")
             try fileManager.moveItem(at: stagedOutputURL, to: destinationURL)
             movedOutput = true
         } catch {
@@ -378,28 +468,23 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         quickLookExportLogger.info("Exported promised item to \(destinationURL.path, privacy: .public)")
     }
 
-    private func exportSource(_ source: QuickLookExportSource, to outputURL: URL) throws {
+    private func exportSource(_ source: QuickLookExportSource, writer: StagedFileWriter, outputPath: String) throws {
         switch source {
         case let .committedFile(repository, revision, path):
             try validate(path: path)
-            let data: Data
-            do {
-                data = try runGit(repository: repository, arguments: ["cat-file", "blob", "\(revision):\(path)"], path: path)
-            } catch {
-                if let treeData = try? runGit(
-                    repository: repository,
-                    arguments: ["ls-tree", "-z", revision, "--", path],
-                    path: path
-                ), let entries = try? parseTreeEntries(treeData),
-                entries.contains(where: { $0.path == path && $0.type == "commit" }) {
-                    throw QuickLookExportError.unsupportedSubmodule(path)
-                }
-                throw error
+            let entries = try parseTreeEntries(runGit(
+                repository: repository, arguments: ["ls-tree", "-z", revision, "--", path], path: path
+            ))
+            guard let entry = entries.first(where: { $0.path.utf8.elementsEqual(path.utf8) }) else {
+                throw QuickLookExportError.missingTree(path)
             }
-            try createParentAndWrite(data, to: outputURL)
+            if entry.type == "commit" {
+                throw QuickLookExportError.unsupportedSubmodule(path)
+            }
+            try writeBlob(entry, repository: repository, writer: writer, outputPath: outputPath)
         case let .committedDirectory(repository, revision, path):
             try validate(path: path)
-            try fileManager.createDirectory(at: outputURL, withIntermediateDirectories: false)
+            try writer.createDirectory(outputPath)
             let treeData = try runGit(
                 repository: repository,
                 arguments: ["ls-tree", "-r", "-z", revision, "--", path],
@@ -417,48 +502,89 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
                 }
                 throw QuickLookExportError.missingTree(path)
             }
-            let prefix = path + "/"
+            let prefix = Array((path + "/").utf8)
             let targets = try entries.map { entry -> GitBatchBlobWriter.Target in
                 if entry.type == "commit" {
                     throw QuickLookExportError.unsupportedSubmodule(entry.path)
                 }
                 let identifier = entry.objectIdentifier.utf8
-                guard entry.type == "blob",
-                      identifier.count == 40 || identifier.count == 64,
-                      identifier.allSatisfy({ (48 ... 57).contains($0) || (97 ... 102).contains($0) })
+                guard entry.type == "blob", ["100644", "100755", "120000"].contains(entry.mode),
+                      validObjectIdentifier(identifier)
                 else {
                     throw QuickLookExportError.malformedTreeEntry
                 }
-                guard entry.path.hasPrefix(prefix) else { throw QuickLookExportError.unsafePath(entry.path) }
-                let relativePath = String(entry.path.dropFirst(prefix.count))
+                let pathBytes = Array(entry.path.utf8)
+                guard pathBytes.starts(with: prefix),
+                      let relativePath = String(bytes: pathBytes.dropFirst(prefix.count), encoding: .utf8)
+                else { throw QuickLookExportError.unsafePath(entry.path) }
                 try validate(path: relativePath)
                 return GitBatchBlobWriter.Target(
                     mode: entry.mode,
                     objectIdentifier: entry.objectIdentifier,
                     path: entry.path,
-                    outputURL: outputURL.appendingPathComponent(relativePath)
+                    outputPath: outputPath + "/" + relativePath
                 )
+            }
+            let paths = Set(targets.map { Data($0.outputPath.utf8) })
+            guard paths.count == targets.count else { throw QuickLookExportError.malformedTreeEntry }
+            for target in targets {
+                var parent = target.outputPath
+                while let slash = parent.utf8.lastIndex(of: 47) {
+                    parent = String(decoding: parent.utf8[..<slash], as: UTF8.self)
+                    if paths.contains(Data(parent.utf8)) {
+                        throw QuickLookExportError.malformedTreeEntry
+                    }
+                }
             }
             let regular = targets.filter { $0.mode != "120000" }
             let links = targets.filter { $0.mode == "120000" }
-            try exportCommittedBlobs(regular + links, repository: repository, path: path)
+            try exportCommittedBlobs(regular + links, repository: repository, path: path, writer: writer)
         case let .workingFile(repository, entry):
-            let modes = try workingIndexModes(repository: repository, rootPath: entry.repositoryPath)
-            try exportWorkingEntry(entry, repository: repository, indexMode: modes[entry.repositoryPath], to: outputURL)
+            let index = try workingIndexEntries(repository: repository, rootPath: entry.repositoryPath)
+            let observed = Result { try fileType(at: entry.fileURL) }
+            try exportWorkingEntry(entry, repository: repository, indexEntry: index[Data(entry.repositoryPath.utf8)],
+                                   observed: observed, writer: writer, outputPath: outputPath)
         case let .workingDirectory(repository, rootPath):
             try validate(path: rootPath)
-            let modes = try workingIndexModes(repository: repository, rootPath: rootPath)
+            let index = try workingIndexEntries(repository: repository, rootPath: rootPath)
             let entries = try workingEntries(repository: repository, rootPath: rootPath)
-            try fileManager.createDirectory(at: outputURL, withIntermediateDirectories: false)
-            let regular = try entries.filter { try !isSymbolicLink(at: $0.fileURL, indexMode: modes[$0.repositoryPath]) }
-            let links = try entries.filter { try isSymbolicLink(at: $0.fileURL, indexMode: modes[$0.repositoryPath]) }
-            for entry in regular + links {
+            try writer.createDirectory(outputPath)
+            var exportedLeaves = Set<Data>()
+            for entry in entries.sorted(by: { $0.repositoryPath.utf8.lexicographicallyPrecedes($1.repositoryPath.utf8) }) {
+                if hasAncestor(entry.repositoryPath, in: exportedLeaves) {
+                    quickLookExportLogger.info("Skipping stale descendant \(entry.repositoryPath, privacy: .public)")
+                    continue
+                }
+                if entry.relativePath.isEmpty {
+                    quickLookExportLogger.info("Copying selected nested repository \(rootPath, privacy: .public)")
+                    guard let kind = try fileType(at: entry.fileURL) else {
+                        throw QuickLookExportError.filesystem(path: entry.repositoryPath, code: ENOENT)
+                    }
+                    try copyWorkingItem(at: entry.fileURL, kind: kind, writer: writer, outputPath: outputPath)
+                    exportedLeaves.insert(Data(entry.repositoryPath.utf8))
+                    continue
+                }
+                let observed = Result { try fileType(at: entry.fileURL) }
+                let kind = try? observed.get()
+                if kind == mode_t(S_IFDIR) && index[Data(entry.repositoryPath.utf8)] != nil {
+                    // An indexed file became a directory; copy its current contents.
+                    quickLookExportLogger.info("Copying directory that replaced indexed file \(entry.repositoryPath, privacy: .public)")
+                    try copyWorkingItem(at: entry.fileURL, kind: mode_t(S_IFDIR), writer: writer,
+                                        outputPath: outputPath + "/" + entry.relativePath)
+                    exportedLeaves.insert(Data(entry.repositoryPath.utf8))
+                    continue
+                }
                 try exportWorkingEntry(
                     entry,
                     repository: repository,
-                    indexMode: modes[entry.repositoryPath],
-                    to: outputURL.appendingPathComponent(entry.relativePath)
+                    indexEntry: index[Data(entry.repositoryPath.utf8)],
+                    observed: observed,
+                    writer: writer,
+                    outputPath: outputPath + "/" + entry.relativePath
                 )
+                if kind == mode_t(S_IFLNK) || kind == mode_t(S_IFREG) || kind == mode_t(S_IFDIR) {
+                    exportedLeaves.insert(Data(entry.repositoryPath.utf8))
+                }
             }
         case let .unavailable(message):
             throw QuickLookExportError.unavailable(message)
@@ -468,37 +594,46 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
     private func exportWorkingEntry(
         _ entry: QuickLookWorkingTreeEntry,
         repository: QuickLookGitRepositoryDescriptor,
-        indexMode: String?,
-        to outputURL: URL
+        indexEntry: IndexEntry?,
+        observed: Result<mode_t?, Error>,
+        writer: StagedFileWriter,
+        outputPath: String
     ) throws {
         try validate(path: entry.relativePath)
-        if indexMode == "160000" {
-            throw QuickLookExportError.unsupportedSubmodule(entry.repositoryPath)
-        }
-        try fileManager.createDirectory(
-            at: outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if let mode = try fileType(at: entry.fileURL) {
-            guard mode != S_IFDIR else {
-                throw QuickLookExportError.unsupportedNestedRepository(entry.repositoryPath)
+        let existingType: mode_t?
+        switch observed {
+        case let .success(kind):
+            existingType = kind
+        case let .failure(error):
+            if indexEntry == nil {
+                throw error
             }
-            try fileManager.copyItem(at: entry.fileURL, to: outputURL)
+            existingType = nil
+        }
+        if let existingType {
+            try copyWorkingItem(at: entry.fileURL, kind: existingType, writer: writer, outputPath: outputPath)
             return
+        }
+        guard let indexEntry else {
+            throw QuickLookExportError.filesystem(path: entry.repositoryPath, code: ENOENT)
+        }
+        quickLookExportLogger.info("Restoring unavailable working entry from index \(entry.repositoryPath, privacy: .public)")
+        if indexEntry.mode == "160000" {
+            throw QuickLookExportError.unsupportedSubmodule(entry.repositoryPath)
         }
         let data = try runGit(
             repository: repository,
-            arguments: ["cat-file", "blob", ":\(entry.repositoryPath)"],
+            arguments: ["cat-file", "blob", indexEntry.objectIdentifier],
             path: entry.repositoryPath
         )
-        if indexMode == "120000" {
+        if indexEntry.mode == "120000" {
             guard !data.isEmpty, data.count <= 4096, !data.contains(0),
                   let destination = String(data: data, encoding: .utf8)
             else { throw QuickLookExportError.invalidSymbolicLink(entry.repositoryPath) }
-            try fileManager.createSymbolicLink(atPath: outputURL.path, withDestinationPath: destination)
+            try writer.createSymbolicLink(outputPath, destination: destination)
             return
         }
-        try data.write(to: outputURL, options: .atomic)
+        try writer.write(data, to: outputPath, permissions: indexEntry.mode == "100755" ? 0o755 : 0o644)
     }
 
     private func workingEntries(
@@ -513,41 +648,50 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             arguments: ["ls-files", "-co", "--exclude-standard", "-z", "--", rootPath],
             path: rootPath
         )
-        var seen = Set<String>()
+        var seen = Set<Data>()
         var entries: [QuickLookWorkingTreeEntry] = []
         for record in try nulRecords(visible) {
             guard let path = String(data: record, encoding: .utf8) else {
                 throw QuickLookExportError.unrepresentablePath
             }
-            if path.hasSuffix("/") {
-                throw QuickLookExportError.unsupportedNestedRepository(String(path.dropLast()))
+            let normalizedPath = path.hasSuffix("/") ? String(path.dropLast()) : path
+            if path.hasSuffix("/"), normalizedPath.utf8.elementsEqual(rootPath.utf8) {
+                guard seen.insert(Data(normalizedPath.utf8)).inserted else { continue }
+                entries.append(QuickLookWorkingTreeEntry(
+                    relativePath: "", repositoryPath: normalizedPath,
+                    fileURL: URL(fileURLWithPath: workingDirectoryPath).appendingPathComponent(normalizedPath)
+                ))
+                continue
             }
-            guard path.hasPrefix(rootPath + "/") else {
+            let prefix = Array((rootPath + "/").utf8)
+            let pathBytes = Array(normalizedPath.utf8)
+            guard pathBytes.starts(with: prefix),
+                  let relativePath = String(bytes: pathBytes.dropFirst(prefix.count), encoding: .utf8)
+            else {
                 throw QuickLookExportError.unsafePath(path)
             }
-            let relativePath = String(path.dropFirst(rootPath.count + 1))
             try validate(path: relativePath)
-            guard seen.insert(path).inserted else { continue }
+            guard seen.insert(Data(normalizedPath.utf8)).inserted else { continue }
             entries.append(QuickLookWorkingTreeEntry(
                 relativePath: relativePath,
-                repositoryPath: path,
-                fileURL: URL(fileURLWithPath: workingDirectoryPath).appendingPathComponent(path)
+                repositoryPath: normalizedPath,
+                fileURL: URL(fileURLWithPath: workingDirectoryPath).appendingPathComponent(normalizedPath)
             ))
         }
         guard !entries.isEmpty else { throw QuickLookExportError.missingTree(rootPath) }
         return entries
     }
 
-    private func workingIndexModes(
+    private func workingIndexEntries(
         repository: QuickLookGitRepositoryDescriptor,
         rootPath: String
-    ) throws -> [String: String] {
+    ) throws -> [Data: IndexEntry] {
         let data = try runGit(
             repository: repository,
             arguments: ["ls-files", "--stage", "-z", "--", rootPath],
             path: rootPath
         )
-        var modes: [String: String] = [:]
+        var entries: [Data: IndexEntry] = [:]
         for record in try nulRecords(data) {
             guard let tab = record.firstIndex(of: 9),
                   let header = String(data: record[..<tab], encoding: .utf8),
@@ -555,9 +699,16 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             else { throw QuickLookExportError.unrepresentablePath }
             let parts = header.split(separator: " ")
             guard parts.count == 3 else { throw QuickLookExportError.malformedTreeEntry }
-            modes[path] = String(parts[0])
+            if parts[2] != "0" {
+                continue
+            }
+            let mode = String(parts[0])
+            guard ["100644", "100755", "120000", "160000"].contains(mode),
+                  validObjectIdentifier(parts[1].utf8)
+            else { throw QuickLookExportError.malformedTreeEntry }
+            entries[Data(path.utf8)] = IndexEntry(mode: mode, objectIdentifier: String(parts[1]))
         }
-        return modes
+        return entries
     }
 
     private func nulRecords(_ data: Data) throws -> [Data] {
@@ -575,25 +726,86 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         if result == 0 {
             return status.st_mode & mode_t(S_IFMT)
         }
-        if errno == ENOENT {
+        if errno == ENOENT || errno == ENOTDIR {
             return nil
         }
-        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        throw QuickLookExportError.filesystem(path: url.path, code: errno)
     }
 
-    private func isSymbolicLink(at url: URL, indexMode: String?) throws -> Bool {
-        if let type = try fileType(at: url) {
-            return type == mode_t(S_IFLNK)
+    private func validObjectIdentifier<S: Collection>(_ bytes: S) -> Bool where S.Element == UInt8 {
+        (bytes.count == 40 || bytes.count == 64)
+            && bytes.allSatisfy { (48 ... 57).contains($0) || (97 ... 102).contains($0) }
+    }
+
+    private func hasAncestor(_ path: String, in leaves: Set<Data>) -> Bool {
+        let bytes = Array(path.utf8)
+        for index in bytes.indices where bytes[index] == 47 {
+            if leaves.contains(Data(bytes[..<index])) {
+                return true
+            }
         }
-        return indexMode == "120000"
+        return false
     }
 
-    private func createParentAndWrite(_ data: Data, to outputURL: URL) throws {
-        try fileManager.createDirectory(
-            at: outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try data.write(to: outputURL, options: .atomic)
+    private func writeBlob(
+        _ entry: GitTreeEntry,
+        repository: QuickLookGitRepositoryDescriptor,
+        writer: StagedFileWriter,
+        outputPath: String
+    ) throws {
+        guard entry.type == "blob", ["100644", "100755", "120000"].contains(entry.mode),
+              validObjectIdentifier(entry.objectIdentifier.utf8)
+        else { throw QuickLookExportError.malformedTreeEntry }
+        let data = try runGit(repository: repository, arguments: ["cat-file", "blob", entry.objectIdentifier], path: entry.path)
+        if entry.mode == "120000" {
+            guard !data.isEmpty, data.count <= 4096, !data.contains(0),
+                  let destination = String(data: data, encoding: .utf8)
+            else { throw QuickLookExportError.invalidSymbolicLink(entry.path) }
+            try writer.createSymbolicLink(outputPath, destination: destination)
+        } else {
+            try writer.write(data, to: outputPath, permissions: entry.mode == "100755" ? 0o755 : 0o644)
+        }
+    }
+
+    private func copyWorkingItem(at source: URL, kind: mode_t, writer: StagedFileWriter, outputPath: String) throws {
+        switch kind {
+        case mode_t(S_IFDIR):
+            try writer.createDirectory(outputPath)
+            for name in try fileManager.contentsOfDirectory(atPath: source.path) {
+                try validate(path: name)
+                let child = source.appendingPathComponent(name)
+                guard let childKind = try fileType(at: child) else {
+                    throw QuickLookExportError.filesystem(path: child.path, code: ENOENT)
+                }
+                try copyWorkingItem(
+                    at: child, kind: childKind, writer: writer, outputPath: outputPath + "/" + name
+                )
+            }
+        case mode_t(S_IFLNK):
+            let destination = try fileManager.destinationOfSymbolicLink(atPath: source.path)
+            try writer.createSymbolicLink(outputPath, destination: destination)
+        case mode_t(S_IFREG):
+            let descriptor = open(source.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+            if descriptor < 0 {
+                throw QuickLookExportError.filesystem(path: source.path, code: errno)
+            }
+            let input = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? input.close() }
+            var status = stat()
+            guard fstat(descriptor, &status) == 0 else {
+                throw QuickLookExportError.filesystem(path: source.path, code: errno)
+            }
+            guard status.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else {
+                throw QuickLookExportError.filesystem(path: source.path, code: EAGAIN)
+            }
+            let output = try writer.openFile(outputPath, permissions: status.st_mode & 0o777)
+            while let chunk = try input.read(upToCount: 65536), !chunk.isEmpty {
+                try output.write(contentsOf: chunk)
+            }
+            try output.close()
+        default:
+            throw QuickLookExportError.filesystem(path: source.path, code: EINVAL)
+        }
     }
 
     private func runGit(
@@ -614,20 +826,21 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
     private func exportCommittedBlobs(
         _ targets: [GitBatchBlobWriter.Target],
         repository: QuickLookGitRepositoryDescriptor,
-        path: String
+        path: String,
+        writer: StagedFileWriter
     ) throws {
         let task = makeGitTask(repository: repository, arguments: ["cat-file", "--batch"])
         task.capturesStandardOutput = false
         task.standardInputData = Data((targets.map(\.objectIdentifier).joined(separator: "\n") + "\n").utf8)
-        let writer = GitBatchBlobWriter(targets: targets, fileManager: fileManager)
+        let batchWriter = GitBatchBlobWriter(targets: targets, writer: writer)
         quickLookExportLogger.info("Streaming \(targets.count) committed blobs for \(path, privacy: .public)")
         do {
-            try task.launch(outputChunkHandler: { writer.consume($0) })
+            try task.launch(outputChunkHandler: { batchWriter.consume($0) })
             logGitDiagnostics(task.standardErrorData, path: path)
         } catch {
             throw QuickLookExportError.commandFailed(path: path, detail: commandFailureDetail(task, error: error))
         }
-        try writer.finish()
+        try batchWriter.finish()
     }
 
     private func commandFailureDetail(_ task: PBTask, error: Error) -> String {
@@ -659,6 +872,9 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
             "GIT_ASKPASS": "/usr/bin/false",
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_LITERAL_PATHSPECS": "1",
+            "GIT_GLOB_PATHSPECS": "0",
+            "GIT_ICASE_PATHSPECS": "0",
+            "GIT_NOGLOB_PATHSPECS": "0",
         ]
         return task
     }

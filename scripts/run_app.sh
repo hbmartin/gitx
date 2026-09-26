@@ -267,6 +267,15 @@ stop_session() {
 	(( failed == 0 ))
 }
 
+# Keep the shared PID and session records owned by one invocation at a time.
+# The lock is held by this shell's open descriptor through its EXIT trap.
+/bin/mkdir -p "$session_dir" || exit 2
+exec 9>"$session_dir/session.lock" || exit 2
+if ! /usr/bin/lockf -t 0 9; then
+	echo "Another run_app.sh invocation owns the runtime session; retry after it finishes." >&2
+	exit 75
+fi
+
 stop_session
 stop_status=$?
 if (( stop_status != 0 )); then
@@ -497,7 +506,7 @@ log stream \
 	--predicate 'subsystem BEGINSWITH "com.gitx"' \
 	--style compact \
 	--level "$log_level" \
-	>>"$log_file" 2>&1 &
+	>>"$log_file" 2>&1 9>&- &
 log_pid=$!
 if ! write_pid_file "$log_pid_file" "$log_pid"; then
 	echo "Could not record the log stream process identity." >&2
@@ -505,7 +514,7 @@ if ! write_pid_file "$log_pid_file" "$log_pid"; then
 fi
 
 : >"$stdout_file"
-env "${environment[@]}" "$app_binary" "${arguments[@]}" >>"$stdout_file" 2>&1 &
+env "${environment[@]}" "$app_binary" "${arguments[@]}" >>"$stdout_file" 2>&1 9>&- &
 app_pid=$!
 if ! write_session_record; then
 	echo "Could not record the GitX session." >&2
