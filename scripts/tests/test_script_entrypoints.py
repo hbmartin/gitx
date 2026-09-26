@@ -1306,6 +1306,53 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
         self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 
+    def test_run_app_removes_home_when_log_exits_before_identity_can_be_recorded(self) -> None:
+        script = self.install_script("run_app.sh")
+        temporary_root = self.root / "runtime-tmp"
+        temporary_root.mkdir()
+        repository = self.root / "fixture-repo"
+        repository.mkdir()
+        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary.parent.mkdir(parents=True)
+        app_binary.write_text("#!/bin/bash\nexit 0\n")
+        app_binary.chmod(0o755)
+        with (app_contents / "Info.plist").open("wb") as handle:
+            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+        log = self.bin / "log"
+        log.write_text("#!/bin/bash\nexit 0\n")
+        log.chmod(0o755)
+        ps = self.bin / "ps"
+        ps.write_text(
+            "#!/bin/bash\n"
+            "if [[ \"$*\" == *'lstart='* ]]; then\n"
+            "  for _ in {1..200}; do\n"
+            "    state=$(/bin/ps -p \"$2\" -o stat= 2>/dev/null)\n"
+            "    [[ -z \"$state\" || \"$state\" == *Z* ]] && exit 1\n"
+            "    sleep 0.01\n"
+            "  done\n"
+            "  exit 2\n"
+            "fi\n"
+            "exec /bin/ps \"$@\"\n"
+        )
+        ps.chmod(0o755)
+
+        result = subprocess.run(
+            [script, "--no-build", "--repo", str(repository)],
+            capture_output=True,
+            text=True,
+            env=self.environment | {"TMPDIR": str(temporary_root)},
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("Could not record the log stream process identity.", result.stderr)
+        self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])
+        session_directory = self.root / "build" / "Logs" / "run-app"
+        self.assertFalse((session_directory / "session.txt").exists())
+        self.assertFalse((session_directory / "logstream.pid").exists())
+
     def test_run_app_preserves_home_when_session_record_cannot_be_written(self) -> None:
         script = self.install_script("run_app.sh")
         temporary_root = self.root / "runtime-tmp"
