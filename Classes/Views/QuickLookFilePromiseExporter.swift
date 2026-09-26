@@ -126,7 +126,6 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
     case malformedBlobResponse(String)
     case invalidSymbolicLink(String)
     case unsupportedSubmodule(String)
-    case unsupportedNestedRepository(String)
     case unrepresentablePath
     case missingTree(String)
     case filesystem(path: String, code: Int32)
@@ -147,8 +146,6 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
             "Git returned an invalid symbolic link while exporting \(path)."
         case let .unsupportedSubmodule(path):
             "GitX cannot export the submodule at \(path) as a promised file."
-        case let .unsupportedNestedRepository(path):
-            "GitX cannot export the nested repository at \(path) as a promised directory."
         case .unrepresentablePath:
             "Git returned a file name that GitX cannot represent as Unicode."
         case let .missingTree(path):

@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import UniformTypeIdentifiers
 import XCTest
 
@@ -455,6 +456,93 @@ final class PBQLOutlineViewTests: XCTestCase {
                 XCTAssertTrue(error.localizedDescription.contains("invalid symbolic link"))
             }
             XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+        }
+    }
+
+    func testStagedWriterRejectsUnsafeComponentsAndLinkParents() throws {
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let outside = parent.appendingPathComponent("outside", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+        let writer = try StagedFileWriter(rootURL: parent)
+        try writer.createSymbolicLink("link", destination: outside.path)
+
+        for path in ["", "../escape", "folder//child", "link/escape"] {
+            XCTAssertThrowsError(try writer.write(Data("escape".utf8), to: path), path)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.appendingPathComponent("escape").path))
+        try writer.write(Data("first".utf8), to: "file")
+        XCTAssertThrowsError(try writer.write(Data("second".utf8), to: "file"))
+        XCTAssertThrowsError(try writer.createSymbolicLink("file", destination: "target"))
+        XCTAssertThrowsError(try writer.createDirectory("file"))
+        XCTAssertThrowsError(try StagedFileWriter(rootURL: parent.appendingPathComponent("missing")))
+    }
+
+    func testStagedWriterReportsDirectoryCreationFailure() throws {
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let writer = try StagedFileWriter(rootURL: parent)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: parent.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent.path) }
+
+        XCTAssertThrowsError(try writer.createDirectory("CannotCreate")) { error in
+            XCTAssertTrue(error.localizedDescription.contains("CannotCreate"))
+        }
+    }
+
+    func testMissingWorkingFileWithoutIndexReportsItsPath() throws {
+        let fixture = try GitFixture()
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let entry = QuickLookWorkingTreeEntry(
+            relativePath: "Missing.txt", repositoryPath: "Documentation/Missing.txt",
+            fileURL: fixture.directory.appendingPathComponent("Documentation/Missing.txt")
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Missing.txt", isDirectory: false,
+            source: .workingFile(repository: repositoryDescriptor(for: fixture), entry: entry)
+        )
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: parent.appendingPathComponent("Missing.txt"))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Documentation/Missing.txt"))
+        }
+    }
+
+    func testMissingWorkingSubmoduleCheckoutReportsSubmodule() throws {
+        let fixture = try GitFixture()
+        _ = try fixture.addSubmoduleEntry(path: "Vendor")
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let entry = QuickLookWorkingTreeEntry(
+            relativePath: "Vendor", repositoryPath: "Vendor",
+            fileURL: fixture.directory.appendingPathComponent("Vendor")
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "Vendor", isDirectory: false,
+            source: .workingFile(repository: repositoryDescriptor(for: fixture), entry: entry)
+        )
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: parent.appendingPathComponent("Vendor"))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("submodule"))
+        }
+    }
+
+    func testWorkingPromiseRejectsUnsupportedFilesystemNode() throws {
+        let fixture = try GitFixture()
+        let fifo = fixture.directory.appendingPathComponent("Documentation/FIFO")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        let parent = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let entry = QuickLookWorkingTreeEntry(
+            relativePath: "FIFO", repositoryPath: "Documentation/FIFO", fileURL: fifo
+        )
+        let descriptor = QuickLookExportDescriptor(
+            fileName: "FIFO", isDirectory: false,
+            source: .workingFile(repository: repositoryDescriptor(for: fixture), entry: entry)
+        )
+
+        XCTAssertThrowsError(try QuickLookFilePromiseExporter().export(descriptor, to: parent.appendingPathComponent("FIFO"))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("FIFO"))
         }
     }
 
