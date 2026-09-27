@@ -340,6 +340,43 @@ final class PBTaskLifecycleTests: XCTestCase {
         XCTAssertEqual(task.standardErrorData.count, 65536)
     }
 
+    func testSeparateStandardErrorAtExactLimitIsNotTrimmed() throws {
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "head -c 65536 /dev/zero >&2"],
+            inDirectory: nil
+        )
+        task.separatesStandardError = true
+
+        try task.launch()
+
+        XCTAssertEqual(task.standardErrorData, Data(repeating: 0, count: 65536))
+    }
+
+    func testSeparateStandardErrorRetainsSuffixAfterRepeatedTrimming() throws {
+        let stderrFile = temporaryFileURL(named: "repeated-stderr")
+        defer { try? FileManager.default.removeItem(at: stderrFile) }
+        let output = String(repeating: "A", count: 70000)
+            + String(repeating: "B", count: 70000)
+            + String(repeating: "C", count: 70000)
+        try Data(output.utf8).write(to: stderrFile)
+        let task = PBTask(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "cat \"$1\" >&2; exit 7", "sh", stderrFile.path],
+            inDirectory: nil
+        )
+        task.separatesStandardError = true
+
+        XCTAssertThrowsError(try task.launch()) { error in
+            let taskError = error as NSError
+            XCTAssertEqual(
+                taskError.userInfo[PBTaskTerminationOutputKey] as? String,
+                String(repeating: "C", count: 65536)
+            )
+        }
+        XCTAssertEqual(task.standardErrorData, Data(repeating: 0x43, count: 65536))
+    }
+
     func testSeparateStandardErrorRetainsDecodableMultibyteFailureDiagnostics() throws {
         let stderrFile = temporaryFileURL(named: "multibyte-stderr")
         defer { try? FileManager.default.removeItem(at: stderrFile) }

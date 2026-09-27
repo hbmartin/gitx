@@ -1298,6 +1298,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         deadline = time.monotonic() + 2
         while not recorded_pid.exists() and time.monotonic() < deadline:
             time.sleep(0.02)
+        self.assertTrue(recorded_pid.exists(), result.stdout + result.stderr)
         log_pid = int(recorded_pid.read_text())
         self.addCleanup(self.terminate_pid, log_pid)
 
