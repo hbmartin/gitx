@@ -714,7 +714,7 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         guard data.isEmpty || records.dropLast().allSatisfy({ !$0.isEmpty }) else {
             throw QuickLookExportError.malformedTreeEntry
         }
-        return data.isEmpty ? [] : records.dropLast().map(Data.init)
+        return data.isEmpty ? [] : records.dropLast().map { Data($0) }
     }
 
     private func fileType(at url: URL) throws -> mode_t? {
