@@ -283,7 +283,7 @@ jobs:
           rm "$HOME/Library/MobileDevice/Provisioning Profiles/build_pp.provisionprofile"
   
   release:
-    if: startsWith(github.event.ref, 'refs/tags/')
+    if: startsWith(github.event.ref, 'refs/tags/') && github.repository == 'gitx/gitx'
     needs: build-gitx
     permissions:
       contents: write
