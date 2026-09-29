@@ -1931,7 +1931,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         waitForIndexUpdate {
             XCTAssertTrue(coordinator.acceptDrop(info, in: fileList.stagedTable))
         }
-        XCTAssertEqual(fileList.stagedFileCount, 2, "the dragged unstaged file lands in the staged list")
+        XCTAssertTrue(
+            waitForCondition { fileList.stagedFileCount == 2 },
+            "the dragged unstaged file lands in the staged list"
+        )
 
         let sameSource = DraggingInfoFake(pasteboard: pasteboard)
         sameSource.draggingSource = fileList.unstagedTable
@@ -1988,7 +1991,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         waitForIndexUpdate {
             XCTAssertTrue(coordinator.acceptDrop(unstageInfo, in: fileList.unstagedTable))
         }
-        XCTAssertEqual(fileList.stagedFileCount, 1, "the dragged staged file lands in the unstaged list")
+        XCTAssertTrue(
+            waitForCondition { fileList.stagedFileCount == 1 },
+            "the dragged staged file lands in the unstaged list"
+        )
 
         waitForIndexUpdate {
             coordinator.toggleStaging(for: fileList.unstagedTable)
