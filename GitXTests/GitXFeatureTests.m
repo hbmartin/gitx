@@ -53,7 +53,7 @@ static NSUInteger PBWelcomePresentationCount;
 @implementation NSWindow (GitXFeatureTests)
 - (void)pb_feature_center
 {
-	if ([self.title isEqualToString:@"Welcome to GitX"]) PBWelcomePresentationCount += 1;
+	if ([self.title isEqualToString:@"Welcome to Half Dark"]) PBWelcomePresentationCount += 1;
 	[self pb_feature_center];
 }
 @end
@@ -1331,7 +1331,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	@try {
 		PBApplicationAboutOptions = nil;
 		[controller showAboutPanel:nil];
-		XCTAssertEqualObjects(PBApplicationAboutOptions[NSAboutPanelOptionApplicationName], @"GitX");
+		XCTAssertEqualObjects(PBApplicationAboutOptions[NSAboutPanelOptionApplicationName], @"Half Dark");
 
 		[controller openPreferencesWindow:nil];
 		[controller setValue:clonePanel forKey:@"cloneRepositoryPanel"];
@@ -2064,7 +2064,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertTrue([controller isKindOfClass:PBRepositoryDocumentController.class]);
 	@try {
 		for (NSWindow *window in NSApp.windows.copy) {
-			if ([window.title isEqualToString:@"Welcome to GitX"]) [window close];
+			if ([window.title isEqualToString:@"Welcome to Half Dark"]) [window close];
 		}
 		[defaults setInteger:2 forKey:@"PBWindowRestorePolicy"];
 		[defaults setBool:NO forKey:@"PBWindowSessionCleanShutdown"];
@@ -2073,13 +2073,13 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 		[PBWindowSessionCoordinator.shared applicationDidFinishLaunching];
 		XCTAssertFalse([NSApp.windows indexOfObjectPassingTest:^BOOL(NSWindow *window, NSUInteger idx, BOOL *stop) {
-						   return [window.title isEqualToString:@"Welcome to GitX"] && window.visible;
+						   return [window.title isEqualToString:@"Welcome to Half Dark"] && window.visible;
 					   }] != NSNotFound);
 
 		[controller finishExplicitLaunchOpen];
 		NSPredicate *welcomeVisible = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
 			return [NSApp.windows indexOfObjectPassingTest:^BOOL(NSWindow *window, NSUInteger idx, BOOL *stop) {
-					   return [window.title isEqualToString:@"Welcome to GitX"] && window.visible;
+					   return [window.title isEqualToString:@"Welcome to Half Dark"] && window.visible;
 				   }] != NSNotFound;
 		}];
 		XCTNSPredicateExpectation *shown = [[XCTNSPredicateExpectation alloc] initWithPredicate:welcomeVisible object:NSApp];
@@ -2087,7 +2087,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 		NSWindow *welcome = [NSApp.windows filteredArrayUsingPredicate:
 											   [NSPredicate predicateWithBlock:^BOOL(NSWindow *window, __unused NSDictionary *bindings) {
-												   return [window.title isEqualToString:@"Welcome to GitX"] && window.visible;
+												   return [window.title isEqualToString:@"Welcome to Half Dark"] && window.visible;
 											   }]]
 								.firstObject;
 		XCTAssertNotNil(welcome);
@@ -2170,7 +2170,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
 		PBApplicationProcessInfo = nil;
 		for (NSWindow *window in NSApp.windows.copy) {
-			if ([window.title isEqualToString:@"Welcome to GitX"]) [window close];
+			if ([window.title isEqualToString:@"Welcome to Half Dark"]) [window close];
 		}
 		((void (*)(id, SEL, id))objc_msgSend)(
 			NSDocumentController.class,
@@ -2247,7 +2247,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		PBFeatureSwapClassMethods(NSProcessInfo.class, @selector(processInfo), @selector(pb_feature_processInfo));
 		PBApplicationProcessInfo = nil;
 		for (NSWindow *window in NSApp.windows.copy) {
-			if ([window.title isEqualToString:@"Welcome to GitX"]) [window close];
+			if ([window.title isEqualToString:@"Welcome to Half Dark"]) [window close];
 		}
 		((void (*)(id, SEL, id))objc_msgSend)(
 			NSDocumentController.class,
@@ -2342,15 +2342,15 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 
 - (void)testApplicationBundleLookupDerivesTheBundleFromAnEmbeddedToolPath
 {
-	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Applications/GitX.app/Contents/Resources/gitx"),
-						  @"/Applications/GitX.app");
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Applications/Half Dark.app/Contents/Resources/gitx"),
+						  @"/Applications/Half Dark.app");
 	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Volumes/Ext Disk/Git X.app/Contents/Resources/gitx"),
 						  @"/Volumes/Ext Disk/Git X.app");
-	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Users/example/Desktop/GitX.app/Contents/Resources/gitx"),
-						  @"/Users/example/Desktop/GitX.app",
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Users/example/Desktop/Half Dark.app/Contents/Resources/gitx"),
+						  @"/Users/example/Desktop/Half Dark.app",
 						  @"Derivation must be lexical so it never depends on what exists on the running machine");
-	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Users/example/Build/../GitX.app/Contents/Resources/gitx"),
-						  @"/Users/example/Build/../GitX.app",
+	XCTAssertEqualObjects(GitXApplicationBundlePathForToolPath(@"/Users/example/Build/../Half Dark.app/Contents/Resources/gitx"),
+						  @"/Users/example/Build/../Half Dark.app",
 						  @"Lexical derivation must retain parent-directory components rather than canonicalizing the path");
 }
 
@@ -2362,9 +2362,9 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 				 @"A tool outside a bundle must fall back to the bundle-identifier lookup");
 	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Users/example/Build/Products/Debug/gitx"),
 				 @"Running from a build directory must fall back to the bundle-identifier lookup");
-	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Applications/GitX.app/Contents/MacOS/GitX"),
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Applications/Half Dark.app/Contents/MacOS/GitX"),
 				 @"Only the tool shipped in Contents/Resources identifies the enclosing bundle");
-	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Applications/GitX.app/Contents/Resources/tools/gitx"),
+	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Applications/Half Dark.app/Contents/Resources/tools/gitx"),
 				 @"A deeper resource path must not be mistaken for the app bundle");
 	XCTAssertNil(GitXApplicationBundlePathForToolPath(@"/Library/Frameworks/Sparkle.framework/Resources/gitx"),
 				 @"A non-app bundle claiming the identifier must never be treated as GitX");
@@ -2915,7 +2915,7 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqual(lookupResult, 1);
 	if (lookupResult == 0 || methodInfo.dli_fname == NULL)
 		return;
-	XCTAssertFalse([[NSString stringWithUTF8String:methodInfo.dli_fname] containsString:@"/GitX.app/Contents/MacOS/GitX"]);
+	XCTAssertFalse([[NSString stringWithUTF8String:methodInfo.dli_fname] containsString:@"/Half Dark.app/Contents/MacOS/GitX"]);
 }
 
 - (void)testAppearanceObservationPostsEffectiveAppearanceNotification

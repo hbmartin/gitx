@@ -25,7 +25,7 @@ nonisolated struct ForgeDestinationScriptFailure: Error, Equatable {
 
     static let invalidDocument = Self(
         code: 18000,
-        message: "The command requires exactly one explicitly identified open GitX repository document."
+        message: "The command requires exactly one explicitly identified open Half Dark repository document."
     )
     static let invalidDestination = Self(
         code: RepositoryForgeScriptingErrorCode.invalidDestination.rawValue,

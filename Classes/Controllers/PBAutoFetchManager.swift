@@ -429,7 +429,7 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
         let reason = nsError?.localizedFailureReason
             ?? nsError?.localizedDescription
             ?? "Git could not refresh this repository."
-        content.body = reason + " GitX will retry automatically."
+        content.body = reason + " Half Dark will retry automatically."
         content.sound = .default
         content.userInfo = ["repository": url.path, "kind": "failure"]
         let request = UNNotificationRequest(

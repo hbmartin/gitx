@@ -390,13 +390,13 @@ stage_built_app() {
 		"$xcodebuild" "${common[@]}" -showBuildSettings "$@" 2>/dev/null \
 			| awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{print $2; exit}'
 	)
-	built_app="$built_products_dir/GitX.app"
+	built_app="$built_products_dir/Half Dark.app"
 	if [[ -z "$built_app" || ! -x "$built_app/Contents/MacOS/GitX" ]]; then
-		echo "Could not locate a valid GitX.app in $derived_data" >&2
+		echo "Could not locate a valid Half Dark.app in $derived_data" >&2
 		return 3
 	fi
 	/usr/bin/codesign --verify --deep --strict "$built_app" || return 3
-	staged="$root/build/GitX.app"
+	staged="$root/build/Half Dark.app"
 	running_pids=$(
 		pgrep -x GitX 2>/dev/null | while read -r pid; do
 			case "$(ps -p "$pid" -o comm= 2>/dev/null)" in
@@ -410,18 +410,18 @@ stage_built_app() {
 	fi
 	mkdir -p "$root/build"
 	if [[ -e "$staged" ]]; then
-		mv "$staged" "$run_dir/previous-GitX.app" || return 3
+		mv "$staged" "$run_dir/previous-Half Dark.app" || return 3
 	fi
-	temporary="$root/build/.GitX.app.$run_id"
+	temporary="$root/build/.Half Dark.app.$run_id"
 	ditto "$built_app" "$temporary"
 	copy_status=$?
 	if (( copy_status != 0 )); then
-		[[ ! -e "$run_dir/previous-GitX.app" ]] || mv "$run_dir/previous-GitX.app" "$staged"
+		[[ ! -e "$run_dir/previous-Half Dark.app" ]] || mv "$run_dir/previous-Half Dark.app" "$staged"
 		return "$copy_status"
 	fi
 	if ! mv "$temporary" "$staged"; then
-		mv "$temporary" "$run_dir/failed-staged-GitX.app" 2>/dev/null || true
-		[[ ! -e "$run_dir/previous-GitX.app" ]] || mv "$run_dir/previous-GitX.app" "$staged"
+		mv "$temporary" "$run_dir/failed-staged-Half Dark.app" 2>/dev/null || true
+		[[ ! -e "$run_dir/previous-Half Dark.app" ]] || mv "$run_dir/previous-Half Dark.app" "$staged"
 		return 3
 	fi
 	echo "Staged app: $staged"

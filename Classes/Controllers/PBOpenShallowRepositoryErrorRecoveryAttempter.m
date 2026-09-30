@@ -25,7 +25,7 @@ NSURL *workingDirectory;
 					 optionIndex:(NSUInteger)recoveryOptionIndex
 {
 	if (recoveryOptionIndex == 1) {
-		NSString *unshallowCommand = @"echo 'Please re-open the repository in GitX once unshallowing has finished.'; git fetch --unshallow";
+		NSString *unshallowCommand = @"echo 'Please re-open the repository in Half Dark once unshallowing has finished.'; git fetch --unshallow";
 		[PBTerminalUtil runCommand:unshallowCommand inDirectory:workingDirectory];
 		return NO;
 	}

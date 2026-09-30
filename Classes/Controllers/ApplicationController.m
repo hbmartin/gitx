@@ -172,6 +172,9 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification
 {
+	NSBundle *bundle = NSBundle.mainBundle;
+	NSLog(@"[AppIdentity] Launched %@ (%@) at %@",
+		  [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"], bundle.bundleIdentifier, bundle.bundlePath);
 	NSDocumentController *documentController = NSDocumentController.sharedDocumentController;
 	BOOL hasRepositoryDocumentController = [documentController isKindOfClass:PBRepositoryDocumentController.class];
 	if (hasRepositoryDocumentController) {
@@ -310,10 +313,10 @@
 		[dict addEntriesFromDictionary:[[NSDictionary alloc] initWithObjectsAndKeys:gitversion, @"Version", nil]];
 
 #ifdef DEBUG_BUILD
-	[dict addEntriesFromDictionary:[[NSDictionary alloc] initWithObjectsAndKeys:@"GitX (DEBUG)", @"ApplicationName", nil]];
+	[dict addEntriesFromDictionary:[[NSDictionary alloc] initWithObjectsAndKeys:@"Half Dark (DEBUG)", @"ApplicationName", nil]];
 #endif
 
-	[dict addEntriesFromDictionary:[[NSDictionary alloc] initWithObjectsAndKeys:@"GitX", @"ApplicationName", nil]];
+	[dict addEntriesFromDictionary:[[NSDictionary alloc] initWithObjectsAndKeys:@"Half Dark", @"ApplicationName", nil]];
 
 	[NSApp orderFrontStandardAboutPanelWithOptions:dict];
 }

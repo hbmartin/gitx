@@ -273,7 +273,7 @@ final class RepositoryRemoteURLCoordinator: NSObject {
         }
         let alert = NSAlert()
         alert.messageText = "Choose a Primary Forge Repository"
-        alert.informativeText = "GitX will keep this repository binding until you explicitly change it."
+        alert.informativeText = "Half Dark will keep this repository binding until you explicitly change it."
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 340, height: 26), pullsDown: false)
         popup.addItems(withTitles: resolution.candidates.map {
             "\($0.localRemoteName) — \($0.repositoryLabel) (\($0.providerName))"

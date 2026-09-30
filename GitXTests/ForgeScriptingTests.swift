@@ -332,7 +332,7 @@ final class ForgeScriptingTests: XCTestCase {
     }
 
     private func commandDescriptions() throws -> [String: NSScriptCommandDescription] {
-        try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "GitX Suite"))
+        try XCTUnwrap(NSScriptSuiteRegistry.shared().commandDescriptions(inSuite: "Half Dark Suite"))
     }
 
     private func scriptCommand(named name: String) throws -> PBForgeDestinationScriptCommand {

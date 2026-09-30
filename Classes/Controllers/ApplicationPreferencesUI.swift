@@ -482,7 +482,7 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
     @objc static func dockIconView() -> NSView {
         let view = SettingsPaneView(
             title: "Dock Icon",
-            detail: "Choose the robot face GitX shows in the Dock. Changes apply immediately and persist across launches."
+            detail: "Choose the robot face Half Dark shows in the Dock. Changes apply immediately and persist across launches."
         )
         let iconChoices = NSStackView()
         iconChoices.orientation = .horizontal
@@ -622,7 +622,7 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
     @objc static func terminalView() -> NSView {
         let view = SettingsPaneView(
             title: "Terminal",
-            detail: "GitX always opens a new terminal window. Unavailable applications remain visible but disabled."
+            detail: "Half Dark always opens a new terminal window. Unavailable applications remain visible but disabled."
         )
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         for terminal in TerminalApplication.all {
@@ -636,7 +636,7 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         popup.selectItem(at: popup.itemArray.firstIndex { ($0.representedObject as? String) == selected } ?? 0)
         popup.target = view
         popup.action = #selector(SettingsPaneView.terminalChanged(_:))
-        view.addRow("Default application:", control: popup, help: "GitX asks on first use if no default has been chosen.")
+        view.addRow("Default application:", control: popup, help: "Half Dark asks on first use if no default has been chosen.")
 
         // sendsActionOnEndEditing so typing a value and clicking away (rather than pressing Return) still
         // commits the edit instead of silently discarding it.
@@ -674,7 +674,7 @@ final class SettingsViewFactory: NSObject { // swiftlint:disable:this unused_dec
         view.addRow("Scripts folder:", control: choose, help: ApplicationSettings.raycastScriptsDirectory.isEmpty ? "No folder selected." : ApplicationSettings.raycastScriptsDirectory)
         let install = NSButton(title: "Install / Update", target: view, action: #selector(SettingsPaneView.installRaycastScripts(_:)))
         let remove = NSButton(title: "Remove", target: view, action: #selector(SettingsPaneView.removeRaycastScripts(_:)))
-        view.addRow("Raycast commands:", control: NSStackView(views: [install, remove]), help: "Installs Open Repository Path, Open Frontmost Finder Folder, Show GitX Recents, and Start Clone.")
+        view.addRow("Raycast commands:", control: NSStackView(views: [install, remove]), help: "Installs Open Repository Path, Open Frontmost Finder Folder, Show Half Dark Recents, and Start Clone.")
         return view
     }
 

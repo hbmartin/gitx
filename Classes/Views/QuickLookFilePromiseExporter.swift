@@ -42,9 +42,9 @@ nonisolated struct QuickLookExportDescriptor: Sendable {
         let isDirectory = !tree.leaf
         guard !fileName.isEmpty else {
             return QuickLookExportDescriptor(
-                fileName: "GitX Export",
+                fileName: "Half Dark Export",
                 isDirectory: isDirectory,
-                source: .unavailable("GitX could not determine the selected repository item's name.")
+                source: .unavailable("Half Dark could not determine the selected repository item's name.")
             )
         }
         guard let repository = tree.value(forKey: "repository") as? PBGitRepository,
@@ -54,7 +54,7 @@ nonisolated struct QuickLookExportDescriptor: Sendable {
             return QuickLookExportDescriptor(
                 fileName: fileName,
                 isDirectory: isDirectory,
-                source: .unavailable("GitX could not retain the selected repository for export.")
+                source: .unavailable("Half Dark could not retain the selected repository for export.")
             )
         }
 
@@ -68,7 +68,7 @@ nonisolated struct QuickLookExportDescriptor: Sendable {
                 return QuickLookExportDescriptor(
                     fileName: fileName,
                     isDirectory: isDirectory,
-                    source: .unavailable("GitX could not locate the working directory for export.")
+                    source: .unavailable("Half Dark could not locate the working directory for export.")
                 )
             }
             if tree.leaf {
@@ -94,7 +94,7 @@ nonisolated struct QuickLookExportDescriptor: Sendable {
             return QuickLookExportDescriptor(
                 fileName: fileName,
                 isDirectory: isDirectory,
-                source: .unavailable("GitX could not determine the selected repository revision.")
+                source: .unavailable("Half Dark could not determine the selected repository revision.")
             )
         }
         let source: QuickLookExportSource = if isDirectory {
@@ -135,7 +135,7 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
         case let .unavailable(message):
             message
         case let .unsafePath(path):
-            "GitX refused to export an unsafe repository path: \(path)"
+            "Half Dark refused to export an unsafe repository path: \(path)"
         case let .commandFailed(path, detail):
             "Git could not export \(path). \(detail)"
         case .malformedTreeEntry:
@@ -145,13 +145,13 @@ nonisolated enum QuickLookExportError: LocalizedError, Sendable {
         case let .invalidSymbolicLink(path):
             "Git returned an invalid symbolic link while exporting \(path)."
         case let .unsupportedSubmodule(path):
-            "GitX cannot export the submodule at \(path) as a promised file."
+            "Half Dark cannot export the submodule at \(path) as a promised file."
         case .unrepresentablePath:
-            "Git returned a file name that GitX cannot represent as Unicode."
+            "Git returned a file name that Half Dark cannot represent as Unicode."
         case let .missingTree(path):
             "Git could not find any files below \(path)."
         case let .filesystem(path, code):
-            "GitX could not access \(path): \(NSError(domain: NSPOSIXErrorDomain, code: Int(code)).localizedDescription)."
+            "Half Dark could not access \(path): \(NSError(domain: NSPOSIXErrorDomain, code: Int(code)).localizedDescription)."
         }
     }
 }
@@ -638,7 +638,7 @@ final nonisolated class QuickLookFilePromiseExporter: @unchecked Sendable {
         rootPath: String
     ) throws -> [QuickLookWorkingTreeEntry] {
         guard let workingDirectoryPath = repository.workingDirectoryPath else {
-            throw QuickLookExportError.unavailable("GitX could not locate the working directory for export.")
+            throw QuickLookExportError.unavailable("Half Dark could not locate the working directory for export.")
         }
         let visible = try runGit(
             repository: repository,

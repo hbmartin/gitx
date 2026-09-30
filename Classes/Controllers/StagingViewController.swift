@@ -466,10 +466,10 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         switch validationPlan.disposition {
         case .mergeInProgress:
             windowController?.showMessageSheet(
-                NSLocalizedString("Cannot commit merges", comment: "Title for sheet that GitX cannot create merge commits"),
+                NSLocalizedString("Cannot commit merges", comment: "Title for sheet that Half Dark cannot create merge commits"),
                 infoText: NSLocalizedString(
-                    "GitX cannot commit merges yet. Please commit your changes from the command line.",
-                    comment: "Information text for sheet that GitX cannot create merge commits"
+                    "Half Dark cannot commit merges yet. Please commit your changes from the command line.",
+                    comment: "Information text for sheet that Half Dark cannot create merge commits"
                 )
             )
             return

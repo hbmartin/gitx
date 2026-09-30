@@ -190,7 +190,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
         view = root
         renderGateway(
             title: "Loading GitHub Collaboration…",
-            message: "GitX is resolving this repository’s exact GitHub account and local cache."
+            message: "Half Dark is resolving this repository’s exact GitHub account and local cache."
         )
         updateAccountBar()
     }
@@ -386,7 +386,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
         if isViewLoaded {
             renderGateway(
                 title: "Loading GitHub Collaboration…",
-                message: "GitX is loading exact-account Credentials without exposing secret material."
+                message: "Half Dark is loading exact-account Credentials without exposing secret material."
             )
         }
         preparationTask = Task { [weak self, composition] in
@@ -1035,7 +1035,7 @@ final class RepositoryForgeCollaborationController: PBViewController {
         case nil:
             renderGateway(
                 title: "Loading GitHub Collaboration…",
-                message: "GitX is resolving the stable repository binding and exact account."
+                message: "Half Dark is resolving the stable repository binding and exact account."
             )
         }
     }

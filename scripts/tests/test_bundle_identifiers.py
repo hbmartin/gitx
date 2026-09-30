@@ -16,8 +16,8 @@ class BundleIdentifierTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
-        self.app = pathlib.Path(self.temporary_directory.name) / "GitX.app"
-        self.write_bundle(self.app, "net.phere.GitX")
+        self.app = pathlib.Path(self.temporary_directory.name) / "Half Dark.app"
+        self.write_bundle(self.app, "me.haroldmartin.HalfDark")
 
     def write_bundle(self, bundle: pathlib.Path, identifier: str | None) -> None:
         if bundle.suffix == ".framework":
@@ -66,7 +66,7 @@ class BundleIdentifierTests(unittest.TestCase):
             / "Versions"
             / "B"
             / "Updater.app",
-            "net.phere.GitX",
+            "me.haroldmartin.HalfDark",
         )
 
         failures = self.failures()
@@ -113,7 +113,7 @@ class BundleIdentifierTests(unittest.TestCase):
         self.assertNotIn("PRODUCT_BUNDLE_IDENTIFIER=", workflow)
         self.assertIn(
             'scripts/check_bundle_identifiers.py "artifacts/verification/'
-            '$ARCHIVE_RUN_ID/Products/GitX.xcarchive/Products/Applications/GitX.app"',
+            '$ARCHIVE_RUN_ID/Products/GitX.xcarchive/Products/Applications/Half Dark.app"',
             workflow,
         )
 

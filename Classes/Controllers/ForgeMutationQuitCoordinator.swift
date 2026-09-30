@@ -20,7 +20,7 @@ enum ForgeMutationQuitCoordinatorError: Error, Equatable, LocalizedError, Sendab
         case .invalidTimestamp:
             "Forge mutation timestamps must be finite."
         case .terminationPending:
-            "GitX is already waiting to terminate."
+            "Half Dark is already waiting to terminate."
         case .persistenceUnavailable:
             "The Forge database is unavailable for unknown-outcome reconciliation."
         case .invalidPersistedRecord:
@@ -401,8 +401,8 @@ private enum ForgeMutationQuitAlert {
         alert.alertStyle = .warning
         alert.messageText = "Forge Changes Are Still in Progress"
         alert.informativeText = mutations.count == 1
-            ? "GitX is waiting for a GitHub change to finish. Quit now only if you accept that its outcome may be unknown."
-            : "GitX is waiting for \(mutations.count) GitHub changes to finish. Quit now only if you accept that their outcomes may be unknown."
+            ? "Half Dark is waiting for a GitHub change to finish. Quit now only if you accept that its outcome may be unknown."
+            : "Half Dark is waiting for \(mutations.count) GitHub changes to finish. Quit now only if you accept that their outcomes may be unknown."
         alert.addButton(withTitle: "Wait")
         alert.addButton(withTitle: "Quit Anyway")
         return alert.runModal() == .alertSecondButtonReturn ? .quitAnyway : .wait

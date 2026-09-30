@@ -96,7 +96,7 @@ final class AppKitRepositoryForgeLinkAlertPresenter: NSObject, RepositoryForgeLi
     func requestNumberReference(completion: @escaping (String?) -> Void) {
         let alert = NSAlert()
         alert.messageText = "Open Pull Request or Issue"
-        alert.informativeText = "Enter a provider reference such as #123. GitX will ask which kind to open."
+        alert.informativeText = "Enter a provider reference such as #123. Half Dark will ask which kind to open."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         field.placeholderString = "#123"
         field.setAccessibilityIdentifier("GitX.ForgeLinks.NumberedReference")
@@ -123,7 +123,7 @@ final class AppKitRepositoryForgeLinkAlertPresenter: NSObject, RepositoryForgeLi
         }
         let alert = NSAlert()
         alert.messageText = "Choose Primary Repository"
-        alert.informativeText = "Choose the remote GitX should use for browser links in this repository."
+        alert.informativeText = "Choose the remote Half Dark should use for browser links in this repository."
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
         popup.addItems(withTitles: candidates.map {
             "\($0.providerName) — \($0.repositoryLabel) (\($0.localRemoteName))"

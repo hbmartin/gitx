@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
 
-<dictionary title="GitX Terminology" xmlns:xi="http://www.w3.org/2003/XInclude">
+<dictionary title="Half Dark Terminology" xmlns:xi="http://www.w3.org/2003/XInclude">
 	<suite name="Standard Suite" code="????" description="Common classes and commands for all applications.">
 		<command name="open" code="aevtodoc" description="Open a document.">
 			<direct-parameter description="The file(s) to be opened.">
@@ -264,7 +264,7 @@
 		</class>
 	</suite>
 
-	<suite name="GitX Suite" code="GitX" description="Classes for GitX.">
+	<suite name="Half Dark Suite" code="GitX" description="Classes for Half Dark.">
 		<enumeration name="forge revision kind" code="FrRK">
 			<enumerator name="branch revision" code="FrBr" description="A branch name."/>
 			<enumerator name="tag revision" code="FrTg" description="A tag name."/>
@@ -288,7 +288,7 @@
 		</command>
 
 
-		<command name="show diff" code="GitXShDf" description="Show the supplied diff output in a GitX window.">
+		<command name="show diff" code="GitXShDf" description="Show the supplied diff output in a Half Dark window.">
 			<direct-parameter type="text" description="The textual output from a diff tool."/>
 		</command>
 
@@ -317,7 +317,7 @@
 
 		<command name="forge repository URL" code="GitXFrRp" description="Return the native Forge repository URL without opening it.">
 			<cocoa class="PBForgeDestinationScriptCommand"/>
-			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open Half Dark repository document.">
 				<cocoa key="document"/>
 			</parameter>
 			<result type="text" description="The provider-native destination URL."/>
@@ -325,7 +325,7 @@
 
 		<command name="forge branch URL" code="GitXFrBr" description="Return the native Forge branch URL without opening it.">
 			<cocoa class="PBForgeDestinationScriptCommand"/>
-			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open Half Dark repository document.">
 				<cocoa key="document"/>
 			</parameter>
 			<parameter name="branch" code="BrNm" type="text" description="The branch name.">
@@ -336,7 +336,7 @@
 
 		<command name="forge commit URL" code="GitXFrCm" description="Return the native Forge commit URL without opening it.">
 			<cocoa class="PBForgeDestinationScriptCommand"/>
-			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open Half Dark repository document.">
 				<cocoa key="document"/>
 			</parameter>
 			<parameter name="commit" code="CmID" type="text" description="The hexadecimal commit identifier.">
@@ -347,7 +347,7 @@
 
 		<command name="forge file URL" code="GitXFrFl" description="Return the native Forge file or line-range URL without opening it.">
 			<cocoa class="PBForgeDestinationScriptCommand"/>
-			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open Half Dark repository document.">
 				<cocoa key="document"/>
 			</parameter>
 			<parameter name="at revision" code="Revn" type="text" description="The branch, tag, or commit revision.">
@@ -370,7 +370,7 @@
 
 		<command name="forge compare URL" code="GitXFrCp" description="Return the native Forge compare URL without opening it.">
 			<cocoa class="PBForgeDestinationScriptCommand"/>
-			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open Half Dark repository document.">
 				<cocoa key="document"/>
 			</parameter>
 			<parameter name="base revision" code="Base" type="text" description="The base branch, tag, or commit revision.">
@@ -390,7 +390,7 @@
 
 		<command name="forge pull request URL" code="GitXFrPR" description="Return the native Forge Pull Request URL without opening it.">
 			<cocoa class="PBForgeDestinationScriptCommand"/>
-			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open Half Dark repository document.">
 				<cocoa key="document"/>
 			</parameter>
 			<parameter name="number" code="Nmbr" type="integer" description="The Pull Request number.">
@@ -401,7 +401,7 @@
 
 		<command name="forge issue URL" code="GitXFrIs" description="Return the native Forge Issue URL without opening it.">
 			<cocoa class="PBForgeDestinationScriptCommand"/>
-			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open GitX repository document.">
+			<parameter name="for document" code="FDoc" type="document" description="An explicitly identified open Half Dark repository document.">
 				<cocoa key="document"/>
 			</parameter>
 			<parameter name="number" code="Nmbr" type="integer" description="The Issue number.">
@@ -420,7 +420,7 @@
 			</parameter>
 		</command>
 
-		<class-extension extends="application" description="The GitX application.">
+		<class-extension extends="application" description="The Half Dark application.">
 			<responds-to name="show diff">
 				<cocoa method="showDiffScriptCommand:"/>
 			</responds-to>

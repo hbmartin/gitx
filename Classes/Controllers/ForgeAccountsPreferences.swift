@@ -1063,8 +1063,8 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
 
     private func presentDeviceAuthorization(_ authorization: GitHubDeviceAuthorization) -> Bool {
         let alert = NSAlert()
-        alert.messageText = "Authorize GitX on GitHub"
-        alert.informativeText = "GitHub will ask for this one-time code:\n\n\(authorization.userCode)\n\nGitX will open the exact GitHub device authorization page and wait for approval."
+        alert.messageText = "Authorize Half Dark on GitHub"
+        alert.informativeText = "GitHub will ask for this one-time code:\n\n\(authorization.userCode)\n\nHalf Dark will open the exact GitHub device authorization page and wait for approval."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open GitHub and Continue")
         alert.addButton(withTitle: "Cancel")
@@ -1102,7 +1102,7 @@ final class ForgeAccountsPreferencesView: NSView, NSTableViewDataSource, NSTable
         alert.messageText = kind == .fineGrained
             ? "Add Fine-Grained Personal Access Token"
             : "Add Classic Personal Access Token"
-        alert.informativeText = "GitX validates the Credential with GitHub and stores it only in Keychain."
+        alert.informativeText = "Half Dark validates the Credential with GitHub and stores it only in Keychain."
         alert.accessoryView = accessory
         alert.addButton(withTitle: "Add Account")
         alert.addButton(withTitle: "Cancel")

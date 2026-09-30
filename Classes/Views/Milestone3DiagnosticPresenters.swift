@@ -393,7 +393,7 @@ import OSLog // swiftlint:disable:this unused_import
             contentStack.addArrangedSubview(card(
                 identifier: Milestone3AccessibilityIdentifier.SuggestedChange.safety,
                 title: "Local edit safety",
-                subtitle: "GitX has no Undo for an applied suggestion. Review the unstaged diff before committing.",
+                subtitle: "Half Dark has no Undo for an applied suggestion. Review the unstaged diff before committing.",
                 views: []
             ))
         }
@@ -463,10 +463,10 @@ import OSLog // swiftlint:disable:this unused_import
             let message = textEditor(
                 identifier: Milestone3AccessibilityIdentifier.Merge.message,
                 label: "Merge message",
-                placeholder: "Reviewed natively in GitX.",
+                placeholder: "Reviewed natively in Half Dark.",
                 height: 46
             )
-            message.textView.string = "Reviewed natively in GitX."
+            message.textView.string = "Reviewed natively in Half Dark."
             let rebaseSummary = label(
                 "Rebase summary is read-only: 3 commits will be replayed onto main.",
                 identifier: Milestone3AccessibilityIdentifier.Merge.rebaseSummary,
@@ -604,7 +604,7 @@ import OSLog // swiftlint:disable:this unused_import
             contentStack.addArrangedSubview(card(
                 identifier: Milestone3AccessibilityIdentifier.PostMerge.actions,
                 title: "Merged Pull Request",
-                subtitle: "GitX never changes the local checkout automatically.",
+                subtitle: "Half Dark never changes the local checkout automatically.",
                 views: [status, horizontal([fetch, checkout])]
             ))
             contentStack.addArrangedSubview(card(
@@ -668,7 +668,7 @@ import OSLog // swiftlint:disable:this unused_import
                 }
                 let updated = original.replacingOccurrences(of: "let answer = 41", with: "let answer = 42")
                 try updated.write(to: fileURL, atomically: true, encoding: .utf8)
-                suggestedChangeStatus?.stringValue = "Applied as an unstaged local edit. GitX Undo is unavailable."
+                suggestedChangeStatus?.stringValue = "Applied as an unstaged local edit. Half Dark Undo is unavailable."
                 emit("SuggestedChange.Applied", "Suggested Change applied as one unstaged local edit")
             } catch {
                 emitFailure(error.localizedDescription)

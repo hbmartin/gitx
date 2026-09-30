@@ -530,8 +530,8 @@ final class RepositoryPullRequestUIController {
                 let alert = NSAlert()
                 alert.messageText = "Check Out Pull Request #\(pullRequest.number.rawValue)?"
                 let remoteDetail = plan.addsRemote
-                    ? "GitX will add the exact contributor remote ‘\(plan.remote.name)’ and fetch only \(plan.fetchRefspec)."
-                    : "GitX will fetch only \(plan.fetchRefspec) from ‘\(plan.remote.name)’."
+                    ? "Half Dark will add the exact contributor remote ‘\(plan.remote.name)’ and fetch only \(plan.fetchRefspec)."
+                    : "Half Dark will fetch only \(plan.fetchRefspec) from ‘\(plan.remote.name)’."
                 alert.informativeText = "\(remoteDetail) The local branch will be named ‘\(plan.localBranch.value)’."
                 alert.addButton(withTitle: "Check Out")
                 alert.addButton(withTitle: "Cancel")

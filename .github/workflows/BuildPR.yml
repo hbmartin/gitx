@@ -202,7 +202,7 @@ jobs:
             ARCHS="${{ matrix.abi }}" \
             "${signing_settings[@]}"
       - name: Verify archived bundle identifiers
-        run: python3 scripts/check_bundle_identifiers.py "artifacts/verification/$ARCHIVE_RUN_ID/Products/GitX.xcarchive/Products/Applications/GitX.app"
+        run: python3 scripts/check_bundle_identifiers.py "artifacts/verification/$ARCHIVE_RUN_ID/Products/GitX.xcarchive/Products/Applications/Half Dark.app"
       - name: Prepare artifact
         if: ${{ env.variableSet != '' }}
         env:
@@ -215,11 +215,11 @@ jobs:
           echo "EXPORT_OPTIONS_PATH=$EXPORT_OPTIONS_PATH"
           mkdir -p "$EXPORT_PATH"
           xcodebuild -exportArchive -archivePath "$ARCHIVE_PATH" -exportPath "$EXPORT_PATH" -exportOptionsPlist "$EXPORT_OPTIONS_PATH"
-          echo "Create GitX-${{ matrix.abi }}.dmg"
-          mkdir dist && ditto "$EXPORT_PATH/GitX.app" dist/GitX.app && ln -s /Applications dist/
-          hdiutil create -fs HFS+ -srcfolder dist/ -volname GitX GitX-${{ matrix.abi }}.dmg
+          echo "Create HalfDark-${{ matrix.abi }}.dmg"
+          mkdir dist && ditto "$EXPORT_PATH/Half Dark.app" "dist/Half Dark.app" && ln -s /Applications dist/
+          hdiutil create -fs HFS+ -srcfolder dist/ -volname "Half Dark" HalfDark-${{ matrix.abi }}.dmg
           rm -rf dist
-          ditto -c -k --keepParent "$EXPORT_PATH/GitX.app" GitX-${{ matrix.abi }}.zip
+          ditto -c -k --keepParent "$EXPORT_PATH/Half Dark.app" HalfDark-${{ matrix.abi }}.zip
       - name: Notarize App
         if: ${{ env.variableSet != '' }}
         env:
@@ -228,7 +228,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           KEY_ID: ${{ secrets.APPLE_KEY_ID }}
         run: |
-          APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/GitX.app"
+          APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app"
           ZIP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/notarization.zip"
           NOTARY_LOG="artifacts/verification/$ARCHIVE_RUN_ID/Logs/notary.log"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
@@ -247,14 +247,14 @@ jobs:
           # Instead, run stapler against each item that you added to the archive.
           # Then create a new ZIP file containing the stapled items for distribution.
           # Reference: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution/customizing_the_notarization_workflow
-          APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/GitX.app"
-          ZIP_PATH="GitX-${{ matrix.abi }}.zip"
+          APP_PATH="artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app"
+          ZIP_PATH="HalfDark-${{ matrix.abi }}.zip"
 
           xcrun stapler staple "$APP_PATH"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
       - name: Check Notarization
         if: ${{ env.variableSet != '' }}
-        run: spctl -a -vv "artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/GitX.app"
+        run: spctl -a -vv "artifacts/verification/$ARCHIVE_RUN_ID/Products/Export/Half Dark.app"
       - name: Upload verification receipts and logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -268,14 +268,14 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: ${{ success() }}
         with:
-          name: GitX-${{ matrix.abi }}.dmg
-          path: GitX-${{ matrix.abi }}.dmg
+          name: HalfDark-${{ matrix.abi }}.dmg
+          path: HalfDark-${{ matrix.abi }}.dmg
           overwrite: true
       - name: Upload zip
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: GitX-${{ matrix.abi }}.zip
-          path: GitX-${{ matrix.abi }}.zip
+          name: HalfDark-${{ matrix.abi }}.zip
+          path: HalfDark-${{ matrix.abi }}.zip
       - name: Clean up keychain and provisioning profile
         if: ${{ env.variableSet != '' }}
         run: |
@@ -304,10 +304,10 @@ jobs:
           commit-ish: HEAD
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: GitX-arm64.dmg
+          name: HalfDark-arm64.dmg
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: GitX-arm64.zip
+          name: HalfDark-arm64.zip
       - name: Check pre-release
         env:
           RELEASE_TAG: ${{ steps.tagger.outputs.tag }}
@@ -329,8 +329,8 @@ jobs:
           prerelease: ${{ env.PRE_RELEASE }}
           name: ${{steps.tagger.outputs.tag}}
           files: |
-            GitX-arm64.dmg
-            GitX-arm64.zip
+            HalfDark-arm64.dmg
+            HalfDark-arm64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -352,15 +352,15 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.tagger.outputs.tag }}
         run: |
-          shaarm64=$(shasum -a 256 GitX-arm64.dmg | cut -d " " -f1)
+          shaarm64=$(shasum -a 256 HalfDark-arm64.dmg | cut -d " " -f1)
           echo "arm64 sha256=$shaarm64"
           cat > brew/Casks/g/gitx.rb <<EOF
           cask "gitx" do
             version "$RELEASE_TAG"
             sha256 "$shaarm64"
 
-            url "https://github.com/gitx/gitx/releases/download/#{version}/GitX-arm64.dmg"
-            name "GitX"
+            url "https://github.com/gitx/gitx/releases/download/#{version}/HalfDark-arm64.dmg"
+            name "Half Dark"
             desc "Git GUI"
             homepage "https://github.com/gitx/gitx"
 
@@ -372,8 +372,8 @@ jobs:
             depends_on arch: :arm64
             depends_on macos: :ventura
 
-            app "GitX.app"
-            binary "#{appdir}/GitX.app/Contents/Resources/gitx"
+            app "Half Dark.app"
+            binary "#{appdir}/Half Dark.app/Contents/Resources/gitx"
 
             zap trash: [
               "~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/nl.frim.gitx.sfl*",

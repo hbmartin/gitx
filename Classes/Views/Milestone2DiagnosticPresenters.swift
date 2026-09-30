@@ -88,7 +88,7 @@ nonisolated struct ForgeMutationControlPresentation: Equatable, Sendable {
         case .mismatchedForge, .unsupportedProviderOperation,
              .mismatchedCredentialEvidence, .mismatchedRepositoryEvidence,
              .authorizationEvidenceUnavailable:
-            "GitX cannot verify the exact GitHub account and repository authority needed to \(action)."
+            "Half Dark cannot verify the exact GitHub account and repository authority needed to \(action)."
         }
     }
 }
@@ -127,7 +127,7 @@ enum RepositorySyncForkConfirmationPresenter {
     static func alert(plan: ForgeSyncForkPlan) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = "Sync Fork from Parent?"
-        alert.informativeText = "GitHub will update \(plan.branch.value) on the fork, then GitX will fetch \(plan.localFetchRemoteName)/\(plan.branch.value). Your checkout will not be changed."
+        alert.informativeText = "GitHub will update \(plan.branch.value) on the fork, then Half Dark will fetch \(plan.localFetchRemoteName)/\(plan.branch.value). Your checkout will not be changed."
         alert.addButton(withTitle: "Sync Fork")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.setAccessibilityIdentifier("GitX.SyncFork.Confirm")
@@ -142,14 +142,14 @@ enum ForgeDeepLinkAlertFactory {
     ) -> (alert: NSAlert, popup: NSPopUpButton) {
         let alert = NSAlert()
         alert.messageText = "Choose an Open Checkout"
-        alert.informativeText = "More than one open checkout matches this GitX deep link."
+        alert.informativeText = "More than one open checkout matches this Half Dark deep link."
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         for candidate in candidates {
             popup.addItem(withTitle: candidate.title)
             popup.lastItem?.representedObject = candidate.identifier
         }
         popup.setAccessibilityIdentifier("GitX.DeepLink.CheckoutChooser")
-        popup.setAccessibilityLabel("Open checkout for GitX deep link")
+        popup.setAccessibilityLabel("Open checkout for Half Dark deep link")
         alert.accessoryView = popup
         alert.addButton(withTitle: "Open")
         alert.addButton(withTitle: "Cancel")
@@ -159,7 +159,7 @@ enum ForgeDeepLinkAlertFactory {
     static func missingObject(actions: [ForgeDeepLinkMissingObjectAction]) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = "Git Object Is Not Available Locally"
-        alert.informativeText = "GitX will not fetch automatically. Fetch explicitly or open the validated destination in your browser."
+        alert.informativeText = "Half Dark will not fetch automatically. Fetch explicitly or open the validated destination in your browser."
         for action in actions {
             let button: NSButton
             switch action {

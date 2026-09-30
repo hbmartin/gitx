@@ -794,7 +794,7 @@ import OSLog // swiftlint:disable:this unused_import
             let pullRequestDetails = try ForgePullRequestDetails(
                 summary: summary,
                 bodyMarkdown: .available(
-                    "## Milestone 2 native destination\n\nThis deterministic Pull Request is rendered by GitX without network access."
+                    "## Milestone 2 native destination\n\nThis deterministic Pull Request is rendered by Half Dark without network access."
                 ),
                 assignees: .available([]),
                 milestone: .available(nil),

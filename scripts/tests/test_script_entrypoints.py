@@ -76,7 +76,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             "for ((index = 0; index < ${#arguments[@]}; index++)); do\n"
             "  if [[ \"${arguments[$index]}\" == '-derivedDataPath' ]]; then\n"
             "    derived=${arguments[$((index + 1))]}\n"
-            "    app=\"$derived/Build/Products/Debug/GitX.app\"\n"
+            "    app=\"$derived/Build/Products/Debug/Half Dark.app\"\n"
             "    mkdir -p \"$app/Contents/MacOS\" \"$app/Contents/Resources\"\n"
             "    printf '#!/bin/bash\\n' >\"$app/Contents/MacOS/GitX\"\n"
             "    chmod +x \"$app/Contents/MacOS/GitX\"\n"
@@ -209,10 +209,10 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
         with (app_contents / "Info.plist").open("wb") as handle:
-            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+            plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")
         peekaboo = self.bin / "peekaboo"
         peekaboo.write_text("#!/bin/bash\nexit 1\n")
@@ -287,7 +287,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             env=self.environment,
         )
 
-        fixture = self.root / "build" / "GitX.app" / "Contents" / "Resources" / "fixture.txt"
+        fixture = self.root / "build" / "Half Dark.app" / "Contents" / "Resources" / "fixture.txt"
         self.assertEqual(fixture.read_text(), "staged\n")
 
     def test_xcodebuild_wrapper_rejects_an_xcode_older_than_ci(self) -> None:
@@ -1063,11 +1063,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
-            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+            plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         forge_roots = self.root / "forge-roots.txt"
         app_binary.write_text(
             "#!/bin/bash\n"
@@ -1133,11 +1133,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
-            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+            plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         app_binary.write_text("#!/bin/bash\nexit 1\n")
         app_binary.chmod(0o755)
         self.install_sleeping_executable(self.bin / "log")
@@ -1275,10 +1275,10 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
         with (app_contents / "Info.plist").open("wb") as handle:
-            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+            plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")
         recorded_pid = self.root / "log-process.pid"
         ps = self.bin / "ps"
@@ -1314,13 +1314,13 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)
         app_binary.write_text("#!/bin/bash\nexit 0\n")
         app_binary.chmod(0o755)
         with (app_contents / "Info.plist").open("wb") as handle:
-            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+            plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         log = self.bin / "log"
         log.write_text("#!/bin/bash\nexit 0\n")
         log.chmod(0o755)
@@ -1361,10 +1361,10 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "GitX.app" / "Contents"
+        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
         with (app_contents / "Info.plist").open("wb") as handle:
-            plistlib.dump({"CFBundleIdentifier": "net.phere.GitX.Tests"}, handle)
+            plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")
         session_directory = self.root / "build" / "Logs" / "run-app"
         mkdir = self.bin / "mkdir"

@@ -183,7 +183,7 @@ final class AppKitForgeLinkConfirmationPresenter: ForgeLinkConfirmationPresentin
         alert.alertStyle = .warning
         alert.messageText = "Open External Link?"
         var lines = [
-            "GitX will open this complete URL in your default browser:",
+            "Half Dark will open this complete URL in your default browser:",
             confirmation.url.absoluteString,
             "",
             "Display host: \(confirmation.displayHost)",

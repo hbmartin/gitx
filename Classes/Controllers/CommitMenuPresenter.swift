@@ -266,8 +266,8 @@ final nonisolated class CommitMenuPresenter: NSObject {
         if files.count == 1, singleSelectionIsSubmodule {
             return String(
                 format: NSLocalizedString(
-                    "Open Submodule “%@” in GitX",
-                    comment: "Open Submodule Repository in GitX menu item (single file with name)"
+                    "Open Submodule “%@” in Half Dark",
+                    comment: "Open Submodule Repository in Half Dark menu item (single file with name)"
                 ),
                 (files[0].path as NSString).standardizingPath
             )

@@ -246,7 +246,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         try requireExists(app.staticTexts["Sync Fork from Parent?"], timeout: 15)
         try requireExists(
             app.staticTexts[
-                "GitHub will update main on the fork, then GitX will fetch origin/main. Your checkout will not be changed."
+                "GitHub will update main on the fork, then Half Dark will fetch origin/main. Your checkout will not be changed."
             ],
             timeout: 5
         )

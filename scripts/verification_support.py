@@ -490,7 +490,7 @@ def command_receipt_step(arguments: argparse.Namespace) -> int:
             )
             if coverage_result.returncode == 0:
                 targets = json.loads(coverage_result.stdout).get("targets", [])
-                target = next((item for item in targets if item.get("name") == "GitX.app"), None)
+                target = next((item for item in targets if item.get("name") == "Half Dark.app"), None)
                 if target is not None:
                     line_coverage = target.get("lineCoverage")
                     coverage = {

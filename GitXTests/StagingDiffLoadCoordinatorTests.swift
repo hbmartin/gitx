@@ -116,7 +116,7 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(output.sections.map(\.path), ["first.txt", "broken.txt", "last.txt"])
             XCTAssertEqual(output.sections.map(\.stagingChrome), [true, false, true])
             XCTAssertEqual(output.sections[1].title, "Diff unavailable — broken.txt")
-            XCTAssertTrue(output.sections[1].text.contains("GitX could not load the diff for broken.txt."))
+            XCTAssertTrue(output.sections[1].text.contains("Half Dark could not load the diff for broken.txt."))
             XCTAssertTrue(output.sections[1].text.contains("git exited 128: invalid object name"))
             XCTAssertEqual(output.sections[1].context, "readOnly")
             delivered.fulfill()

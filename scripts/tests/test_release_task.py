@@ -49,8 +49,8 @@ class ReleaseTaskTests(unittest.TestCase):
         self.assertNotIn("universal", result.stdout)
         self.assertNotIn("GITX_RELEASE_ARCH", result.stdout)
         self.assertIn("Developer ID", result.stdout)
-        self.assertIn("GitX-arm64.zip", result.stdout)
-        self.assertIn("GitX-arm64.dmg", result.stdout)
+        self.assertIn("HalfDark-arm64.zip", result.stdout)
+        self.assertIn("HalfDark-arm64.dmg", result.stdout)
 
     def test_release_task_rejects_architecture_arguments(self) -> None:
         for arch in ("x86_64", "arm64", "universal"):
@@ -83,7 +83,7 @@ class ReleaseTaskTests(unittest.TestCase):
                 "cat <<'EOF'\n"
                 "    CODE_SIGN_STYLE = Automatic\n"
                 "    ENABLE_HARDENED_RUNTIME = YES\n"
-                "    PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitX\n"
+                "    PRODUCT_BUNDLE_IDENTIFIER = me.haroldmartin.HalfDark\n"
                 "EOF\n"
             )
             mock_xcodebuild.chmod(0o755)

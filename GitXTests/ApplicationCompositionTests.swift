@@ -272,7 +272,7 @@ final class ApplicationCompositionTests: XCTestCase {
             restore(previousCleanShutdown, forKey: cleanShutdownKey, in: standard)
         }
 
-        if let existingWelcome = NSApplication.shared.windows.first(where: { $0.title == "Welcome to GitX" }),
+        if let existingWelcome = NSApplication.shared.windows.first(where: { $0.title == "Welcome to Half Dark" }),
            let existingSheet = existingWelcome.attachedSheet
         {
             existingWelcome.endSheet(
@@ -294,13 +294,13 @@ final class ApplicationCompositionTests: XCTestCase {
 
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while !NSApplication.shared.windows.contains(where: {
-            $0.title == "Welcome to GitX" && $0.attachedSheet != nil
+            $0.title == "Welcome to Half Dark" && $0.attachedSheet != nil
         }),
             ContinuousClock.now < deadline
         {
             try await Task.sleep(for: .milliseconds(10))
         }
-        let welcome = try XCTUnwrap(NSApplication.shared.windows.first { $0.title == "Welcome to GitX" })
+        let welcome = try XCTUnwrap(NSApplication.shared.windows.first { $0.title == "Welcome to Half Dark" })
         let restoreSheet = try XCTUnwrap(welcome.attachedSheet)
         let promptIsVisible = descendantText(in: restoreSheet.contentView)
             .contains("Restore Windows from the Previous Session?")

@@ -29,7 +29,7 @@ set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
 
-app_bundle=$root/build/GitX.app
+app_bundle="$root/build/Half Dark.app"
 session_dir=$root/build/Logs/run-app
 log_file=
 stdout_file=
@@ -309,7 +309,7 @@ fi
 bundle_identifier=$(
 	/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_bundle/Contents/Info.plist" 2>/dev/null
 )
-bundle_identifier=${bundle_identifier:-net.phere.GitX}
+bundle_identifier=${bundle_identifier:-me.haroldmartin.HalfDark}
 
 # Peekaboo resolves targets by bundle identifier, so a second GitX process makes
 # window lookups ambiguous and `see` returns an empty element list even when the

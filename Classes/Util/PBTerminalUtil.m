@@ -69,7 +69,7 @@
 
 - (BOOL)runTerminalCommand:(NSString *)command inDirectory:(NSURL *)directory
 {
-	NSString *fullCommand = [NSString stringWithFormat:@"cd %@; clear; echo '# Opened by GitX'; %@", [PBTerminalUtil shellQuote:directory.path], command];
+	NSString *fullCommand = [NSString stringWithFormat:@"cd %@; clear; echo '# Opened by Half Dark'; %@", [PBTerminalUtil shellQuote:directory.path], command];
 
 	TerminalApplication *term = [SBApplication applicationWithBundleIdentifier:@"com.apple.Terminal"];
 	if (!term)
@@ -87,7 +87,7 @@
 
 - (BOOL)runiTerm2Command:(NSString *)command inDirectory:(NSURL *)directory
 {
-	NSString *fullCommand = [NSString stringWithFormat:@"cd %@; clear; echo '# Opened by GitX'; %@", [PBTerminalUtil shellQuote:directory.path], command];
+	NSString *fullCommand = [NSString stringWithFormat:@"cd %@; clear; echo '# Opened by Half Dark'; %@", [PBTerminalUtil shellQuote:directory.path], command];
 
 	iTerm2Application *term = [SBApplication applicationWithBundleIdentifier:@"com.googlecode.iterm2"];
 	if (!term)
