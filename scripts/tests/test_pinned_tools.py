@@ -95,6 +95,12 @@ class PinnedToolsTests(unittest.TestCase):
             self.assertIn(setting, guarded_branch)
             self.assertNotIn(setting, build_step.split('if [[ -z "$variableSet" ]]; then', maxsplit=1)[0])
 
+    def test_fork_tag_cannot_publish_unsigned_ci_artifacts(self) -> None:
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+        release_job = build_workflow.split("\n  release:\n", maxsplit=1)[1]
+
+        self.assertIn("github.repository == 'gitx/gitx'", release_job.split("\n    needs:", maxsplit=1)[0])
+
     def test_screenshot_fixture_only_overrides_ui_fixture_when_comparison_enabled(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
         checkout_step = build_workflow.split(
