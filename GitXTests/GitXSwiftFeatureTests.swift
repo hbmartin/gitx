@@ -3,6 +3,12 @@ import XCTest
 
 @MainActor
 final class GitXSwiftFeatureTests: XCTestCase {
+    func testApplicationBundleIdentityAndName() {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "net.phere.GitX")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String, "GitX")
+        XCTAssertEqual(URL(fileURLWithPath: Bundle.main.bundlePath).lastPathComponent, "GitX.app")
+    }
+
     private final class ForgeWindowControllerFixture: PBGitWindowController {
         private var fixedRepository: PBGitRepository?
         private(set) var shownErrors: [NSError] = []
