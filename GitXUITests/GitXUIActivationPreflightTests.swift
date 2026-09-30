@@ -70,7 +70,9 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
             object: app
         )
         XCTAssertEqual(XCTWaiter.wait(for: [foreground], timeout: 15), .completed)
-        let repositoryWindow = app.windows["\(repository.lastPathComponent) (branch: main)"]
+        let repositoryWindow = app.windows.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "\(repository.lastPathComponent) (branch: main)")
+        ).firstMatch
         XCTAssertTrue(repositoryWindow.waitForExistence(timeout: 20))
         let uncommittedChanges = repositoryWindow.buttons["Uncommitted Changes"]
         XCTAssertTrue(uncommittedChanges.waitForExistence(timeout: 15))
