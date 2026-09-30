@@ -378,8 +378,11 @@ jobs:
             zap trash: [
               "~/Library/Application Support/com.apple.sharedfilelist/com.apple.LSSharedFileList.ApplicationRecentDocuments/nl.frim.gitx.sfl*",
               "~/Library/Caches/nl.frim.GitX",
+              "~/Library/Caches/me.haroldmartin.HalfDark",
               "~/Library/Preferences/nl.frim.GitX.plist",
+              "~/Library/Preferences/me.haroldmartin.HalfDark.plist",
               "~/Library/Saved Application State/nl.frim.GitX.savedState",
+              "~/Library/Saved Application State/me.haroldmartin.HalfDark.savedState",
             ]
           end
           EOF
