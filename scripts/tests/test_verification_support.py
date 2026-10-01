@@ -185,14 +185,14 @@ class ReceiptTests(unittest.TestCase):
                 [], 0, stdout='{"totalTestCount": 1, "passedTests": 1}', stderr=""
             )
             coverage = subprocess.CompletedProcess(
-                [], 0, stdout='{"targets": [{"name": "GitX.app"}]}', stderr=""
+                [], 0, stdout='{"targets": [{"name": "Half Dark.app"}]}', stderr=""
             )
 
             with mock.patch.object(verification, "run", side_effect=[summary, coverage]):
                 verification.command_receipt_step(arguments)
             step = json.loads(receipt.read_text())["steps"][0]
 
-        self.assertEqual(step["coverage"], {"target": "GitX.app", "lineCoverage": None})
+        self.assertEqual(step["coverage"], {"target": "Half Dark.app", "lineCoverage": None})
 
     def test_finish_discovers_durable_outputs_without_derived_data_internals(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT) as directory:

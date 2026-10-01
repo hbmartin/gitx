@@ -875,7 +875,7 @@
 		6C5244121E00C66E0051DE20 /* PBHistorySearchMode.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBHistorySearchMode.m; sourceTree = "<group>"; };
 		77C82804067257F0000B614F /* CoreData.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreData.framework; path = /System/Library/Frameworks/CoreData.framework; sourceTree = "<absolute>"; };
 		7EDCE8ED2EBEFEEF0062CE78 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
-		8D1107320486CEB800E47090 /* GitX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GitX.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8D1107320486CEB800E47090 /* Half Dark.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Half Dark.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		911112360E5A097800BF76B4 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = /System/Library/Frameworks/Security.framework; sourceTree = "<absolute>"; };
 		913D5E490E55644600CECEA2 /* gitx */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = gitx; sourceTree = BUILT_PRODUCTS_DIR; };
 		978357A4189C05B100ADC689 /* FolderClosedTemplate.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; path = FolderClosedTemplate.pdf; sourceTree = "<group>"; };
@@ -1157,7 +1157,7 @@
 		19C28FACFE9D520D11CA2CBB /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				8D1107320486CEB800E47090 /* GitX.app */,
+				8D1107320486CEB800E47090 /* Half Dark.app */,
 				913D5E490E55644600CECEA2 /* gitx */,
 				551BF111112F371800265053 /* gitx_askpasswd */,
 				CC0000030000003 /* GitXUITests.xctest */,
@@ -1843,7 +1843,7 @@
 			);
 			productInstallPath = "$(HOME)/Applications";
 			productName = GitTest;
-			productReference = 8D1107320486CEB800E47090 /* GitX.app */;
+			productReference = 8D1107320486CEB800E47090 /* Half Dark.app */;
 			productType = "com.apple.product-type.application";
 		};
 		913D5E480E55644600CECEA2 /* cli tool */ = {
@@ -2683,15 +2683,16 @@
 				GCC_PRECOMPILE_PREFIX_HEADER = YES;
 				GCC_PREFIX_HEADER = Resources/GitX_Prefix.pch;
 				INFOPLIST_FILE = Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = GitX;
+				INFOPLIST_KEY_CFBundleDisplayName = "Half Dark";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_OTHER_PREPROCESSOR_FLAGS = "-traditional";
 				INSTALL_PATH = /Applications;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
-				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitX;
+				PRODUCT_BUNDLE_IDENTIFIER = me.haroldmartin.HalfDark;
 				PRODUCT_NAME = GitX;
+				WRAPPER_NAME = "Half Dark.app";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG GITX_APP_TARGET";
@@ -2722,15 +2723,16 @@
 				GCC_PREFIX_HEADER = Resources/GitX_Prefix.pch;
 				GCC_PREPROCESSOR_DEFINITIONS_NOT_USED_IN_PRECOMPS = "";
 				INFOPLIST_FILE = Resources/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = GitX;
+				INFOPLIST_KEY_CFBundleDisplayName = "Half Dark";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_OTHER_PREPROCESSOR_FLAGS = "-traditional";
 				INSTALL_PATH = /Applications;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
-				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitX;
+				PRODUCT_BUNDLE_IDENTIFIER = me.haroldmartin.HalfDark;
 				PRODUCT_NAME = GitX;
+				WRAPPER_NAME = "Half Dark.app";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRIP_INSTALLED_PRODUCT = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -2939,7 +2941,7 @@
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GitX.app/Contents/MacOS/GitX";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Half Dark.app/Contents/MacOS/GitX";
 			};
 			name = Debug;
 		};
@@ -2966,7 +2968,7 @@
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/GitX.app/Contents/MacOS/GitX";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Half Dark.app/Contents/MacOS/GitX";
 			};
 			name = Release;
 		};

@@ -50,7 +50,7 @@ actor ForgeAttentionNotificationDelivery: ForgeAttentionAlertDelivering {
         }
         let content = UNMutableNotificationContent()
         content.title = Self.title(alert.category)
-        content.body = "GitX found a current item that needs your attention."
+        content.body = "Half Dark found a current item that needs your attention."
         content.sound = .default
         content.categoryIdentifier = Self.categoryIdentifier
         content.userInfo = ["payload": payload.base64EncodedString()]

@@ -26,7 +26,7 @@ nonisolated enum ForgeGitHubPullRequestCompositionError: Error, Equatable, Local
         case .currentCredentialRequired:
             "The selected GitHub account no longer has a current Credential."
         case .authorizationEvidenceUnavailable:
-            "GitX could not obtain current authorization evidence for this repository."
+            "Half Dark could not obtain current authorization evidence for this repository."
         case let .capabilityUnavailable(operation):
             "The current Credential cannot perform \(operation.rawValue)."
         case let .explicitConfirmationRequired(operation):

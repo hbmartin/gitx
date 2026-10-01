@@ -1648,7 +1648,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             pane.diffPaneController.contentView.textView.string.contains("Diff unavailable — \(missingPath)")
         })
         let rendered = pane.diffPaneController.contentView.textView.string
-        XCTAssertTrue(rendered.contains("GitX could not load the diff for \(missingPath)."), rendered)
+        XCTAssertTrue(rendered.contains("Half Dark could not load the diff for \(missingPath)."), rendered)
         XCTAssertTrue(rendered.contains(expectedDetail), rendered)
         XCTAssertFalse(rendered.contains("Stage hunk"), rendered)
         XCTAssertFalse(rendered.contains("Stage line"), rendered)

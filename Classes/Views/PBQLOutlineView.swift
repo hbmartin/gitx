@@ -87,7 +87,7 @@ class QuickLookOutlineView: NSOutlineView, NSOutlineViewDataSource, NSFilePromis
         _ filePromiseProvider: NSFilePromiseProvider,
         fileNameForType fileType: String
     ) -> String {
-        payload(for: filePromiseProvider)?.fileName ?? "GitX Export"
+        payload(for: filePromiseProvider)?.fileName ?? "Half Dark Export"
     }
 
     nonisolated func filePromiseProvider(
@@ -100,7 +100,7 @@ class QuickLookOutlineView: NSOutlineView, NSOutlineViewDataSource, NSFilePromis
             completionHandler(NSError(
                 domain: NSCocoaErrorDomain,
                 code: NSFileWriteUnknownError,
-                userInfo: [NSLocalizedDescriptionKey: "GitX could not identify the promised repository item."]
+                userInfo: [NSLocalizedDescriptionKey: "Half Dark could not identify the promised repository item."]
             ))
             return
         }

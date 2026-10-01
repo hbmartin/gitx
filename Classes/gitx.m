@@ -35,7 +35,7 @@ static NSString *executablePath(void)
 
 static GitXApplication *gitXApplication(void)
 {
-	// This tool ships inside the app bundle at GitX.app/Contents/Resources/gitx,
+	// This tool ships inside the app bundle at Half Dark.app/Contents/Resources/gitx,
 	// so locate the app relative to the tool itself. Looking it up by bundle
 	// identifier is unreliable: if another bundle on disk claims the same
 	// identifier (e.g. Sparkle's embedded Updater.app in some releases),
@@ -63,7 +63,7 @@ void usage(char const *programName)
 	printf("   or: %s (--clone <repository> [destination])\n", programName);
 	printf("\n");
 	printf("    -h, --help             print this help\n");
-	printf("    -v, --version          prints version info for both GitX and git\n");
+	printf("    -v, --version          prints version info for both Half Dark and git\n");
 	printf("    --git-path             prints the path to the directory containing git\n");
 	printf("\n");
 	printf("Repository path\n");
@@ -75,7 +75,7 @@ void usage(char const *programName)
 	printf("                           send the gitx commands to the repository located at <path>\n");
 	printf("\n");
 	printf("Commit/Stage view\n");
-	printf("    -c, --commit           open GitX showing uncommitted changes\n");
+	printf("    -c, --commit           open Half Dark showing uncommitted changes\n");
 	printf("\n");
 	printf("Branch filter options\n");
 	printf("    Add an optional branch or tag name to select that branch using the given branch filter\n");
@@ -94,9 +94,9 @@ void usage(char const *programName)
 	printf("    See 'man git-diff' for options you can pass to gitx --diff\n");
 	printf("\n");
 	printf("    -d, --diff [<common diff options>] <commit>{0,2} [--] [<path>...]\n");
-	printf("                            shows the diff in a window in GitX\n");
+	printf("                            shows the diff in a window in Half Dark\n");
 	printf("    git diff [options] | gitx\n");
-	printf("                            use gitx to pipe diff output to a GitX window\n");
+	printf("                            use gitx to pipe diff output to a Half Dark window\n");
 	printf("\n");
 	printf("Search\n");
 	printf("\n");
@@ -110,7 +110,7 @@ void usage(char const *programName)
 	printf("                           commits that modify the file at file path\n");
 	printf("\n");
 	printf("Creating repositories\n");
-	printf("    These commands will create a git repository and then open it up in GitX\n");
+	printf("    These commands will create a git repository and then open it up in Half Dark\n");
 	printf("\n");
 	printf("    --init                  creates (or reinitializes) a git repository\n");
 	printf("    --clone <repository URL> [destination path]\n");
@@ -123,7 +123,7 @@ void usage(char const *programName)
 void version_info(void)
 {
 	NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString *)kCFBundleVersionKey];
-	printf("GitX version %s\n", [version UTF8String]);
+	printf("Half Dark version %s\n", [version UTF8String]);
 	exit(1);
 }
 
@@ -145,7 +145,7 @@ void handleSTDINDiff(void)
 		NSError *deliveryError = [gitXApp lastError];
 		if (deliveryError) {
 			const char *message = deliveryError.localizedDescription.UTF8String ?: "Unknown Apple-event delivery error";
-			fprintf(stderr, "gitx: could not send piped diff to GitX: %s\n", message);
+			fprintf(stderr, "gitx: could not send piped diff to Half Dark: %s\n", message);
 			exit(3);
 		}
 		exit(0);

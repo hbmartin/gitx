@@ -15,10 +15,10 @@
         </customObject>
         <menu title="MainMenu" systemMenu="main" id="29" userLabel="MainMenu">
             <items>
-                <menuItem title="GitX" id="56">
-                    <menu key="submenu" title="GitX" systemMenu="apple" id="57">
+                <menuItem title="Half Dark" id="56">
+                    <menu key="submenu" title="Half Dark" systemMenu="apple" id="57">
                         <items>
-                            <menuItem title="About GitX" id="58">
+                            <menuItem title="About Half Dark" id="58">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="showAboutPanel:" target="-1" id="ivG-FU-hGW"/>
@@ -47,7 +47,7 @@
                             <menuItem isSeparatorItem="YES" id="144">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Hide GitX" keyEquivalent="h" id="134">
+                            <menuItem title="Hide Half Dark" keyEquivalent="h" id="134">
                                 <connections>
                                     <action selector="hide:" target="-1" id="f2f-Ce-Bqz"/>
                                 </connections>
@@ -66,7 +66,7 @@
                             <menuItem isSeparatorItem="YES" id="149">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Quit GitX" keyEquivalent="q" id="136">
+                            <menuItem title="Quit Half Dark" keyEquivalent="q" id="136">
                                 <connections>
                                     <action selector="terminate:" target="-1" id="cQq-Bb-5Zs"/>
                                 </connections>
@@ -680,7 +680,7 @@ DQ
                 <menuItem title="Help" id="103">
                     <menu key="submenu" title="Help" id="106">
                         <items>
-                            <menuItem title="GitX Help" keyEquivalent="?" id="111">
+                            <menuItem title="Half Dark Help" keyEquivalent="?" id="111">
                                 <connections>
                                     <action selector="showHelp:" target="205" id="932"/>
                                 </connections>
@@ -697,7 +697,7 @@ DQ
                                     <action selector="showChangeLog:" target="205" id="976"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Discuss GitX" id="972">
+                            <menuItem title="Discuss Half Dark" id="972">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                             </menuItem>
                         </items>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Build, Developer ID sign, notarize, verify, and package GitX"
+#MISE description="Build, Developer ID sign, notarize, verify, and package Half Dark"
 
 set -euo pipefail
 
@@ -24,7 +24,7 @@ fail()
 usage()
 {
 	cat <<'EOF'
-Build a directly distributable GitX app using the Apple team configured in Xcode.
+Build a directly distributable Half Dark app using the Apple team configured in Xcode.
 
 Usage:
   mise run release
@@ -35,7 +35,7 @@ The release command:
   2. Uploads the archive for Developer ID signing and notarization.
   3. Waits for Xcode to export the notarized, stapled app.
   4. Verifies signatures, bundle identifiers, architectures, and Gatekeeper acceptance.
-  5. Writes GitX-arm64.zip, GitX-arm64.dmg, the exported app,
+  5. Writes HalfDark-arm64.zip, HalfDark-arm64.dmg, the exported app,
      and SHA-256 checksums under release/.
 
 Xcode must have an Apple Developer account with access to the project's team.
@@ -126,7 +126,7 @@ bundle_identifier=$(build_setting PRODUCT_BUNDLE_IDENTIFIER)
 	fail "Release must use Xcode automatic signing; found CODE_SIGN_STYLE=$signing_style"
 [[ "$hardened_runtime" == YES ]] ||
 	fail "Release must enable the hardened runtime"
-[[ "$bundle_identifier" == net.phere.GitX ]] ||
+[[ "$bundle_identifier" == me.haroldmartin.HalfDark ]] ||
 	fail "Unexpected root bundle identifier: $bundle_identifier"
 
 log "Preflight passed (team $team_id, bundle $bundle_identifier, architecture $artifact_arch)"
@@ -189,11 +189,11 @@ verification_receipt="$root/artifacts/verification/$verification_run_id/receipt.
 upload_export_path="$work_root/Upload"
 notarized_export_path="$work_root/Notarized"
 logs_path="$work_root/logs"
-final_app_dir="$output_root/GitX-$artifact_arch"
-final_app_path="$final_app_dir/GitX.app"
-zip_path="$output_root/GitX-$artifact_arch.zip"
-dmg_path="$output_root/GitX-$artifact_arch.dmg"
-checksum_path="$output_root/GitX-$artifact_arch.sha256"
+final_app_dir="$output_root/HalfDark-$artifact_arch"
+final_app_path="$final_app_dir/Half Dark.app"
+zip_path="$output_root/HalfDark-$artifact_arch.zip"
+dmg_path="$output_root/HalfDark-$artifact_arch.dmg"
+checksum_path="$output_root/HalfDark-$artifact_arch.sha256"
 
 rm -rf \
 	"$work_root" \
@@ -211,8 +211,8 @@ scripts/xcodebuild.sh --run-id "$verification_run_id" archive \
 	"ARCHS=$xcode_archs" \
 	ONLY_ACTIVE_ARCH=NO
 
-archived_app="$archive_path/Products/Applications/GitX.app"
-[[ -d "$archived_app" ]] || fail "Archive did not contain GitX.app"
+archived_app="$archive_path/Products/Applications/Half Dark.app"
+[[ -d "$archived_app" ]] || fail "Archive did not contain Half Dark.app"
 python3 scripts/check_bundle_identifiers.py "$archived_app"
 
 log "Uploading the archive for Developer ID signing and notarization"
@@ -249,8 +249,8 @@ while true; do
 	sleep "$poll_seconds"
 done
 
-exported_app="$notarized_export_path/GitX.app"
-[[ -d "$exported_app" ]] || fail "The notarized export did not contain GitX.app"
+exported_app="$notarized_export_path/Half Dark.app"
+[[ -d "$exported_app" ]] || fail "The notarized export did not contain Half Dark.app"
 
 verify_app()
 {
@@ -280,26 +280,26 @@ verify_app "$exported_app"
 mkdir -p "$final_app_dir"
 ditto "$exported_app" "$final_app_path"
 
-log "Creating GitX-$artifact_arch.zip"
+log "Creating HalfDark-$artifact_arch.zip"
 ditto -c -k --sequesterRsrc --keepParent "$final_app_path" "$zip_path"
 
 zip_staging="$temporary_dir/zip"
 mkdir -p "$zip_staging"
 ditto -x -k "$zip_path" "$zip_staging"
 log "Checking the packaged app from the ZIP archive"
-verify_app "$zip_staging/GitX.app"
+verify_app "$zip_staging/Half Dark.app"
 
 dmg_staging="$temporary_dir/dmg"
 mkdir -p "$dmg_staging"
-ditto "$final_app_path" "$dmg_staging/GitX.app"
+ditto "$final_app_path" "$dmg_staging/Half Dark.app"
 ln -s /Applications "$dmg_staging/Applications"
 
-log "Creating GitX-$artifact_arch.dmg"
+log "Creating HalfDark-$artifact_arch.dmg"
 hdiutil create \
 	-fs HFS+ \
 	-format UDZO \
 	-srcfolder "$dmg_staging" \
-	-volname GitX \
+	-volname "Half Dark" \
 	"$dmg_path" >/dev/null
 
 log "Checking the packaged app from the disk image"
@@ -310,16 +310,16 @@ hdiutil attach \
 	-readonly \
 	-mountpoint "$mounted_dmg" \
 	"$dmg_path" >/dev/null
-verify_app "$mounted_dmg/GitX.app"
+verify_app "$mounted_dmg/Half Dark.app"
 hdiutil detach "$mounted_dmg" -quiet
 mounted_dmg=
 
 (
 	cd "$output_root"
 	shasum -a 256 \
-		"GitX-$artifact_arch.zip" \
-		"GitX-$artifact_arch.dmg" \
-		>"GitX-$artifact_arch.sha256"
+		"HalfDark-$artifact_arch.zip" \
+		"HalfDark-$artifact_arch.dmg" \
+		>"HalfDark-$artifact_arch.sha256"
 )
 
 log "Release artifacts are ready:"

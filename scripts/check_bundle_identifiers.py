@@ -11,7 +11,7 @@ import sys
 from typing import NamedTuple
 
 
-EXPECTED_ROOT_IDENTIFIER = "net.phere.GitX"
+EXPECTED_ROOT_IDENTIFIER = "me.haroldmartin.HalfDark"
 BUNDLE_SUFFIXES = {".app", ".framework", ".xpc"}
 
 

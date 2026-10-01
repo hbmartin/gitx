@@ -269,7 +269,7 @@ final nonisolated class RepositoryMutationService: NSObject {
         toPointAt newCommit: PBGitCommit,
         expectedOldOID: String?
     ) throws {
-        var arguments = ["update-ref", "-mUpdate from GitX", ref.ref, newCommit.sha]
+        var arguments = ["update-ref", "-mUpdate from Half Dark", ref.ref, newCommit.sha]
         if let expectedOldOID {
             arguments.append(expectedOldOID)
         }

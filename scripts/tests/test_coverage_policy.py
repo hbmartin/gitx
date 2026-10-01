@@ -17,24 +17,24 @@ class CoveragePolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "coverage.json"
             path.write_text(
-                '{"version": 1, "target": "GitX.app", '
+                '{"version": 1, "target": "Half Dark.app", '
                 '"minimumLineCoverage": 0.5, "files": {"Classes/A.m": 0.75}}'
             )
 
             policy = self.module.load_policy(path)
 
-        self.assertEqual(policy.target, "GitX.app")
+        self.assertEqual(policy.target, "Half Dark.app")
         self.assertEqual(policy.minimum_line_coverage, 0.5)
         self.assertEqual(policy.files, {"Classes/A.m": 0.75})
         self.assertEqual(policy.groups, {})
 
     def test_policy_requires_explicit_groups(self) -> None:
         with self.assertRaises(TypeError):  # noqa: PT027 -- canonical runner is unittest
-            self.module.CoveragePolicy("GitX.app", 0.5, {})
+            self.module.CoveragePolicy("Half Dark.app", 0.5, {})
 
     def test_coverage_regressions_fail_against_the_policy(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75},
             groups={},
@@ -50,7 +50,7 @@ class CoveragePolicyTests(unittest.TestCase):
 
     def test_new_source_file_requires_an_explicit_policy_floor(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75},
             groups={},
@@ -69,7 +69,7 @@ class CoveragePolicyTests(unittest.TestCase):
 
     def test_external_dependency_source_does_not_require_a_policy_floor(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75},
             groups={},
@@ -88,7 +88,7 @@ class CoveragePolicyTests(unittest.TestCase):
 
     def test_recording_improvements_never_lowers_a_floor(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75, "Classes/B.m": 0.8},
             groups={},
@@ -106,7 +106,7 @@ class CoveragePolicyTests(unittest.TestCase):
 
     def test_policy_payload_is_stable_and_sorted(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={"Classes/Z.m": 0.6, "Classes/A.m": 0.7},
             groups={},
@@ -121,7 +121,7 @@ class CoveragePolicyTests(unittest.TestCase):
 
     def test_recording_improvements_adds_new_first_party_sources(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={"Classes/A.m": 0.75},
             groups={},
@@ -145,7 +145,7 @@ class CoveragePolicyTests(unittest.TestCase):
 
     def test_weighted_group_preserves_a_split_file_floor(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={},
             groups={
@@ -173,7 +173,7 @@ class CoveragePolicyTests(unittest.TestCase):
 
     def test_weighted_group_regression_fails(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={},
             groups={
@@ -225,7 +225,7 @@ class CoveragePolicyTests(unittest.TestCase):
 
     def test_recording_improvements_does_not_create_individual_group_file_floors(self) -> None:
         policy = self.module.CoveragePolicy(
-            target="GitX.app",
+            target="Half Dark.app",
             minimum_line_coverage=0.5,
             files={
                 "Classes/Tracked.swift": 0.75,
@@ -273,14 +273,14 @@ class CoveragePolicyTests(unittest.TestCase):
             policy_path = pathlib.Path(directory) / "coverage.json"
             proposal_path = pathlib.Path(directory) / "proposal.json"
             policy_path.write_text(
-                '{"version": 1, "target": "GitX.app", '
+                '{"version": 1, "target": "Half Dark.app", '
                 '"minimumLineCoverage": 0.5, "files": {"Classes/A.m": 0.75}}'
             )
             original = policy_path.read_bytes()
             report = {
                 "targets": [
                     {
-                        "name": "GitX.app",
+                        "name": "Half Dark.app",
                         "lineCoverage": 0.6,
                         "files": [
                             {

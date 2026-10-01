@@ -104,7 +104,7 @@ nonisolated enum RepositoryForgeProcessError: Error, Equatable, LocalizedError, 
     var errorDescription: String? {
         switch self {
         case .launchFailed:
-            "GitX could not start Git for the clone operation."
+            "Half Dark could not start Git for the clone operation."
         case let .commandFailed(exitCode):
             "Git could not clone the repository (exit code \(exitCode))."
         }
@@ -317,7 +317,7 @@ nonisolated enum RepositorySyncForkError: Error, Equatable, LocalizedError, Send
     var errorDescription: String? {
         switch self {
         case let .localFetchFailed(serverSummary):
-            "\(serverSummary) The server-side fork sync completed, but GitX could not fetch the updated branch."
+            "\(serverSummary) The server-side fork sync completed, but Half Dark could not fetch the updated branch."
         }
     }
 }

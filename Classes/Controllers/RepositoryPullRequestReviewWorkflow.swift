@@ -237,17 +237,17 @@ nonisolated enum RepositoryPullRequestReviewServiceError: Error, Equatable, Loca
         case .unavailable:
             "This Pull Request operation is unavailable."
         case .offline:
-            "GitX is offline. The mutation was not queued."
+            "Half Dark is offline. The mutation was not queued."
         case let .rateLimited(until):
             "Rate limited until \(until.formatted(date: .abbreviated, time: .shortened))."
         case let .authoritative(message):
             message
         case .outcomeUnknown:
-            "The server outcome is unknown. GitX will reconcile it on refresh without retrying."
+            "The server outcome is unknown. Half Dark will reconcile it on refresh without retrying."
         case .stalePullRequest:
             "The Pull Request changed. Refresh and confirm again."
         case .invalidWorkspace:
-            "GitX rejected Forge state for a different account, repository, or Pull Request."
+            "Half Dark rejected Forge state for a different account, repository, or Pull Request."
         case .unsafeLocalEdit:
             "The local file is not eligible for this suggested change."
         }

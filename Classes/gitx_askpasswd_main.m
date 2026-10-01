@@ -48,7 +48,7 @@ static const NSInteger kReturnCodeCancel = 1;
 														defer:NO];
 		[mPasswordPanel setHidesOnDeactivate:NO];
 		[mPasswordPanel setLevel:NSFloatingWindowLevel];
-		[mPasswordPanel setTitle:NSLocalizedString(@"GitX SSH Remote Login", @"Title for password panel in command line tool")];
+		[mPasswordPanel setTitle:NSLocalizedString(@"Half Dark SSH Remote Login", @"Title for password panel in command line tool")];
 		if (![mPasswordPanel setFrameUsingName:WINDOWAUTOSAVENAME]) {
 			[mPasswordPanel center];
 			[mPasswordPanel setFrameAutosaveName:WINDOWAUTOSAVENAME];

@@ -64,7 +64,7 @@ final class CommitMenuPresenterTests: XCTestCase {
         )
         XCTAssertEqual(
             presentation("openFiles:", files: selected, submodule: true).title,
-            "Open Submodule “folder/submodule” in GitX"
+            "Open Submodule “folder/submodule” in Half Dark"
         )
         XCTAssertFalse(presentation("openFiles:").enabled)
     }

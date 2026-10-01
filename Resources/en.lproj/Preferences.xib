@@ -24,7 +24,7 @@
                 <button toolTip="Use this instead of continuous repository watching." fixedFrame="YES" translatesAutoresizingMaskIntoConstraints="NO" id="focus-refresh-checkbox">
                     <rect key="frame" x="103" y="163" width="300" height="18"/>
                     <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMinY="YES"/>
-                    <buttonCell key="cell" type="check" title="Refresh repositories when GitX regains focus" bezelStyle="regularSquare" imagePosition="left" alignment="left" inset="2" id="focus-refresh-cell">
+                    <buttonCell key="cell" type="check" title="Refresh repositories when Half Dark regains focus" bezelStyle="regularSquare" imagePosition="left" alignment="left" inset="2" id="focus-refresh-cell">
                         <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                         <font key="font" metaFont="system"/>
                     </buttonCell>

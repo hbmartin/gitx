@@ -1,14 +1,14 @@
 {
   "files": {
     "Classes/Controllers/ApplicationComposition.swift": 1.0,
-    "Classes/Controllers/ApplicationController.m": 0.9429,
+    "Classes/Controllers/ApplicationController.m": 0.9435,
     "Classes/Controllers/ApplicationIcon.swift": 1.0,
     "Classes/Controllers/CommitControllerPolicies.swift": 1.0,
     "Classes/Controllers/CommitMenuPresenter.swift": 1.0,
     "Classes/Controllers/CommitMessageEditCoordinator.swift": 1.0,
     "Classes/Controllers/CommitPatchExportCoordinator.swift": 0.1421,
     "Classes/Controllers/CommitTableInteractionCoordinator.swift": 0.9818,
-    "Classes/Controllers/DBPrefsWindowController.m": 0.6813,
+    "Classes/Controllers/DBPrefsWindowController.m": 0.6978,
     "Classes/Controllers/FlowDeltaAdapters.swift": 0.9771,
     "Classes/Controllers/ForgeAccountLifecycle.swift": 0.9851,
     "Classes/Controllers/ForgeAccountsPreferences.swift": 0.9463,
@@ -45,7 +45,7 @@
     "Classes/Controllers/PBHistorySearchController.m": 0.9285,
     "Classes/Controllers/PBHistorySearchMode.m": 0.8333,
     "Classes/Controllers/PBOpenShallowRepositoryErrorRecoveryAttempter.m": 0.0,
-    "Classes/Controllers/PBPrefsWindowController.m": 0.7885,
+    "Classes/Controllers/PBPrefsWindowController.m": 0.7942,
     "Classes/Controllers/PBRepositoryDocumentController.swift": 0.9767,
     "Classes/Controllers/PBServicesController.m": 0.0,
     "Classes/Controllers/PBViewController.m": 0.909,
@@ -60,7 +60,7 @@
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
     "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8807,
     "Classes/Controllers/RepositoryForgeRemoteDescriptorLoader.swift": 0.9871,
-    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7708,
+    "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7726,
     "Classes/Controllers/RepositoryPullRequestGitOperations.swift": 0.9403,
     "Classes/Controllers/RepositoryPullRequestMutationPreferenceStore.swift": 0.9492,
     "Classes/Controllers/RepositoryPullRequestReviewComposition.swift": 0.903,
@@ -75,7 +75,7 @@
     "Classes/Controllers/RepositoryStatusBarPresentation.swift": 1.0,
     "Classes/Controllers/RepositoryToolbarController.swift": 0.995,
     "Classes/Controllers/StagingDiffLoadCoordinator.swift": 0.9952,
-    "Classes/Controllers/StagingDiffPaneController.swift": 0.7777,
+    "Classes/Controllers/StagingDiffPaneController.swift": 0.7816,
     "Classes/Controllers/StagingFileListController.swift": 0.8464,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
     "Classes/Controllers/StagingViewController.swift": 0.8888,
@@ -210,7 +210,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9117,
-  "target": "GitX.app",
+  "minimumLineCoverage": 0.9118,
+  "target": "Half Dark.app",
   "version": 1
 }

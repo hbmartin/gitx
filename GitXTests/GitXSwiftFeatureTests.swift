@@ -3,6 +3,13 @@ import XCTest
 
 @MainActor
 final class GitXSwiftFeatureTests: XCTestCase {
+    func testApplicationBundleIdentityAndName() {
+        XCTAssertEqual(Bundle.main.bundleIdentifier, "me.haroldmartin.HalfDark")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String, "Half Dark")
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String, "Half Dark")
+        XCTAssertEqual(URL(fileURLWithPath: Bundle.main.bundlePath).lastPathComponent, "Half Dark.app")
+    }
+
     private final class ForgeWindowControllerFixture: PBGitWindowController {
         private var fixedRepository: PBGitRepository?
         private(set) var shownErrors: [NSError] = []
@@ -1546,7 +1553,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         try (String(contentsOf: modifiedScript, encoding: .utf8) + "\n# user customization\n")
             .write(to: modifiedScript, atomically: true, encoding: .utf8)
         let malformedScript = directory.appendingPathComponent("gitx-raycast-start-clone.sh")
-        try "#!/bin/zsh\n# GitX checksum: malformed\nopen -b net.phere.GitX\n"
+        try "#!/bin/zsh\n# GitX checksum: malformed\nopen -b me.haroldmartin.HalfDark\n"
             .write(to: malformedScript, atomically: true, encoding: .utf8)
         let alteredChecksumScript = directory.appendingPathComponent("gitx-raycast-show-recents.sh")
         let alteredChecksum = try String(contentsOf: alteredChecksumScript, encoding: .utf8)
@@ -1571,14 +1578,14 @@ final class GitXSwiftFeatureTests: XCTestCase {
     }
 
     func testRaycastScriptCatalogTargetsAnApplicationPathInsteadOfABundleIdentifier() throws {
-        let scripts = PBRaycastScriptCatalog.scriptContents(forApplicationPath: "/Applications/GitX.app")
+        let scripts = PBRaycastScriptCatalog.scriptContents(forApplicationPath: "/Applications/Half Dark.app")
 
         XCTAssertEqual(
             Set(scripts.keys),
             ["open-repository.sh", "open-finder.sh", "show-recents.sh", "start-clone.sh"]
         )
         for (filename, contents) in scripts {
-            XCTAssertTrue(contents.contains("APP='/Applications/GitX.app'"), filename)
+            XCTAssertTrue(contents.contains("APP='/Applications/Half Dark.app'"), filename)
             XCTAssertFalse(
                 contents.contains("open -b "),
                 "\(filename) must not launch GitX by an identifier another bundle can claim"
@@ -1593,8 +1600,8 @@ final class GitXSwiftFeatureTests: XCTestCase {
             )
             XCTAssertTrue(
                 contents.contains(
-                    "The embedded GitX command-line tool could not be found or is not executable. " +
-                        "Reinstall the Raycast commands from GitX Settings."
+                    "The embedded Half Dark command-line tool could not be found or is not executable. " +
+                        "Reinstall the Raycast commands from Half Dark Settings."
                 ),
                 "\(filename) must describe every route to the missing-tool failure"
             )

@@ -742,7 +742,7 @@ final class PBQLOutlineViewTests: XCTestCase {
         let parent = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: parent) }
 
-        XCTAssertEqual(outline.filePromiseProvider(provider, fileNameForType: provider.fileType), "GitX Export")
+        XCTAssertEqual(outline.filePromiseProvider(provider, fileNameForType: provider.fileType), "Half Dark Export")
         let error = write(provider: provider, with: outline, to: parent.appendingPathComponent("invalid")) as NSError?
 
         XCTAssertEqual(error?.domain, NSCocoaErrorDomain)
@@ -751,7 +751,7 @@ final class PBQLOutlineViewTests: XCTestCase {
 
     func testDescriptorReportsMissingNameAndRevisionWithoutRetainingTreeState() throws {
         let unnamedDescriptor = QuickLookExportDescriptor.make(tree: tree(path: "", leaf: true))
-        XCTAssertEqual(unnamedDescriptor.fileName, "GitX Export")
+        XCTAssertEqual(unnamedDescriptor.fileName, "Half Dark Export")
         guard case let .unavailable(unnamedMessage) = unnamedDescriptor.source else {
             return XCTFail("An unnamed tree should produce an unavailable export")
         }

@@ -107,7 +107,7 @@ struct RepositoryOpeningClassifier {
                     for: inputURL,
                     code: 1,
                     description: NSLocalizedString("Unable to Open Repository", comment: ""),
-                    reason: NSLocalizedString("GitX can only open folders on this Mac.", comment: "")
+                    reason: NSLocalizedString("Half Dark can only open folders on this Mac.", comment: "")
                 )
             )
         }
@@ -215,7 +215,7 @@ struct AppKitRepositoryCreationPrompter: RepositoryCreationPrompting {
         alert.messageText = NSLocalizedString("Create a Repository?", comment: "")
         alert.informativeText = String(
             format: NSLocalizedString(
-                "“%@” is not inside a Git repository. Would you like GitX to create one in this folder?",
+                "“%@” is not inside a Git repository. Would you like Half Dark to create one in this folder?",
                 comment: ""
             ),
             url.lastPathComponent
@@ -499,7 +499,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate, NSTab
             backing: .buffered,
             defer: false
         )
-        window.title = "Welcome to GitX"
+        window.title = "Welcome to Half Dark"
         window.isReleasedWhenClosed = false
         // Whether this window belongs on screen is a decision made fresh at every
         // launch by WelcomePresentationPolicy. Letting AppKit restore it means it
@@ -846,7 +846,7 @@ final class WindowSessionCoordinator: NSObject {
             WelcomeWindowController.shared.show()
             let alert = NSAlert()
             alert.messageText = "Restore Windows from the Previous Session?"
-            alert.informativeText = "GitX did not finish closing normally. You can reopen the saved repository windows and tabs."
+            alert.informativeText = "Half Dark did not finish closing normally. You can reopen the saved repository windows and tabs."
             alert.addButton(withTitle: "Restore")
             alert.addButton(withTitle: "Don’t Restore")
             if let welcome = WelcomeWindowController.shared.window {

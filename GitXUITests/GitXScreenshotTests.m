@@ -147,11 +147,11 @@
 	XCTAssertTrue([self waitForWindow], @"Preferences require the application to finish launching");
 	[self.app activate];
 	if ([element waitForExistenceWithTimeout:1]) return;
-	XCUIElement *applicationMenu = self.app.menuBars.menuBarItems[@"GitX"];
-	XCTAssertTrue([applicationMenu waitForExistenceWithTimeout:5], @"Preferences require the GitX application menu");
+	XCUIElement *applicationMenu = self.app.menuBars.menuBarItems[@"Half Dark"];
+	XCTAssertTrue([applicationMenu waitForExistenceWithTimeout:5], @"Preferences require the Half Dark application menu");
 	[applicationMenu click];
 	XCUIElement *settingsItem = self.app.menuItems[@"Settings…"];
-	XCTAssertTrue([settingsItem waitForExistenceWithTimeout:5], @"The GitX application menu should offer Settings");
+	XCTAssertTrue([settingsItem waitForExistenceWithTimeout:5], @"The Half Dark application menu should offer Settings");
 	[settingsItem click];
 	XCTAssertTrue([element waitForExistenceWithTimeout:10],
 				  @"The requested preferences pane should expose %@", element);
@@ -653,7 +653,7 @@
 
 	XCUIElement *continuousWatch = self.app.checkBoxes[@"Watch for changes in repositories"];
 	[self openPreferencesWaitingForElement:continuousWatch];
-	XCUIElement *refreshOnFocus = self.app.checkBoxes[@"Refresh repositories when GitX regains focus"];
+	XCUIElement *refreshOnFocus = self.app.checkBoxes[@"Refresh repositories when Half Dark regains focus"];
 	XCTAssertTrue([refreshOnFocus waitForExistenceWithTimeout:5]);
 	XCTAssertFalse([continuousWatch.value boolValue]);
 	XCTAssertFalse(continuousWatch.isEnabled);

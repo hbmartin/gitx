@@ -116,7 +116,7 @@ import XCTest
             XCTAssertEqual(
                 try field(Milestone3AccessibilityIdentifier.SuggestedChange.status, in: mounted.controller)
                     .stringValue,
-                "Applied as an unstaged local edit. GitX Undo is unavailable."
+                "Applied as an unstaged local edit. Half Dark Undo is unavailable."
             )
             XCTAssertEqual(
                 try String(contentsOf: fixture.suggestedChangeURL, encoding: .utf8),

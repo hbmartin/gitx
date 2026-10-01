@@ -12,13 +12,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// Derives the path of the GitX application bundle that contains the embedded
 /// command-line tool at the given path.
 ///
-/// The tool ships at GitX.app/Contents/Resources/gitx, so the bundle is the
+/// The tool ships at Half Dark.app/Contents/Resources/gitx, so the bundle is the
 /// grandparent of its enclosing directory. Returns nil unless the tool sits at
 /// exactly that location. A tool running straight from a build directory is the
 /// expected nil case; callers fall back to a bundle-identifier lookup for it.
 ///
 /// Resolving the app by bundle identifier alone is unreliable: when another
-/// bundle on disk claims net.phere.GitX, LaunchServices can return a bundle
+/// bundle on disk claims me.haroldmartin.HalfDark, LaunchServices can return a bundle
 /// without GitX's scripting definition and every command fails.
 ///
 /// The derivation is purely lexical and touches no file system. Callers pass a

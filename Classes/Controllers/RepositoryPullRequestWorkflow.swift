@@ -536,7 +536,7 @@ nonisolated enum RepositoryPullRequestServiceError: Error, Equatable, LocalizedE
         case .noLocalBranch:
             "Check out a local branch before creating a Pull Request."
         case .invalidLocalHead:
-            "GitX could not resolve the checked-out branch head."
+            "Half Dark could not resolve the checked-out branch head."
         case .draftUnavailable:
             "The Pull Request draft could not be loaded or saved."
         case .localDiffUnavailable:
@@ -544,7 +544,7 @@ nonisolated enum RepositoryPullRequestServiceError: Error, Equatable, LocalizedE
         case .checkoutVerificationFailed:
             "The fetched Pull Request head did not match the expected commit."
         case .deepLinkUnavailable:
-            "The GitX deep link does not match an open checkout."
+            "The Half Dark deep link does not match an open checkout."
         }
     }
 }

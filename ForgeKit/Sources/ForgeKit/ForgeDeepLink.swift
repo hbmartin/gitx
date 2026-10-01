@@ -13,15 +13,15 @@ public enum ForgeDeepLinkError: Error, Equatable, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidURL: "The GitX deep link is invalid."
+        case .invalidURL: "The Half Dark deep link is invalid."
         case .unsupportedScheme: "Only the x-gitx deep-link scheme is supported."
-        case .credentialsNotAllowed: "GitX deep links cannot contain credentials."
-        case .malformedAuthority: "The GitX deep-link authority is malformed."
-        case .queryOrFragmentNotAllowed: "GitX deep links cannot contain a query or fragment."
-        case .unknownRepository: "The GitX deep link does not match a known Forge Repository."
-        case .ambiguousRepository: "The GitX deep link matches more than one Forge Repository."
-        case .unsupportedRoute: "The GitX deep-link route is unsupported."
-        case .malformedRoute: "The GitX deep-link route is malformed."
+        case .credentialsNotAllowed: "Half Dark deep links cannot contain credentials."
+        case .malformedAuthority: "The Half Dark deep-link authority is malformed."
+        case .queryOrFragmentNotAllowed: "Half Dark deep links cannot contain a query or fragment."
+        case .unknownRepository: "The Half Dark deep link does not match a known Forge Repository."
+        case .ambiguousRepository: "The Half Dark deep link matches more than one Forge Repository."
+        case .unsupportedRoute: "The Half Dark deep-link route is unsupported."
+        case .malformedRoute: "The Half Dark deep-link route is malformed."
         }
     }
 }

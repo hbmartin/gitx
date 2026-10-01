@@ -6,7 +6,11 @@
 //  Copyright 2010 Nathan Kinsinger. All rights reserved.
 //
 
-#define kGitXBundleIdentifier @"net.phere.GitX"
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+#define kGitXBundleIdentifier @"me.haroldmartin.HalfDark"
 
 
 #define kGitXAEKeyArgumentsList 'ARGS'
@@ -16,3 +20,5 @@
 
 #define kGitXFindSearchStringKey @"searchString"
 #define kGitXFindInModeKey @"inMode"
+
+NS_ASSUME_NONNULL_END

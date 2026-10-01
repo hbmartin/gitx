@@ -180,7 +180,7 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
         )
         let explanation = String(
             format: NSLocalizedString(
-                "GitX could not load the diff for %@.",
+                "Half Dark could not load the diff for %@.",
                 comment: "Staging diff explanation when one selected file cannot be loaded"
             ),
             request.path

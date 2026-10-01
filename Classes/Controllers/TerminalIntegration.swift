@@ -88,7 +88,7 @@ final class TerminalLauncher: NSObject {
         let available = TerminalApplication.all.filter(\.isInstalled)
         let alert = NSAlert()
         alert.messageText = "Choose a Terminal Application"
-        alert.informativeText = "GitX will remember this choice. You can change it later in Settings."
+        alert.informativeText = "Half Dark will remember this choice. You can change it later in Settings."
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 26), pullsDown: false)
         for terminal in available {
             popup.addItem(withTitle: terminal.name)
@@ -269,13 +269,13 @@ final nonisolated class RaycastScriptCatalog: NSObject {
         let contents: String
     }
 
-    private static let bundleIdentifier = "net.phere.GitX"
+    private static let bundleIdentifier = "me.haroldmartin.HalfDark"
     private static let toolSubpath = "Contents/Resources/gitx"
 
     /// Raycast commands for a GitX installed at `applicationPath`.
     ///
     /// The scripts must not resolve GitX by bundle identifier alone. Another
-    /// bundle on disk can claim net.phere.GitX — Sparkle's embedded Updater.app
+    /// bundle on disk can claim me.haroldmartin.HalfDark — Sparkle's embedded Updater.app
     /// did in releases built with a workspace-wide identifier override — and
     /// Spotlight can return that one first. The running app's own path is baked
     /// in, and the Spotlight fallback that keeps the commands working after the
@@ -285,7 +285,7 @@ final nonisolated class RaycastScriptCatalog: NSObject {
             Script(
                 filename: "open-repository.sh",
                 contents: script(
-                    title: "Open Repository Path in GitX",
+                    title: "Open Repository Path in Half Dark",
                     metadata: ["# @raycast.argument1 { \"type\": \"text\", \"placeholder\": \"Repository path\" }"],
                     applicationPath: applicationPath,
                     body: "\"$APP/\(toolSubpath)\" \"$1\""
@@ -294,7 +294,7 @@ final nonisolated class RaycastScriptCatalog: NSObject {
             Script(
                 filename: "open-finder.sh",
                 contents: script(
-                    title: "Open Frontmost Finder Folder in GitX",
+                    title: "Open Frontmost Finder Folder in Half Dark",
                     applicationPath: applicationPath,
                     body: """
                     DIR=$(osascript -e 'tell application "Finder" to POSIX path of (target of front window as alias)') || exit 1
@@ -306,7 +306,7 @@ final nonisolated class RaycastScriptCatalog: NSObject {
             Script(
                 filename: "show-recents.sh",
                 contents: script(
-                    title: "Show GitX Recents",
+                    title: "Show Half Dark Recents",
                     applicationPath: applicationPath,
                     body: "open -a \"$APP\" --args --welcome"
                 )
@@ -314,7 +314,7 @@ final nonisolated class RaycastScriptCatalog: NSObject {
             Script(
                 filename: "start-clone.sh",
                 contents: script(
-                    title: "Start GitX Clone",
+                    title: "Start Half Dark Clone",
                     applicationPath: applicationPath,
                     body: "open -a \"$APP\" --args --clone"
                 )
@@ -365,7 +365,7 @@ final nonisolated class RaycastScriptCatalog: NSObject {
           done)
         fi
         if [ ! -x "$APP/\(toolSubpath)" ]; then
-          echo "The embedded GitX command-line tool could not be found or is not executable. Reinstall the Raycast commands from GitX Settings." >&2
+          echo "The embedded Half Dark command-line tool could not be found or is not executable. Reinstall the Raycast commands from Half Dark Settings." >&2
           exit 1
         fi
         """
@@ -400,7 +400,7 @@ final class IntegrationManager: NSObject {
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination.path)
             }
             logger.info("Installed managed Raycast commands")
-            present(title: "Raycast Commands Installed", message: "Four GitX commands are ready in Raycast.", window: window)
+            present(title: "Raycast Commands Installed", message: "Four Half Dark commands are ready in Raycast.", window: window)
         } catch {
             present(error: error, window: window)
         }
@@ -428,8 +428,8 @@ final class IntegrationManager: NSObject {
             present(
                 title: "Raycast Commands Removed",
                 message: preservedCount == 0
-                    ? "GitX left other scripts unchanged."
-                    : "GitX preserved modified and user-authored scripts.",
+                    ? "Half Dark left other scripts unchanged."
+                    : "Half Dark preserved modified and user-authored scripts.",
                 window: window
             )
         } catch {

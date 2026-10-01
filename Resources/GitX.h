@@ -60,7 +60,7 @@ typedef enum GitXForgeRevisionKind GitXForgeRevisionKind;
 - (void) quitSaving:(GitXSaveOptions)saving;  // Quit the application.
 - (BOOL) exists:(id)x;  // Verify that an object exists.
 - (id) open:(id)x withOptions:(NSArray<NSString *> *)withOptions;  // Open a document.
-- (void) showDiff:(NSString *)x;  // Show the supplied diff output in a GitX window.
+- (void) showDiff:(NSString *)x;  // Show the supplied diff output in a Half Dark window.
 - (void) performDiffIn:(NSURL *)x withOptions:(NSArray<NSString *> *)withOptions;  // Perform a diff operation in a repository.
 - (void) createRepository:(NSURL *)x;  // Create a git repository at the given filesystem URL.
 - (void) cloneRepository:(NSString *)x to:(NSURL *)to isBare:(BOOL)isBare;  // Clone a repository.
@@ -106,16 +106,16 @@ typedef enum GitXForgeRevisionKind GitXForgeRevisionKind;
 
 
 /*
- * GitX Suite
+ * Half Dark Suite
  */
 
-// The GitX application.
-@interface GitXApplication (GitXSuite)
+// The Half Dark application.
+@interface GitXApplication (HalfDarkSuite)
 
 @end
 
 // A document.
-@interface GitXDocument (GitXSuite)
+@interface GitXDocument (HalfDarkSuite)
 
 @end
 

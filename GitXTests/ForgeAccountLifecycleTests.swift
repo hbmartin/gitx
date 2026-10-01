@@ -1748,7 +1748,7 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         guard let contentView = alert.window.contentView,
               let informativeText = descendants(in: contentView)
               .compactMap({ $0 as? NSTextField })
-              .first(where: { $0.stringValue.hasPrefix("GitX validates the Credential") })
+              .first(where: { $0.stringValue.hasPrefix("Half Dark validates the Credential") })
         else {
             return XCTFail("Personal access token explanation is unavailable", file: file, line: line)
         }

@@ -260,7 +260,7 @@ final class ForgeDeepLinkApplicationRouter: NSObject {
     private func presentNoCheckout(_ destination: ForgeDestination) {
         let alert = NSAlert()
         alert.messageText = "No Matching Checkout Is Open"
-        alert.informativeText = "Open a checkout for \(destination.repository.owner)/\(destination.repository.name), or continue in the browser. GitX will not clone it automatically."
+        alert.informativeText = "Open a checkout for \(destination.repository.owner)/\(destination.repository.name), or continue in the browser. Half Dark will not clone it automatically."
         alert.addButton(withTitle: "Open in Browser")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.setAccessibilityIdentifier("GitX.DeepLink.OpenInBrowser")

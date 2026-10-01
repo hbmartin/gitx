@@ -881,7 +881,7 @@ final class RepositoryPullRequestReviewOverlayController: NSViewController {
             confirm.isEnabled = !reanchorConfirmationInFlight
             row.addArrangedSubview(confirm)
             let warning = banner(
-                "The displayed head changed. GitX found one exact context match; confirm the new location explicitly.",
+                "The displayed head changed. Half Dark found one exact context match; confirm the new location explicitly.",
                 color: .systemOrange
             )
             stack.addArrangedSubview(warning)

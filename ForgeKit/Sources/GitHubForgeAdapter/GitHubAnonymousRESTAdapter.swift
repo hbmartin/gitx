@@ -32,7 +32,7 @@ public enum GitHubAnonymousRESTError: Error, Equatable, LocalizedError, Sendable
         case .invalidResponse:
             "GitHub returned an invalid anonymous response."
         case .responseTooLarge:
-            "GitHub returned an anonymous response larger than GitX accepts."
+            "GitHub returned an anonymous response larger than Half Dark accepts."
         case .notFound:
             "The public GitHub repository or item was not found."
         case let .rateLimited(until):
