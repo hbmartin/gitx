@@ -126,6 +126,17 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    @MainActor
+    private final class WorkspaceOpenRecorder: NSObject {
+        static var openedURLs: [URL] = []
+
+        @objc(gitx_recordOpenedURL:)
+        func recordOpenedURL(_ url: URL) -> Bool {
+            WorkspaceOpenRecorder.openedURLs.append(url)
+            return true
+        }
+    }
+
     private final class RevisionCellFake: NSTableCellView {
         var referenceIndex: Int32 = -1
 
@@ -2741,6 +2752,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             pumpRunLoop(for: 0.5)
             let fileBrowser = try XCTUnwrap(historyController.value(forKey: "fileBrowser") as? NSOutlineView)
             fileBrowser.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            let original = try XCTUnwrap(class_getInstanceMethod(NSWorkspace.self, NSSelectorFromString("openURL:")))
+            let replacement = try XCTUnwrap(class_getInstanceMethod(
+                WorkspaceOpenRecorder.self, #selector(WorkspaceOpenRecorder.recordOpenedURL(_:))
+            ))
+            WorkspaceOpenRecorder.openedURLs = []
+            method_exchangeImplementations(original, replacement)
+            defer {
+                method_exchangeImplementations(original, replacement)
+                WorkspaceOpenRecorder.openedURLs = []
+            }
+            historyController.openSelectedFile(self)
+            let opened = try XCTUnwrap(WorkspaceOpenRecorder.openedURLs.first)
+            XCTAssertTrue(opened.isFileURL)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: opened.path))
             XCTAssertEqual(historyController.numberOfPreviewItems(inPreviewPanel: nil), 1)
             XCTAssertNotNil(historyController.previewPanel(nil, previewItemAt: 0))
             _ = historyController.previewPanel(nil, sourceFrameOnScreenFor: NSURL(fileURLWithPath: "/tmp"))
@@ -2775,6 +2800,70 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.updateKeys()
         XCTAssertNil(historyController.gitTree)
         XCTAssertTrue(historyController.webCommits.isEmpty)
+    }
+
+    func testCopyActionsCharacterizeMultipleCommitFormattingAndEmptySelection() throws {
+        let pasteboard = NSPasteboard.general
+        let saved: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        } ?? []
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(saved.map { $0 as NSPasteboardWriting })
+        }
+        let commits = Array(loadedCommits().prefix(2))
+        XCTAssertEqual(commits.count, 2)
+        historyController.commitController.setSelectedObjects(commits)
+        let selected = try XCTUnwrap(historyController.commitController.selectedObjects as? [PBGitCommit])
+        XCTAssertEqual(selected.count, 2)
+        historyController.copy(self)
+        XCTAssertEqual(pasteboard.string(forType: .string), selected.reversed().map {
+            "\($0.sha.prefix(10)) (\($0.subject))"
+        }.joined(separator: "\n"))
+        historyController.copySHA(self)
+        XCTAssertEqual(pasteboard.string(forType: .string), selected.reversed().map(\.sha).joined(separator: "\n"))
+        historyController.copyShortName(self)
+        XCTAssertEqual(pasteboard.string(forType: .string), selected.reversed().map { $0.shortName() }.joined(separator: " "))
+        selected[0].setValue("first patch", forKey: "patch")
+        selected[1].setValue("second patch", forKey: "patch")
+        historyController.copyPatch(self)
+        XCTAssertEqual(pasteboard.string(forType: .string), "second patch\n\n\nfirst patch")
+        for action in ["copy:", "copySHA:", "copyShortName:", "copyPatch:", "createPatch:"] {
+            let item = NSMenuItem(title: action, action: NSSelectorFromString(action), keyEquivalent: "")
+            XCTAssertTrue(historyController.validateMenuItem(item))
+            historyController.commitController.setSelectedObjects([])
+            XCTAssertFalse(historyController.validateMenuItem(item))
+            pasteboard.clearContents()
+            pasteboard.setString("preserve clipboard", forType: .string)
+            if action != "createPatch:" {
+                historyController.perform(item.action, with: self)
+            }
+            XCTAssertEqual(pasteboard.string(forType: .string), "preserve clipboard")
+            historyController.commitController.setSelectedObjects(selected)
+        }
+    }
+
+    func testHistoryUIEmptyNavigationAndRefreshBoundaries() throws {
+        historyController.commitController.setSelectedObjects([])
+        historyController.selectParentCommit(self)
+        XCTAssertTrue(historyController.commitController.selectedObjects.isEmpty)
+        let root = try XCTUnwrap(loadedCommits().first { $0.parents.isEmpty })
+        historyController.commitController.setSelectedObjects([root])
+        historyController.selectParentCommit(self)
+        XCTAssertEqual((historyController.commitController.selectedObjects.first as? PBGitCommit)?.sha, root.sha)
+        historyController.treeController.setSelectionIndexPaths([])
+        historyController.openSelectedFile(self)
+        historyController.updateView()
+        historyController.refresh(self)
+        waitForHistory()
+        historyController.updateQuicklookForce(true)
+        XCTAssertNotNil(historyController.commitController.arrangedObjects)
     }
 
     func testHistorySearchModesCharacterizeCurrentWhitespaceAndUnicodeBehavior() throws {

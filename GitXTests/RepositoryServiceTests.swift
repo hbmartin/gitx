@@ -41,6 +41,25 @@ private final class UnavailablePatchCommit: PBGitCommit {
     }
 }
 
+private final class LocalGitRunner: NSObject, PBGitCommandRunning {
+    let directory: String
+    private(set) var lastOutput: String?
+
+    init(directory: String) {
+        self.directory = directory
+    }
+
+    func output(withArguments arguments: [String]) throws -> String {
+        let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: directory)
+        _ = try task.launch()
+        return task.standardOutputString() ?? ""
+    }
+
+    func launch(withArguments arguments: [String]) throws {
+        lastOutput = try output(withArguments: arguments)
+    }
+}
+
 @MainActor
 final class RepositoryServiceTests: XCTestCase {
     private final class CommandRunnerFake: NSObject, PBGitCommandRunning {
@@ -382,6 +401,43 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         defaultsSuiteName = nil
         originalComposition = nil
         try super.tearDownWithError()
+    }
+
+    func testNativeLocalBranchDeletionProtectsWorktreesAndRemovesConfiguration() throws {
+        let runner = LocalGitRunner(directory: repositoryURL.path)
+        let service = PBRepositoryMutationService(repository: repository, runner: runner)
+        var error: NSError?
+        XCTAssertFalse(service.deleteReference(PBGitRef(string: "refs/heads/main"), error: &error))
+        XCTAssertTrue(taskOutput(error).contains("worktree") || taskOutput(error).contains("checked out"), taskOutput(error))
+        XCTAssertFalse(service.deleteReference(PBGitRef(string: "refs/heads/missing"), error: &error))
+        XCTAssertTrue(taskOutput(error).contains("not found"))
+
+        let linked = repositoryURL.appendingPathComponent("linked")
+        try runGit(["worktree", "add", "--quiet", "-b", "linked", linked.path])
+        defer { try? runGit(["worktree", "remove", "--force", linked.path]) }
+        XCTAssertFalse(service.deleteReference(PBGitRef(string: "refs/heads/linked"), error: &error))
+        XCTAssertTrue(taskOutput(error).contains("worktree") || taskOutput(error).contains("checked out"), taskOutput(error))
+        try runGit(["branch", "disposable"])
+        try runGit(["config", "branch.disposable.remote", "origin"])
+        try runGit(["config", "branch.disposable.merge", "refs/heads/main"])
+        XCTAssertTrue(service.deleteReference(PBGitRef(string: "refs/heads/disposable"), error: &error))
+        XCTAssertThrowsError(try runGit(["config", "--get", "branch.disposable.remote"]))
+        XCTAssertThrowsError(try runGit(["rev-parse", "--verify", "refs/heads/disposable"]))
+    }
+
+    func testCheckoutRetainsRealGitOutputInUnderlyingTaskError() {
+        let service = PBRepositoryMutationService(repository: repository, runner: LocalGitRunner(directory: repositoryURL.path))
+        var error: NSError?
+        XCTAssertFalse(service.checkoutRefish(PBGitRef(string: "refs/heads/missing"), error: &error))
+        XCTAssertTrue(taskOutput(error).contains("pathspec"))
+        error = nil
+        XCTAssertFalse(service.checkoutFiles(["missing.txt"], from: PBGitRef(string: "refs/heads/main"), error: &error))
+        XCTAssertTrue(taskOutput(error).contains("pathspec"))
+    }
+
+    private func taskOutput(_ error: NSError?) -> String {
+        let underlying = error?.userInfo[NSUnderlyingErrorKey] as? NSError
+        return underlying?.userInfo[PBTaskTerminationOutputKey] as? String ?? ""
     }
 
     func testUniqueRemotePersistsStableBindingThatRemainsAuthoritative() throws {
