@@ -598,6 +598,11 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
 - (BOOL)checkoutRefish:(id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 - (BOOL)checkoutFiles:(nullable NSArray<NSString *> *)files fromRefish:(id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (BOOL)deleteReference:(PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+@end
+
+@interface GitXCommitCopier : NSValueTransformer
++ (NSString *)toPatch:(NSArray<PBGitCommit *> *)commits;
 @end
 
 @interface PBRepositoryStashService : NSObject

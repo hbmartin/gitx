@@ -675,7 +675,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @IBAction dynamic func fetchRemote(_ sender: Any?) {
-        let ref = refish(for: sender, refishTypes: [kGitXBranchType, kGitXRemoteType])
+        let ref = refish(for: sender, refishTypes: [kGitXBranchType, kGitXRemoteBranchType, kGitXRemoteType])
         if let ref = ref as? PBGitRef {
             performFetch(for: ref)
         }

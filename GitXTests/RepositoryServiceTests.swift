@@ -125,6 +125,10 @@ final class RepositoryServiceTests: XCTestCase {
         error = nil
         XCTAssertTrue(service.pushBranch(nil, toRemote: remote, error: &error))
         XCTAssertEqual(service.lastPushOutput, "remote: Open https://example.test/pull/42")
+
+        runner.launchResults = [.success(())]
+        XCTAssertTrue(service.pushBranch(nil, toRemote: remote, forceWithLease: true, error: &error))
+        XCTAssertEqual(runner.launchArguments.last, ["push", "origin", "--force-with-lease"])
     }
 
     func testRemoteServiceReportsDiscoveryPullAndDeleteFailures() {
@@ -156,7 +160,7 @@ final class RepositoryServiceTests: XCTestCase {
     func testMutationServicePreservesReferenceAndPathCommandShapes() {
         let repository = PBGitRepository()
         let runner = CommandRunnerFake()
-        runner.outputResults = [.success(""), .success(""), .failure(commandError)]
+        runner.outputResults = [.success(""), .success(""), .failure(commandError), .success(""), .success("")]
         let service = PBRepositoryMutationService(repository: repository, runner: runner)
         let main = PBGitRef(string: "refs/heads/main")
 
@@ -166,10 +170,14 @@ final class RepositoryServiceTests: XCTestCase {
         var error: NSError?
         XCTAssertFalse(service.checkoutRefish(UnknownRefish(), error: &error))
         XCTAssertTrue(error?.localizedFailureReason?.contains("(null)") == true)
+        XCTAssertTrue(service.deleteReference(main, error: nil))
+        XCTAssertTrue(service.deleteReference(PBGitRef(string: "refs/tags/v1"), error: nil))
         XCTAssertEqual(runner.outputArguments, [
             ["checkout", "main"],
             ["checkout", "main", "--", "folder/file.txt"],
             ["checkout", "refs/unknown"],
+            ["branch", "-D", "--", "main"],
+            ["update-ref", "-d", "refs/tags/v1"],
         ])
     }
 
@@ -187,6 +195,41 @@ final class RepositoryServiceTests: XCTestCase {
             ["stash", "save", "--keep-index"],
             ["stash", "save", "--no-keep-index"],
         ])
+    }
+
+    func testCommitCopierSkipsCommitsWithoutAPatch() {
+        let commit = PBGitCommit()
+
+        XCTAssertEqual(GitXCommitCopier.toPatch([commit]), "")
+        XCTAssertEqual(GitXCommitCopier.toPatch([]), "")
+    }
+
+    func testCheckoutFailureShowsTheGitError() {
+        let repository = PBGitRepository()
+        let runner = CommandRunnerFake()
+        runner.outputResults = [.failure(commandError)]
+        let service = PBRepositoryMutationService(repository: repository, runner: runner)
+        var error: NSError?
+
+        XCTAssertFalse(service.checkoutRefish(PBGitRef(string: "refs/heads/main"), error: &error))
+        XCTAssertTrue(error?.localizedFailureReason?.contains("expected command failure") == true)
+        XCTAssertFalse(error?.localizedFailureReason?.contains("working directory not clean") == true)
+    }
+
+    func testRejectedPushRecoveryOnlyOffersALeaseProtectedRetry() {
+        let rejected = NSError(
+            domain: "git",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "! [rejected] main -> main (non-fast-forward)"]
+        )
+        let unrelated = NSError(
+            domain: "git",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Permission denied"]
+        )
+
+        XCTAssertTrue(RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: rejected))
+        XCTAssertFalse(RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: unrelated))
     }
 }
 

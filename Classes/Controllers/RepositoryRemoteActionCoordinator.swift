@@ -34,12 +34,32 @@ private final nonisolated class RemoteOperationTarget: @unchecked Sendable {
         _ = try repository.pullBranch(branch, fromRemote: remote, rebase: rebase)
     }
 
-    func push() throws {
-        _ = try repository.pushBranch(branch, toRemote: remote)
+    func push(forceWithLease: Bool = false) throws {
+        if forceWithLease {
+            _ = try repository.pushBranch(branch, toRemote: remote, forceWithLease: true)
+        } else {
+            _ = try repository.pushBranch(branch, toRemote: remote)
+        }
     }
 
     var pushOutput: String {
         repository.lastPushOutput ?? ""
+    }
+}
+
+enum RepositoryRejectedPushRecoveryPolicy {
+    static func shouldOfferForceWithLease(for error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let error = current {
+            let text = [error.localizedDescription, error.localizedFailureReason]
+                .compactMap { $0?.lowercased() }
+                .joined(separator: "\n")
+            if text.contains("non-fast-forward") || text.contains("[rejected]") || text.contains("fetch first") {
+                return true
+            }
+            current = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 }
 
@@ -251,8 +271,19 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 },
                 completion: { [weak self] error in
                     if let error {
-                        self?.windowController?.showErrorSheet(error)
-                        completion?(.failed)
+                        guard let self else { return }
+                        if RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: error) {
+                            self.offerForceWithLeaseRetry(
+                                error: error,
+                                branch: branch,
+                                remote: remote,
+                                operationTarget: operationTarget,
+                                completion: completion
+                            )
+                        } else {
+                            self.windowController?.showErrorSheet(error)
+                            completion?(.failed)
+                        }
                     } else {
                         self?.logger.debug("Push workflow completed")
                         if let self {
@@ -301,6 +332,46 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             },
             forAction: beginPush
         )
+    }
+
+    private func offerForceWithLeaseRetry(
+        error: NSError,
+        branch: PBGitRef?,
+        remote: PBGitRef?,
+        operationTarget: RemoteOperationTarget,
+        completion: ((RepositoryPushEvent) -> Void)?
+    ) {
+        guard let window = windowController?.window else {
+            windowController?.showErrorSheet(error)
+            completion?(.failed)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Push was rejected"
+        alert.informativeText = "The remote branch changed. Push the same branch to the same remote with force-with-lease? This only proceeds if the remote still matches the value GitX observed."
+        alert.addButton(withTitle: "Push with Lease")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else {
+                completion?(.failed)
+                return
+            }
+            self.logger.info("Retrying rejected push with force-with-lease")
+            self.runProgress(
+                title: "Pushing remote…",
+                description: self.pushDescription(branch: branch, remote: remote, capitalized: false),
+                operation: { try operationTarget.push(forceWithLease: true) },
+                completion: { retryError in
+                    if let retryError {
+                        self.windowController?.showErrorSheet(retryError)
+                        completion?(.failed)
+                    } else {
+                        self.reportSuccess(.push)
+                        completion?(.succeeded)
+                    }
+                }
+            )
+        }
     }
 
     private func pushDescription(branch: PBGitRef?, remote: PBGitRef?, capitalized: Bool) -> String {

@@ -21,7 +21,6 @@
 #import "PBGitRepositoryWatcher.h"
 #import "PBQLTextView.h"
 #import "GLFileView.h"
-#import "GitXCommitCopier.h"
 #import "NSSplitView+GitX.h"
 #import "PBGitRevisionRow.h"
 #import "PBGitRevisionCell.h"

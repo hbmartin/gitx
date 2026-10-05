@@ -148,7 +148,7 @@
 		50DCC65A20111E4000999D3D /* PBGitRevisionRow.m in Sources */ = {isa = PBXBuildFile; fileRef = 50DCC65920111E4000999D3D /* PBGitRevisionRow.m */; };
 		551BF176112F3F4B00265053 /* gitx_askpasswd in Resources */ = {isa = PBXBuildFile; fileRef = 551BF111112F371800265053 /* gitx_askpasswd */; };
 		643952771603EF9B00BB7AFF /* PBSourceViewGitSubmoduleItem.m in Sources */ = {isa = PBXBuildFile; fileRef = 643952761603EF9B00BB7AFF /* PBSourceViewGitSubmoduleItem.m */; };
-		6C25810B1C2720E60080A89A /* GitXCommitCopier.m in Sources */ = {isa = PBXBuildFile; fileRef = 6C25810A1C2720E60080A89A /* GitXCommitCopier.m */; };
+		C0DE90000000000000000021 /* GitXCommitCopier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90000000000000000031 /* GitXCommitCopier.swift */; };
 		6C4855C81D57DCFC0027A7B4 /* PBTerminalUtil.m in Sources */ = {isa = PBXBuildFile; fileRef = 6C4855C71D57DCFC0027A7B4 /* PBTerminalUtil.m */; };
 		6C4855DA1D57E4FA0027A7B4 /* PBOpenShallowRepositoryErrorRecoveryAttempter.m in Sources */ = {isa = PBXBuildFile; fileRef = 6C4855D91D57E4FA0027A7B4 /* PBOpenShallowRepositoryErrorRecoveryAttempter.m */; };
 		6C5244131E00C66E0051DE20 /* PBHistorySearchMode.m in Sources */ = {isa = PBXBuildFile; fileRef = 6C5244121E00C66E0051DE20 /* PBHistorySearchMode.m */; };
@@ -865,8 +865,7 @@
 		62E3BAC528D5105600DCD7B2 /* gitx_askpasswd.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = gitx_askpasswd.entitlements; sourceTree = SOURCE_ROOT; };
 		643952751603EF9B00BB7AFF /* PBSourceViewGitSubmoduleItem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBSourceViewGitSubmoduleItem.h; sourceTree = "<group>"; };
 		643952761603EF9B00BB7AFF /* PBSourceViewGitSubmoduleItem.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBSourceViewGitSubmoduleItem.m; sourceTree = "<group>"; };
-		6C2581091C2720E60080A89A /* GitXCommitCopier.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = GitXCommitCopier.h; sourceTree = "<group>"; };
-		6C25810A1C2720E60080A89A /* GitXCommitCopier.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GitXCommitCopier.m; sourceTree = "<group>"; };
+		C0DE90000000000000000031 /* GitXCommitCopier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXCommitCopier.swift; sourceTree = "<group>"; };
 		6C4855C61D57DCFC0027A7B4 /* PBTerminalUtil.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBTerminalUtil.h; sourceTree = "<group>"; };
 		6C4855C71D57DCFC0027A7B4 /* PBTerminalUtil.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PBTerminalUtil.m; sourceTree = "<group>"; };
 		6C4855D81D57E4FA0027A7B4 /* PBOpenShallowRepositoryErrorRecoveryAttempter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PBOpenShallowRepositoryErrorRecoveryAttempter.h; sourceTree = "<group>"; };
@@ -1581,8 +1580,7 @@
 				6C4855C71D57DCFC0027A7B4 /* PBTerminalUtil.m */,
 				4AB71FF614B7EDD400F1DFFC /* RJModalRepoSheet.h */,
 				4AB71FF714B7EDD400F1DFFC /* RJModalRepoSheet.m */,
-				6C2581091C2720E60080A89A /* GitXCommitCopier.h */,
-				6C25810A1C2720E60080A89A /* GitXCommitCopier.m */,
+				C0DE90000000000000000031 /* GitXCommitCopier.swift */,
 				4DECFBB01E662962004C3A6F /* ObjectiveGit+PBCategories.h */,
 				4DECFBB11E662962004C3A6F /* ObjectiveGit+PBCategories.m */,
 				4D843B1D1E5D27C3004C3A6F /* PBTask.h */,
@@ -2343,7 +2341,7 @@
 				4A5D76F214A9A9CC00DF6C68 /* PBWebDiffController.m in Sources */,
 				4A5D76F314A9A9CC00DF6C68 /* PBWebHistoryController.swift in Sources */,
 				4A5D76F414A9A9CC00DF6C68 /* PBGitBinary.m in Sources */,
-				6C25810B1C2720E60080A89A /* GitXCommitCopier.m in Sources */,
+				C0DE90000000000000000021 /* GitXCommitCopier.swift in Sources */,
 				4A5D76F514A9A9CC00DF6C68 /* PBGitCommit.m in Sources */,
 				6C4855DA1D57E4FA0027A7B4 /* PBOpenShallowRepositoryErrorRecoveryAttempter.m in Sources */,
 				4A5D76F714A9A9CC00DF6C68 /* PBGitDefaults.m in Sources */,
@@ -2689,7 +2687,7 @@
 				INSTALL_PATH = /Applications;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella";
 				PRODUCT_BUNDLE_IDENTIFIER = me.haroldmartin.HalfDark;
 				PRODUCT_NAME = GitX;
 				WRAPPER_NAME = "Half Dark.app";
@@ -2729,7 +2727,7 @@
 				INSTALL_PATH = /Applications;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella";
 				PRODUCT_BUNDLE_IDENTIFIER = me.haroldmartin.HalfDark;
 				PRODUCT_NAME = GitX;
 				WRAPPER_NAME = "Half Dark.app";
@@ -2932,7 +2930,7 @@
 					"$(PROJECT_DIR)/Classes/Util",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella";
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
@@ -2959,7 +2957,7 @@
 					"$(PROJECT_DIR)/Classes/Util",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella";
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;

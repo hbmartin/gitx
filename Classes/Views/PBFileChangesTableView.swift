@@ -30,7 +30,9 @@ final class PBFileChangesTableView: NSTableView {
     override func draggingSession(_ session: NSDraggingSession,
                                   sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation
     {
-        .every
+        // A file dragged from the staging list is an export, never a request to
+        // move the working-tree entry out of its repository.
+        .copy
     }
 
     override var acceptsFirstResponder: Bool {
