@@ -2802,6 +2802,32 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.webCommits.isEmpty)
     }
 
+    func testWorkingStateImmutableCopyActionsPreserveClipboard() throws {
+        let pasteboard = NSPasteboard.general
+        let saved = pasteboard.string(forType: .string)
+        defer {
+            pasteboard.clearContents()
+            if let saved {
+                pasteboard.setString(saved, forType: .string)
+            }
+        }
+        let commit = try XCTUnwrap(loadedCommits().first)
+        let working = PBUncommittedChanges(repository: repository)
+        historyController.commitController.content = [commit, working]
+        historyController.commitController.rearrangeObjects()
+        for selection in [[working], [commit, working]] {
+            historyController.commitController.setSelectedObjects(selection)
+            for action in ["copy:", "copySHA:", "copyShortName:"] {
+                let item = NSMenuItem(title: action, action: NSSelectorFromString(action), keyEquivalent: "")
+                XCTAssertFalse(historyController.validateMenuItem(item))
+                pasteboard.clearContents()
+                pasteboard.setString("preserve clipboard", forType: .string)
+                historyController.perform(item.action, with: self)
+                XCTAssertEqual(pasteboard.string(forType: .string), "preserve clipboard")
+            }
+        }
+    }
+
     func testCopyActionsCharacterizeMultipleCommitFormattingAndEmptySelection() throws {
         let pasteboard = NSPasteboard.general
         let saved: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
@@ -2847,6 +2873,41 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(pasteboard.string(forType: .string), "preserve clipboard")
             historyController.commitController.setSelectedObjects(selected)
         }
+    }
+
+    func testCopyPatchWarnsAfterCopyingAvailablePatchesAndPreservesAllUnavailableClipboard() throws {
+        let window = try XCTUnwrap(windowController as? HistoryWindowController)
+        let pasteboard = NSPasteboard.general
+        let saved = pasteboard.string(forType: .string)
+        defer {
+            pasteboard.clearContents()
+            if let saved {
+                pasteboard.setString(saved, forType: .string)
+            }
+        }
+        let commits = Array(loadedCommits().prefix(3))
+        XCTAssertEqual(commits.count, 3)
+        historyController.commitController.setSelectedObjects(commits)
+        let selected = try XCTUnwrap(historyController.commitController.selectedObjects as? [PBGitCommit])
+        selected[0].setValue("first", forKey: "patch")
+        selected[1].setValue("", forKey: "patch")
+        selected[2].setValue("last", forKey: "patch")
+        historyController.copyPatch(self)
+        XCTAssertEqual(pasteboard.string(forType: .string), "last\n\n\nfirst")
+        XCTAssertEqual(window.shownMessages.last?.message, "Some patches could not be copied")
+        XCTAssertTrue(window.shownMessages.last?.info.contains("Copied 2 patches; skipped 1 commit") == true)
+        selected.forEach { $0.setValue("", forKey: "patch") }
+        pasteboard.clearContents()
+        pasteboard.setString("preserve clipboard", forType: .string)
+        historyController.copyPatch(self)
+        XCTAssertEqual(pasteboard.string(forType: .string), "preserve clipboard")
+        XCTAssertEqual(window.shownMessages.last?.message, "No patches available")
+        XCTAssertTrue(window.shownMessages.last?.info.contains("skipped 3 commits") == true)
+        let count = window.shownMessages.count
+        historyController.commitController.setSelectedObjects([])
+        historyController.copyPatch(self)
+        XCTAssertEqual(window.shownMessages.count, count)
+        XCTAssertEqual(pasteboard.string(forType: .string), "preserve clipboard")
     }
 
     func testHistoryUIEmptyNavigationAndRefreshBoundaries() throws {

@@ -602,8 +602,22 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (BOOL)deleteReference:(PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 @end
 
+@interface PBCommitPatchCopyResult : NSObject
+@property (nonatomic, readonly, copy) NSString *text;
+@property (nonatomic, readonly) NSInteger copiedCount;
+@property (nonatomic, readonly) NSInteger skippedCount;
+@property (nonatomic, readonly, nullable, copy) NSString *warningMessage;
+@property (nonatomic, readonly, copy) NSString *warningInfo;
+@end
+
 @interface GitXCommitCopier : NSValueTransformer
++ (BOOL)canCopyImmutableCommits:(NSArray<PBGitCommit *> *)commits;
++ (NSString *)toFullSHA:(NSArray<PBGitCommit *> *)commits;
++ (NSString *)toShortName:(NSArray<PBGitCommit *> *)commits;
++ (NSString *)toSHAAndHeadingString:(NSArray<PBGitCommit *> *)commits;
++ (PBCommitPatchCopyResult *)patchCopyResult:(NSArray<PBGitCommit *> *)commits;
 + (NSString *)toPatch:(NSArray<PBGitCommit *> *)commits;
++ (void)putStringToPasteboard:(nullable NSString *)text;
 @end
 
 @interface PBRepositoryStashService : NSObject

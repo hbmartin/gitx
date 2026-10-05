@@ -1151,6 +1151,23 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
         XCTAssertEqual(try controller.selectedChoice(destinationDirectory: destination).request.transport, .https)
     }
 
+    @MainActor
+    func testPartialPatchCopyWarningKeepsCurrentDiagnosticScreenshot() throws {
+        let result = CommitPatchCopyResult(patches: ["first", nil, "last"])
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        let controller = PBGitWindowController(window: window)
+        window.makeKeyAndOrderFront(nil)
+        controller.showMessageSheet(try XCTUnwrap(result.warningMessage), infoText: result.warningInfo)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.attachedSheet?.isVisible == true
+        }, object: nil)
+        wait(for: [ready], timeout: 5)
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        try attachScreenshot(of: sheet, named: "Review fixes partial patch copy warning")
+        window.endSheet(sheet)
+        window.close()
+    }
+
     func testPushAndDeepLinkPresentersKeepDiagnosticScreenshots() throws {
         let checkbox = RepositoryPushConfirmationPresenter.createPullRequestButton(
             initiallySelected: true
