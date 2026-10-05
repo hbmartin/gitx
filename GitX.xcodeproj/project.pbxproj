@@ -2687,7 +2687,7 @@
 				INSTALL_PATH = /Applications;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella";
 				PRODUCT_BUNDLE_IDENTIFIER = me.haroldmartin.HalfDark;
 				PRODUCT_NAME = GitX;
 				WRAPPER_NAME = "Half Dark.app";
@@ -2727,7 +2727,7 @@
 				INSTALL_PATH = /Applications;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella";
 				PRODUCT_BUNDLE_IDENTIFIER = me.haroldmartin.HalfDark;
 				PRODUCT_NAME = GitX;
 				WRAPPER_NAME = "Half Dark.app";
@@ -2930,7 +2930,7 @@
 					"$(PROJECT_DIR)/Classes/Util",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xfrontend -enable-actor-data-race-checks -Xcc -Wno-error=incomplete-umbrella";
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
@@ -2957,7 +2957,7 @@
 					"$(PROJECT_DIR)/Classes/Util",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella -Xcc -Wno-error=quoted-include-in-framework-header";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -Wno-error=incomplete-umbrella";
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;

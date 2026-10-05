@@ -38,7 +38,7 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertEqual(project.count("SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor"), 2)
         self.assertEqual(project.count("-enable-actor-data-race-checks"), 2)
         self.assertEqual(project.count("-Wno-error=incomplete-umbrella"), 4)
-        self.assertEqual(project.count("-Wno-error=quoted-include-in-framework-header"), 4)
+        self.assertNotIn("-Wno-error=quoted-include-in-framework-header", project)
 
     def test_ci_pins_the_swift_6_3_toolchain_and_documents_the_xcode_floor(self) -> None:
         build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
