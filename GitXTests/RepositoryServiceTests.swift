@@ -161,7 +161,7 @@ final class RepositoryServiceTests: XCTestCase {
 
     func testAppReportsMissingHarnessRepositoryAndUsesTheChildWorkingDirectory() throws {
         #if DEBUG
-            XCTAssertEqual(PBMilestone2ProductCoverageHarness.verificationBoundaryProof(), (1 << 3) - 1)
+            XCTAssertEqual(PBMilestone2ProductCoverageHarness.verificationBoundaryProof(), (1 << 9) - 1)
         #else
             throw XCTSkip("Product harness is available in Debug")
         #endif

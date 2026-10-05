@@ -3147,32 +3147,44 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	PBOpenDisposition previousDisposition = PBApplicationSettings.openDisposition;
 	NSWindow *originalWindow = self.controller.window;
 	PBWindowTabStateSpy *sourceWindow = [[PBWindowTabStateSpy alloc]
-		initWithContentRect:NSMakeRect(0, 0, 500, 320) styleMask:NSWindowStyleMaskTitled
-		backing:NSBackingStoreBuffered defer:NO];
+		initWithContentRect:NSMakeRect(0, 0, 500, 320)
+				  styleMask:NSWindowStyleMaskTitled
+					backing:NSBackingStoreBuffered
+					  defer:NO];
 	self.controller.window = sourceWindow;
 	PBSwapInstanceMethods(NSApplication.class, @selector(currentEvent), @selector(pb_window_currentEvent));
 	@try {
 		for (NSNumber *flags in @[ @(NSEventModifierFlagCommand), @(NSEventModifierFlagOption), @(NSEventModifierFlagOption | NSEventModifierFlagCommand) ]) {
 			BOOL expectsTab = flags.unsignedIntegerValue == NSEventModifierFlagCommand;
 			PBApplicationSettings.openDisposition = expectsTab ? PBOpenDispositionAlwaysNewWindow : PBOpenDispositionPreferTab;
-			PBWindowModifierEvent = [NSEvent keyEventWithType:NSEventTypeFlagsChanged location:NSZeroPoint
-				modifierFlags:flags.unsignedIntegerValue timestamp:0 windowNumber:0 context:nil
-				characters:@"" charactersIgnoringModifiers:@"" isARepeat:NO keyCode:0];
+			PBWindowModifierEvent = [NSEvent keyEventWithType:NSEventTypeFlagsChanged
+													 location:NSZeroPoint
+												modifierFlags:flags.unsignedIntegerValue
+													timestamp:0
+												 windowNumber:0
+													  context:nil
+												   characters:@""
+								  charactersIgnoringModifiers:@""
+													isARepeat:NO
+													  keyCode:0];
 			NSDocument *document = [[NSDocument alloc] init];
 			PBWindowTabStateSpy *newWindow = [[PBWindowTabStateSpy alloc]
-				initWithContentRect:NSMakeRect(20, 20, 500, 320) styleMask:NSWindowStyleMaskTitled
-				backing:NSBackingStoreBuffered defer:NO];
+				initWithContentRect:NSMakeRect(20, 20, 500, 320)
+						  styleMask:NSWindowStyleMaskTitled
+							backing:NSBackingStoreBuffered
+							  defer:NO];
 			[document addWindowController:[[NSWindowController alloc] initWithWindow:newWindow]];
 			PBWindowDocumentToOpen = document;
 			PBWindowDocumentWasAlreadyOpen = NO;
 			NSUInteger previousTabCount = sourceWindow.addTabbedWindowCount;
 			XCTestExpectation *completion = [self expectationWithDescription:@"modifier-directed repository open"];
-			[[PBRepositoryOpenCoordinator shared] openURLs:@[ self.repositoryURL ] sourceWindow:sourceWindow
-				completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
-					XCTAssertEqualObjects(documents, @[ document ]);
-					XCTAssertEqual(errors.count, (NSUInteger)0);
-					[completion fulfill];
-				}];
+			[[PBRepositoryOpenCoordinator shared] openURLs:@[ self.repositoryURL ]
+											  sourceWindow:sourceWindow
+												completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+													XCTAssertEqualObjects(documents, @[ document ]);
+													XCTAssertEqual(errors.count, (NSUInteger)0);
+													[completion fulfill];
+												}];
 			[self waitForExpectations:@[ completion ] timeout:1.0];
 			XCTAssertEqual(sourceWindow.addTabbedWindowCount - previousTabCount, expectsTab ? (NSUInteger)1 : (NSUInteger)0);
 			XCTAssertEqual(newWindow.focusCount, (NSUInteger)1);

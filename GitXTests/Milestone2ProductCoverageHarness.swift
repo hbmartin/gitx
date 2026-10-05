@@ -788,14 +788,111 @@
                 let data = try output.fileHandleForReading.readToEnd() ?? Data()
                 try output.fileHandleForReading.close()
                 let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                let system = PBPosixChildProcessSystem()
+                let missingChildObservation = reportsPOSIXError(ECHILD) {
+                    _ = try system.exitStateWithoutReaping(processIdentifier: .max)
+                }
+                let missingChildReap = reportsPOSIXError(ECHILD) {
+                    _ = try system.reapIfExited(processIdentifier: .max)
+                }
+                let missingGroupSignal = reportsPOSIXError(ESRCH) {
+                    try system.send(signal: SIGTERM, toProcessGroup: .max)
+                }
+                let invalidDescriptor = reportsPOSIXError(EBADF) {
+                    _ = try system.spawn(configuration: PBChildProcessConfiguration(
+                        launchPath: "/bin/pwd", arguments: [], environment: ProcessInfo.processInfo.environment,
+                        workingDirectory: nil, standardInputFileDescriptor: STDIN_FILENO,
+                        standardOutputFileDescriptor: .max
+                    ))
+                }
+                var schedule = PBChildProcessTerminationSchedule()
+                schedule.mergeRequest(now: 100, gracePeriod: 10, forceKillDelay: 20, terminationWasSent: false)
+                schedule.mergeRequest(now: 200, gracePeriod: 40, forceKillDelay: 50, terminationWasSent: false)
+                let failedSignalSystem = BoundaryProcessSystem()
+                let owner = PBChildProcessOwner(system: failedSignalSystem)
+                try owner.launch(configuration: PBChildProcessConfiguration(
+                    launchPath: "/unused", arguments: [], environment: [:], workingDirectory: nil,
+                    standardInputFileDescriptor: nil, standardOutputFileDescriptor: STDOUT_FILENO
+                )) { status, error in
+                    failedSignalSystem.recordCompletion(
+                        status == 0 && error == nil && !owner.requestTermination(gracePeriod: 0, forceKillDelay: 0)
+                    )
+                }
+                let requested = owner.requestTermination(gracePeriod: 0, forceKillDelay: 0)
                 return bitProof([
                     missingRepositoryWasReported,
                     reaped == process && status == 0,
                     URL(fileURLWithPath: path).resolvingSymlinksInPath() == directory.resolvingSymlinksInPath(),
+                    missingChildObservation, missingChildReap, missingGroupSignal, invalidDescriptor,
+                    schedule.terminationDeadline == 10_000_000_100 && schedule.forceKillDeadline == 30_000_000_100,
+                    requested && failedSignalSystem.completedAfterEscalation,
                 ])
             } catch {
                 NSLog("Verification boundary proof failed: %@", error.localizedDescription)
                 return 0
+            }
+        }
+
+        private final nonisolated class BoundaryExitMonitor: PBChildProcessExitMonitoring {
+            func activate() {}
+            func cancel() {}
+        }
+
+        // swift6-safety-justification: The lock protects all fake lifecycle state across the owner's serial queue and the test caller.
+        private final nonisolated class BoundaryProcessSystem: PBChildProcessSystem, @unchecked Sendable {
+            private let lock = NSLock()
+            private var exited = false
+            private var signals: [Int32] = []
+            private var completed = false
+
+            var completedAfterEscalation: Bool {
+                lock.withLock { completed && signals == [SIGTERM, SIGKILL] }
+            }
+
+            func recordCompletion(_ success: Bool) {
+                lock.withLock { completed = success }
+            }
+
+            func spawn(configuration _: PBChildProcessConfiguration) throws -> pid_t {
+                4321
+            }
+
+            func makeExitMonitor(processIdentifier _: pid_t, queue _: DispatchQueue,
+                                 handler _: @escaping @Sendable () -> Void) -> any PBChildProcessExitMonitoring
+            {
+                BoundaryExitMonitor()
+            }
+
+            func exitStateWithoutReaping(processIdentifier _: pid_t) throws -> PBChildProcessExitState {
+                lock.withLock { exited ? .terminal : .running }
+            }
+
+            func reapIfExited(processIdentifier _: pid_t) throws -> Int32? {
+                lock.withLock { exited ? 0 : nil }
+            }
+
+            func send(signal: Int32, toProcessGroup _: pid_t) throws {
+                try lock.withLock {
+                    signals.append(signal)
+                    if signal == SIGTERM {
+                        throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                    }
+                    exited = true
+                }
+            }
+
+            func processGroupMembers(processGroup _: pid_t) throws -> [pid_t] {
+                [4321]
+            }
+        }
+
+        private static func reportsPOSIXError(_ code: Int32, body: () throws -> Void) -> Bool {
+            do {
+                try body()
+                return false
+            } catch {
+                let error = error as NSError
+                return error.domain == NSPOSIXErrorDomain && error.code == Int(code)
             }
         }
 
