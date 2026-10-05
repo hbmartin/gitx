@@ -12,7 +12,7 @@ final nonisolated class GitXCommitCopier: ValueTransformer {
 
     @objc(toShortName:)
     static func toShortName(_ commits: [PBGitCommit]) -> String {
-        transformed(commits) { $0.shortName() }
+        transformed(commits, separator: " ") { $0.shortName() }
     }
 
     @objc(toSHAAndHeadingString:)

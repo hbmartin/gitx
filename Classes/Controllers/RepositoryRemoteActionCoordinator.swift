@@ -34,12 +34,13 @@ private final nonisolated class RemoteOperationTarget: @unchecked Sendable {
         _ = try repository.pullBranch(branch, fromRemote: remote, rebase: rebase)
     }
 
-    func push(forceWithLease: Bool = false) throws {
-        if forceWithLease {
-            _ = try repository.pushBranch(branch, toRemote: remote, forceWithLease: true)
-        } else {
-            _ = try repository.pushBranch(branch, toRemote: remote)
-        }
+    func push() throws {
+        _ = try repository.pushBranch(branch, toRemote: remote)
+    }
+
+    func retryPush() throws {
+        guard let branch else { throw RepositoryRejectedPushRecoveryError.missingReference }
+        _ = try repository.retryPushBranch(branch, toRemote: remote)
     }
 
     var pushOutput: String {
@@ -47,19 +48,42 @@ private final nonisolated class RemoteOperationTarget: @unchecked Sendable {
     }
 }
 
+private enum RepositoryRejectedPushRecoveryError: LocalizedError {
+    case missingReference
+
+    var errorDescription: String? {
+        "Push retry requires a local reference."
+    }
+}
+
 enum RepositoryRejectedPushRecoveryPolicy {
     static func shouldOfferForceWithLease(for error: Error) -> Bool {
         var current: NSError? = error as NSError
         while let error = current {
-            let text = [error.localizedDescription, error.localizedFailureReason]
-                .compactMap { $0?.lowercased() }
-                .joined(separator: "\n")
+            let text = [
+                error.localizedDescription,
+                error.localizedFailureReason,
+                error.userInfo[PBTaskTerminationOutputKey] as? String,
+            ]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: "\n")
             if text.contains("non-fast-forward") || text.contains("[rejected]") || text.contains("fetch first") {
                 return true
             }
             current = error.userInfo[NSUnderlyingErrorKey] as? NSError
         }
         return false
+    }
+
+    static func recoveryReference(
+        requested: PBGitRef?,
+        head: PBGitRef?
+    ) -> PBGitRef? {
+        if let requested, requested.isBranch || requested.isTag {
+            return requested
+        }
+        guard requested == nil, let head, head.isBranch else { return nil }
+        return head
     }
 }
 
@@ -272,12 +296,18 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 completion: { [weak self] error in
                     if let error {
                         guard let self else { return }
-                        if RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: error) {
+                        let recoveryBranch = RepositoryRejectedPushRecoveryPolicy.recoveryReference(
+                            requested: branch,
+                            head: self.repository.headRef()?.ref()
+                        )
+                        if RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: error), let recoveryBranch {
                             self.offerForceWithLeaseRetry(
                                 error: error,
-                                branch: branch,
+                                branch: recoveryBranch,
                                 remote: remote,
-                                operationTarget: operationTarget,
+                                nativeCreationWasAvailable: nativeCreationWasAvailable,
+                                suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
+                                createPullRequestSelected: createPullRequestSelected,
                                 completion: completion
                             )
                         } else {
@@ -285,28 +315,15 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                             completion?(.failed)
                         }
                     } else {
-                        self?.logger.debug("Push workflow completed")
                         if let self {
-                            self.reportSuccess(.push)
-                            if RepositoryPostPushBrowserSuggestionPolicy.shouldOpen(
+                            self.finishSuccessfulPush(
+                                operationTarget: operationTarget,
+                                remote: remote,
                                 nativeCreationWasAvailable: nativeCreationWasAvailable,
-                                explicitlySuppressed: suppressesPostPushBrowserSuggestion
-                            ) {
-                                RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
-                                    output: operationTarget.pushOutput,
-                                    repository: self.repository,
-                                    remote: remote,
-                                    presenting: self.windowController?.window
-                                )
-                                self.logger.debug(
-                                    "Retained validated post-push browser fallback because native creation was unavailable"
-                                )
-                            } else {
-                                self.logger.debug(
-                                    "Suppressed post-push browser suggestion for API-capable repository; create selected=\(createPullRequestSelected, privacy: .public)"
-                                )
-                            }
-                            completion?(.succeeded)
+                                suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
+                                createPullRequestSelected: createPullRequestSelected,
+                                completion: completion
+                            )
                         }
                     }
                 }
@@ -336,9 +353,11 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
 
     private func offerForceWithLeaseRetry(
         error: NSError,
-        branch: PBGitRef?,
+        branch: PBGitRef,
         remote: PBGitRef?,
-        operationTarget: RemoteOperationTarget,
+        nativeCreationWasAvailable: Bool,
+        suppressesPostPushBrowserSuggestion: Bool,
+        createPullRequestSelected: Bool,
         completion: ((RepositoryPushEvent) -> Void)?
     ) {
         guard let window = windowController?.window else {
@@ -348,7 +367,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         }
         let alert = NSAlert()
         alert.messageText = "Push was rejected"
-        alert.informativeText = "The remote branch changed. Push the same branch to the same remote with force-with-lease? This only proceeds if the remote still matches the value GitX observed."
+        alert.informativeText = "The remote reference changed. Push the same reference to the same remote with force-with-lease? This only proceeds if the remote still matches the value GitX observes immediately before retrying."
         alert.addButton(withTitle: "Push with Lease")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
@@ -356,22 +375,60 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 completion?(.failed)
                 return
             }
-            self.logger.info("Retrying rejected push with force-with-lease")
-            self.runProgress(
+            self.logger.info("Starting lease-protected rejected-push retry")
+            let retryTarget = RemoteOperationTarget(repository: self.repository, branch: branch, remote: remote)
+            let didStart = self.runProgress(
                 title: "Pushing remote…",
                 description: self.pushDescription(branch: branch, remote: remote, capitalized: false),
-                operation: { try operationTarget.push(forceWithLease: true) },
+                operation: { try retryTarget.retryPush() },
                 completion: { retryError in
                     if let retryError {
                         self.windowController?.showErrorSheet(retryError)
                         completion?(.failed)
                     } else {
-                        self.reportSuccess(.push)
-                        completion?(.succeeded)
+                        self.finishSuccessfulPush(
+                            operationTarget: retryTarget,
+                            remote: remote,
+                            nativeCreationWasAvailable: nativeCreationWasAvailable,
+                            suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
+                            createPullRequestSelected: createPullRequestSelected,
+                            completion: completion
+                        )
                     }
                 }
             )
+            if let terminalEvent = RepositoryPushProgressStartPolicy.terminalEvent(didStart: didStart) {
+                self.logger.error("Lease-protected retry progress did not start")
+                completion?(terminalEvent)
+            }
         }
+    }
+
+    private func finishSuccessfulPush(
+        operationTarget: RemoteOperationTarget,
+        remote: PBGitRef?,
+        nativeCreationWasAvailable: Bool,
+        suppressesPostPushBrowserSuggestion: Bool,
+        createPullRequestSelected: Bool,
+        completion: ((RepositoryPushEvent) -> Void)?
+    ) {
+        logger.debug("Push workflow completed")
+        reportSuccess(.push)
+        if RepositoryPostPushBrowserSuggestionPolicy.shouldOpen(
+            nativeCreationWasAvailable: nativeCreationWasAvailable,
+            explicitlySuppressed: suppressesPostPushBrowserSuggestion
+        ) {
+            RepositoryRemoteURLCoordinator.shared.handleSuccessfulPush(
+                output: operationTarget.pushOutput,
+                repository: repository,
+                remote: remote,
+                presenting: windowController?.window
+            )
+            logger.debug("Retained validated post-push browser fallback because native creation was unavailable")
+        } else {
+            logger.debug("Suppressed post-push browser suggestion for API-capable repository; create selected=\(createPullRequestSelected, privacy: .public)")
+        }
+        completion?(.succeeded)
     }
 
     private func pushDescription(branch: PBGitRef?, remote: PBGitRef?, capitalized: Bool) -> String {

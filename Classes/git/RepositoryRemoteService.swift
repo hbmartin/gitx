@@ -216,36 +216,58 @@ final nonisolated class RepositoryRemoteService: NSObject {
         guard let resolvedRemote = resolvedRemote(remoteRef, for: branchRef, error: outputError) else {
             return false
         }
-        return pushBranch(branchRef, to: resolvedRemote, forceWithLease: false, error: outputError)
+        return pushBranch(branchRef, to: resolvedRemote, error: outputError)
     }
 
-    @objc(pushBranch:toRemote:forceWithLease:error:)
-    func pushBranch(
+    @objc(retryPushBranch:toRemote:error:)
+    func retryPushBranch(
         _ branchRef: PBGitRef?,
         toRemote remoteRef: PBGitRef?,
-        forceWithLease: Bool,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         commandWasLaunched = false
         lastPushOutput = nil
-        logger.debug("Pushing repository reference with lease recovery=\(forceWithLease, privacy: .public)")
+        guard let branchRef, branchRef.isBranch || branchRef.isTag else {
+            outputError?.pointee = RepositoryServiceError.make(
+                description: "Push retry unavailable",
+                failureReason: "GitX can only retry a rejected local branch or tag push."
+            )
+            logger.error("Rejected lease retry for an ineligible reference")
+            return false
+        }
         guard let resolvedRemote = resolvedRemote(remoteRef, for: branchRef, error: outputError) else {
             return false
         }
-        return pushBranch(branchRef, to: resolvedRemote, forceWithLease: forceWithLease, error: outputError)
+        let remoteName = resolvedRemote.remoteName ?? ""
+        let remoteRef = branchRef.ref
+        guard let expectedOID = remoteOID(
+            named: remoteRef,
+            on: remoteName,
+            error: outputError
+        ) else {
+            return false
+        }
+        logger.info("Retrying rejected push with an explicit lease")
+        return launchPush(
+            arguments: [
+                "push",
+                remoteName,
+                "--force-with-lease=\(remoteRef):\(expectedOID)",
+                "\(remoteRef):\(remoteRef)",
+            ],
+            branchDescription: branchRef.shortName(),
+            remoteName: remoteName,
+            error: outputError
+        )
     }
 
     private func pushBranch(
         _ branchRef: PBGitRef?,
         to resolvedRemote: PBGitRef,
-        forceWithLease: Bool,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         let remoteName = resolvedRemote.remoteName ?? ""
         var arguments = ["push", remoteName]
-        if forceWithLease {
-            arguments.append("--force-with-lease")
-        }
         let branchDescription: String
         if branchRef == nil || branchRef?.isRemote == true {
             branchDescription = "all updates"
@@ -258,6 +280,68 @@ final nonisolated class RepositoryRemoteService: NSObject {
             arguments.append(branchDescription)
         }
 
+        return launchPush(
+            arguments: arguments,
+            branchDescription: branchDescription,
+            remoteName: remoteName,
+            error: outputError
+        )
+    }
+
+    private func remoteOID(
+        named remoteRef: String,
+        on remoteName: String,
+        error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
+    ) -> String? {
+        do {
+            let output = try runner.output(arguments: ["ls-remote", "--refs", remoteName, remoteRef])
+            let lines = output.split(whereSeparator: \.isNewline)
+            guard lines.count == 1 else {
+                outputError?.pointee = RepositoryServiceError.make(
+                    description: "Push retry unavailable",
+                    failureReason: "The remote reference changed or could not be read."
+                )
+                logger.error("Lease discovery returned no unambiguous remote reference")
+                return nil
+            }
+            let fields = lines[0].split(maxSplits: 1, whereSeparator: \.isWhitespace)
+            guard fields.count == 2, fields[1] == remoteRef else {
+                outputError?.pointee = RepositoryServiceError.make(
+                    description: "Push retry unavailable",
+                    failureReason: "The remote reference changed or could not be read."
+                )
+                logger.error("Lease discovery returned a malformed remote reference")
+                return nil
+            }
+            let oid = String(fields[0])
+            guard [40, 64].contains(oid.count), oid.allSatisfy(\.isHexDigit) else {
+                outputError?.pointee = RepositoryServiceError.make(
+                    description: "Push retry unavailable",
+                    failureReason: "The remote reference changed or could not be read."
+                )
+                logger.error("Lease discovery returned a malformed object identifier")
+                return nil
+            }
+            logger.debug("Discovered remote reference for lease-protected retry")
+            return oid
+        } catch {
+            let wrapped = RepositoryServiceError.make(
+                description: "Push retry unavailable",
+                failureReason: "GitX could not read the remote reference before retrying the push.",
+                underlyingError: error
+            )
+            logger.error("Lease discovery failed")
+            outputError?.pointee = wrapped
+            return nil
+        }
+    }
+
+    private func launchPush(
+        arguments: [String],
+        branchDescription: String,
+        remoteName: String,
+        error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
+    ) -> Bool {
         do {
             commandWasLaunched = true
             try runner.launch(arguments: arguments)

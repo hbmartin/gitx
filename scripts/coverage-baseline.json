@@ -92,7 +92,7 @@
     "Classes/PBNSURLPathUserDefaultsTransfomer.m": 0.3888,
     "Classes/PBSidebarList.m": 0.0,
     "Classes/PBUnsortableTableHeader.m": 0.0,
-    "Classes/Util/GitXCommitCopier.m": 0.9482,
+    "Classes/Util/GitXCommitCopier.swift": 0.9482,
     "Classes/Util/IncrementalUTF8Decoder.swift": 1.0,
     "Classes/Util/NSApplication+GitXScripting.m": 0.0,
     "Classes/Util/NSFileHandleExt.m": 0.0,

@@ -22,7 +22,6 @@
     "Classes/PBNSURLPathUserDefaultsTransfomer.h",
     "Classes/PBUnsortableTableHeader.h",
     "Classes/Terminal.h",
-    "Classes/Util/GitXCommitCopier.h",
     "Classes/Util/NSApplication+GitXScripting.h",
     "Classes/Util/NSFileHandleExt.h",
     "Classes/Util/NSString_Truncate.h",

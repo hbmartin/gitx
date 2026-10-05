@@ -115,12 +115,14 @@
 
 - (BOOL)pushBranch:(PBGitRef *)branchRef toRemote:(PBGitRef *)remoteRef error:(NSError **)error
 {
-	return [self pushBranch:branchRef toRemote:remoteRef forceWithLease:NO error:error];
+	BOOL success = [self.pb_remoteService pushBranch:branchRef toRemote:remoteRef error:error];
+	[self scheduleRemoteReloadIfNeeded];
+	return success;
 }
 
-- (BOOL)pushBranch:(PBGitRef *)branchRef toRemote:(PBGitRef *)remoteRef forceWithLease:(BOOL)forceWithLease error:(NSError **)error
+- (BOOL)retryPushBranch:(PBGitRef *)branchRef toRemote:(PBGitRef *)remoteRef error:(NSError **)error
 {
-	BOOL success = [self.pb_remoteService pushBranch:branchRef toRemote:remoteRef forceWithLease:forceWithLease error:error];
+	BOOL success = [self.pb_remoteService retryPushBranch:branchRef toRemote:remoteRef error:error];
 	[self scheduleRemoteReloadIfNeeded];
 	return success;
 }

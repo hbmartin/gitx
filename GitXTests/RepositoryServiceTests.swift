@@ -125,10 +125,67 @@ final class RepositoryServiceTests: XCTestCase {
         error = nil
         XCTAssertTrue(service.pushBranch(nil, toRemote: remote, error: &error))
         XCTAssertEqual(service.lastPushOutput, "remote: Open https://example.test/pull/42")
+    }
 
-        runner.launchResults = [.success(())]
-        XCTAssertTrue(service.pushBranch(nil, toRemote: remote, forceWithLease: true, error: &error))
-        XCTAssertEqual(runner.launchArguments.last, ["push", "origin", "--force-with-lease"])
+    func testRemoteServiceRetriesOnlyAnObservedBranchOrTagReference() {
+        let repository = PBGitRepository()
+        let runner = CommandRunnerFake()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        let remote = PBGitRef(string: "refs/remotes/origin")
+        let branch = PBGitRef(string: "refs/heads/main")
+        let tag = PBGitRef(string: "refs/tags/v1.0")
+        let branchOID = String(repeating: "a", count: 40)
+        let tagOID = String(repeating: "b", count: 64)
+        runner.outputResults = [
+            .success("\(branchOID)\trefs/heads/main\n"),
+            .success("\(tagOID) refs/tags/v1.0\n"),
+        ]
+        runner.launchResults = [.success(()), .success(())]
+
+        var error: NSError?
+        XCTAssertTrue(service.retryPushBranch(branch, toRemote: remote, error: &error))
+        XCTAssertTrue(service.retryPushBranch(tag, toRemote: remote, error: &error))
+        XCTAssertNil(error)
+        XCTAssertEqual(runner.outputArguments, [
+            ["ls-remote", "--refs", "origin", "refs/heads/main"],
+            ["ls-remote", "--refs", "origin", "refs/tags/v1.0"],
+        ])
+        XCTAssertEqual(runner.launchArguments, [
+            [
+                "push", "origin", "--force-with-lease=refs/heads/main:\(branchOID)",
+                "refs/heads/main:refs/heads/main",
+            ],
+            [
+                "push", "origin", "--force-with-lease=refs/tags/v1.0:\(tagOID)",
+                "refs/tags/v1.0:refs/tags/v1.0",
+            ],
+        ])
+        XCTAssertFalse(runner.launchArguments.contains { $0 == ["push", "origin"] })
+    }
+
+    func testRemoteServiceRejectsUnreadableOrIneligibleLeaseRetriesWithoutPushing() {
+        let repository = PBGitRepository()
+        let runner = CommandRunnerFake()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        let remote = PBGitRef(string: "refs/remotes/origin")
+        let branch = PBGitRef(string: "refs/heads/main")
+        runner.outputResults = [
+            .failure(commandError),
+            .success(""),
+            .success("not-an-object-id refs/heads/main\n"),
+            .success(String(repeating: "c", count: 40) + " refs/tags/v1^{}\n"),
+            .success(String(repeating: "d", count: 40) + " refs/heads/main\nmalformed"),
+        ]
+
+        for _ in 0 ..< 5 {
+            var error: NSError?
+            XCTAssertFalse(service.retryPushBranch(branch, toRemote: remote, error: &error))
+            XCTAssertEqual(error?.localizedDescription, "Push retry unavailable")
+        }
+        var error: NSError?
+        XCTAssertFalse(service.retryPushBranch(PBGitRef(string: "refs/remotes/origin/main"), toRemote: remote, error: &error))
+        XCTAssertEqual(error?.localizedDescription, "Push retry unavailable")
+        XCTAssertTrue(runner.launchArguments.isEmpty)
     }
 
     func testRemoteServiceReportsDiscoveryPullAndDeleteFailures() {
@@ -204,6 +261,18 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertEqual(GitXCommitCopier.toPatch([]), "")
     }
 
+    func testCommitCopierCopiesTwoCommitPatchesInReverseOrder() {
+        let older = PBGitCommit()
+        let newer = PBGitCommit()
+        older.setValue("From older", forKey: "patch")
+        newer.setValue("From newer", forKey: "patch")
+
+        XCTAssertEqual(
+            GitXCommitCopier.toPatch([older, newer]),
+            "From newer\n\n\nFrom older"
+        )
+    }
+
     func testCheckoutFailureShowsTheGitError() {
         let repository = PBGitRepository()
         let runner = CommandRunnerFake()
@@ -220,7 +289,13 @@ final class RepositoryServiceTests: XCTestCase {
         let rejected = NSError(
             domain: "git",
             code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "! [rejected] main -> main (non-fast-forward)"]
+            userInfo: [
+                NSUnderlyingErrorKey: NSError(
+                    domain: "git-task",
+                    code: 1,
+                    userInfo: [PBTaskTerminationOutputKey: "! [rejected] main -> main (non-fast-forward)"]
+                ),
+            ]
         )
         let unrelated = NSError(
             domain: "git",
@@ -230,6 +305,29 @@ final class RepositoryServiceTests: XCTestCase {
 
         XCTAssertTrue(RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: rejected))
         XCTAssertFalse(RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: unrelated))
+    }
+
+    func testRejectedPushRecoveryUsesOnlyLocalBranchOrTagAndFallsBackToHead() {
+        let main = PBGitRef(string: "refs/heads/main")
+        let tag = PBGitRef(string: "refs/tags/v1.0")
+        let remoteBranch = PBGitRef(string: "refs/remotes/origin/main")
+
+        XCTAssertEqual(
+            RepositoryRejectedPushRecoveryPolicy.recoveryReference(requested: main, head: nil)?.ref,
+            "refs/heads/main"
+        )
+        XCTAssertEqual(
+            RepositoryRejectedPushRecoveryPolicy.recoveryReference(requested: tag, head: main)?.ref,
+            "refs/tags/v1.0"
+        )
+        XCTAssertEqual(
+            RepositoryRejectedPushRecoveryPolicy.recoveryReference(requested: nil, head: main)?.ref,
+            "refs/heads/main"
+        )
+        XCTAssertNil(
+            RepositoryRejectedPushRecoveryPolicy.recoveryReference(requested: remoteBranch, head: main)
+        )
+        XCTAssertNil(RepositoryRejectedPushRecoveryPolicy.recoveryReference(requested: nil, head: tag))
     }
 }
 

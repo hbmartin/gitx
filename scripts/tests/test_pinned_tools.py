@@ -59,6 +59,15 @@ class PinnedToolsTests(unittest.TestCase):
         self.assertIn('scripts/xcodebuild.sh --run-id "$UI_RUN_ID" test ui', build_workflow)
         self.assertNotIn("-only-testing:GitXUITests", build_workflow)
 
+    def test_build_workflow_groups_superseded_runs_by_ref_not_run_id(self) -> None:
+        build_workflow = (ROOT / ".github" / "workflows" / "BuildPR.yml").read_text()
+
+        self.assertIn(
+            "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+            build_workflow,
+        )
+        self.assertNotIn("github.event.pull_request.number || github.run_id", build_workflow)
+
     def test_verify_workflow_allows_cold_analyzer_and_full_ui_to_finish(self) -> None:
         verify_workflow = (ROOT / ".github" / "workflows" / "Verify.yml").read_text()
         unit_and_analyze = verify_workflow.split("  unit-and-analyze:\n", maxsplit=1)[1].split(
