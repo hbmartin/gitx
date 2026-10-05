@@ -109,6 +109,18 @@ enum RepositoryPushConfirmationPresenter {
         return button
     }
 
+    static func retryAlert(branch: String, remote: String, destinationRef: String, sourceOID: String, fetchedOID: String) -> NSAlert {
+        let alert = NSAlert()
+        let destination = String(destinationRef.dropFirst("refs/heads/".count))
+        alert.messageText = "Replace remote branch '\(destination)'?"
+        alert.informativeText = "Push commit \(sourceOID) from local branch '\(branch)' to '\(destination)' on remote '\(remote)', replacing the fetched commit \(fetchedOID). This may remove remote commits. The retry will be rejected if newer remote work has changed that fetched tip."
+        alert.addButton(withTitle: "Push with Lease")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.setAccessibilityIdentifier("GitX.Push.RetryWithLease")
+        alert.showsSuppressionButton = false
+        return alert
+    }
+
     static func alert(description: String, accessoryView: NSView?) -> NSAlert {
         let lowerDescription = "p" + description.dropFirst()
         let alert = NSAlert()

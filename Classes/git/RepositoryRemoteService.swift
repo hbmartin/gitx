@@ -219,44 +219,18 @@ final nonisolated class RepositoryRemoteService: NSObject {
         return pushBranch(branchRef, to: resolvedRemote, error: outputError)
     }
 
-    @objc(retryPushBranch:toRemote:error:)
-    func retryPushBranch(
-        _ branchRef: PBGitRef?,
-        toRemote remoteRef: PBGitRef?,
+    @objc(retryPushWithPlan:error:)
+    func retryPush(
+        withPlan plan: PBRepositoryPushRetryPlan,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         commandWasLaunched = false
         lastPushOutput = nil
-        guard let branchRef, branchRef.isBranch || branchRef.isTag else {
-            outputError?.pointee = RepositoryServiceError.make(
-                description: "Push retry unavailable",
-                failureReason: "GitX can only retry a rejected local branch or tag push."
-            )
-            logger.error("Rejected lease retry for an ineligible reference")
-            return false
-        }
-        guard let resolvedRemote = resolvedRemote(remoteRef, for: branchRef, error: outputError) else {
-            return false
-        }
-        let remoteName = resolvedRemote.remoteName ?? ""
-        let remoteRef = branchRef.ref
-        guard let expectedOID = remoteOID(
-            named: remoteRef,
-            on: remoteName,
-            error: outputError
-        ) else {
-            return false
-        }
-        logger.info("Retrying rejected push with an explicit lease")
+        logger.info("Retrying frozen commit with the original fetched lease")
         return launchPush(
-            arguments: [
-                "push",
-                remoteName,
-                "--force-with-lease=\(remoteRef):\(expectedOID)",
-                "\(remoteRef):\(remoteRef)",
-            ],
-            branchDescription: branchRef.shortName(),
-            remoteName: remoteName,
+            arguments: plan.snapshot.retryArguments,
+            branchDescription: plan.branchName,
+            remoteName: plan.remoteName,
             error: outputError
         )
     }
@@ -267,7 +241,7 @@ final nonisolated class RepositoryRemoteService: NSObject {
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         let remoteName = resolvedRemote.remoteName ?? ""
-        var arguments = ["push", remoteName]
+        var arguments = ["push", "--porcelain", "--", remoteName]
         let branchDescription: String
         if branchRef == nil || branchRef?.isRemote == true {
             branchDescription = "all updates"
@@ -284,54 +258,47 @@ final nonisolated class RepositoryRemoteService: NSObject {
             arguments: arguments,
             branchDescription: branchDescription,
             remoteName: remoteName,
+            snapshot: capturePushSnapshot(branch: branchRef, remoteName: remoteName),
             error: outputError
         )
     }
 
-    private func remoteOID(
-        named remoteRef: String,
-        on remoteName: String,
-        error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
-    ) -> String? {
+    private func capturePushSnapshot(branch: PBGitRef?, remoteName: String) -> RepositoryPushSnapshot? {
+        guard let branch, branch.isBranch else { return nil }
         do {
-            let output = try runner.output(arguments: ["ls-remote", "--refs", remoteName, remoteRef])
-            let lines = output.split(whereSeparator: \.isNewline)
-            guard lines.count == 1 else {
-                outputError?.pointee = RepositoryServiceError.make(
-                    description: "Push retry unavailable",
-                    failureReason: "The remote reference changed or could not be read."
-                )
-                logger.error("Lease discovery returned no unambiguous remote reference")
-                return nil
+            let sourceOID = try runner.output(arguments: ["rev-parse", "--verify", "\(branch.ref)^{commit}"])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let fetchURLs = try runner.output(arguments: ["remote", "get-url", "--all", remoteName])
+                .split(whereSeparator: \.isNewline).map(String.init)
+            let pushURLs = try runner.output(arguments: ["remote", "get-url", "--push", "--all", remoteName])
+                .split(whereSeparator: \.isNewline).map(String.init)
+            guard fetchURLs.count == 1, fetchURLs == pushURLs, let endpoint = pushURLs.first,
+                  !endpoint.isEmpty else { return nil }
+            let config = try runner.output(arguments: ["config", "--null", "--list"])
+            var values: [String: [String]] = [:]
+            for entry in config.split(separator: "\0") {
+                let fields = entry.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+                values[String(fields[0]), default: []].append(fields.count == 2 ? String(fields[1]) : "true")
             }
-            let fields = lines[0].split(maxSplits: 1, whereSeparator: \.isWhitespace)
-            guard fields.count == 2, fields[1] == remoteRef else {
-                outputError?.pointee = RepositoryServiceError.make(
-                    description: "Push retry unavailable",
-                    failureReason: "The remote reference changed or could not be read."
-                )
-                logger.error("Lease discovery returned a malformed remote reference")
-                return nil
-            }
-            let oid = String(fields[0])
-            guard [40, 64].contains(oid.count), oid.allSatisfy(\.isHexDigit) else {
-                outputError?.pointee = RepositoryServiceError.make(
-                    description: "Push retry unavailable",
-                    failureReason: "The remote reference changed or could not be read."
-                )
-                logger.error("Lease discovery returned a malformed object identifier")
-                return nil
-            }
-            logger.debug("Discovered remote reference for lease-protected retry")
-            return oid
+            let remoteKey = "remote.\(remoteName)."
+            let disabledValues = ["false", "no", "off", "0"]
+            guard (values[remoteKey + "mirror"] ?? []).allSatisfy({ disabledValues.contains($0.lowercased()) }),
+                  (values["push.followtags"] ?? []).allSatisfy({ disabledValues.contains($0.lowercased()) }),
+                  let destination = RepositoryPushRefspecPolicy.destination(
+                      source: branch.ref, pushMappings: values[remoteKey + "push"] ?? []
+                  ), destination.hasPrefix("refs/heads/"),
+                  let tracking = RepositoryPushRefspecPolicy.trackingReference(
+                      destination: destination, fetchMappings: values[remoteKey + "fetch"] ?? []
+                  ) else { return nil }
+            let fetchedOID = try runner.output(arguments: ["rev-parse", "--verify", "\(tracking)^{commit}"])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard RepositoryPushSnapshot.isOID(sourceOID), RepositoryPushSnapshot.isOID(fetchedOID),
+                  sourceOID.count == fetchedOID.count else { return nil }
+            logger.debug("Captured source commit and fetched destination before push")
+            return RepositoryPushSnapshot(sourceRef: branch.ref, sourceOID: sourceOID,
+                                          remoteName: remoteName, endpoint: endpoint, destinationRef: destination, fetchedOID: fetchedOID)
         } catch {
-            let wrapped = RepositoryServiceError.make(
-                description: "Push retry unavailable",
-                failureReason: "GitX could not read the remote reference before retrying the push.",
-                underlyingError: error
-            )
-            logger.error("Lease discovery failed")
-            outputError?.pointee = wrapped
+            logger.debug("No unambiguous fetched snapshot; push recovery will remain unavailable")
             return nil
         }
     }
@@ -340,6 +307,7 @@ final nonisolated class RepositoryRemoteService: NSObject {
         arguments: [String],
         branchDescription: String,
         remoteName: String,
+        snapshot: RepositoryPushSnapshot? = nil,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         do {
@@ -349,6 +317,11 @@ final nonisolated class RepositoryRemoteService: NSObject {
             logger.debug("Repository reference push completed")
             return true
         } catch {
+            var info: [String: Any] = [:]
+            if let snapshot, RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: error, snapshot: snapshot) {
+                info[PBRepositoryPushRetryPlan.errorKey] = PBRepositoryPushRetryPlan(snapshot: snapshot)
+                logger.info("Attached frozen retry plan to rejected push error")
+            }
             let wrapped = RepositoryServiceError.make(
                 description: NSLocalizedString(
                     "Push failed",
@@ -362,7 +335,8 @@ final nonisolated class RepositoryRemoteService: NSObject {
                     branchDescription,
                     remoteName
                 ),
-                underlyingError: error
+                underlyingError: error,
+                userInfo: info
             )
             logger.error("Repository reference push failed")
             return RepositoryServiceError.assign(wrapped, to: outputError)
@@ -404,6 +378,59 @@ final nonisolated class RepositoryRemoteService: NSObject {
         }
         guard let branchRef else { return nil }
         return self.remoteRef(forBranch: branchRef, error: outputError)
+    }
+}
+
+// swiftlint:enable unused_declaration
+
+/// Cocoa passes this immutable value back to the repository façade after confirmation.
+// swiftlint:disable unused_declaration
+@objc(PBRepositoryPushRetryPlan)
+// swift6-safety-justification: Every stored property is an immutable Sendable snapshot; NSObject supplies only Objective-C interoperability.
+final nonisolated class PBRepositoryPushRetryPlan: NSObject, @unchecked Sendable {
+    static let errorKey = "GitXRejectedPushRetryPlan"
+    let snapshot: RepositoryPushSnapshot
+
+    init(snapshot: RepositoryPushSnapshot) {
+        self.snapshot = snapshot
+        super.init()
+    }
+
+    @objc var branchName: String {
+        snapshot.branchName
+    }
+
+    @objc var remoteName: String {
+        snapshot.remoteName
+    }
+
+    @objc var sourceOID: String {
+        snapshot.sourceOID
+    }
+
+    @objc var fetchedOID: String {
+        snapshot.fetchedOID
+    }
+
+    @objc var destinationRef: String {
+        snapshot.destinationRef
+    }
+
+    @objc var endpoint: String {
+        snapshot.endpoint
+    }
+
+    @objc(planForError:)
+    static func plan(forError error: NSError) -> PBRepositoryPushRetryPlan? {
+        var current: NSError? = error
+        var visited = Set<ObjectIdentifier>()
+        while let error = current, visited.insert(ObjectIdentifier(error)).inserted {
+            if let plan = error.userInfo[errorKey] as? PBRepositoryPushRetryPlan {
+                return plan
+            }
+            current = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return nil
     }
 }
 

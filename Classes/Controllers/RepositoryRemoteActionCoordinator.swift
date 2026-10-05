@@ -1,5 +1,11 @@
 import OSLog // swiftlint:disable:this unused_import
 
+typealias RepositoryRetryConfirmation = (
+    _ alert: NSAlert,
+    _ onCancel: @escaping () -> Void,
+    _ action: @escaping () -> Void
+) -> Bool
+
 typealias RepositoryRemoteProgressStarting = (
     _ title: String,
     _ description: String,
@@ -15,11 +21,13 @@ private final nonisolated class RemoteOperationTarget: @unchecked Sendable {
     private let repository: PBGitRepository
     private let branch: PBGitRef?
     private let remote: PBGitRef?
+    private let retryPlan: PBRepositoryPushRetryPlan?
 
-    init(repository: PBGitRepository, branch: PBGitRef? = nil, remote: PBGitRef? = nil) {
+    init(repository: PBGitRepository, branch: PBGitRef? = nil, remote: PBGitRef? = nil, retryPlan: PBRepositoryPushRetryPlan? = nil) {
         self.repository = repository
         self.branch = branch
         self.remote = remote
+        self.retryPlan = retryPlan
     }
 
     func addRemote(name: String, url: String) throws {
@@ -35,24 +43,15 @@ private final nonisolated class RemoteOperationTarget: @unchecked Sendable {
     }
 
     func push() throws {
-        _ = try repository.pushBranch(branch, toRemote: remote)
-    }
-
-    func retryPush() throws {
-        guard let branch else { throw RepositoryRejectedPushRecoveryError.missingReference }
-        _ = try repository.retryPushBranch(branch, toRemote: remote)
+        if let retryPlan {
+            _ = try repository.retryPush(with: retryPlan)
+        } else {
+            _ = try repository.pushBranch(branch, toRemote: remote)
+        }
     }
 
     var pushOutput: String {
         repository.lastPushOutput ?? ""
-    }
-}
-
-private enum RepositoryRejectedPushRecoveryError: LocalizedError {
-    case missingReference
-
-    var errorDescription: String? {
-        "Push retry requires a local reference."
     }
 }
 
@@ -72,6 +71,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
     private let repository: PBGitRepository
     private weak var windowController: PBGitWindowController?
     private let progressStarting: RepositoryRemoteProgressStarting?
+    private let retryConfirmation: RepositoryRetryConfirmation?
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryRemoteActionCoordinator")
 
     @objc(initWithRepository:windowController:)
@@ -79,17 +79,20 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         self.repository = repository
         self.windowController = windowController
         progressStarting = nil
+        retryConfirmation = nil
         super.init()
     }
 
     init(
         repository: PBGitRepository,
         windowController: PBGitWindowController,
+        retryConfirmation: RepositoryRetryConfirmation? = nil,
         progressStarting: @escaping RepositoryRemoteProgressStarting
     ) {
         self.repository = repository
         self.windowController = windowController
         self.progressStarting = progressStarting
+        self.retryConfirmation = retryConfirmation
         super.init()
     }
 
@@ -211,6 +214,16 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         suppressesPostPushBrowserSuggestion: Bool = false,
         completion: ((RepositoryPushEvent) -> Void)?
     ) {
+        // Cocoa progress callbacks and failed starts can arrive in either order.
+        // Each push workflow owns one terminal event, including its optional retry.
+        var finished = false
+        let emit: (RepositoryPushEvent) -> Void = { event in
+            guard !finished else { return }
+            if event.isTerminal {
+                finished = true
+            }
+            completion?(event)
+        }
         let offeredInitialSelection = pullRequestOption?.initiallySelected ?? pullRequestOffer?.initiallySelected
         guard branch != nil || remote != nil,
               branch == nil || branch?.isBranch == true || branch?.isRemoteBranch == true || branch?.isTag == true,
@@ -220,7 +233,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             let selected = offeredInitialSelection == true
             RepositoryPushProgressStartPolicy.rejectedEvents(
                 createPullRequestSelected: selected
-            ).forEach { completion?($0) }
+            ).forEach { emit($0) }
             return
         }
 
@@ -253,53 +266,19 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 (createPullRequestButton?.state == .on ||
                     (!requiresConfirmation && offeredInitialSelection == true))
             pullRequestOffer?.onPresentationChange = nil
-            completion?(.began(createPullRequestSelected: createPullRequestSelected))
+            emit(.began(createPullRequestSelected: createPullRequestSelected))
             self.logger.debug("Starting push workflow")
             let operationTarget = RemoteOperationTarget(repository: self.repository, branch: branch, remote: remote)
-            let didStart = self.runProgress(
-                title: "Pushing remote…",
-                description: self.pushDescription(branch: branch, remote: remote, capitalized: false),
-                operation: {
-                    try operationTarget.push()
-                },
-                completion: { [weak self] error in
-                    if let error {
-                        guard let self else { return }
-                        let recoveryBranch = RepositoryRejectedPushRecoveryPolicy.recoveryReference(
-                            requested: branch,
-                            head: self.repository.headRef()?.ref()
-                        )
-                        if RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: error), let recoveryBranch {
-                            self.offerForceWithLeaseRetry(
-                                error: error,
-                                branch: recoveryBranch,
-                                remote: remote,
-                                nativeCreationWasAvailable: nativeCreationWasAvailable,
-                                suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
-                                createPullRequestSelected: createPullRequestSelected,
-                                completion: completion
-                            )
-                        } else {
-                            self.windowController?.showErrorSheet(error)
-                            completion?(.failed)
-                        }
-                    } else {
-                        if let self {
-                            self.finishSuccessfulPush(
-                                operationTarget: operationTarget,
-                                remote: remote,
-                                nativeCreationWasAvailable: nativeCreationWasAvailable,
-                                suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
-                                createPullRequestSelected: createPullRequestSelected,
-                                completion: completion
-                            )
-                        }
-                    }
-                }
+            self.runPush(
+                operationTarget: operationTarget,
+                branch: branch,
+                remote: remote,
+                nativeCreationWasAvailable: nativeCreationWasAvailable,
+                suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
+                createPullRequestSelected: createPullRequestSelected,
+                allowsRecovery: true,
+                completion: emit
             )
-            if let terminalEvent = RepositoryPushProgressStartPolicy.terminalEvent(didStart: didStart) {
-                completion?(terminalEvent)
-            }
         }
 
         guard requiresConfirmation, let windowController else {
@@ -314,62 +293,100 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             alert,
             suppressionIdentifier: "Confirm Push",
             onCancel: {
-                completion?(.cancelled)
+                emit(.cancelled)
             },
             forAction: beginPush
         )
     }
 
-    private func offerForceWithLeaseRetry(
-        error: NSError,
-        branch: PBGitRef,
+    private func runPush(
+        operationTarget: RemoteOperationTarget,
+        branch: PBGitRef?,
         remote: PBGitRef?,
         nativeCreationWasAvailable: Bool,
         suppressesPostPushBrowserSuggestion: Bool,
         createPullRequestSelected: Bool,
-        completion: ((RepositoryPushEvent) -> Void)?
+        allowsRecovery: Bool,
+        completion: @escaping (RepositoryPushEvent) -> Void
     ) {
-        guard let window = windowController?.window else {
-            windowController?.showErrorSheet(error)
-            completion?(.failed)
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = "Push was rejected"
-        alert.informativeText = "The remote reference changed. Push the same reference to the same remote with force-with-lease? This only proceeds if the remote still matches the value GitX observes immediately before retrying."
-        alert.addButton(withTitle: "Push with Lease")
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard response == .alertFirstButtonReturn, let self else {
-                completion?(.failed)
-                return
-            }
-            self.logger.info("Starting lease-protected rejected-push retry")
-            let retryTarget = RemoteOperationTarget(repository: self.repository, branch: branch, remote: remote)
-            let didStart = self.runProgress(
-                title: "Pushing remote…",
-                description: self.pushDescription(branch: branch, remote: remote, capitalized: false),
-                operation: { try retryTarget.retryPush() },
-                completion: { retryError in
-                    if let retryError {
-                        self.windowController?.showErrorSheet(retryError)
-                        completion?(.failed)
-                    } else {
-                        self.finishSuccessfulPush(
-                            operationTarget: retryTarget,
-                            remote: remote,
+        let didStart = runProgress(
+            title: "Pushing remote…",
+            description: pushDescription(branch: branch, remote: remote, capitalized: false),
+            operation: { try operationTarget.push() },
+            completion: { [weak self] error in
+                guard let self else { completion(.failed); return }
+                if let error {
+                    if allowsRecovery, let plan = PBRepositoryPushRetryPlan.plan(forError: error) {
+                        self.offerForceWithLeaseRetry(
+                            error: error, plan: plan, remote: remote,
                             nativeCreationWasAvailable: nativeCreationWasAvailable,
                             suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
                             createPullRequestSelected: createPullRequestSelected,
                             completion: completion
                         )
+                    } else {
+                        self.windowController?.showErrorSheet(error)
+                        completion(.failed)
                     }
+                } else {
+                    self.finishSuccessfulPush(
+                        operationTarget: operationTarget, remote: remote,
+                        nativeCreationWasAvailable: nativeCreationWasAvailable,
+                        suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
+                        createPullRequestSelected: createPullRequestSelected,
+                        completion: completion
+                    )
                 }
-            )
-            if let terminalEvent = RepositoryPushProgressStartPolicy.terminalEvent(didStart: didStart) {
-                self.logger.error("Lease-protected retry progress did not start")
-                completion?(terminalEvent)
             }
+        )
+        if let terminal = RepositoryPushProgressStartPolicy.terminalEvent(didStart: didStart) {
+            logger.error("Push progress did not start")
+            completion(terminal)
+        }
+    }
+
+    private func offerForceWithLeaseRetry(
+        error: NSError,
+        plan: PBRepositoryPushRetryPlan,
+        remote: PBGitRef?,
+        nativeCreationWasAvailable: Bool,
+        suppressesPostPushBrowserSuggestion: Bool,
+        createPullRequestSelected: Bool,
+        completion: @escaping (RepositoryPushEvent) -> Void
+    ) {
+        guard let windowController, windowController.window != nil else {
+            windowController?.showErrorSheet(error)
+            completion(.failed)
+            return
+        }
+        let alert = RepositoryPushConfirmationPresenter.retryAlert(
+            branch: plan.branchName, remote: plan.remoteName, destinationRef: plan.destinationRef,
+            sourceOID: plan.sourceOID, fetchedOID: plan.fetchedOID
+        )
+        let action = { [weak self] in
+            guard let self else { completion(.failed); return }
+            self.logger.info("Starting rejected-push retry with frozen source and fetched lease")
+            let target = RemoteOperationTarget(repository: self.repository, retryPlan: plan)
+            self.runPush(
+                operationTarget: target, branch: PBGitRef(string: "refs/heads/" + plan.branchName), remote: remote,
+                nativeCreationWasAvailable: nativeCreationWasAvailable,
+                suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
+                createPullRequestSelected: createPullRequestSelected,
+                allowsRecovery: false, completion: completion
+            )
+        }
+        let cancel = { completion(RepositoryPushEvent.cancelled) }
+        let presented: Bool
+        if let retryConfirmation {
+            presented = retryConfirmation(alert, cancel, action)
+        } else {
+            presented = WindowDialogPresenter.confirmDialog(
+                alert, suppressionIdentifier: nil, for: windowController,
+                onCancel: cancel, allowsSuppression: false, action: action
+            )
+        }
+        if !presented {
+            completion(.failed)
         }
     }
 

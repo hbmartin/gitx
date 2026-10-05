@@ -1157,15 +1157,33 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         let controller = PBGitWindowController(window: window)
         window.makeKeyAndOrderFront(nil)
-        controller.showMessageSheet(try XCTUnwrap(result.warningMessage), infoText: result.warningInfo)
+        try controller.showMessageSheet(XCTUnwrap(result.warningMessage), infoText: result.warningInfo)
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             window.attachedSheet?.isVisible == true
         }, object: nil)
         wait(for: [ready], timeout: 5)
         let sheet = try XCTUnwrap(window.attachedSheet)
+        sheet.contentView?.displayIfNeeded()
         try attachScreenshot(of: sheet, named: "Review fixes partial patch copy warning")
         window.endSheet(sheet)
         window.close()
+    }
+
+    @MainActor
+    func testFrozenLeaseRetryAlertKeepsCurrentDiagnosticScreenshot() throws {
+        let alert = RepositoryPushConfirmationPresenter.retryAlert(branch: "feature/rewrite", remote: "origin", destinationRef: "refs/heads/review/rewrite",
+                                                                   sourceOID: "7b1c2a9a638c04110f0ec4fcb4de55a3c7901728", fetchedOID: "b2ee9100ca63e8c1a65766cb5dbf5ec33041a9bf")
+        XCTAssertEqual(alert.messageText, "Replace remote branch 'review/rewrite'?")
+        XCTAssertTrue(alert.informativeText.contains("local branch 'feature/rewrite'"))
+        XCTAssertFalse(alert.showsSuppressionButton)
+        XCTAssertEqual(alert.buttons.map(\.title), ["Push with Lease", "Cancel"])
+        XCTAssertEqual(alert.buttons.first?.accessibilityIdentifier(), "GitX.Push.RetryWithLease")
+        XCTAssertTrue(alert.informativeText.contains("newer remote work"))
+        alert.layout()
+        alert.window.makeKeyAndOrderFront(nil)
+        alert.window.contentView?.displayIfNeeded()
+        try attachScreenshot(of: alert.window, named: "Review fixes frozen lease retry confirmation")
+        alert.window.close()
     }
 
     func testPushAndDeepLinkPresentersKeepDiagnosticScreenshots() throws {

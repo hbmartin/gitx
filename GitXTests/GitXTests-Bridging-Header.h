@@ -583,6 +583,22 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (nullable PBGitRef *)refForName:(nullable NSString *)name;
 @end
 
+#if DEBUG
+@interface PBMilestone2ProductCoverageHarness (ReviewFixProof)
++ (uint64_t)rejectedPushRecoveryProof;
+@end
+#endif
+
+@interface PBRepositoryPushRetryPlan : NSObject
+@property (nonatomic, readonly, copy) NSString *branchName;
+@property (nonatomic, readonly, copy) NSString *remoteName;
+@property (nonatomic, readonly, copy) NSString *sourceOID;
+@property (nonatomic, readonly, copy) NSString *fetchedOID;
+@property (nonatomic, readonly, copy) NSString *destinationRef;
+@property (nonatomic, readonly, copy) NSString *endpoint;
++ (nullable instancetype)planForError:(NSError *)error NS_SWIFT_NAME(plan(forError:));
+@end
+
 @interface PBRepositoryRemoteService : NSObject
 @property (nonatomic, copy, readonly, nullable) NSString *lastPushOutput;
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
@@ -591,7 +607,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (BOOL)fetchRemoteForRef:(nullable PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 - (BOOL)pullBranch:(nullable PBGitRef *)branchRef fromRemote:(nullable PBGitRef *)remoteRef rebase:(BOOL)rebase error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 - (BOOL)pushBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
-- (BOOL)retryPushBranch:(nullable PBGitRef *)branchRef toRemote:(nullable PBGitRef *)remoteRef error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (BOOL)retryPushWithPlan:(PBRepositoryPushRetryPlan *)plan error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 - (BOOL)deleteRemote:(nullable PBGitRef *)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
 @end
 

@@ -120,9 +120,9 @@
 	return success;
 }
 
-- (BOOL)retryPushBranch:(PBGitRef *)branchRef toRemote:(PBGitRef *)remoteRef error:(NSError **)error
+- (BOOL)retryPushWithPlan:(PBRepositoryPushRetryPlan *)plan error:(NSError **)error
 {
-	BOOL success = [self.pb_remoteService retryPushBranch:branchRef toRemote:remoteRef error:error];
+	BOOL success = [self.pb_remoteService retryPushWithPlan:plan error:error];
 	[self scheduleRemoteReloadIfNeeded];
 	return success;
 }
