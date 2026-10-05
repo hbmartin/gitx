@@ -340,7 +340,7 @@ final class RepositoryServiceTests: XCTestCase {
         var error: NSError?
 
         XCTAssertFalse(service.checkoutRefish(PBGitRef(string: "refs/heads/main"), error: &error))
-        XCTAssertTrue(error?.localizedFailureReason?.contains("expected command failure") == true)
+        XCTAssertEqual((error?.userInfo[NSUnderlyingErrorKey] as? NSError)?.localizedDescription, "expected command failure")
         XCTAssertFalse(error?.localizedFailureReason?.contains("working directory not clean") == true)
     }
 
@@ -466,6 +466,14 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         XCTAssertTrue(taskOutput(error).contains("pathspec"))
         error = nil
         XCTAssertFalse(service.checkoutFiles(["missing.txt"], from: PBGitRef(string: "refs/heads/main"), error: &error))
+        XCTAssertTrue(taskOutput(error).contains("pathspec"))
+    }
+
+    func testCheckoutContextDoesNotRepeatGenericTaskDescription() {
+        let service = PBRepositoryMutationService(repository: repository, runner: LocalGitRunner(directory: repositoryURL.path))
+        var error: NSError?
+        XCTAssertFalse(service.checkoutRefish(PBGitRef(string: "refs/heads/missing"), error: &error))
+        XCTAssertFalse(error?.localizedFailureReason?.contains("Task exited unsuccessfully") == true)
         XCTAssertTrue(taskOutput(error).contains("pathspec"))
     }
 
