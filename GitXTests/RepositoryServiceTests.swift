@@ -156,7 +156,7 @@ final class RepositoryServiceTests: XCTestCase {
     func testMutationServicePreservesReferenceAndPathCommandShapes() {
         let repository = PBGitRepository()
         let runner = CommandRunnerFake()
-        runner.outputResults = [.success(""), .success(""), .failure(commandError)]
+        runner.outputResults = [.success(""), .success(""), .failure(commandError), .success(""), .success("")]
         let service = PBRepositoryMutationService(repository: repository, runner: runner)
         let main = PBGitRef(string: "refs/heads/main")
 
@@ -166,10 +166,14 @@ final class RepositoryServiceTests: XCTestCase {
         var error: NSError?
         XCTAssertFalse(service.checkoutRefish(UnknownRefish(), error: &error))
         XCTAssertTrue(error?.localizedFailureReason?.contains("(null)") == true)
+        XCTAssertTrue(service.deleteReference(main, error: nil))
+        XCTAssertTrue(service.deleteReference(PBGitRef(string: "refs/tags/v1"), error: nil))
         XCTAssertEqual(runner.outputArguments, [
             ["checkout", "main"],
             ["checkout", "main", "--", "folder/file.txt"],
             ["checkout", "refs/unknown"],
+            ["branch", "-D", "--", "main"],
+            ["update-ref", "-d", "refs/tags/v1"],
         ])
     }
 
@@ -187,6 +191,25 @@ final class RepositoryServiceTests: XCTestCase {
             ["stash", "save", "--keep-index"],
             ["stash", "save", "--no-keep-index"],
         ])
+    }
+
+    func testCommitCopierSkipsCommitsWithoutAPatch() {
+        let commit = PBGitCommit()
+
+        XCTAssertEqual(GitXCommitCopier.toPatch([commit]), "")
+        XCTAssertEqual(GitXCommitCopier.toPatch([]), "")
+    }
+
+    func testCheckoutFailureShowsTheGitError() {
+        let repository = PBGitRepository()
+        let runner = CommandRunnerFake()
+        runner.outputResults = [.failure(commandError)]
+        let service = PBRepositoryMutationService(repository: repository, runner: runner)
+        var error: NSError?
+
+        XCTAssertFalse(service.checkoutRefish(PBGitRef(string: "refs/heads/main"), error: &error))
+        XCTAssertTrue(error?.localizedFailureReason?.contains("expected command failure") == true)
+        XCTAssertFalse(error?.localizedFailureReason?.contains("working directory not clean") == true)
     }
 }
 

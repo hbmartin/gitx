@@ -2699,6 +2699,7 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 
 	self.controller.interceptRemoteRouting = YES;
 	[self.controller fetchRemote:[self menuItemWithObject:self.branchRef]];
+	[self.controller fetchRemote:[self menuItemWithObject:self.remoteBranchRef]];
 	[self.controller fetchRemote:[self menuItemWithObject:self.tagRef]];
 	[self.controller fetchAllRemotes:self];
 	[self.controller pullRemote:[self menuItemWithObject:self.branchRef]];
@@ -2715,7 +2716,7 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	NSMenuItem *remoteItem = [self menuItemWithObject:@"origin"];
 	[submenu addItem:remoteItem];
 	[self.controller pushToRemote:remoteItem];
-	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)2);
+	XCTAssertEqual(self.controller.fetchRouteCount, (NSUInteger)3);
 	XCTAssertEqual(self.controller.pullRouteCount, (NSUInteger)4);
 	XCTAssertEqual(self.controller.pushRouteCount, (NSUInteger)3);
 }

@@ -8,7 +8,6 @@
 #import "PBHistorySearchController.h"
 #import "PBQLTextView.h"
 #import "PBDiffWindowController.h"
-#import "GitXCommitCopier.h"
 #import "GitX-Swift.h"
 
 @interface PBGitHistoryController (PBFacadePrivate)
@@ -45,16 +44,16 @@
 		[menuItem setState:(self.detailMode == PBHistoryDetailModeFlow) ? NSControlStateValueOn : NSControlStateValueOff];
 	}
 
+	if (action == @selector(copy:) || action == @selector(copySHA:) || action == @selector(copyShortName:) || action == @selector(copyPatch:) || action == @selector(createPatch:)) {
+		return self.commitController.selectedObjects.count > 0;
+	}
+
 	if ([self respondsToSelector:action]) {
 		if (action == @selector(createBranch:) || action == @selector(createTag:)) {
 			return self.singleCommitSelected;
 		}
 
 		return YES;
-	}
-
-	if (action == @selector(copy:) || action == @selector(copySHA:) || action == @selector(copyShortName:) || action == @selector(copyPatch:) || action == @selector(createPatch:)) {
-		return self.commitController.selectedObjects.count > 0;
 	}
 
 	return [[self nextResponder] validateMenuItem:menuItem];

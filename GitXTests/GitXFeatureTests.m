@@ -2453,6 +2453,13 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqualObjects(table.selectedRowIndexes, [NSIndexSet indexSetWithIndex:2]);
 }
 
+- (void)testFileChangeDragExportsACopy
+{
+	PBFileChangesTableView *table = [[PBFileChangesTableView alloc] initWithFrame:NSMakeRect(0, 0, 300, 120)];
+	XCTAssertEqual([table draggingSession:(id)NSNull.null sourceOperationMaskForDraggingContext:NSDraggingContextOutsideApplication],
+				   NSDragOperationCopy);
+}
+
 - (void)testRevisionCellObjectValueIsNullableBeforeTableConfiguration
 {
 	PBGitRevisionCell *cell = [[PBGitRevisionCell alloc] initWithFrame:NSMakeRect(0, 0, 200, 20)];

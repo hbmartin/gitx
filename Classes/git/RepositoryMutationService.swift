@@ -41,7 +41,7 @@ final nonisolated class RepositoryMutationService: NSObject {
         } catch {
             let wrapped = RepositoryServiceError.make(
                 description: "Checkout failed",
-                failureReason: "There was an error checking out the \(displayType(of: ref)) '\(ref.shortName())'.\n\nPerhaps your working directory is not clean?",
+                failureReason: "There was an error checking out the \(displayType(of: ref)) '\(ref.shortName())'.\n\n\((error as NSError).localizedDescription)",
                 underlyingError: error
             )
             logger.error("Repository checkout failed")
@@ -65,7 +65,7 @@ final nonisolated class RepositoryMutationService: NSObject {
         } catch {
             let wrapped = RepositoryServiceError.make(
                 description: "Checkout failed",
-                failureReason: "There was an error checking out the file(s) from the \(displayType(of: ref)) '\(ref.shortName())'.\n\nPerhaps your working directory is not clean?",
+                failureReason: "There was an error checking out the file(s) from the \(displayType(of: ref)) '\(ref.shortName())'.\n\n\((error as NSError).localizedDescription)",
                 underlyingError: error
             )
             logger.error("Repository path checkout failed")
@@ -234,7 +234,16 @@ final nonisolated class RepositoryMutationService: NSObject {
     ) -> Bool {
         logger.debug("Deleting repository reference")
         do {
-            _ = try runner.output(arguments: ["update-ref", "-d", ref.ref])
+            // `update-ref -d` bypasses Git's linked-worktree safety check.  Keep
+            // its precise behavior for tags and remote-tracking refs, but let
+            // `git branch` reject a local branch checked out elsewhere.
+            let arguments: [String]
+            if ref.refishType() == kGitXBranchType {
+                arguments = ["branch", "-D", "--", ref.shortName()]
+            } else {
+                arguments = ["update-ref", "-d", ref.ref]
+            }
+            _ = try runner.output(arguments: arguments)
             logger.debug("Repository reference deleted")
             return true
         } catch {
