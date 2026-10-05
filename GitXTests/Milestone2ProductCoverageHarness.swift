@@ -1,5 +1,6 @@
 #if DEBUG
     import AppKit
+    import Darwin
     import ForgeKit
     import GitHubForgeAdapter
 
@@ -756,6 +757,47 @@
         }
 
         // MARK: Existing remote action coordinator
+
+        // XCTest calls the shipped module so this checks the real POSIX adapter.
+        // swiftlint:disable:next unused_declaration
+        @objc static func verificationBoundaryProof() -> UInt64 {
+            do {
+                let window = HarnessDialogWindowController(window: NSWindow())
+                let harness = Milestone2UITestHarness.runProductProof(
+                    for: window, environment: ["GITX_M2_SCENARIO": "partial-patch-copy"]
+                )
+                let missingRepositoryWasReported = window.errorCount == 1
+                _ = harness
+                window.close()
+
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let output = Pipe()
+                let process = try PBPosixChildProcessSystem().spawn(configuration: PBChildProcessConfiguration(
+                    launchPath: "/bin/pwd", arguments: [], environment: ProcessInfo.processInfo.environment,
+                    workingDirectory: directory.path, standardInputFileDescriptor: nil,
+                    standardOutputFileDescriptor: output.fileHandleForWriting.fileDescriptor
+                ))
+                var status: Int32 = 0
+                var reaped: pid_t
+                repeat {
+                    reaped = Darwin.waitpid(process, &status, 0)
+                } while reaped == -1 && errno == EINTR
+                try output.fileHandleForWriting.close()
+                let data = try output.fileHandleForReading.readToEnd() ?? Data()
+                try output.fileHandleForReading.close()
+                let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                return bitProof([
+                    missingRepositoryWasReported,
+                    reaped == process && status == 0,
+                    URL(fileURLWithPath: path).resolvingSymlinksInPath() == directory.resolvingSymlinksInPath(),
+                ])
+            } catch {
+                NSLog("Verification boundary proof failed: %@", error.localizedDescription)
+                return 0
+            }
+        }
 
         private static func remoteActionProof(_ fixture: HarnessPullRequestFixture) throws -> Bool {
             let local = try HarnessLocalRepository(remoteURL: "https://github.com/hbmartin/gitx.git")

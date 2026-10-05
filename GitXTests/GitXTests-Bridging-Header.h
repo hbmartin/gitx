@@ -586,6 +586,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 #if DEBUG
 @interface PBMilestone2ProductCoverageHarness (ReviewFixProof)
 + (uint64_t)rejectedPushRecoveryProof;
++ (uint64_t)verificationBoundaryProof;
 @end
 #endif
 
