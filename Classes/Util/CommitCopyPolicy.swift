@@ -1,5 +1,3 @@
-import Foundation
-
 nonisolated enum CommitCopySelectionPolicy {
     static func canCopyImmutableCommits(shas: [String]) -> Bool {
         !shas.isEmpty && shas.allSatisfy { !$0.isEmpty }
