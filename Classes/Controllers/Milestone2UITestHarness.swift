@@ -18,6 +18,7 @@ import OSLog // swiftlint:disable:this unused_import
             case deepLinkNoCheckout = "deep-link-no-checkout"
             case stagingCreate = "staging-create"
             case syncFork = "sync-fork"
+            case partialPatchCopy = "partial-patch-copy"
         }
 
         private let windowController: PBGitWindowController
@@ -301,6 +302,9 @@ import OSLog // swiftlint:disable:this unused_import
                     windowController.showUncommittedChanges(self)
                 case .syncFork:
                     try startSyncFork(repository: repository)
+                case .partialPatchCopy:
+                    let result = CommitPatchCopyResult(patches: ["UI diagnostic patch", nil])
+                    windowController.showMessageSheet(result.warningMessage ?? "", infoText: result.warningInfo)
                 }
                 markState("Ready.\(rawScenario)", label: "Milestone 2 UI harness ready for \(rawScenario)")
                 logger.notice("Started deterministic Milestone 2 UI journey \(rawScenario, privacy: .public)")

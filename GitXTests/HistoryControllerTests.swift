@@ -2802,14 +2802,45 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(historyController.webCommits.isEmpty)
     }
 
-    func testWorkingStateImmutableCopyActionsPreserveClipboard() throws {
+    private func preservedPasteboardItems(_ pasteboard: NSPasteboard) -> [NSPasteboardItem] {
+        pasteboard.pasteboardItems?.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        } ?? []
+    }
+
+    func testWorkingStatePatchCopyIncludesStagedAndUnstagedChanges() throws {
         let pasteboard = NSPasteboard.general
-        let saved = pasteboard.string(forType: .string)
+        let saved = preservedPasteboardItems(pasteboard)
         defer {
             pasteboard.clearContents()
-            if let saved {
-                pasteboard.setString(saved, forType: .string)
-            }
+            pasteboard.writeObjects(saved.map { $0 as NSPasteboardWriting })
+        }
+        try fixture.write("staged patch line\n", to: "nested/tracked.txt")
+        try fixture.git(["add", "nested/tracked.txt"])
+        try fixture.write("staged patch line\nunstaged patch line\n", to: "nested/tracked.txt")
+        let working = PBUncommittedChanges(repository: repository)
+        historyController.commitController.content = [working]
+        historyController.commitController.setSelectedObjects([working])
+        XCTAssertTrue(historyController.validateMenuItem(NSMenuItem(title: "Copy Patch", action: NSSelectorFromString("copyPatch:"), keyEquivalent: "")))
+        historyController.copyPatch(self)
+        let copied = try XCTUnwrap(pasteboard.string(forType: .string))
+        XCTAssertTrue(copied.contains("+staged patch line"))
+        XCTAssertTrue(copied.contains("+unstaged patch line"))
+        XCTAssertTrue((windowController as? HistoryWindowController)?.shownMessages.isEmpty == true)
+    }
+
+    func testWorkingStateImmutableCopyActionsPreserveClipboard() throws {
+        let pasteboard = NSPasteboard.general
+        let saved = preservedPasteboardItems(pasteboard)
+        defer {
+            pasteboard.clearContents()
+            pasteboard.writeObjects(saved.map { $0 as NSPasteboardWriting })
         }
         let commit = try XCTUnwrap(loadedCommits().first)
         let working = PBUncommittedChanges(repository: repository)
@@ -2878,12 +2909,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     func testCopyPatchWarnsAfterCopyingAvailablePatchesAndPreservesAllUnavailableClipboard() throws {
         let window = try XCTUnwrap(windowController as? HistoryWindowController)
         let pasteboard = NSPasteboard.general
-        let saved = pasteboard.string(forType: .string)
+        let saved = preservedPasteboardItems(pasteboard)
         defer {
             pasteboard.clearContents()
-            if let saved {
-                pasteboard.setString(saved, forType: .string)
-            }
+            pasteboard.writeObjects(saved.map { $0 as NSPasteboardWriting })
         }
         let commits = Array(loadedCommits().prefix(3))
         XCTAssertEqual(commits.count, 3)

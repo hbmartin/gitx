@@ -1152,7 +1152,7 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
     }
 
     @MainActor
-    func testPartialPatchCopyWarningKeepsCurrentDiagnosticScreenshot() throws {
+    func testPartialPatchCopyWarningUsesDismissibleMessageSheet() throws {
         let result = CommitPatchCopyResult(patches: ["first", nil, "last"])
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
         let controller = PBGitWindowController(window: window)
@@ -1164,13 +1164,12 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
         wait(for: [ready], timeout: 5)
         let sheet = try XCTUnwrap(window.attachedSheet)
         sheet.contentView?.displayIfNeeded()
-        try attachScreenshot(of: sheet, named: "Review fixes partial patch copy warning")
         window.endSheet(sheet)
         window.close()
     }
 
     @MainActor
-    func testFrozenLeaseRetryAlertKeepsCurrentDiagnosticScreenshot() throws {
+    func testFrozenLeaseRetryAlertShowsSourceDestinationAndProtection() {
         let alert = RepositoryPushConfirmationPresenter.retryAlert(branch: "feature/rewrite", remote: "origin", destinationRef: "refs/heads/review/rewrite",
                                                                    sourceOID: "7b1c2a9a638c04110f0ec4fcb4de55a3c7901728", fetchedOID: "b2ee9100ca63e8c1a65766cb5dbf5ec33041a9bf")
         XCTAssertEqual(alert.messageText, "Replace remote branch 'review/rewrite'?")
@@ -1182,7 +1181,6 @@ final class RepositoryPullRequestSheetAppTests: XCTestCase {
         alert.layout()
         alert.window.makeKeyAndOrderFront(nil)
         alert.window.contentView?.displayIfNeeded()
-        try attachScreenshot(of: alert.window, named: "Review fixes frozen lease retry confirmation")
         alert.window.close()
     }
 

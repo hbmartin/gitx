@@ -639,6 +639,8 @@
                 && sidebarPullRequest && sidebarIssue && sidebarUnavailable
         }
 
+        // Objective-C-compatible XCTest declarations invoke this shipped-module proof.
+        // swiftlint:disable:next unused_declaration
         @objc static func rejectedPushRecoveryProof() -> UInt64 {
             do {
                 let local = try HarnessLocalRepository(remoteURL: "/tmp/unavailable-review-remote")
@@ -738,6 +740,14 @@
                 }
                 conditions.append(defaultEvents == [.began(createPullRequestSelected: false), .cancelled])
                 defaultWindow.window?.close()
+                let copyWindow = HarnessWindowController(repository: local.repository, window: NSWindow())
+                let copyHarness = Milestone2UITestHarness.runProductProof(for: copyWindow, environment: ["GITX_M2_SCENARIO": "partial-patch-copy"])
+                conditions.append(copyWindow.window?.attachedSheet != nil)
+                if let sheet = copyWindow.window?.attachedSheet {
+                    copyWindow.window?.endSheet(sheet)
+                }
+                _ = copyHarness
+                copyWindow.window?.close()
                 return bitProof(conditions)
             } catch {
                 print("Review recovery proof failed: \(error)")

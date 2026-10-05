@@ -153,7 +153,7 @@ final class RepositoryServiceTests: XCTestCase {
 
     func testRejectedPushCoordinatorPreservesIntentAndEmitsOneTerminalEvent() throws {
         #if DEBUG
-            XCTAssertEqual(PBMilestone2ProductCoverageHarness.rejectedPushRecoveryProof(), (1 << 11) - 1)
+            XCTAssertEqual(PBMilestone2ProductCoverageHarness.rejectedPushRecoveryProof(), (1 << 12) - 1)
         #else
             throw XCTSkip("Product harness is available in Debug")
         #endif
