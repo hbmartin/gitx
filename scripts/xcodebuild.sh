@@ -382,7 +382,7 @@ xcode_test() {
 	shift 2
 	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
 		"$xcodebuild" "${common[@]}" test -testPlan "$plan" -resultBundlePath "$result" \
-		CODE_SIGN_IDENTITY=- "$@"
+		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES "$@"
 }
 
 stage_built_app() {
@@ -562,6 +562,7 @@ case "$command" in
 		has_package_cache=0
 		has_result_bundle=0
 		is_test_action=0
+		is_test_build=0
 		for argument in "${extra[@]}"; do
 			case "$argument" in
 				-workspace|-workspace=*) has_workspace=1 ;;
@@ -572,10 +573,14 @@ case "$command" in
 				-derivedDataPath|-derivedDataPath=*) has_derived_data=1 ;;
 				-clonedSourcePackagesDirPath|-clonedSourcePackagesDirPath=*) has_package_cache=1 ;;
 				-resultBundlePath|-resultBundlePath=*) has_result_bundle=1 ;;
-				test|test-without-building) is_test_action=1 ;;
+				test|test-without-building) is_test_action=1; is_test_build=1 ;;
+				build-for-testing) is_test_build=1 ;;
 			esac
 		done
 		raw_common=()
+		# Release Swift packages also need testable interfaces for app-hosted
+		# XCTest imports; ordinary release builds retain their normal settings.
+		(( is_test_build )) && raw_common+=( ENABLE_TESTABILITY=YES )
 		(( has_workspace || has_project )) || raw_common+=( -workspace "$workspace" )
 		(( has_scheme )) || raw_common+=( -scheme "$scheme" )
 		(( has_destination )) || raw_common+=( -destination "$destination" )

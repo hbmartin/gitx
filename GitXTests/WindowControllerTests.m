@@ -4401,6 +4401,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertGreaterThan(self.controller.synchronizeCount, changedCount);
 }
 
+// These product harnesses are compiled into the Debug app only.
+#if DEBUG
 - (void)testMilestone2ShippedProductCoverageProofs
 {
 	uint64_t synchronousProof = [PBMilestone2ProductCoverageHarness synchronousProof];
@@ -4489,5 +4491,7 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 																		   }];
 	[self waitForExpectations:@[ expectation ] timeout:30.0];
 }
+
+#endif
 
 @end

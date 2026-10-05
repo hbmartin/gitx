@@ -53,6 +53,20 @@ class ScriptEntrypointTests(unittest.TestCase):
                 shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
         return destination
 
+    def test_release_test_build_enables_package_testability_only_for_testing(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        for action in ("build", "build-for-testing"):
+            subprocess.run(
+                [script, "--configuration", "Release", "--run-id", action, "raw", "--", action],
+                check=True, capture_output=True, text=True, env=self.environment,
+            )
+        invocations = captured.read_text().split("__INVOCATION__")
+        build = next(value for value in invocations if "\nbuild\n" in value)
+        test_build = next(value for value in invocations if "\nbuild-for-testing\n" in value)
+        self.assertNotIn("ENABLE_TESTABILITY=YES", build)
+        self.assertIn("ENABLE_TESTABILITY=YES", test_build)
+
     def install_mock_xcodebuild(
         self,
         products_directory: pathlib.Path,

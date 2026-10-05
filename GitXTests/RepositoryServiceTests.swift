@@ -35,6 +35,12 @@ private final class RepositorySettingsConcurrencyBox: @unchecked Sendable {
     }
 }
 
+private final class UnavailablePatchCommit: PBGitCommit {
+    override var patch: String? {
+        nil
+    }
+}
+
 @MainActor
 final class RepositoryServiceTests: XCTestCase {
     private final class CommandRunnerFake: NSObject, PBGitCommandRunning {
@@ -255,7 +261,7 @@ final class RepositoryServiceTests: XCTestCase {
     }
 
     func testCommitCopierSkipsCommitsWithoutAPatch() {
-        let commit = PBGitCommit()
+        let commit = UnavailablePatchCommit()
 
         XCTAssertEqual(GitXCommitCopier.toPatch([commit]), "")
         XCTAssertEqual(GitXCommitCopier.toPatch([]), "")

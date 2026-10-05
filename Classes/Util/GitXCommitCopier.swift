@@ -3,6 +3,8 @@ import AppKit
 /// Objective-C history actions use this through the generated GitX-Swift
 /// interface.  Keeping the runtime name and selectors stable lets the small
 /// conversion remain transparent to the existing controller façade.
+// These selectors are called by Objective-C history actions.
+// swiftlint:disable unused_declaration
 @objc(GitXCommitCopier)
 final nonisolated class GitXCommitCopier: ValueTransformer {
     @objc(toFullSHA:)
