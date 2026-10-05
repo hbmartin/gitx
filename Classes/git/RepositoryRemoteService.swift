@@ -216,8 +216,36 @@ final nonisolated class RepositoryRemoteService: NSObject {
         guard let resolvedRemote = resolvedRemote(remoteRef, for: branchRef, error: outputError) else {
             return false
         }
+        return pushBranch(branchRef, to: resolvedRemote, forceWithLease: false, error: outputError)
+    }
+
+    @objc(pushBranch:toRemote:forceWithLease:error:)
+    func pushBranch(
+        _ branchRef: PBGitRef?,
+        toRemote remoteRef: PBGitRef?,
+        forceWithLease: Bool,
+        error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
+    ) -> Bool {
+        commandWasLaunched = false
+        lastPushOutput = nil
+        logger.debug("Pushing repository reference with lease recovery=\(forceWithLease, privacy: .public)")
+        guard let resolvedRemote = resolvedRemote(remoteRef, for: branchRef, error: outputError) else {
+            return false
+        }
+        return pushBranch(branchRef, to: resolvedRemote, forceWithLease: forceWithLease, error: outputError)
+    }
+
+    private func pushBranch(
+        _ branchRef: PBGitRef?,
+        to resolvedRemote: PBGitRef,
+        forceWithLease: Bool,
+        error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
+    ) -> Bool {
         let remoteName = resolvedRemote.remoteName ?? ""
         var arguments = ["push", remoteName]
+        if forceWithLease {
+            arguments.append("--force-with-lease")
+        }
         let branchDescription: String
         if branchRef == nil || branchRef?.isRemote == true {
             branchDescription = "all updates"

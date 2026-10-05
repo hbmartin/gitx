@@ -125,6 +125,10 @@ final class RepositoryServiceTests: XCTestCase {
         error = nil
         XCTAssertTrue(service.pushBranch(nil, toRemote: remote, error: &error))
         XCTAssertEqual(service.lastPushOutput, "remote: Open https://example.test/pull/42")
+
+        runner.launchResults = [.success(())]
+        XCTAssertTrue(service.pushBranch(nil, toRemote: remote, forceWithLease: true, error: &error))
+        XCTAssertEqual(runner.launchArguments.last, ["push", "origin", "--force-with-lease"])
     }
 
     func testRemoteServiceReportsDiscoveryPullAndDeleteFailures() {
@@ -210,6 +214,22 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertFalse(service.checkoutRefish(PBGitRef(string: "refs/heads/main"), error: &error))
         XCTAssertTrue(error?.localizedFailureReason?.contains("expected command failure") == true)
         XCTAssertFalse(error?.localizedFailureReason?.contains("working directory not clean") == true)
+    }
+
+    func testRejectedPushRecoveryOnlyOffersALeaseProtectedRetry() {
+        let rejected = NSError(
+            domain: "git",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "! [rejected] main -> main (non-fast-forward)"]
+        )
+        let unrelated = NSError(
+            domain: "git",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Permission denied"]
+        )
+
+        XCTAssertTrue(RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: rejected))
+        XCTAssertFalse(RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: unrelated))
     }
 }
 
