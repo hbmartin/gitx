@@ -237,6 +237,16 @@ final class RepositoryServiceTests: XCTestCase {
         #endif
     }
 
+    @MainActor
+    func testRetryCancellationPreservesDraftAndAllowsAnotherPRJourney() async throws {
+        #if DEBUG
+            let preservedAndReusable = await PBMilestone2ProductCoverageHarness.reviewRetryCancellationWorkflow()
+            XCTAssertTrue(preservedAndReusable)
+        #else
+            throw XCTSkip("Product harness is available in Debug")
+        #endif
+    }
+
     func testAppReportsMissingHarnessRepositoryAndUsesTheChildWorkingDirectory() throws {
         #if DEBUG
             XCTAssertEqual(PBMilestone2ProductCoverageHarness.verificationBoundaryProof(), (1 << 9) - 1)

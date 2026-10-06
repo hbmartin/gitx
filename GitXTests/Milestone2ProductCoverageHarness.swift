@@ -649,6 +649,68 @@
             return window
         }
 
+        @objc(reviewRetryCancellationWorkflowWithCompletion:)
+        static func reviewRetryCancellationWorkflow(completion: @escaping (Bool) -> Void) {
+            Task { @MainActor in
+                do { try completion(await retryCancellationWorkflow()) }
+                catch { completion(false) }
+            }
+        }
+
+        private static func retryCancellationWorkflow() async throws -> Bool {
+            let fixture = try HarnessPullRequestFixture()
+            let local = try HarnessLocalRepository(remoteURL: "git@github.com:contributor/gitx.git")
+            defer { local.cleanup() }
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+            defer {
+                if let sheet = window.attachedSheet {
+                    window.endSheet(sheet)
+                }
+                window.close()
+            }
+            let windowController = HarnessRecoveryWindowController(window: window)
+            let head = try ForgeBranchReference(repository: fixture.fork, name: ForgeRefName("main"), commit: ForgeCommitID(local.head))
+            let preparation = try RepositoryPullRequestCreationPreparation(accountID: fixture.accountID, repository: fixture.repository, base: fixture.base, head: head, branchAlreadyPushed: false, commitsOldestFirst: [ForgePullRequestCommitSummary(id: head.commit, subject: "Preserved PR draft", body: "Preserved review body")])
+            let form = try preparation.initialForms().forms[0]
+            let identity = try RepositoryPullRequestDraftPolicy.identity(preparation: preparation)
+            let expected = ForgeDraftContent(title: form.title, body: form.bodyMarkdown)
+            let snapshot = RepositoryPushSnapshot(sourceRef: "refs/heads/main", sourceOID: local.head, remoteName: "origin", endpoint: "fixture", destinationRef: "refs/heads/main", fetchedOID: String(repeating: "b", count: 40))
+            let rejected = NSError(domain: "review-workflow-fixture", code: 1, userInfo: [PBRepositoryPushRetryPlan.errorKey: PBRepositoryPushRetryPlan(snapshot: snapshot)])
+            var cancelledRetries = 0
+            var starts = 0
+            let remoteActions = RepositoryRemoteActionCoordinator(repository: local.repository, windowController: windowController, retryConfirmation: { _, cancel, _ in
+                cancelledRetries += 1
+                cancel()
+                return true
+            }, progressStarting: { _, _, _, complete in
+                starts += 1
+                complete(rejected)
+                return true
+            })
+            let drafts = HarnessDraftStore()
+            let controller = RepositoryPullRequestUIController(repository: local.repository, windowController: windowController, remoteActions: remoteActions, service: HarnessUIService(fixture: fixture, preparation: preparation), drafts: drafts, destinationOpening: { _ in false }, bindingResolving: { try? fixture.binding() }, postPushBrowserFallback: { _ in })
+            windowController.pullRequestUIController = controller
+            window.makeKeyAndOrderFront(nil)
+            try controller.beginUITestCreateJourney(preparation: preparation, initialForm: form, branch: local.repository.headRef()?.ref(), requiresPush: true)
+            guard await eventually({ window.attachedSheet != nil }), let initialSheet = window.attachedSheet else { return false }
+            window.endSheet(initialSheet, returnCode: .alertFirstButtonReturn)
+            guard await eventually({ cancelledRetries == 1 && window.attachedSheet == nil }) else { return false }
+            for _ in 0 ..< 2000 {
+                if await drafts.savedContents[identity] == expected {
+                    break
+                }
+                await Task.yield()
+            }
+            let stored = await drafts.savedContents[identity]
+            let deleted = await drafts.deleteCount
+            let preserved = stored == expected && deleted == 0
+            guard preserved, windowController.errorCount == 0 else { return false }
+            try controller.beginUITestCreateJourney(preparation: preparation, initialForm: form, branch: local.repository.headRef()?.ref(), requiresPush: true)
+            guard await eventually({ window.attachedSheet != nil }), let nextSheet = window.attachedSheet else { return false }
+            window.endSheet(nextSheet, returnCode: .alertSecondButtonReturn)
+            return starts == 1 && cancelledRetries == 1 && windowController.errorCount == 0
+        }
+
         @objc static func reviewHistoryOutput(repository: PBGitRepository, arguments: [String]) throws -> String {
             try RepositoryGitCommandRunner(repository: repository).historyOutput(arguments: arguments)
         }
@@ -699,7 +761,7 @@
                     coordinator.performPush(branch: branch, remote: remote, requiresConfirmation: false,
                                             pullRequestOption: nil, pullRequestOffer: offer, suppressesPostPushBrowserSuggestion: true,
                                             completion: { events.append($0) })
-                    let terminal: RepositoryPushEvent = scenario == 1 ? .cancelled : ([0, 7].contains(scenario) ? .succeeded : .failed)
+                    let terminal: RepositoryPushEvent = [0, 7].contains(scenario) ? .succeeded : .failed
                     conditions.append(events == [.began(createPullRequestSelected: true), terminal]
                         && confirmations == ([5, 6].contains(scenario) ? 0 : 1)
                         && starts == ([0, 2, 3, 7].contains(scenario) ? 2 : 1)
@@ -752,7 +814,7 @@
                 while defaultEvents.last?.isTerminal != true, Date() < deadline {
                     RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.001))
                 }
-                conditions.append(defaultEvents == [.began(createPullRequestSelected: false), .cancelled])
+                conditions.append(defaultEvents == [.began(createPullRequestSelected: false), .failed])
                 defaultWindow.window?.close()
                 let copyWindow = HarnessWindowController(repository: local.repository, window: NSWindow())
                 let copyHarness = Milestone2UITestHarness.runProductProof(for: copyWindow, environment: ["GITX_M2_SCENARIO": "partial-patch-copy"])
@@ -2703,14 +2765,25 @@
         }
     }
 
+    @MainActor
+    private final class HarnessRecoveryWindowController: PBGitWindowController {
+        private(set) var errorCount = 0
+        override func showErrorSheet(_ error: any Error) {
+            _ = error
+            errorCount += 1
+        }
+    }
+
     private actor HarnessDraftStore: RepositoryPullRequestDraftPersisting {
         private(set) var saveCount = 0
         private(set) var deleteCount = 0
+        private(set) var savedContents: [ForgeDraftIdentity: ForgeDraftContent] = [:]
         func load(identity _: ForgeDraftIdentity) async throws -> ForgeDraft? {
             nil
         }
 
-        func save(identity _: ForgeDraftIdentity, content _: ForgeDraftContent, at _: Date) async throws {
+        func save(identity: ForgeDraftIdentity, content: ForgeDraftContent, at _: Date) async throws {
+            savedContents[identity] = content
             saveCount += 1
         }
 

@@ -52,6 +52,9 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         try click(sheet.buttons["Cancel"], timeout: 5)
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !retry.exists }, object: nil)
         wait(for: [dismissed], timeout: 10)
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.sheets.firstMatch.exists }, object: nil)
+        wait(for: [completed], timeout: 10)
+        retainDiagnosticScreenshot(named: "Review-Fixes-Retry-Cancelled-Workflow-Released", of: app.windows.firstMatch, in: app)
         XCTAssertEqual(try git(["rev-parse", "refs/heads/feature/milestone-2"], in: fixture.remote).trimmingCharacters(in: .whitespacesAndNewlines), fixture.expectedHead)
     }
 
