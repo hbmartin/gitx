@@ -243,6 +243,22 @@ final class GitXPerformanceTests: XCTestCase {
             return task.standardOutputString() ?? ""
         }
 
+        func historyOutput(withArguments arguments: [String]) throws -> String {
+            try output(withArguments: arguments)
+        }
+
+        func push(withArguments arguments: [String]) -> PBRepositoryPushCommandResult {
+            let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: directory)
+            RepositoryTestGitEnvironment.prepare(task)
+            task.separatesStandardError = true
+            do {
+                try task.launch()
+                return PBRepositoryPushCommandResult(stdout: String(decoding: task.standardOutputData, as: UTF8.self), stderr: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: 0, error: nil)
+            } catch {
+                return PBRepositoryPushCommandResult(stdout: String(decoding: task.standardOutputData, as: UTF8.self), stderr: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: (error as NSError).userInfo[PBTaskTerminationStatusKey] as? NSNumber, error: error as NSError)
+            }
+        }
+
         func launch(withArguments arguments: [String]) throws {
             lastOutput = try output(withArguments: arguments)
         }

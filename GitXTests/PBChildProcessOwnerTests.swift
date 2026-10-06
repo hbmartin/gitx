@@ -472,6 +472,41 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertTrue(recorder.errors.isEmpty)
     }
 
+    func testPermissionDeniedWhileLeaderIsLiveStillAllowsLaterExitCompletion() throws {
+        let system = FakeProcessSystem()
+        system.failNextSignal(withPOSIXError: EPERM)
+        let signalAttempted = expectation(description: "permission-denied termination attempted")
+        system.expectSignal(signalAttempted)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "leader reaped after permission-denied signal")
+        let recorder = CompletionRecorder(expectation: completed)
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0, forceKillDelay: nil))
+        wait(for: [signalAttempted], timeout: 1)
+        system.setLeaderExited(true)
+        system.triggerExitMonitor()
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(recorder.statuses.count, 1)
+        XCTAssertTrue(recorder.errors.isEmpty)
+    }
+
+    func testPermissionDeniedAfterLeaderExitIsBenignDuringDescendantCleanup() throws {
+        let system = FakeProcessSystem()
+        system.setProcessGroupMembers([4321, 4322])
+        system.failNextSignal(withPOSIXError: EPERM)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "descendant cleanup after permission-denied signal")
+        let recorder = CompletionRecorder(expectation: completed)
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0.03, forceKillDelay: 0.03))
+        system.setLeaderExited(true)
+        system.triggerExitMonitor()
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(recorder.statuses.count, 1)
+        XCTAssertTrue(recorder.errors.isEmpty)
+        XCTAssertTrue(system.events.contains("signal:\(SIGKILL)"))
+    }
+
     func testImmediateTerminationAttemptsSIGTERMBeforeReturning() throws {
         let system = FakeProcessSystem()
         let owner = PBChildProcessOwner(system: system, queueLabel: #function)

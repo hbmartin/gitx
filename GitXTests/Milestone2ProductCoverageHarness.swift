@@ -640,6 +640,19 @@
                 && sidebarPullRequest && sidebarIssue && sidebarUnavailable
         }
 
+        @objc static func reviewPushFailureWindow(error: NSError) -> NSWindow {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+            let controller = PBGitWindowController(window: window)
+            retainedObjects.append(controller)
+            window.makeKeyAndOrderFront(nil)
+            WindowDialogPresenter.showErrorSheet(error, for: controller)
+            return window
+        }
+
+        @objc static func reviewHistoryOutput(repository: PBGitRepository, arguments: [String]) throws -> String {
+            try RepositoryGitCommandRunner(repository: repository).historyOutput(arguments: arguments)
+        }
+
         // Objective-C-compatible XCTest declarations invoke this shipped-module proof.
         // swiftlint:disable:next unused_declaration
         @objc static func rejectedPushRecoveryProof() -> UInt64 {

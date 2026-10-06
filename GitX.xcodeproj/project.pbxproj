@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		C0DEA1110000000000000001 /* PBTaskDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */; };
 		C0DEF2000000000000000002 /* CommitCopyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF2000000000000000001 /* CommitCopyPolicy.swift */; };
 		C0DEF2000000000000000003 /* CommitCopyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF2000000000000000001 /* CommitCopyPolicy.swift */; };
 		C0DEF1000000000000000002 /* RepositoryRejectedPushRecoveryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF1000000000000000001 /* RepositoryRejectedPushRecoveryPolicy.swift */; };
@@ -644,6 +645,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskDiagnostics.swift; sourceTree = "<group>"; };
 		C0DEF2000000000000000001 /* CommitCopyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitCopyPolicy.swift; sourceTree = "<group>"; };
 		C0DEF1000000000000000001 /* RepositoryRejectedPushRecoveryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRejectedPushRecoveryPolicy.swift; sourceTree = "<group>"; };
 		0A6858C611F7EA8A00AC2BE4 /* CoreServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreServices.framework; path = System/Library/Frameworks/CoreServices.framework; sourceTree = SDKROOT; };
@@ -1597,6 +1599,7 @@
 				C01400000000000000000011 /* IncrementalUTF8Decoder.swift */,
 				C0DE44300000000000000002 /* PBProcessEnvironment.h */,
 				C0DE44300000000000000003 /* PBProcessEnvironment.swift */,
+				C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */,
 			);
 			path = Util;
 			sourceTree = "<group>";
@@ -2221,6 +2224,7 @@
 				C0DE10000000000000000019 /* PBAutoFetchManager.swift in Sources */,
 				C0DE10000000000000000011 /* PBHighlighting.swift in Sources */,
 				C0DE44300000000000000001 /* PBProcessEnvironment.swift in Sources */,
+				C0DEA1110000000000000001 /* PBTaskDiagnostics.swift in Sources */,
 				C0DE70000000000000000001 /* RepositoryRefreshCoordinator.swift in Sources */,
 				C0DE90000000000000000001 /* GitCommandRunning.swift in Sources */,
 				C0DE90000000000000000002 /* RepositoryRemoteService.swift in Sources */,

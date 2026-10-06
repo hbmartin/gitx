@@ -226,7 +226,16 @@ final nonisolated class RepositoryRemoteService: NSObject {
     ) -> Bool {
         commandWasLaunched = false
         lastPushOutput = nil
-        logger.info("Retrying frozen commit with the original fetched lease")
+        do {
+            _ = try validatedEndpoint(for: plan.snapshot)
+        } catch {
+            logger.info("Retry excluded because captured remote settings changed or became unavailable")
+            return RepositoryServiceError.assign(RepositoryServiceError.make(
+                description: "Push settings changed",
+                failureReason: "The remote settings changed or could not be verified. Start a fresh push before retrying."
+            ), to: outputError)
+        }
+        logger.info("Retrying frozen commit through the named remote with the original fetched lease")
         return launchPush(
             arguments: plan.snapshot.retryArguments,
             branchDescription: plan.branchName,
@@ -241,7 +250,7 @@ final nonisolated class RepositoryRemoteService: NSObject {
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         let remoteName = resolvedRemote.remoteName ?? ""
-        var arguments = ["push", "--porcelain", "--", remoteName]
+        var arguments = ["push", "--", remoteName]
         let branchDescription: String
         if branchRef == nil || branchRef?.isRemote == true {
             branchDescription = "all updates"
@@ -251,6 +260,7 @@ final nonisolated class RepositoryRemoteService: NSObject {
             arguments.append(contentsOf: ["tag", tagName])
         } else {
             branchDescription = branchRef?.shortName() ?? ""
+            arguments.insert("--porcelain", at: 1)
             arguments.append(branchDescription)
         }
 
@@ -263,84 +273,163 @@ final nonisolated class RepositoryRemoteService: NSObject {
         )
     }
 
+    private enum PushSafetyFailure: Error {
+        case excluded(String)
+    }
+
+    private func configuration() throws -> [String: [String]] {
+        try RepositoryPushConfiguration.values(runner.output(arguments: ["config", "--null", "--list"]))
+    }
+
+    private func effectiveBoolean(_ key: String, values: [String: [String]]) throws -> Bool {
+        guard values[key] != nil else { return false }
+        let value = try runner.output(arguments: ["config", "--type=bool", "--get", key]).trimmingCharacters(in: .newlines)
+        guard value == "true" || value == "false" else {
+            throw PushSafetyFailure.excluded("Git could not resolve a Boolean setting")
+        }
+        return value == "true"
+    }
+
     private func capturePushSnapshot(branch: PBGitRef?, remoteName: String) -> RepositoryPushSnapshot? {
         guard let branch, branch.isBranch else { return nil }
         do {
-            let sourceOID = try runner.output(arguments: ["rev-parse", "--verify", "\(branch.ref)^{commit}"])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let fetchURLs = try runner.output(arguments: ["remote", "get-url", "--all", remoteName])
-                .split(whereSeparator: \.isNewline).map(String.init)
-            let pushURLs = try runner.output(arguments: ["remote", "get-url", "--push", "--all", remoteName])
-                .split(whereSeparator: \.isNewline).map(String.init)
-            guard fetchURLs.count == 1, fetchURLs == pushURLs, let endpoint = pushURLs.first,
-                  !endpoint.isEmpty else { return nil }
-            let config = try runner.output(arguments: ["config", "--null", "--list"])
-            var values: [String: [String]] = [:]
-            for entry in config.split(separator: "\0") {
-                let fields = entry.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
-                values[String(fields[0]), default: []].append(fields.count == 2 ? String(fields[1]) : "true")
+            let values = try configuration()
+            guard try !effectiveBoolean("remote.\(remoteName).mirror", values: values),
+                  try !effectiveBoolean("push.followtags", values: values)
+            else { throw PushSafetyFailure.excluded("Mirror or follow-tags push is not a single-branch recovery") }
+            guard values["remote.\(remoteName).fetch"]?.count == 1,
+                  (values["remote.\(remoteName).push"]?.count ?? 0) <= 1
+            else { throw PushSafetyFailure.excluded("Unsupported or ambiguous reference mappings") }
+            let mode = values["push.default"]?.last == "upstream" ? "upstream" : "current"
+            let format = "%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)"
+            let metadata = try runner.output(arguments: [
+                "-c", "branch.\(branch.shortName()).remote=\(remoteName)",
+                "-c", "branch.\(branch.shortName()).pushRemote=\(remoteName)", "-c", "push.default=\(mode)",
+                "for-each-ref", "--format=\(format)", branch.ref,
+            ]).split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+            guard metadata.count == 1 else { throw PushSafetyFailure.excluded("Ambiguous source reference") }
+            let fields = metadata[0].components(separatedBy: "\0")
+            guard fields.count == 6, fields[0] == branch.ref, RepositoryPushSnapshot.isOID(fields[1]),
+                  fields[5] == remoteName, !fields[4].isEmpty,
+                  !fields[4].hasPrefix("refs/heads/"), !fields[4].hasPrefix("refs/tags/")
+            else { throw PushSafetyFailure.excluded("Git could not resolve a unique tracking reference") }
+            let destination: String
+            if !fields[3].isEmpty {
+                destination = fields[3]
+            } else {
+                guard values["remote.\(remoteName).push"] == nil else {
+                    throw PushSafetyFailure.excluded("Unsupported or ambiguous push mapping")
+                }
+                destination = mode == "upstream" ? fields[2] : branch.ref
             }
-            let remoteKey = "remote.\(remoteName)."
-            let disabledValues = ["false", "no", "off", "0"]
-            guard (values[remoteKey + "mirror"] ?? []).allSatisfy({ disabledValues.contains($0.lowercased()) }),
-                  (values["push.followtags"] ?? []).allSatisfy({ disabledValues.contains($0.lowercased()) }),
-                  let destination = RepositoryPushRefspecPolicy.destination(
-                      source: branch.ref, pushMappings: values[remoteKey + "push"] ?? []
-                  ), destination.hasPrefix("refs/heads/"),
-                  let tracking = RepositoryPushRefspecPolicy.trackingReference(
-                      destination: destination, fetchMappings: values[remoteKey + "fetch"] ?? []
-                  ) else { return nil }
-            let fetchedOID = try runner.output(arguments: ["rev-parse", "--verify", "\(tracking)^{commit}"])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard RepositoryPushSnapshot.isOID(sourceOID), RepositoryPushSnapshot.isOID(fetchedOID),
-                  sourceOID.count == fetchedOID.count else { return nil }
-            logger.debug("Captured source commit and fetched destination before push")
-            return RepositoryPushSnapshot(sourceRef: branch.ref, sourceOID: sourceOID,
-                                          remoteName: remoteName, endpoint: endpoint, destinationRef: destination, fetchedOID: fetchedOID)
+            guard destination.hasPrefix("refs/heads/") else { throw PushSafetyFailure.excluded("Destination is not a branch") }
+            let tracking = try runner.output(arguments: ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", fields[4]])
+                .split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+            guard tracking.count == 1 else { throw PushSafetyFailure.excluded("Fetched tracking reference is missing or ambiguous") }
+            let tracked = tracking[0].components(separatedBy: "\0")
+            guard tracked.count == 3, tracked[0] == fields[4], tracked[2] == "commit",
+                  RepositoryPushSnapshot.isOID(tracked[1]), tracked[1].count == fields[1].count
+            else { throw PushSafetyFailure.excluded("Fetched tracking commit is unavailable") }
+            let reflog = try runner.output(arguments: ["reflog", "show", "--format=%H", branch.ref])
+                .split(separator: "\n").map(String.init)
+            guard reflog.allSatisfy(RepositoryPushSnapshot.isOID) else { throw PushSafetyFailure.excluded("Invalid branch reflog evidence") }
+            logger.debug("Captured source, tracking commit, branch reflog and effective push settings")
+            return RepositoryPushSnapshot(sourceRef: branch.ref, sourceOID: fields[1], remoteName: remoteName,
+                                          endpoint: "", destinationRef: destination, fetchedOID: tracked[1], trackingRef: fields[4],
+                                          reflogOIDs: reflog, configuration: RepositoryPushConfiguration.relevant(values, remote: remoteName, branch: branch.shortName()))
         } catch {
-            logger.debug("No unambiguous fetched snapshot; push recovery will remain unavailable")
+            logExclusion(error)
             return nil
         }
     }
 
+    private func logExclusion(_ error: Error) {
+        if case let PushSafetyFailure.excluded(reason) = error {
+            logger.info("Push recovery excluded: \(reason, privacy: .public)")
+        } else {
+            logger.info("Push recovery excluded because Git could not validate captured evidence")
+        }
+    }
+
+    private func validatedEndpoint(for snapshot: RepositoryPushSnapshot) throws -> String {
+        let current = try RepositoryPushConfiguration.relevant(configuration(), remote: snapshot.remoteName, branch: snapshot.branchName)
+        guard current == snapshot.configuration else { throw PushSafetyFailure.excluded("Relevant configuration changed; start a fresh push") }
+        let fetch = try runner.output(arguments: ["remote", "get-url", "--all", snapshot.remoteName]).split(separator: "\n").map(String.init)
+        let push = try runner.output(arguments: ["remote", "get-url", "--push", "--all", snapshot.remoteName]).split(separator: "\n").map(String.init)
+        guard fetch.count == 1, fetch == push, let endpoint = push.first,
+              snapshot.endpoint.isEmpty || endpoint == snapshot.endpoint
+        else { throw PushSafetyFailure.excluded("Push and fetch endpoints differ or changed") }
+        return endpoint
+    }
+
+    private func recoveryPlan(for snapshot: RepositoryPushSnapshot) throws -> PBRepositoryPushRetryPlan {
+        let endpoint = try validatedEndpoint(for: snapshot)
+        guard try runner.output(arguments: ["rev-parse", "--is-shallow-repository"]).trimmingCharacters(in: .newlines) == "false" else {
+            throw PushSafetyFailure.excluded("Shallow history cannot prove integration")
+        }
+        let witnesses = Array(Set([snapshot.sourceOID] + snapshot.reflogOIDs)).sorted()
+        // Validate captured objects, without reading any live source or lease ref.
+        _ = try runner.historyOutput(arguments: ["rev-list", "--no-walk"] + Array(Set(witnesses + [snapshot.fetchedOID])).sorted() + ["--"])
+        var integrated = witnesses.contains(snapshot.fetchedOID)
+        for witness in witnesses where !integrated {
+            do {
+                _ = try runner.historyOutput(arguments: ["merge-base", "--is-ancestor", snapshot.fetchedOID, witness])
+                integrated = true
+            } catch {
+                guard (error as NSError).domain == PBTaskErrorDomain,
+                      (error as NSError).code == Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue),
+                      (error as NSError).userInfo[PBTaskTerminationStatusKey] as? Int == 1 else { throw error }
+            }
+        }
+        guard integrated else { throw PushSafetyFailure.excluded("Fetched remote work was never integrated into the captured branch") }
+        let eligible = RepositoryPushSnapshot(sourceRef: snapshot.sourceRef, sourceOID: snapshot.sourceOID,
+                                              remoteName: snapshot.remoteName, endpoint: endpoint, destinationRef: snapshot.destinationRef,
+                                              fetchedOID: snapshot.fetchedOID, trackingRef: snapshot.trackingRef,
+                                              reflogOIDs: snapshot.reflogOIDs, configuration: snapshot.configuration)
+        logger.info("Captured branch history proves fetched remote work was integrated")
+        return PBRepositoryPushRetryPlan(snapshot: eligible)
+    }
+
     private func launchPush(
-        arguments: [String],
-        branchDescription: String,
-        remoteName: String,
+        arguments: [String], branchDescription: String, remoteName: String,
         snapshot: RepositoryPushSnapshot? = nil,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
-        do {
-            commandWasLaunched = true
-            try runner.launch(arguments: arguments)
-            lastPushOutput = runner.lastOutput
+        commandWasLaunched = true
+        let result = runner.push(arguments: arguments)
+        guard let error = result.error else {
+            lastPushOutput = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
             logger.debug("Repository reference push completed")
             return true
-        } catch {
-            var info: [String: Any] = [:]
-            if let snapshot, RepositoryRejectedPushRecoveryPolicy.shouldOfferForceWithLease(for: error, snapshot: snapshot) {
-                info[PBRepositoryPushRetryPlan.errorKey] = PBRepositoryPushRetryPlan(snapshot: snapshot)
-                logger.info("Attached frozen retry plan to rejected push error")
-            }
-            let wrapped = RepositoryServiceError.make(
-                description: NSLocalizedString(
-                    "Push failed",
-                    comment: "PBGitRepository - push error description"
-                ),
-                failureReason: String(
-                    format: NSLocalizedString(
-                        "An error occurred while pushing %@ to \"%@\".",
-                        comment: "PBGitRepository - push error reason"
-                    ),
-                    branchDescription,
-                    remoteName
-                ),
-                underlyingError: error,
-                userInfo: info
-            )
-            logger.error("Repository reference push failed")
-            return RepositoryServiceError.assign(wrapped, to: outputError)
         }
+        var info: [String: Any] = [:]
+        let decision = RepositoryRejectedPushRecoveryPolicy.decision(stdout: result.stdout, snapshot: snapshot)
+        if let status = result.terminationStatus, status.intValue != 0, error.domain == PBTaskErrorDomain,
+           error.code == Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue), decision == .eligible, let snapshot
+        {
+            do {
+                info[PBRepositoryPushRetryPlan.errorKey] = try recoveryPlan(for: snapshot)
+                logger.info("Attached one frozen recovery plan to rejected push")
+            } catch { logExclusion(error) }
+        } else if case let .excluded(reason) = decision {
+            logger.info("Push recovery excluded: \(reason, privacy: .public)")
+        }
+        let diagnostic = PBTaskDiagnostics.pushFailure(stdout: result.stdout, stderr: result.stderr,
+                                                       porcelain: arguments.contains("--porcelain"))
+        var diagnostics: [String: Any] = [
+            NSLocalizedDescriptionKey: PBTaskDiagnostics.redacted(error.localizedDescription),
+            NSLocalizedFailureReasonErrorKey: PBTaskDiagnostics.redacted(error.localizedFailureReason ?? error.localizedDescription),
+            PBTaskTerminationOutputKey: diagnostic,
+        ]
+        diagnostics[PBTaskTerminationStatusKey] = result.terminationStatus
+        let safeError = NSError(domain: error.domain, code: error.code, userInfo: diagnostics)
+        let wrapped = RepositoryServiceError.make(
+            description: "Push failed",
+            failureReason: PBTaskDiagnostics.redacted("An error occurred while pushing \(branchDescription) to \"\(remoteName)\"."),
+            underlyingError: safeError, userInfo: info
+        )
+        logger.error("Repository reference push failed")
+        return RepositoryServiceError.assign(wrapped, to: outputError)
     }
 
     @objc(deleteRemote:error:)

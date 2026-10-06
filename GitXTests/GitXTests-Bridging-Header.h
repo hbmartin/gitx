@@ -572,8 +572,29 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (instancetype)initWithFrame:(NSRect)frameRect;
 @end
 
+#pragma push_macro("stdout")
+#undef stdout
+#pragma push_macro("stderr")
+#undef stderr
+@interface PBTaskDiagnostics : NSObject
++ (NSString *)redacted:(nullable id)text;
++ (NSString *)displayArguments:(NSArray *)arguments;
+@end
+
+@interface PBRepositoryPushCommandResult : NSObject
+@property (nonatomic, copy, readonly) NSString *stdout;
+@property (nonatomic, copy, readonly) NSString *stderr;
+@property (nonatomic, strong, readonly, nullable) NSNumber *terminationStatus;
+@property (nonatomic, strong, readonly, nullable) NSError *error;
+- (instancetype)initWithStdout:(NSString *)stdout stderr:(NSString *)stderr terminationStatus:(nullable NSNumber *)terminationStatus error:(nullable NSError *)error;
+@end
+#pragma pop_macro("stderr")
+#pragma pop_macro("stdout")
+
 @protocol PBGitCommandRunning <NSObject>
 @property (nonatomic, copy, readonly, nullable) NSString *lastOutput;
+- (NSString * _Nullable)historyOutputWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
+- (PBRepositoryPushCommandResult *)pushWithArguments:(NSArray<NSString *> *)arguments;
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)launchWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
 @end
@@ -587,6 +608,8 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @interface PBMilestone2ProductCoverageHarness (ReviewFixProof)
 + (uint64_t)rejectedPushRecoveryProof;
 + (uint64_t)verificationBoundaryProof;
++ (nullable NSString *)reviewHistoryOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewHistoryOutput(repository:arguments:));
++ (NSWindow *)reviewPushFailureWindowWithError:(NSError *)error NS_SWIFT_NAME(reviewPushFailureWindow(error:));
 + (NSAlert *)reviewSuppressionAlertWithIdentifier:(BOOL)hasIdentifier allowsSuppression:(BOOL)allowsSuppression NS_SWIFT_NAME(reviewSuppressionAlert(hasIdentifier:allowsSuppression:));
 @end
 #endif
@@ -602,6 +625,8 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @end
 
 @interface PBRepositoryRemoteService : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+@property (nonatomic, readonly) BOOL commandWasLaunched;
 @property (nonatomic, copy, readonly, nullable) NSString *lastPushOutput;
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
 - (nullable NSArray<NSString *> *)remotes;

@@ -2,6 +2,22 @@ import Darwin
 import XCTest
 
 final class PBTaskLifecycleTests: XCTestCase {
+    func testDiagnosticExtractionHandlesDynamicInputsAndPreservesExecutionData() throws {
+        XCTAssertEqual(PBTaskDiagnostics.redacted(nil), "(null)")
+        XCTAssertEqual(PBTaskDiagnostics.redacted(NSNumber(value: 42)), "42")
+        XCTAssertEqual(PBTaskDiagnostics.displayArguments(["push", "HTTPS://dummy:password@example.invalid/repo", 7]), "push HTTPS://[redacted]@example.invalid/repo 7")
+        let credential = "https://dummy:password@example.invalid/repo"
+        let task = PBTask(launchPath: "/bin/sh", arguments: ["-c", "printf '%s' \"$1\"; printf '%s' \"$1\" >&2; exit 1", "fixture", credential], inDirectory: nil)
+        task.separatesStandardError = true
+        XCTAssertThrowsError(try task.launch()) { error in
+            XCTAssertFalse(String(describing: error).contains("dummy:password"))
+            XCTAssertFalse((error as NSError).localizedFailureReason?.contains("dummy:password") == true)
+        }
+        XCTAssertEqual((task.value(forKey: "arguments") as? [String])?.last, credential)
+        XCTAssertEqual(task.standardOutputString(), credential)
+        XCTAssertEqual(String(decoding: task.standardErrorData, as: UTF8.self), credential)
+    }
+
     private final class MissingPipeTask: PBTask {
         private var pipeCount = 0
         var failedPipeNumber = 0
@@ -82,11 +98,11 @@ final class PBTaskLifecycleTests: XCTestCase {
         task.separatesStandardError = true
         XCTAssertThrowsError(try task.launch()) { error in
             XCTAssertEqual((error as NSError).userInfo[PBTaskTerminationOutputKey] as? String, "diagnostic")
-            XCTAssertTrue((error as NSError).localizedFailureReason?.contains(credential) == true)
+            XCTAssertFalse((error as NSError).localizedFailureReason?.contains(credential) == true)
         }
         XCTAssertEqual(String(decoding: task.standardOutputData, as: UTF8.self), "status")
         XCTAssertEqual(String(decoding: task.standardErrorData, as: UTF8.self), "diagnostic")
-        XCTAssertTrue(task.description.contains(credential))
+        XCTAssertFalse(task.description.contains(credential))
     }
 
     func testDebugLoggingPreferenceStillRunsTask() throws {

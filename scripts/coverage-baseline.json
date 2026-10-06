@@ -106,6 +106,7 @@
     "Classes/Util/PBError.m": 1.0,
     "Classes/Util/PBProcessEnvironment.swift": 1.0,
     "Classes/Util/PBTask.m": 1.0,
+    "Classes/Util/PBTaskDiagnostics.swift": 1.0,
     "Classes/Util/PBTerminalUtil.m": 0.0625,
     "Classes/Util/RJModalRepoSheet.m": 0.4583,
     "Classes/Views/CommitMessageDropPathPolicy.swift": 1.0,

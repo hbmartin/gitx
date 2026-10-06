@@ -1,7 +1,7 @@
 import Foundation
 
-/// Every field is captured before the original push. In particular, neither a
-/// background fetch nor a moved local branch may change an approved retry.
+/// Evidence captured before the original command. Rejection-time checks only
+/// validate these IDs; they never substitute live branch or tracking tips.
 nonisolated struct RepositoryPushSnapshot: Equatable, Sendable {
     let sourceRef: String
     let sourceOID: String
@@ -9,6 +9,23 @@ nonisolated struct RepositoryPushSnapshot: Equatable, Sendable {
     let endpoint: String
     let destinationRef: String
     let fetchedOID: String
+    let trackingRef: String
+    let reflogOIDs: [String]
+    let configuration: [String: [String]]
+
+    init(sourceRef: String, sourceOID: String, remoteName: String, endpoint: String, destinationRef: String,
+         fetchedOID: String, trackingRef: String = "", reflogOIDs: [String] = [], configuration: [String: [String]] = [:])
+    {
+        self.sourceRef = sourceRef
+        self.sourceOID = sourceOID
+        self.remoteName = remoteName
+        self.endpoint = endpoint
+        self.destinationRef = destinationRef
+        self.fetchedOID = fetchedOID
+        self.trackingRef = trackingRef
+        self.reflogOIDs = reflogOIDs
+        self.configuration = configuration
+    }
 
     var branchName: String {
         String(sourceRef.dropFirst("refs/heads/".count))
@@ -16,7 +33,7 @@ nonisolated struct RepositoryPushSnapshot: Equatable, Sendable {
 
     var retryArguments: [String] {
         ["push", "--porcelain", "--force-with-lease=\(destinationRef):\(fetchedOID)",
-         "--", endpoint, "\(sourceOID):\(destinationRef)"]
+         "--", remoteName, "\(sourceOID):\(destinationRef)"]
     }
 
     static func isOID(_ value: String) -> Bool {
@@ -26,73 +43,46 @@ nonisolated struct RepositoryPushSnapshot: Equatable, Sendable {
     }
 }
 
-/// Resolve only exact or single-wildcard refspecs. Unknown syntax and negative
-/// fetch mappings fail closed; they never justify replacing remote history.
-nonisolated enum RepositoryPushRefspecPolicy {
-    static func destination(source: String, pushMappings: [String]) -> String? {
-        guard !pushMappings.isEmpty else { return source }
-        return mappedReference(source, mappings: pushMappings)
-    }
-
-    static func trackingReference(destination: String, fetchMappings: [String]) -> String? {
-        guard let tracking = mappedReference(destination, mappings: fetchMappings),
-              !tracking.hasPrefix("refs/heads/"), !tracking.hasPrefix("refs/tags/")
-        else { return nil }
-        return tracking
-    }
-
-    private static func mappedReference(_ reference: String, mappings: [String]) -> String? {
-        var matches = Set<String>()
-        for mapping in mappings {
-            let spec = mapping.hasPrefix("+") ? String(mapping.dropFirst()) : mapping
-            let fields = spec.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count == 2, fields.allSatisfy({ $0.hasPrefix("refs/") }) else { return nil }
-            let source = fields[0].split(separator: "*", omittingEmptySubsequences: false).map(String.init)
-            let target = fields[1].split(separator: "*", omittingEmptySubsequences: false).map(String.init)
-            guard source.count == target.count, [1, 2].contains(source.count) else { return nil }
-            if source.count == 1 {
-                if reference == fields[0] {
-                    matches.insert(fields[1])
-                }
-            } else if reference.hasPrefix(source[0]), reference.hasSuffix(source[1]),
-                      reference.count >= source[0].count + source[1].count
-            {
-                let wildcard = reference.dropFirst(source[0].count).dropLast(source[1].count)
-                matches.insert(target[0] + wildcard + target[1])
-            }
-        }
-        guard matches.count == 1 else { return nil }
-        return matches.first
-    }
+nonisolated enum RepositoryPushRecoveryDecision: Equatable {
+    case eligible
+    case excluded(String)
 }
 
 nonisolated enum RepositoryRejectedPushRecoveryPolicy {
-    static func shouldOfferForceWithLease(for error: Error, snapshot: RepositoryPushSnapshot?) -> Bool {
-        guard let snapshot, let output = taskOutput(for: error) else { return false }
-        let statuses = output.components(separatedBy: .newlines).compactMap { line -> [String]? in
-            let fields = line.components(separatedBy: "\t")
-            guard fields.count == 3, fields[0].count == 1,
-                  " !=+-*".contains(fields[0]) else { return nil }
-            return fields
+    static func decision(stdout: String, snapshot: RepositoryPushSnapshot?) -> RepositoryPushRecoveryDecision {
+        guard let snapshot else { return .excluded("No captured branch evidence") }
+        // Literal LF matters: Unicode separators in hook diagnostics are data.
+        let lines = stdout.components(separatedBy: "\n")
+        guard lines.count == 4, lines[0].hasPrefix("To "), lines[0].count > 3,
+              lines[2] == "Done", lines[3].isEmpty,
+              !stdout.contains("\r"), !stdout.contains("\u{2028}"), !stdout.contains("\u{2029}")
+        else { return .excluded("Incomplete or ambiguous push status envelope") }
+        let fields = lines[1].components(separatedBy: "\t")
+        guard fields.count == 3, fields[0] == "!",
+              fields[1] == "\(snapshot.sourceRef):\(snapshot.destinationRef)"
+        else { return .excluded("Push status does not describe the captured branch") }
+        guard fields[2] == "[rejected] (non-fast-forward)" else {
+            return .excluded("Only a non-fast-forward rejection supports recovery")
         }
-        guard statuses.count == 1 else { return false }
-        let status = statuses[0]
-        return status[0] == "!"
-            && status[1] == "\(snapshot.sourceRef):\(snapshot.destinationRef)"
-            && ["[rejected] (non-fast-forward)", "[rejected] (fetch first)"].contains(status[2])
+        return .eligible
+    }
+}
+
+nonisolated enum RepositoryPushConfiguration {
+    static func values(_ output: String) -> [String: [String]] {
+        var values: [String: [String]] = [:]
+        for entry in output.split(separator: "\0") {
+            let fields = entry.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            values[String(fields[0]), default: []].append(fields.count == 2 ? String(fields[1]) : "true")
+        }
+        return values
     }
 
-    static func taskOutput(for error: Error) -> String? {
-        var current: NSError? = error as NSError
-        var visited = Set<ObjectIdentifier>()
-        while let error = current, visited.insert(ObjectIdentifier(error)).inserted {
-            if error.domain == PBTaskErrorDomain,
-               let output = error.userInfo[PBTaskTerminationOutputKey] as? String
-            {
-                return output
-            }
-            current = error.userInfo[NSUnderlyingErrorKey] as? NSError
+    static func relevant(_ values: [String: [String]], remote: String, branch: String) -> [String: [String]] {
+        values.filter { key, _ in
+            key.hasPrefix("remote.\(remote).") || key.hasPrefix("branch.\(branch).")
+                || ["url.", "push.", "http.", "credential.", "protocol.", "ssh.", "receive.", "transfer.", "extensions."].contains { key.hasPrefix($0) }
+                || ["remote.pushdefault", "core.sshcommand", "core.gitproxy", "core.hookspath"].contains(key)
         }
-        return nil
     }
 }
