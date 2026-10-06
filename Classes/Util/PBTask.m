@@ -143,7 +143,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 - (NSError *)timeoutError
 {
 	NSString *desc = @"Timeout while running task";
-	NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" failed to complete before its timeout", [[self taskArguments] componentsJoinedByString:@" "]];
+	NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" failed to complete before its timeout", [PBTaskDiagnostics displayArguments:[self taskArguments]]];
 	NSDictionary *userInfo = @{
 		NSLocalizedDescriptionKey : desc,
 		NSLocalizedFailureReasonErrorKey : failureReason,
@@ -157,7 +157,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 		PBTaskLog(@"task %p: caught signal", self);
 
 		NSString *desc = @"Task killed";
-		NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" caught a termination signal", [[self taskArguments] componentsJoinedByString:@" "]];
+		NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" caught a termination signal", [PBTaskDiagnostics displayArguments:[self taskArguments]]];
 		NSDictionary *userInfo = @{
 			NSLocalizedDescriptionKey : desc,
 			NSLocalizedFailureReasonErrorKey : failureReason,
@@ -171,7 +171,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 		NSData *diagnosticOutput = self.separatesStandardError && self.standardErrorData.length ? self.standardErrorData : output;
 		NSString *outputString = [[NSString alloc] initWithData:diagnosticOutput encoding:NSUTF8StringEncoding] ?: @"";
 		NSString *desc = @"Task exited unsuccessfully";
-		NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" returned a non-zero return code", [[self taskArguments] componentsJoinedByString:@" "]];
+		NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" returned a non-zero return code", [PBTaskDiagnostics displayArguments:[self taskArguments]]];
 		int status = self.terminationStatus;
 		NSNumber *terminationStatus = (status < 255 ? [NSNumber numberWithShort:(short)status] : @(status));
 
@@ -179,7 +179,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 			NSLocalizedDescriptionKey : desc,
 			NSLocalizedFailureReasonErrorKey : failureReason,
 			PBTaskTerminationStatusKey : terminationStatus,
-			PBTaskTerminationOutputKey : outputString,
+			PBTaskTerminationOutputKey : [PBTaskDiagnostics redacted:outputString],
 		};
 		return [NSError errorWithDomain:PBTaskErrorDomain code:PBTaskNonZeroExitCodeError userInfo:userInfo];
 	}
@@ -406,7 +406,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 - (NSError *)launchErrorForException:(NSException *)exception underlyingError:(NSError *)underlyingError
 {
 	NSString *desc = @"Exception raised while launching task";
-	NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" failed to launch", self.launchPath];
+	NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" failed to launch", [PBTaskDiagnostics redacted:self.launchPath]];
 	NSMutableDictionary *info = [@{
 		NSLocalizedDescriptionKey : desc,
 		NSLocalizedFailureReasonErrorKey : failureReason,
@@ -501,9 +501,9 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 		}
 
 		if ([[NSUserDefaults standardUserDefaults] boolForKey:@"Show Debug Messages"])
-			NSLog(@"Starting command `%@ %@` in dir %@", self.launchPath, [validatedArguments componentsJoinedByString:@" "], self.currentDirectoryPath);
+			NSLog(@"Starting command `%@ %@` in dir %@", [PBTaskDiagnostics redacted:self.launchPath], [PBTaskDiagnostics displayArguments:validatedArguments], [PBTaskDiagnostics redacted:self.currentDirectoryPath]);
 #ifdef CLI
-		NSLog(@"Starting command `%@ %@` in dir %@", self.launchPath, [validatedArguments componentsJoinedByString:@" "], self.currentDirectoryPath);
+		NSLog(@"Starting command `%@ %@` in dir %@", [PBTaskDiagnostics redacted:self.launchPath], [PBTaskDiagnostics displayArguments:validatedArguments], [PBTaskDiagnostics redacted:self.currentDirectoryPath]);
 #endif
 
 		PBTaskLog(@"task %p: launching", self);
@@ -639,7 +639,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 {
 	NSArray *taskArguments = [@[ self.launchPath ] arrayByAddingObjectsFromArray:self.arguments];
 	return [NSString stringWithFormat:@"<%@ %p command: %@ stdin: %@>", NSStringFromClass([self class]), self,
-									  [taskArguments componentsJoinedByString:@" "],
+									  [PBTaskDiagnostics displayArguments:taskArguments],
 									  (self.standardInputData ? @"YES" : @"NO")];
 }
 

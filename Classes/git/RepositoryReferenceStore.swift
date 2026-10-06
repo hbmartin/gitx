@@ -181,7 +181,7 @@ final nonisolated class RepositoryReferenceStore: NSObject {
         }
         let searchOIDs = NSMutableSet(object: branchOID)
         for commit in commits {
-            let commitOID = commit.oid
+            guard let commitOID = commit.oid else { continue }
             if searchOIDs.contains(commitOID) {
                 if testOID == commitOID {
                     return true

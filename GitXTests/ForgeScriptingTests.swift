@@ -25,7 +25,12 @@ final class ForgeScriptingTests: XCTestCase {
             // Drain history cancellation while this main-actor fixture still owns the
             // document. NSDocument may release the repository on its file-coordination
             // queue, where PBGitHistoryList cleanup cannot synchronously return here.
-            (document as? PBGitRepositoryDocument)?.repository.revisionList?.cleanup()
+            if let repository = (document as? PBGitRepositoryDocument)?.repository {
+                repository.revisionList?.cleanup()
+                // Releasing history here also keeps its deinit cancellation on the main
+                // thread; cleanup alone leaves that second cancellation for Foundation.
+                repository.revisionList = nil
+            }
             // Let NSDocument coordinate file-presenter teardown and unregister itself.
             // Removing it first can deadlock Foundation's presenter arbiter under ASan.
             document.close()

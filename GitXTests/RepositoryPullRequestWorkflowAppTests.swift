@@ -121,6 +121,9 @@ final class RepositoryPullRequestWorkflowAppTests: XCTestCase {
             }
         }
         XCTAssertEqual(flow.state, .draftPreserved(intent))
+        XCTAssertFalse(flow.isActive)
+        try flow.beginOrdinaryPush(intent: intent)
+        XCTAssertTrue(flow.isActive)
     }
 
     func testApplicationPushFlowRejectsOverlappingIntentWithoutCrossPairing() throws {

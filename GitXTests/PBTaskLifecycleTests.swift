@@ -2,6 +2,36 @@ import Darwin
 import XCTest
 
 final class PBTaskLifecycleTests: XCTestCase {
+    func testDiagnosticRedactionPreservesURLPrefixesAndBoundaries() {
+        let cases = [
+            ("123+.-abc://dummy:password@example.invalid/repo", "123+.-abc://[redacted]@example.invalid/repo"),
+            ("prefixhttps://dummy:password@example.invalid/repo", "prefixhttps://[redacted]@example.invalid/repo"),
+            ("https://first@second@example.invalid/repo", "https://[redacted]@example.invalid/repo"),
+            ("See https://δοκιμή:密碼@example.invalid/repo?query=a@b", "See https://[redacted]@example.invalid/repo?query=a@b"),
+            ("mail@example.invalid; -1://entry@example.invalid", "mail@example.invalid; -1://entry@example.invalid"),
+            ("https://example.invalid/help\nmail@example.invalid", "https://example.invalid/help\nmail@example.invalid"),
+        ]
+        for (input, expected) in cases {
+            XCTAssertEqual(PBTaskDiagnostics.redacted(input), expected)
+        }
+    }
+
+    func testDiagnosticExtractionHandlesDynamicInputsAndPreservesExecutionData() throws {
+        XCTAssertEqual(PBTaskDiagnostics.redacted(nil), "(null)")
+        XCTAssertEqual(PBTaskDiagnostics.redacted(NSNumber(value: 42)), "42")
+        XCTAssertEqual(PBTaskDiagnostics.displayArguments(["push", "HTTPS://dummy:password@example.invalid/repo", 7]), "push HTTPS://[redacted]@example.invalid/repo 7")
+        let credential = "https://dummy:password@example.invalid/repo"
+        let task = PBTask(launchPath: "/bin/sh", arguments: ["-c", "printf '%s' \"$1\"; printf '%s' \"$1\" >&2; exit 1", "fixture", credential], inDirectory: nil)
+        task.separatesStandardError = true
+        XCTAssertThrowsError(try task.launch()) { error in
+            XCTAssertFalse(String(describing: error).contains("dummy:password"))
+            XCTAssertFalse((error as NSError).localizedFailureReason?.contains("dummy:password") == true)
+        }
+        XCTAssertEqual((task.value(forKey: "arguments") as? [String])?.last, credential)
+        XCTAssertEqual(task.standardOutputString(), credential)
+        XCTAssertEqual(String(decoding: task.standardErrorData, as: UTF8.self), credential)
+    }
+
     private final class MissingPipeTask: PBTask {
         private var pipeCount = 0
         var failedPipeNumber = 0
@@ -74,6 +104,19 @@ final class PBTaskLifecycleTests: XCTestCase {
             )
         }
         return returnedSize <= 0 || information.pbi_status == SZOMB
+    }
+
+    func testSeparateStreamsAndCurrentTaskDiagnostics() throws {
+        let credential = "dummy-user:dummy-password"
+        let task = PBTask(launchPath: "/bin/sh", arguments: ["-c", "printf status; printf diagnostic >&2; exit 1", "https://\(credential)@example.invalid/repo"], inDirectory: nil)
+        task.separatesStandardError = true
+        XCTAssertThrowsError(try task.launch()) { error in
+            XCTAssertEqual((error as NSError).userInfo[PBTaskTerminationOutputKey] as? String, "diagnostic")
+            XCTAssertFalse((error as NSError).localizedFailureReason?.contains(credential) == true)
+        }
+        XCTAssertEqual(String(decoding: task.standardOutputData, as: UTF8.self), "status")
+        XCTAssertEqual(String(decoding: task.standardErrorData, as: UTF8.self), "diagnostic")
+        XCTAssertFalse(task.description.contains(credential))
     }
 
     func testDebugLoggingPreferenceStillRunsTask() throws {

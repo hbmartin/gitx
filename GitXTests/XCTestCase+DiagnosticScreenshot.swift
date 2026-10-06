@@ -59,8 +59,16 @@ extension XCTestCase {
             line: line
         )
         view.cacheDisplay(in: view.bounds, to: representation)
+        let captured = NSImage(size: view.bounds.size)
+        captured.addRepresentation(representation)
         let image = NSImage(size: view.bounds.size)
-        image.addRepresentation(representation)
+        image.lockFocus()
+        let bounds = NSRect(origin: .zero, size: view.bounds.size)
+        let isDark = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        (isDark ? NSColor(calibratedWhite: 0.16, alpha: 1) : .white).setFill()
+        bounds.fill()
+        captured.draw(in: bounds, from: .zero, operation: .sourceOver, fraction: 1)
+        image.unlockFocus()
         let attachment = XCTAttachment(image: image)
         attachment.name = name
         attachment.lifetime = .keepAlways

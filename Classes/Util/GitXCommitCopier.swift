@@ -10,7 +10,11 @@ import OSLog // swiftlint:disable:this unused_import
 final nonisolated class GitXCommitCopier: ValueTransformer {
     @objc(canCopyImmutableCommits:)
     static func canCopyImmutableCommits(_ commits: [PBGitCommit]) -> Bool {
-        CommitCopySelectionPolicy.canCopyImmutableCommits(shas: commits.map(\.sha))
+        CommitCopySelectionPolicy.canCopyImmutableCommits(commits, isImmutable: isImmutableCommit)
+    }
+
+    static func isImmutableCommit(_ commit: PBGitCommit) -> Bool {
+        !(commit is PBUncommittedChanges) && commit.oid != nil
     }
 
     @objc(toFullSHA:)

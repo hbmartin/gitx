@@ -57,7 +57,7 @@ enum WindowDialogPresenter {
             actionBlock()
             return didAct
         }
-        alert.showsSuppressionButton = allowsSuppression
+        alert.showsSuppressionButton = allowsSuppression && identifier != nil
         guard let window = windowController.window else {
             return WindowDialogPresentationPolicy.cancelWithoutPresentation(onCancel: onCancel)
         }

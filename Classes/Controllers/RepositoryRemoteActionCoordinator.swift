@@ -375,7 +375,10 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 allowsRecovery: false, completion: completion
             )
         }
-        let cancel = { completion(RepositoryPushEvent.cancelled) }
+        let cancel = { [weak self] in
+            self?.logger.info("Rejected push recovery declined; completing the failed push")
+            completion(RepositoryPushEvent.failed)
+        }
         let presented: Bool
         if let retryConfirmation {
             presented = retryConfirmation(alert, cancel, action)

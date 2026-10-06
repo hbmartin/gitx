@@ -472,6 +472,41 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertTrue(recorder.errors.isEmpty)
     }
 
+    func testPermissionDeniedWhileLeaderIsLiveStillAllowsLaterExitCompletion() throws {
+        let system = FakeProcessSystem()
+        system.failNextSignal(withPOSIXError: EPERM)
+        let signalAttempted = expectation(description: "permission-denied termination attempted")
+        system.expectSignal(signalAttempted)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "leader reaped after permission-denied signal")
+        let recorder = CompletionRecorder(expectation: completed)
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0, forceKillDelay: nil))
+        wait(for: [signalAttempted], timeout: 1)
+        system.setLeaderExited(true)
+        system.triggerExitMonitor()
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(recorder.statuses.count, 1)
+        XCTAssertTrue(recorder.errors.isEmpty)
+    }
+
+    func testPermissionDeniedAfterLeaderExitIsBenignDuringDescendantCleanup() throws {
+        let system = FakeProcessSystem()
+        system.setProcessGroupMembers([4321, 4322])
+        system.failNextSignal(withPOSIXError: EPERM)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "descendant cleanup after permission-denied signal")
+        let recorder = CompletionRecorder(expectation: completed)
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0.03, forceKillDelay: 0.03))
+        system.setLeaderExited(true)
+        system.triggerExitMonitor()
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(recorder.statuses.count, 1)
+        XCTAssertTrue(recorder.errors.isEmpty)
+        XCTAssertTrue(system.events.contains("signal:\(SIGKILL)"))
+    }
+
     func testImmediateTerminationAttemptsSIGTERMBeforeReturning() throws {
         let system = FakeProcessSystem()
         let owner = PBChildProcessOwner(system: system, queueLabel: #function)
@@ -747,6 +782,32 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertThrowsError(try PBPosixChildProcessSystem().send(signal: SIGTERM, toProcessGroup: Int32.max)) { error in
             XCTAssertEqual((error as NSError).code, Int(ESRCH))
         }
+    }
+
+    func testPosixGroupInspectionIncludesMoreThanInitialCapacity() throws {
+        let system = PBPosixChildProcessSystem()
+        let outputPipe = try makePOSIXPipe()
+        defer { Darwin.close(outputPipe.read) }
+        let processIdentifier = try system.spawn(configuration: PBChildProcessConfiguration(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "i=0; while [ \"$i\" -lt 20 ]; do /bin/sleep 60 & i=$((i+1)); done; printf ready; wait"],
+            environment: ProcessInfo.processInfo.environment,
+            workingDirectory: nil,
+            standardInputFileDescriptor: nil,
+            standardOutputFileDescriptor: outputPipe.write
+        ))
+        defer {
+            _ = killpg(processIdentifier, SIGKILL)
+            var status: Int32 = 0
+            _ = waitpid(processIdentifier, &status, 0)
+        }
+        XCTAssertEqual(Darwin.close(outputPipe.write), 0)
+        let readiness = try FileHandle(fileDescriptor: outputPipe.read, closeOnDealloc: false).read(upToCount: 5)
+        XCTAssertEqual(readiness, Data("ready".utf8))
+
+        let members = try system.processGroupMembers(processGroup: processIdentifier)
+        XCTAssertTrue(members.contains(processIdentifier))
+        XCTAssertEqual(members.count, 21)
     }
 
     func testPosixSpawnRejectsInvalidConfigurationBeforeLaunching() {

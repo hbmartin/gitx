@@ -112,6 +112,10 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
             pasteboard.setData(data, forType: .gitXBranchReference)
             logger.debug("Started local branch drag")
         } else {
+            guard GitXCommitCopier.isImmutableCommit(commit) else {
+                logger.debug("Rejected text drag for a mutable or unavailable commit")
+                return false
+            }
             pasteboard.declareTypes([.string], owner: self)
             let shortColumn = tableView.column(withIdentifier: NSUserInterfaceItemIdentifier("ShortSHAColumn"))
             let value = column == shortColumn ? commit.shortName() : "\(commit.shortName()) (\(commit.subject))"
