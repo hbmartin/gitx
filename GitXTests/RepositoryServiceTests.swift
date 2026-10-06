@@ -346,12 +346,6 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertEqual(service.lastPushOutput, "remote: Open https://example.test/pull/42")
     }
 
-    private func rejection(_ summary: String = "[rejected] (non-fast-forward)", destination: String = "refs/heads/main") -> NSError {
-        NSError(domain: PBTaskErrorDomain, code: 4, userInfo: [
-            PBTaskTerminationOutputKey: "To /tmp/remote\n!\trefs/heads/main:\(destination)\t\(summary)\nDone\n",
-        ])
-    }
-
     private var snapshot: RepositoryPushSnapshot {
         RepositoryPushSnapshot(sourceRef: "refs/heads/main", sourceOID: String(repeating: "a", count: 40),
                                remoteName: "origin", endpoint: "/tmp/remote", destinationRef: "refs/heads/main", fetchedOID: String(repeating: "b", count: 40))
@@ -366,7 +360,6 @@ final class RepositoryServiceTests: XCTestCase {
         var commands: [[String]] = []
         var pushes: [[String]] = []
         var config = "remote.origin.fetch\n+refs/heads/*:refs/remotes/origin/*\0branch.main.remote\norigin\0branch.main.merge\nrefs/heads/main\0"
-        var destination = "refs/heads/main"
         var tracking = "refs/remotes/origin/main"
         init(eligible: Bool = true) {
             super.init()
@@ -768,6 +761,18 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         defaultsSuiteName = nil
         originalComposition = nil
         try super.tearDownWithError()
+    }
+
+    func testShippedRunnerPreservesGeneralCommandOutputAndFailures() throws {
+        #if DEBUG
+            XCTAssertEqual(try PBMilestone2ProductCoverageHarness.reviewGeneralOutput(repository: repository, arguments: ["config", "--get", "user.name"]), "GitX Tests\n")
+            XCTAssertThrowsError(try PBMilestone2ProductCoverageHarness.reviewGeneralOutput(repository: repository, arguments: ["config", "--get", "missing.fixture-key"])) { error in
+                XCTAssertEqual((error as NSError).domain, PBTaskErrorDomain)
+                XCTAssertEqual((error as NSError).code, Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue))
+            }
+        #else
+            throw XCTSkip("Product harness is available in Debug")
+        #endif
     }
 
     func testNativeLocalBranchDeletionProtectsWorktreesAndRemovesConfiguration() throws {

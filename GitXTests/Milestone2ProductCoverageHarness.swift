@@ -649,8 +649,9 @@
             return window
         }
 
+        /// XCTest calls the synthesized async import of this Objective-C selector.
         @objc(reviewRetryCancellationWorkflowWithCompletion:)
-        static func reviewRetryCancellationWorkflow(completion: @escaping (Bool) -> Void) {
+        static func reviewRetryCancellationWorkflow(completion: @escaping (Bool) -> Void) { // swiftlint:disable:this unused_declaration
             Task { @MainActor in
                 do { try completion(await retryCancellationWorkflow()) }
                 catch { completion(false) }
@@ -713,6 +714,12 @@
 
         @objc static func reviewHistoryOutput(repository: PBGitRepository, arguments: [String]) throws -> String {
             try RepositoryGitCommandRunner(repository: repository).historyOutput(arguments: arguments)
+        }
+
+        @objc static func reviewGeneralOutput(repository: PBGitRepository, arguments: [String]) throws -> String {
+            let runner: GitCommandRunning = RepositoryGitCommandRunner(repository: repository)
+            try runner.launch(arguments: arguments)
+            return runner.lastOutput ?? ""
         }
 
         // Objective-C-compatible XCTest declarations invoke this shipped-module proof.

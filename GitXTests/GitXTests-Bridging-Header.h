@@ -618,6 +618,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 + (void)reviewRetryCancellationWorkflowWithCompletion:(void (^)(BOOL preservedAndReusable))completion NS_SWIFT_NAME(reviewRetryCancellationWorkflow(completion:));
 + (uint64_t)verificationBoundaryProof;
 + (nullable NSString *)reviewHistoryOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewHistoryOutput(repository:arguments:));
++ (nullable NSString *)reviewGeneralOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewGeneralOutput(repository:arguments:));
 + (NSWindow *)reviewPushFailureWindowWithError:(NSError *)error NS_SWIFT_NAME(reviewPushFailureWindow(error:));
 + (NSAlert *)reviewSuppressionAlertWithIdentifier:(BOOL)hasIdentifier allowsSuppression:(BOOL)allowsSuppression NS_SWIFT_NAME(reviewSuppressionAlert(hasIdentifier:allowsSuppression:));
 @end
