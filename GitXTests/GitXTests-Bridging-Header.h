@@ -31,6 +31,13 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBRepositoryOpenCoordinator : NSObject
+@property (class, nonatomic, readonly) PBRepositoryOpenCoordinator *shared;
+- (void)openURLs:(NSArray<NSURL *> *)urls
+    sourceWindow:(nullable NSWindow *)sourceWindow
+      completion:(void (^)(NSArray<NSDocument *> *, NSArray<NSError *> *))completion;
+@end
+
 @interface PBGitBinary (HistoryFlowTestSupport)
 + (BOOL)acceptBinary:(nullable NSString *)path;
 @end

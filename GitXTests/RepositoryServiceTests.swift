@@ -1,3 +1,4 @@
+import ObjectiveC.runtime
 import XCTest
 
 nonisolated enum RepositoryTestGitEnvironment {
@@ -236,6 +237,35 @@ final class RepositoryServiceTests: XCTestCase {
         #else
             throw XCTSkip("Product harness is available in Debug")
         #endif
+    }
+
+    @MainActor
+    func testEmptyOpenPreservesFocusedRepositoryWindow() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let controller = PBGitWindowController(window: window)
+        defer { window.close() }
+        // App-hosted tests cannot rely on the desktop granting activation.
+        // Scope the AppKit input to this real repository window and restore it
+        // before any other test executes.
+        let method = try XCTUnwrap(try class_getInstanceMethod(type(of: XCTUnwrap(NSApp)), #selector(getter: NSApplication.keyWindow)))
+        let keyWindow: @convention(block) (AnyObject) -> NSWindow? = { _ in window }
+        let replacement = imp_implementationWithBlock(keyWindow)
+        let original = method_setImplementation(method, replacement)
+        defer {
+            method_setImplementation(method, original)
+            imp_removeBlock(replacement)
+        }
+        XCTAssertTrue(NSApp.keyWindow === window)
+        var completed = false
+        PBRepositoryOpenCoordinator.shared.open([], sourceWindow: nil) { documents, errors in
+            XCTAssertTrue(documents.isEmpty)
+            XCTAssertTrue(errors.isEmpty)
+            completed = true
+        }
+        XCTAssertTrue(completed)
+        XCTAssertTrue(NSApp.keyWindow === window)
+        withExtendedLifetime(controller) {}
     }
 
     func testRejectedPushCoordinatorPreservesIntentAndEmitsOneTerminalEvent() throws {
@@ -619,6 +649,8 @@ final class RepositoryServiceTests: XCTestCase {
                        valid.replacingOccurrences(of: "refs/heads/main:refs/heads/main", with: "refs/heads/other:refs/heads/main"),
                        valid.replacingOccurrences(of: "!\t", with: "=\t"), valid.replacingOccurrences(of: "Done\n", with: ""),
                        valid.replacingOccurrences(of: "\n", with: "\u{2028}"), valid.replacingOccurrences(of: "\n", with: "\u{2029}"),
+                       valid.replacingOccurrences(of: "\n", with: "\u{0085}"), valid.replacingOccurrences(of: "\n", with: "\u{000B}"),
+                       valid.replacingOccurrences(of: "\n", with: "\u{000C}"),
                        valid.replacingOccurrences(of: "\n", with: "\r\n"), valid + valid,
                        valid.replacingOccurrences(of: "Done", with: "!\trefs/heads/main:refs/heads/main\t[rejected] (non-fast-forward)\nDone")]
         {
