@@ -173,7 +173,7 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.path))
     }
 
-    func testDefaultFactoryUsesTheProvidedApplicationSupportDirectoryWithoutConsultingCredentials() async throws {
+    func testDefaultFactoryHonorsApplicationSupportAndExplicitTestStorage() async throws {
         let applicationSupport = FileManager.default.temporaryDirectory
             .appendingPathComponent("ForgeApplicationDefaultFactoryTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: applicationSupport) }
@@ -190,9 +190,16 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         )
         let services = try await loader.services()
 
-        let forgeDirectory = applicationSupport
-            .appendingPathComponent("GitX", isDirectory: true)
-            .appendingPathComponent("Forge", isDirectory: true)
+        let forgeDirectory: URL
+        if let testStorage = ProcessInfo.processInfo.environment["GITX_UITEST_FORGE_STORAGE_ROOT"],
+           !testStorage.isEmpty
+        {
+            forgeDirectory = URL(fileURLWithPath: testStorage, isDirectory: true).standardizedFileURL
+        } else {
+            forgeDirectory = applicationSupport
+                .appendingPathComponent("GitX", isDirectory: true)
+                .appendingPathComponent("Forge", isDirectory: true)
+        }
         XCTAssertTrue(FileManager.default.fileExists(atPath: forgeDirectory.path))
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: forgeDirectory.appendingPathComponent("Forge.sqlite3").path
