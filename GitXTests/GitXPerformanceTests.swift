@@ -207,6 +207,17 @@ final class GitXPerformanceTests: XCTestCase {
         print("REVIEW_BENCHMARK selection p95_ms=\(percentile95(samples) * 1000)")
     }
 
+    func testLargeCredentialFreeDiagnosticRedactionPerformance() {
+        let diagnostic = String(repeating: "C", count: 65536)
+            + "\nSee https://example.invalid/help\nContact gitx@example.invalid"
+        var output = ""
+        let samples = (0 ..< 3).map { _ in elapsed { output = PBTaskDiagnostics.redacted(diagnostic) } }
+        XCTAssertEqual(output, diagnostic)
+        attachMeasurements("64-KiB credential-free diagnostic formatting", samples: samples)
+        print("REVIEW_BENCHMARK diagnostic p95_ms=\(percentile95(samples) * 1000)")
+        XCTAssertLessThanOrEqual(percentile95(samples), 0.016)
+    }
+
     func testLocalPushPreparationPerformance() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-push-performance-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

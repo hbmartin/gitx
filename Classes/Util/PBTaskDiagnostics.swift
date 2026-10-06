@@ -6,8 +6,11 @@ final nonisolated class PBTaskDiagnostics: NSObject {
     @objc(redacted:)
     static func redacted(_ text: Any?) -> String {
         let value = text.map { String(describing: $0) } ?? "(null)"
-        return value.replacingOccurrences(of: #"([A-Za-z][A-Za-z0-9+.-]*://)[^/\s?#]*@"#,
-                                          with: "$1[redacted]@", options: .regularExpression)
+        guard value.contains("://"), value.contains("@") else { return value }
+        // Start once per scheme token rather than retrying every letter in long diagnostics.
+        // Preserve any numeric/punctuation prefix that preceded the original scheme match.
+        return value.replacingOccurrences(of: #"(?<![A-Za-z0-9+.-])([0-9+.-]*)([A-Za-z][A-Za-z0-9+.-]*://)[^/\s?#]*@"#,
+                                          with: "$1$2[redacted]@", options: .regularExpression)
     }
 
     @objc(displayArguments:)
