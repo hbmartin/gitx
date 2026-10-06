@@ -416,7 +416,6 @@ final class RepositoryServiceTests: XCTestCase {
             { $0.replies[metadataArguments] = .success("refs/heads/main\0invalid\0\0\0refs/remotes/origin/main\0origin") },
             { $0.replies[["config", "--null", "--list"]] = .success($0.config + "remote.origin.push\nrefs/heads/missing:refs/heads/main\0") },
             { $0.replies[["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", $0.tracking]] = .success($0.tracking + "\0" + $0.fetched + "\0tag") },
-            { $0.replies[["reflog", "show", "--format=%H", "refs/heads/main"]] = .success($0.source + "\n"); $0.replies[["merge-base", "--is-ancestor", $0.fetched, $0.source]] = .failure(NSError(domain: PBTaskErrorDomain, code: 4, userInfo: [PBTaskTerminationStatusKey: 128])) },
         ]
         for mutate in mutations {
             let runner = PushRunnerFake()
@@ -425,6 +424,29 @@ final class RepositoryServiceTests: XCTestCase {
             let repository = PBGitRepository()
             let service = PBRepositoryRemoteService(repository: repository, runner: runner)
             var error: NSError?
+            XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+            XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        }
+    }
+
+    func testAncestryCommandFailuresChangeOneConditionFromIntegratedHistory() {
+        let failures = [
+            NSError(domain: PBTaskErrorDomain, code: 4, userInfo: [PBTaskTerminationStatusKey: 128]),
+            NSError(domain: "unexpected-command-error", code: 4, userInfo: [PBTaskTerminationStatusKey: 1]),
+            NSError(domain: PBTaskErrorDomain, code: 2, userInfo: [PBTaskTerminationStatusKey: 1]),
+        ]
+        for failure in failures {
+            let runner = PushRunnerFake(eligible: false)
+            let ancestry = ["merge-base", "--is-ancestor", runner.fetched, runner.source]
+            runner.replies[ancestry] = .success("")
+            runner.pushResults = [rejectedResult(), rejectedResult()]
+            let repository = PBGitRepository()
+            let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+            var error: NSError?
+            XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+            XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+            // The same captured graph is eligible until this one command fails.
+            runner.replies[ancestry] = .failure(failure)
             XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
             XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
         }
