@@ -1124,6 +1124,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(preserved[1] === replacement)
         XCTAssertTrue(preserved[2] === secondReplacement)
         XCTAssertNil(stateCoordinator.preservedSelection([commits[2]], inContent: [replacement]))
+        XCTAssertNil(stateCoordinator.preservedSelection([decisionWorkingState], inContent: [replacement]))
+        XCTAssertEqual(stateCoordinator.preservedSelection([commits[0]], inContent: [decisionWorkingState, replacement]), [replacement])
 
         historyController.commitController.content = commits
         historyController.commitController.rearrangeObjects()
@@ -2836,6 +2838,28 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue((windowController as? HistoryWindowController)?.shownMessages.isEmpty == true)
     }
 
+    private final class SHAReadCountingCommit: PBGitCommit {
+        private(set) var reads = 0
+        override var sha: String {
+            reads += 1
+            return super.sha
+        }
+    }
+
+    func testCopyMenuValidationUsesCachedOIDWithoutReadingSHA() throws {
+        let real = try XCTUnwrap(loadedCommits().first)
+        let counted = SHAReadCountingCommit(repository: repository, andCommit: real.gtCommit)
+        historyController.commitController.content = [counted]
+        historyController.commitController.setSelectedObjects([counted])
+        let before = counted.reads
+        for action in ["copy:", "copySHA:", "copyShortName:"] {
+            let item = NSMenuItem(title: action, action: NSSelectorFromString(action), keyEquivalent: "")
+            XCTAssertTrue(historyController.validateMenuItem(item))
+        }
+        XCTAssertEqual(counted.reads, before)
+        XCTAssertFalse(GitXCommitCopier.canCopyImmutableCommits([PBGitCommit()]))
+    }
+
     func testWorkingStateImmutableCopyActionsPreserveClipboard() throws {
         let pasteboard = NSPasteboard.general
         let saved = preservedPasteboardItems(pasteboard)
@@ -2858,6 +2882,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 XCTAssertEqual(pasteboard.string(forType: .string), "preserve clipboard")
             }
         }
+        historyController.commitController.setSelectedObjects([working])
+        historyController.updateKeys()
+        historyController.commitList.reloadData()
+        pumpRunLoop()
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Working State immutable copy actions preserve the clipboard")
     }
 
     func testCopyActionsCharacterizeMultipleCommitFormattingAndEmptySelection() throws {
@@ -3175,7 +3204,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(open.isEnabled)
     }
 
-    func testWorkingStateTextDragCharacterization() {
+    func testWorkingStateTextDragPreservesPasteboard() {
         let working = PBUncommittedChanges(repository: repository)
         historyController.commitController.content = [working]
         historyController.commitController.rearrangeObjects()
@@ -3190,8 +3219,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         defer { historyController.setValue(original, forKey: "commitList") }
         let pasteboard = freshPasteboard()
         pasteboard.setString("preserve drag clipboard", forType: .string)
-        XCTAssertTrue(coordinator.tableView(table, writeRowsWith: IndexSet(integer: 0), to: pasteboard))
-        XCTAssertEqual(pasteboard.string(forType: .string), "")
+        let changeCount = pasteboard.changeCount
+        let types = pasteboard.types
+        XCTAssertFalse(coordinator.tableView(table, writeRowsWith: IndexSet(integer: 0), to: pasteboard))
+        XCTAssertEqual(pasteboard.string(forType: .string), "preserve drag clipboard")
+        XCTAssertEqual(pasteboard.changeCount, changeCount)
+        XCTAssertEqual(pasteboard.types, types)
     }
 
     func testTablePasteboardDropCheckoutAndResponderInteractions() throws {

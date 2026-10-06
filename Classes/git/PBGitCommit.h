@@ -23,7 +23,7 @@ extern NSString *const kGitXCommitType;
 @property (nonatomic, weak, readonly) PBGitRepository *repository;
 
 @property (nonatomic, strong, readonly) GTCommit *gtCommit;
-@property (nonatomic, strong, readonly) GTOID *OID;
+@property (nonatomic, strong, readonly, nullable) GTOID *OID;
 
 @property (nonatomic, strong, readonly) NSDate *date;
 @property (nonatomic, strong, readonly) NSString *subject;
@@ -40,14 +40,14 @@ extern NSString *const kGitXCommitType;
 @property (nonatomic, strong, readonly, nullable) NSString *SVNRevision;
 
 @property (nonatomic, copy, readonly) NSArray<GTOID *> *parents;
-@property NSMutableArray *refs;
+@property NSMutableArray<PBGitRef *> *refs;
 
 // Graph metadata is produced off the main thread and consumed while AppKit draws. Keep publication atomic so
 // readers cannot observe a freshly allocated PBGraphCellInfo before its immutable contents are initialized.
 @property (atomic, strong) PBGraphCellInfo *lineInfo;
 
 @property (nonatomic, readonly) PBGitTree *tree;
-@property (readonly) NSArray *treeContents;
+@property (readonly) NSArray<PBGitTree *> *treeContents;
 
 - (instancetype)initWithRepository:(PBGitRepository *)repo andCommit:(GTCommit *)gtCommit;
 

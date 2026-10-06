@@ -1,6 +1,9 @@
 nonisolated enum CommitCopySelectionPolicy {
-    static func canCopyImmutableCommits(shas: [String]) -> Bool {
-        !shas.isEmpty && shas.allSatisfy { !$0.isEmpty }
+    static func canCopyImmutableCommits<Selection: Collection>(
+        _ selection: Selection,
+        isImmutable: (Selection.Element) -> Bool
+    ) -> Bool {
+        !selection.isEmpty && selection.allSatisfy(isImmutable)
     }
 }
 

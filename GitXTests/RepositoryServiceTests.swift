@@ -183,10 +183,16 @@ final class RepositoryServiceTests: XCTestCase {
     }
 
     func testCopyDecisionBoundariesAndPatchCounts() {
-        XCTAssertFalse(CommitCopySelectionPolicy.canCopyImmutableCommits(shas: []))
-        XCTAssertFalse(CommitCopySelectionPolicy.canCopyImmutableCommits(shas: [""]))
-        XCTAssertFalse(CommitCopySelectionPolicy.canCopyImmutableCommits(shas: ["abc", ""]))
-        XCTAssertTrue(CommitCopySelectionPolicy.canCopyImmutableCommits(shas: ["abc", "def"]))
+        XCTAssertFalse(CommitCopySelectionPolicy.canCopyImmutableCommits([Bool](), isImmutable: { $0 }))
+        XCTAssertFalse(CommitCopySelectionPolicy.canCopyImmutableCommits([false], isImmutable: { $0 }))
+        XCTAssertFalse(CommitCopySelectionPolicy.canCopyImmutableCommits([true, false], isImmutable: { $0 }))
+        XCTAssertTrue(CommitCopySelectionPolicy.canCopyImmutableCommits([true, true], isImmutable: { $0 }))
+        var visited: [Int] = []
+        XCTAssertFalse(CommitCopySelectionPolicy.canCopyImmutableCommits([1, 0, 2], isImmutable: { value in
+            visited.append(value)
+            return value != 0
+        }))
+        XCTAssertEqual(visited, [1, 0])
         let mixed = CommitPatchCopyResult(patches: ["first", nil, "", "last"])
         XCTAssertEqual(mixed.text, "last\n\n\nfirst")
         XCTAssertEqual(mixed.copiedCount, 2)
@@ -216,14 +222,17 @@ final class RepositoryServiceTests: XCTestCase {
         GitXCommitCopier.putString(toPasteboard: nil)
     }
 
-    func testDialogSuppressionVisibilityCharacterization() throws {
+    @MainActor
+    func testDialogSuppressionRequiresAnIdentifier() throws {
         #if DEBUG
             let unidentified = PBMilestone2ProductCoverageHarness.reviewSuppressionAlert(hasIdentifier: false, allowsSuppression: true)
-            XCTAssertTrue(unidentified.showsSuppressionButton)
+            XCTAssertFalse(unidentified.showsSuppressionButton)
             let prohibited = PBMilestone2ProductCoverageHarness.reviewSuppressionAlert(hasIdentifier: true, allowsSuppression: false)
             XCTAssertFalse(prohibited.showsSuppressionButton)
             let identified = PBMilestone2ProductCoverageHarness.reviewSuppressionAlert(hasIdentifier: true, allowsSuppression: true)
             XCTAssertTrue(identified.showsSuppressionButton)
+            try attachScreenshot(of: unidentified.window, named: "Unidentified dialog without suppression checkbox")
+            try attachScreenshot(of: identified.window, named: "Identified dialog retains suppression checkbox")
         #else
             throw XCTSkip("Product harness is available in Debug")
         #endif
@@ -837,6 +846,18 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         var error: NSError?
         XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/" + branch), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
         return try (service, XCTUnwrap(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) }, taskOutput(error)))
+    }
+
+    func testSameBranchTraversalIgnoresCommitsWithoutCachedOID() throws {
+        let gitRepository = try XCTUnwrap(repository.gtRepo)
+        let ancestor = try XCTUnwrap(gitRepository.lookUpObject(byRevParse: "HEAD") as? GTCommit)
+        try runGit(["commit", "--quiet", "--allow-empty", "-m", "descendant"])
+        let descendant = try XCTUnwrap(gitRepository.lookUpObject(byRevParse: "HEAD") as? GTCommit)
+        let commits = [PBGitCommit(), PBGitCommit(repository: repository, andCommit: descendant), PBGitCommit(repository: repository, andCommit: ancestor)]
+        let store = PBRepositoryReferenceStore(repository: repository, runner: LocalGitRunner(directory: repositoryURL.path))
+        XCTAssertTrue(store.isOID(descendant.oid, onSameBranchAs: ancestor.oid, commits: commits))
+        XCTAssertFalse(store.isOID(ancestor.oid, onSameBranchAs: descendant.oid, commits: commits))
+        XCTAssertFalse(store.isOID(descendant.oid, onSameBranchAs: ancestor.oid, commits: [PBGitCommit()]))
     }
 
     func testFetchedButUnintegratedRemoteWorkCannotRecover() throws {

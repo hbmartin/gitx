@@ -602,6 +602,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @interface PBRepositoryReferenceStore : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
 - (nullable PBGitRef *)refForName:(nullable NSString *)name;
+- (BOOL)isOID:(nullable GTOID *)branchOID onSameBranchAsOID:(nullable GTOID *)testOID commits:(nullable NSArray<PBGitCommit *> *)commits NS_SWIFT_NAME(isOID(_:onSameBranchAs:commits:));
 @end
 
 #if DEBUG
