@@ -10,6 +10,8 @@
 
 #import "RJModalRepoSheet.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBGitXMessageSheet : RJModalRepoSheet {
 	NSImageView *iconView;
 	NSTextField *messageField;
@@ -27,22 +29,24 @@
 + (void)beginSheetWithMessage:(NSString *)message
 						 info:(NSString *)info
 			 windowController:(PBGitWindowController *)windowController
-			completionHandler:(RJSheetCompletionHandler)handler;
+			completionHandler:(nullable RJSheetCompletionHandler)handler;
 
 + (void)beginSheetWithError:(NSError *)error
 		   windowController:(PBGitWindowController *)windowController
-		  completionHandler:(RJSheetCompletionHandler)handler;
+		  completionHandler:(nullable RJSheetCompletionHandler)handler;
 
 - (void)beginMessageSheetWithMessageText:(NSString *)message
 								infoText:(NSString *)info
-					   completionHandler:(RJSheetCompletionHandler)handler;
+					   completionHandler:(nullable RJSheetCompletionHandler)handler;
 
-- (IBAction)closeMessageSheet:(id)sender;
+- (IBAction)closeMessageSheet:(nullable id)sender;
 
 
-@property IBOutlet NSImageView *iconView;
-@property IBOutlet NSTextField *messageField;
-@property IBOutlet NSTextView *infoView;
-@property IBOutlet NSScrollView *scrollView;
+@property (nullable, strong) IBOutlet NSImageView *iconView;
+@property (nullable, strong) IBOutlet NSTextField *messageField;
+@property (nullable, strong) IBOutlet NSTextView *infoView;
+@property (nullable, strong) IBOutlet NSScrollView *scrollView;
 
 @end
+
+NS_ASSUME_NONNULL_END

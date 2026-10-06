@@ -815,6 +815,24 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 
 @end
 
+static PBGitXMessageSheet *PBRecoveryLastMessageSheet;
+static NSUInteger PBRecoveryMessageSheetAcceptCount;
+
+@interface PBRecoveryMessageSheet : PBGitXMessageSheet
+@end
+
+@implementation PBRecoveryMessageSheet
+- (void)beginSheetWithCompletionHandler:(nullable RJSheetCompletionHandler)handler
+{
+	PBRecoveryLastMessageSheet = self;
+	if (handler) handler(self, NSModalResponseOK);
+}
+- (IBAction)acceptSheet:(nullable id)sender
+{
+	PBRecoveryMessageSheetAcceptCount++;
+}
+@end
+
 @interface PBCommitHookFailedSheet (WindowControllerTests)
 + (void)pb_window_beginWithMessageText:(NSString *)message infoText:(NSString *)info windowController:(PBGitWindowController *)windowController completionHandler:(RJSheetCompletionHandler)handler;
 @end
@@ -4445,6 +4463,66 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	[self.controller showRepositorySettings:self];
 	PBWindowAlertResponse = NSAlertFirstButtonReturn;
 	[self.controller showRepositorySettings:self];
+}
+
+- (void)testMessageSheetCharacterizesOrdinaryAndCompleteTaskErrorsAndLayout
+{
+	@try {
+		[PBRecoveryMessageSheet pb_window_beginSheetWithMessage:@"Message" info:@"Short detail" windowController:self.controller];
+		XCTAssertEqualObjects(PBRecoveryLastMessageSheet.messageField.stringValue, @"Message");
+		XCTAssertEqualObjects(PBRecoveryLastMessageSheet.infoView.string, @"Short detail");
+		PBRecoveryMessageSheetAcceptCount = 0;
+		[PBRecoveryLastMessageSheet closeMessageSheet:self];
+		XCTAssertEqual(PBRecoveryMessageSheetAcceptCount, 1U);
+		[PBRecoveryLastMessageSheet.window orderOut:nil];
+
+		NSError *ordinary = [NSError errorWithDomain:@"GitXTests.Message" code:1 userInfo:@{NSLocalizedDescriptionKey : @"Ordinary failure"}];
+		[PBRecoveryMessageSheet pb_window_beginSheetWithError:ordinary windowController:self.controller];
+		XCTAssertEqualObjects(PBRecoveryLastMessageSheet.messageField.stringValue, @"Ordinary failure");
+		XCTAssertEqualObjects(PBRecoveryLastMessageSheet.infoView.string, @"");
+		[PBRecoveryLastMessageSheet.window orderOut:nil];
+
+		for (NSNumber *code in @[ @(PBTaskNonZeroExitCodeError), @(PBTaskLaunchError) ]) {
+			NSError *taskError = [NSError errorWithDomain:PBTaskErrorDomain code:code.integerValue userInfo:@{
+				NSLocalizedDescriptionKey : @"Task description",
+				NSLocalizedFailureReasonErrorKey : @"Task reason",
+				PBTaskTerminationStatusKey : @17,
+				PBTaskTerminationOutputKey : @"fatal output",
+			}];
+			NSError *outer = [NSError errorWithDomain:@"GitXTests.Message" code:2 userInfo:@{
+				NSLocalizedDescriptionKey : @"Outer description",
+				NSLocalizedFailureReasonErrorKey : @"Outer reason",
+				NSLocalizedRecoverySuggestionErrorKey : @"Try again.",
+				NSUnderlyingErrorKey : taskError,
+			}];
+			__block BOOL completed = NO;
+			[PBRecoveryMessageSheet beginSheetWithError:outer windowController:self.controller completionHandler:^(id sheet, NSModalResponse returnCode) {
+				completed = YES;
+				XCTAssertEqual(returnCode, NSModalResponseOK);
+			}];
+			XCTAssertTrue(completed);
+			NSString *info = PBRecoveryLastMessageSheet.infoView.string;
+			XCTAssertTrue([info containsString:@"Outer reason"]);
+			XCTAssertTrue([info containsString:@"Try again."]);
+			XCTAssertTrue([info containsString:@"Task description"]);
+			if (code.integerValue == PBTaskNonZeroExitCodeError) {
+				XCTAssertTrue([info containsString:@"Return code: 17"]);
+				XCTAssertTrue([info containsString:@"fatal output"]);
+			}
+			[PBRecoveryLastMessageSheet.window orderOut:nil];
+		}
+
+		NSString *longMessage = [@"Message wrapping across the available label width " stringByPaddingToLength:360 withString:@"more message " startingAtIndex:0];
+		NSString *longInfo = [@"Detail line\n" stringByPaddingToLength:1000 withString:@"More detail\n" startingAtIndex:0];
+		[PBRecoveryMessageSheet beginSheetWithMessage:longMessage info:longInfo windowController:self.controller completionHandler:nil];
+		XCTAssertEqualObjects(PBRecoveryLastMessageSheet.messageField.stringValue, longMessage);
+		XCTAssertEqualObjects(PBRecoveryLastMessageSheet.infoView.string, longInfo);
+		XCTAssertGreaterThan(PBRecoveryLastMessageSheet.window.frame.size.height, 179.0);
+		[self attachScreenshotOfView:PBRecoveryLastMessageSheet.window.contentView name:@"Recovery error sheet wrapping and details"];
+	} @finally {
+		[PBRecoveryLastMessageSheet.window orderOut:nil];
+		PBRecoveryLastMessageSheet = nil;
+	}
 }
 
 - (void)testFocusRefreshSnapshotsPreferenceGenerationAndCancellation

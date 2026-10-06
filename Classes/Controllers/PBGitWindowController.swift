@@ -122,7 +122,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard focusRefreshCoordinator == nil, let repository else { return }
         focusRefreshCoordinator = RepositoryFocusRefreshCoordinator(
             repository: repository,
-            gitExecutablePath: PBGitBinary.path()
+            gitExecutablePath: PBGitBinary.path() ?? ""
         ) { [weak self] in
             guard let self else { return }
             self.refreshLocalRepositoryContent()
@@ -937,7 +937,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         controller.install(visible: ApplicationSettings.repositoryStatusBarVisible)
         repositoryLocalStatusLoader = RepositoryLocalStatusLoader(
             repository: repository,
-            gitExecutablePath: PBGitBinary.path()
+            gitExecutablePath: PBGitBinary.path() ?? ""
         ) { [weak self] snapshot in
             guard let self else { return }
             self.repositoryLocalStatusSnapshot = snapshot

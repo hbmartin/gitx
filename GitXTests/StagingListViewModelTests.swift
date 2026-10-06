@@ -3,6 +3,60 @@ import XCTest
 @MainActor
 // swift6-safety-justification: XCTest owns the test lifetime and all mutable access is confined to the main actor.
 final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
+    func testChangedFileDefaultsAndAllStatusIconsPreserveObjectiveCContract() {
+        let changed = PBChangedFile(path: "folder/spaced ü.txt")
+        XCTAssertEqual(changed.path, "folder/spaced ü.txt")
+        XCTAssertEqual(changed.status, .NEW)
+        XCTAssertFalse(changed.hasStagedChanges)
+        XCTAssertFalse(changed.hasUnstagedChanges)
+        XCTAssertNil(changed.commitBlobSHA)
+        XCTAssertNil(changed.commitBlobMode)
+        for (status, imageName) in [
+            (PBChangedFileStatus.NEW, "new_file"),
+            (.MODIFIED, "empty_file"),
+            (.DELETED, "deleted_file"),
+        ] {
+            changed.status = status
+            XCTAssertEqual(changed.icon(), NSImage(named: imageName))
+        }
+    }
+
+    func testChangedFileCopySettersNullableMetadataAndKVC() {
+        let changed = PBChangedFile(path: "initial.txt")
+        let mutablePath = NSMutableString(string: "copied.txt")
+        changed.setValue(mutablePath, forKey: "path")
+        mutablePath.append("-mutated")
+        XCTAssertEqual(changed.path, "copied.txt")
+        changed.commitBlobSHA = "abc"
+        changed.commitBlobMode = "100644"
+        XCTAssertEqual(changed.value(forKey: "commitBlobSHA") as? String, "abc")
+        XCTAssertEqual(changed.value(forKey: "commitBlobMode") as? String, "100644")
+        changed.commitBlobSHA = nil
+        changed.commitBlobMode = nil
+        XCTAssertNil(changed.commitBlobSHA)
+        XCTAssertNil(changed.commitBlobMode)
+    }
+
+    func testChangedFileStatusAndMembershipRemainKVOObservable() {
+        let changed = PBChangedFile(path: "observed.txt")
+        var statuses: [PBChangedFileStatus] = []
+        var memberships: [Bool] = []
+        let statusObservation = changed.observe(\.status, options: [.new]) { object, _ in
+            // NS_ENUM values arrive through NSNumber in Objective-C KVO;
+            // reading the observed object preserves the imported enum contract.
+            statuses.append(object.status)
+        }
+        let membershipObservation = changed.observe(\.hasStagedChanges, options: [.new]) { _, change in
+            if let value = change.newValue { memberships.append(value) }
+        }
+        changed.status = .MODIFIED
+        changed.hasStagedChanges = true
+        changed.hasStagedChanges = false
+        XCTAssertEqual(statuses, [.MODIFIED])
+        XCTAssertEqual(memberships, [true, false])
+        withExtendedLifetime((statusObservation, membershipObservation)) {}
+    }
+
     private func file(
         _ path: String,
         status: PBChangedFileStatus = .MODIFIED,

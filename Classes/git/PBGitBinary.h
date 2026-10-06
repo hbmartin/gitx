@@ -10,10 +10,14 @@
 
 #define MIN_GIT_VERSION "1.6.0"
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface PBGitBinary : NSObject
 
-+ (NSString *)path;
-+ (NSString *)version;
-+ (NSArray *)searchLocations;
++ (nullable NSString *)path;
++ (nullable NSString *)version;
++ (NSArray<NSString *> *)searchLocations;
 + (NSString *)notFoundError;
 @end
+
+NS_ASSUME_NONNULL_END

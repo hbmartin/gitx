@@ -115,8 +115,11 @@ nonisolated enum RepositoryForgeProcessError: Error, Equatable, LocalizedError, 
 /// output, which may contain credential-helper diagnostics.
 nonisolated struct RepositoryForgeProcessGitRunner: RepositoryPullRequestGitCommandRunning {
     func run(_ arguments: [String]) throws -> String {
+        guard let executable = PBGitBinary.path() else {
+            throw RepositoryForgeProcessError.launchFailed
+        }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: PBGitBinary.path())
+        process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         let output = Pipe()
         process.standardOutput = output

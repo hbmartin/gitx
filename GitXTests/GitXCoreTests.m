@@ -28,6 +28,7 @@
 #import "PBWorkingTree.h"
 #import "PBTask.h"
 #import "PBWebHistoryControllerCompatibility.h"
+#import <objc/runtime.h>
 
 @interface PBNativeContentView (GitXCoreTests)
 - (nullable NSString *)patchWithFileHeader:(NSArray<NSString *> *)fileHeader
@@ -55,6 +56,55 @@
 
 @interface PBGitCommit (GitXCoreGraphTests)
 - (void)setParents:(NSArray<GTOID *> *)parents;
+@end
+
+static NSUInteger PBBinaryRecoveryAcceptedAttempt;
+static NSUInteger PBBinaryRecoveryAttempt;
+static NSUInteger PBBinaryRecoveryAlertCount;
+static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
+
+// Exercise the existing +initialize body without allowing Objective-C to run
+// it implicitly for this test subclass or changing the actual selected binary.
+@interface PBBinaryRecoveryProbe : PBGitBinary
+@end
+
+@implementation PBBinaryRecoveryProbe
++ (void)initialize {}
++ (BOOL)acceptBinary:(nullable NSString *)path
+{
+	[PBBinaryRecoveryCandidates addObject:path ?: @"<nil>"];
+	PBBinaryRecoveryAttempt++;
+	return PBBinaryRecoveryAttempt == PBBinaryRecoveryAcceptedAttempt;
+}
+@end
+
+@interface NSAlert (PBBinaryRecoveryTests)
+- (NSModalResponse)pb_recovery_runModal;
+@end
+
+@implementation NSAlert (PBBinaryRecoveryTests)
+- (NSModalResponse)pb_recovery_runModal
+{
+	PBBinaryRecoveryAlertCount++;
+	return NSModalResponseOK;
+}
+@end
+
+@interface PBCommitRecoveryRepository : PBGitRepository
+@property (nonatomic, copy, nullable) NSString *recoveryPatchOutput;
+@property (nonatomic) NSUInteger recoveryPatchInvocationCount;
+@end
+
+@implementation PBCommitRecoveryRepository
+- (nullable NSString *)outputOfTaskWithArguments:(NSArray *)arguments error:(NSError **)error
+{
+	self.recoveryPatchInvocationCount++;
+	if (!self.recoveryPatchOutput && error) {
+		*error = [NSError errorWithDomain:@"GitXTests.PatchRecovery" code:1
+							 userInfo:@{NSLocalizedDescriptionKey : @"Expected patch failure"}];
+	}
+	return self.recoveryPatchOutput;
+}
 @end
 
 @interface PBGitIndex (GitXCoreTests)
@@ -461,6 +511,83 @@
 
 @implementation GitXRefAndRevisionTests
 
+- (void)testGitBinaryInitializationSearchAndInvalidPreferenceRemainCharacterized
+{
+	NSString *originalPath = PBGitBinary.path;
+	id originalPreference = [NSUserDefaults.standardUserDefaults objectForKey:@"gitExecutable"];
+	const char *environmentPath = getenv("GIT_PATH");
+	NSString *originalEnvironment = environmentPath ? [NSString stringWithUTF8String:environmentPath] : nil;
+	Method alertMethod = class_getInstanceMethod(NSAlert.class, @selector(runModal));
+	Method replacement = class_getInstanceMethod(NSAlert.class, @selector(pb_recovery_runModal));
+	method_exchangeImplementations(alertMethod, replacement);
+	@try {
+		// Invalid custom preference reaches its alert, then the explicit
+		// environment candidate; the remaining scenarios cover each fallback.
+		[NSUserDefaults.standardUserDefaults setObject:@"/invalid/custom/git" forKey:@"gitExecutable"];
+		setenv("GIT_PATH", "/explicit/environment/git", 1);
+		PBBinaryRecoveryCandidates = [NSMutableArray array];
+		PBBinaryRecoveryAttempt = 0;
+		PBBinaryRecoveryAcceptedAttempt = 2;
+		PBBinaryRecoveryAlertCount = 0;
+		IMP initialize = class_getMethodImplementation(object_getClass(PBGitBinary.class), @selector(initialize));
+		((void (*)(id, SEL))initialize)(PBBinaryRecoveryProbe.class, @selector(initialize));
+		XCTAssertEqualObjects(PBBinaryRecoveryCandidates, (@[ @"/invalid/custom/git", @"/explicit/environment/git" ]));
+		XCTAssertEqual(PBBinaryRecoveryAlertCount, 1U);
+
+		PBBinaryRecoveryCandidates = [NSMutableArray array];
+		PBBinaryRecoveryAttempt = 0;
+		PBBinaryRecoveryAcceptedAttempt = 1;
+		((void (*)(id, SEL))initialize)(PBBinaryRecoveryProbe.class, @selector(initialize));
+		XCTAssertEqual(PBBinaryRecoveryCandidates.count, 1U);
+
+		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"gitExecutable"];
+		unsetenv("GIT_PATH");
+		for (NSNumber *acceptedAttempt in @[ @1, @2, @(PBGitBinary.searchLocations.count + 2), @0 ]) {
+			PBBinaryRecoveryCandidates = [NSMutableArray array];
+			PBBinaryRecoveryAttempt = 0;
+			PBBinaryRecoveryAcceptedAttempt = acceptedAttempt.unsignedIntegerValue;
+			((void (*)(id, SEL))initialize)(PBBinaryRecoveryProbe.class, @selector(initialize));
+			if (acceptedAttempt.unsignedIntegerValue > 0) {
+				XCTAssertEqual(PBBinaryRecoveryCandidates.count, acceptedAttempt.unsignedIntegerValue);
+			} else {
+				XCTAssertEqual(PBBinaryRecoveryCandidates.count, PBGitBinary.searchLocations.count + 2);
+			}
+		}
+	} @finally {
+		method_exchangeImplementations(alertMethod, replacement);
+		if (originalPreference) [NSUserDefaults.standardUserDefaults setObject:originalPreference forKey:@"gitExecutable"];
+		else [NSUserDefaults.standardUserDefaults removeObjectForKey:@"gitExecutable"];
+		if (originalEnvironment) setenv("GIT_PATH", originalEnvironment.UTF8String, 1);
+		else unsetenv("GIT_PATH");
+		XCTAssertTrue([PBGitBinary acceptBinary:originalPath]);
+		PBBinaryRecoveryCandidates = nil;
+	}
+}
+
+- (void)testGitBinaryRejectsOldMalformedAndFailingExecutablesWithoutReplacingAcceptedPath
+{
+	NSString *originalPath = PBGitBinary.path;
+	NSURL *directory = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:NULL]);
+	@try {
+		for (NSString *output in @[ @"git version 1.5.9", @"not a git version", @"git version 1.6.0", @"git version 2.50.1" ]) {
+			NSURL *executable = [directory URLByAppendingPathComponent:@"git"];
+			NSString *script = [NSString stringWithFormat:@"#!/bin/sh\nprintf '%%s\\n' '%@'\n", output];
+			XCTAssertTrue([script writeToURL:executable atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+			XCTAssertTrue([NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:executable.path error:NULL]);
+			BOOL expected = [output hasPrefix:@"git version 1.6"] || [output hasPrefix:@"git version 2."];
+			XCTAssertEqual([PBGitBinary acceptBinary:executable.path], expected);
+			if (!expected) XCTAssertEqualObjects(PBGitBinary.path, originalPath);
+		}
+		NSURL *nonexecutable = [directory URLByAppendingPathComponent:@"not-executable"];
+		XCTAssertTrue([@"not executable" writeToURL:nonexecutable atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+		XCTAssertNil([PBGitBinary versionForPath:nonexecutable.path]);
+	} @finally {
+		XCTAssertTrue([PBGitBinary acceptBinary:originalPath]);
+		[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+	}
+}
+
 - (void)testGitBinaryDiscoveryCompatibilitySurface
 {
 	XCTAssertNil([PBGitBinary versionForPath:nil]);
@@ -623,6 +750,77 @@
 
 
 @implementation GitXRepositoryIntegrationTests
+
+- (void)testCommitPatchCharacterizesNewlineEmptyFailureAndCachedOutput
+{
+	NSError *error = nil;
+	GTReference *head = [self.repository.gtRepo headReferenceWithError:&error];
+	GTCommit *target = (GTCommit *)[head resolvedTarget];
+	XCTAssertNotNil(target, @"%@", error);
+	for (NSArray<NSString *> *example in @[
+		@[ @"patch\n", @"patch+GitX" ],
+		@[ @"", @"+GitX" ],
+		@[ @"patch\n\n", @"patch\n+GitX" ],
+	]) {
+		PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
+		repository.recoveryPatchOutput = example[0];
+		PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
+		XCTAssertEqualObjects(commit.patch, example[1]);
+		repository.recoveryPatchOutput = @"changed output\n";
+		XCTAssertEqualObjects(commit.patch, example[1]);
+		XCTAssertEqual(repository.recoveryPatchInvocationCount, 1U);
+	}
+	PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
+	PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
+	XCTAssertNil(commit.patch);
+	XCTAssertNil(commit.patch);
+	XCTAssertEqual(repository.recoveryPatchInvocationCount, 2U, @"a failed export is retried rather than cached");
+}
+
+- (void)testCommitIdentityReferencesAndSVNMetadataCompatibility
+{
+	[self.repository readCurrentBranch];
+	[self waitForHistoryUpdate];
+	PBGitCommit *commit = self.repository.headCommit;
+	PBGitCommit *anotherWrapper = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:commit.gtCommit];
+	XCTAssertTrue([commit isEqual:commit]);
+	XCTAssertFalse([commit isEqual:anotherWrapper]);
+	XCTAssertTrue([commit isOnSameBranchAs:commit]);
+	XCTAssertTrue(commit.isOnHeadBranch);
+	XCTAssertEqualObjects(commit.authorDate, commit.committerDate);
+	XCTAssertEqualObjects(commit.subject, @"initial commit");
+	XCTAssertEqualObjects(commit.shortName, commit.gtCommit.shortSHA);
+	XCTAssertEqualObjects(commit.refishName, commit.SHA);
+	XCTAssertEqualObjects(commit.refishType, kGitXCommitType);
+	XCTAssertNil(commit.SVNRevision);
+
+	PBGitRef *ref = [PBGitRef refFromString:@"refs/heads/recovery-characterization"];
+	commit.refs = [NSMutableArray array];
+	XCTAssertFalse([commit hasRef:ref]);
+	[commit removeRef:ref];
+	[commit addRef:ref];
+	XCTAssertTrue([commit hasRef:[PBGitRef refFromString:@"refs/heads/recovery-characterization"]]);
+	XCTAssertFalse([commit hasRef:[PBGitRef refFromString:@"refs/heads/other"]]);
+	[commit removeRef:ref];
+	XCTAssertFalse([commit hasRef:ref]);
+	[self.repository.refs removeObjectForKey:commit.OID];
+	[commit removeRef:ref];
+	XCTAssertFalse([commit hasRef:ref]);
+	[commit addRef:ref];
+	XCTAssertTrue([commit hasRef:ref]);
+
+	NSError *error = nil;
+	XCTAssertNotNil(([self.fixture git:@[ @"config", @"svn-remote.svn.url", @"https://example.invalid/svn" ] error:&error]), @"%@", error);
+	XCTAssertTrue([self.fixture writeText:@"metadata\n" toPath:@"svn-metadata.txt" error:&error], @"%@", error);
+	XCTAssertTrue([self.fixture commitAllWithMessage:@"metadata\n\ngit-svn-id: https://example.invalid/svn@123 abc\ngit-svn-id: https://example.invalid/svn@456 def" error:&error], @"%@", error);
+	PBGitRepository *svnRepository = [[PBGitRepository alloc] initWithURL:[NSURL fileURLWithPath:self.fixture.path] error:&error];
+	XCTAssertNotNil(svnRepository, @"%@", error);
+	GTReference *svnHead = [svnRepository.gtRepo headReferenceWithError:&error];
+	GTCommit *svnTarget = (GTCommit *)[svnHead resolvedTarget];
+	XCTAssertNotNil(svnTarget, @"%@", error);
+	PBGitCommit *svnCommit = [[PBGitCommit alloc] initWithRepository:svnRepository andCommit:svnTarget];
+	XCTAssertEqualObjects(svnCommit.SVNRevision, @"456");
+}
 
 - (NSArray<PBGitCommit *> *)loadCommitsForRevision:(PBGitRevSpecifier *)revision
 {
