@@ -257,13 +257,14 @@ final class RepositoryServiceTests: XCTestCase {
             imp_removeBlock(replacement)
         }
         XCTAssertTrue(NSApp.keyWindow === window)
-        var completed = false
+        let completed = expectation(description: "Empty repository open completes once")
+        completed.assertForOverFulfill = true
         PBRepositoryOpenCoordinator.shared.open([], sourceWindow: nil) { documents, errors in
             XCTAssertTrue(documents.isEmpty)
             XCTAssertTrue(errors.isEmpty)
-            completed = true
+            completed.fulfill()
         }
-        XCTAssertTrue(completed)
+        wait(for: [completed], timeout: 1)
         XCTAssertTrue(NSApp.keyWindow === window)
         withExtendedLifetime(controller) {}
     }
