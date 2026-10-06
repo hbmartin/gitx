@@ -784,6 +784,32 @@ final class PBChildProcessOwnerTests: XCTestCase {
         }
     }
 
+    func testPosixGroupInspectionIncludesMoreThanInitialCapacity() throws {
+        let system = PBPosixChildProcessSystem()
+        let outputPipe = try makePOSIXPipe()
+        defer { Darwin.close(outputPipe.read) }
+        let processIdentifier = try system.spawn(configuration: PBChildProcessConfiguration(
+            launchPath: "/bin/sh",
+            arguments: ["-c", "i=0; while [ \"$i\" -lt 20 ]; do /bin/sleep 60 & i=$((i+1)); done; printf ready; wait"],
+            environment: ProcessInfo.processInfo.environment,
+            workingDirectory: nil,
+            standardInputFileDescriptor: nil,
+            standardOutputFileDescriptor: outputPipe.write
+        ))
+        defer {
+            _ = killpg(processIdentifier, SIGKILL)
+            var status: Int32 = 0
+            _ = waitpid(processIdentifier, &status, 0)
+        }
+        XCTAssertEqual(Darwin.close(outputPipe.write), 0)
+        let readiness = try FileHandle(fileDescriptor: outputPipe.read, closeOnDealloc: false).read(upToCount: 5)
+        XCTAssertEqual(readiness, Data("ready".utf8))
+
+        let members = try system.processGroupMembers(processGroup: processIdentifier)
+        XCTAssertTrue(members.contains(processIdentifier))
+        XCTAssertEqual(members.count, 21)
+    }
+
     func testPosixSpawnRejectsInvalidConfigurationBeforeLaunching() {
         let system = PBPosixChildProcessSystem()
         let base = PBChildProcessConfiguration(
