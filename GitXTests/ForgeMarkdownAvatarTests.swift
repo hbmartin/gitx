@@ -926,40 +926,44 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
     }
 
     func testAppModuleProductBoundariesReceiveAppHostedCoverage() async throws {
-        XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.markdownProof(), 0b11_1111_1111_1111)
-        XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.requestProof(), 0b1_1111_1111)
+        #if DEBUG
+            XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.markdownProof(), 0b11_1111_1111_1111)
+            XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.requestProof(), 0b1_1111_1111)
 
-        let png = try rasterData(type: .png, width: 12, height: 10)
-        XCTAssertTrue(PBForgeMarkdownAvatarProductHarness.validateAvatarData(
-            png,
-            declaredMediaType: ForgeAvatarMediaType.png.rawValue,
-            maximumPixels: 120,
-            expectedWidth: 12,
-            expectedHeight: 10
-        ))
-        XCTAssertFalse(PBForgeMarkdownAvatarProductHarness.validateAvatarData(
-            png,
-            declaredMediaType: ForgeAvatarMediaType.jpeg.rawValue,
-            maximumPixels: 120,
-            expectedWidth: 12,
-            expectedHeight: 10
-        ))
-        XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.avatarFallbackProof(), 0b11111)
+            let png = try rasterData(type: .png, width: 12, height: 10)
+            XCTAssertTrue(PBForgeMarkdownAvatarProductHarness.validateAvatarData(
+                png,
+                declaredMediaType: ForgeAvatarMediaType.png.rawValue,
+                maximumPixels: 120,
+                expectedWidth: 12,
+                expectedHeight: 10
+            ))
+            XCTAssertFalse(PBForgeMarkdownAvatarProductHarness.validateAvatarData(
+                png,
+                declaredMediaType: ForgeAvatarMediaType.jpeg.rawValue,
+                maximumPixels: 120,
+                expectedWidth: 12,
+                expectedHeight: 10
+            ))
+            XCTAssertEqual(PBForgeMarkdownAvatarProductHarness.avatarFallbackProof(), 0b11111)
 
-        let loaderProof = await PBForgeMarkdownAvatarProductHarness.loaderProof()
-        XCTAssertEqual(loaderProof, 0b1111_1111_1111_1111)
+            let loaderProof = await PBForgeMarkdownAvatarProductHarness.loaderProof()
+            XCTAssertEqual(loaderProof, 0b1111_1111_1111_1111)
 
-        let sidebarAttentionProof = await PBForgeMarkdownAvatarProductHarness.sidebarAttentionProof()
-        XCTAssertEqual(sidebarAttentionProof, 0b111_1111_1111_1111)
+            let sidebarAttentionProof = await PBForgeMarkdownAvatarProductHarness.sidebarAttentionProof()
+            XCTAssertEqual(sidebarAttentionProof, 0b111_1111_1111_1111)
 
-        let windowRecoveryProof = await PBForgeMarkdownAvatarProductHarness.windowRecoveryProof()
-        XCTAssertEqual(windowRecoveryProof, 0b1111111)
+            let windowRecoveryProof = await PBForgeMarkdownAvatarProductHarness.windowRecoveryProof()
+            XCTAssertEqual(windowRecoveryProof, 0b1111111)
 
-        let startupFailureProof = await PBForgeMarkdownAvatarProductHarness.applicationStartupFailureProof()
-        XCTAssertEqual(startupFailureProof, 0b111)
+            let startupFailureProof = await PBForgeMarkdownAvatarProductHarness.applicationStartupFailureProof()
+            XCTAssertEqual(startupFailureProof, 0b111)
 
-        let collaborationLifecycleProof = await PBForgeMarkdownAvatarProductHarness.collaborationLifecycleProof()
-        XCTAssertEqual(collaborationLifecycleProof, 0b111)
+            let collaborationLifecycleProof = await PBForgeMarkdownAvatarProductHarness.collaborationLifecycleProof()
+            XCTAssertEqual(collaborationLifecycleProof, 0b111)
+        #else
+            throw XCTSkip("Product coverage harnesses are compiled into the Debug app only.")
+        #endif
     }
 
     private func cell(_ text: String) -> ForgeMarkdownTableCell {

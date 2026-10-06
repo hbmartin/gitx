@@ -5,6 +5,13 @@ import XCTest
 
 // swift6-safety-justification: XCTest owns the case lifetime; cross-task result state lives in the locked ResultBox.
 final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        #if !DEBUG
+            throw XCTSkip("The revision-provider harness is compiled into the Debug app only.")
+        #endif
+    }
+
     private enum InvocationResult {
         case success(RevisionComparison)
         case failure(String)
@@ -393,27 +400,31 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         maximumChangedFiles: Int = 500,
         maximumBlobBytes: Int = 2 * 1024 * 1024
     ) -> (operation: PBHistoryFlowRevisionProviderTestOperation, result: ResultBox) {
-        let result = ResultBox()
-        let operation = PBHistoryFlowRevisionProviderTestHarness.compareRepository(
-            at: repositoryURL,
-            gitExecutableURL: gitExecutableURL,
-            base: base,
-            target: target,
-            maximumChangedFiles: maximumChangedFiles,
-            maximumBlobBytes: maximumBlobBytes
-        ) { data, errorDescription in
-            do {
-                if let data {
-                    let comparison = try JSONDecoder().decode(RevisionComparison.self, from: data)
-                    result.complete(.success(comparison))
-                } else {
-                    result.complete(.failure(errorDescription ?? "Unknown provider failure"))
+        #if DEBUG
+            let result = ResultBox()
+            let operation = PBHistoryFlowRevisionProviderTestHarness.compareRepository(
+                at: repositoryURL,
+                gitExecutableURL: gitExecutableURL,
+                base: base,
+                target: target,
+                maximumChangedFiles: maximumChangedFiles,
+                maximumBlobBytes: maximumBlobBytes
+            ) { data, errorDescription in
+                do {
+                    if let data {
+                        let comparison = try JSONDecoder().decode(RevisionComparison.self, from: data)
+                        result.complete(.success(comparison))
+                    } else {
+                        result.complete(.failure(errorDescription ?? "Unknown provider failure"))
+                    }
+                } catch {
+                    result.complete(.failure("Could not decode provider result: \(error)"))
                 }
-            } catch {
-                result.complete(.failure("Could not decode provider result: \(error)"))
             }
-        }
-        return (operation, result)
+            return (operation, result)
+        #else
+            preconditionFailure("setUpWithError skips this Debug-only harness in Release.")
+        #endif
     }
 
     private func makeGitShim(

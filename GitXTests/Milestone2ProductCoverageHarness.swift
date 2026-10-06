@@ -1,5 +1,6 @@
 #if DEBUG
     import AppKit
+    import Darwin
     import ForgeKit
     import GitHubForgeAdapter
 
@@ -639,7 +640,261 @@
                 && sidebarPullRequest && sidebarIssue && sidebarUnavailable
         }
 
+        // Objective-C-compatible XCTest declarations invoke this shipped-module proof.
+        // swiftlint:disable:next unused_declaration
+        @objc static func rejectedPushRecoveryProof() -> UInt64 {
+            do {
+                let local = try HarnessLocalRepository(remoteURL: "/tmp/unavailable-review-remote")
+                defer { local.cleanup() }
+                let snapshot = RepositoryPushSnapshot(sourceRef: "refs/heads/main", sourceOID: local.head,
+                                                      remoteName: "origin", endpoint: "/tmp/unavailable-review-remote", destinationRef: "refs/heads/main",
+                                                      fetchedOID: String(repeating: "b", count: 40))
+                let plan = PBRepositoryPushRetryPlan(snapshot: snapshot)
+                let rejected = NSError(domain: "review-proof", code: 1, userInfo: [PBRepositoryPushRetryPlan.errorKey: plan])
+                let ordinary = NSError(domain: "review-proof", code: 2)
+                let branch = PBGitRef(string: "refs/heads/main")
+                let remote = PBGitRef(string: "refs/remotes/origin")
+                var conditions: [Bool] = []
+                for scenario in 0 ..< 8 {
+                    let window = HarnessDialogWindowController(window: scenario == 5 ? nil : NSWindow())
+                    var events: [RepositoryPushEvent] = []
+                    var starts = 0
+                    var confirmations = 0
+                    var presentationValid = true
+                    let coordinator = RepositoryRemoteActionCoordinator(repository: local.repository, windowController: window,
+                                                                        retryConfirmation: { alert, cancel, action in
+                                                                            confirmations += 1
+                                                                            presentationValid = !alert.showsSuppressionButton && alert.informativeText.contains(local.head)
+                                                                                && alert.informativeText.contains("newer remote work")
+                                                                            if scenario == 1 {
+                                                                                cancel()
+                                                                            } else if scenario != 4 {
+                                                                                action()
+                                                                            }
+                                                                            return scenario != 4
+                                                                        }, progressStarting: { _, _, _, complete in
+                                                                            starts += 1
+                                                                            if starts == 1 {
+                                                                                complete(scenario == 6 ? ordinary : rejected)
+                                                                            } else if scenario != 3 {
+                                                                                complete(scenario == 2 ? rejected : nil)
+                                                                            }
+                                                                            return scenario != 3 && scenario != 7
+                                                                        })
+                    let offer = RepositoryPullRequestPushOffer(initiallySelected: true,
+                                                               presentation: .capability(.verified(.knownAuthority), action: "create a Pull Request after pushing"))
+                    coordinator.performPush(branch: branch, remote: remote, requiresConfirmation: false,
+                                            pullRequestOption: nil, pullRequestOffer: offer, suppressesPostPushBrowserSuggestion: true,
+                                            completion: { events.append($0) })
+                    let terminal: RepositoryPushEvent = scenario == 1 ? .cancelled : ([0, 7].contains(scenario) ? .succeeded : .failed)
+                    conditions.append(events == [.began(createPullRequestSelected: true), terminal]
+                        && confirmations == ([5, 6].contains(scenario) ? 0 : 1)
+                        && starts == ([0, 2, 3, 7].contains(scenario) ? 2 : 1)
+                        && window.errorCount == ([2, 5, 6].contains(scenario) ? 1 : 0) && presentationValid)
+                }
+                var ephemeral: HarnessDialogWindowController? = HarnessDialogWindowController(window: NSWindow())
+                let lostWindow = RepositoryRemoteActionCoordinator(repository: local.repository, windowController: ephemeral!) { _, _, _, _ in false }
+                ephemeral = nil
+                var unavailableEvents: [RepositoryPushEvent] = []
+                lostWindow.performPush(branch: branch, remote: remote, requiresConfirmation: false,
+                                       pullRequestOption: nil, completion: { unavailableEvents.append($0) })
+                conditions.append(unavailableEvents == [.began(createPullRequestSelected: false), .failed])
+
+                let bare = local.directory.appendingPathComponent("remote.git")
+                _ = try local.repository.outputOfTask(withArguments: ["init", "--bare", "--quiet", bare.path])
+                _ = try local.repository.outputOfTask(withArguments: ["remote", "set-url", "origin", bare.path])
+                _ = try local.repository.outputOfTask(withArguments: ["push", "origin", "main"])
+                _ = try local.repository.outputOfTask(withArguments: ["fetch", "origin"])
+                _ = try local.repository.outputOfTask(withArguments: ["commit", "--amend", "-m", "rewritten"])
+                let realWindow = HarnessDialogWindowController(window: NSWindow())
+                var realEvents: [RepositoryPushEvent] = []
+                var realStarts = 0
+                let real = RepositoryRemoteActionCoordinator(repository: local.repository, windowController: realWindow,
+                                                             retryConfirmation: { _, _, action in action(); return true },
+                                                             progressStarting: { _, _, operation, completion in
+                                                                 realStarts += 1
+                                                                 do { try operation(); completion(nil) } catch { completion(error as NSError) }
+                                                                 return true
+                                                             })
+                real.performPush(branch: branch, remote: remote, requiresConfirmation: false,
+                                 pullRequestOption: nil, suppressesPostPushBrowserSuggestion: true, completion: { realEvents.append($0) })
+                conditions.append(realEvents == [.began(createPullRequestSelected: false), .succeeded]
+                    && realStarts == 2 && realWindow.errorCount == 0)
+                let defaultWindow = HarnessDialogWindowController(window: NSWindow())
+                defaultWindow.window?.makeKeyAndOrderFront(nil)
+                var defaultEvents: [RepositoryPushEvent] = []
+                let defaultConfirmation = RepositoryRemoteActionCoordinator(repository: local.repository, windowController: defaultWindow) { _, _, _, complete in
+                    complete(rejected)
+                    return true
+                }
+                defaultConfirmation.performPush(branch: branch, remote: remote, requiresConfirmation: false,
+                                                pullRequestOption: nil, completion: { defaultEvents.append($0) })
+                let deadline = Date().addingTimeInterval(5)
+                while defaultWindow.window?.attachedSheet == nil, Date() < deadline {
+                    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.001))
+                }
+                if let sheet = defaultWindow.window?.attachedSheet {
+                    defaultWindow.window?.endSheet(sheet, returnCode: .alertSecondButtonReturn)
+                }
+                while defaultEvents.last?.isTerminal != true, Date() < deadline {
+                    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.001))
+                }
+                conditions.append(defaultEvents == [.began(createPullRequestSelected: false), .cancelled])
+                defaultWindow.window?.close()
+                let copyWindow = HarnessWindowController(repository: local.repository, window: NSWindow())
+                let copyHarness = Milestone2UITestHarness.runProductProof(for: copyWindow, environment: ["GITX_M2_SCENARIO": "partial-patch-copy"])
+                conditions.append(copyWindow.window?.attachedSheet != nil)
+                if let sheet = copyWindow.window?.attachedSheet {
+                    copyWindow.window?.endSheet(sheet)
+                }
+                _ = copyHarness
+                copyWindow.window?.close()
+                return bitProof(conditions)
+            } catch {
+                print("Review recovery proof failed: \(error)")
+                return 0
+            }
+        }
+
         // MARK: Existing remote action coordinator
+
+        // XCTest calls the shipped module so this checks the real POSIX adapter.
+        // swiftlint:disable:next unused_declaration
+        @objc static func verificationBoundaryProof() -> UInt64 {
+            do {
+                let window = HarnessDialogWindowController(window: NSWindow())
+                let harness = Milestone2UITestHarness.runProductProof(
+                    for: window, environment: ["GITX_M2_SCENARIO": "partial-patch-copy"]
+                )
+                let missingRepositoryWasReported = window.errorCount == 1
+                _ = harness
+                window.close()
+
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let output = Pipe()
+                let process = try PBPosixChildProcessSystem().spawn(configuration: PBChildProcessConfiguration(
+                    launchPath: "/bin/pwd", arguments: [], environment: ProcessInfo.processInfo.environment,
+                    workingDirectory: directory.path, standardInputFileDescriptor: nil,
+                    standardOutputFileDescriptor: output.fileHandleForWriting.fileDescriptor
+                ))
+                var status: Int32 = 0
+                var reaped: pid_t
+                repeat {
+                    reaped = Darwin.waitpid(process, &status, 0)
+                } while reaped == -1 && errno == EINTR
+                try output.fileHandleForWriting.close()
+                let data = try output.fileHandleForReading.readToEnd() ?? Data()
+                try output.fileHandleForReading.close()
+                let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                let system = PBPosixChildProcessSystem()
+                let missingChildObservation = reportsPOSIXError(ECHILD) {
+                    _ = try system.exitStateWithoutReaping(processIdentifier: .max)
+                }
+                let missingChildReap = reportsPOSIXError(ECHILD) {
+                    _ = try system.reapIfExited(processIdentifier: .max)
+                }
+                let missingGroupSignal = reportsPOSIXError(ESRCH) {
+                    try system.send(signal: SIGTERM, toProcessGroup: .max)
+                }
+                let invalidDescriptor = reportsPOSIXError(EBADF) {
+                    _ = try system.spawn(configuration: PBChildProcessConfiguration(
+                        launchPath: "/bin/pwd", arguments: [], environment: ProcessInfo.processInfo.environment,
+                        workingDirectory: nil, standardInputFileDescriptor: STDIN_FILENO,
+                        standardOutputFileDescriptor: .max
+                    ))
+                }
+                var schedule = PBChildProcessTerminationSchedule()
+                schedule.mergeRequest(now: 100, gracePeriod: 10, forceKillDelay: 20, terminationWasSent: false)
+                schedule.mergeRequest(now: 200, gracePeriod: 40, forceKillDelay: 50, terminationWasSent: false)
+                let failedSignalSystem = BoundaryProcessSystem()
+                let owner = PBChildProcessOwner(system: failedSignalSystem)
+                try owner.launch(configuration: PBChildProcessConfiguration(
+                    launchPath: "/unused", arguments: [], environment: [:], workingDirectory: nil,
+                    standardInputFileDescriptor: nil, standardOutputFileDescriptor: STDOUT_FILENO
+                )) { status, error in
+                    failedSignalSystem.recordCompletion(
+                        status == 0 && error == nil && !owner.requestTermination(gracePeriod: 0, forceKillDelay: 0)
+                    )
+                }
+                let requested = owner.requestTermination(gracePeriod: 0, forceKillDelay: 0)
+                return bitProof([
+                    missingRepositoryWasReported,
+                    reaped == process && status == 0,
+                    URL(fileURLWithPath: path).resolvingSymlinksInPath() == directory.resolvingSymlinksInPath(),
+                    missingChildObservation, missingChildReap, missingGroupSignal, invalidDescriptor,
+                    schedule.terminationDeadline == 10_000_000_100 && schedule.forceKillDeadline == 30_000_000_100,
+                    requested && failedSignalSystem.completedAfterEscalation,
+                ])
+            } catch {
+                NSLog("Verification boundary proof failed: %@", error.localizedDescription)
+                return 0
+            }
+        }
+
+        private final nonisolated class BoundaryExitMonitor: PBChildProcessExitMonitoring {
+            func activate() {}
+            func cancel() {}
+        }
+
+        // swift6-safety-justification: The lock protects all fake lifecycle state across the owner's serial queue and the test caller.
+        private final nonisolated class BoundaryProcessSystem: PBChildProcessSystem, @unchecked Sendable {
+            private let lock = NSLock()
+            private var exited = false
+            private var signals: [Int32] = []
+            private var completed = false
+
+            var completedAfterEscalation: Bool {
+                lock.withLock { completed && signals == [SIGTERM, SIGKILL] }
+            }
+
+            func recordCompletion(_ success: Bool) {
+                lock.withLock { completed = success }
+            }
+
+            func spawn(configuration _: PBChildProcessConfiguration) throws -> pid_t {
+                4321
+            }
+
+            func makeExitMonitor(processIdentifier _: pid_t, queue _: DispatchQueue,
+                                 handler _: @escaping @Sendable () -> Void) -> any PBChildProcessExitMonitoring
+            {
+                BoundaryExitMonitor()
+            }
+
+            func exitStateWithoutReaping(processIdentifier _: pid_t) throws -> PBChildProcessExitState {
+                lock.withLock { exited ? .terminal : .running }
+            }
+
+            func reapIfExited(processIdentifier _: pid_t) throws -> Int32? {
+                lock.withLock { exited ? 0 : nil }
+            }
+
+            func send(signal: Int32, toProcessGroup _: pid_t) throws {
+                try lock.withLock {
+                    signals.append(signal)
+                    if signal == SIGTERM {
+                        throw NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+                    }
+                    exited = true
+                }
+            }
+
+            func processGroupMembers(processGroup _: pid_t) throws -> [pid_t] {
+                [4321]
+            }
+        }
+
+        private static func reportsPOSIXError(_ code: Int32, body: () throws -> Void) -> Bool {
+            do {
+                try body()
+                return false
+            } catch {
+                let error = error as NSError
+                return error.domain == NSPOSIXErrorDomain && error.code == Int(code)
+            }
+        }
 
         private static func remoteActionProof(_ fixture: HarnessPullRequestFixture) throws -> Bool {
             let local = try HarnessLocalRepository(remoteURL: "https://github.com/hbmartin/gitx.git")

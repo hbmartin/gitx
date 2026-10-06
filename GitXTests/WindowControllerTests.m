@@ -508,6 +508,17 @@ static void PBSwapClassMethods(Class cls, SEL original, SEL replacement)
 	method_exchangeImplementations(class_getClassMethod(cls, original), class_getClassMethod(cls, replacement));
 }
 
+static NSEvent *PBWindowModifierEvent;
+@interface NSApplication (WindowModifierTests)
+- (NSEvent *)pb_window_currentEvent;
+@end
+@implementation NSApplication (WindowModifierTests)
+- (NSEvent *)pb_window_currentEvent
+{
+	return PBWindowModifierEvent;
+}
+@end
+
 static void PBWindowSendObject(id target, SEL selector, id object)
 {
 	((void (*)(id, SEL, id))objc_msgSend)(target, selector, object);
@@ -3131,6 +3142,65 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	}
 }
 
+- (void)testRepositoryOpeningModifierKeysOverrideThePreference
+{
+	PBOpenDisposition previousDisposition = PBApplicationSettings.openDisposition;
+	NSWindow *originalWindow = self.controller.window;
+	PBWindowTabStateSpy *sourceWindow = [[PBWindowTabStateSpy alloc]
+		initWithContentRect:NSMakeRect(0, 0, 500, 320)
+				  styleMask:NSWindowStyleMaskTitled
+					backing:NSBackingStoreBuffered
+					  defer:NO];
+	self.controller.window = sourceWindow;
+	PBSwapInstanceMethods(NSApplication.class, @selector(currentEvent), @selector(pb_window_currentEvent));
+	@try {
+		for (NSNumber *flags in @[ @(NSEventModifierFlagCommand), @(NSEventModifierFlagOption), @(NSEventModifierFlagOption | NSEventModifierFlagCommand) ]) {
+			BOOL expectsTab = flags.unsignedIntegerValue == NSEventModifierFlagCommand;
+			PBApplicationSettings.openDisposition = expectsTab ? PBOpenDispositionAlwaysNewWindow : PBOpenDispositionPreferTab;
+			PBWindowModifierEvent = [NSEvent keyEventWithType:NSEventTypeFlagsChanged
+													 location:NSZeroPoint
+												modifierFlags:flags.unsignedIntegerValue
+													timestamp:0
+												 windowNumber:0
+													  context:nil
+												   characters:@""
+								  charactersIgnoringModifiers:@""
+													isARepeat:NO
+													  keyCode:0];
+			NSDocument *document = [[NSDocument alloc] init];
+			PBWindowTabStateSpy *newWindow = [[PBWindowTabStateSpy alloc]
+				initWithContentRect:NSMakeRect(20, 20, 500, 320)
+						  styleMask:NSWindowStyleMaskTitled
+							backing:NSBackingStoreBuffered
+							  defer:NO];
+			[document addWindowController:[[NSWindowController alloc] initWithWindow:newWindow]];
+			PBWindowDocumentToOpen = document;
+			PBWindowDocumentWasAlreadyOpen = NO;
+			NSUInteger previousTabCount = sourceWindow.addTabbedWindowCount;
+			XCTestExpectation *completion = [self expectationWithDescription:@"modifier-directed repository open"];
+			[[PBRepositoryOpenCoordinator shared] openURLs:@[ self.repositoryURL ]
+											  sourceWindow:sourceWindow
+												completion:^(NSArray<NSDocument *> *documents, NSArray<NSError *> *errors) {
+													XCTAssertEqualObjects(documents, @[ document ]);
+													XCTAssertEqual(errors.count, (NSUInteger)0);
+													[completion fulfill];
+												}];
+			[self waitForExpectations:@[ completion ] timeout:1.0];
+			XCTAssertEqual(sourceWindow.addTabbedWindowCount - previousTabCount, expectsTab ? (NSUInteger)1 : (NSUInteger)0);
+			XCTAssertEqual(newWindow.focusCount, (NSUInteger)1);
+			[document close];
+		}
+	} @finally {
+		PBSwapInstanceMethods(NSApplication.class, @selector(currentEvent), @selector(pb_window_currentEvent));
+		PBWindowModifierEvent = nil;
+		PBApplicationSettings.openDisposition = previousDisposition;
+		PBWindowDocumentToOpen = nil;
+		PBWindowDocumentWasAlreadyOpen = NO;
+		self.controller.window = originalWindow;
+		[sourceWindow close];
+	}
+}
+
 - (void)testRepositoryDocumentOpensUnbornRepository
 {
 	NSString *name = [NSString stringWithFormat:@"GitXUnbornOpening-%@", NSUUID.UUID.UUIDString];
@@ -3533,10 +3603,18 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 		XCTAssertFalse((preferences.window.styleMask & NSWindowStyleMaskResizable) != 0);
 		XCTAssertEqual(preferences.window.toolbar.displayMode, NSToolbarDisplayModeIconAndLabel);
 		XCTAssertFalse(preferences.window.toolbar.allowsUserCustomization);
+		XCTAssertTrue(preferences.crossFade);
+		XCTAssertTrue(preferences.shiftSlowsAnimation);
+		[preferences setCrossFade:NO];
+		[preferences setShiftSlowsAnimation:NO];
+		XCTAssertFalse(preferences.crossFade);
+		XCTAssertFalse(preferences.shiftSlowsAnimation);
 		XCTAssertGreaterThanOrEqual(preferences.window.frame.size.width, 860.0);
 		NSPopUpButton *appearancePopup = [preferences valueForKey:@"appearancePopup"];
 		XCTAssertEqualObjects([appearancePopup.itemArray valueForKey:@"title"],
 							  (@[ @"Automatic (System)", @"Light", @"Dark" ]));
+		[NSApp sendAction:appearancePopup.action to:appearancePopup.target from:appearancePopup];
+		XCTAssertEqual([PBGitDefaults appearancePreference], appearancePopup.selectedItem.tag);
 		NSView *generalPrefsView = [preferences valueForKey:@"generalPrefsView"];
 		NSMutableArray<NSView *> *pendingViews = [NSMutableArray arrayWithObject:preferences.window.contentView];
 		BOOL foundCommitGuideControl = NO;
@@ -4401,6 +4479,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertGreaterThan(self.controller.synchronizeCount, changedCount);
 }
 
+// These product harnesses are compiled into the Debug app only.
+#if DEBUG
 - (void)testMilestone2ShippedProductCoverageProofs
 {
 	uint64_t synchronousProof = [PBMilestone2ProductCoverageHarness synchronousProof];
@@ -4489,5 +4569,7 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 																		   }];
 	[self waitForExpectations:@[ expectation ] timeout:30.0];
 }
+
+#endif
 
 @end

@@ -44,7 +44,11 @@
 		[menuItem setState:(self.detailMode == PBHistoryDetailModeFlow) ? NSControlStateValueOn : NSControlStateValueOff];
 	}
 
-	if (action == @selector(copy:) || action == @selector(copySHA:) || action == @selector(copyShortName:) || action == @selector(copyPatch:) || action == @selector(createPatch:)) {
+	if (action == @selector(copy:) || action == @selector(copySHA:) || action == @selector(copyShortName:)) {
+		return [GitXCommitCopier canCopyImmutableCommits:self.commitController.selectedObjects];
+	}
+
+	if (action == @selector(copyPatch:) || action == @selector(createPatch:)) {
 		return self.commitController.selectedObjects.count > 0;
 	}
 
@@ -103,22 +107,29 @@
 
 - (IBAction)copy:(id)sender
 {
+	if (![GitXCommitCopier canCopyImmutableCommits:self.commitController.selectedObjects]) return;
 	[GitXCommitCopier putStringToPasteboard:[GitXCommitCopier toSHAAndHeadingString:self.commitController.selectedObjects]];
 }
 
 - (IBAction)copySHA:(id)sender
 {
+	if (![GitXCommitCopier canCopyImmutableCommits:self.commitController.selectedObjects]) return;
 	[GitXCommitCopier putStringToPasteboard:[GitXCommitCopier toFullSHA:self.commitController.selectedObjects]];
 }
 
 - (IBAction)copyShortName:(id)sender
 {
+	if (![GitXCommitCopier canCopyImmutableCommits:self.commitController.selectedObjects]) return;
 	[GitXCommitCopier putStringToPasteboard:[GitXCommitCopier toShortName:self.commitController.selectedObjects]];
 }
 
 - (IBAction)copyPatch:(id)sender
 {
-	[GitXCommitCopier putStringToPasteboard:[GitXCommitCopier toPatch:self.commitController.selectedObjects]];
+	PBCommitPatchCopyResult *result = [GitXCommitCopier patchCopyResult:self.commitController.selectedObjects];
+	[GitXCommitCopier putStringToPasteboard:result.text];
+	if (result.warningMessage) {
+		[self.windowController showMessageSheet:result.warningMessage infoText:result.warningInfo];
+	}
 }
 
 - (IBAction)createPatch:(id)sender

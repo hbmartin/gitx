@@ -21,6 +21,10 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		C0DEF2000000000000000002 /* CommitCopyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF2000000000000000001 /* CommitCopyPolicy.swift */; };
+		C0DEF2000000000000000003 /* CommitCopyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF2000000000000000001 /* CommitCopyPolicy.swift */; };
+		C0DEF1000000000000000002 /* RepositoryRejectedPushRecoveryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF1000000000000000001 /* RepositoryRejectedPushRecoveryPolicy.swift */; };
+		C0DEF1000000000000000003 /* RepositoryRejectedPushRecoveryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF1000000000000000001 /* RepositoryRejectedPushRecoveryPolicy.swift */; };
 		0A6858C711F7EA8A00AC2BE4 /* CoreServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A6858C611F7EA8A00AC2BE4 /* CoreServices.framework */; };
 		2DE9B60629ABEB450097873A /* GitX.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = 2DE9B60529ABEB450097873A /* GitX.xcconfig */; };
 		373F9A201EAF97A200A77B4C /* NSSplitView+GitX.m in Sources */ = {isa = PBXBuildFile; fileRef = 373F9A1F1EAF97A200A77B4C /* NSSplitView+GitX.m */; };
@@ -640,6 +644,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0DEF2000000000000000001 /* CommitCopyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitCopyPolicy.swift; sourceTree = "<group>"; };
+		C0DEF1000000000000000001 /* RepositoryRejectedPushRecoveryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRejectedPushRecoveryPolicy.swift; sourceTree = "<group>"; };
 		0A6858C611F7EA8A00AC2BE4 /* CoreServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreServices.framework; path = System/Library/Frameworks/CoreServices.framework; sourceTree = SDKROOT; };
 		1058C7A1FEA54F0111CA2CBB /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = /System/Library/Frameworks/Cocoa.framework; sourceTree = "<absolute>"; };
 		29B97324FDCFA39411CA2CEA /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = /System/Library/Frameworks/AppKit.framework; sourceTree = "<absolute>"; };
@@ -1448,6 +1454,7 @@
 				F0F500000000000000000104 /* RepositoryPullRequestMutationPreferenceStore.swift */,
 				C0DED0000000000000000011 /* RepositoryActionContextResolver.swift */,
 				C0DED0000000000000000012 /* RepositoryFocusRefreshCoordinator.swift */,
+				C0DEF1000000000000000001 /* RepositoryRejectedPushRecoveryPolicy.swift */,
 				C0DED0000000000000000013 /* RepositoryRemoteActionCoordinator.swift */,
 				C0DED0000000000000000014 /* RepositoryReferenceActionCoordinator.swift */,
 				C0DED0000000000000000015 /* RepositoryStashActionCoordinator.swift */,
@@ -1580,6 +1587,7 @@
 				6C4855C71D57DCFC0027A7B4 /* PBTerminalUtil.m */,
 				4AB71FF614B7EDD400F1DFFC /* RJModalRepoSheet.h */,
 				4AB71FF714B7EDD400F1DFFC /* RJModalRepoSheet.m */,
+				C0DEF2000000000000000001 /* CommitCopyPolicy.swift */,
 				C0DE90000000000000000031 /* GitXCommitCopier.swift */,
 				4DECFBB01E662962004C3A6F /* ObjectiveGit+PBCategories.h */,
 				4DECFBB11E662962004C3A6F /* ObjectiveGit+PBCategories.m */,
@@ -2261,6 +2269,8 @@
 				C0DEB0000000000000000004 /* PBGitHistoryController+UI.m in Sources */,
 				C0DED0000000000000000001 /* RepositoryActionContextResolver.swift in Sources */,
 				C0DED0000000000000000002 /* RepositoryFocusRefreshCoordinator.swift in Sources */,
+				C0DEF2000000000000000002 /* CommitCopyPolicy.swift in Sources */,
+				C0DEF1000000000000000002 /* RepositoryRejectedPushRecoveryPolicy.swift in Sources */,
 				C0DED0000000000000000003 /* RepositoryRemoteActionCoordinator.swift in Sources */,
 				C0DED0000000000000000004 /* RepositoryReferenceActionCoordinator.swift in Sources */,
 				C0DED0000000000000000005 /* RepositoryStashActionCoordinator.swift in Sources */,
@@ -2436,6 +2446,8 @@
 				C0DE60000000000000000001 /* GitXSwiftFeatureTests.swift in Sources */,
 				C0DE91000000000000000001 /* PBQLOutlineViewTests.swift in Sources */,
 				C0DE92000000000000000003 /* QuickLookFilePromiseExporter.swift in Sources */,
+				C0DEF2000000000000000003 /* CommitCopyPolicy.swift in Sources */,
+				C0DEF1000000000000000003 /* RepositoryRejectedPushRecoveryPolicy.swift in Sources */,
 				C0DE90000000000000000007 /* RepositoryServiceTests.swift in Sources */,
 				C0CAC4000000000000000002 /* RepositoryForgeRemoteDescriptorLoader.swift in Sources */,
 				C0DF20000000000000000001 /* ForgeScriptingTests.swift in Sources */,
@@ -2923,6 +2935,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
 					"$(PROJECT_DIR)/Classes",
 					"$(PROJECT_DIR)/Classes/git",
 					"$(PROJECT_DIR)/Classes/Controllers",
@@ -2934,6 +2947,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.phere.GitXTests;
 				PRODUCT_NAME = GitXTests;
 				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "GitXTests/GitXTests-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
@@ -2950,6 +2964,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
 					"$(PROJECT_DIR)/Classes",
 					"$(PROJECT_DIR)/Classes/git",
 					"$(PROJECT_DIR)/Classes/Controllers",

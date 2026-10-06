@@ -80,6 +80,23 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         XCTAssertNil(weakRepository, "releasing the pane must release the repository without a retain cycle")
     }
 
+    func testUntrackedDiffWithoutAWorkingDirectoryShowsTheFailure() {
+        let repository = PBGitRepository()
+        let pane = PBStagingDiffPaneController(repository: repository)
+        let file = PBChangedFile(path: "untracked.txt")
+        file.status = .NEW
+        file.hasUnstagedChanges = true
+        pane.renderRequests([PBStagingDiffRequest(file: file, staged: false)])
+
+        let expected = "The repository has no working directory."
+        let deadline = Date().addingTimeInterval(2)
+        while !pane.contentView.textView.string.contains(expected), Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.001))
+        }
+        XCTAssertTrue(pane.contentView.textView.string.contains(expected))
+        XCTAssertTrue(pane.contentView.textView.string.contains("untracked.txt"))
+    }
+
     func testQueuedProductionRetainsRepositoryAfterPaneTeardownAndCompletes() async throws {
         let producerStarted = expectation(description: "queued producer started")
         let producerFinished = expectation(description: "queued producer finished")

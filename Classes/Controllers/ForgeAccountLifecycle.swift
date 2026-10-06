@@ -143,16 +143,12 @@ final nonisolated class SystemForgeCLICommandRunner: ForgeCLICommandRunning, Sen
             }
             let outputHandle = SendableForgeFileHandle(outputPipe.fileHandleForReading)
             let errorHandle = SendableForgeFileHandle(errorPipe.fileHandleForReading)
-            let outputRead = Task.detached(priority: .userInitiated) {
-                outputHandle.value.readDataToEndOfFile()
-            }
-            let errorRead = Task.detached(priority: .userInitiated) {
-                errorHandle.value.readDataToEndOfFile()
-            }
+            async let outputRead = outputHandle.readToEnd()
+            async let errorRead = errorHandle.readToEnd()
             let terminationStatus = await termination.wait()
             let result = ForgeCLICommandResult(
-                standardOutput: await outputRead.value,
-                standardError: await errorRead.value,
+                standardOutput: await outputRead,
+                standardError: await errorRead,
                 terminationStatus: terminationStatus
             )
             if Task.isCancelled || ownership.isCancelled {
@@ -252,12 +248,22 @@ private final nonisolated class ForgeCLIProcessTermination: @unchecked Sendable 
     }
 }
 
-// swift6-safety-justification: The immutable handle is transferred to exactly one detached reader task.
+// swift6-safety-justification: The immutable handle is transferred to exactly one dispatch reader.
 private final nonisolated class SendableForgeFileHandle: @unchecked Sendable {
     let value: FileHandle
 
     init(_ value: FileHandle) {
         self.value = value
+    }
+
+    func readToEnd() async -> Data {
+        await withCheckedContinuation { continuation in
+            // Pipe reads can block until the child exits. Keep them off Swift's
+            // cooperative executor so cancellation can always make progress.
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                continuation.resume(returning: value.readDataToEndOfFile())
+            }
+        }
     }
 }
 

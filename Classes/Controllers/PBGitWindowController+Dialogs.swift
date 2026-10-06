@@ -49,14 +49,15 @@ enum WindowDialogPresenter {
         suppressionIdentifier identifier: String?,
         for windowController: PBGitWindowController,
         onCancel: (() -> Void)? = nil,
+        allowsSuppression: Bool = true,
         action actionBlock: @escaping () -> Void
     ) -> Bool {
         var didAct = true
-        if let identifier, PBGitDefaults.isDialogWarningSuppressed(forDialog: identifier) {
+        if allowsSuppression, let identifier, PBGitDefaults.isDialogWarningSuppressed(forDialog: identifier) {
             actionBlock()
             return didAct
         }
-        alert.showsSuppressionButton = true
+        alert.showsSuppressionButton = allowsSuppression
         guard let window = windowController.window else {
             return WindowDialogPresentationPolicy.cancelWithoutPresentation(onCancel: onCancel)
         }
@@ -66,7 +67,7 @@ enum WindowDialogPresenter {
                 onCancel?()
                 return
             }
-            if let identifier, alert.suppressionButton?.state == .on {
+            if allowsSuppression, let identifier, alert.suppressionButton?.state == .on {
                 PBGitDefaults.suppressDialogWarning(forDialog: identifier)
             }
             actionBlock()

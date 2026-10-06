@@ -41,7 +41,7 @@ final nonisolated class RepositoryMutationService: NSObject {
         } catch {
             let wrapped = RepositoryServiceError.make(
                 description: "Checkout failed",
-                failureReason: "There was an error checking out the \(displayType(of: ref)) '\(ref.shortName())'.\n\n\((error as NSError).localizedDescription)",
+                failureReason: "There was an error checking out the \(displayType(of: ref)) '\(ref.shortName())'.",
                 underlyingError: error
             )
             logger.error("Repository checkout failed")
@@ -65,7 +65,7 @@ final nonisolated class RepositoryMutationService: NSObject {
         } catch {
             let wrapped = RepositoryServiceError.make(
                 description: "Checkout failed",
-                failureReason: "There was an error checking out the file(s) from the \(displayType(of: ref)) '\(ref.shortName())'.\n\n\((error as NSError).localizedDescription)",
+                failureReason: "There was an error checking out the file(s) from the \(displayType(of: ref)) '\(ref.shortName())'.",
                 underlyingError: error
             )
             logger.error("Repository path checkout failed")
