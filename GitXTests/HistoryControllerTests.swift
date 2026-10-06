@@ -326,6 +326,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
             process.currentDirectoryURL = URL(fileURLWithPath: path)
             process.arguments = arguments
+            process.environment = RepositoryTestGitEnvironment.isolated()
             process.standardOutput = output
             process.standardError = errors
             try process.run()
@@ -370,7 +371,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 window.close()
             }
             fixture = try GitFixture()
-            repository = try PBGitRepository(url: URL(fileURLWithPath: fixture.path))
+            repository = try RepositoryTestGitRepository(url: URL(fileURLWithPath: fixture.path))
             repository.currentBranchFilter = 0
             repository.readCurrentBranch()
             waitForHistory()
@@ -1014,7 +1015,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testControllerWithoutCurrentBranchReloadsHeadDuringNibAwakening() throws {
-        let coldRepository = try PBGitRepository(url: URL(fileURLWithPath: fixture.path))
+        let coldRepository = try RepositoryTestGitRepository(url: URL(fileURLWithPath: fixture.path))
         XCTAssertNil(coldRepository.currentBranch)
         let coldWindowController = HistoryWindowController(repository: coldRepository)
         let coldHistoryController = try XCTUnwrap(
@@ -3172,6 +3173,25 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(history.isEnabled)
         XCTAssertTrue(finder.isEnabled)
         XCTAssertTrue(open.isEnabled)
+    }
+
+    func testWorkingStateTextDragCharacterization() {
+        let working = PBUncommittedChanges(repository: repository)
+        historyController.commitController.content = [working]
+        historyController.commitController.rearrangeObjects()
+        let table = CommitListFake()
+        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ShortSHAColumn")))
+        table.testRow = 0
+        table.testColumn = 0
+        table.revisionCell.referenceIndex = -1
+        let coordinator = tableCoordinator
+        let original = historyController.commitList
+        historyController.setValue(table, forKey: "commitList")
+        defer { historyController.setValue(original, forKey: "commitList") }
+        let pasteboard = freshPasteboard()
+        pasteboard.setString("preserve drag clipboard", forType: .string)
+        XCTAssertTrue(coordinator.tableView(table, writeRowsWith: IndexSet(integer: 0), to: pasteboard))
+        XCTAssertEqual(pasteboard.string(forType: .string), "")
     }
 
     func testTablePasteboardDropCheckoutAndResponderInteractions() throws {

@@ -1,5 +1,33 @@
 import XCTest
 
+nonisolated enum RepositoryTestGitEnvironment {
+    static func isolated(_ inherited: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        var environment = inherited.filter { !$0.key.hasPrefix("GIT_") }
+        environment.merge([
+            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
+            "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
+            "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
+            "GIT_AUTHOR_NAME": "GitX Tests", "GIT_AUTHOR_EMAIL": "gitx-tests@example.invalid",
+            "GIT_COMMITTER_NAME": "GitX Tests", "GIT_COMMITTER_EMAIL": "gitx-tests@example.invalid",
+            "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C",
+        ]) { _, value in value }
+        return environment
+    }
+
+    static func prepare(_ task: PBTask) {
+        task.setValue(isolated(task.value(forKey: "environment") as? [String: String] ?? [:]), forKey: "environment")
+    }
+}
+
+final nonisolated class RepositoryTestGitRepository: PBGitRepository {
+    override func task(withArguments arguments: [Any]?) -> PBTask {
+        let task = super.task(withArguments: arguments)
+        RepositoryTestGitEnvironment.prepare(task)
+        return task
+    }
+}
+
 // swift6-safety-justification: all mutable state is guarded by the private lock.
 private final class RepositoryIgnoreErrorCollector: @unchecked Sendable {
     private let lock = NSLock()
@@ -59,6 +87,7 @@ private final class LocalGitRunner: NSObject, PBGitCommandRunning {
 
     func output(withArguments arguments: [String]) throws -> String {
         let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: directory)
+        RepositoryTestGitEnvironment.prepare(task)
         _ = try task.launch()
         return task.standardOutputString() ?? ""
     }
@@ -149,6 +178,19 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertEqual(GitXCommitCopier.toPatch([absent, empty]), "")
         XCTAssertFalse(GitXCommitCopier.canCopyImmutableCommits([]))
         GitXCommitCopier.putString(toPasteboard: nil)
+    }
+
+    func testDialogSuppressionVisibilityCharacterization() throws {
+        #if DEBUG
+            let unidentified = PBMilestone2ProductCoverageHarness.reviewSuppressionAlert(hasIdentifier: false, allowsSuppression: true)
+            XCTAssertTrue(unidentified.showsSuppressionButton)
+            let prohibited = PBMilestone2ProductCoverageHarness.reviewSuppressionAlert(hasIdentifier: true, allowsSuppression: false)
+            XCTAssertFalse(prohibited.showsSuppressionButton)
+            let identified = PBMilestone2ProductCoverageHarness.reviewSuppressionAlert(hasIdentifier: true, allowsSuppression: true)
+            XCTAssertTrue(identified.showsSuppressionButton)
+        #else
+            throw XCTSkip("Product harness is available in Debug")
+        #endif
     }
 
     func testRejectedPushCoordinatorPreservesIntentAndEmitsOneTerminalEvent() throws {
@@ -256,7 +298,7 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertNil(error)
         XCTAssertEqual(service.lastPushOutput, runner.lastOutput)
         XCTAssertEqual(runner.outputArguments.count, readCount)
-        XCTAssertEqual(runner.launchArguments, [["push", "--porcelain", "--", "origin", "main"], snapshot.retryArguments])
+        XCTAssertEqual(runner.launchArguments, [["push", "--porcelain", "--", "origin", "main"], ["push", "--porcelain", "--force-with-lease=refs/heads/main:" + String(repeating: "b", count: 40), "--", "/tmp/remote", String(repeating: "a", count: 40) + ":refs/heads/main"]])
         XCTAssertFalse(service.retryPush(with: plan, error: &error))
         XCTAssertNil(try PBRepositoryPushRetryPlan.plan(forError: XCTUnwrap(error)))
         XCTAssertNil(service.lastPushOutput)
@@ -277,8 +319,8 @@ final class RepositoryServiceTests: XCTestCase {
         cases[3][1] = .success("/tmp/remote\n/tmp/second")
         cases[4][4] = .failure(commandError)
         cases[5][4] = .success(String(repeating: "b", count: 64))
-        cases[6] = snapshotOutputs(config: "remote.origin.mirror\ntrue\0")
-        cases[7] = snapshotOutputs(config: "push.followtags\ntrue\0")
+        cases[6] = snapshotOutputs(config: "remote.origin.fetch\n+refs/heads/*:refs/remotes/origin/*\0remote.origin.mirror\ntrue\0")
+        cases[7] = snapshotOutputs(config: "remote.origin.fetch\n+refs/heads/*:refs/remotes/origin/*\0push.followtags\ntrue\0")
         cases[8] = snapshotOutputs(config: "remote.origin.fetch\n^refs/heads/main\0")
         for outputs in cases {
             runner.outputResults = outputs
@@ -505,7 +547,7 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         )
         try runGit(["add", "--all"])
         try runGit(["commit", "--quiet", "-m", "initial"])
-        repository = try PBGitRepository(url: repositoryURL)
+        repository = try RepositoryTestGitRepository(url: repositoryURL)
     }
 
     override func tearDownWithError() throws {
@@ -791,7 +833,7 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
             try? runGit(["worktree", "remove", "--force", linkedURL.path])
             try? FileManager.default.removeItem(at: linkedURL)
         }
-        let linkedRepository = try PBGitRepository(url: linkedURL)
+        let linkedRepository = try RepositoryTestGitRepository(url: linkedURL)
         let linkedGitURL = try XCTUnwrap(linkedRepository.gitURL())
         XCTAssertTrue(
             FileManager.default.fileExists(
@@ -989,6 +1031,7 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = arguments
+        process.environment = RepositoryTestGitEnvironment.isolated()
         process.currentDirectoryURL = repositoryURL
         process.standardOutput = FileHandle.nullDevice
         let standardError = Pipe()
@@ -1032,7 +1075,7 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
             )
             try runGit(["add", "--all"])
             try runGit(["commit", "--quiet", "-m", "initial"])
-            repository = try PBGitRepository(url: repositoryURL)
+            repository = try RepositoryTestGitRepository(url: repositoryURL)
         }
     }
 
@@ -1346,6 +1389,7 @@ final class RepositoryIgnoreCharacterizationTests: XCTestCase, @unchecked Sendab
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = arguments
+        process.environment = RepositoryTestGitEnvironment.isolated()
         process.currentDirectoryURL = repositoryURL
         process.standardOutput = FileHandle.nullDevice
         let standardError = Pipe()

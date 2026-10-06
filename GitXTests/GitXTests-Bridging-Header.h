@@ -587,6 +587,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @interface PBMilestone2ProductCoverageHarness (ReviewFixProof)
 + (uint64_t)rejectedPushRecoveryProof;
 + (uint64_t)verificationBoundaryProof;
++ (NSAlert *)reviewSuppressionAlertWithIdentifier:(BOOL)hasIdentifier allowsSuppression:(BOOL)allowsSuppression NS_SWIFT_NAME(reviewSuppressionAlert(hasIdentifier:allowsSuppression:));
 @end
 #endif
 

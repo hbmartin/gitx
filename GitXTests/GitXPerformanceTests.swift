@@ -183,8 +183,69 @@ final class GitXPerformanceTests: XCTestCase {
             inDirectory: directory.path
         )
         task.timeout = 30
+        RepositoryTestGitEnvironment.prepare(task)
         try task.launch()
         return task.standardOutputString() ?? ""
+    }
+
+    func testLargeCommitSelectionValidationPerformance() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-selection-performance-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try gitOutput(["init", "--quiet", "--initial-branch=main"], in: root)
+        _ = try gitOutput(["commit", "--quiet", "--allow-empty", "-m", "selection fixture"], in: root)
+        let repository = try RepositoryTestGitRepository(url: root)
+        defer { repository.revisionList?.cleanup() }
+        let gitRepository = try XCTUnwrap(repository.gtRepo)
+        let gitCommit = try XCTUnwrap(gitRepository.lookUpObject(byRevParse: "HEAD") as? GTCommit)
+        let commit = PBGitCommit(repository: repository, andCommit: gitCommit)
+        let selection = Array(repeating: commit, count: 10000)
+        var accepted = false
+        let samples = (0 ..< 30).map { _ in elapsed { accepted = GitXCommitCopier.canCopyImmutableCommits(selection) } }
+        XCTAssertTrue(accepted)
+        attachMeasurements("10000 commit selection validation", samples: samples)
+        print("REVIEW_BENCHMARK selection p95_ms=\(percentile95(samples) * 1000)")
+    }
+
+    func testLocalPushPreparationPerformance() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("gitx-push-performance-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bare = root.appendingPathComponent("remote.git")
+        _ = try gitOutput(["init", "--quiet", "--initial-branch=main"], in: root)
+        _ = try gitOutput(["commit", "--quiet", "--allow-empty", "-m", "push fixture"], in: root)
+        _ = try gitOutput(["init", "--bare", "--quiet", bare.path], in: root)
+        _ = try gitOutput(["remote", "add", "origin", bare.path], in: root)
+        _ = try gitOutput(["push", "--quiet", "origin", "main"], in: root)
+        let repository = try RepositoryTestGitRepository(url: root)
+        defer { repository.revisionList?.cleanup() }
+        let service = PBRepositoryRemoteService(repository: repository, runner: PerformanceGitRunner(directory: root.path))
+        let branch = PBGitRef(string: "refs/heads/main")
+        let remote = PBGitRef(string: "refs/remotes/origin")
+        var succeeded = true
+        let samples = (0 ..< 20).map { _ in elapsed { succeeded = service.pushBranch(branch, toRemote: remote, error: nil) && succeeded } }
+        XCTAssertTrue(succeeded)
+        attachMeasurements("local push with safety preparation", samples: samples)
+        print("REVIEW_BENCHMARK local_push p95_ms=\(percentile95(samples) * 1000)")
+    }
+
+    private final class PerformanceGitRunner: NSObject, PBGitCommandRunning {
+        let directory: String
+        var lastOutput: String?
+        init(directory: String) {
+            self.directory = directory
+        }
+
+        func output(withArguments arguments: [String]) throws -> String {
+            let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: directory)
+            RepositoryTestGitEnvironment.prepare(task)
+            try task.launch()
+            return task.standardOutputString() ?? ""
+        }
+
+        func launch(withArguments arguments: [String]) throws {
+            lastOutput = try output(withArguments: arguments)
+        }
     }
 
     func testCommittedDirectoryExportPerformance() throws {
@@ -241,7 +302,7 @@ final class GitXPerformanceTests: XCTestCase {
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: rootURL) }
         _ = try gitOutput(["init", "--quiet"], in: rootURL)
-        let repository = try PBGitRepository(url: rootURL)
+        let repository = try RepositoryTestGitRepository(url: rootURL)
         let root = PBWorkingTree()
         root.path = ""
         root.leaf = false

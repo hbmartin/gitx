@@ -756,6 +756,20 @@
             }
         }
 
+        @objc(reviewSuppressionAlertWithIdentifier:allowsSuppression:)
+        static func reviewSuppressionAlert(hasIdentifier: Bool, allowsSuppression: Bool) -> NSAlert { // swiftlint:disable:this unused_declaration
+            let alert = NSAlert()
+            alert.messageText = "Review confirmation"
+            alert.informativeText = "A suppression checkbox requires a persistent dialog identifier."
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Cancel")
+            let window = HarnessDialogWindowController(window: nil)
+            _ = WindowDialogPresenter.confirmDialog(alert, suppressionIdentifier: hasIdentifier ? "ReviewFixture.Dialog.\(UUID())" : nil,
+                                                    for: window, allowsSuppression: allowsSuppression, action: {})
+            alert.layout()
+            return alert
+        }
+
         // MARK: Existing remote action coordinator
 
         // XCTest calls the shipped module so this checks the real POSIX adapter.
@@ -2568,6 +2582,23 @@
         }
     }
 
+    private final nonisolated class HarnessIsolatedGitRepository: PBGitRepository {
+        override func task(withArguments arguments: [Any]?) -> PBTask {
+            let task = super.task(withArguments: arguments)
+            var environment = (task.value(forKey: "environment") as? [String: String] ?? [:]).filter { !$0.key.hasPrefix("GIT_") }
+            environment.merge([
+                "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
+                "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
+                "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
+                "GIT_AUTHOR_NAME": "GitX Tests", "GIT_AUTHOR_EMAIL": "gitx-tests@example.invalid",
+                "GIT_COMMITTER_NAME": "GitX Tests", "GIT_COMMITTER_EMAIL": "gitx-tests@example.invalid",
+            ]) { _, value in value }
+            task.setValue(environment, forKey: "environment")
+            return task
+        }
+    }
+
     // swift6-safety-justification: The app-hosted harness confines repository mutation to its main-actor proofs.
     private final class HarnessLocalRepository: NSObject, @unchecked Sendable {
         static let empty = try! HarnessLocalRepository(remoteURL: "https://github.com/hbmartin/gitx.git").repository
@@ -2589,7 +2620,7 @@
             _ = try Self.git(["remote", "add", "origin", remoteURL], in: directory)
             head = try Self.git(["rev-parse", "HEAD"], in: directory)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            repository = try PBGitRepository(url: directory)
+            repository = try HarnessIsolatedGitRepository(url: directory)
         }
 
         func cleanup() {
@@ -2601,6 +2632,14 @@
             let pipe = Pipe()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
             process.arguments = arguments
+            process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }.merging([
+                "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
+                "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
+                "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
+                "GIT_AUTHOR_NAME": "GitX Tests", "GIT_AUTHOR_EMAIL": "gitx-tests@example.invalid",
+                "GIT_COMMITTER_NAME": "GitX Tests", "GIT_COMMITTER_EMAIL": "gitx-tests@example.invalid",
+            ]) { _, value in value }
             process.currentDirectoryURL = directory
             process.standardOutput = pipe
             process.standardError = pipe

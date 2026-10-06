@@ -76,6 +76,19 @@ final class PBTaskLifecycleTests: XCTestCase {
         return returnedSize <= 0 || information.pbi_status == SZOMB
     }
 
+    func testSeparateStreamsAndCurrentTaskDiagnostics() throws {
+        let credential = "dummy-user:dummy-password"
+        let task = PBTask(launchPath: "/bin/sh", arguments: ["-c", "printf status; printf diagnostic >&2; exit 1", "https://\(credential)@example.invalid/repo"], inDirectory: nil)
+        task.separatesStandardError = true
+        XCTAssertThrowsError(try task.launch()) { error in
+            XCTAssertEqual((error as NSError).userInfo[PBTaskTerminationOutputKey] as? String, "diagnostic")
+            XCTAssertTrue((error as NSError).localizedFailureReason?.contains(credential) == true)
+        }
+        XCTAssertEqual(String(decoding: task.standardOutputData, as: UTF8.self), "status")
+        XCTAssertEqual(String(decoding: task.standardErrorData, as: UTF8.self), "diagnostic")
+        XCTAssertTrue(task.description.contains(credential))
+    }
+
     func testDebugLoggingPreferenceStillRunsTask() throws {
         let defaults = UserDefaults.standard
         let key = "Show Debug Messages"
