@@ -78,6 +78,10 @@ final class PBChildProcessOwnerTests: XCTestCase {
                 queue.async(execute: handler)
             }
         }
+
+        func performSynchronously(_ operation: () -> Void) {
+            queue.sync(execute: operation)
+        }
     }
 
     // swift6-safety-justification: The lock protects all mutable fake process-system state.
@@ -95,6 +99,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
         private var storedEvents: [String] = []
         private var storedMonitor: FakeExitMonitor?
         private var leaderExited = false
+        private var leaderExitsAfterNextRunningObservation = false
         private var members: [pid_t] = [4321]
         private var shouldFailSpawn = false
         private var shouldFailObservation = false
@@ -127,6 +132,20 @@ final class PBChildProcessOwnerTests: XCTestCase {
             lock.lock()
             members = processIdentifiers
             lock.unlock()
+        }
+
+        func exitAfterNextRunningObservation() {
+            lock.lock()
+            leaderExitsAfterNextRunningObservation = true
+            lock.unlock()
+        }
+
+        func performOnMonitorQueue(_ operation: () -> Void) {
+            lock.lock()
+            let monitor = storedMonitor
+            lock.unlock()
+            guard let monitor else { preconditionFailure("Launch must install the exit monitor first") }
+            monitor.performSynchronously(operation)
         }
 
         func failNextSpawn() {
@@ -242,7 +261,12 @@ final class PBChildProcessOwnerTests: XCTestCase {
                 shouldFailObservation = false
                 throw Failure.observation
             }
-            return leaderExited ? .terminal : .running
+            let result: PBChildProcessExitState = leaderExited ? .terminal : .running
+            if result == .running, leaderExitsAfterNextRunningObservation {
+                leaderExitsAfterNextRunningObservation = false
+                leaderExited = true
+            }
+            return result
         }
 
         func reapIfExited(processIdentifier: pid_t) throws -> Int32? {
@@ -895,6 +919,27 @@ final class PBChildProcessOwnerTests: XCTestCase {
 
         XCTAssertEqual(recorder.statuses, [0])
         XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
+    }
+
+    func testExitBetweenTerminationRequestAndImmediateSignalIsReapedWithoutSignalling() throws {
+        let system = FakeProcessSystem()
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "leader exits before the immediate signal check")
+        let recorder = CompletionRecorder(expectation: completed)
+        try owner.launch(configuration: configuration()) { recorder.record($0, error: $1) }
+
+        // Keep the one-shot registration probe from consuming the scripted transition.
+        system.performOnMonitorQueue {
+            system.exitAfterNextRunningObservation()
+            XCTAssertTrue(owner.requestTermination(gracePeriod: 0, forceKillDelay: 0))
+        }
+        wait(for: [completed], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertTrue(recorder.errors.isEmpty)
+        XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
+        XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
+        XCTAssertFalse(owner.requestTermination(gracePeriod: 0, forceKillDelay: 0))
     }
 
     func testExitBeforeTerminationDeadlineIsNeverSignalled() throws {
