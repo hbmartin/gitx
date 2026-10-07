@@ -123,7 +123,7 @@ private final class LocalGitRunner: NSObject, PBGitCommandRunning {
 
 @MainActor
 final class RepositoryServiceTests: XCTestCase {
-    private final class CommandRunnerFake: NSObject, PBGitCommandRunning {
+    fileprivate final class CommandRunnerFake: NSObject, PBGitCommandRunning {
         var outputResults: [Result<String, Error>] = []
         var launchResults: [Result<Void, Error>] = []
         var lastOutput: String?
@@ -774,6 +774,44 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         #else
             throw XCTSkip("Product harness is available in Debug")
         #endif
+    }
+
+    @MainActor
+    func testReadOnlyDiffHonorsEachWhitespaceChoiceAndReturnsEmptyOnFailure() throws {
+        let gitRepository = try XCTUnwrap(repository.gtRepo)
+        let initial = try XCTUnwrap(gitRepository.lookUpObject(byRevParse: "HEAD") as? GTCommit)
+        try runGit(["commit", "--quiet", "--allow-empty", "-m", "diff target"])
+        let target = try XCTUnwrap(gitRepository.lookUpObject(byRevParse: "HEAD") as? GTCommit)
+        let startCommit = PBGitCommit(repository: repository, andCommit: initial)
+        let targetCommit = PBGitCommit(repository: repository, andCommit: target)
+        let runner = RepositoryServiceTests.CommandRunnerFake()
+        runner.outputResults = [
+            .success("complete whitespace diff"),
+            .success("semantic diff"),
+            .failure(NSError(domain: "RepositoryDiffTests", code: 1)),
+        ]
+        let service = PBRepositoryMutationService(repository: repository, runner: runner)
+        let preferenceKey = "PBShowWhitespaceDifferences"
+        let original = defaults.object(forKey: preferenceKey)
+        defer {
+            if let original {
+                defaults.set(original, forKey: preferenceKey)
+            } else {
+                defaults.removeObject(forKey: preferenceKey)
+            }
+        }
+        let comparison = "\(initial.oid.sha)..\(target.oid.sha)"
+
+        defaults.set(true, forKey: preferenceKey)
+        XCTAssertEqual(service.performDiff(startCommit, against: targetCommit, forFiles: nil), "complete whitespace diff")
+        defaults.set(false, forKey: preferenceKey)
+        XCTAssertEqual(service.performDiff(startCommit, against: targetCommit, forFiles: ["space name.txt"]), "semantic diff")
+        XCTAssertEqual(service.performDiff(startCommit, against: targetCommit, forFiles: nil), "")
+        XCTAssertEqual(runner.outputArguments, [
+            ["diff", "--no-ext-diff", comparison],
+            ["diff", "-w", "--no-ext-diff", comparison, "--", "space name.txt"],
+            ["diff", "-w", "--no-ext-diff", comparison],
+        ])
     }
 
     func testNativeLocalBranchDeletionProtectsWorktreesAndRemovesConfiguration() throws {

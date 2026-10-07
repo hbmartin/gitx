@@ -140,6 +140,45 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 @end
 
+// Drive a mid-walk ObjectiveGit error deterministically, without racing a real
+// fetch/gc against the revision list's asynchronous object lookup.
+@interface GTRevisionEnumerationErrorStub : GTEnumerator
+@property (nonatomic, copy) NSArray<GTOID *> *oidsBeforeError;
+@property (nonatomic, strong) NSError *terminalError;
+@property (nonatomic) NSUInteger deliveredOIDCount;
+@property (nonatomic) NSUInteger reportedErrorCount;
+@end
+
+@implementation GTRevisionEnumerationErrorStub
+
+- (nullable GTOID *)nextOIDWithSuccess:(BOOL *)success error:(NSError **)error
+{
+	if (self.deliveredOIDCount < self.oidsBeforeError.count) {
+		if (success) *success = YES;
+		if (error) *error = nil;
+		return self.oidsBeforeError[self.deliveredOIDCount++];
+	}
+	if (success) *success = NO;
+	if (error) *error = self.terminalError;
+	self.reportedErrorCount++;
+	return nil;
+}
+
+@end
+
+@interface PBGitRevListScriptedEnumeratorStub : PBGitRevList
+@property (nonatomic, strong) GTEnumerator *scriptedEnumerator;
+@end
+
+@implementation PBGitRevListScriptedEnumeratorStub
+
+- (nullable GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error
+{
+	return self.scriptedEnumerator;
+}
+
+@end
+
 @interface PBWebHistoryController (GitXCoreTests)
 - (BOOL)isGenerationCurrent:(NSUInteger)generation;
 - (NSUInteger)beginContentGeneration;
@@ -987,6 +1026,58 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 	[self waitForExpectations:@[ completion ] timeout:2.0];
 	XCTAssertEqual(revisionList.commits.count, 0);
+}
+
+- (void)testRevisionEnumerationErrorPublishesValidPrefixAndCompletesBeforeNormalRetry
+{
+	NSError *error = nil;
+	GTReference *head = [self.repository.gtRepo headReferenceWithError:&error];
+	GTCommit *headCommit = (GTCommit *)[head resolvedTarget];
+	XCTAssertNotNil(headCommit, @"%@", error);
+	PBGitCommit *previousCommit = [[PBGitCommit alloc] initWithRepository:self.repository andCommit:headCommit];
+	PBGitRevListScriptedEnumeratorStub *revisionList = [[PBGitRevListScriptedEnumeratorStub alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]
+			   shouldGraph:NO];
+
+	for (NSArray<GTOID *> *validPrefix in @[ @[], @[ headCommit.OID ] ]) {
+		GTRevisionEnumerationErrorStub *enumerator = [[GTRevisionEnumerationErrorStub alloc]
+			initWithRepository:self.repository.gtRepo
+						 error:&error];
+		XCTAssertNotNil(enumerator, @"%@", error);
+		enumerator.oidsBeforeError = validPrefix;
+		enumerator.terminalError = [NSError errorWithDomain:@"RevisionEnumerationTests"
+													   code:-1
+												   userInfo:@{NSLocalizedDescriptionKey : @"Object database changed during enumeration"}];
+		revisionList.scriptedEnumerator = enumerator;
+		// An empty failed load must replace rows from the previous generation.
+		revisionList.commits = [NSMutableArray arrayWithObject:previousCommit];
+		XCTestExpectation *completion = [self expectationWithDescription:
+												  [NSString stringWithFormat:@"enumeration error after %lu valid commits", (unsigned long)validPrefix.count]];
+		[revisionList loadRevisionsWithCompletionBlock:^{
+			XCTAssertTrue(NSThread.isMainThread);
+			[completion fulfill];
+		}];
+		[self waitForExpectations:@[ completion ] timeout:2.0];
+
+		XCTAssertFalse(revisionList.isParsing);
+		XCTAssertEqual(enumerator.reportedErrorCount, (NSUInteger)1);
+		XCTAssertEqual(enumerator.deliveredOIDCount, validPrefix.count);
+		XCTAssertEqualObjects([revisionList.commits valueForKey:@"OID"], validPrefix,
+							  @"Only the successfully enumerated prefix may be published after a walk error");
+
+		revisionList.scriptedEnumerator = [[GTEnumerator alloc] initWithRepository:self.repository.gtRepo error:&error];
+		XCTAssertNotNil(revisionList.scriptedEnumerator, @"%@", error);
+		XCTestExpectation *retry = [self expectationWithDescription:@"normal retry after enumeration error"];
+		[revisionList loadRevisionsWithCompletionBlock:^{
+			XCTAssertTrue(NSThread.isMainThread);
+			[retry fulfill];
+		}];
+		[self waitForExpectations:@[ retry ] timeout:2.0];
+
+		XCTAssertFalse(revisionList.isParsing);
+		XCTAssertEqualObjects([revisionList.commits valueForKey:@"OID"], (@[ headCommit.OID ]));
+	}
 }
 
 - (void)assertCommitsAreUniqueAndChildrenPrecedeParents:(NSArray<PBGitCommit *> *)commits

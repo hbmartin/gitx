@@ -280,6 +280,25 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         XCTAssertGreaterThanOrEqual(fcntl(writeOnly, F_GETFD), 0, "The runner retains descriptor closure ownership")
     }
 
+    func testBufferedPipeEOFAndOutputBoundariesPreserveBytesAndDescriptorOwnership() throws {
+        for byteCount in [0, 1024, 1025] {
+            let source = Pipe()
+            defer { try? source.fileHandleForReading.close() }
+            let bytes = Data((0 ..< byteCount).map { UInt8($0 % 251) })
+            try source.fileHandleForWriting.write(contentsOf: bytes)
+            try source.fileHandleForWriting.close()
+
+            let descriptor = source.fileHandleForReading.fileDescriptor
+            let result = PBHistoryFlowRevisionProviderTestHarness.drainPipe(fileDescriptor: descriptor)
+
+            XCTAssertEqual(result["data"] as? Data, Data(bytes.prefix(1024)))
+            XCTAssertEqual(result["didExceedLimit"] as? Bool, byteCount > 1024)
+            XCTAssertEqual(result["stopCount"] as? Int, byteCount > 1024 ? 1 : 0)
+            XCTAssertEqual(result["failure"] as? String, "")
+            XCTAssertGreaterThanOrEqual(fcntl(descriptor, F_GETFD), 0, "The runner retains descriptor closure ownership")
+        }
+    }
+
     func testChangedFileAndBlobLimitsAreEnforced() async throws {
         let fixture = try RepositoryFixture()
         defer { fixture.remove() }

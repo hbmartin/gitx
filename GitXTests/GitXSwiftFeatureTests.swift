@@ -642,6 +642,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = arguments
         process.currentDirectoryURL = directory
+        process.environment = RepositoryTestGitEnvironment.isolated()
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
@@ -1452,10 +1453,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
         task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         task.arguments = arguments
         task.currentDirectoryURL = directory
-        var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }
-        environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
-        environment["GIT_CONFIG_NOSYSTEM"] = "1"
-        task.environment = environment
+        task.environment = RepositoryTestGitEnvironment.isolated()
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
