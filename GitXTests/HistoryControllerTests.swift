@@ -3156,6 +3156,30 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testHookFailureLeavesHEADUnchangedAndAllowsAFreshSubmissionAfterCancellation() throws {
+        try fixture.write("hook fixture\n", to: "hook-fixture.txt")
+        try fixture.git(["add", "hook-fixture.txt"])
+        let pane = try openStagingPane()
+        let hook = URL(fileURLWithPath: fixture.path).appendingPathComponent(".git/hooks/pre-commit")
+        try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\necho rejected >&2\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        let before = try fixture.git(["rev-parse", "HEAD"])
+        pane.commitMessageView.string = "Original rejected request"
+        let rejected = expectation(forNotification: Notification.Name(PBGitIndexCommitHookFailed), object: repository.index)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        wait(for: [rejected], timeout: 10)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), before)
+        XCTAssertTrue(pane.commitMessageView.isEditable)
+        try FileManager.default.removeItem(at: hook)
+        pane.commitMessageView.string = "Fresh accepted request"
+        let accepted = expectation(forNotification: Notification.Name(PBGitIndexFinishedCommit), object: repository.index)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        wait(for: [accepted], timeout: 10)
+        XCTAssertEqual(try fixture.git(["log", "-1", "--pretty=%s"]).trimmingCharacters(in: .newlines), "Fresh accepted request")
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+    }
+
     func testStagingPaneCommitWorkflowComposerAndNotifications() throws {
         try fixture.write("compose body\n", to: "compose.txt")
         try fixture.git(["add", "compose.txt"])
