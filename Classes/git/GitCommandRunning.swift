@@ -3,6 +3,8 @@ import Foundation
 @objc(PBGitCommandRunning)
 protocol GitCommandRunning: AnyObject {
     nonisolated func output(arguments: [String]) throws -> String
+    // Retained for Objective-C runner compatibility; the app-hosted harness exercises its selector.
+    // swiftlint:disable:next unused_declaration
     nonisolated func historyOutput(arguments: [String]) throws -> String
     nonisolated func push(arguments: [String]) -> PBRepositoryPushCommandResult
     nonisolated func launch(arguments: [String]) throws

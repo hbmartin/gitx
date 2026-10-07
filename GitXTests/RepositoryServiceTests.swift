@@ -125,9 +125,6 @@ private final class LocalGitRunner: NSObject, PBGitEvidenceCommandRunning {
 private final class LegacyPushGitRunner: NSObject, PBGitCommandRunning {
     private let wrapped: LocalGitRunner
     private(set) var pushes: [[String]] = []
-    var lastOutput: String? {
-        wrapped.lastOutput
-    }
 
     init(directory: String) {
         wrapped = LocalGitRunner(directory: directory)
@@ -406,7 +403,6 @@ final class RepositoryServiceTests: XCTestCase {
     private final class PushRunnerFake: NSObject, PBGitEvidenceCommandRunning {
         let source = String(repeating: "a", count: 40)
         let fetched = String(repeating: "b", count: 40)
-        var lastOutput: String?
         var replies: [[String]: Result<String, Error>] = [:]
         var pushResults: [PBRepositoryPushCommandResult] = []
         var commands: [[String]] = []

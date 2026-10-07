@@ -538,6 +538,12 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	[message typeKey:@"v" modifierFlags:XCUIKeyModifierCommand];
 
 	NSString *hookPath = [repositoryPath stringByAppendingPathComponent:@".git/hooks/pre-commit"];
+	NSError *hookDirectoryError = nil;
+	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtPath:hookPath.stringByDeletingLastPathComponent
+											withIntermediateDirectories:YES
+															 attributes:nil
+																  error:&hookDirectoryError],
+				  @"Failed to create the intentional commit-hook directory: %@", hookDirectoryError);
 	XCTAssertTrue([@"#!/bin/sh\nexit 1\n" writeToFile:hookPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
 	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:hookPath error:nil]);
 	[self.app.buttons[@"CommitButton"] click];

@@ -1,5 +1,5 @@
 import AppKit
-import OSLog
+import os
 
 /// Opaque capture ownership crosses only error presentation and active exports.
 nonisolated enum PushDiagnosticOwnership {
@@ -20,6 +20,8 @@ nonisolated enum PushDiagnosticOwnership {
 
 #if DEBUG
     /// App-hosted XCTest exercises the shipped coordinator without importing duplicate app interfaces.
+    // The test target reaches this facade through its Objective-C declarations.
+    // swiftlint:disable unused_declaration
     @objc(PBPushOutputExportCoordinatorTestHarness)
     @MainActor
     final class PushOutputExportCoordinatorTestHarness: NSObject {
@@ -149,6 +151,8 @@ nonisolated enum PushDiagnosticOwnership {
         }
     }
 
+    // swiftlint:enable unused_declaration
+
     @MainActor
     private final class PushOutputExportProofState {
         var responses: [PushOutputExportCoordinator.DestinationResponse] = []
@@ -254,7 +258,7 @@ final class PushOutputExportCoordinator: NSObject {
     private let destinationPresenter: DestinationPresenter
     private let reportWriter: ReportWriter
     private let failurePresenter: FailurePresenter
-    private let logger = Logger(subsystem: "com.gitx.gitx", category: "PushOutputExport")
+    private let logger = os.Logger(subsystem: "com.gitx.gitx", category: "PushOutputExport")
     private var isExporting = false
 
     #if DEBUG

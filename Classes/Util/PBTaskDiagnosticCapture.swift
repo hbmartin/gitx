@@ -1,8 +1,9 @@
 import Darwin
 import Foundation
-import OSLog
 
 #if GITX_APP_TARGET
+    import os
+
     // Objective-C task and sheet callers are not visible to SwiftLint's analyzer.
     // swiftlint:disable unused_declaration
 
@@ -162,7 +163,7 @@ import OSLog
 
     // swift6-safety-justification: The owning capture/artifact confines every access to `lock`.
     fileprivate final nonisolated class PBTaskDiagnosticStore: @unchecked Sendable {
-        private static let logger = Logger(subsystem: "com.gitx.gitx", category: "PushDiagnostics")
+        private static let logger = os.Logger(subsystem: "com.gitx.gitx", category: "PushDiagnostics")
         private static let base = FileManager.default.temporaryDirectory.appendingPathComponent("GitX-Push-Diagnostics", isDirectory: true)
         private let lock = NSLock()
         private let io: PBTaskDiagnosticIO

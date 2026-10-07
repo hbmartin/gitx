@@ -44,6 +44,7 @@
 - (void)setCurrentRevList:(PBGitRevList *)parser;
 - (void)resetGraphing;
 - (NSInvocationOperation *)operationForCommits:(NSArray *)commits;
+- (void)finishGraphingForQueue:(nullable NSOperationQueue *)queue revisionList:(nullable PBGitRevList *)parser;
 - (void)updateProjectHistoryForRev:(PBGitRevSpecifier *)revision;
 @end
 
@@ -53,16 +54,86 @@
 @interface PBGitHistoryHeldGrapher : PBGitHistoryGrapher
 @property (nonatomic, strong) XCTestExpectation *callbacksDelivered;
 @property (nonatomic, strong) dispatch_semaphore_t releaseGraphing;
+@property (nonatomic) BOOL holdsBeforePublication;
 @end
 
 @implementation PBGitHistoryHeldGrapher
 - (void)graphCommits:(NSArray *)commits
 {
+	if (self.holdsBeforePublication) {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[self.callbacksDelivered fulfill];
+		});
+		dispatch_semaphore_wait(self.releaseGraphing, DISPATCH_TIME_FOREVER);
+		[super graphCommits:commits];
+		return;
+	}
 	[super graphCommits:commits];
 	dispatch_async(dispatch_get_main_queue(), ^{
 		[self.callbacksDelivered fulfill];
 	});
 	dispatch_semaphore_wait(self.releaseGraphing, DISPATCH_TIME_FOREVER);
+}
+@end
+
+// The fixture controls the parser completion boundary on the main thread.
+// Real PBGitRevList generation, error, and cancellation behavior is covered by
+// the integration tests; this isolates graph completion ordering/source reuse.
+@interface PBGitHistoryControlledRevList : PBGitRevList
+@property (nonatomic) BOOL testParsing;
+@property (nonatomic, copy, nullable) dispatch_block_t testLoadCompletion;
+- (void)completeTestLoad;
+@end
+
+@implementation PBGitHistoryControlledRevList
+- (BOOL)isParsing
+{
+	return self.testParsing;
+}
+- (void)loadRevisionsWithCompletionBlock:(void (^)(void))completion
+{
+	self.testParsing = YES;
+	self.testLoadCompletion = completion;
+}
+- (void)cancel
+{
+	[super cancel];
+	self.testParsing = NO;
+	self.testLoadCompletion = nil;
+}
+- (void)completeTestLoad
+{
+	self.testParsing = NO;
+	dispatch_block_t completion = self.testLoadCompletion;
+	self.testLoadCompletion = nil;
+	if (completion) completion();
+}
+@end
+
+// NSOperationQueue may retain already-finished operations briefly. Model that
+// documented boundary without trying to win its removal race with real timing.
+@interface PBGitHistoryQueueMembershipProbe : NSOperationQueue
+@property (nonatomic, copy) NSArray<NSOperation *> *testOperations;
+@end
+
+@implementation PBGitHistoryQueueMembershipProbe
+- (NSArray<NSOperation *> *)operations
+{
+	return self.testOperations;
+}
+@end
+
+// Keep a newly created queue suspended until the test has attached a receipt
+// to its actual production operation completion, eliminating a start race.
+@interface PBGitHistoryPausedQueues : PBGitHistoryList
+@end
+
+@implementation PBGitHistoryPausedQueues
+- (void)resetGraphing
+{
+	[super resetGraphing];
+	NSOperationQueue *queue = [self valueForKey:@"graphQueue"];
+	queue.suspended = YES;
 }
 @end
 
@@ -2132,7 +2203,7 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	}
 
 	[self waitForGraphQueueToDrain:queue];
-	[history finishedGraphing];
+	[self waitForHistoryListToFinish:history];
 	XCTAssertFalse(history.isUpdating);
 	XCTAssertEqual(history.commits.count, (NSUInteger)1);
 	[history cleanup];
@@ -2146,7 +2217,7 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	history.commits = [NSMutableArray arrayWithObject:commit];
 	XCTAssertTrue(history.isUpdating);
 
-	[history finishedGraphing];
+	[history finishGraphingForQueue:[history valueForKey:@"graphQueue"] revisionList:history.projectRevList];
 
 	XCTAssertFalse(history.isUpdating);
 	XCTAssertEqual(history.commits.count, (NSUInteger)0);
@@ -2173,6 +2244,253 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 	XCTAssertEqual(history.commits.count, (NSUInteger)0);
 	XCTAssertFalse(history.projectRevList.isParsing);
+	[history cleanup];
+}
+
+- (PBGitHistoryHeldGrapher *)heldGrapherForHistory:(PBGitHistoryList *)history beforePublication:(BOOL)beforePublication
+{
+	PBGitHistoryHeldGrapher *heldGrapher = [[PBGitHistoryHeldGrapher alloc]
+		initWithBaseCommits:[NSSet set]
+			viewAllBranches:YES
+					  queue:[history valueForKey:@"graphQueue"]
+				   delegate:history];
+	heldGrapher.callbacksDelivered = [self expectationWithDescription:@"held graph invocation reached its controlled boundary"];
+	heldGrapher.releaseGraphing = dispatch_semaphore_create(0);
+	heldGrapher.holdsBeforePublication = beforePublication;
+	[history setValue:heldGrapher forKey:@"grapher"];
+	return heldGrapher;
+}
+
+- (XCTestExpectation *)completionReceiptForGraphOperation:(NSOperation *)operation
+{
+	XCTestExpectation *receipt = [self expectationWithDescription:@"actual graph operation completion delivered on main"];
+	dispatch_block_t originalCompletion = operation.completionBlock;
+	operation.completionBlock = ^{
+		if (originalCompletion) originalCompletion();
+		// The production completion enqueues its main callback first. This
+		// receipt observes that delivery rather than polling or sleeping.
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[receipt fulfill];
+		});
+	};
+	return receipt;
+}
+
+- (void)testSupersededGraphQueueCompletionCannotFinishTheCurrentLoad
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[ commit ]];
+	NSOperationQueue *oldQueue = [history valueForKey:@"graphQueue"];
+	PBGitHistoryHeldGrapher *heldGrapher = [self heldGrapherForHistory:history beforePublication:NO];
+	NSInvocationOperation *oldOperation = [history operationForCommits:@[ commit ]];
+	XCTestExpectation *oldCompletion = [self completionReceiptForGraphOperation:oldOperation];
+
+	@try {
+		[oldQueue addOperation:oldOperation];
+		[self waitForExpectations:@[ heldGrapher.callbacksDelivered ] timeout:10.0];
+		[history resetGraphing];
+		XCTAssertNotEqual([history valueForKey:@"graphQueue"], oldQueue);
+	} @finally {
+		dispatch_semaphore_signal(heldGrapher.releaseGraphing);
+	}
+	[self waitForExpectations:@[ oldCompletion ] timeout:10.0];
+	XCTAssertTrue(history.isUpdating, @"An old invocation cannot finish a new, otherwise idle graph generation");
+
+	NSOperationQueue *currentQueue = [history valueForKey:@"graphQueue"];
+	[currentQueue addOperation:[history operationForCommits:@[ commit ]]];
+	[self waitForHistoryListToFinish:history];
+	XCTAssertEqualObjects([history.commits valueForKey:@"SHA"], (@[ commit.SHA ]));
+	[history cleanup];
+}
+
+- (void)testSupersededGraphParserCompletionCannotFinishTheCurrentLoad
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[ commit ]];
+	NSOperationQueue *queue = [history valueForKey:@"graphQueue"];
+	PBGitHistoryHeldGrapher *heldGrapher = [self heldGrapherForHistory:history beforePublication:NO];
+	NSInvocationOperation *oldOperation = [history operationForCommits:@[ commit ]];
+	XCTestExpectation *oldCompletion = [self completionReceiptForGraphOperation:oldOperation];
+	PBGitRevList *newParser = [[PBGitRevList alloc] initWithRepository:self.repository
+																   rev:PBGitRevSpecifier.allBranchesRevSpec
+														   shouldGraph:NO];
+	newParser.commits = [NSMutableArray arrayWithObject:commit];
+
+	@try {
+		[queue addOperation:oldOperation];
+		[self waitForExpectations:@[ heldGrapher.callbacksDelivered ] timeout:10.0];
+		[history setCurrentRevList:newParser];
+	} @finally {
+		dispatch_semaphore_signal(heldGrapher.releaseGraphing);
+	}
+	[self waitForExpectations:@[ oldCompletion ] timeout:10.0];
+	XCTAssertTrue(history.isUpdating, @"The queue alone does not identify the active parser source");
+
+	PBGitHistoryGrapher *currentGrapher = [[PBGitHistoryGrapher alloc] initWithBaseCommits:[NSSet set]
+																		   viewAllBranches:YES
+																					 queue:queue
+																				  delegate:history];
+	[history setValue:currentGrapher forKey:@"grapher"];
+	[queue addOperation:[history operationForCommits:@[ commit ]]];
+	[self waitForHistoryListToFinish:history];
+	XCTAssertEqual(history.commits.count, (NSUInteger)1);
+	[history cleanup];
+}
+
+- (void)testHistoryCleanupRejectsLateGraphPublicationAndCompletion
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[ commit ]];
+	NSOperationQueue *queue = [history valueForKey:@"graphQueue"];
+	PBGitHistoryHeldGrapher *heldGrapher = [self heldGrapherForHistory:history beforePublication:YES];
+	NSInvocationOperation *operation = [history operationForCommits:@[ commit ]];
+	XCTestExpectation *completion = [self completionReceiptForGraphOperation:operation];
+
+	@try {
+		[queue addOperation:operation];
+		[self waitForExpectations:@[ heldGrapher.callbacksDelivered ] timeout:10.0];
+		XCTAssertEqual(history.commits.count, (NSUInteger)0);
+		[history cleanup];
+		XCTAssertNil([history valueForKey:@"currentRevList"]);
+		XCTAssertNil([history valueForKey:@"graphQueue"]);
+	} @finally {
+		dispatch_semaphore_signal(heldGrapher.releaseGraphing);
+	}
+	[self waitForExpectations:@[ completion ] timeout:10.0];
+	XCTAssertEqual(history.commits.count, (NSUInteger)0, @"Closing a history list invalidates queued publications");
+	XCTAssertTrue(history.isUpdating, @"A late completion must not mutate the invalidated load's state");
+}
+
+- (void)testCancelledQueuedGraphOperationFinishesWithoutReplacingTheSnapshot
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[ commit ]];
+	NSMutableArray *previousSnapshot = [NSMutableArray arrayWithObject:commit];
+	history.commits = previousSnapshot;
+	NSOperationQueue *queue = [history valueForKey:@"graphQueue"];
+	queue.suspended = YES;
+	NSInvocationOperation *operation = [history operationForCommits:@[ commit ]];
+	XCTestExpectation *completion = [self completionReceiptForGraphOperation:operation];
+	[queue addOperation:operation];
+	[operation cancel];
+	queue.suspended = NO;
+
+	[self waitForExpectations:@[ completion ] timeout:10.0];
+	XCTAssertTrue(operation.finished);
+	XCTAssertTrue(operation.cancelled);
+	XCTAssertFalse(history.isUpdating);
+	XCTAssertEqual(history.commits, previousSnapshot, @"Cancelled graph work publishes no replacement data");
+	[history cleanup];
+}
+
+- (void)testReusedProjectParserCompletionFinishesItsCurrentGraphQueue
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitRevSpecifier *revision = self.repository.headRef;
+	XCTAssertNotNil(revision);
+	if (!revision) return;
+	PBGitHistoryPausedQueues *history = [[PBGitHistoryPausedQueues alloc] initWithRepository:self.repository];
+	PBGitHistoryControlledRevList *sharedParser = [[PBGitHistoryControlledRevList alloc]
+		initWithRepository:self.repository
+					   rev:PBGitRevSpecifier.allBranchesRevSpec
+			   shouldGraph:NO];
+	history.projectRevList = sharedParser;
+	[history updateProjectHistoryForRev:revision];
+	NSOperationQueue *originalQueue = [history valueForKey:@"graphQueue"];
+	sharedParser.commits = [NSMutableArray arrayWithObject:commit];
+
+	PBGitRevList *temporaryParser = [[PBGitRevList alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~0" ]]
+			   shouldGraph:YES];
+	[history setCurrentRevList:temporaryParser];
+	[history resetGraphing];
+	[history updateProjectHistoryForRev:revision];
+	NSOperationQueue *currentQueue = [history valueForKey:@"graphQueue"];
+	XCTAssertNotEqual(currentQueue, originalQueue);
+	XCTAssertEqual([history valueForKey:@"currentRevList"], sharedParser);
+	XCTAssertTrue(sharedParser.isParsing);
+	XCTAssertEqual(currentQueue.operations.count, (NSUInteger)1);
+	NSOperation *graphOperation = currentQueue.operations.firstObject;
+	XCTestExpectation *graphCompletion = [self completionReceiptForGraphOperation:graphOperation];
+	currentQueue.suspended = NO;
+	[self waitForExpectations:@[ graphCompletion ] timeout:10.0];
+	XCTAssertTrue(history.isUpdating, @"Graph completion must wait for parsing even after all graph work finished");
+	XCTAssertTrue(sharedParser.isParsing);
+
+	[sharedParser completeTestLoad];
+	[self waitForHistoryListToFinish:history];
+	XCTAssertFalse(sharedParser.isParsing);
+	XCTAssertEqualObjects([history.commits valueForKey:@"SHA"], (@[ commit.SHA ]));
+	[history cleanup];
+}
+
+- (void)testOldParserLoadCompletionAndUnsourcedCallbackCannotFinishANewLoad
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitRevSpecifier *revision = self.repository.headRef;
+	XCTAssertNotNil(revision);
+	if (!revision) return;
+	PBGitHistoryPausedQueues *history = [[PBGitHistoryPausedQueues alloc] initWithRepository:self.repository];
+	PBGitHistoryControlledRevList *oldParser = [[PBGitHistoryControlledRevList alloc]
+		initWithRepository:self.repository
+					   rev:PBGitRevSpecifier.allBranchesRevSpec
+			   shouldGraph:NO];
+	history.projectRevList = oldParser;
+	[history updateProjectHistoryForRev:revision];
+	PBGitRevList *currentParser = [[PBGitRevList alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD~0" ]]
+			   shouldGraph:YES];
+	currentParser.commits = [NSMutableArray array];
+	[history setCurrentRevList:currentParser];
+	[history resetGraphing];
+
+	[oldParser completeTestLoad];
+	XCTestExpectation *parserCompletionDelivered = [self expectationWithDescription:@"old parser's main completion delivered"];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[parserCompletionDelivered fulfill];
+	});
+	[self waitForExpectations:@[ parserCompletionDelivered ] timeout:10.0];
+	XCTAssertTrue(history.isUpdating);
+	[history finishedGraphing];
+	XCTAssertTrue(history.isUpdating, @"A callback without a source token cannot settle another load");
+
+	NSOperationQueue *queue = [history valueForKey:@"graphQueue"];
+	[queue addOperation:[history operationForCommits:@[]]];
+	queue.suspended = NO;
+	[self waitForHistoryListToFinish:history];
+	XCTAssertEqual(history.commits.count, (NSUInteger)0);
+	[history cleanup];
+}
+
+- (void)testFinishedQueueMembersDoNotBlockSettlementButUnfinishedMembersDo
+{
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[]];
+	PBGitHistoryQueueMembershipProbe *queue = [PBGitHistoryQueueMembershipProbe new];
+	NSBlockOperation *finished = [NSBlockOperation blockOperationWithBlock:^{
+	}];
+	NSBlockOperation *pending = [NSBlockOperation blockOperationWithBlock:^{
+	}];
+	[finished start];
+	queue.testOperations = @[ finished, pending ];
+	[history setValue:queue forKey:@"graphQueue"];
+
+	[history finishGraphingForQueue:nil revisionList:history.projectRevList];
+	[history finishGraphingForQueue:queue revisionList:nil];
+	[history finishGraphingForQueue:queue revisionList:history.projectRevList];
+	XCTAssertTrue(history.isUpdating);
+	[pending start];
+	[history finishGraphingForQueue:queue revisionList:history.projectRevList];
+	XCTAssertFalse(history.isUpdating, @"Finished members do not represent pending graph work");
+	XCTAssertEqual(queue.operations.count, (NSUInteger)2);
+	XCTAssertEqual(history.commits.count, (NSUInteger)0);
 	[history cleanup];
 }
 
