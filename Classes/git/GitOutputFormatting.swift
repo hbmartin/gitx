@@ -6,11 +6,9 @@ final nonisolated class GitOutputFormatting: NSObject { // swiftlint:disable:thi
     @objc(patchWithGitXIdentifier:)
     // swiftlint:disable:next unused_declaration
     static func patchWithGitXIdentifier(_ output: String) -> String {
-        var scalars = output.unicodeScalars
-        if scalars.last == "\n" {
-            scalars.removeLast()
-        }
-        return String(scalars) + "+GitX"
+        guard !output.isEmpty else { return "" }
+        let terminated = output.unicodeScalars.last == "\n" ? output : output + "\n"
+        return terminated + "\n-- \n+GitX\n"
     }
 
     @objc(normalizedExecutableCandidate:)

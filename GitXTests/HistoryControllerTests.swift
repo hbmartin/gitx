@@ -3831,9 +3831,59 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Working State immutable copy actions preserve the clipboard")
     }
 
+    func testExportedRootOrdinaryAndMergePatchesRoundTripThroughApplyAndAm() throws {
+        try fixture.git(["merge", "--quiet", "--no-ff", "feature", "-m", "merge export fixture"])
+        let mergeSHA = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        historyController.refresh(self)
+        XCTAssertTrue(waitForCondition { self.repository.revisionList?.commits.contains { ($0 as? PBGitCommit)?.sha == mergeSHA } == true })
+        let commits = loadedCommits()
+        let root = try XCTUnwrap(commits.first { $0.parents.isEmpty })
+        let ordinary = try XCTUnwrap(commits.first { $0.parents.count == 1 })
+        let merge = try XCTUnwrap(commits.first { $0.sha == mergeSHA })
+        XCTAssertEqual(merge.parents.count, 2)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXPatchRoundTrip-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for (offset, commit) in [root, ordinary, merge].enumerated() {
+            let patch = try XCTUnwrap(commit.patch)
+            XCTAssertFalse(patch.isEmpty)
+            let arguments = commit.parents.count > 1
+                ? ["show", "--first-parent", "-m", "--patch", "--format=email", commit.sha]
+                : ["format-patch", "-1", "--stdout", commit.sha]
+            let original = try fixture.git(arguments)
+            XCTAssertTrue(patch.hasPrefix(original), "Git's original text must remain verbatim")
+            let patchURL = directory.appendingPathComponent("\(offset).patch")
+            try Data(patch.utf8).write(to: patchURL)
+            let expectedTree = try fixture.git(["rev-parse", commit.sha + "^{tree}"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            for useAm in [false, true] {
+                let clone = directory.appendingPathComponent("clone-\(offset)-\(useAm)")
+                try fixture.git(["clone", "--quiet", "--no-local", fixture.path, clone.path])
+                @discardableResult
+                func git(_ arguments: [String]) throws -> String {
+                    try fixture.git(["-C", clone.path] + arguments)
+                }
+                try git(["config", "user.name", "Patch Round Trip"])
+                try git(["config", "user.email", "patch@example.invalid"])
+                if let parent = commit.parents.first {
+                    try git(["checkout", "--quiet", "--detach", parent.sha])
+                } else {
+                    try git(["checkout", "--quiet", "--orphan", "empty-patch-base"])
+                    try git(["rm", "--quiet", "-rf", "--ignore-unmatch", "."])
+                }
+                if useAm {
+                    try git(["am", "--quiet", patchURL.path])
+                    XCTAssertEqual(try git(["rev-parse", "HEAD^{tree}"]).trimmingCharacters(in: .whitespacesAndNewlines), expectedTree)
+                } else {
+                    try git(["apply", "--index", patchURL.path])
+                    XCTAssertEqual(try git(["write-tree"]).trimmingCharacters(in: .whitespacesAndNewlines), expectedTree)
+                }
+            }
+        }
+    }
+
     func testCommitPatchCharacterizesNewlineEmptyFailureAndCachedOutput() throws {
         let target = try XCTUnwrap(repository.headCommit()).gtCommit
-        for (output, expected) in [("patch\n", "patch+GitX"), ("", "+GitX"), ("patch\n\n", "patch\n+GitX")] {
+        for (output, expected) in [("patch\n", "patch\n\n-- \n+GitX\n"), ("", ""), ("patch\n\n", "patch\n\n\n-- \n+GitX\n")] {
             let fake = PBCommitRecoveryRepository()
             fake.recoveryPatchOutput = output
             let commit = PBGitCommit(repository: fake, andCommit: target)
@@ -3855,11 +3905,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             let fake = PBCommitRecoveryRepository()
             fake.recoveryPatchOutput = output
             let commit = PBGitCommit(repository: fake, andCommit: target)
-            var scalars = output.unicodeScalars
-            if scalars.last == "\n" {
-                scalars.removeLast()
-            }
-            XCTAssertEqual(commit.patch, String(scalars) + "+GitX")
+            let terminated = output.unicodeScalars.last == "\n" ? output : output + "\n"
+            XCTAssertEqual(commit.patch, terminated + "\n-- \n+GitX\n")
         }
     }
 
