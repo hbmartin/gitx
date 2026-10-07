@@ -13,6 +13,7 @@
 #import "PBGitRef.h"
 #import "PBGitDefaults.h"
 #import "ObjectiveGit+PBCategories.h"
+#import "GitX-Swift.h"
 
 NSString *const kGitXCommitType = @"commit";
 
@@ -209,9 +210,7 @@ NSString *const kGitXCommitType = @"commit";
 		return nil;
 	}
 
-	// Add a GitX identifier to the patch ;) — guard against underflow when the command produced no output.
-	NSString *trimmed = p.length > 0 ? [p substringToIndex:p.length - 1] : p;
-	self.patch = [trimmed stringByAppendingString:@"+GitX"];
+	self.patch = [PBGitOutputFormatting patchWithGitXIdentifier:p];
 	return self->_patch;
 }
 

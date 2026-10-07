@@ -463,6 +463,37 @@ final class RepositoryPullRequestWorkflowAppTests: XCTestCase {
         XCTAssertFalse(merging.commands.contains { $0.first == "fetch" })
     }
 
+    func testCloneProcessRunnerReturnsSuccessfulGitOutput() throws {
+        let output = try RepositoryForgeProcessGitRunner().run(["--version"])
+
+        XCTAssertTrue(output.hasPrefix("git version "))
+    }
+
+    func testCloneProcessRunnerReportsExitStatusWithoutExposingGitDiagnostics() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitXMissingCloneSource-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("missing-private-source", isDirectory: true)
+        let destination = directory.appendingPathComponent("destination", isDirectory: true)
+
+        XCTAssertThrowsError(try RepositoryForgeProcessGitRunner().run([
+            "clone", "--", source.path, destination.path,
+        ])) { error in
+            XCTAssertEqual(error as? RepositoryForgeProcessError, .commandFailed(exitCode: 128))
+            XCTAssertEqual(error.localizedDescription, "Git could not clone the repository (exit code 128).")
+            XCTAssertFalse(error.localizedDescription.contains(source.path))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testCloneLaunchErrorProvidesAnActionableDescriptionWithoutCommandDetails() {
+        XCTAssertEqual(
+            RepositoryForgeProcessError.launchFailed.localizedDescription,
+            "Half Dark could not start Git for the clone operation."
+        )
+    }
+
     func testCloneCatalogExcludesStarredAndURLChoiceIsExact() throws {
         let fixture = try PullRequestAppFixture()
         XCTAssertThrowsError(try RepositoryForgeCloneCatalog.Entry(

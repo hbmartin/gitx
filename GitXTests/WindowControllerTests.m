@@ -3158,6 +3158,7 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	}
 	PBWorkingTree *leaf = folder.children.firstObject;
 	XCTAssertNotNil(leaf);
+	if (!leaf) return;
 	XCTAssertEqualObjects(leaf.path, @"leaf.txt");
 	XCTAssertEqualObjects(leaf.fullPath, @"nested/leaf.txt");
 	XCTAssertEqualObjects([self.controller selectedURLsFromSender:[self menuItemWithObject:@[ leaf ]]], (@[ fileURL ]));
@@ -4615,6 +4616,102 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	PBHistoryTreePresentation *presentation = [[PBHistoryTreePresentation alloc] initWithRepository:self.repository];
 	NSArray<NSString *> *paths = [[presentation treeForCommit:commit].children valueForKey:@"fullPath"];
 	XCTAssertEqualObjects(paths, (@[ @"file2.txt", @"file10.txt" ]));
+}
+
+- (void)testMessageSheetUsesValueDomainEqualityAndIncludesTaskDetailsOnce
+{
+	@try {
+		NSString *matchingDomain = [[NSString alloc] initWithBytes:PBTaskErrorDomain.UTF8String length:[PBTaskErrorDomain lengthOfBytesUsingEncoding:NSUTF8StringEncoding] encoding:NSUTF8StringEncoding];
+		for (NSNumber *code in @[ @(PBTaskNonZeroExitCodeError), @(PBTaskLaunchError) ]) {
+			NSError *task = [NSError errorWithDomain:matchingDomain
+												code:code.integerValue
+											userInfo:@{
+												NSLocalizedDescriptionKey : @"Task description",
+												NSLocalizedFailureReasonErrorKey : @"Task reason",
+												PBTaskTerminationStatusKey : @17,
+												PBTaskTerminationOutputKey : @"fatal output",
+											}];
+			NSError *outer = [NSError errorWithDomain:@"GitXTests.Message" code:1 userInfo:@{NSUnderlyingErrorKey : task}];
+			[PBRecoveryMessageSheet beginSheetWithError:outer windowController:self.controller completionHandler:nil];
+			NSString *info = PBRecoveryLastMessageSheet.infoView.string;
+			XCTAssertEqual([info componentsSeparatedByString:@"Task description"].count - 1, 1U);
+			XCTAssertEqual([info componentsSeparatedByString:@"Task reason"].count - 1, 1U);
+			[PBRecoveryLastMessageSheet.window orderOut:nil];
+		}
+	} @finally {
+		[PBRecoveryLastMessageSheet.window orderOut:nil];
+		PBRecoveryLastMessageSheet = nil;
+	}
+}
+
+- (void)testMessageSheetDeduplicatesSharedDetailsAndOmitsMalformedLocalizedFields
+{
+	@try {
+		NSError *task = [NSError errorWithDomain:PBTaskErrorDomain
+											code:PBTaskLaunchError
+										userInfo:@{
+											NSLocalizedDescriptionKey : @"Shared detail",
+											NSLocalizedFailureReasonErrorKey : @"Shared detail",
+										}];
+		NSError *outer = [NSError errorWithDomain:@"GitXTests.Message"
+											 code:1
+										 userInfo:@{
+											 NSLocalizedDescriptionKey : @"Outer title",
+											 NSLocalizedFailureReasonErrorKey : @"Shared detail",
+											 NSUnderlyingErrorKey : task,
+										 }];
+		[PBRecoveryMessageSheet beginSheetWithError:outer windowController:self.controller completionHandler:nil];
+		XCTAssertEqual([PBRecoveryLastMessageSheet.infoView.string componentsSeparatedByString:@"Shared detail"].count - 1, 1U);
+		[PBRecoveryLastMessageSheet.window orderOut:nil];
+
+		NSError *malformedTask = [NSError errorWithDomain:PBTaskErrorDomain
+													 code:PBTaskLaunchError
+												 userInfo:@{
+													 NSLocalizedDescriptionKey : @"Valid task detail",
+													 NSLocalizedFailureReasonErrorKey : NSNull.null,
+												 }];
+		NSError *malformedOuter = [NSError errorWithDomain:@"GitXTests.Message"
+													  code:1
+												  userInfo:@{
+													  NSLocalizedDescriptionKey : @"Valid outer title",
+													  NSLocalizedFailureReasonErrorKey : @42,
+													  NSLocalizedRecoverySuggestionErrorKey : NSNull.null,
+													  NSUnderlyingErrorKey : malformedTask,
+												  }];
+		XCTAssertNoThrow([PBRecoveryMessageSheet beginSheetWithError:malformedOuter windowController:self.controller completionHandler:nil]);
+		NSString *info = PBRecoveryLastMessageSheet.infoView.string;
+		XCTAssertTrue([info containsString:@"Valid task detail"]);
+		XCTAssertFalse([info containsString:@"42"]);
+		XCTAssertFalse([info containsString:@"Maybe you could try"]);
+	} @finally {
+		[PBRecoveryLastMessageSheet.window orderOut:nil];
+		PBRecoveryLastMessageSheet = nil;
+	}
+}
+
+- (void)testMessageSheetOmitsMissingAndMalformedOptionalTaskDetails
+{
+	@try {
+		for (NSDictionary *taskInfo in @[ @{}, @{PBTaskTerminationStatusKey : NSNull.null, PBTaskTerminationOutputKey : NSNull.null} ]) {
+			NSError *task = [NSError errorWithDomain:PBTaskErrorDomain code:PBTaskNonZeroExitCodeError userInfo:taskInfo];
+			NSError *outer = [NSError errorWithDomain:@"GitXTests.Message" code:1 userInfo:@{NSUnderlyingErrorKey : task}];
+			PBRecoveryLastMessageSheet = nil;
+			XCTAssertNoThrow([PBRecoveryMessageSheet beginSheetWithError:outer windowController:self.controller completionHandler:nil]);
+			XCTAssertNotNil(PBRecoveryLastMessageSheet);
+			XCTAssertTrue([PBRecoveryLastMessageSheet.infoView.string containsString:@"Return code: ?"]);
+			XCTAssertFalse([PBRecoveryLastMessageSheet.infoView.string containsString:@"Output:"]);
+			[PBRecoveryLastMessageSheet.window orderOut:nil];
+		}
+		for (id underlying in @[ NSNull.null, [NSError errorWithDomain:@"Other" code:1 userInfo:nil] ]) {
+			NSError *ordinary = [NSError errorWithDomain:@"GitXTests.Message" code:1 userInfo:@{NSUnderlyingErrorKey : underlying, NSLocalizedFailureReasonErrorKey : @"", NSLocalizedRecoverySuggestionErrorKey : @""}];
+			XCTAssertNoThrow([PBRecoveryMessageSheet beginSheetWithError:ordinary windowController:self.controller completionHandler:nil]);
+			XCTAssertEqualObjects(PBRecoveryLastMessageSheet.infoView.string, @"");
+			[PBRecoveryLastMessageSheet.window orderOut:nil];
+		}
+	} @finally {
+		[PBRecoveryLastMessageSheet.window orderOut:nil];
+		PBRecoveryLastMessageSheet = nil;
+	}
 }
 
 - (void)testFileViewImageDataHandlesWorkingTreeAndIncompleteGitSources

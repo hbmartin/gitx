@@ -933,6 +933,17 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 }
 @end
 
+@interface PBAutoFetchTaskManagerSpy : PBAutoFetchManager
+@property (nonatomic, strong) PBAutoFetchTaskSpy *testTask;
+@end
+
+@implementation PBAutoFetchTaskManagerSpy
+- (PBTask *)taskForRepositoryURL:(NSURL *)url arguments:(NSArray<NSString *> *)arguments
+{
+	return self.testTask;
+}
+@end
+
 @interface PBAutoFetchBehaviorSpy : PBAutoFetchManager
 @property (nonatomic, copy) NSDictionary<NSString *, NSURL *> *testCandidates;
 @property (nonatomic, copy) NSArray<NSDictionary<NSString *, NSString *> *> *testSnapshots;
@@ -1641,6 +1652,22 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 	XCTAssertEqual([manager commitTimestampForSHA:@"new" repositoryURL:url], 0);
 }
 
+- (void)testAutoFetchSuccessfulTaskWithUnavailableDecodedOutputReturnsAnEmptyString
+{
+	PBAutoFetchTaskManagerSpy *manager = [[PBAutoFetchTaskManagerSpy alloc] init];
+	manager.testTask = [[PBAutoFetchTaskSpy alloc] init];
+	manager.testTask.succeeds = YES;
+	manager.testTask.testOutput = nil;
+	NSError *error = nil;
+
+	NSString *output = [manager outputForRepositoryURL:[NSURL fileURLWithPath:NSTemporaryDirectory()]
+											 arguments:@[ @"for-each-ref" ]
+												 error:&error];
+
+	XCTAssertEqualObjects(output, @"");
+	XCTAssertNil(error);
+}
+
 - (void)testAutoFetchSuccessfulFetchRefreshesAndNotifiesOnlyFastForwardAdvances
 {
 	PBAutoFetchBehaviorSpy *manager = [[PBAutoFetchBehaviorSpy alloc] init];
@@ -1788,6 +1815,13 @@ static void PBFeatureSwapClassMethods(Class cls, SEL original, SEL replacement)
 		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.title containsString:@"0 new commits"]);
 		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"sha"], @"");
 		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"ref"], @"");
+
+		[manager postAdvanceNotificationForURL:url advances:@[]];
+		XCTAssertTrue([PBAutoFetchLastNotificationRequest.content.title containsString:@"0 new commits"]);
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.body, @"");
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"sha"], @"");
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"ref"], @"");
+		XCTAssertEqualObjects(PBAutoFetchLastNotificationRequest.content.userInfo[@"multipleBranches"], @NO);
 	} @finally {
 		PBFeatureSwapInstanceMethods(
 			UNUserNotificationCenter.class,

@@ -175,6 +175,14 @@ typedef NS_ENUM(NSInteger, PBApplicationIconStyle) {
 - (instancetype)initWithUserDefaults:(NSUserDefaults *)userDefaults;
 - (instancetype)initWithUserDefaults:(NSUserDefaults *)userDefaults
 	automaticallyStartsForgeServices:(BOOL)automaticallyStartsForgeServices;
+- (instancetype)initWithUserDefaults:(NSUserDefaults *)userDefaults
+		 forgeStartupFailureProvider:(void (^)(void (^completionHandler)(NSError *)))failureProvider
+	automaticallyStartsForgeServices:(BOOL)automaticallyStartsForgeServices
+	NS_SWIFT_NAME(init(userDefaults:forgeStartupFailureProvider:automaticallyStartsForgeServices:));
+- (void)waitForAutomaticForgeServiceStartupForTestingWithCompletionHandler:(void (^)(void))completionHandler
+	NS_SWIFT_NAME(waitForAutomaticForgeServiceStartupForTesting(completionHandler:));
+- (void)retryForgeServicesForTestingWithCompletionHandler:(void (^)(NSError *_Nullable))completionHandler
+	NS_SWIFT_NAME(retryForgeServicesForTesting(completionHandler:));
 + (PBApplicationComposition *)sharedComposition;
 + (void)setSharedComposition:(PBApplicationComposition *)composition;
 @end

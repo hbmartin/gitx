@@ -121,6 +121,7 @@ final nonisolated class ApplicationComposition: NSObject {
     private let automaticallyStartsForgeServices: Bool
     private let forgeServiceStartupLock = NSLock()
     private var didStartForgeServices = false
+    private var forgeServiceStartupTask: Task<Void, Never>?
 
     @objc(initWithUserDefaults:)
     convenience init(userDefaults: UserDefaults) {
@@ -233,15 +234,55 @@ final nonisolated class ApplicationComposition: NSObject {
         super.init()
     }
 
+    #if DEBUG
+        @objc(initWithUserDefaults:forgeStartupFailureProvider:automaticallyStartsForgeServices:)
+        // swiftlint:disable:next unused_declaration -- The manual XCTest facade invokes this DEBUG-only selector.
+        convenience init(
+            userDefaults: UserDefaults,
+            forgeStartupFailureProvider: @escaping @Sendable (@escaping @Sendable (NSError) -> Void) -> Void,
+            automaticallyStartsForgeServices: Bool
+        ) {
+            let loader = ForgeApplicationServiceLoader {
+                let failure: NSError = await withCheckedContinuation { continuation in
+                    forgeStartupFailureProvider { continuation.resume(returning: $0) }
+                }
+                throw failure
+            }
+            self.init(
+                userDefaults: userDefaults,
+                forgeServices: loader,
+                automaticallyStartsForgeServices: automaticallyStartsForgeServices
+            )
+        }
+
+        @objc(waitForAutomaticForgeServiceStartupForTestingWithCompletionHandler:)
+        // swiftlint:disable:next unused_declaration -- The manual XCTest facade awaits this DEBUG-only selector.
+        func waitForAutomaticForgeServiceStartupForTesting() async {
+            await waitForAutomaticForgeServiceStartup()
+        }
+
+        @objc(retryForgeServicesForTestingWithCompletionHandler:)
+        // swiftlint:disable:next unused_declaration -- The manual XCTest facade invokes this DEBUG-only selector.
+        func retryForgeServicesForTesting() async -> NSError? {
+            do {
+                _ = try await forgeServices.services()
+                return nil
+            } catch {
+                return error as NSError
+            }
+        }
+    #endif
+
     private func startForgeServicesIfNeeded() {
         guard automaticallyStartsForgeServices else { return }
         forgeServiceStartupLock.lock()
-        let shouldStart = !didStartForgeServices
+        guard !didStartForgeServices else {
+            forgeServiceStartupLock.unlock()
+            return
+        }
         didStartForgeServices = true
-        forgeServiceStartupLock.unlock()
-        guard shouldStart else { return }
         let forgeServices = forgeServices
-        Task {
+        forgeServiceStartupTask = Task {
             do {
                 _ = try await forgeServices.services()
                 NSLog("[GitX] Forge application services initialized from the composition root")
@@ -249,6 +290,19 @@ final nonisolated class ApplicationComposition: NSObject {
                 NSLog("[GitX] Forge application services initialization failed from the composition root")
             }
         }
+        forgeServiceStartupLock.unlock()
+    }
+
+    /// A completion boundary for callers that must finish startup before releasing a composition.
+    func waitForAutomaticForgeServiceStartup() async {
+        let task = automaticForgeServiceStartupTask()
+        await task?.value
+    }
+
+    private func automaticForgeServiceStartupTask() -> Task<Void, Never>? {
+        forgeServiceStartupLock.lock()
+        defer { forgeServiceStartupLock.unlock() }
+        return forgeServiceStartupTask
     }
 
     @objc(sharedComposition)

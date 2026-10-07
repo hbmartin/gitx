@@ -69,7 +69,9 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 @end
 
 @implementation PBBinaryRecoveryProbe
-+ (void)initialize {}
++ (void)initialize
+{
+}
 + (BOOL)acceptBinary:(nullable NSString *)path
 {
 	[PBBinaryRecoveryCandidates addObject:path ?: @"<nil>"];
@@ -100,8 +102,9 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 {
 	self.recoveryPatchInvocationCount++;
 	if (!self.recoveryPatchOutput && error) {
-		*error = [NSError errorWithDomain:@"GitXTests.PatchRecovery" code:1
-							 userInfo:@{NSLocalizedDescriptionKey : @"Expected patch failure"}];
+		*error = [NSError errorWithDomain:@"GitXTests.PatchRecovery"
+									 code:1
+								 userInfo:@{NSLocalizedDescriptionKey : @"Expected patch failure"}];
 	}
 	return self.recoveryPatchOutput;
 }
@@ -555,10 +558,14 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 		}
 	} @finally {
 		method_exchangeImplementations(alertMethod, replacement);
-		if (originalPreference) [NSUserDefaults.standardUserDefaults setObject:originalPreference forKey:@"gitExecutable"];
-		else [NSUserDefaults.standardUserDefaults removeObjectForKey:@"gitExecutable"];
-		if (originalEnvironment) setenv("GIT_PATH", originalEnvironment.UTF8String, 1);
-		else unsetenv("GIT_PATH");
+		if (originalPreference)
+			[NSUserDefaults.standardUserDefaults setObject:originalPreference forKey:@"gitExecutable"];
+		else
+			[NSUserDefaults.standardUserDefaults removeObjectForKey:@"gitExecutable"];
+		if (originalEnvironment)
+			setenv("GIT_PATH", originalEnvironment.UTF8String, 1);
+		else
+			unsetenv("GIT_PATH");
 		XCTAssertTrue([PBGitBinary acceptBinary:originalPath]);
 		PBBinaryRecoveryCandidates = nil;
 	}
@@ -582,6 +589,27 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 		NSURL *nonexecutable = [directory URLByAppendingPathComponent:@"not-executable"];
 		XCTAssertTrue([@"not executable" writeToURL:nonexecutable atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
 		XCTAssertNil([PBGitBinary versionForPath:nonexecutable.path]);
+	} @finally {
+		XCTAssertTrue([PBGitBinary acceptBinary:originalPath]);
+		[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+	}
+}
+
+- (void)testGitBinaryDiscoveryPreservesLegitimateSpacesInExecutablePaths
+{
+	NSString *originalPath = PBGitBinary.path;
+	NSURL *directory = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString]];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:NULL]);
+	@try {
+		for (NSString *name in @[ @"git ", @" git", @"git with spaces " ]) {
+			NSURL *executable = [directory URLByAppendingPathComponent:name];
+			XCTAssertTrue([@"#!/bin/sh\nprintf 'git version 2.50.1\\n'\n" writeToURL:executable atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+			XCTAssertTrue([NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:executable.path error:NULL]);
+			XCTAssertTrue([PBGitBinary acceptBinary:executable.path]);
+			XCTAssertEqualObjects(PBGitBinary.path, executable.path);
+			XCTAssertTrue([PBGitBinary acceptBinary:[executable.path stringByAppendingString:@"\r\n"]]);
+			XCTAssertEqualObjects(PBGitBinary.path, executable.path);
+		}
 	} @finally {
 		XCTAssertTrue([PBGitBinary acceptBinary:originalPath]);
 		[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
@@ -758,10 +786,10 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	GTCommit *target = (GTCommit *)[head resolvedTarget];
 	XCTAssertNotNil(target, @"%@", error);
 	for (NSArray<NSString *> *example in @[
-		@[ @"patch\n", @"patch+GitX" ],
-		@[ @"", @"+GitX" ],
-		@[ @"patch\n\n", @"patch\n+GitX" ],
-	]) {
+			 @[ @"patch\n", @"patch+GitX" ],
+			 @[ @"", @"+GitX" ],
+			 @[ @"patch\n\n", @"patch\n+GitX" ],
+		 ]) {
 		PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
 		repository.recoveryPatchOutput = example[0];
 		PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
@@ -775,6 +803,21 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	XCTAssertNil(commit.patch);
 	XCTAssertNil(commit.patch);
 	XCTAssertEqual(repository.recoveryPatchInvocationCount, 2U, @"a failed export is retried rather than cached");
+}
+
+- (void)testCommitPatchPreservesFinalContentWhenOutputHasNoLineFeed
+{
+	NSError *error = nil;
+	GTReference *head = [self.repository.gtRepo headReferenceWithError:&error];
+	GTCommit *target = (GTCommit *)[head resolvedTarget];
+	XCTAssertNotNil(target, @"%@", error);
+	for (NSString *output in @[ @"patch-without-newline", @"patch🙂", @"patch\r", @"patch\r\n" ]) {
+		PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
+		repository.recoveryPatchOutput = output;
+		PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
+		NSString *expected = [output hasSuffix:@"\n"] ? [output substringToIndex:output.length - 1] : output;
+		XCTAssertEqualObjects(commit.patch, [expected stringByAppendingString:@"+GitX"]);
+	}
 }
 
 - (void)testCommitIdentityReferencesAndSVNMetadataCompatibility
@@ -2620,7 +2663,7 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	XCTAssertEqual([finished.userInfo[@"sha"] length], 40);
 }
 
-- (void)testPostCommitHookFailurePublishesCompletedCommitWithoutRefreshing
+- (void)testPostCommitHookFailurePublishesCompletedCommitWithHookDiagnostics
 {
 	NSError *error = nil;
 	[self stageTrackedText:@"post hook failure contents\n" error:&error];

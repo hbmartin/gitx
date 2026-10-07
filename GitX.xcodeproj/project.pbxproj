@@ -408,6 +408,8 @@
 		D89E9B141218BA260097A90B /* ScriptingBridge.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D89E9AB21218A9DA0097A90B /* ScriptingBridge.framework */; };
 		D8E3B2B810DC9FB2001096A3 /* ScriptingBridge.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D8E3B2B710DC9FB2001096A3 /* ScriptingBridge.framework */; };
 		F5E4DBFB0EAB58D90013FAFC /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F5E4DBFA0EAB58D90013FAFC /* SystemConfiguration.framework */; };
+		C0DEAC0F0000000000000001 /* ErrorMessagePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAC0F0000000000000011 /* ErrorMessagePresentation.swift */; };
+		C0DEAC0F0000000000000002 /* GitOutputFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEAC0F0000000000000012 /* GitOutputFormatting.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1094,6 +1096,8 @@
 		D89E9AB21218A9DA0097A90B /* ScriptingBridge.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScriptingBridge.framework; path = System/Library/Frameworks/ScriptingBridge.framework; sourceTree = SDKROOT; };
 		D8E3B2B710DC9FB2001096A3 /* ScriptingBridge.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScriptingBridge.framework; path = /System/Library/Frameworks/ScriptingBridge.framework; sourceTree = "<absolute>"; };
 		F5E4DBFA0EAB58D90013FAFC /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = /System/Library/Frameworks/SystemConfiguration.framework; sourceTree = "<absolute>"; };
+		C0DEAC0F0000000000000011 /* ErrorMessagePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorMessagePresentation.swift; sourceTree = "<group>"; };
+		C0DEAC0F0000000000000012 /* GitOutputFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitOutputFormatting.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1490,6 +1494,7 @@
 		4A5D764D14A9A9CC00DF6C68 /* git */ = {
 			isa = PBXGroup;
 			children = (
+				C0DEAC0F0000000000000012 /* GitOutputFormatting.swift */,
 				C0DE10000000000000000005 /* PBHistoryArrayController.h */,
 				C0DE10000000000000000006 /* PBHistoryArrayController.swift */,
 				C0DE10000000000000000009 /* PBUncommittedChanges.h */,
@@ -1607,6 +1612,7 @@
 		4A5D76B314A9A9CC00DF6C68 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				C0DEAC0F0000000000000011 /* ErrorMessagePresentation.swift */,
 				C0DE10000000000000000001 /* PBHighlighting.h */,
 				C0DE10000000000000000002 /* PBHighlighting.swift */,
 				C0DE10000000000000000003 /* PBNativeContentView.h */,
@@ -2221,6 +2227,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0DEAC0F0000000000000002 /* GitOutputFormatting.swift in Sources */,
+				C0DEAC0F0000000000000001 /* ErrorMessagePresentation.swift in Sources */,
 				C0DE10000000000000000019 /* PBAutoFetchManager.swift in Sources */,
 				C0DE10000000000000000011 /* PBHighlighting.swift in Sources */,
 				C0DE44300000000000000001 /* PBProcessEnvironment.swift in Sources */,
