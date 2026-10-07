@@ -225,7 +225,7 @@ final class RepositoryRemoteURLCoordinator: NSObject {
 
     @objc(firstHTTPURLInOutput:)
     func firstHTTPURL(in output: String) -> URL? {
-        ForgeWebURLPolicy.firstHTTPURL(in: output)
+        RepositoryPushBrowserHintPolicy.firstURL(in: output)
     }
 
     @objc(webURLForRemoteURL:branch:sha:)

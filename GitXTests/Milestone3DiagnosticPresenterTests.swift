@@ -281,6 +281,96 @@ import XCTest
             XCTAssertEqual(recorder.last?.state, "PostMerge.BaseCheckedOut")
         }
 
+        func testDiagnosticBackgroundDrawsOffscreenForFullAndEdgeDirtyRects() throws {
+            let fixture = try Milestone3DiagnosticRepositoryFixture()
+            defer { fixture.cleanup() }
+            let recorder = Milestone3DiagnosticStateRecorder()
+            let mounted = mount(.lifecycle, fixture: fixture, recorder: recorder)
+            let background = mounted.controller.view
+            // The window is offscreen; supply the drawing surface explicitly rather
+            // than depending on AppKit to assign its eventual display geometry.
+            background.frame = NSRect(x: 0, y: 0, width: 1000, height: 700)
+            background.bounds = NSRect(x: 0, y: 0, width: 1000, height: 700)
+            let initialBounds = background.bounds
+            let previousContext = NSGraphicsContext.current
+            XCTAssertEqual(
+                background.accessibilityIdentifier(),
+                Milestone3AccessibilityIdentifier.diagnosticRoot
+            )
+            XCTAssertGreaterThan(initialBounds.width, 0)
+            XCTAssertGreaterThan(initialBounds.height, 1)
+
+            let dirtyRects = [
+                initialBounds,
+                NSRect(x: initialBounds.minX, y: initialBounds.maxY - 1, width: initialBounds.width, height: 1),
+            ]
+            for (index, dirtyRect) in dirtyRects.enumerated() {
+                let bitmap = try drawBackground(background, dirtyRect: dirtyRect)
+                XCTAssertEqual(bitmap.pixelsWide, Int(initialBounds.width))
+                XCTAssertEqual(bitmap.pixelsHigh, Int(initialBounds.height))
+                XCTAssertTrue(NSGraphicsContext.current === previousContext)
+                XCTAssertEqual(background.bounds, initialBounds)
+                let image = NSImage(size: initialBounds.size)
+                image.addRepresentation(bitmap)
+                let attachment = XCTAttachment(image: image)
+                attachment.name = "Milestone 3 diagnostic background \(index == 0 ? "full" : "top edge")"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+            XCTAssertEqual(
+                try field(Milestone3AccessibilityIdentifier.Lifecycle.status, in: mounted.controller).stringValue,
+                "Draft Pull Request • open • branch update available"
+            )
+            XCTAssertTrue(recorder.events.isEmpty)
+        }
+
+        func testSuggestedChangeReadFailurePreservesStatusAndReportsAnError() throws {
+            let fixture = try Milestone3DiagnosticRepositoryFixture()
+            defer { fixture.cleanup() }
+            let recorder = Milestone3DiagnosticStateRecorder()
+            let mounted = mount(.suggestedChange, fixture: fixture, recorder: recorder)
+            let status = try field(Milestone3AccessibilityIdentifier.SuggestedChange.status, in: mounted.controller)
+            let initialStatus = status.stringValue
+            try FileManager.default.removeItem(at: fixture.suggestedChangeURL)
+
+            try button(Milestone3AccessibilityIdentifier.SuggestedChange.apply, in: mounted.controller)
+                .performClick(nil)
+
+            let failure = try XCTUnwrap(recorder.last)
+            XCTAssertEqual(failure.state, "Failure")
+            XCTAssertFalse(failure.label.isEmpty)
+            XCTAssertEqual(status.stringValue, initialStatus)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.suggestedChangeURL.path))
+        }
+
+        func testMissingBaseReportsFetchAndCheckoutErrorsWithoutChangingTheBranch() throws {
+            let fixture = try Milestone3DiagnosticRepositoryFixture()
+            defer { fixture.cleanup() }
+            let recorder = Milestone3DiagnosticStateRecorder()
+            let mounted = mount(.postMerge, fixture: fixture, recorder: recorder)
+            let status = try field(Milestone3AccessibilityIdentifier.PostMerge.status, in: mounted.controller)
+            let fetch = try button(Milestone3AccessibilityIdentifier.PostMerge.fetch, in: mounted.controller)
+            let checkout = try button(Milestone3AccessibilityIdentifier.PostMerge.checkoutBase, in: mounted.controller)
+            fetch.performClick(nil)
+            XCTAssertEqual(recorder.last?.state, "PostMerge.Fetched")
+            XCTAssertTrue(checkout.isEnabled)
+            let fetchedStatus = status.stringValue
+            _ = try fixture.git(["branch", "--delete", "--force", "main"])
+
+            fetch.performClick(nil)
+            XCTAssertEqual(recorder.last?.state, "Failure")
+            XCTAssertFalse(try XCTUnwrap(recorder.last).label.isEmpty)
+            XCTAssertEqual(status.stringValue, fetchedStatus)
+            XCTAssertEqual(try fixture.currentBranch(), "feature/milestone-3")
+
+            checkout.performClick(nil)
+            XCTAssertEqual(recorder.last?.state, "Failure")
+            XCTAssertFalse(try XCTUnwrap(recorder.last).label.isEmpty)
+            XCTAssertEqual(recorder.events.filter { $0.state == "Failure" }.count, 2)
+            XCTAssertEqual(status.stringValue, fetchedStatus)
+            XCTAssertEqual(try fixture.currentBranch(), "feature/milestone-3")
+        }
+
         func testProductProofHarnessMarksARepositoryWindowReady() throws {
             let fixture = try Milestone3DiagnosticRepositoryFixture()
             defer { fixture.cleanup() }
@@ -330,6 +420,29 @@ import XCTest
                 "The window owns an installed harness; the harness must not retain the window in return"
             )
             withExtendedLifetime(proof) {}
+        }
+
+        private func drawBackground(_ background: NSView, dirtyRect: NSRect) throws -> NSBitmapImageRep {
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: Int(background.bounds.width),
+                pixelsHigh: Int(background.bounds.height),
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ))
+            let context = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: bitmap))
+            NSGraphicsContext.saveGraphicsState()
+            defer { NSGraphicsContext.restoreGraphicsState() }
+            NSGraphicsContext.current = context
+            // Call the actual override directly; drawing coverage must not depend
+            // on whether AppKit happens to display this offscreen test window.
+            background.draw(dirtyRect)
+            return bitmap
         }
 
         private func mount(
@@ -472,7 +585,7 @@ import XCTest
             _ = try Self.runGit(["add", "M3Suggested.swift", "README.md"], in: directory)
             _ = try Self.runGit(["commit", "--quiet", "-m", "Diagnostic fixture"], in: directory)
             _ = try Self.runGit(["switch", "--quiet", "-c", "feature/milestone-3"], in: directory)
-            repository = try PBGitRepository(url: directory)
+            repository = try GitXTestGitRepository(url: directory)
         }
 
         func cleanup() {
@@ -489,31 +602,7 @@ import XCTest
         }
 
         private static func runGit(_ arguments: [String], in directory: URL) throws -> String {
-            let process = Process()
-            let pipe = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = arguments
-            process.currentDirectoryURL = directory
-            process.standardOutput = pipe
-            process.standardError = pipe
-            try process.run()
-            process.waitUntilExit()
-            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            guard process.terminationStatus == 0 else {
-                throw Milestone3DiagnosticRepositoryFixtureError.git(arguments: arguments, output: output)
-            }
-            return output
-        }
-    }
-
-    private enum Milestone3DiagnosticRepositoryFixtureError: LocalizedError {
-        case git(arguments: [String], output: String)
-
-        var errorDescription: String? {
-            switch self {
-            case let .git(arguments, output):
-                "git \(arguments.joined(separator: " ")) failed: \(output)"
-            }
+            try GitXTestGitFixture.run(arguments, in: directory).standardOutput
         }
     }
 #endif

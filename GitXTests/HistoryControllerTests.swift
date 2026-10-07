@@ -1383,7 +1383,11 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyList.commits = [commits[0]]
         historyList.setValue(true, forKey: "resetCommits")
         historyList.isUpdating = true
-        _ = historyList.perform(NSSelectorFromString("finishedGraphing"))
+        _ = historyList.perform(
+            NSSelectorFromString("finishGraphingForQueue:revisionList:"),
+            with: graphQueue,
+            with: currentRevList
+        )
         XCTAssertEqual(historyList.commits.count, 0)
         XCTAssertFalse(historyList.isUpdating)
         currentRevList.setValue(currentCommits, forKey: "commits")

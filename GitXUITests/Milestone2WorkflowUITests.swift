@@ -58,6 +58,37 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try git(["rev-parse", "refs/heads/feature/milestone-2"], in: fixture.remote).trimmingCharacters(in: .whitespacesAndNewlines), fixture.expectedHead)
     }
 
+    func testRejectedPushRetryRequiresFreshPushWhenSettingsChange() throws {
+        let fixture = try makePushFixture()
+        _ = try git(["config", "url.\(fixture.remote.path).insteadOf", "https://github.com/contributor/gitx.git"], in: fixture.repository)
+        _ = try git(["push", "--quiet", "origin", "feature/milestone-2"], in: fixture.repository)
+        _ = try git(["fetch", "--quiet", "origin"], in: fixture.repository)
+        _ = try git(["commit", "--amend", "--quiet", "-m", "Rewritten UI fixture"], in: fixture.repository)
+        let replacement = try git(["rev-parse", "HEAD"], in: fixture.repository).trimmingCharacters(in: .whitespacesAndNewlines)
+        let app = try launch(repository: fixture.repository, scenario: "push-create")
+        try click(app.sheets.buttons["Push"], timeout: 15)
+        let retry = app.buttons["GitX.Push.RetryWithLease"]
+        try requireHittable(retry, timeout: 20)
+        let confirmationText = app.sheets.firstMatch.staticTexts.allElementsBoundByIndex.map(elementText).joined(separator: "\n")
+        XCTAssertTrue(confirmationText.contains(replacement), confirmationText)
+        XCTAssertTrue(confirmationText.contains(fixture.expectedHead), confirmationText)
+        _ = try git(["config", "remote.origin.receivepack", "gitx-fixture-command-must-not-run"], in: fixture.repository)
+        try click(retry, timeout: 5)
+        let message = app.staticTexts["Push settings changed"].firstMatch
+        try requireExists(message, timeout: 15)
+        let errorSheet = app.sheets.firstMatch
+        let detail = errorSheet.textViews.allElementsBoundByIndex.map(elementText).joined(separator: "\n")
+            + errorSheet.staticTexts.allElementsBoundByIndex.map(elementText).joined(separator: "\n")
+        XCTAssertTrue(detail.contains("Start a fresh push"), detail)
+        retainDiagnosticScreenshot(named: "Review-Fixes-Push-Settings-Changed", of: errorSheet, in: app)
+        XCTAssertEqual(try git(["rev-parse", "refs/heads/feature/milestone-2"], in: fixture.remote).trimmingCharacters(in: .whitespacesAndNewlines), fixture.expectedHead)
+        XCTAssertEqual(try git(["rev-parse", "HEAD"], in: fixture.repository).trimmingCharacters(in: .whitespacesAndNewlines), replacement)
+        try click(errorSheet.buttons["OK"], timeout: 5)
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.sheets.firstMatch.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed)
+        XCTAssertFalse(app.staticTexts["Pull Request Created"].exists)
+    }
+
     func testPartialPatchCopyWarningCanBeDismissed() throws {
         let repository = try makeWorkingRepository(name: "partial-copy")
         let app = try launch(repository: repository, scenario: "partial-patch-copy")
@@ -348,24 +379,15 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
             "-PBAutoFetchScope", "0",
             "-Suppressed Dialog Warnings", "()",
         ]
-        app.launchEnvironment = [
+        app.launchEnvironment = GitXTestGitEnvironment.isolated(app.launchEnvironment).merging([
             "CFFIXED_USER_HOME": isolatedHome.path,
             "CFPREFERENCES_AVOID_DAEMON": "1",
-            "GCM_INTERACTIVE": "never",
-            "GIT_ASKPASS": "/usr/bin/false",
-            "GIT_CONFIG_PARAMETERS": "",
-            "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
-            "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
-            "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
             "GITX_UITEST_REPO": repository.path,
             "GITX_UITEST_FORGE_STORAGE_ROOT": isolatedHome
                 .appendingPathComponent("Library/Application Support/GitX/Forge", isDirectory: true).path,
             "GITX_M2_UITEST": "1",
             "GITX_M2_SCENARIO": scenario,
-        ].merging(additionalEnvironment) { _, value in value }
+        ]) { _, value in value }.merging(additionalEnvironment) { _, value in value }
         activeApplication = app
         app.launch()
         try requireHarnessState("Ready.\(scenario)", in: app, timeout: 15)

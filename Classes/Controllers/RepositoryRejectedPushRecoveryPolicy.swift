@@ -9,12 +9,13 @@ nonisolated struct RepositoryPushSnapshot: Equatable, Sendable {
     let endpoint: String
     let destinationRef: String
     let fetchedOID: String
-    let trackingRef: String
     let reflogOIDs: [String]
+    let reflogIsTruncated: Bool
     let configuration: [String: [String]]
 
     init(sourceRef: String, sourceOID: String, remoteName: String, endpoint: String, destinationRef: String,
-         fetchedOID: String, trackingRef: String = "", reflogOIDs: [String] = [], configuration: [String: [String]] = [:])
+         fetchedOID: String, reflogOIDs: [String] = [], reflogIsTruncated: Bool = false,
+         configuration: [String: [String]] = [:])
     {
         self.sourceRef = sourceRef
         self.sourceOID = sourceOID
@@ -22,8 +23,8 @@ nonisolated struct RepositoryPushSnapshot: Equatable, Sendable {
         self.endpoint = endpoint
         self.destinationRef = destinationRef
         self.fetchedOID = fetchedOID
-        self.trackingRef = trackingRef
         self.reflogOIDs = reflogOIDs
+        self.reflogIsTruncated = reflogIsTruncated
         self.configuration = configuration
     }
 

@@ -10,6 +10,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class PBTaskDiagnosticCapture;
+
 extern NSString *const PBTaskErrorDomain;
 extern NSString *const PBTaskUnderlyingExceptionKey;
 extern NSString *const PBTaskTerminationStatusKey;
@@ -83,6 +85,10 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 @property BOOL separatesStandardError;
 /// Set to NO when an output chunk handler consumes a large stream. Defaults to YES.
 @property BOOL capturesStandardOutput;
+/// Opt in before launch to private file-backed diagnostics and separate streams.
+/// Memory output remains bounded to 64 KiB; complete output belongs to the sealed artifact.
+/// Existing callers default to nil.
+@property (nullable, strong) PBTaskDiagnosticCapture *diagnosticCapture;
 /// Maximum synchronous execution time in seconds. Defaults to 30; values at or below zero disable the timeout.
 @property NSTimeInterval timeout;
 /// Set this if you want to pass data to the command on its standard input

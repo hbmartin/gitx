@@ -23,6 +23,8 @@
 
 - (PBGitHistoryGrapher *)grapher;
 - (NSInvocationOperation *)operationForCommits:(NSArray *)newCommits;
+- (void)finishGraphingForQueue:(NSOperationQueue *)queue revisionList:(PBGitRevList *)parser;
+- (void)finishParsingRevisionList:(PBGitRevList *)parser;
 
 - (void)updateProjectHistoryForRev:(PBGitRevSpecifier *)rev;
 - (void)updateHistoryForRev:(PBGitRevSpecifier *)rev;
@@ -101,7 +103,10 @@
 	[projectRevList cancel];
 	if (projectLoadWasActive)
 		NSLog(@"[GitX] Cancelled an active project history load during cleanup");
-	[graphQueue cancelAllOperations];
+	// Invalidate the publication token before cancelled graph work can deliver.
+	NSOperationQueue *cancelledQueue = graphQueue;
+	graphQueue = nil;
+	[cancelledQueue cancelAllOperations];
 }
 
 
@@ -152,15 +157,41 @@
 
 - (void)finishedGraphing
 {
-	if (!currentRevList.parsing && ([[graphQueue operations] count] == 0)) {
-		if (resetCommits && currentRevList.commits.count == 0) {
-			self.commits = [NSMutableArray array];
-			self.publishedCommitSHAs = [NSMutableSet set];
-			resetCommits = NO;
-			NSLog(@"[GitX] Cleared history after an empty revision load");
-		}
-		self.isUpdating = NO;
+	// The legacy delegate callback is sent before its invocation finishes and
+	// carries no source identity. Actual operation completions settle the load.
+}
+
+- (void)finishGraphingForQueue:(NSOperationQueue *)queue revisionList:(PBGitRevList *)parser
+{
+	if (!queue || !parser || queue != graphQueue || parser != currentRevList) {
+		NSLog(@"[GitX] Ignored graph completion for a superseded history load");
+		return;
 	}
+	if (parser.isParsing) return;
+	for (NSOperation *operation in queue.operations) {
+		if (!operation.finished) return;
+	}
+
+	if (resetCommits && parser.commits.count == 0) {
+		self.commits = [NSMutableArray array];
+		self.publishedCommitSHAs = [NSMutableSet set];
+		resetCommits = NO;
+		NSLog(@"[GitX] Cleared history after an empty revision load");
+	}
+	self.isUpdating = NO;
+	NSLog(@"[GitX] History load finished with %lu commits", (unsigned long)commits.count);
+}
+
+- (void)finishParsingRevisionList:(PBGitRevList *)parser
+{
+	if (!parser || parser != currentRevList) {
+		NSLog(@"[GitX] Ignored parser completion for a superseded history source");
+		return;
+	}
+	// The shared project parser may outlive a temporary revision selection.
+	// Its own generation gate has accepted this completion; reevaluate the
+	// current graph of that source after its parsing operation really finishes.
+	[self finishGraphingForQueue:graphQueue revisionList:parser];
 }
 
 
@@ -183,7 +214,16 @@
 
 - (NSInvocationOperation *)operationForCommits:(NSArray *)newCommits
 {
-	return [[NSInvocationOperation alloc] initWithTarget:grapher selector:@selector(graphCommits:) object:newCommits];
+	NSInvocationOperation *operation = [[NSInvocationOperation alloc] initWithTarget:grapher selector:@selector(graphCommits:) object:newCommits];
+	__weak typeof(self) weakSelf = self;
+	__weak NSOperationQueue *sourceQueue = graphQueue;
+	__weak PBGitRevList *sourceParser = currentRevList;
+	operation.completionBlock = ^{
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[weakSelf finishGraphingForQueue:sourceQueue revisionList:sourceParser];
+		});
+	};
+	return operation;
 }
 
 
@@ -367,9 +407,11 @@
 		lastBranchFilter = -1;
 		lastRemoteRef = nil;
 		lastOID = nil;
+		__weak typeof(self) weakSelf = self;
+		__weak PBGitRevList *sourceParser = projectRevList;
 		[projectRevList loadRevisionsWithCompletionBlock:^{
 			dispatch_async(dispatch_get_main_queue(), ^{
-				[self finishedGraphing];
+				[weakSelf finishParsingRevisionList:sourceParser];
 			});
 		}];
 	} else {
@@ -388,9 +430,11 @@
 	lastRemoteRef = nil;
 	lastOID = nil;
 
+	__weak typeof(self) weakSelf = self;
+	__weak PBGitRevList *sourceParser = otherRevListParser;
 	[otherRevListParser loadRevisionsWithCompletionBlock:^{
 		dispatch_async(dispatch_get_main_queue(), ^{
-			[self finishedGraphing];
+			[weakSelf finishParsingRevisionList:sourceParser];
 		});
 	}];
 }

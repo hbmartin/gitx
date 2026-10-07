@@ -37,7 +37,7 @@ final class PBQLOutlineViewTests: XCTestCase {
             try Self.runGit(["commit", "--quiet", "-m", "Quick Look fixture"], in: directory)
             revision = try Self.runGit(["rev-parse", "HEAD"], in: directory)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            repository = try PBGitRepository(url: directory)
+            repository = try GitXTestGitRepository(url: directory)
         }
 
         deinit {
@@ -82,39 +82,15 @@ final class PBQLOutlineViewTests: XCTestCase {
         }
 
         func writeObject(type: String, data: Data) throws -> String {
-            let task = PBTask(
-                launchPath: "/usr/bin/git",
-                arguments: ["hash-object", "-w", "-t", type, "--literally", "--stdin"],
-                inDirectory: directory.path
-            )
-            task.standardInputData = data
-            try task.launch()
-            return String(decoding: task.standardOutputData, as: UTF8.self)
+            try GitXTestGitFixture.run(
+                ["hash-object", "-w", "-t", type, "--literally", "--stdin"], in: directory, standardInput: data
+            ).standardOutput
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         @discardableResult
         private static func runGit(_ arguments: [String], in directory: URL) throws -> String {
-            let process = Process()
-            let output = Pipe()
-            let errors = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.currentDirectoryURL = directory
-            process.arguments = arguments
-            process.standardOutput = output
-            process.standardError = errors
-            try process.run()
-            process.waitUntilExit()
-            let outputData = output.fileHandleForReading.readDataToEndOfFile()
-            guard process.terminationStatus == 0 else {
-                let errorData = errors.fileHandleForReading.readDataToEndOfFile()
-                throw NSError(
-                    domain: "PBQLOutlineViewTests.GitFixture",
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: String(decoding: errorData, as: UTF8.self)]
-                )
-            }
-            return String(decoding: outputData, as: UTF8.self)
+            try GitXTestGitFixture.run(arguments, in: directory).standardOutput
         }
     }
 
@@ -278,8 +254,9 @@ final class PBQLOutlineViewTests: XCTestCase {
             arguments: ["clone", "--bare", "--quiet", fixture.directory.path, bare.path],
             inDirectory: nil
         )
+        GitXTestGitFixture.prepare(clone)
         try clone.launch()
-        let bareRepository = try PBGitRepository(url: bare)
+        let bareRepository = try GitXTestGitRepository(url: bare)
         let root = PBGitTree()
         root.path = ""
         root.leaf = false
@@ -963,6 +940,7 @@ final class PBQLOutlineViewTests: XCTestCase {
         let nested = fixture.directory.appendingPathComponent("Documentation/NestedRepo", isDirectory: true)
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
         let initTask = PBTask(launchPath: "/usr/bin/git", arguments: ["init", "--quiet", nested.path], inDirectory: nil)
+        GitXTestGitFixture.prepare(initTask)
         try initTask.launch()
         try Data("nested\n".utf8).write(to: nested.appendingPathComponent("README.md"))
         let root = PBWorkingTree.root(for: fixture.repository)

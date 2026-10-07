@@ -390,21 +390,31 @@ final class ForgeMarkdownAvatarTests: XCTestCase {
         let avatarURL = try ForgeAvatarURL("https://avatars.githubusercontent.com/u/42")
         let oldPayload = ForgeAvatarPayload(data: Data([4, 2]), mediaType: .jpeg)
         let newPayload = ForgeAvatarPayload(data: Data([4, 3]), mediaType: .png)
-        let transport = SequencedAvatarTransport()
+        let oldFetchStarted = expectation(description: "Old noncooperative avatar fetch started")
+        let replacementFetchStarted = expectation(description: "Replacement avatar fetch started")
+        let transport = SequencedAvatarTransport { fetchCount in
+            if fetchCount == 1 {
+                oldFetchStarted.fulfill()
+            } else if fetchCount == 2 {
+                replacementFetchStarted.fulfill()
+            }
+        }
         let loader = ForgeAvatarLoader(transport: transport)
 
         let oldWaiter = Task { try await loader.load(avatarURL) }
-        let oldFetchStarted = await transport.waitForFetchCount(1)
-        XCTAssertTrue(oldFetchStarted)
+        await fulfillment(of: [oldFetchStarted], timeout: 5)
+        let oldFetchCount = await transport.fetchCount
+        XCTAssertEqual(oldFetchCount, 1)
         oldWaiter.cancel()
         await XCTAssertThrowsErrorAsync(try await oldWaiter.value) { error in
             XCTAssertTrue(error is CancellationError)
         }
 
         let replacement = Task { try await loader.load(avatarURL) }
-        let replacementFetchStarted = await transport.waitForFetchCount(2)
+        await fulfillment(of: [replacementFetchStarted], timeout: 5)
+        let replacementFetchCount = await transport.fetchCount
         let replacementJoined = await waitForWaiterCount(1, in: loader)
-        XCTAssertTrue(replacementFetchStarted)
+        XCTAssertEqual(replacementFetchCount, 2)
         XCTAssertTrue(replacementJoined)
         await transport.completeFetch(at: 0, with: oldPayload)
         let oldCompletionDiscarded = await waitForDiscardedCompletion(in: loader)
@@ -1164,20 +1174,18 @@ private actor ControlledAvatarTransport: ForgeAvatarTransport {
 private actor SequencedAvatarTransport: ForgeAvatarTransport {
     private(set) var fetchCount = 0
     private var continuations: [CheckedContinuation<ForgeAvatarPayload, Error>] = []
+    private let onFetch: @Sendable (Int) -> Void
 
-    func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
-        fetchCount += 1
-        return try await withCheckedThrowingContinuation { continuations.append($0) }
+    init(onFetch: @escaping @Sendable (Int) -> Void) {
+        self.onFetch = onFetch
     }
 
-    func waitForFetchCount(_ expected: Int) async -> Bool {
-        for _ in 0 ..< 1000 {
-            if fetchCount >= expected {
-                return true
-            }
-            await Task.yield()
+    func fetch(_: ForgeAvatarURL) async throws -> ForgeAvatarPayload {
+        try await withCheckedThrowingContinuation { continuation in
+            continuations.append(continuation)
+            fetchCount += 1
+            onFetch(fetchCount)
         }
-        return false
     }
 
     func completeFetch(at index: Int, with payload: ForgeAvatarPayload) {

@@ -7,6 +7,7 @@ final nonisolated class ErrorMessagePresentation: NSObject { // swiftlint:disabl
     // swiftlint:disable:next unused_declaration
     static func infoText(for error: NSError) -> String {
         var parts: [String] = []
+        let artifact = PushDiagnosticOwnership.artifact(for: error)
         append(localizedString(
             for: error,
             key: NSLocalizedFailureReasonErrorKey,
@@ -24,7 +25,10 @@ final nonisolated class ErrorMessagePresentation: NSObject { // swiftlint:disabl
         }
         guard let taskError = error.userInfo[NSUnderlyingErrorKey] as? NSError,
               taskError.domain == PBTaskErrorDomain
-        else { return parts.joined(separator: "\n\n") }
+        else {
+            append(artifact?.redactedSummary, to: &parts)
+            return parts.joined(separator: "\n\n")
+        }
 
         parts.append(NSLocalizedString(
             "The underlying task failed:",
@@ -42,12 +46,15 @@ final nonisolated class ErrorMessagePresentation: NSObject { // swiftlint:disabl
                 "Return code: %@",
                 comment: "PBGitXMessageSheet - task return code header"
             ), status))
-            if let output = taskError.userInfo[PBTaskTerminationOutputKey] as? String, !output.isEmpty {
+            if artifact == nil, let output = taskError.userInfo[PBTaskTerminationOutputKey] as? String, !output.isEmpty {
                 parts.append(NSLocalizedString(
                     "Output:",
                     comment: "PBGitXMessageSheet - task output header"
                 ) + "\n" + output)
             }
+        }
+        if let artifact {
+            parts.append("Output:\n" + artifact.redactedSummary)
         }
         return parts.joined(separator: "\n\n")
     }

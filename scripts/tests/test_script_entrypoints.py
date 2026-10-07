@@ -41,6 +41,15 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.environment = os.environ.copy()
         self.environment["PATH"] = f"{self.bin}:{self.environment['PATH']}"
         self.environment["GITX_DEVELOPER_DIR"] = str(self.developer_directory)
+        self.fixture_environment = {
+            key: value for key, value in self.environment.items() if not key.startswith("GIT_")
+        } | {
+            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
+            "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
+            "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
+            "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "/usr/bin/false", "GCM_INTERACTIVE": "never", "LC_ALL": "C",
+        }
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -222,7 +231,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         temporary_root.mkdir()
         repository = self.root / "fixture-repo"
         repository.mkdir()
-        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
         app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
         with (app_contents / "Info.plist").open("wb") as handle:
@@ -1076,23 +1085,32 @@ class ScriptEntrypointTests(unittest.TestCase):
         temporary_root.mkdir()
         repository = self.root / "fixture-repo"
         repository.mkdir()
-        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
         app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         forge_roots = self.root / "forge-roots.txt"
+        launch_environment = self.root / "launch-environment.txt"
         app_binary.write_text(
             "#!/bin/bash\n"
             f"printf '%s\\n' \"$GITX_UITEST_FORGE_STORAGE_ROOT\" >>'{forge_roots}'\n"
+            f"/usr/bin/env >'{launch_environment}'\n"
             "exec /bin/sleep 60\n"
         )
         app_binary.chmod(0o755)
         log = self.bin / "log"
         log.write_text("#!/bin/bash\nexec /bin/sleep 60\n")
         log.chmod(0o755)
-        environment = self.environment | {"TMPDIR": str(temporary_root)}
+        environment = self.environment | {
+            "TMPDIR": str(temporary_root),
+            "GIT_CONFIG_PARAMETERS": "'commit.gpgsign=true'",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "init.templateDir",
+            "GIT_CONFIG_VALUE_0": str(self.root / "inherited-template"),
+            "GIT_INDEX_FILE": str(self.root / "inherited-index"),
+        }
         sessions: list[dict[str, str]] = []
 
         try:
@@ -1138,6 +1156,26 @@ class ScriptEntrypointTests(unittest.TestCase):
             roots,
             [f"{home}/Library/Application Support/GitX/Forge" for home in homes],
         )
+        captured = dict(
+            line.split("=", maxsplit=1)
+            for line in launch_environment.read_text().splitlines()
+            if "=" in line
+        )
+        self.assertEqual(captured["GIT_CONFIG_GLOBAL"], "/dev/null")
+        self.assertEqual(captured["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(captured["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(captured["GIT_ASKPASS"], "/usr/bin/false")
+        self.assertEqual(captured["GCM_INTERACTIVE"], "never")
+        self.assertEqual(captured["GIT_CONFIG_SYSTEM"], "/dev/null")
+        self.assertEqual(captured["GIT_CONFIG_COUNT"], "3")
+        self.assertEqual(captured["GIT_CONFIG_KEY_0"], "commit.gpgsign")
+        self.assertEqual(captured["GIT_CONFIG_VALUE_0"], "false")
+        self.assertEqual(captured["GIT_CONFIG_KEY_1"], "tag.gpgsign")
+        self.assertEqual(captured["GIT_CONFIG_VALUE_1"], "false")
+        self.assertEqual(captured["GIT_CONFIG_KEY_2"], "init.templateDir")
+        self.assertEqual(captured["GIT_CONFIG_VALUE_2"], "/dev/null")
+        self.assertNotIn("GIT_CONFIG_PARAMETERS", captured)
+        self.assertNotIn("GIT_INDEX_FILE", captured)
         self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 
     def test_run_app_cleans_an_isolated_home_when_launch_fails(self) -> None:
@@ -1146,7 +1184,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         temporary_root.mkdir()
         repository = self.root / "fixture-repo"
         repository.mkdir()
-        subprocess.run(["git", "init", "--quiet", repository], check=True)
+        subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
         app_contents = self.root / "build" / "Half Dark.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)

@@ -77,6 +77,7 @@ void PBShowGitXErrorSheet(NSError *error, NSWindowController *windowController)
 	[sheet beginMessageSheetWithMessageText:[error localizedDescription]
 								   infoText:infoText
 						  completionHandler:handler];
+	[PBPushOutputExportCoordinator installOnWindow:sheet.window error:error];
 }
 
 - (IBAction)closeMessageSheet:(id)sender

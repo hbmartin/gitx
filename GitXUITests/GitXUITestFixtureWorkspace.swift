@@ -46,17 +46,7 @@ final class GitXUITestFixtureWorkspace {
             : URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = arguments
         process.currentDirectoryURL = directory
-        process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }.merging([
-            "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
-            "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
-            "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
-            "GCM_INTERACTIVE": "never",
-            "GIT_ASKPASS": "/usr/bin/false",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
-            "LC_ALL": "C",
-        ]) { _, value in value }
+        process.environment = GitXTestGitEnvironment.isolated()
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output

@@ -1,0 +1,362 @@
+{
+  "verifiedProductionHead": "cee604df671413b2dd8053c7798365f0fbbf0428",
+  "base": "bcf38a23d11ae6dcc2876884538620832d604a03",
+  "gates": [
+    {
+      "run": "20261007T151957Z-bcf38a23d1-75182",
+      "status": "passed",
+      "head": "bcf38a23d11ae6dcc2876884538620832d604a03",
+      "dirty": true,
+      "workingTreeFingerprint": "403c5e536c5a187ac3c5fa4f4990113b74c4a3c8e98ce62226f0dd295e966d78",
+      "preset": "test:correctness",
+      "configuration": "Debug",
+      "steps": [
+        {
+          "name": "doctor",
+          "status": "passed",
+          "durationSeconds": 3.856,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T151957Z-bcf38a23d1-75182/Logs/doctor.log",
+          "xcresult": null
+        },
+        {
+          "name": "test:correctness",
+          "status": "passed",
+          "durationSeconds": 744.152,
+          "testCounts": {
+            "failed": 0,
+            "passed": 1381,
+            "skipped": 0,
+            "total": 1381
+          },
+          "coverage": {
+            "lineCoverage": 0.9199725403131572,
+            "target": "Half Dark.app"
+          },
+          "log": "artifacts/verification/20261007T151957Z-bcf38a23d1-75182/Logs/GitX.log",
+          "xcresult": "artifacts/verification/20261007T151957Z-bcf38a23d1-75182/Results/GitX.xcresult"
+        },
+        {
+          "name": "coverage",
+          "status": "passed",
+          "durationSeconds": 1.945,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T151957Z-bcf38a23d1-75182/Logs/coverage.log",
+          "xcresult": null
+        }
+      ]
+    },
+    {
+      "run": "20261007T195127Z-cee604df67-97970",
+      "status": "passed",
+      "head": "cee604df671413b2dd8053c7798365f0fbbf0428",
+      "dirty": true,
+      "workingTreeFingerprint": "403c5e536c5a187ac3c5fa4f4990113b74c4a3c8e98ce62226f0dd295e966d78",
+      "preset": "test:correctness",
+      "configuration": "Debug",
+      "steps": [
+        {
+          "name": "doctor",
+          "status": "passed",
+          "durationSeconds": 4.017,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T195127Z-cee604df67-97970/Logs/doctor.log",
+          "xcresult": null
+        },
+        {
+          "name": "test:correctness",
+          "status": "passed",
+          "durationSeconds": 588.651,
+          "testCounts": {
+            "failed": 0,
+            "passed": 1515,
+            "skipped": 0,
+            "total": 1515
+          },
+          "coverage": {
+            "lineCoverage": 0.922010792388526,
+            "target": "Half Dark.app"
+          },
+          "log": "artifacts/verification/20261007T195127Z-cee604df67-97970/Logs/GitX.log",
+          "xcresult": "artifacts/verification/20261007T195127Z-cee604df67-97970/Results/GitX.xcresult"
+        },
+        {
+          "name": "coverage",
+          "status": "passed",
+          "durationSeconds": 1.053,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T195127Z-cee604df67-97970/Logs/coverage.log",
+          "xcresult": null
+        }
+      ]
+    },
+    {
+      "run": "20261007T200323Z-cee604df67-27398",
+      "status": "passed",
+      "head": "cee604df671413b2dd8053c7798365f0fbbf0428",
+      "dirty": true,
+      "workingTreeFingerprint": "a78283d4ad93fd85df2f8db35484f492169e7a7aa0095ddf6d2052e849b221b9",
+      "preset": "test:address-undefined",
+      "configuration": "Debug",
+      "steps": [
+        {
+          "name": "doctor",
+          "status": "passed",
+          "durationSeconds": 2.752,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T200323Z-cee604df67-27398/Logs/doctor.log",
+          "xcresult": null
+        },
+        {
+          "name": "test:address-undefined",
+          "status": "passed",
+          "durationSeconds": 727.247,
+          "testCounts": {
+            "failed": 0,
+            "passed": 1515,
+            "skipped": 0,
+            "total": 1515
+          },
+          "coverage": null,
+          "log": "artifacts/verification/20261007T200323Z-cee604df67-27398/Logs/GitXAddressUndefined.log",
+          "xcresult": "artifacts/verification/20261007T200323Z-cee604df67-27398/Results/GitXAddressUndefined.xcresult"
+        }
+      ]
+    },
+    {
+      "run": "20261007T202248Z-cee604df67-61474",
+      "status": "passed",
+      "head": "cee604df671413b2dd8053c7798365f0fbbf0428",
+      "dirty": true,
+      "workingTreeFingerprint": "cee5b2d64238da9974613372471002b510030ab8dd77825adee8718c8a682084",
+      "preset": "test:thread-sanitizer",
+      "configuration": "Debug",
+      "steps": [
+        {
+          "name": "doctor",
+          "status": "passed",
+          "durationSeconds": 2.697,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T202248Z-cee604df67-61474/Logs/doctor.log",
+          "xcresult": null
+        },
+        {
+          "name": "test:thread-sanitizer",
+          "status": "passed",
+          "durationSeconds": 663.269,
+          "testCounts": {
+            "failed": 0,
+            "passed": 1515,
+            "skipped": 0,
+            "total": 1515
+          },
+          "coverage": null,
+          "log": "artifacts/verification/20261007T202248Z-cee604df67-61474/Logs/GitXThreadSanitizer.log",
+          "xcresult": "artifacts/verification/20261007T202248Z-cee604df67-61474/Results/GitXThreadSanitizer.xcresult"
+        }
+      ]
+    },
+    {
+      "run": "20261007T203405Z-cee604df67-82883",
+      "status": "passed",
+      "head": "cee604df671413b2dd8053c7798365f0fbbf0428",
+      "dirty": true,
+      "workingTreeFingerprint": "cee5b2d64238da9974613372471002b510030ab8dd77825adee8718c8a682084",
+      "preset": "test:ui",
+      "configuration": "Debug",
+      "steps": [
+        {
+          "name": "doctor",
+          "status": "passed",
+          "durationSeconds": 2.422,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T203405Z-cee604df67-82883/Logs/doctor.log",
+          "xcresult": null
+        },
+        {
+          "name": "test:ui-preflight",
+          "status": "passed",
+          "durationSeconds": 19.004,
+          "testCounts": {
+            "failed": 0,
+            "passed": 1,
+            "skipped": 0,
+            "total": 1
+          },
+          "coverage": null,
+          "log": "artifacts/verification/20261007T203405Z-cee604df67-82883/Logs/GitXUIPreflight.log",
+          "xcresult": "artifacts/verification/20261007T203405Z-cee604df67-82883/Results/GitXUIPreflight.xcresult"
+        },
+        {
+          "name": "test:ui",
+          "status": "passed",
+          "durationSeconds": 860.676,
+          "testCounts": {
+            "failed": 0,
+            "passed": 39,
+            "skipped": 0,
+            "total": 39
+          },
+          "coverage": null,
+          "log": "artifacts/verification/20261007T203405Z-cee604df67-82883/Logs/GitXUI.log",
+          "xcresult": "artifacts/verification/20261007T203405Z-cee604df67-82883/Results/GitXUI.xcresult"
+        }
+      ]
+    },
+    {
+      "run": "20261007T204905Z-cee604df67-94572",
+      "status": "passed",
+      "head": "cee604df671413b2dd8053c7798365f0fbbf0428",
+      "dirty": true,
+      "workingTreeFingerprint": "cee5b2d64238da9974613372471002b510030ab8dd77825adee8718c8a682084",
+      "preset": "test:performance",
+      "configuration": "Debug",
+      "steps": [
+        {
+          "name": "doctor",
+          "status": "passed",
+          "durationSeconds": 2.773,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T204905Z-cee604df67-94572/Logs/doctor.log",
+          "xcresult": null
+        },
+        {
+          "name": "test:performance",
+          "status": "passed",
+          "durationSeconds": 32.181,
+          "testCounts": {
+            "failed": 0,
+            "passed": 23,
+            "skipped": 0,
+            "total": 23
+          },
+          "coverage": null,
+          "log": "artifacts/verification/20261007T204905Z-cee604df67-94572/Logs/GitXPerformance.log",
+          "xcresult": "artifacts/verification/20261007T204905Z-cee604df67-94572/Results/GitXPerformance.xcresult"
+        }
+      ]
+    },
+    {
+      "run": "20261007T195129Z-cee604df67-98042",
+      "status": "passed",
+      "head": "cee604df671413b2dd8053c7798365f0fbbf0428",
+      "dirty": true,
+      "workingTreeFingerprint": "403c5e536c5a187ac3c5fa4f4990113b74c4a3c8e98ce62226f0dd295e966d78",
+      "preset": "analyze",
+      "configuration": "Debug",
+      "steps": [
+        {
+          "name": "doctor",
+          "status": "passed",
+          "durationSeconds": 2.787,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T195129Z-cee604df67-98042/Logs/doctor.log",
+          "xcresult": null
+        },
+        {
+          "name": "analyze",
+          "status": "passed",
+          "durationSeconds": 308.451,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T195129Z-cee604df67-98042/Logs/analyze.log",
+          "xcresult": null
+        },
+        {
+          "name": "analyzer-policy",
+          "status": "passed",
+          "durationSeconds": 0.139,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T195129Z-cee604df67-98042/Logs/analyzer-policy.log",
+          "xcresult": null
+        },
+        {
+          "name": "swiftlint-analyze",
+          "status": "passed",
+          "durationSeconds": 1776.849,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T195129Z-cee604df67-98042/Logs/swiftlint-analyze.log",
+          "xcresult": null
+        }
+      ]
+    },
+    {
+      "run": "20261007T204958Z-cee604df67-97105",
+      "status": "passed",
+      "head": "cee604df671413b2dd8053c7798365f0fbbf0428",
+      "dirty": true,
+      "workingTreeFingerprint": "cee5b2d64238da9974613372471002b510030ab8dd77825adee8718c8a682084",
+      "preset": "build",
+      "configuration": "Debug",
+      "steps": [
+        {
+          "name": "doctor",
+          "status": "passed",
+          "durationSeconds": 2.07,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T204958Z-cee604df67-97105/Logs/doctor.log",
+          "xcresult": null
+        },
+        {
+          "name": "build",
+          "status": "passed",
+          "durationSeconds": 9.187,
+          "testCounts": null,
+          "coverage": null,
+          "log": "artifacts/verification/20261007T204958Z-cee604df67-97105/Logs/build.log",
+          "xcresult": null
+        }
+      ]
+    }
+  ],
+  "static": {
+    "scriptTests": 261,
+    "status": "passed",
+    "swiftLintVersion": "0.63.2",
+    "swiftFormatVersion": "0.62.1",
+    "log": "/tmp/gitx-review-verification-final-static.log"
+  },
+  "coverage": {
+    "baseAppLineCoverage": 0.92,
+    "finalAppLineCoverage": 0.922,
+    "allExistingFloorsPassed": true,
+    "acceptedRatchets": [
+      "app .9218 to .9220",
+      "Milestone3DiagnosticPresenters .9812 to .9852",
+      "PBGitHistoryList .9816 to .9839",
+      "PBGitRevList .9417 to .9470"
+    ],
+    "retainedProcessOwnerFloor": 0.993,
+    "retentionReason": "Higher proposal includes a wrapped closing-brace instrumentation counter; no genuine improvement claimed and no checked-in floor lowered."
+  },
+  "regressionEvidence": {
+    "mainRed": "20261007T155147Z-ff5c3b8c28-85081",
+    "combinedGreen": "20261007T165702Z-ff5c3b8c28-67291",
+    "realGuardMutationRed": "20261007T170101Z-ff5c3b8c28-73212",
+    "guardRestoredGreenLog": "/tmp/gitx-review-eof-red-guard-green.log",
+    "historyHeldInvocationRed": "20261007T191211Z-3ee0255267-31839",
+    "historyGreen": "20261007T191647Z-3ee0255267-34721"
+  },
+  "packagePlans": "Not applicable: no package production code changed.",
+  "runtime": {
+    "result": "passed",
+    "report": "runtime.json",
+    "completeExportBytes": 348438,
+    "allRowsAndMarkersPresent": true,
+    "testCredentialsRedacted": true,
+    "refsUnchanged": true,
+    "sessionsStopped": true
+  }
+}

@@ -65,10 +65,11 @@ nonisolated struct PBChildProcessTerminationSchedule: Equatable, Sendable {
         terminationWasSent: Bool
     ) {
         let requestedTermination = Self.adding(Self.nanoseconds(for: gracePeriod), to: now)
-        terminationDeadline = min(terminationDeadline ?? requestedTermination, requestedTermination)
+        let earliestTermination = min(terminationDeadline ?? requestedTermination, requestedTermination)
+        terminationDeadline = earliestTermination
 
         guard let forceKillDelay else { return }
-        let forceKillBase = terminationWasSent ? now : terminationDeadline ?? requestedTermination
+        let forceKillBase = terminationWasSent ? now : earliestTermination
         let requestedForceKill = Self.adding(Self.nanoseconds(for: forceKillDelay), to: forceKillBase)
         forceKillDeadline = min(forceKillDeadline ?? requestedForceKill, requestedForceKill)
     }
@@ -908,6 +909,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         private let configuration: PBChildProcessConfiguration
         private let terminationHandler: PBChildProcessOwner.TerminationHandler
         private let owner = PBChildProcessOwner()
+        @objc var retainLeaderUntilReleased = false
 
         @objc(
             initWithLaunchPath:arguments:environment:workingDirectory:standardInputFileDescriptor:standardOutputFileDescriptor:standardErrorFileDescriptor:terminationHandler:
@@ -936,7 +938,13 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
 
         @objc(launchAndReturnError:)
         func launch() throws {
-            try owner.launch(configuration: configuration, terminationHandler: terminationHandler)
+            try owner.launch(configuration: configuration,
+                             retainLeaderUntilReleased: retainLeaderUntilReleased,
+                             terminationHandler: terminationHandler)
+        }
+
+        @objc func releaseLeaderRetention() {
+            owner.releaseLeaderRetention()
         }
 
         @objc(requestTerminationAfterGracePeriod:forceKillAfter:)

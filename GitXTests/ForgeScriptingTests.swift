@@ -326,14 +326,7 @@ final class ForgeScriptingTests: XCTestCase {
     }
 
     private func runGit(_ arguments: [String], in directory: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-C", directory.path] + arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0, "git \(arguments.joined(separator: " "))")
+        try GitXTestGitFixture.run(arguments, in: directory)
     }
 
     private func commandDescriptions() throws -> [String: NSScriptCommandDescription] {

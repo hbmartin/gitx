@@ -12,6 +12,35 @@
 // The app needs fixtures outside the runner's container, which macOS protects as another app's data.
 static NSString *const GitXUIFixtureRoot = @"/private/tmp/gitx-ui-fixtures";
 
+static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironment(NSDictionary<NSString *, NSString *> *inherited)
+{
+	NSMutableDictionary<NSString *, NSString *> *environment = inherited.mutableCopy;
+	for (NSString *key in inherited) {
+		if ([key hasPrefix:@"GIT_"]) [environment removeObjectForKey:key];
+	}
+	[environment addEntriesFromDictionary:@{
+		@"GIT_CONFIG_GLOBAL" : @"/dev/null",
+		@"GIT_CONFIG_SYSTEM" : @"/dev/null",
+		@"GIT_CONFIG_NOSYSTEM" : @"1",
+		@"GIT_CONFIG_COUNT" : @"3",
+		@"GIT_CONFIG_KEY_0" : @"commit.gpgsign",
+		@"GIT_CONFIG_VALUE_0" : @"false",
+		@"GIT_CONFIG_KEY_1" : @"tag.gpgsign",
+		@"GIT_CONFIG_VALUE_1" : @"false",
+		@"GIT_CONFIG_KEY_2" : @"init.templateDir",
+		@"GIT_CONFIG_VALUE_2" : @"/dev/null",
+		@"GIT_AUTHOR_NAME" : @"GitX Tests",
+		@"GIT_AUTHOR_EMAIL" : @"gitx-tests@example.invalid",
+		@"GIT_COMMITTER_NAME" : @"GitX Tests",
+		@"GIT_COMMITTER_EMAIL" : @"gitx-tests@example.invalid",
+		@"GCM_INTERACTIVE" : @"never",
+		@"GIT_ASKPASS" : @"/usr/bin/false",
+		@"GIT_TERMINAL_PROMPT" : @"0",
+		@"LC_ALL" : @"C",
+	}];
+	return environment;
+}
+
 @interface GitXScreenshotTests : XCTestCase
 @property (nonatomic, strong) XCUIApplication *app;
 @property (nonatomic, strong) NSMutableArray<NSString *> *temporaryRepositoryPaths;
@@ -95,18 +124,15 @@ static NSString *const GitXUIFixtureRoot = @"/private/tmp/gitx-ui-fixtures";
 																  error:&error],
 				  @"Failed to create isolated preferences home: %@", error);
 	[self.temporaryRepositoryPaths addObject:isolatedHome];
-	return @{
+	NSMutableDictionary<NSString *, NSString *> *environment = [GitXIsolatedScreenshotGitEnvironment(self.app.launchEnvironment) mutableCopy];
+	[environment addEntriesFromDictionary:@{
 		@"CFFIXED_USER_HOME" : isolatedHome,
 		@"CFPREFERENCES_AVOID_DAEMON" : @"1",
-		@"GCM_INTERACTIVE" : @"never",
-		@"GIT_ASKPASS" : @"/usr/bin/false",
-		@"GIT_CONFIG_GLOBAL" : @"/dev/null",
-		@"GIT_CONFIG_NOSYSTEM" : @"1",
-		@"GIT_TERMINAL_PROMPT" : @"0",
 		@"GITX_UITEST_REPO" : repositoryPath,
 		@"GITX_UITEST_FORGE_STORAGE_ROOT" :
 			[isolatedHome stringByAppendingPathComponent:@"Library/Application Support/GitX/Forge"],
-	};
+	}];
+	return environment;
 }
 
 - (BOOL)waitForWindow
@@ -180,6 +206,7 @@ static NSString *const GitXUIFixtureRoot = @"/private/tmp/gitx-ui-fixtures";
 	}
 	task.executableURL = [NSURL fileURLWithPath:gitPath];
 	task.arguments = arguments;
+	task.environment = GitXIsolatedScreenshotGitEnvironment(NSProcessInfo.processInfo.environment);
 	task.currentDirectoryURL = [NSURL fileURLWithPath:directory isDirectory:YES];
 	NSError *error = nil;
 	[task launchAndReturnError:&error];
@@ -202,6 +229,7 @@ static NSString *const GitXUIFixtureRoot = @"/private/tmp/gitx-ui-fixtures";
 	NSPipe *outputPipe = [NSPipe pipe];
 	task.executableURL = [NSURL fileURLWithPath:gitPath];
 	task.arguments = arguments;
+	task.environment = GitXIsolatedScreenshotGitEnvironment(NSProcessInfo.processInfo.environment);
 	task.currentDirectoryURL = [NSURL fileURLWithPath:directory isDirectory:YES];
 	task.standardOutput = outputPipe;
 	task.standardError = [NSFileHandle fileHandleWithNullDevice];
@@ -510,6 +538,12 @@ static NSString *const GitXUIFixtureRoot = @"/private/tmp/gitx-ui-fixtures";
 	[message typeKey:@"v" modifierFlags:XCUIKeyModifierCommand];
 
 	NSString *hookPath = [repositoryPath stringByAppendingPathComponent:@".git/hooks/pre-commit"];
+	NSError *hookDirectoryError = nil;
+	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtPath:hookPath.stringByDeletingLastPathComponent
+											withIntermediateDirectories:YES
+															 attributes:nil
+																  error:&hookDirectoryError],
+				  @"Failed to create the intentional commit-hook directory: %@", hookDirectoryError);
 	XCTAssertTrue([@"#!/bin/sh\nexit 1\n" writeToFile:hookPath atomically:YES encoding:NSUTF8StringEncoding error:nil]);
 	XCTAssertTrue([[NSFileManager defaultManager] setAttributes:@{NSFilePosixPermissions : @0755} ofItemAtPath:hookPath error:nil]);
 	[self.app.buttons[@"CommitButton"] click];

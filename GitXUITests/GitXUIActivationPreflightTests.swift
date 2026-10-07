@@ -48,18 +48,13 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
             "-PBAutoFetchScope", "0",
             "-Suppressed Dialog Warnings", "()",
         ]
-        app.launchEnvironment = [
+        app.launchEnvironment = GitXTestGitEnvironment.isolated(app.launchEnvironment).merging([
             "CFFIXED_USER_HOME": isolatedHome.path,
             "CFPREFERENCES_AVOID_DAEMON": "1",
-            "GCM_INTERACTIVE": "never",
-            "GIT_ASKPASS": "/usr/bin/false",
-            "GIT_CONFIG_GLOBAL": "/dev/null",
-            "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_TERMINAL_PROMPT": "0",
             "GITX_UITEST_REPO": repository.path,
             "GITX_UITEST_FORGE_STORAGE_ROOT": isolatedHome
                 .appendingPathComponent("Library/Application Support/GitX/Forge", isDirectory: true).path,
-        ]
+        ]) { _, value in value }
         activeApplication = app
 
         NSLog("[GitXUIActivationPreflightTests] launching GitX for %@", repository.path)

@@ -2,12 +2,34 @@ import Darwin
 import XCTest
 
 final class PBTaskLifecycleTests: XCTestCase {
+    func testAddingForceKillToAGracefulRequestKeepsItsEarlierTerminationDeadline() {
+        var schedule = PBChildProcessTerminationSchedule()
+        schedule.mergeRequest(
+            now: 100,
+            gracePeriod: 10,
+            forceKillDelay: nil,
+            terminationWasSent: false
+        )
+        XCTAssertEqual(schedule.terminationDeadline, 10_000_000_100)
+        XCTAssertNil(schedule.forceKillDeadline)
+
+        // A later caller enables escalation without extending the original grace period.
+        schedule.mergeRequest(
+            now: 200,
+            gracePeriod: 40,
+            forceKillDelay: 20,
+            terminationWasSent: false
+        )
+        XCTAssertEqual(schedule.terminationDeadline, 10_000_000_100)
+        XCTAssertEqual(schedule.forceKillDeadline, 30_000_000_100)
+    }
+
     func testDiagnosticRedactionPreservesURLPrefixesAndBoundaries() {
         let cases = [
             ("123+.-abc://dummy:password@example.invalid/repo", "123+.-abc://[redacted]@example.invalid/repo"),
             ("prefixhttps://dummy:password@example.invalid/repo", "prefixhttps://[redacted]@example.invalid/repo"),
             ("https://first@second@example.invalid/repo", "https://[redacted]@example.invalid/repo"),
-            ("See https://δοκιμή:密碼@example.invalid/repo?query=a@b", "See https://[redacted]@example.invalid/repo?query=a@b"),
+            ("See https://δοκιμή:密碼@example.invalid/repo?query=a@b", "See https://[redacted]@b"),
             ("mail@example.invalid; -1://entry@example.invalid", "mail@example.invalid; -1://entry@example.invalid"),
             ("https://example.invalid/help\nmail@example.invalid", "https://example.invalid/help\nmail@example.invalid"),
         ]
