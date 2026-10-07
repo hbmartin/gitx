@@ -1083,9 +1083,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         forge_roots = self.root / "forge-roots.txt"
+        launch_environment = self.root / "launch-environment.txt"
         app_binary.write_text(
             "#!/bin/bash\n"
             f"printf '%s\\n' \"$GITX_UITEST_FORGE_STORAGE_ROOT\" >>'{forge_roots}'\n"
+            f"/usr/bin/env >'{launch_environment}'\n"
             "exec /bin/sleep 60\n"
         )
         app_binary.chmod(0o755)
@@ -1138,6 +1140,16 @@ class ScriptEntrypointTests(unittest.TestCase):
             roots,
             [f"{home}/Library/Application Support/GitX/Forge" for home in homes],
         )
+        captured = dict(
+            line.split("=", maxsplit=1)
+            for line in launch_environment.read_text().splitlines()
+            if "=" in line
+        )
+        self.assertEqual(captured["GIT_CONFIG_GLOBAL"], "/dev/null")
+        self.assertEqual(captured["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(captured["GIT_TERMINAL_PROMPT"], "0")
+        self.assertEqual(captured["GIT_ASKPASS"], "/usr/bin/false")
+        self.assertEqual(captured["GCM_INTERACTIVE"], "never")
         self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 
     def test_run_app_cleans_an_isolated_home_when_launch_fails(self) -> None:

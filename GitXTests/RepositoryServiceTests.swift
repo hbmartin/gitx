@@ -1105,6 +1105,35 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"]).trimmingCharacters(in: .newlines), fetched)
     }
 
+    func testShippedRecoveryIgnoresLocalReplacementRefs() throws {
+        let (runner, bare) = try prepareRecoveryRemote()
+        let other = repositoryURL.appendingPathComponent("other")
+        _ = try runner.output(withArguments: ["clone", "--quiet", "--branch", "main", bare.path, other.path])
+        let otherRunner = LocalGitRunner(directory: other.path)
+        _ = try otherRunner.output(withArguments: ["commit", "--quiet", "--allow-empty", "-m", "unintegrated remote"])
+        _ = try otherRunner.output(withArguments: ["push", "--quiet", "origin", "main"])
+        try runGit(["fetch", "--quiet", "origin"])
+        try runGit(["commit", "--quiet", "--allow-empty", "-m", "old local witness"])
+        let witness = try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        try runGit(["commit", "--quiet", "--allow-empty", "--amend", "-m", "local rewrite"])
+        let source = try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let fetched = try otherRunner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let replacement = try runner.output(withArguments: ["commit-tree", "HEAD^{tree}", "-p", fetched, "-m", "replacement with false ancestry"])
+            .trimmingCharacters(in: .newlines)
+        try runGit(["replace", witness, replacement])
+        XCTAssertNoThrow(try runner.output(withArguments: ["merge-base", "--is-ancestor", fetched, witness]))
+        XCTAssertThrowsError(try runner.output(withArguments: ["merge-base", "--is-ancestor", fetched, source])) { error in
+            XCTAssertEqual((error as NSError).userInfo[PBTaskTerminationStatusKey] as? Int, 1)
+        }
+
+        let service = PBRepositoryRemoteService(repository: repository)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .newlines), fetched)
+    }
+
     func testRebaseCanRecoverUsingAncestorOfCapturedReflogEntry() throws {
         let (runner, bare) = try prepareRecoveryRemote()
         let base = try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
