@@ -241,12 +241,17 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 @property (nonatomic, strong) NSError *terminalError;
 @property (nonatomic) NSUInteger deliveredOIDCount;
 @property (nonatomic) NSUInteger reportedErrorCount;
+@property (nonatomic) NSTimeInterval firstOIDDelay;
 @end
 
 @implementation GTRevisionEnumerationErrorStub
 
 - (nullable GTOID *)nextOIDWithSuccess:(BOOL *)success error:(NSError **)error
 {
+	// Exercise the production 200ms publication gate, rather than calling its
+	// private publication method directly. This is a clock boundary test.
+	if (self.deliveredOIDCount == 0 && self.firstOIDDelay > 0)
+		[NSThread sleepForTimeInterval:self.firstOIDDelay];
 	if (self.deliveredOIDCount < self.oidsBeforeError.count) {
 		if (success) *success = YES;
 		if (error) *error = nil;
@@ -262,9 +267,16 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 @interface PBGitRevListScriptedEnumeratorStub : PBGitRevList
 @property (nonatomic, strong) GTEnumerator *scriptedEnumerator;
+@property (nonatomic, strong) NSMutableArray<NSNumber *> *publicationSizes;
 @end
 
 @implementation PBGitRevListScriptedEnumeratorStub
+
+- (void)updateCommits:(NSArray<PBGitCommit *> *)revisions operation:(NSOperation *)operation generation:(NSUInteger)generation
+{
+	[self.publicationSizes addObject:@(revisions.count)];
+	[super updateCommits:revisions operation:operation generation:generation];
+}
 
 - (nullable GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error
 {
@@ -1545,6 +1557,27 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	XCTAssertEqual(commit.treeContents.count, commit.tree.children.count);
 	XCTAssertEqual(commit.hash, commit.OID.hash);
 	XCTAssertFalse([commit isOnSameBranchAs:nil]);
+}
+
+- (void)testRevisionWalkPublishesTimedBatchesAndDeduplicatesTheirCommitIdentity
+{
+	NSError *error = nil;
+	GTCommit *head = (GTCommit *)[[self.repository.gtRepo headReferenceWithError:&error] resolvedTarget];
+	XCTAssertNotNil(head, @"%@", error);
+	GTRevisionEnumerationErrorStub *enumerator = [[GTRevisionEnumerationErrorStub alloc] initWithRepository:self.repository.gtRepo error:&error];
+	NSMutableArray<GTOID *> *oids = [NSMutableArray array];
+	for (NSUInteger index = 0; index < 120; index++) [oids addObject:head.OID];
+	enumerator.oidsBeforeError = oids;
+	enumerator.firstOIDDelay = 0.25;
+	PBGitRevListScriptedEnumeratorStub *revisionList = [[PBGitRevListScriptedEnumeratorStub alloc]
+		initWithRepository:self.repository rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]] shouldGraph:YES];
+	revisionList.scriptedEnumerator = enumerator;
+	revisionList.publicationSizes = [NSMutableArray array];
+	XCTestExpectation *completion = [self expectationWithDescription:@"timed walk completes after both publications"];
+	[revisionList loadRevisionsWithCompletionBlock:^{ [completion fulfill]; }];
+	[self waitForExpectations:@[ completion ] timeout:5];
+	XCTAssertEqualObjects(revisionList.publicationSizes, (@[ @100, @20 ]));
+	XCTAssertEqualObjects([revisionList.commits valueForKey:@"OID"], (@[ head.OID ]));
 }
 
 - (void)testRevisionListPublishesIncrementalBatches
