@@ -607,6 +607,20 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (instancetype)initWithFrame:(NSRect)frameRect;
 @end
 
+@interface PBRepositoryRemoteURLCoordinator : NSObject
+@property (class, nonatomic, readonly) PBRepositoryRemoteURLCoordinator *shared;
+- (nullable NSURL *)firstHTTPURLInOutput:(NSString *)output NS_SWIFT_NAME(firstHTTPURL(in:));
+@end
+
+@interface PBTaskDiagnostics : NSObject
++ (NSString *)redacted:(nullable id)text;
++ (NSString *)displayArguments:(NSArray *)arguments;
+@end
+
+@interface PBErrorMessagePresentation : NSObject
++ (NSString *)infoTextForError:(NSError *)error NS_SWIFT_NAME(infoText(for:));
+@end
+
 @interface PBTaskDiagnosticPrefix : NSObject
 @property (nonatomic, readonly) NSData *data;
 @property (nonatomic, readonly) BOOL complete;
@@ -621,6 +635,15 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (BOOL)writeRedactedReportToURL:(NSURL *)url error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(writeRedactedReport(to:));
 - (void)discard;
 @end
+
+#if DEBUG
+@interface PBPushOutputExportCoordinatorTestHarness : NSObject
++ (nullable PBTaskDiagnosticArtifact *)artifactForError:(NSError *)error NS_SWIFT_NAME(artifact(for:));
++ (nullable NSButton *)buttonForError:(NSError *)error NS_SWIFT_NAME(button(for:));
++ (void)installOnWindow:(nullable NSWindow *)window error:(NSError *)error NS_SWIFT_NAME(install(on:error:));
++ (void)exportProofForScenario:(NSString *)scenario completion:(void (^)(NSDictionary<NSString *, NSNumber *> *facts))completion NS_SWIFT_NAME(exportProof(scenario:completion:));
+@end
+#endif
 
 @interface PBTaskDiagnosticCapture : NSObject
 @property (nonatomic, readonly, nullable) PBTaskDiagnosticArtifact *artifact;
@@ -646,34 +669,33 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 + (PBTaskDiagnosticCapture *)captureWithFault:(NSString *)fault NS_SWIFT_NAME(capture(fault:));
 + (nullable PBTaskDiagnosticCaptureLifetimeProbe *)lifetimeProbeForCapture:(PBTaskDiagnosticCapture *)capture NS_SWIFT_NAME(lifetimeProbe(for:));
 + (nullable PBTaskDiagnosticCaptureLifetimeProbe *)orphanProbeWithAge:(NSTimeInterval)age error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(orphanProbe(age:));
++ (nullable PBTaskDiagnosticCaptureLifetimeProbe *)unlockedLeasedOrphanProbeWithAge:(NSTimeInterval)age error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(unlockedLeasedOrphanProbe(age:));
 @end
 #endif
 
-#pragma push_macro("stdout")
-#undef stdout
-#pragma push_macro("stderr")
-#undef stderr
-@interface PBTaskDiagnostics : NSObject
-+ (NSString *)redacted:(nullable id)text;
-+ (NSString *)displayArguments:(NSArray *)arguments;
-@end
-
 @interface PBRepositoryPushCommandResult : NSObject
-@property (nonatomic, copy, readonly) NSString *stdout;
-@property (nonatomic, copy, readonly) NSString *stderr;
+@property (nonatomic, copy, readonly) NSString *standardOutput;
+@property (nonatomic, copy, readonly) NSString *standardError;
+@property (nonatomic, readonly) BOOL standardOutputComplete;
+@property (nonatomic, readonly) BOOL standardErrorComplete;
+@property (nonatomic, strong, readonly, nullable) PBTaskDiagnosticArtifact *diagnosticArtifact;
+@property (nonatomic, copy, readonly) NSString *browserHintOutput;
 @property (nonatomic, strong, readonly, nullable) NSNumber *terminationStatus;
 @property (nonatomic, strong, readonly, nullable) NSError *error;
-- (instancetype)initWithStdout:(NSString *)stdout stderr:(NSString *)stderr terminationStatus:(nullable NSNumber *)terminationStatus error:(nullable NSError *)error;
+- (instancetype)initWithStandardOutput:(NSString *)standardOutput standardError:(NSString *)standardError terminationStatus:(nullable NSNumber *)terminationStatus error:(nullable NSError *)error;
+- (instancetype)initWithStandardOutput:(NSString *)standardOutput standardError:(NSString *)standardError terminationStatus:(nullable NSNumber *)terminationStatus error:(nullable NSError *)error standardOutputComplete:(BOOL)standardOutputComplete standardErrorComplete:(BOOL)standardErrorComplete diagnosticArtifact:(nullable PBTaskDiagnosticArtifact *)diagnosticArtifact browserHintOutput:(NSString *)browserHintOutput;
 @end
-#pragma pop_macro("stderr")
-#pragma pop_macro("stdout")
 
 @protocol PBGitCommandRunning <NSObject>
-@property (nonatomic, copy, readonly, nullable) NSString *lastOutput;
 - (NSString * _Nullable)historyOutputWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
 - (PBRepositoryPushCommandResult *)pushWithArguments:(NSArray<NSString *> *)arguments;
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
 - (BOOL)launchWithArguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error;
+@end
+
+@protocol PBGitEvidenceCommandRunning <PBGitCommandRunning>
+@property (nonatomic, copy, readonly) NSString *evidenceExecutableIdentity;
+- (nullable NSData *)evidenceDataWithArguments:(NSArray<NSString *> *)arguments inputData:(nullable NSData *)inputData environment:(nullable NSDictionary<NSString *, NSString *> *)environment error:(NSError * _Nullable * _Nullable)error;
 @end
 
 @interface PBRepositoryReferenceStore : NSObject
@@ -688,7 +710,11 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 + (void)reviewRetryCancellationWorkflowWithCompletion:(void (^)(BOOL preservedAndReusable))completion NS_SWIFT_NAME(reviewRetryCancellationWorkflow(completion:));
 + (uint64_t)verificationBoundaryProof;
 + (nullable NSString *)reviewHistoryOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewHistoryOutput(repository:arguments:));
++ (PBRepositoryPushCommandResult *)reviewPushCommandResultWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments NS_SWIFT_NAME(reviewPushCommandResult(repository:arguments:));
++ (uint64_t)reviewPushRepeatedCallbacksProof;
 + (nullable NSString *)reviewGeneralOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewGeneralOutput(repository:arguments:));
++ (BOOL)reviewGeneralLaunchWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewGeneralLaunch(repository:arguments:));
++ (NSString *)reviewEvidenceExecutableIdentityWithRepository:(PBGitRepository *)repository NS_SWIFT_NAME(reviewEvidenceExecutableIdentity(repository:));
 + (NSWindow *)reviewPushFailureWindowWithError:(NSError *)error NS_SWIFT_NAME(reviewPushFailureWindow(error:));
 + (NSAlert *)reviewSuppressionAlertWithIdentifier:(BOOL)hasIdentifier allowsSuppression:(BOOL)allowsSuppression NS_SWIFT_NAME(reviewSuppressionAlert(hasIdentifier:allowsSuppression:));
 @end

@@ -264,9 +264,9 @@ final class GitXPerformanceTests: XCTestCase {
             task.separatesStandardError = true
             do {
                 try task.launch()
-                return PBRepositoryPushCommandResult(stdout: String(decoding: task.standardOutputData, as: UTF8.self), stderr: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: 0, error: nil)
+                return PBRepositoryPushCommandResult(standardOutput: String(decoding: task.standardOutputData, as: UTF8.self), standardError: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: 0, error: nil)
             } catch {
-                return PBRepositoryPushCommandResult(stdout: String(decoding: task.standardOutputData, as: UTF8.self), stderr: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: (error as NSError).userInfo[PBTaskTerminationStatusKey] as? NSNumber, error: error as NSError)
+                return PBRepositoryPushCommandResult(standardOutput: String(decoding: task.standardOutputData, as: UTF8.self), standardError: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: (error as NSError).userInfo[PBTaskTerminationStatusKey] as? NSNumber, error: error as NSError)
             }
         }
 

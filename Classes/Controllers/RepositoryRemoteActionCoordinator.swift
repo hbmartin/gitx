@@ -216,13 +216,11 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
     ) {
         // Cocoa progress callbacks and failed starts can arrive in either order.
         // Each push workflow owns one terminal event, including its optional retry.
-        var finished = false
-        let emit: (RepositoryPushEvent) -> Void = { event in
-            guard !finished else { return }
-            if event.isTerminal {
-                finished = true
-            }
+        var gate = RepositoryPushEventGate()
+        let emit: (RepositoryPushEvent) -> Bool = { event in
+            guard gate.accept(event) else { return false }
             completion?(event)
+            return true
         }
         let offeredInitialSelection = pullRequestOption?.initiallySelected ?? pullRequestOffer?.initiallySelected
         guard branch != nil || remote != nil,
@@ -233,7 +231,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             let selected = offeredInitialSelection == true
             RepositoryPushProgressStartPolicy.rejectedEvents(
                 createPullRequestSelected: selected
-            ).forEach { emit($0) }
+            ).forEach { _ = emit($0) }
             return
         }
 
@@ -266,7 +264,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 (createPullRequestButton?.state == .on ||
                     (!requiresConfirmation && offeredInitialSelection == true))
             pullRequestOffer?.onPresentationChange = nil
-            emit(.began(createPullRequestSelected: createPullRequestSelected))
+            guard emit(.began(createPullRequestSelected: createPullRequestSelected)) else { return }
             self.logger.debug("Starting push workflow")
             let operationTarget = RemoteOperationTarget(repository: self.repository, branch: branch, remote: remote)
             self.runPush(
@@ -277,7 +275,8 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
                 createPullRequestSelected: createPullRequestSelected,
                 allowsRecovery: true,
-                completion: emit
+                isActive: { gate.isActive },
+                completion: { _ = emit($0) }
             )
         }
 
@@ -293,7 +292,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             alert,
             suppressionIdentifier: "Confirm Push",
             onCancel: {
-                emit(.cancelled)
+                _ = emit(.cancelled)
             },
             forAction: beginPush
         )
@@ -307,13 +306,17 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         suppressesPostPushBrowserSuggestion: Bool,
         createPullRequestSelected: Bool,
         allowsRecovery: Bool,
+        isActive: @escaping () -> Bool,
         completion: @escaping (RepositoryPushEvent) -> Void
     ) {
+        var completionHandled = false
         let didStart = runProgress(
             title: "Pushing remote…",
             description: pushDescription(branch: branch, remote: remote, capitalized: false),
             operation: { try operationTarget.push() },
             completion: { [weak self] error in
+                guard isActive(), !completionHandled else { return }
+                completionHandled = true
                 guard let self else { completion(.failed); return }
                 if let error {
                     if allowsRecovery, let plan = PBRepositoryPushRetryPlan.plan(forError: error) {
@@ -322,6 +325,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                             nativeCreationWasAvailable: nativeCreationWasAvailable,
                             suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
                             createPullRequestSelected: createPullRequestSelected,
+                            isActive: isActive,
                             completion: completion
                         )
                     } else {
@@ -352,6 +356,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
         nativeCreationWasAvailable: Bool,
         suppressesPostPushBrowserSuggestion: Bool,
         createPullRequestSelected: Bool,
+        isActive: @escaping () -> Bool,
         completion: @escaping (RepositoryPushEvent) -> Void
     ) {
         guard let windowController, windowController.window != nil else {
@@ -363,7 +368,11 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
             branch: plan.branchName, remote: plan.remoteName, destinationRef: plan.destinationRef,
             sourceOID: plan.sourceOID, fetchedOID: plan.fetchedOID
         )
+        alert.accessoryView = PushOutputExportCoordinator.button(for: error)
+        var retryStarted = false
         let action = { [weak self] in
+            guard isActive(), !retryStarted else { return }
+            retryStarted = true
             guard let self else { completion(.failed); return }
             self.logger.info("Starting rejected-push retry with frozen source and fetched lease")
             let target = RemoteOperationTarget(repository: self.repository, retryPlan: plan)
@@ -372,10 +381,11 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 nativeCreationWasAvailable: nativeCreationWasAvailable,
                 suppressesPostPushBrowserSuggestion: suppressesPostPushBrowserSuggestion,
                 createPullRequestSelected: createPullRequestSelected,
-                allowsRecovery: false, completion: completion
+                allowsRecovery: false, isActive: isActive, completion: completion
             )
         }
         let cancel = { [weak self] in
+            guard isActive(), !retryStarted else { return }
             self?.logger.info("Rejected push recovery declined; completing the failed push")
             completion(RepositoryPushEvent.failed)
         }
@@ -388,7 +398,7 @@ final class RepositoryRemoteActionCoordinator: NSObject, RepositoryRemoteActionC
                 onCancel: cancel, allowsSuppression: false, action: action
             )
         }
-        if !presented {
+        if !presented, !retryStarted, isActive() {
             completion(.failed)
         }
     }

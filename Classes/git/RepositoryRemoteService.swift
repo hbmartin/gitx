@@ -8,6 +8,8 @@ final nonisolated class RepositoryRemoteService: NSObject {
     private unowned let repository: PBGitRepository
     private let runner: GitCommandRunning
     private let logger = Logger(subsystem: "com.gitx.gitx", category: "RepositoryRemoteService")
+    private let capabilitiesLock = NSLock()
+    private var cachedCapabilities: PushCapabilities?
     @objc private(set) var commandWasLaunched = false
     @objc private(set) var lastPushOutput: String?
 
@@ -251,6 +253,8 @@ final nonisolated class RepositoryRemoteService: NSObject {
     ) -> Bool {
         let remoteName = resolvedRemote.remoteName ?? ""
         var arguments = ["push", "--", remoteName]
+        var snapshot: RepositoryPushSnapshot?
+        var captureExclusion: String?
         let branchDescription: String
         if branchRef == nil || branchRef?.isRemote == true {
             branchDescription = "all updates"
@@ -260,21 +264,110 @@ final nonisolated class RepositoryRemoteService: NSObject {
             arguments.append(contentsOf: ["tag", tagName])
         } else {
             branchDescription = branchRef?.shortName() ?? ""
-            arguments.insert("--porcelain", at: 1)
-            arguments.append(branchDescription)
+            let porcelain = porcelainSupported()
+            if porcelain == true {
+                arguments.insert("--porcelain", at: 1)
+                let capture = capturePushSnapshot(branch: branchRef, remoteName: remoteName)
+                snapshot = capture.snapshot
+                captureExclusion = capture.exclusion
+            } else {
+                captureExclusion = porcelain == false
+                    ? "Configured Git does not advertise porcelain push status"
+                    : "Porcelain push capability could not be verified"
+            }
+            arguments.append(branchRef?.ref ?? "")
         }
 
         return launchPush(
             arguments: arguments,
             branchDescription: branchDescription,
             remoteName: remoteName,
-            snapshot: capturePushSnapshot(branch: branchRef, remoteName: remoteName),
+            snapshot: snapshot,
+            captureExclusion: captureExclusion,
             error: outputError
         )
     }
 
     private enum PushSafetyFailure: Error {
         case excluded(String)
+    }
+
+    private struct PushCapabilities {
+        let identity: String
+        var porcelain: Bool?
+        var configEnvironment: Bool?
+    }
+
+    private func capabilityIdentity() -> String {
+        (runner as? GitEvidenceCommandRunning)?.evidenceExecutableIdentity
+            ?? IndexGitExecutableIdentity.identity(path: PBGitBinary.path() ?? "")
+    }
+
+    private func capabilities(for identity: String) -> PushCapabilities {
+        if let cachedCapabilities, cachedCapabilities.identity == identity {
+            return cachedCapabilities
+        }
+        return PushCapabilities(identity: identity)
+    }
+
+    /// A configured executable can change in place. Re-probe its resolved
+    /// target identity, never infer optional features from a version number.
+    private func porcelainSupported() -> Bool? {
+        capabilitiesLock.lock()
+        defer { capabilitiesLock.unlock() }
+        let identity = capabilityIdentity()
+        var cached = capabilities(for: identity)
+        if let supported = cached.porcelain {
+            return supported
+        }
+        let help: String
+        do {
+            help = try runner.output(arguments: ["push", "-h"])
+        } catch {
+            let error = error as NSError
+            guard error.domain == PBTaskErrorDomain,
+                  error.code == Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue),
+                  (error.userInfo[PBTaskTerminationStatusKey] as? NSNumber)?.intValue == 129,
+                  let output = error.userInfo[PBTaskTerminationOutputKey] as? String
+            else { return nil }
+            help = output
+        }
+        guard help.contains("git push") else { return nil }
+        cached.porcelain = help.replacingOccurrences(of: "[no-]", with: "").contains("--porcelain")
+        cachedCapabilities = cached
+        return cached.porcelain
+    }
+
+    private func configEnvironmentSupported(using evidence: GitEvidenceCommandRunning) -> Bool? {
+        capabilitiesLock.lock()
+        defer { capabilitiesLock.unlock() }
+        let identity = evidence.evidenceExecutableIdentity
+        var cached = capabilities(for: identity)
+        if let supported = cached.configEnvironment {
+            return supported
+        }
+        let key = "gitx.push-recovery=probe.value"
+        let variable = "GITX_PUSH_CAPABILITY_PROBE"
+        let sentinel = "gitx-config-env-capability"
+        do {
+            let data = try evidence.evidenceData(
+                arguments: ["--config-env=\(key)=\(variable)", "config", "--get", key], inputData: nil,
+                environment: [variable: sentinel]
+            )
+            guard data == Data((sentinel + "\n").utf8) else { return nil }
+            cached.configEnvironment = true
+        } catch {
+            let error = error as NSError
+            let output = (error.userInfo[PBTaskTerminationOutputKey] as? String ?? "").lowercased()
+            guard error.domain == PBTaskErrorDomain,
+                  error.code == Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue),
+                  (error.userInfo[PBTaskTerminationStatusKey] as? NSNumber)?.intValue == 129,
+                  output.contains("config-env"), output.contains("unknown option") || output.contains("unrecognized option")
+            else { return nil }
+            cached.configEnvironment = false
+        }
+        cachedCapabilities = cached
+        return cached.configEnvironment
     }
 
     private func configuration() throws -> [String: [String]] {
@@ -290,23 +383,42 @@ final nonisolated class RepositoryRemoteService: NSObject {
         return value == "true"
     }
 
-    private func capturePushSnapshot(branch: PBGitRef?, remoteName: String) -> RepositoryPushSnapshot? {
-        guard let branch, branch.isBranch else { return nil }
+    private func capturePushSnapshot(branch: PBGitRef?, remoteName: String) -> (snapshot: RepositoryPushSnapshot?, exclusion: String?) {
+        guard let branch, branch.isBranch else { return (nil, "Selection is not a local branch") }
         do {
+            guard let evidence = runner as? GitEvidenceCommandRunning else {
+                throw PushSafetyFailure.excluded("Configured Git does not provide bounded byte evidence")
+            }
             let values = try configuration()
             guard try !effectiveBoolean("remote.\(remoteName).mirror", values: values),
                   try !effectiveBoolean("push.followtags", values: values)
             else { throw PushSafetyFailure.excluded("Mirror or follow-tags push is not a single-branch recovery") }
-            guard values["remote.\(remoteName).fetch"]?.count == 1,
+            guard let fetchMappings = values["remote.\(remoteName).fetch"], !fetchMappings.isEmpty,
                   (values["remote.\(remoteName).push"]?.count ?? 0) <= 1
             else { throw PushSafetyFailure.excluded("Unsupported or ambiguous reference mappings") }
-            let mode = values["push.default"]?.last == "upstream" ? "upstream" : "current"
+            let mode = ["upstream", "tracking"].contains(values["push.default"]?.last ?? "") ? "upstream" : "current"
             let format = "%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)"
-            let metadata = try runner.output(arguments: [
-                "-c", "branch.\(branch.shortName()).remote=\(remoteName)",
-                "-c", "branch.\(branch.shortName()).pushRemote=\(remoteName)", "-c", "push.default=\(mode)",
-                "for-each-ref", "--format=\(format)", branch.ref,
-            ]).split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+            let keys = ["branch.\(branch.shortName()).remote", "branch.\(branch.shortName()).pushRemote", "push.default"]
+            let overrides: [String]
+            let environment: [String: String]?
+            if configEnvironmentSupported(using: evidence) == true {
+                overrides = keys.prefix(2).map { "--config-env=\($0)=GITX_PUSH_METADATA_REMOTE" }
+                    + ["--config-env=push.default=GITX_PUSH_METADATA_MODE"]
+                environment = ["GITX_PUSH_METADATA_REMOTE": remoteName, "GITX_PUSH_METADATA_MODE": mode]
+            } else {
+                guard keys.allSatisfy({ !$0.contains("=") }) else {
+                    throw PushSafetyFailure.excluded("Configured Git cannot safely override this branch metadata key")
+                }
+                overrides = ["-c", keys[0] + "=" + remoteName, "-c", keys[1] + "=" + remoteName, "-c", keys[2] + "=" + mode]
+                environment = nil
+            }
+            let metadataData = try evidence.evidenceData(
+                arguments: overrides + ["for-each-ref", "--format=\(format)", branch.ref], inputData: nil,
+                environment: environment
+            )
+            guard let metadata = RepositoryPushObjectEvidence.lines(metadataData) else {
+                throw PushSafetyFailure.excluded("Incomplete source reference metadata")
+            }
             guard metadata.count == 1 else { throw PushSafetyFailure.excluded("Ambiguous source reference") }
             let fields = metadata[0].components(separatedBy: "\0")
             guard fields.count == 6, fields[0] == branch.ref, RepositoryPushSnapshot.isOID(fields[1]),
@@ -323,32 +435,51 @@ final nonisolated class RepositoryRemoteService: NSObject {
                 destination = mode == "upstream" ? fields[2] : branch.ref
             }
             guard destination.hasPrefix("refs/heads/") else { throw PushSafetyFailure.excluded("Destination is not a branch") }
-            let tracking = try runner.output(arguments: ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", fields[4]])
-                .split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+            try RepositoryPushFetchMapping.validate(fetchMappings, destination: destination, tracking: fields[4])
+            let trackingData = try evidence.evidenceData(
+                arguments: ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", fields[4]],
+                inputData: nil, environment: nil
+            )
+            guard let tracking = RepositoryPushObjectEvidence.lines(trackingData) else {
+                throw PushSafetyFailure.excluded("Incomplete fetched tracking metadata")
+            }
             guard tracking.count == 1 else { throw PushSafetyFailure.excluded("Fetched tracking reference is missing or ambiguous") }
             let tracked = tracking[0].components(separatedBy: "\0")
             guard tracked.count == 3, tracked[0] == fields[4], tracked[2] == "commit",
                   RepositoryPushSnapshot.isOID(tracked[1]), tracked[1].count == fields[1].count
             else { throw PushSafetyFailure.excluded("Fetched tracking commit is unavailable") }
-            let reflog = try runner.output(arguments: ["reflog", "show", "--format=%H", branch.ref])
-                .split(separator: "\n").map(String.init)
-            guard reflog.allSatisfy(RepositoryPushSnapshot.isOID) else { throw PushSafetyFailure.excluded("Invalid branch reflog evidence") }
+            let reflogData = try evidence.evidenceData(
+                arguments: ["reflog", "show", "--no-show-signature", "--format=%H",
+                            "--max-count=\(RepositoryPushReflogEvidence.limit + 1)", branch.ref, "--"],
+                inputData: nil, environment: nil
+            )
+            let reflog = try RepositoryPushReflogEvidence.capture(reflogData, oidLength: fields[1].count)
             logger.debug("Captured source, tracking commit, branch reflog and effective push settings")
-            return RepositoryPushSnapshot(sourceRef: branch.ref, sourceOID: fields[1], remoteName: remoteName,
-                                          endpoint: "", destinationRef: destination, fetchedOID: tracked[1], trackingRef: fields[4],
-                                          reflogOIDs: reflog, configuration: RepositoryPushConfiguration.relevant(values, remote: remoteName, branch: branch.shortName()))
+            return (RepositoryPushSnapshot(sourceRef: branch.ref, sourceOID: fields[1], remoteName: remoteName,
+                                           endpoint: "", destinationRef: destination, fetchedOID: tracked[1],
+                                           reflogOIDs: reflog.retainedOIDs, reflogIsTruncated: reflog.isTruncated,
+                                           configuration: RepositoryPushConfiguration.relevant(values, remote: remoteName, branch: branch.shortName())), nil)
         } catch {
-            logExclusion(error)
-            return nil
+            return (nil, exclusionReason(for: error))
         }
     }
 
-    private func logExclusion(_ error: Error) {
+    private func exclusionReason(for error: Error) -> String {
         if case let PushSafetyFailure.excluded(reason) = error {
-            logger.info("Push recovery excluded: \(reason, privacy: .public)")
-        } else {
-            logger.info("Push recovery excluded because Git could not validate captured evidence")
+            return reason
+        } else if let failure = error as? RepositoryPushEvidenceError {
+            return "Bounded reference evidence is invalid: \(failure)"
         }
+        let taskError = error as NSError
+        if taskError.domain == PBTaskErrorDomain {
+            switch taskError.code {
+            case Int(PBTaskErrorCode.timeoutError.rawValue): return "Git evidence command timed out"
+            case Int(PBTaskErrorCode.caughtSignalError.rawValue): return "Git evidence command ended by signal"
+            case Int(PBTaskErrorCode.launchError.rawValue): return "Git evidence command could not start"
+            default: break
+            }
+        }
+        return "Git could not validate captured evidence"
     }
 
     private func validatedEndpoint(for snapshot: RepositoryPushSnapshot) throws -> String {
@@ -363,73 +494,131 @@ final nonisolated class RepositoryRemoteService: NSObject {
     }
 
     private func recoveryPlan(for snapshot: RepositoryPushSnapshot) throws -> PBRepositoryPushRetryPlan {
+        guard let evidence = runner as? GitEvidenceCommandRunning else {
+            throw PushSafetyFailure.excluded("Configured Git does not provide bounded byte evidence")
+        }
         let endpoint = try validatedEndpoint(for: snapshot)
-        guard try runner.output(arguments: ["rev-parse", "--is-shallow-repository"]).trimmingCharacters(in: .newlines) == "false" else {
-            throw PushSafetyFailure.excluded("Shallow history cannot prove integration")
-        }
-        let witnesses = Array(Set([snapshot.sourceOID] + snapshot.reflogOIDs)).sorted()
-        // Validate captured objects, without reading any live source or lease ref.
-        _ = try runner.historyOutput(arguments: ["rev-list", "--no-walk"] + Array(Set(witnesses + [snapshot.fetchedOID])).sorted() + ["--"])
-        var integrated = witnesses.contains(snapshot.fetchedOID)
-        for witness in witnesses where !integrated {
-            do {
-                _ = try runner.historyOutput(arguments: ["merge-base", "--is-ancestor", snapshot.fetchedOID, witness])
-                integrated = true
-            } catch {
-                guard (error as NSError).domain == PBTaskErrorDomain,
-                      (error as NSError).code == Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue),
-                      (error as NSError).userInfo[PBTaskTerminationStatusKey] as? Int == 1 else { throw error }
+        let witnesses = RepositoryPushReflogEvidence.witnesses(sourceOID: snapshot.sourceOID, reflogOIDs: snapshot.reflogOIDs)
+        let objects = RepositoryPushReflogEvidence.witnesses(sourceOID: snapshot.sourceOID, reflogOIDs: snapshot.reflogOIDs + [snapshot.fetchedOID])
+        let validated = try evidence.evidenceData(arguments: ["cat-file", "--batch-check"],
+                                                  inputData: RepositoryPushObjectEvidence.input(objects), environment: nil)
+        try RepositoryPushObjectEvidence.validateCommits(validated, expectedOIDs: objects)
+        let integrated: Bool
+        if witnesses.contains(snapshot.fetchedOID) {
+            integrated = true
+        } else {
+            guard try evidence.evidenceData(arguments: ["rev-parse", "--is-shallow-repository"], inputData: nil, environment: nil) == Data("false\n".utf8) else {
+                throw PushSafetyFailure.excluded("Shallow history cannot prove integration")
             }
+            let input = RepositoryPushObjectEvidence.input(witnesses + ["^" + snapshot.fetchedOID])
+            let proof = try evidence.evidenceData(arguments: ["rev-list", "--stdin", "--ancestry-path", "--max-count=1"],
+                                                  inputData: input, environment: nil)
+            integrated = try RepositoryPushObjectEvidence.provesAncestry(proof, oidLength: snapshot.fetchedOID.count)
         }
-        guard integrated else { throw PushSafetyFailure.excluded("Fetched remote work was never integrated into the captured branch") }
+        guard integrated else {
+            throw PushSafetyFailure.excluded(snapshot.reflogIsTruncated
+                ? "Newest 1024 reflog entries do not prove integration"
+                : "Fetched remote work was never integrated into the captured branch")
+        }
         let eligible = RepositoryPushSnapshot(sourceRef: snapshot.sourceRef, sourceOID: snapshot.sourceOID,
                                               remoteName: snapshot.remoteName, endpoint: endpoint, destinationRef: snapshot.destinationRef,
-                                              fetchedOID: snapshot.fetchedOID, trackingRef: snapshot.trackingRef,
-                                              reflogOIDs: snapshot.reflogOIDs, configuration: snapshot.configuration)
-        logger.info("Captured branch history proves fetched remote work was integrated")
+                                              fetchedOID: snapshot.fetchedOID,
+                                              reflogOIDs: snapshot.reflogOIDs, reflogIsTruncated: snapshot.reflogIsTruncated,
+                                              configuration: snapshot.configuration)
         return PBRepositoryPushRetryPlan(snapshot: eligible)
     }
 
     private func launchPush(
         arguments: [String], branchDescription: String, remoteName: String,
         snapshot: RepositoryPushSnapshot? = nil,
+        captureExclusion: String? = nil,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> Bool {
         commandWasLaunched = true
         let result = runner.push(arguments: arguments)
         guard let error = result.error else {
-            lastPushOutput = [result.stdout, result.stderr].filter { !$0.isEmpty }.joined(separator: "\n")
+            lastPushOutput = result.browserHintOutput
             logger.debug("Repository reference push completed")
             return true
         }
         var info: [String: Any] = [:]
-        let decision = RepositoryRejectedPushRecoveryPolicy.decision(stdout: result.stdout, snapshot: snapshot)
-        if let status = result.terminationStatus, status.intValue != 0, error.domain == PBTaskErrorDomain,
-           error.code == Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue), decision == .eligible, let snapshot
-        {
+        let decision = failedPushDecision(result: result, snapshot: snapshot, captureExclusion: captureExclusion)
+        let outcome: String
+        if decision == .eligible, let snapshot {
             do {
                 info[PBRepositoryPushRetryPlan.errorKey] = try recoveryPlan(for: snapshot)
-                logger.info("Attached one frozen recovery plan to rejected push")
-            } catch { logExclusion(error) }
+                outcome = "Eligible using source and \(snapshot.reflogOIDs.count) captured reflog entries (maximum 1024, capped=\(snapshot.reflogIsTruncated))"
+            } catch { outcome = "Excluded: " + exclusionReason(for: error) }
         } else if case let .excluded(reason) = decision {
-            logger.info("Push recovery excluded: \(reason, privacy: .public)")
+            outcome = "Excluded: " + reason
+        } else {
+            outcome = "Excluded: No captured branch evidence"
         }
-        let diagnostic = PBTaskDiagnostics.pushFailure(stdout: result.stdout, stderr: result.stderr,
-                                                       porcelain: arguments.contains("--porcelain"))
+        let statusKind = failedPushStatusKind(result: result)
+        let witnessCount = snapshot.map { RepositoryPushReflogEvidence.witnesses(sourceOID: $0.sourceOID, reflogOIDs: $0.reflogOIDs).count } ?? 0
+        logger.info("Failed push recovery decision: \(outcome, privacy: .public) [task=\(statusKind, privacy: .public), statusComplete=\(result.standardOutputComplete), diagnosticsComplete=\(result.standardErrorComplete), witnesses=\(witnessCount), reflogCapped=\(snapshot?.reflogIsTruncated ?? false)]")
+        let diagnostic = result.diagnosticArtifact?.redactedSummary
+            ?? PBTaskDiagnostics.pushFailure(stdout: result.standardOutput, stderr: result.standardError,
+                                             porcelain: arguments.contains("--porcelain"))
         var diagnostics: [String: Any] = [
             NSLocalizedDescriptionKey: PBTaskDiagnostics.redacted(error.localizedDescription),
             NSLocalizedFailureReasonErrorKey: PBTaskDiagnostics.redacted(error.localizedFailureReason ?? error.localizedDescription),
             PBTaskTerminationOutputKey: diagnostic,
         ]
         diagnostics[PBTaskTerminationStatusKey] = result.terminationStatus
+        if let artifact = result.diagnosticArtifact {
+            diagnostics[PushDiagnosticOwnership.errorKey] = artifact
+            info[PushDiagnosticOwnership.errorKey] = artifact
+        }
+        if let suggestion = error.localizedRecoverySuggestion {
+            diagnostics[NSLocalizedRecoverySuggestionErrorKey] = PBTaskDiagnostics.redacted(suggestion)
+            info[NSLocalizedRecoverySuggestionErrorKey] = PBTaskDiagnostics.redacted(suggestion)
+        }
         let safeError = NSError(domain: error.domain, code: error.code, userInfo: diagnostics)
+        let completionUnknown = error.domain == PBTaskErrorDomain && error.code == Int(PBTaskErrorCode.timeoutError.rawValue)
+        let failureReason = completionUnknown
+            ? "Git stopped waiting, so remote completion is unknown. Check or fetch the remote before starting another push."
+            : PBTaskDiagnostics.redacted("An error occurred while pushing \(branchDescription) to \"\(remoteName)\".")
         let wrapped = RepositoryServiceError.make(
             description: "Push failed",
-            failureReason: PBTaskDiagnostics.redacted("An error occurred while pushing \(branchDescription) to \"\(remoteName)\"."),
+            failureReason: failureReason,
             underlyingError: safeError, userInfo: info
         )
         logger.error("Repository reference push failed")
         return RepositoryServiceError.assign(wrapped, to: outputError)
+    }
+
+    private func failedPushDecision(result: PBRepositoryPushCommandResult, snapshot: RepositoryPushSnapshot?,
+                                    captureExclusion: String?) -> RepositoryPushRecoveryDecision
+    {
+        guard let error = result.error, error.domain == PBTaskErrorDomain else {
+            return .excluded("Push did not report a Git task failure")
+        }
+        switch error.code {
+        case Int(PBTaskErrorCode.timeoutError.rawValue): return .excluded("Push timed out; remote completion is unknown")
+        case Int(PBTaskErrorCode.caughtSignalError.rawValue): return .excluded("Push ended by signal")
+        case Int(PBTaskErrorCode.launchError.rawValue): return .excluded("Push command could not start")
+        case Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue): break
+        default: return .excluded("Push did not report a nonzero Git exit")
+        }
+        guard let status = result.terminationStatus, status.intValue != 0 else {
+            return .excluded("Push exit status is missing or inconsistent")
+        }
+        guard result.standardOutputComplete else { return .excluded("Porcelain status capture is incomplete") }
+        guard let snapshot else { return .excluded(captureExclusion ?? "No captured branch evidence") }
+        return RepositoryRejectedPushRecoveryPolicy.decision(stdout: result.standardOutput, snapshot: snapshot)
+    }
+
+    private func failedPushStatusKind(result: PBRepositoryPushCommandResult) -> String {
+        guard let error = result.error, error.domain == PBTaskErrorDomain else { return "non-Git failure" }
+        switch error.code {
+        case Int(PBTaskErrorCode.timeoutError.rawValue): return "timeout"
+        case Int(PBTaskErrorCode.caughtSignalError.rawValue): return "signal"
+        case Int(PBTaskErrorCode.launchError.rawValue): return "launch failure"
+        case Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue):
+            return result.terminationStatus.map { "nonzero exit \($0.intValue)" } ?? "missing exit status"
+        default: return "unrecognized task failure"
+        }
     }
 
     @objc(deleteRemote:error:)

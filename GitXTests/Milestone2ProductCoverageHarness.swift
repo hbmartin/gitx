@@ -716,10 +716,95 @@
             try RepositoryGitCommandRunner(repository: repository).historyOutput(arguments: arguments)
         }
 
+        @objc static func reviewPushCommandResult(repository: PBGitRepository, arguments: [String]) -> PBRepositoryPushCommandResult {
+            RepositoryGitCommandRunner(repository: repository).push(arguments: arguments)
+        }
+
+        @objc static func reviewPushRepeatedCallbacksProof() -> UInt64 {
+            do {
+                let local = try HarnessLocalRepository(remoteURL: "/tmp/unavailable-review-remote")
+                defer { local.cleanup() }
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+                defer { window.close() }
+                let controller = HarnessRecoveryWindowController(window: window)
+                let snapshot = RepositoryPushSnapshot(sourceRef: "refs/heads/main", sourceOID: local.head, remoteName: "origin", endpoint: "fixture", destinationRef: "refs/heads/main", fetchedOID: String(repeating: "b", count: 40))
+                let rejected = NSError(domain: "review-callback-fixture", code: 1, userInfo: [PBRepositoryPushRetryPlan.errorKey: PBRepositoryPushRetryPlan(snapshot: snapshot)])
+                var starts = 0
+                var offers = 0
+                var events: [RepositoryPushEvent] = []
+                var retryAction: (() -> Void)?
+                var retryCancel: (() -> Void)?
+                let coordinator = RepositoryRemoteActionCoordinator(repository: local.repository, windowController: controller, retryConfirmation: { _, cancel, action in
+                    offers += 1
+                    retryAction = action
+                    retryCancel = cancel
+                    return true
+                }, progressStarting: { _, _, _, complete in
+                    starts += 1
+                    complete(starts == 1 ? rejected : nil)
+                    complete(starts == 1 ? rejected : nil)
+                    return true
+                })
+                coordinator.performPush(branch: PBGitRef(string: "refs/heads/main"), remote: PBGitRef(string: "refs/remotes/origin"), requiresConfirmation: false, pullRequestOption: nil, suppressesPostPushBrowserSuggestion: true, completion: { events.append($0) })
+                var result: UInt64 = 0
+                if starts == 1 {
+                    result |= 1 << 0
+                }
+                if offers == 1 {
+                    result |= 1 << 1
+                }
+                retryAction?()
+                retryAction?()
+                retryCancel?()
+                if starts == 2 {
+                    result |= 1 << 2
+                }
+                if events == [.began(createPullRequestSelected: false), .succeeded] {
+                    result |= 1 << 3
+                }
+
+                var secondEvents: [RepositoryPushEvent] = []
+                var secondStarts = 0
+                var finishRetry: ((NSError?) -> Void)?
+                let second = RepositoryRemoteActionCoordinator(repository: local.repository, windowController: controller, retryConfirmation: { _, _, action in
+                    action()
+                    return false
+                }, progressStarting: { _, _, _, complete in
+                    secondStarts += 1
+                    if secondStarts == 1 {
+                        complete(rejected)
+                    } else {
+                        finishRetry = complete
+                    }
+                    return true
+                })
+                second.performPush(branch: PBGitRef(string: "refs/heads/main"), remote: PBGitRef(string: "refs/remotes/origin"), requiresConfirmation: false, pullRequestOption: nil, suppressesPostPushBrowserSuggestion: true, completion: { secondEvents.append($0) })
+                if secondStarts == 2, secondEvents == [.began(createPullRequestSelected: false)] {
+                    result |= 1 << 4
+                }
+                finishRetry?(nil)
+                finishRetry?(nil)
+                if secondEvents == [.began(createPullRequestSelected: false), .succeeded] {
+                    result |= 1 << 5
+                }
+                return result
+            } catch { return 0 }
+        }
+
         @objc static func reviewGeneralOutput(repository: PBGitRepository, arguments: [String]) throws -> String {
             let runner: GitCommandRunning = RepositoryGitCommandRunner(repository: repository)
-            try runner.launch(arguments: arguments)
-            return runner.lastOutput ?? ""
+            return try runner.output(arguments: arguments)
+        }
+
+        // The command boundary intentionally no longer stores previous output.
+        // swiftlint:disable:next unused_declaration
+        @objc static func reviewGeneralLaunch(repository: PBGitRepository, arguments: [String]) throws {
+            try RepositoryGitCommandRunner(repository: repository).launch(arguments: arguments)
+        }
+
+        // swiftlint:disable:next unused_declaration
+        @objc static func reviewEvidenceExecutableIdentity(repository: PBGitRepository) -> String {
+            RepositoryGitCommandRunner(repository: repository).evidenceExecutableIdentity
         }
 
         // Objective-C-compatible XCTest declarations invoke this shipped-module proof.
@@ -2664,23 +2749,6 @@
         }
     }
 
-    private final nonisolated class HarnessIsolatedGitRepository: PBGitRepository {
-        override func task(withArguments arguments: [Any]?) -> PBTask {
-            let task = super.task(withArguments: arguments)
-            var environment = (task.value(forKey: "environment") as? [String: String] ?? [:]).filter { !$0.key.hasPrefix("GIT_") }
-            environment.merge([
-                "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
-                "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
-                "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
-                "GIT_AUTHOR_NAME": "GitX Tests", "GIT_AUTHOR_EMAIL": "gitx-tests@example.invalid",
-                "GIT_COMMITTER_NAME": "GitX Tests", "GIT_COMMITTER_EMAIL": "gitx-tests@example.invalid",
-            ]) { _, value in value }
-            task.setValue(environment, forKey: "environment")
-            return task
-        }
-    }
-
     // swift6-safety-justification: The app-hosted harness confines repository mutation to its main-actor proofs.
     private final class HarnessLocalRepository: NSObject, @unchecked Sendable {
         static let empty = try! HarnessLocalRepository(remoteURL: "https://github.com/hbmartin/gitx.git").repository
@@ -2702,7 +2770,7 @@
             _ = try Self.git(["remote", "add", "origin", remoteURL], in: directory)
             head = try Self.git(["rev-parse", "HEAD"], in: directory)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            repository = try HarnessIsolatedGitRepository(url: directory)
+            repository = try GitXTestGitRepository(url: directory)
         }
 
         func cleanup() {
@@ -2710,26 +2778,7 @@
         }
 
         private static func git(_ arguments: [String], in directory: URL) throws -> String {
-            let process = Process()
-            let pipe = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = arguments
-            process.environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }.merging([
-                "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
-                "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
-                "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
-                "GIT_AUTHOR_NAME": "GitX Tests", "GIT_AUTHOR_EMAIL": "gitx-tests@example.invalid",
-                "GIT_COMMITTER_NAME": "GitX Tests", "GIT_COMMITTER_EMAIL": "gitx-tests@example.invalid",
-            ]) { _, value in value }
-            process.currentDirectoryURL = directory
-            process.standardOutput = pipe
-            process.standardError = pipe
-            try process.run()
-            process.waitUntilExit()
-            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            guard process.terminationStatus == 0 else { throw HarnessError.expected }
-            return output
+            try GitXTestGitFixture.run(arguments, in: directory).standardOutput
         }
     }
 

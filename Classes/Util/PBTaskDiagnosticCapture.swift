@@ -450,12 +450,17 @@ import OSLog
                 outputDescriptor < 0 && errorDescriptor < 0
             }
 
-            static func orphanProbe(age: TimeInterval) throws -> PBTaskDiagnosticCaptureLifetimeProbe {
+            static func orphanProbe(age: TimeInterval, hasUnlockedLease: Bool = false) throws -> PBTaskDiagnosticCaptureLifetimeProbe {
                 guard age.isFinite, age >= 0 else { throw error() }
                 try prepareBase()
                 let directory = base.appendingPathComponent(UUID().uuidString, isDirectory: true)
                 guard mkdir(directory.path, 0o700) == 0 else { throw error() }
                 do {
+                    if hasUnlockedLease {
+                        let io = PBTaskDiagnosticIO(fault: "")
+                        let descriptor = try io.create(directory.appendingPathComponent("lease"), operation: "createLease")
+                        try io.close(descriptor)
+                    }
                     try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -age)], ofItemAtPath: directory.path)
                 } catch {
                     try? FileManager.default.removeItem(at: directory)
@@ -679,6 +684,11 @@ import OSLog
             @objc(orphanProbeWithAge:error:)
             static func orphanProbe(age: TimeInterval) throws -> PBTaskDiagnosticCaptureLifetimeProbe {
                 try PBTaskDiagnosticStore.orphanProbe(age: age)
+            }
+
+            @objc(unlockedLeasedOrphanProbeWithAge:error:)
+            static func unlockedLeasedOrphanProbe(age: TimeInterval) throws -> PBTaskDiagnosticCaptureLifetimeProbe {
+                try PBTaskDiagnosticStore.orphanProbe(age: age, hasUnlockedLease: true)
             }
         }
     #endif

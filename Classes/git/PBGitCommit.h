@@ -47,7 +47,7 @@ extern NSString *const kGitXCommitType;
 @property (atomic, strong) PBGraphCellInfo *lineInfo;
 
 @property (nonatomic, readonly) PBGitTree *tree;
-@property (atomic, readonly) NSArray<PBGitTree *> *treeContents;
+@property (atomic, readonly, nullable) NSArray<PBGitTree *> *treeContents;
 
 - (instancetype)initWithRepository:(PBGitRepository *)repo andCommit:(GTCommit *)gtCommit;
 

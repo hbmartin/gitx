@@ -600,6 +600,25 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         XCTAssertNil(artifact)
     }
 
+    func testCoreAbandonedUnsealedCaptureRemovesPrivateFilesAndKeepsItsIdentityOpaque() throws {
+        var probe: PBTaskDiagnosticCaptureLifetimeProbe?
+        autoreleasepool {
+            let capture = PBTaskDiagnosticCapture()
+            capture.appendStandardOutput(Data("unpublished-status".utf8))
+            capture.appendStandardError(Data("https://user:secret@example.invalid/repo".utf8))
+            probe = PBTaskDiagnosticCaptureTestHarness.lifetimeProbe(for: capture)
+            XCTAssertNotNil(probe)
+            XCTAssertTrue(probe?.directoryExists == true)
+            XCTAssertFalse(probe?.writersClosed == true)
+            XCTAssertNil(capture.artifact, "Abandoning a capture must not require sealing or publishing raw output")
+            XCTAssertEqual(capture.description, "<private push diagnostic capture>")
+            XCTAssertEqual(probe?.description, "<private capture lifetime probe>")
+        }
+        let releasedProbe = try XCTUnwrap(probe)
+        XCTAssertFalse(releasedProbe.directoryExists, "Last-owner release must remove an unsealed private capture")
+        XCTAssertTrue(releasedProbe.writersClosed)
+    }
+
     func testCoreCleanupRemovesOldLeaseLessOrphansAndPreservesFreshCreationGap() throws {
         let old = try PBTaskDiagnosticCaptureTestHarness.orphanProbe(age: 2 * 24 * 60 * 60)
         let fresh = try PBTaskDiagnosticCaptureTestHarness.orphanProbe(age: 0)
@@ -609,6 +628,27 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         PBTaskDiagnosticCapture.cleanupStaleCaptures()
         XCTAssertFalse(old.directoryExists)
         XCTAssertTrue(fresh.directoryExists)
+    }
+
+    func testCoreCleanupRemovesUnlockedLeasedOrphanWhileLiveCaptureSurvives() throws {
+        let orphan = try PBTaskDiagnosticCaptureTestHarness.unlockedLeasedOrphanProbe(age: 0)
+        let capture = PBTaskDiagnosticCapture()
+        let live = try XCTUnwrap(PBTaskDiagnosticCaptureTestHarness.lifetimeProbe(for: capture))
+        defer { orphan.discardFixture(); capture.seal().discard() }
+        XCTAssertTrue(orphan.directoryExists)
+        XCTAssertEqual(orphan.directoryMode, 0o700)
+        XCTAssertEqual(orphan.rawFileModes.last, NSNumber(value: 0o600))
+        XCTAssertTrue(live.directoryExists)
+
+        PBTaskDiagnosticCapture.cleanupStaleCaptures()
+
+        XCTAssertFalse(orphan.directoryExists, "An unlocked lease identifies an abandoned capture regardless of age")
+        XCTAssertTrue(live.directoryExists, "Cleanup must preserve an actively locked capture")
+        XCTAssertFalse(live.writersClosed)
+        XCTAssertNil(capture.artifact)
+        PBTaskDiagnosticCapture.cleanupStaleCaptures()
+        XCTAssertFalse(orphan.directoryExists)
+        XCTAssertTrue(live.directoryExists)
     }
 
     func testCoreCaptureFailureModesKeepSafeStaticFallbackAndPartialIntegrity() {

@@ -3,21 +3,11 @@ import XCTest
 
 nonisolated enum RepositoryTestGitEnvironment {
     static func isolated(_ inherited: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
-        var environment = inherited.filter { !$0.key.hasPrefix("GIT_") }
-        environment.merge([
-            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
-            "GIT_CONFIG_COUNT": "3", "GIT_CONFIG_KEY_0": "commit.gpgsign", "GIT_CONFIG_VALUE_0": "false",
-            "GIT_CONFIG_KEY_1": "tag.gpgsign", "GIT_CONFIG_VALUE_1": "false",
-            "GIT_CONFIG_KEY_2": "init.templateDir", "GIT_CONFIG_VALUE_2": "/dev/null",
-            "GIT_AUTHOR_NAME": "GitX Tests", "GIT_AUTHOR_EMAIL": "gitx-tests@example.invalid",
-            "GIT_COMMITTER_NAME": "GitX Tests", "GIT_COMMITTER_EMAIL": "gitx-tests@example.invalid",
-            "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C",
-        ]) { _, value in value }
-        return environment
+        GitXTestGitEnvironment.isolated(inherited)
     }
 
     static func prepare(_ task: PBTask) {
-        task.setValue(isolated(task.value(forKey: "environment") as? [String: String] ?? [:]), forKey: "environment")
+        GitXTestGitFixture.prepare(task)
     }
 }
 
@@ -78,10 +68,14 @@ private final class CyclicRepositoryError: NSError, @unchecked Sendable {
     }
 }
 
-private final class LocalGitRunner: NSObject, PBGitCommandRunning {
+private final class LocalGitRunner: NSObject, PBGitEvidenceCommandRunning {
     let directory: String
     private(set) var lastOutput: String?
     var environmentOverrides: [String: String] = [:]
+
+    var evidenceExecutableIdentity: String {
+        PBIndexGitExecutableIdentity.identity(forPath: "/usr/bin/git")
+    }
 
     init(directory: String) {
         self.directory = directory
@@ -96,28 +90,71 @@ private final class LocalGitRunner: NSObject, PBGitCommandRunning {
     }
 
     func historyOutput(withArguments arguments: [String]) throws -> String {
+        try String(decoding: evidenceData(withArguments: arguments, inputData: nil, environment: nil), as: UTF8.self)
+    }
+
+    func evidenceData(withArguments arguments: [String], inputData: Data?, environment: [String: String]?) throws -> Data {
         let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: directory)
         RepositoryTestGitEnvironment.prepare(task)
-        task.additionalEnvironment = environmentOverrides.merging(["GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": "/dev/null"]) { _, value in value }
+        task.separatesStandardError = true
+        task.standardInputData = inputData
+        task.additionalEnvironment = environmentOverrides.merging(environment ?? [:]) { _, value in value }
+            .merging(["GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": "/dev/null/gitx-recovery-grafts"]) { _, value in value }
         try task.launch()
-        return task.standardOutputString() ?? ""
+        return task.standardOutputData
     }
 
     func push(withArguments arguments: [String]) -> PBRepositoryPushCommandResult {
         let task = PBTask(launchPath: "/usr/bin/git", arguments: arguments, inDirectory: directory)
         RepositoryTestGitEnvironment.prepare(task)
-        task.additionalEnvironment = environmentOverrides
+        task.additionalEnvironment = environmentOverrides.merging(["GIT_NO_REPLACE_OBJECTS": "1", "GIT_GRAFT_FILE": "/dev/null/gitx-recovery-grafts"]) { _, value in value }
         task.separatesStandardError = true
         do {
             try task.launch()
-            return PBRepositoryPushCommandResult(stdout: String(decoding: task.standardOutputData, as: UTF8.self), stderr: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: 0, error: nil)
+            return PBRepositoryPushCommandResult(standardOutput: String(decoding: task.standardOutputData, as: UTF8.self), standardError: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: 0, error: nil)
         } catch {
-            return PBRepositoryPushCommandResult(stdout: String(decoding: task.standardOutputData, as: UTF8.self), stderr: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: (error as NSError).userInfo[PBTaskTerminationStatusKey] as? NSNumber, error: error as NSError)
+            return PBRepositoryPushCommandResult(standardOutput: String(decoding: task.standardOutputData, as: UTF8.self), standardError: String(decoding: task.standardErrorData, as: UTF8.self), terminationStatus: (error as NSError).userInfo[PBTaskTerminationStatusKey] as? NSNumber, error: error as NSError)
         }
     }
 
     func launch(withArguments arguments: [String]) throws {
         lastOutput = try output(withArguments: arguments)
+    }
+}
+
+private final class LegacyPushGitRunner: NSObject, PBGitCommandRunning {
+    private let wrapped: LocalGitRunner
+    private(set) var pushes: [[String]] = []
+    var lastOutput: String? {
+        wrapped.lastOutput
+    }
+
+    init(directory: String) {
+        wrapped = LocalGitRunner(directory: directory)
+    }
+
+    func output(withArguments arguments: [String]) throws -> String {
+        if arguments == ["push", "-h"] {
+            return "usage: git push [options] [<repository> [<refspec>...]]\n    --dry-run    dry run\n"
+        }
+        return try wrapped.output(withArguments: arguments)
+    }
+
+    func historyOutput(withArguments arguments: [String]) throws -> String {
+        try wrapped.historyOutput(withArguments: arguments)
+    }
+
+    func push(withArguments arguments: [String]) -> PBRepositoryPushCommandResult {
+        pushes.append(arguments)
+        if arguments.contains("--porcelain") {
+            return PBRepositoryPushCommandResult(standardOutput: "", standardError: "error: unknown option `porcelain'\n",
+                                                 terminationStatus: 129, error: NSError(domain: PBTaskErrorDomain, code: 4))
+        }
+        return wrapped.push(withArguments: arguments)
+    }
+
+    func launch(withArguments arguments: [String]) throws {
+        try wrapped.launch(withArguments: arguments)
     }
 }
 
@@ -142,9 +179,9 @@ final class RepositoryServiceTests: XCTestCase {
         func push(withArguments arguments: [String]) -> PBRepositoryPushCommandResult {
             do {
                 try launch(withArguments: arguments)
-                return PBRepositoryPushCommandResult(stdout: lastOutput ?? "", stderr: "", terminationStatus: 0, error: nil)
+                return PBRepositoryPushCommandResult(standardOutput: "", standardError: lastOutput ?? "", terminationStatus: 0, error: nil)
             } catch {
-                return PBRepositoryPushCommandResult(stdout: (error as NSError).userInfo[PBTaskTerminationOutputKey] as? String ?? "", stderr: "", terminationStatus: 1, error: error as NSError)
+                return PBRepositoryPushCommandResult(standardOutput: (error as NSError).userInfo[PBTaskTerminationOutputKey] as? String ?? "", standardError: "", terminationStatus: 1, error: error as NSError)
             }
         }
 
@@ -256,7 +293,21 @@ final class RepositoryServiceTests: XCTestCase {
             method_setImplementation(method, original)
             imp_removeBlock(replacement)
         }
-        XCTAssertTrue(NSApp.keyWindow === window)
+        let focusMethod = try XCTUnwrap(class_getInstanceMethod(NSWindow.self, #selector(NSWindow.makeKeyAndOrderFront(_:))))
+        var presentationRequests: [NSWindow] = []
+        let focusRequest: @convention(block) (NSWindow, AnyObject?) -> Void = { requestedWindow, _ in
+            presentationRequests.append(requestedWindow)
+        }
+        let focusReplacement = imp_implementationWithBlock(focusRequest)
+        let originalFocusRequest = method_setImplementation(focusMethod, focusReplacement)
+        defer {
+            method_setImplementation(focusMethod, originalFocusRequest)
+            imp_removeBlock(focusReplacement)
+        }
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertEqual(presentationRequests.count, 1, "The observation must detect a real presentation request")
+        XCTAssertTrue(presentationRequests.first === window)
+        presentationRequests.removeAll()
         let completed = expectation(description: "Empty repository open completes once")
         completed.assertForOverFulfill = true
         PBRepositoryOpenCoordinator.shared.open([], sourceWindow: nil) { documents, errors in
@@ -265,7 +316,7 @@ final class RepositoryServiceTests: XCTestCase {
             completed.fulfill()
         }
         wait(for: [completed], timeout: 1)
-        XCTAssertTrue(NSApp.keyWindow === window)
+        XCTAssertTrue(presentationRequests.isEmpty, "An empty open must not refocus or present any repository window")
         withExtendedLifetime(controller) {}
     }
 
@@ -352,7 +403,7 @@ final class RepositoryServiceTests: XCTestCase {
                                remoteName: "origin", endpoint: "/tmp/remote", destinationRef: "refs/heads/main", fetchedOID: String(repeating: "b", count: 40))
     }
 
-    private final class PushRunnerFake: NSObject, PBGitCommandRunning {
+    private final class PushRunnerFake: NSObject, PBGitEvidenceCommandRunning {
         let source = String(repeating: "a", count: 40)
         let fetched = String(repeating: "b", count: 40)
         var lastOutput: String?
@@ -360,19 +411,23 @@ final class RepositoryServiceTests: XCTestCase {
         var pushResults: [PBRepositoryPushCommandResult] = []
         var commands: [[String]] = []
         var pushes: [[String]] = []
+        var evidenceExecutableIdentity = "push-fixture-v1"
+        var binaryRequests: [(arguments: [String], input: Data?, environment: [String: String]?)] = []
         var config = "remote.origin.fetch\n+refs/heads/*:refs/remotes/origin/*\0branch.main.remote\norigin\0branch.main.merge\nrefs/heads/main\0"
         var tracking = "refs/remotes/origin/main"
         init(eligible: Bool = true) {
             super.init()
+            replies[["push", "-h"]] = .success("usage: git push [options]\n    --porcelain    machine-readable output\n")
+            replies[["--config-env=gitx.push-recovery=probe.value=GITX_PUSH_CAPABILITY_PROBE", "config", "--get", "gitx.push-recovery=probe.value"]] = .success("gitx-config-env-capability\n")
             replies[["config", "--null", "--list"]] = .success(config)
-            replies[["-c", "branch.main.remote=origin", "-c", "branch.main.pushRemote=origin", "-c", "push.default=current", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)", "refs/heads/main"]] = .success("refs/heads/main\0" + source + "\0refs/heads/main\0\0refs/remotes/origin/main\0origin\n")
+            replies[["--config-env=branch.main.remote=GITX_PUSH_METADATA_REMOTE", "--config-env=branch.main.pushRemote=GITX_PUSH_METADATA_REMOTE", "--config-env=push.default=GITX_PUSH_METADATA_MODE", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)", "refs/heads/main"]] = .success("refs/heads/main\0" + source + "\0refs/heads/main\0\0refs/remotes/origin/main\0origin\n")
             replies[["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", tracking]] = .success(tracking + "\0" + fetched + "\0commit\n")
-            replies[["reflog", "show", "--format=%H", "refs/heads/main"]] = .success(eligible ? fetched + "\n" : source + "\n")
+            replies[["reflog", "show", "--no-show-signature", "--format=%H", "--max-count=1025", "refs/heads/main", "--"]] = .success(eligible ? fetched + "\n" : source + "\n")
             replies[["remote", "get-url", "--all", "origin"]] = .success("/tmp/remote\n")
             replies[["remote", "get-url", "--push", "--all", "origin"]] = .success("/tmp/remote\n")
             replies[["rev-parse", "--is-shallow-repository"]] = .success("false\n")
-            replies[["rev-list", "--no-walk", source, fetched, "--"]] = .success(source + "\n" + fetched + "\n")
-            replies[["merge-base", "--is-ancestor", fetched, source]] = .failure(NSError(domain: PBTaskErrorDomain, code: 4, userInfo: [PBTaskTerminationStatusKey: 1]))
+            replies[["cat-file", "--batch-check"]] = .success(source + " commit 100\n" + fetched + " commit 100\n")
+            replies[["rev-list", "--stdin", "--ancestry-path", "--max-count=1"]] = .success("")
         }
 
         func output(withArguments arguments: [String]) throws -> String {
@@ -388,25 +443,30 @@ final class RepositoryServiceTests: XCTestCase {
             try output(withArguments: arguments)
         }
 
+        func evidenceData(withArguments arguments: [String], inputData: Data?, environment: [String: String]?) throws -> Data {
+            binaryRequests.append((arguments, inputData, environment))
+            return try Data(output(withArguments: arguments).utf8)
+        }
+
         func launch(withArguments arguments: [String]) throws {
             XCTFail("Unexpected legacy launch: \(arguments)")
         }
 
         func push(withArguments arguments: [String]) -> PBRepositoryPushCommandResult {
             pushes.append(arguments)
-            guard !pushResults.isEmpty else { XCTFail("Unexpected push"); return PBRepositoryPushCommandResult(stdout: "", stderr: "", terminationStatus: nil, error: NSError(domain: "unexpected-push", code: 1)) }
+            guard !pushResults.isEmpty else { XCTFail("Unexpected push"); return PBRepositoryPushCommandResult(standardOutput: "", standardError: "", terminationStatus: nil, error: NSError(domain: "unexpected-push", code: 1)) }
             return pushResults.removeFirst()
         }
     }
 
     private func rejectedResult(_ output: String? = nil, stderr: String = "", status: NSNumber? = 1) -> PBRepositoryPushCommandResult {
-        PBRepositoryPushCommandResult(stdout: output ?? "To /tmp/remote\n!\trefs/heads/main:refs/heads/main\t[rejected] (non-fast-forward)\nDone\n", stderr: stderr, terminationStatus: status, error: NSError(domain: PBTaskErrorDomain, code: 4))
+        PBRepositoryPushCommandResult(standardOutput: output ?? "To /tmp/remote\n!\trefs/heads/main:refs/heads/main\t[rejected] (non-fast-forward)\nDone\n", standardError: stderr, terminationStatus: status, error: NSError(domain: PBTaskErrorDomain, code: 4))
     }
 
     func testRemoteServiceAttachesImmutablePlanAndRetriesWithoutReplacingSourceOrLease() throws {
         let repository = PBGitRepository()
         let runner = PushRunnerFake()
-        runner.pushResults = [rejectedResult(), PBRepositoryPushCommandResult(stdout: "Done\n", stderr: "remote: Open https://example.test/pull/42", terminationStatus: 0, error: nil), rejectedResult()]
+        runner.pushResults = [rejectedResult(), PBRepositoryPushCommandResult(standardOutput: "Done\n", standardError: "remote: Open https://example.test/pull/42", terminationStatus: 0, error: nil), rejectedResult()]
         let service = PBRepositoryRemoteService(repository: repository, runner: runner)
         var error: NSError?
         XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
@@ -417,7 +477,7 @@ final class RepositoryServiceTests: XCTestCase {
         let readCount = runner.commands.count
         XCTAssertTrue(service.retryPush(with: plan, error: &error))
         XCTAssertEqual(Array(runner.commands.dropFirst(readCount)), [["config", "--null", "--list"], ["remote", "get-url", "--all", "origin"], ["remote", "get-url", "--push", "--all", "origin"]])
-        XCTAssertEqual(runner.pushes, [["push", "--porcelain", "--", "origin", "main"], ["push", "--porcelain", "--force-with-lease=refs/heads/main:" + String(repeating: "b", count: 40), "--", "origin", String(repeating: "a", count: 40) + ":refs/heads/main"]])
+        XCTAssertEqual(runner.pushes, [["push", "--porcelain", "--", "origin", "refs/heads/main"], ["push", "--porcelain", "--force-with-lease=refs/heads/main:" + String(repeating: "b", count: 40), "--", "origin", String(repeating: "a", count: 40) + ":refs/heads/main"]])
         XCTAssertTrue(service.lastPushOutput?.contains("https://example.test/pull/42") == true)
         XCTAssertFalse(service.retryPush(with: plan, error: &error))
         XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
@@ -426,12 +486,12 @@ final class RepositoryServiceTests: XCTestCase {
     func testRecoveryExclusionsChangeOneConditionFromEligibleEvidence() {
         let mutations: [(PushRunnerFake) -> Void] = [
             { $0.replies[["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", $0.tracking]] = .success("") },
-            { $0.replies[["reflog", "show", "--format=%H", "refs/heads/main"]] = .success($0.source + "\n") },
-            { $0.replies[["rev-parse", "--is-shallow-repository"]] = .success("true\n") },
+            { $0.replies[["reflog", "show", "--no-show-signature", "--format=%H", "--max-count=1025", "refs/heads/main", "--"]] = .success($0.source + "\n") },
+            { $0.replies[["reflog", "show", "--no-show-signature", "--format=%H", "--max-count=1025", "refs/heads/main", "--"]] = .success($0.source + "\n"); $0.replies[["rev-parse", "--is-shallow-repository"]] = .success("true\n") },
             { $0.replies[["remote", "get-url", "--push", "--all", "origin"]] = .success("/tmp/different\n") },
             { $0.replies[["remote", "get-url", "--all", "origin"]] = .success("/tmp/remote\n/tmp/second\n") },
-            { $0.replies[["rev-list", "--no-walk", $0.source, $0.fetched, "--"]] = .failure(NSError(domain: PBTaskErrorDomain, code: 4)) },
-            { $0.replies[["reflog", "show", "--format=%H", "refs/heads/main"]] = .success("invalid\n") },
+            { $0.replies[["cat-file", "--batch-check"]] = .failure(NSError(domain: PBTaskErrorDomain, code: 4)) },
+            { $0.replies[["reflog", "show", "--no-show-signature", "--format=%H", "--max-count=1025", "refs/heads/main", "--"]] = .success("invalid\n") },
             { $0.replies[["config", "--null", "--list"]] = .failure(NSError(domain: PBTaskErrorDomain, code: 4)) },
             { $0.replies[["config", "--null", "--list"]] = .success($0.config + "remote.origin.mirror\ntrue\0"); $0.replies[["config", "--type=bool", "--get", "remote.origin.mirror"]] = .success("true\n") },
             { $0.replies[["config", "--null", "--list"]] = .success($0.config + "push.followtags\ntrue\0"); $0.replies[["config", "--type=bool", "--get", "push.followtags"]] = .success("true\n") },
@@ -449,16 +509,16 @@ final class RepositoryServiceTests: XCTestCase {
     }
 
     func testDiscoveryAndAncestryFailuresDisableRecovery() {
-        let metadataArguments = ["-c", "branch.main.remote=origin", "-c", "branch.main.pushRemote=origin", "-c", "push.default=current", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)", "refs/heads/main"]
+        let metadataArguments = ["--config-env=branch.main.remote=GITX_PUSH_METADATA_REMOTE", "--config-env=branch.main.pushRemote=GITX_PUSH_METADATA_REMOTE", "--config-env=push.default=GITX_PUSH_METADATA_MODE", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)", "refs/heads/main"]
         let mutations: [(PushRunnerFake) -> Void] = [
-            { $0.replies[["config", "--null", "--list"]] = .success($0.config + "remote.origin.fetch\n+refs/other/*:refs/cache/*\0") },
+            { $0.replies[["config", "--null", "--list"]] = .success($0.config + "remote.origin.fetch\n+refs/heads/main:refs/cache/main\0") },
             { $0.replies[["config", "--null", "--list"]] = .success($0.config + "remote.origin.mirror\ninvalid\0"); $0.replies[["config", "--type=bool", "--get", "remote.origin.mirror"]] = .success("invalid") },
             { $0.replies[metadataArguments] = .success("") },
-            { $0.replies[metadataArguments] = .success("refs/heads/main\0" + $0.source + "\0\0refs/tags/main\0refs/remotes/origin/main\0origin") },
-            { $0.replies[metadataArguments] = .success("refs/heads/main\0" + $0.source + "\0\0\0refs/heads/main\0origin") },
-            { $0.replies[metadataArguments] = .success("refs/heads/main\0invalid\0\0\0refs/remotes/origin/main\0origin") },
+            { $0.replies[metadataArguments] = .success("refs/heads/main\0" + $0.source + "\0\0refs/tags/main\0refs/remotes/origin/main\0origin\n") },
+            { $0.replies[metadataArguments] = .success("refs/heads/main\0" + $0.source + "\0\0\0refs/heads/main\0origin\n") },
+            { $0.replies[metadataArguments] = .success("refs/heads/main\0invalid\0\0\0refs/remotes/origin/main\0origin\n") },
             { $0.replies[["config", "--null", "--list"]] = .success($0.config + "remote.origin.push\nrefs/heads/missing:refs/heads/main\0") },
-            { $0.replies[["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", $0.tracking]] = .success($0.tracking + "\0" + $0.fetched + "\0tag") },
+            { $0.replies[["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", $0.tracking]] = .success($0.tracking + "\0" + $0.fetched + "\0tag\n") },
         ]
         for mutate in mutations {
             let runner = PushRunnerFake()
@@ -480,8 +540,8 @@ final class RepositoryServiceTests: XCTestCase {
         ]
         for failure in failures {
             let runner = PushRunnerFake(eligible: false)
-            let ancestry = ["merge-base", "--is-ancestor", runner.fetched, runner.source]
-            runner.replies[ancestry] = .success("")
+            let ancestry = ["rev-list", "--stdin", "--ancestry-path", "--max-count=1"]
+            runner.replies[ancestry] = .success(runner.source + "\n")
             runner.pushResults = [rejectedResult(), rejectedResult()]
             let repository = PBGitRepository()
             let service = PBRepositoryRemoteService(repository: repository, runner: runner)
@@ -505,6 +565,45 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertFalse(runner.commands.contains { ["reflog", "remote", "rev-list", "merge-base"].contains($0.first ?? "") })
     }
 
+    func testCompleteMetadataRejectsUncapturedSourceAndRemoteBeforeReadingHistory() {
+        let arguments = ["--config-env=branch.main.remote=GITX_PUSH_METADATA_REMOTE", "--config-env=branch.main.pushRemote=GITX_PUSH_METADATA_REMOTE", "--config-env=push.default=GITX_PUSH_METADATA_MODE", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)", "refs/heads/main"]
+        for (sourceRef, remote) in [("refs/heads/other", "origin"), ("refs/heads/main", "backup")] {
+            let runner = PushRunnerFake()
+            runner.replies[arguments] = .success(sourceRef + "\0" + runner.source + "\0refs/heads/main\0\0" + runner.tracking + "\0" + remote + "\n")
+            runner.pushResults = [rejectedResult()]
+            let repository = PBGitRepository()
+            let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+            var error: NSError?
+            XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+            XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+            XCTAssertEqual(runner.pushes, [["push", "--porcelain", "--", "origin", "refs/heads/main"]])
+            XCTAssertFalse(runner.commands.contains { ["reflog", "remote", "cat-file", "rev-list"].contains($0.first ?? "") })
+        }
+    }
+
+    func testUnterminatedSourceOrTrackingMetadataExcludesRecoveryBeforeReadingHistory() throws {
+        let sourceArguments = ["--config-env=branch.main.remote=GITX_PUSH_METADATA_REMOTE", "--config-env=branch.main.pushRemote=GITX_PUSH_METADATA_REMOTE", "--config-env=push.default=GITX_PUSH_METADATA_MODE", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)", "refs/heads/main"]
+        for truncateSource in [true, false] {
+            let runner = PushRunnerFake()
+            let trackingArguments = ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", runner.tracking]
+            let arguments = truncateSource ? sourceArguments : trackingArguments
+            let complete = try XCTUnwrap(runner.replies[arguments]).get()
+            XCTAssertTrue(complete.hasSuffix("\n"))
+            runner.replies[arguments] = .success(String(complete.dropLast()))
+            runner.pushResults = [rejectedResult()]
+            let repository = PBGitRepository()
+            let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+            var error: NSError?
+            XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+            XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+            XCTAssertEqual(runner.pushes, [["push", "--porcelain", "--", "origin", "refs/heads/main"]])
+            XCTAssertFalse(runner.commands.contains { ["reflog", "remote", "cat-file", "rev-list"].contains($0.first ?? "") })
+            if truncateSource {
+                XCTAssertFalse(runner.commands.contains(trackingArguments))
+            }
+        }
+    }
+
     func testCapturedConfigurationIncludesTransportAndRewriteSettingsOnly() {
         let values = RepositoryPushConfiguration.values("push.followtags\0remote.origin.url\nhttps://dummy:password@example.invalid/repo\0core.editor\nvi\0url.file:///tmp/.insteadof\ngit@example.invalid:\0core.sshcommand\nssh-wrapper\0")
         XCTAssertEqual(values["push.followtags"], ["true"])
@@ -516,7 +615,7 @@ final class RepositoryServiceTests: XCTestCase {
 
     func testSuccessfulPushDefersEndpointAndAncestryWork() {
         let runner = PushRunnerFake()
-        runner.pushResults = [PBRepositoryPushCommandResult(stdout: "Done\n", stderr: "browser hint", terminationStatus: 0, error: nil)]
+        runner.pushResults = [PBRepositoryPushCommandResult(standardOutput: "Done\n", standardError: "browser hint", terminationStatus: 0, error: nil)]
         let repository = PBGitRepository()
         let service = PBRepositoryRemoteService(repository: repository, runner: runner)
         XCTAssertTrue(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: nil))
@@ -535,6 +634,224 @@ final class RepositoryServiceTests: XCTestCase {
         XCTAssertFalse(service.retryPush(with: plan, error: &error))
         XCTAssertTrue(error?.localizedFailureReason?.contains("fresh push") == true)
         XCTAssertEqual(runner.pushes.count, 1)
+    }
+
+    func testReflogEvidenceBeyondNewest1024EntriesCannotAuthorizeRetry() {
+        let runner = PushRunnerFake()
+        runner.replies[["reflog", "show", "--no-show-signature", "--format=%H", "--max-count=1025", "refs/heads/main", "--"]] =
+            .success((Array(repeating: runner.source, count: 1024) + [runner.fetched]).joined(separator: "\n") + "\n")
+        runner.pushResults = [rejectedResult()]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+    }
+
+    func testAdvertisedPorcelainAndConfigEnvironmentCapabilitiesCacheUntilExecutableChanges() {
+        let runner = PushRunnerFake()
+        let helpArguments = ["push", "-h"]
+        let probeArguments = ["--config-env=gitx.push-recovery=probe.value=GITX_PUSH_CAPABILITY_PROBE", "config", "--get", "gitx.push-recovery=probe.value"]
+        runner.replies[helpArguments] = .failure(NSError(domain: PBTaskErrorDomain, code: 4,
+                                                         userInfo: [PBTaskTerminationStatusKey: 129,
+                                                                    PBTaskTerminationOutputKey: "usage: git push [options]\n    --[no-]porcelain    machine-readable output\n"]))
+        runner.pushResults = [rejectedResult(), rejectedResult(), rejectedResult()]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        var error: NSError?
+        for _ in 0 ..< 2 {
+            XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+            XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        }
+        XCTAssertEqual(runner.commands.filter { $0 == helpArguments }.count, 1)
+        XCTAssertEqual(runner.commands.filter { $0 == probeArguments }.count, 1)
+        runner.evidenceExecutableIdentity = "push-fixture-v2"
+        runner.replies[helpArguments] = .success("usage: git push [options]\n    --dry-run    dry run\n")
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(runner.commands.filter { $0 == helpArguments }.count, 2)
+        XCTAssertEqual(runner.pushes.last, ["push", "--", "origin", "refs/heads/main"])
+    }
+
+    func testUnknownPorcelainProbeDoesNotBlockPushOrCacheTransientFailure() {
+        let runner = PushRunnerFake()
+        let helpArguments = ["push", "-h"]
+        runner.replies[helpArguments] = .failure(NSError(domain: PBTaskErrorDomain, code: 2))
+        runner.pushResults = [PBRepositoryPushCommandResult(standardOutput: "", standardError: "", terminationStatus: 0, error: nil), rejectedResult()]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        XCTAssertTrue(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: nil))
+        XCTAssertEqual(runner.pushes.last, ["push", "--", "origin", "refs/heads/main"])
+        runner.replies[helpArguments] = .success("usage: git push [options]\n    --porcelain    machine-readable output\n")
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(runner.commands.filter { $0 == helpArguments }.count, 2)
+    }
+
+    func testPorcelainWithoutByteEvidencePreservesOrdinaryPushAndExcludesRecovery() throws {
+        let status = "To /tmp/remote\n!\trefs/heads/main:refs/heads/main\t[rejected] (non-fast-forward)\nDone\n"
+        let runner = CommandRunnerFake()
+        runner.outputResults = [.success("usage: git push [options]\n    --porcelain    machine-readable output\n")]
+        runner.launchResults = [.success(()), .failure(NSError(domain: PBTaskErrorDomain, code: 4,
+                                                               userInfo: [PBTaskTerminationStatusKey: 1, PBTaskTerminationOutputKey: status]))]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        let branch = PBGitRef(string: "refs/heads/main")
+        let remote = PBGitRef(string: "refs/remotes/origin")
+        XCTAssertTrue(service.pushBranch(branch, toRemote: remote, error: nil))
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(branch, toRemote: remote, error: &error))
+        XCTAssertTrue(service.commandWasLaunched)
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(runner.outputArguments, [["push", "-h"]])
+        XCTAssertEqual(runner.launchArguments, Array(repeating: ["push", "--porcelain", "--", "origin", "refs/heads/main"], count: 2))
+        let underlying = try XCTUnwrap(error?.userInfo[NSUnderlyingErrorKey] as? NSError)
+        XCTAssertEqual(underlying.code, 4)
+        XCTAssertEqual(underlying.userInfo[PBTaskTerminationStatusKey] as? Int, 1)
+    }
+
+    func testUnsupportedConfigEnvironmentUsesSafeLegacyKeysAndExcludesEqualsBranchRecovery() {
+        let runner = PushRunnerFake()
+        let probeArguments = ["--config-env=gitx.push-recovery=probe.value=GITX_PUSH_CAPABILITY_PROBE", "config", "--get", "gitx.push-recovery=probe.value"]
+        runner.replies[probeArguments] = .failure(NSError(domain: PBTaskErrorDomain, code: 4,
+                                                          userInfo: [PBTaskTerminationStatusKey: 129,
+                                                                     PBTaskTerminationOutputKey: "unknown option: --config-env\n"]))
+        let fallback = ["-c", "branch.main.remote=origin", "-c", "branch.main.pushRemote=origin", "-c", "push.default=current",
+                        "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)", "refs/heads/main"]
+        runner.replies[fallback] = .success("refs/heads/main\0" + runner.source + "\0refs/heads/main\0\0refs/remotes/origin/main\0origin\n")
+        runner.pushResults = [rejectedResult(), rejectedResult("To /tmp/remote\n!\trefs/heads/feat=x:refs/heads/feat=x\t[rejected] (non-fast-forward)\nDone\n")]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        let request = runner.binaryRequests.first { $0.arguments == fallback }
+        XCTAssertNotNil(request)
+        XCTAssertNil(request?.environment)
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/feat=x"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(runner.commands.filter { $0 == probeArguments }.count, 1)
+        XCTAssertEqual(runner.pushes.last, ["push", "--porcelain", "--", "origin", "refs/heads/feat=x"])
+        XCTAssertFalse(runner.binaryRequests.contains { $0.arguments.contains("branch.feat=x.remote=origin") })
+    }
+
+    func testUnvalidatedEqualityCannotSkipCommitObjectValidation() {
+        let runner = PushRunnerFake()
+        runner.replies[["cat-file", "--batch-check"]] = .success(runner.source + " commit 100\n" + runner.fetched + " missing\n")
+        runner.pushResults = [rejectedResult()]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertFalse(runner.commands.contains { $0.first == "rev-list" || $0.first == "rev-parse" })
+    }
+
+    func testPushTaskFailuresNeverAuthorizeRecoveryWithValidStructuredStatus() {
+        let failures: [(NSError, NSNumber?)] = [
+            (NSError(domain: PBTaskErrorDomain, code: 1), nil),
+            (NSError(domain: PBTaskErrorDomain, code: 2), 1),
+            (NSError(domain: PBTaskErrorDomain, code: 3), 1),
+            (NSError(domain: PBTaskErrorDomain, code: 4), nil),
+            (NSError(domain: PBTaskErrorDomain, code: 4), 0),
+            (NSError(domain: PBTaskErrorDomain, code: 5), 1),
+            (NSError(domain: "non-Git-error", code: 4), 1),
+        ]
+        let output = "To /tmp/remote\n!\trefs/heads/main:refs/heads/main\t[rejected] (non-fast-forward)\nDone\n"
+        for (failure, status) in failures {
+            let runner = PushRunnerFake()
+            runner.pushResults = [PBRepositoryPushCommandResult(standardOutput: output, standardError: "", terminationStatus: status, error: failure)]
+            let repository = PBGitRepository()
+            let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+            var error: NSError?
+            XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+            XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+            XCTAssertFalse(runner.commands.contains { $0.first == "cat-file" || $0.first == "rev-list" })
+            if failure.domain == PBTaskErrorDomain, failure.code == 2 {
+                XCTAssertTrue(error?.localizedFailureReason?.contains("remote completion is unknown") == true)
+                XCTAssertTrue(error?.localizedFailureReason?.contains("fetch") == true)
+            }
+        }
+    }
+
+    func testTimeoutRecoverySuggestionIsRedactedOnOuterAndUnderlyingErrors() throws {
+        let runner = PushRunnerFake()
+        let suggestion = "Check https://review-user:review-secret@example.invalid/repo before another push."
+        let timeout = NSError(domain: PBTaskErrorDomain, code: 2,
+                              userInfo: [NSLocalizedRecoverySuggestionErrorKey: suggestion])
+        runner.pushResults = [PBRepositoryPushCommandResult(standardOutput: "To /tmp/remote\n!\trefs/heads/main:refs/heads/main\t[rejected] (non-fast-forward)\nDone\n",
+                                                            standardError: "", terminationStatus: 1, error: timeout)]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        let failure = try XCTUnwrap(error)
+        let underlying = try XCTUnwrap(failure.userInfo[NSUnderlyingErrorKey] as? NSError)
+        let expected = "Check https://[redacted]@example.invalid/repo before another push."
+        XCTAssertEqual(failure.localizedRecoverySuggestion, expected)
+        XCTAssertEqual(underlying.localizedRecoverySuggestion, expected)
+        XCTAssertEqual(underlying.code, 2)
+        XCTAssertTrue(failure.localizedFailureReason?.contains("remote completion is unknown") == true)
+        XCTAssertNil(PBRepositoryPushRetryPlan.plan(forError: failure))
+        XCTAssertFalse(runner.commands.contains { ["remote", "cat-file", "rev-list"].contains($0.first ?? "") })
+    }
+
+    func testUnknownConfigEnvironmentProbeIsNotCachedAsUnsupported() {
+        let runner = PushRunnerFake()
+        let probe = ["--config-env=gitx.push-recovery=probe.value=GITX_PUSH_CAPABILITY_PROBE", "config", "--get", "gitx.push-recovery=probe.value"]
+        runner.replies[probe] = .success("unexpected\n")
+        let fallback = ["-c", "branch.main.remote=origin", "-c", "branch.main.pushRemote=origin", "-c", "push.default=current",
+                        "for-each-ref", "--format=%(refname)%00%(objectname)%00%(upstream:remoteref)%00%(push:remoteref)%00%(push)%00%(push:remotename)", "refs/heads/main"]
+        runner.replies[fallback] = .success("refs/heads/main\0" + runner.source + "\0refs/heads/main\0\0refs/remotes/origin/main\0origin\n")
+        runner.pushResults = [rejectedResult(), rejectedResult()]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        runner.replies[probe] = .success("gitx-config-env-capability\n")
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(runner.commands.filter { $0 == probe }.count, 2)
+    }
+
+    func testManyReflogWitnessesUseOrderedBinaryInputAndOneAncestryProcess() {
+        let runner = PushRunnerFake(eligible: false)
+        let witnesses = (1 ... 1000).map { String(format: "%040x", $0) }
+        let reflog = witnesses + Array(witnesses.prefix(10))
+        runner.replies[["reflog", "show", "--no-show-signature", "--format=%H", "--max-count=1025", "refs/heads/main", "--"]] = .success(reflog.joined(separator: "\n") + "\n")
+        let objects = [runner.source] + witnesses + [runner.fetched]
+        runner.replies[["cat-file", "--batch-check"]] = .success(objects.map { $0 + " commit 100\n" }.joined())
+        let ancestry = ["rev-list", "--stdin", "--ancestry-path", "--max-count=1"]
+        runner.replies[ancestry] = .success(witnesses[999] + "\n")
+        runner.pushResults = [rejectedResult()]
+        let repository = PBGitRepository()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        let requests = runner.binaryRequests.filter { $0.arguments == ancestry }
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests.first?.input, RepositoryPushObjectEvidence.input([runner.source] + witnesses + ["^" + runner.fetched]))
+        XCTAssertEqual(runner.binaryRequests.first { $0.arguments == ["cat-file", "--batch-check"] }?.input,
+                       RepositoryPushObjectEvidence.input(objects))
+        XCTAssertFalse(runner.commands.contains { $0.first == "merge-base" || $0.contains("--no-walk") })
+    }
+
+    func testMissingBranchAndRemoteSelectionStopsPullAndPushBeforeGitCommands() {
+        let repository = PBGitRepository()
+        let runner = CommandRunnerFake()
+        let service = PBRepositoryRemoteService(repository: repository, runner: runner)
+        var error: NSError?
+        XCTAssertFalse(service.pullBranch(nil, fromRemote: nil, rebase: false, error: &error))
+        XCTAssertFalse(service.commandWasLaunched)
+        XCTAssertNil(error)
+        XCTAssertFalse(service.pushBranch(nil, toRemote: nil, error: &error))
+        XCTAssertFalse(service.commandWasLaunched)
+        XCTAssertNil(error)
+        XCTAssertEqual(runner.outputArguments, [])
+        XCTAssertEqual(runner.launchArguments, [])
     }
 
     func testRemoteServiceReportsDiscoveryPullAndDeleteFailures() {
@@ -766,7 +1083,7 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
 
     func testShippedRunnerPreservesGeneralCommandOutputAndFailures() throws {
         #if DEBUG
-            XCTAssertEqual(try PBMilestone2ProductCoverageHarness.reviewGeneralOutput(repository: repository, arguments: ["config", "--get", "user.name"]), "GitX Tests\n")
+            XCTAssertEqual(try PBMilestone2ProductCoverageHarness.reviewGeneralOutput(repository: repository, arguments: ["config", "--get", "user.name"]), "GitX Tests")
             XCTAssertThrowsError(try PBMilestone2ProductCoverageHarness.reviewGeneralOutput(repository: repository, arguments: ["config", "--get", "missing.fixture-key"])) { error in
                 XCTAssertEqual((error as NSError).domain, PBTaskErrorDomain)
                 XCTAssertEqual((error as NSError).code, Int(PBTaskErrorCode.nonZeroExitCodeError.rawValue))
@@ -924,6 +1241,20 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         return try (service, XCTUnwrap(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) }, taskOutput(error)))
     }
 
+    private func prepareUnintegratedRemoteRewrite() throws -> (LocalGitRunner, URL, String, String) {
+        let (runner, bare) = try prepareRecoveryRemote()
+        let other = repositoryURL.appendingPathComponent("other")
+        _ = try runner.output(withArguments: ["clone", "--quiet", "--branch", "main", bare.path, other.path])
+        let otherRunner = LocalGitRunner(directory: other.path)
+        _ = try otherRunner.output(withArguments: ["commit", "--quiet", "--allow-empty", "-m", "unintegrated remote"])
+        _ = try otherRunner.output(withArguments: ["push", "--quiet", "origin", "main"])
+        try runGit(["fetch", "--quiet", "origin"])
+        try runGit(["commit", "--quiet", "--amend", "-m", "local rewrite"])
+        let source = try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let fetched = try otherRunner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        return (runner, bare, source, fetched)
+    }
+
     func testSameBranchTraversalIgnoresCommitsWithoutCachedOID() throws {
         let gitRepository = try XCTUnwrap(repository.gtRepo)
         let ancestor = try XCTUnwrap(gitRepository.lookUpObject(byRevParse: "HEAD") as? GTCommit)
@@ -950,6 +1281,167 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
         XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
         XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"]), try otherRunner.output(withArguments: ["rev-parse", "HEAD"]))
+    }
+
+    func testLeadingPlusBranchPushPreservesRemoteFeatureAndSelectsLiteralSource() throws {
+        let (runner, bare) = try prepareRecoveryRemote()
+        let original = try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let remoteWork = try runner.output(withArguments: ["commit-tree", "HEAD^{tree}", "-p", original, "-m", "remote-only feature work"])
+            .trimmingCharacters(in: .newlines)
+        try runGit(["branch", "feature", remoteWork])
+        try runGit(["push", "--quiet", "origin", "refs/heads/feature"])
+        try runGit(["update-ref", "refs/heads/feature", original])
+        try runGit(["branch", "+feature", original])
+
+        let service = PBRepositoryRemoteService(repository: repository)
+        XCTAssertTrue(service.pushBranch(PBGitRef(string: "refs/heads/+feature"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: nil))
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/feature"])
+            .trimmingCharacters(in: .newlines), remoteWork)
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "for-each-ref", "--format=%(objectname)", "refs/heads/+feature"])
+            .trimmingCharacters(in: .newlines), original)
+    }
+
+    func testOldGitWithoutPorcelainStillPushesQualifiedBranchAndOffersNoRecovery() throws {
+        let (runner, bare) = try prepareRecoveryRemote()
+        try runGit(["branch", "-m", "topic"])
+        let legacy = LegacyPushGitRunner(directory: repositoryURL.path)
+        let service = PBRepositoryRemoteService(repository: repository, runner: legacy)
+        var error: NSError?
+        XCTAssertTrue(service.pushBranch(PBGitRef(string: "refs/heads/topic"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(legacy.pushes, [["push", "--", "origin", "refs/heads/topic"]])
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "for-each-ref", "--format=%(objectname)", "refs/heads/topic"])
+            .trimmingCharacters(in: .newlines), try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines))
+    }
+
+    func testDisjointFetchRefspecsPermitRecovery() throws {
+        let (runner, bare) = try prepareRecoveryRemote()
+        try runGit(["config", "--add", "remote.origin.fetch", "+refs/pull/*/head:refs/remotes/origin/pr/*"])
+        try runGit(["commit", "--quiet", "--amend", "-m", "rewrite with unrelated PR fetch mapping"])
+        let (service, plan) = try rejectedPlan(runner: runner)
+        XCTAssertEqual(plan.destinationRef, "refs/heads/main")
+        XCTAssertTrue(service.retryPush(with: plan, error: nil))
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .newlines), plan.sourceOID)
+    }
+
+    func testReverseOverlappingFetchRefspecsDisableRecovery() throws {
+        let (runner, bare) = try prepareRecoveryRemote()
+        try runGit(["config", "--add", "remote.origin.fetch", "+refs/pull/*/head:refs/remotes/origin/*"])
+        try runGit(["commit", "--quiet", "--amend", "-m", "rewrite with colliding PR tracking mapping"])
+        let fetched = try runner.output(withArguments: ["rev-parse", "refs/remotes/origin/main"]).trimmingCharacters(in: .newlines)
+        let service = PBRepositoryRemoteService(repository: repository)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .newlines), fetched)
+    }
+
+    func testNegativeFetchRefspecExcludesStaleTrackingEvidence() throws {
+        _ = try prepareRecoveryRemote()
+        try runGit(["config", "--add", "remote.origin.fetch", "^refs/heads/main"])
+        try runGit(["commit", "--quiet", "--amend", "-m", "rewrite with excluded fetch branch"])
+        let service = PBRepositoryRemoteService(repository: repository)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+    }
+
+    func testTrackingPushDefaultUsesUpstreamDestination() throws {
+        let (runner, bare) = try prepareRecoveryRemote()
+        try runGit(["branch", "-m", "topic"])
+        try runGit(["config", "branch.topic.remote", "origin"])
+        try runGit(["config", "branch.topic.merge", "refs/heads/main"])
+        try runGit(["config", "push.default", "tracking"])
+        try runGit(["commit", "--quiet", "--amend", "-m", "rewritten tracking topic"])
+        let (service, plan) = try rejectedPlan(runner: runner, branch: "topic")
+        XCTAssertEqual(plan.destinationRef, "refs/heads/main")
+        XCTAssertTrue(service.retryPush(with: plan, error: nil))
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .newlines), plan.sourceOID)
+        XCTAssertEqual(try runner.output(withArguments: ["rev-parse", "refs/remotes/origin/main"])
+            .trimmingCharacters(in: .newlines), plan.sourceOID)
+    }
+
+    func testEqualsBranchRecoveryPreservesInheritedConfigEntriesAndCustomTrackingMapping() throws {
+        let (runner, bare) = try prepareRecoveryRemote()
+        try runGit(["branch", "-m", "feat=x"])
+        try runGit(["config", "branch.feat=x.remote", "origin"])
+        try runGit(["config", "branch.feat=x.merge", "refs/heads/main"])
+        try runGit(["config", "push.default", "upstream"])
+        // Inherited multi-valued fetch entries append to local entries; keep the local mapping disjoint.
+        try runGit(["config", "remote.origin.fetch", "+refs/tags/*:refs/tags/*"])
+        runner.environmentOverrides = [
+            "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "remote.origin.fetch",
+            "GIT_CONFIG_VALUE_0": "+refs/heads/*:refs/cache/origin/*",
+            "GIT_CONFIG_PARAMETERS": "'unrelated.fixture=preserved'",
+        ]
+        _ = try runner.output(withArguments: ["fetch", "--quiet", "origin"])
+        try runGit(["commit", "--quiet", "--amend", "-m", "rewrite equals branch with inherited configuration"])
+        XCTAssertEqual(try runner.output(withArguments: ["config", "--get-all", "remote.origin.fetch"]).split(separator: "\n").map(String.init),
+                       ["+refs/tags/*:refs/tags/*", "+refs/heads/*:refs/cache/origin/*"])
+        XCTAssertEqual(try runner.output(withArguments: ["config", "--get", "unrelated.fixture"]).trimmingCharacters(in: .newlines), "preserved")
+        let (service, plan) = try rejectedPlan(runner: runner, branch: "feat=x", useShippedRunner: false)
+        XCTAssertEqual(plan.destinationRef, "refs/heads/main")
+        XCTAssertTrue(service.retryPush(with: plan, error: nil))
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .newlines), plan.sourceOID)
+        XCTAssertEqual(try runner.output(withArguments: ["rev-parse", "refs/cache/origin/main"])
+            .trimmingCharacters(in: .newlines), plan.sourceOID)
+        XCTAssertEqual(try runner.output(withArguments: ["config", "--get", "unrelated.fixture"]).trimmingCharacters(in: .newlines), "preserved")
+    }
+
+    func testEqualsBranchRecoveryCannotUseAnotherRemotesFetchedCommit() throws {
+        let (runner, bare, _, fetched) = try prepareUnintegratedRemoteRewrite()
+        let base = try runner.output(withArguments: ["rev-parse", "refs/remotes/origin/main^"]).trimmingCharacters(in: .newlines)
+        let backup = repositoryURL.appendingPathComponent("backup.git")
+        _ = try runner.output(withArguments: ["init", "--bare", "--quiet", backup.path])
+        try runGit(["remote", "add", "backup", backup.path])
+        try runGit(["branch", "backup-base", base])
+        try runGit(["push", "--quiet", "backup", "refs/heads/backup-base:refs/heads/main"])
+        try runGit(["fetch", "--quiet", "backup"])
+        try runGit(["branch", "-m", "feat=x"])
+        try runGit(["config", "branch.feat=x.remote", "backup"])
+        try runGit(["config", "branch.feat=x.merge", "refs/heads/main"])
+        try runGit(["config", "remote.pushDefault", "origin"])
+        try runGit(["config", "push.default", "upstream"])
+
+        let service = PBRepositoryRemoteService(repository: repository)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/feat=x"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .newlines), fetched)
+    }
+
+    func testReflogCaptureDoesNotInvokeSignatureVerification() throws {
+        let (runner, _) = try prepareRecoveryRemote()
+        let tree = try runner.output(withArguments: ["rev-parse", "HEAD^{tree}"]).trimmingCharacters(in: .newlines)
+        let parent = try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let object = "tree \(tree)\nparent \(parent)\nauthor GitX Tests <gitx-tests@example.invalid> 1000000000 +0000\ncommitter GitX Tests <gitx-tests@example.invalid> 1000000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n invalid-signature\n -----END PGP SIGNATURE-----\n\nsigned fixture\n"
+        let task = PBTask(launchPath: "/usr/bin/git", arguments: ["hash-object", "-t", "commit", "-w", "--stdin"], inDirectory: repositoryURL.path)
+        RepositoryTestGitEnvironment.prepare(task)
+        task.standardInputData = Data(object.utf8)
+        try task.launch()
+        let signed = try XCTUnwrap(task.standardOutputString()).trimmingCharacters(in: .newlines)
+        try runGit(["update-ref", "refs/heads/main", signed])
+        try runGit(["push", "--quiet", "origin", "refs/heads/main"])
+        try runGit(["fetch", "--quiet", "origin"])
+        try runGit(["commit", "--quiet", "--allow-empty", "--amend", "-m", "unsigned rewrite"])
+        let marker = repositoryURL.appendingPathComponent("signature-verification-marker")
+        let verifier = repositoryURL.appendingPathComponent("signature-verifier")
+        let quotedMarker = "'" + marker.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        try "#!/bin/sh\nprintf invoked > \(quotedMarker)\nexit 1\n".write(to: verifier, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: verifier.path)
+        try runGit(["config", "gpg.program", verifier.path])
+        try runGit(["config", "log.showSignature", "true"])
+
+        let service = PBRepositoryRemoteService(repository: repository)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
     }
 
     func testUpstreamTopicToMainRecoveryUsesNativeDestinationAndUpdatesTracking() throws {
@@ -1067,7 +1559,7 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         }
     }
 
-    func testShallowHistoryAndExpiredBranchEvidenceDisableRecovery() throws {
+    func testValidatedEqualityRemainsEligibleInShallowHistoryButExpiredEvidenceDoesNot() throws {
         let (runner, _) = try prepareRecoveryRemote()
         let old = try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
         try runGit(["commit", "--quiet", "--amend", "-m", "rewritten"])
@@ -1076,7 +1568,7 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         let service = PBRepositoryRemoteService(repository: repository)
         var error: NSError?
         XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
-        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertNotNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
         try FileManager.default.removeItem(at: shallow)
         try runGit(["reflog", "expire", "--expire=now", "refs/heads/main"])
         XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
@@ -1103,6 +1595,34 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
             }
         #endif
         XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"]).trimmingCharacters(in: .newlines), fetched)
+    }
+
+    func testOriginalPushCannotOverwriteUnintegratedRemoteUsingCurrentReplacement() throws {
+        let (runner, bare, source, fetched) = try prepareUnintegratedRemoteRewrite()
+        let replacement = try runner.output(withArguments: ["commit-tree", "HEAD^{tree}", "-p", fetched, "-m", "replacement with false ancestry"])
+            .trimmingCharacters(in: .newlines)
+        try runGit(["replace", source, replacement])
+        XCTAssertNoThrow(try runner.output(withArguments: ["merge-base", "--is-ancestor", fetched, source]))
+        let service = PBRepositoryRemoteService(repository: repository)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .newlines), fetched)
+    }
+
+    func testOriginalPushCannotOverwriteUnintegratedRemoteUsingCurrentGraft() throws {
+        let (runner, bare, source, fetched) = try prepareUnintegratedRemoteRewrite()
+        let info = repositoryURL.appendingPathComponent(".git/info")
+        try FileManager.default.createDirectory(at: info, withIntermediateDirectories: true)
+        try (source + " " + fetched + "\n").write(to: info.appendingPathComponent("grafts"), atomically: true, encoding: .utf8)
+        XCTAssertNoThrow(try runner.output(withArguments: ["merge-base", "--is-ancestor", fetched, source]))
+        let service = PBRepositoryRemoteService(repository: repository)
+        var error: NSError?
+        XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
+        XCTAssertNil(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
+        XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .newlines), fetched)
     }
 
     func testShippedRecoveryIgnoresLocalReplacementRefs() throws {
@@ -1143,7 +1663,7 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         try runGit(["fetch", "--quiet", "origin"])
         try runGit(["commit", "--quiet", "--allow-empty", "-m", "local descendant"])
         try runGit(["rebase", "--quiet", "--keep-empty", "--onto", base, fetched])
-        let entries = try runner.output(withArguments: ["reflog", "show", "--format=%H", "refs/heads/main"]).split(separator: "\n").map(String.init)
+        let entries = try runner.output(withArguments: ["reflog", "show", "--no-show-signature", "--format=%H", "--max-count=1025", "refs/heads/main", "--"]).split(separator: "\n").map(String.init)
         for index in entries.indices.reversed() where entries[index] == fetched {
             try runGit(["reflog", "delete", "refs/heads/main@{\(index)}"])
         }
