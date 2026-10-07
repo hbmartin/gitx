@@ -58,7 +58,7 @@
     "Classes/Controllers/RepositoryForgeCollaborationController.swift": 0.9056,
     "Classes/Controllers/RepositoryForgeCoordinator.swift": 0.9638,
     "Classes/Controllers/RepositoryForgeLinkUseCase.swift": 0.9673,
-    "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8815,
+    "Classes/Controllers/RepositoryForgeOverlaySession.swift": 0.8847,
     "Classes/Controllers/RepositoryForgeRemoteDescriptorLoader.swift": 0.9871,
     "Classes/Controllers/RepositoryOpeningCoordinator.swift": 0.7743,
     "Classes/Controllers/RepositoryPullRequestGitOperations.swift": 0.9777,
@@ -101,7 +101,7 @@
     "Classes/Util/NSOutlineViewExt.m": 1.0,
     "Classes/Util/NSString_Truncate.m": 0.0,
     "Classes/Util/ObjectiveGit+PBCategories.m": 1.0,
-    "Classes/Util/PBChildProcessOwner.swift": 0.9859,
+    "Classes/Util/PBChildProcessOwner.swift": 0.991,
     "Classes/Util/PBEasyFS.m": 1.0,
     "Classes/Util/PBError.m": 1.0,
     "Classes/Util/PBProcessEnvironment.swift": 1.0,
@@ -190,7 +190,7 @@
     "Classes/git/PBWorkingTree.m": 0.986,
     "Classes/git/RepositoryHookRunner.swift": 0.9176,
     "Classes/git/RepositoryIgnoreFileService.swift": 1.0,
-    "Classes/git/RepositoryMutationService.swift": 0.9676,
+    "Classes/git/RepositoryMutationService.swift": 0.9797,
     "Classes/git/RepositoryReferenceStore.swift": 0.9523,
     "Classes/git/RepositoryRefreshCoordinator.swift": 0.9948,
     "Classes/git/RepositoryRemoteService.swift": 0.9596,
@@ -215,7 +215,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9197,
+  "minimumLineCoverage": 0.9199,
   "target": "Half Dark.app",
   "version": 1
 }
