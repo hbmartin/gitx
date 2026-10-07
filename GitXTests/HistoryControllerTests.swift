@@ -3038,7 +3038,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         )
         pane.perform(NSSelectorFromString("commit:"), with: nil)
         wait(for: [committed], timeout: 20)
-        pumpRunLoop(for: 0.5)
+        XCTAssertTrue(
+            waitForCondition(timeout: 20) {
+                !self.repository.index.mutationReconciliationPending && self.repository.index.indexChanges.isEmpty
+            },
+            "commit retries await the accepted clean index and re-enabled controls"
+        )
         let newHead = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertNotEqual(newHead, initialHead)
         XCTAssertEqual(messageView.string, "", "a successful commit clears the composer")
