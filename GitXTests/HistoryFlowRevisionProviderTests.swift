@@ -22,24 +22,31 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         private let lock = NSLock()
         private var result: InvocationResult?
         private var continuation: CheckedContinuation<InvocationResult, Never>?
+        let completed = XCTestExpectation(description: "Flow provider completed")
+
+        var completedResult: InvocationResult? {
+            lock.lock()
+            defer { lock.unlock() }
+            return result
+        }
 
         func complete(_ result: InvocationResult) {
             lock.lock()
+            self.result = result
             if let continuation {
                 self.continuation = nil
                 lock.unlock()
                 continuation.resume(returning: result)
             } else {
-                self.result = result
                 lock.unlock()
             }
+            completed.fulfill()
         }
 
         func value() async -> InvocationResult {
             await withCheckedContinuation { continuation in
                 lock.lock()
                 if let result {
-                    self.result = nil
                     lock.unlock()
                     continuation.resume(returning: result)
                 } else {
@@ -239,6 +246,40 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(message, "Git returned non-UTF-8 data for name status.")
     }
 
+    func testNonUTF8RevisionAndBlobSizeMetadataAreRejected() async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        let invalidRevision = try makeExecutableScript(in: fixture, body: "printf '\\377'")
+        let revisionMessage = await failedComparison(repositoryURL: fixture.url, gitExecutableURL: invalidRevision)
+        XCTAssertEqual(revisionMessage, "Git returned non-UTF-8 data for base revision.")
+
+        let invalidBlobSize = try makeGitShim(
+            in: fixture, name: "invalid-blob-size-git", diffCommand: "printf 'M\\0File.swift\\0'",
+            catFileCommand: "printf '\\377'"
+        )
+        let sizeMessage = await failedComparison(repositoryURL: fixture.url, gitExecutableURL: invalidBlobSize)
+        XCTAssertEqual(sizeMessage, "Git returned non-UTF-8 data for blob size for File.swift.")
+    }
+
+    func testPipeDescriptorFailuresRetainNoDataAndRequestOneProcessStop() throws {
+        let writeOnly = open("/dev/null", O_WRONLY | O_CLOEXEC)
+        XCTAssertGreaterThanOrEqual(writeOnly, 0)
+        defer {
+            if writeOnly >= 0 {
+                Darwin.close(writeOnly)
+            }
+        }
+        for descriptor in [-1, writeOnly] {
+            let result = PBHistoryFlowRevisionProviderTestHarness.drainPipe(fileDescriptor: descriptor)
+            XCTAssertEqual(result["data"] as? Data, Data())
+            XCTAssertEqual(result["didExceedLimit"] as? Bool, false)
+            XCTAssertEqual(result["stopCount"] as? Int, 1)
+            let message = try XCTUnwrap(result["failure"] as? String)
+            XCTAssertEqual(message, "Could not read git output: \(String(cString: strerror(EBADF)))")
+        }
+        XCTAssertGreaterThanOrEqual(fcntl(writeOnly, F_GETFD), 0, "The runner retains descriptor closure ownership")
+    }
+
     func testChangedFileAndBlobLimitsAreEnforced() async throws {
         let fixture = try RepositoryFixture()
         defer { fixture.remove() }
@@ -313,30 +354,278 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(message, "Blob File.swift is 3 bytes, exceeding the limit of 2.")
     }
 
+    func testExcessiveStandardErrorDoesNotBecomeBlobLimitError() async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        let executable = try makeGitShim(
+            in: fixture,
+            diffCommand: "printf 'M\\0File.swift\\0'",
+            catFileCommand: "printf '1\\n'",
+            showCommand: "/usr/bin/head -c 65537 /dev/zero >&2"
+        )
+
+        let message = await failedComparison(
+            repositoryURL: fixture.url,
+            gitExecutableURL: executable,
+            maximumBlobBytes: 2
+        )
+
+        XCTAssertEqual(message, "Git returned more than 65536 bytes of error output for blob File.swift.")
+        XCTAssertFalse(message.contains("Blob File.swift is"))
+    }
+
     func testCancellationTerminatesTheRunningGitProcess() async throws {
         let fixture = try RepositoryFixture()
         defer { fixture.remove() }
         let started = fixture.url.appendingPathComponent("started")
         let terminated = fixture.url.appendingPathComponent("terminated")
+        let record = fixture.url.appendingPathComponent("cancellation-pid")
         let executable = try makeExecutableScript(
             in: fixture,
             body: """
-            trap 'touch '\"'\"'\(terminated.path)'\"'\"'; exit 143' TERM
-            touch '\(started.path)'
-            while :; do sleep 1; done
+            trap 'printf terminated > '\"'\"'\(terminated.path)'\"'\"'; exit 143' TERM
+            printf '%s\\n' "$$" > '\(record.path)'
+            : > '\(started.path)'
+            while :; do :; done
             """
         )
+        defer { terminateRecordedProcesses(at: record) }
         let invocation = startComparison(repositoryURL: fixture.url, gitExecutableURL: executable)
+        defer { invocation.operation.cancel() }
         try await waitForFile(started)
+        let identifiers = try recordedProcessIdentifiers(at: record)
+        XCTAssertEqual(identifiers.count, 1)
 
         invocation.operation.cancel()
-        let result = await invocation.result.value()
+        let result = try await boundedResult(of: invocation.result)
 
         guard case let .failure(message) = result else {
             return XCTFail("Expected cancellation, received \(result)")
         }
         XCTAssertTrue(message.contains("CancellationError"), message)
         try await waitForFile(terminated)
+        XCTAssertEqual(try String(contentsOf: terminated, encoding: .utf8), "terminated")
+        try await waitForTerminatedProcesses(identifiers)
+    }
+
+    func testOutputLimitsIncludeTheBoundaryAndDrainBufferedEOFData() async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        for byteCount in [0, 128 * 1024] {
+            let executable = try makeGitShim(
+                in: fixture,
+                name: "boundary-git-\(byteCount)",
+                diffCommand: "printf 'M\\0File.swift\\0'",
+                catFileCommand: "printf '\(byteCount + 4)\\n'",
+                showCommand: """
+                /usr/bin/head -c 65536 /dev/zero >&2 &
+                errorProducer=$!
+                \(byteCount == 0 ? ":" : "/usr/bin/head -c \(byteCount) /dev/zero")
+                printf tail
+                wait "$errorProducer"
+                """
+            )
+
+            let comparison = try await successfulComparison(
+                repositoryURL: fixture.url,
+                gitExecutableURL: executable,
+                maximumBlobBytes: byteCount + 4
+            )
+
+            XCTAssertEqual(comparison.files.first?.new?.text, String(repeating: "\0", count: byteCount) + "tail")
+        }
+    }
+
+    func testRevisionOutputLimitReportsTheRevisionContext() async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        let executable = try makeExecutableScript(
+            in: fixture,
+            body: "exec /usr/bin/head -c 4097 /dev/zero"
+        )
+
+        let message = await failedComparison(repositoryURL: fixture.url, gitExecutableURL: executable)
+
+        XCTAssertEqual(message, "Git returned more than 4096 bytes for base revision.")
+    }
+
+    func testStderrAtItsLimitPreservesTheGitFailureDiagnostic() async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        let executable = try makeExecutableScript(
+            in: fixture,
+            body: "/usr/bin/head -c 65529 /dev/zero >&2\nprintf failure >&2\nexit 7"
+        )
+
+        let message = await failedComparison(repositoryURL: fixture.url, gitExecutableURL: executable)
+
+        XCTAssertTrue(message.contains("status 7"))
+        XCTAssertTrue(message.hasSuffix("failure"))
+        XCTAssertFalse(message.contains("more than"))
+    }
+
+    func testCancellationKillsATermResistantLeaderAndDescendant() async throws {
+        try await assertCancellationCleansUpProcessGroup(leaderExitsFirst: false)
+    }
+
+    func testCancellationBeforeLaunchNeverRunsTheConfiguredExecutable() async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        let started = fixture.url.appendingPathComponent("unexpected-launch")
+        let executable = try makeExecutableScript(in: fixture, body: "touch '\(started.path)'")
+        let result = ResultBox()
+        #if DEBUG
+            let operation = PBHistoryFlowRevisionProviderTestHarness.cancelledBeforeLaunch(
+                gitExecutableURL: executable
+            ) { message in
+                result.complete(.failure(message ?? "Unexpected launch success"))
+            }
+            defer { operation.cancel() }
+        #endif
+
+        guard case let .failure(message) = try await boundedResult(of: result) else {
+            return XCTFail("Expected cancellation before launch")
+        }
+        XCTAssertTrue(message.contains("CancellationError"), message)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: started.path))
+    }
+
+    func testCancellationAfterLeaderExitKillsTheInheritedPipeHolder() async throws {
+        try await assertCancellationCleansUpProcessGroup(leaderExitsFirst: true)
+    }
+
+    func testRepeatedOutputOverflowKillsTheWholeProducerGroup() async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        for iteration in 0 ..< 3 {
+            let record = fixture.url.appendingPathComponent("producer-pids-\(iteration)")
+            let release = fixture.url.appendingPathComponent("producer-release-\(iteration)")
+            let executable = try makeGitShim(
+                in: fixture,
+                name: "overflow-git-\(iteration)",
+                diffCommand: """
+                trap '' TERM
+                (
+                    trap '' TERM
+                    while [ ! -f '\(release.path)' ]; do /bin/sleep 0.01; done
+                    exec /usr/bin/yes
+                ) &
+                producer=$!
+                printf '%s\\n%s\\n' "$$" "$producer" > '\(record.path)'
+                touch '\(release.path)'
+                wait "$producer"
+                """
+            )
+            defer { terminateRecordedProcesses(at: record) }
+            let invocation = startComparison(repositoryURL: fixture.url, gitExecutableURL: executable)
+            defer { invocation.operation.cancel() }
+
+            guard case let .failure(message) = try await boundedResult(of: invocation.result) else {
+                return XCTFail("Expected changed-file output overflow")
+            }
+            XCTAssertEqual(message, "Git returned more than 8388608 bytes for changed-file list.")
+            let identifiers = try recordedProcessIdentifiers(at: record)
+            XCTAssertEqual(identifiers.count, 2)
+            try await waitForTerminatedProcesses(identifiers)
+        }
+    }
+
+    private func assertCancellationCleansUpProcessGroup(leaderExitsFirst: Bool) async throws {
+        let fixture = try RepositoryFixture()
+        defer { fixture.remove() }
+        let record = fixture.url.appendingPathComponent("cancellation-pids")
+        let descendantReady = fixture.url.appendingPathComponent("descendant-ready")
+        let ready = fixture.url.appendingPathComponent("cancellation-ready")
+        let executable = try makeExecutableScript(
+            in: fixture,
+            body: """
+            trap '' TERM
+            (
+                trap '' TERM
+                touch '\(descendantReady.path)'
+                exec /bin/sleep 60
+            ) &
+            child=$!
+            printf '%s\\n%s\\n' "$$" "$child" > '\(record.path)'
+            while [ ! -f '\(descendantReady.path)' ]; do /bin/sleep 0.01; done
+            touch '\(ready.path)'
+            \(leaderExitsFirst ? "exit 0" : "wait \"$child\"")
+            """
+        )
+        defer { terminateRecordedProcesses(at: record) }
+        let invocation = startComparison(repositoryURL: fixture.url, gitExecutableURL: executable)
+        defer { invocation.operation.cancel() }
+        try await waitForFile(ready)
+        let identifiers = try recordedProcessIdentifiers(at: record)
+        XCTAssertEqual(identifiers.count, 2)
+        if leaderExitsFirst {
+            let leader = try XCTUnwrap(identifiers.first)
+            try await waitForCondition("leader exit while descendant retains pipes") { self.isZombie(leader) }
+        }
+
+        invocation.operation.cancel()
+        invocation.operation.cancel()
+        guard case let .failure(message) = try await boundedResult(of: invocation.result) else {
+            return XCTFail("Expected process-group cancellation")
+        }
+        XCTAssertTrue(message.contains("CancellationError"), message)
+        try await waitForTerminatedProcesses(identifiers)
+    }
+
+    private func boundedResult(of box: ResultBox) async throws -> InvocationResult {
+        await fulfillment(of: [box.completed], timeout: 5)
+        return try XCTUnwrap(box.completedResult)
+    }
+
+    private func recordedProcessIdentifiers(at record: URL) throws -> [pid_t] {
+        try String(contentsOf: record, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .compactMap { pid_t($0) }
+    }
+
+    private func terminateRecordedProcesses(at record: URL) {
+        for identifier in (try? recordedProcessIdentifiers(at: record)) ?? [] where identifier > 1 {
+            kill(identifier, SIGKILL)
+        }
+    }
+
+    private func isZombie(_ identifier: pid_t) -> Bool {
+        // libproc may refuse information for zombies. waitid observes our
+        // direct child without reaping the identity held by the supervisor.
+        var status = siginfo_t()
+        if waitid(P_PID, id_t(identifier), &status, WEXITED | WNOHANG | WNOWAIT) == 0,
+           status.si_pid == identifier
+        {
+            return [CLD_EXITED, CLD_KILLED, CLD_DUMPED].contains(status.si_code)
+        }
+        var information = proc_bsdinfo()
+        let size = MemoryLayout<proc_bsdinfo>.size
+        let count = proc_pidinfo(identifier, PROC_PIDTBSDINFO, 0, &information, Int32(size))
+        return count == size && information.pbi_status == UInt32(SZOMB)
+    }
+
+    private func waitForTerminatedProcesses(_ identifiers: [pid_t]) async throws {
+        try await waitForCondition("recorded git process group to terminate") {
+            identifiers.allSatisfy { kill($0, 0) != 0 || self.isZombie($0) }
+        }
+        // The supervised leader must be reaped, not merely stopped as a zombie.
+        if let leader = identifiers.first {
+            XCTAssertNotEqual(kill(leader, 0), 0)
+        }
+    }
+
+    private func waitForCondition(_ description: String, condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !condition() {
+            guard ContinuousClock.now < deadline else {
+                throw NSError(
+                    domain: "HistoryFlowRevisionProviderTests",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for \(description)"]
+                )
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private func successfulComparison(

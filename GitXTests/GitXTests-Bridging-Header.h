@@ -49,13 +49,31 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface PBHistoryFlowRevisionProviderTestHarness : NSObject
++ (NSDictionary<NSString *, id> *)drainPipeWithFileDescriptor:(int)descriptor NS_SWIFT_NAME(drainPipe(fileDescriptor:));
++ (PBHistoryFlowRevisionProviderTestOperation *)cancelledBeforeLaunchWithGitExecutableURL:(NSURL *)gitExecutableURL
+																		completionHandler:(void (^)(NSString *_Nullable errorDescription))completionHandler
+	NS_SWIFT_NAME(cancelledBeforeLaunch(gitExecutableURL:completionHandler:));
 + (PBHistoryFlowRevisionProviderTestOperation *)compareRepositoryAtURL:(NSURL *)repositoryURL
-											  gitExecutableURL:(NSURL *)gitExecutableURL
-														base:(NSString *)base
-													  target:(NSString *)target
-									 maximumChangedFiles:(NSInteger)maximumChangedFiles
-										maximumBlobBytes:(NSInteger)maximumBlobBytes
-										 completionHandler:(void (^)(NSData *_Nullable data, NSString *_Nullable errorDescription))completionHandler;
+													  gitExecutableURL:(NSURL *)gitExecutableURL
+																  base:(NSString *)base
+																target:(NSString *)target
+												   maximumChangedFiles:(NSInteger)maximumChangedFiles
+													  maximumBlobBytes:(NSInteger)maximumBlobBytes
+													 completionHandler:(void (^)(NSData *_Nullable data, NSString *_Nullable errorDescription))completionHandler;
+@end
+
+@interface PBChildProcessSupervisor : NSObject
+- (instancetype)initWithLaunchPath:(NSString *)launchPath
+						 arguments:(NSArray<NSString *> *)arguments
+					   environment:(NSDictionary<NSString *, NSString *> *)environment
+				  workingDirectory:(nullable NSString *)workingDirectory
+	   standardInputFileDescriptor:(nullable NSNumber *)standardInputFileDescriptor
+	  standardOutputFileDescriptor:(int)standardOutputFileDescriptor
+	   standardErrorFileDescriptor:(nullable NSNumber *)standardErrorFileDescriptor
+				terminationHandler:(void (^)(int status, NSError *_Nullable error))terminationHandler
+	NS_SWIFT_NAME(init(launchPath:arguments:environment:workingDirectory:standardInputFileDescriptor:standardOutputFileDescriptor:standardErrorFileDescriptor:terminationHandler:));
+- (BOOL)launchAndReturnError:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(launch());
+- (void)requestTerminationAfterGracePeriod:(NSTimeInterval)gracePeriod forceKillAfter:(nullable NSNumber *)forceKillDelay NS_SWIFT_NAME(requestTermination(gracePeriod:forceKillDelay:));
 @end
 
 typedef NS_ENUM(NSInteger, PBOpenDisposition) {

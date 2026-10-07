@@ -106,6 +106,11 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         var observationRetryScheduled = false
         var observationRetryDelay: TimeInterval = 0.01
         var groupRecheckScheduled = false
+        var retainLeaderUntilReleased = false
+        var supervisionError: NSError?
+        var supervisionCleanupDeadline: UInt64?
+        var supervisionCleanupRetryScheduled = false
+        var supervisionCleanupRetryDelay: TimeInterval = 0.01
     }
 
     private enum State {
@@ -118,6 +123,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     private static let maximumObservationRetryInterval: TimeInterval = 0.1
     private static let groupRecheckInterval: TimeInterval = 0.05
     private static let monitorRegistrationProbeDelay: TimeInterval = 0.02
+    private static let supervisionCleanupTimeout: TimeInterval = 0.5
     private static let logger = Logger(subsystem: "com.gitx.gitx", category: "PBChildProcess")
 
     private let queue: DispatchQueue
@@ -136,6 +142,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
 
     func launch(
         configuration: PBChildProcessConfiguration,
+        retainLeaderUntilReleased: Bool = false,
         terminationHandler: @escaping TerminationHandler
     ) throws {
         try queue.sync {
@@ -153,6 +160,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 processGroup: processIdentifier,
                 terminationHandler: terminationHandler
             )
+            process.retainLeaderUntilReleased = retainLeaderUntilReleased
             let exitMonitor = system.makeExitMonitor(
                 processIdentifier: processIdentifier,
                 queue: queue
@@ -196,6 +204,18 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             scheduleTerminationTimer()
             scheduleForceKillTimer()
             return true
+        }
+    }
+
+    /// A pipe-draining caller keeps the terminal leader unreaped so its process
+    /// group cannot be reused before cancellation or output-limit cleanup.
+    /// Releasing that lease never cancels already-scheduled descendant cleanup.
+    func releaseLeaderRetention() {
+        syncOnQueue {
+            guard case var .running(process) = state else { return }
+            process.retainLeaderUntilReleased = false
+            state = .running(process)
+            observeLeaderExit()
         }
     }
 
@@ -334,6 +354,10 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
 
     private func observeLeaderExit(fromExitEvent: Bool = false) {
         guard case var .running(process) = state else { return }
+        if process.supervisionError != nil {
+            reapAfterSupervisionFailure()
+            return
+        }
         do {
             if fromExitEvent {
                 process.exitEventWasObserved = true
@@ -353,6 +377,9 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 )
             }
 
+            if process.retainLeaderUntilReleased {
+                return
+            }
             if shouldRetainLeaderForScheduledGroup(process) {
                 scheduleGroupRecheck()
                 return
@@ -463,7 +490,77 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         Self.logger.error(
             "Could not \(operation, privacy: .public) child pid=\(process.processIdentifier, privacy: .public): \(error.localizedDescription, privacy: .public)"
         )
-        finish(process: process, rawWaitStatus: 0, error: error)
+        // ECHILD means this owner no longer has a child to retain. Sending a
+        // signal after that observation could target a reused group identity.
+        if error.domain == NSPOSIXErrorDomain, error.code == Int(ECHILD) {
+            finish(process: process, rawWaitStatus: 0, error: process.supervisionError ?? error)
+            return
+        }
+        guard case var .running(current) = state else { return }
+        if current.supervisionError == nil {
+            current.supervisionError = error
+            current.supervisionCleanupDeadline = DispatchTime.now().uptimeNanoseconds +
+                UInt64(Self.supervisionCleanupTimeout * Double(NSEC_PER_SEC))
+            current.terminationWasSent = true
+            current.forceKillWasSent = true
+            current.terminationTimerGeneration += 1
+            current.forceKillTimerGeneration += 1
+            current.reapRetryGeneration += 1
+            state = .running(current)
+            // Retain the leader identity until these signals have been sent;
+            // otherwise descendants could outlive an error completion.
+            signalProcessGroup(SIGTERM, label: "SIGTERM after supervision failure")
+            signalProcessGroup(SIGKILL, label: "SIGKILL after supervision failure")
+        }
+        reapAfterSupervisionFailure()
+    }
+
+    private func reapAfterSupervisionFailure() {
+        guard case let .running(process) = state,
+              let originalError = process.supervisionError
+        else { return }
+        do {
+            if let rawWaitStatus = try system.reapIfExited(processIdentifier: process.processIdentifier) {
+                finish(process: process, rawWaitStatus: rawWaitStatus, error: originalError)
+                return
+            }
+        } catch let error as NSError where error.domain == NSPOSIXErrorDomain && error.code == Int(ECHILD) {
+            finish(process: process, rawWaitStatus: 0, error: originalError)
+            return
+        } catch {
+            Self.logger.error(
+                "Could not reap child during supervision cleanup: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        scheduleSupervisionCleanupRetry()
+    }
+
+    private func scheduleSupervisionCleanupRetry() {
+        guard case var .running(process) = state,
+              let originalError = process.supervisionError,
+              let deadline = process.supervisionCleanupDeadline
+        else { return }
+        guard DispatchTime.now().uptimeNanoseconds < deadline else {
+            Self.logger.error(
+                "Supervision cleanup deadline elapsed for pid=\(process.processIdentifier, privacy: .public); group termination was requested"
+            )
+            finish(process: process, rawWaitStatus: 0, error: originalError)
+            return
+        }
+        guard !process.supervisionCleanupRetryScheduled else { return }
+        process.supervisionCleanupRetryScheduled = true
+        let delay = process.supervisionCleanupRetryDelay
+        process.supervisionCleanupRetryDelay = min(delay * 2, Self.maximumObservationRetryInterval)
+        state = .running(process)
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self,
+                  case var .running(current) = state,
+                  current.supervisionCleanupRetryScheduled
+            else { return }
+            current.supervisionCleanupRetryScheduled = false
+            state = .running(current)
+            reapAfterSupervisionFailure()
+        }
     }
 
     private func finish(process: RunningProcess, rawWaitStatus: Int32, error: NSError?) {
