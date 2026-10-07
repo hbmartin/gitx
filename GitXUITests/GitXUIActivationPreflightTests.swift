@@ -75,6 +75,11 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
         let uncommittedChanges = repositoryWindow.buttons["Uncommitted Changes"]
         XCTAssertTrue(uncommittedChanges.waitForExistence(timeout: 15))
         XCTAssertTrue(uncommittedChanges.isHittable)
+        let commitList = repositoryWindow.tables["CommitList"]
+        XCTAssertTrue(commitList.waitForExistence(timeout: 15))
+        let fixtureCommit = commitList.tableRows.containing(.staticText, identifier: "Fixture").firstMatch
+        XCTAssertTrue(fixtureCommit.waitForExistence(timeout: 15))
+        XCTAssertTrue(fixtureCommit.isHittable)
         NSLog("[GitXUIActivationPreflightTests] repository window is active and ready")
         retainScreenshot(named: "UI-Activation-Preflight")
     }

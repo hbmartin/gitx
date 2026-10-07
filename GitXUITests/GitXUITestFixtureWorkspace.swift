@@ -10,7 +10,8 @@ final class GitXUITestFixtureWorkspace {
     }
 
     func makeDirectory(named name: String) throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
+        // The app cannot read the runner's container when macOS protects another app's data.
+        let directory = URL(fileURLWithPath: "/private/tmp/gitx-ui-fixtures", isDirectory: true)
             .appendingPathComponent("\(prefix)-\(UUID().uuidString)-\(name)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         directories.append(directory)
