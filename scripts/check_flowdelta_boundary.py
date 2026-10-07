@@ -16,7 +16,8 @@ ALLOWED_FILES = {
 FLOWDELTA_IMPORT = re.compile(
     r"^\s*(?:(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?|"
     r"public|package|internal|fileprivate|private)\s+)*"
-    r"import\s+FlowDelta[A-Za-z0-9_]*\b",
+    r"import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?"
+    r"FlowDelta[A-Za-z0-9_]*\b",
     re.MULTILINE,
 )
 

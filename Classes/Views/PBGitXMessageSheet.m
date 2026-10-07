@@ -8,6 +8,7 @@
 
 #import "PBGitXMessageSheet.h"
 #import "PBTask.h"
+#import "GitX-Swift.h"
 
 
 #define MaxScrollViewHeight 125.0f
@@ -70,38 +71,8 @@ void PBShowGitXErrorSheet(NSError *error, NSWindowController *windowController)
 {
 	PBGitXMessageSheet *sheet = [[self alloc] initWithWindowNibName:@"PBGitXMessageSheet" windowController:windowController];
 
-	NSMutableArray *messageParts = [NSMutableArray array];
-
-	if (error.localizedFailureReason)
-		[messageParts addObject:error.localizedFailureReason];
-
-	if (error.localizedRecoverySuggestion) {
-		NSString *message = NSLocalizedString(@"Maybe you could try the following:", @"PBGitXMessageSheet - localized recovery suggestion header");
-		message = [message stringByAppendingString:@"\n"];
-		message = [message stringByAppendingString:error.localizedRecoverySuggestion];
-		[messageParts addObject:message];
-	}
-
-	NSError *taskError = error.userInfo[NSUnderlyingErrorKey];
-	if (taskError && taskError.domain == PBTaskErrorDomain) {
-		[messageParts addObject:NSLocalizedString(@"The underlying task failed:", @"PBGitXMessageSheet - task failed header")];
-		[messageParts addObject:taskError.localizedDescription];
-		[messageParts addObject:taskError.localizedFailureReason];
-		if (taskError.code == PBTaskNonZeroExitCodeError) {
-			NSString *message = NSLocalizedString(@"Return code: %@", @"PBGitXMessageSheet - task return code header");
-			message = [NSString stringWithFormat:message, taskError.userInfo[PBTaskTerminationStatusKey]];
-			[messageParts addObject:message];
-			message = NSLocalizedString(@"Output:", @"PBGitXMessageSheet - task output header");
-			message = [message stringByAppendingString:@"\n"];
-			message = [message stringByAppendingString:taskError.userInfo[PBTaskTerminationOutputKey]];
-			[messageParts addObject:message];
-		} else {
-			[messageParts addObject:taskError.localizedDescription];
-			[messageParts addObject:taskError.localizedFailureReason];
-		}
-	}
-
-	NSString *infoText = [messageParts componentsJoinedByString:@"\n\n"];
+	NSString *infoText = [PBErrorMessagePresentation infoTextForError:error];
+	NSLog(@"[GitX] Prepared error sheet details without requiring optional task fields");
 
 	[sheet beginMessageSheetWithMessageText:[error localizedDescription]
 								   infoText:infoText

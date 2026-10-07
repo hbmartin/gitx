@@ -122,7 +122,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         guard focusRefreshCoordinator == nil, let repository else { return }
         focusRefreshCoordinator = RepositoryFocusRefreshCoordinator(
             repository: repository,
-            gitExecutablePath: PBGitBinary.path()
+            gitExecutablePath: PBGitBinary.path() ?? ""
         ) { [weak self] in
             guard let self else { return }
             self.refreshLocalRepositoryContent()
@@ -172,7 +172,11 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             RepositoryForgeLinkMenuPresenter.apply(model: model, to: menuItem)
             return model.isEnabled
         }
-        if menuItem.action == #selector(revealInFinder(_:)) || menuItem.action == #selector(openInTerminal(_:)) {
+        if menuItem.action == #selector(revealInFinder(_:)) {
+            ensureActionCoordinators()
+            return workspaceActionCoordinator?.hasRevealTarget == true
+        }
+        if menuItem.action == #selector(openInTerminal(_:)) {
             ensureActionCoordinators()
             return workspaceActionCoordinator?.hasWorkingDirectory == true
         }
@@ -572,7 +576,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         } else if window?.firstResponder === _historyViewController?.commitList,
                   _historyViewController?.singleCommitSelected == true
         {
-            historyRefs = _historyViewController?.selectedCommits.first?.refs.compactMap { $0 as? PBGitRef }
+            historyRefs = _historyViewController?.selectedCommits.first?.refs?.compactMap { $0 as? PBGitRef }
         }
         return actionContextResolver?.selectedRef(
             sidebarRef: sidebarRef,
@@ -838,17 +842,8 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @IBAction dynamic func revealInFinder(_ sender: Any?) {
-        var urls: [URL]?
-        if let object = sender as? NSObject,
-           object.responds(to: NSSelectorFromString("representedObject"))
-        {
-            urls = selectedURLs(from: sender)
-        }
-        if urls?.isEmpty != false {
-            guard let workingDirectoryURL = repository?.workingDirectoryURL() else { return }
-            urls = [workingDirectoryURL]
-        }
-        revealURLs(inFinder: urls)
+        ensureActionCoordinators()
+        revealURLs(inFinder: workspaceActionCoordinator?.revealURLs(from: representedObject(from: sender)))
     }
 
     @IBAction dynamic func openInTerminal(_ sender: Any?) {
@@ -937,7 +932,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         controller.install(visible: ApplicationSettings.repositoryStatusBarVisible)
         repositoryLocalStatusLoader = RepositoryLocalStatusLoader(
             repository: repository,
-            gitExecutablePath: PBGitBinary.path()
+            gitExecutablePath: PBGitBinary.path() ?? ""
         ) { [weak self] snapshot in
             guard let self else { return }
             self.repositoryLocalStatusSnapshot = snapshot

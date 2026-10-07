@@ -41,6 +41,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     private var syncingSectionedSelection = false
     private var syncingExclusiveSelection = false
     private var observingSelections = false
+    private var pendingObservation: NSKeyValueObservation?
 
     private struct SectionedDrop {
         let target: StagingListSection
@@ -137,6 +138,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             controller.addObserver(self, forKeyPath: "selectionIndexes", options: [], context: &Self.selectionContext)
         }
         observingSelections = true
+        pendingObservation = index.observe(\.mutationReconciliationPending, options: [.initial, .new]) { [weak self] _, _ in
+            // swift6-safety-justification: Staging actions and commit/refresh completion write this KVO property on main; the initial callback runs during this main-actor initializer.
+            MainActor.assumeIsolated { self?.refreshMutationControls() }
+        }
     }
 
     override nonisolated func observeValue(
@@ -163,7 +168,9 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             }
             observingSelections = false
         }
+        pendingObservation = nil
         onSelectionChange = nil
+        interactionCoordinator.close()
         for table in [unstagedTable, stagedTable] {
             table.unbind(NSBindingName.content)
             table.unbind(NSBindingName.selectionIndexes)
@@ -178,8 +185,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     @objc func applyFilterAndSort() {
         unstagedFilesController.filterPredicate = viewModel.filterPredicate(for: .unstaged)
         stagedFilesController.filterPredicate = viewModel.filterPredicate(for: .staged)
-        unstagedFilesController.sortDescriptors = viewModel.sortDescriptors
-        stagedFilesController.sortDescriptors = viewModel.sortDescriptors
+        unstagedFilesController.sortDescriptors = viewModel.sortDescriptors(for: .unstaged)
+        stagedFilesController.sortDescriptors = viewModel.sortDescriptors(for: .staged)
 
         rearrange()
     }
@@ -189,6 +196,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         stagedFilesController.rearrangeObjects()
         rebuildSectionedRows()
         refreshHeaders()
+        refreshMutationControls()
     }
 
     // MARK: Layout switching
@@ -265,6 +273,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     private func toggleSectionedSelection() {
+        guard !index.mutationReconciliationPending else { return }
         var toStage: [PBChangedFile] = []
         var toUnstage: [PBChangedFile] = []
         for rowIndex in sectionedTable.selectedRowIndexes where sectionedRows.indices.contains(rowIndex) {
@@ -373,6 +382,21 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         )
     }
 
+    @objc func refreshMutationControls() {
+        let enabled = !index.mutationReconciliationPending
+        stagedHeader.masterCheckbox.isEnabled = enabled && !(stagedFilesController.arrangedObjects as? [PBChangedFile] ?? []).isEmpty
+        unstagedHeader.masterCheckbox.isEnabled = enabled && !(unstagedFilesController.arrangedObjects as? [PBChangedFile] ?? []).isEmpty
+        for table in [unstagedTable, stagedTable, sectionedTable] {
+            for row in 0 ..< table.numberOfRows {
+                if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? StagingFileCellView {
+                    cell.checkbox.isEnabled = enabled
+                } else if let header = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? StagingSectionHeaderView {
+                    header.masterCheckbox.isEnabled = enabled
+                }
+            }
+        }
+    }
+
     // MARK: Actions
 
     @objc private func didDoubleClickTable(_ sender: NSTableView) {
@@ -384,6 +408,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc private func masterCheckboxToggled(_ sender: NSButton) {
+        guard !index.mutationReconciliationPending else { return }
         let stagedContext = sender.tag == 1
         let controller = stagedContext ? stagedFilesController : unstagedFilesController
         guard let files = controller.arrangedObjects as? [PBChangedFile], !files.isEmpty else {
@@ -400,6 +425,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc private func rowCheckboxToggled(_ sender: NSButton) {
+        guard !index.mutationReconciliationPending else { return }
         guard let (isStagedSection, file, _) = rowContext(for: sender) else { return }
         if isStagedSection {
             NSLog("[GitX] Unstaging %@ from its row checkbox", file.path)
@@ -458,8 +484,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             let cell = makeFileCell(in: tableView)
             cell.configure(
                 with: file,
-                checkboxState: viewModel.rowCheckboxState(for: file, in: sectionRow.section)
+                checkboxState: viewModel.rowCheckboxState(for: file, in: sectionRow.section),
+                section: sectionRow.section
             )
+            cell.checkbox.isEnabled = !index.mutationReconciliationPending
             return cell
         }
         guard let files = controller(for: tableView).arrangedObjects as? [PBChangedFile],
@@ -468,7 +496,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         let file = files[row]
         let cell = makeFileCell(in: tableView)
         let section: StagingListSection = tableView.tag == 1 ? .staged : .unstaged
-        cell.configure(with: file, checkboxState: viewModel.rowCheckboxState(for: file, in: section))
+        cell.configure(with: file, checkboxState: viewModel.rowCheckboxState(for: file, in: section), section: section)
+        cell.checkbox.isEnabled = !index.mutationReconciliationPending
         return cell
     }
 
@@ -505,6 +534,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             fileCount: viewModel.files(in: section, from: changes).count,
             masterState: viewModel.masterCheckboxState(for: changes, in: section)
         )
+        header.masterCheckbox.isEnabled = header.masterCheckbox.isEnabled && !index.mutationReconciliationPending
         return header
     }
 
@@ -592,7 +622,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     private func sectionedDrop(_ info: NSDraggingInfo, row: Int) -> SectionedDrop? {
-        guard let target = targetSection(forDropRow: row),
+        guard !index.mutationReconciliationPending, (info.draggingSource as? NSTableView) === sectionedTable,
+              let target = targetSection(forDropRow: row),
               let files = viewModel.resolvedDropFiles(
                   from: info.draggingPasteboard.propertyList(forType: Self.sectionedDragType),
                   rows: sectionedRows,

@@ -1,6 +1,40 @@
 import XCTest
 
 final class IndexRefreshCoordinatorTests: XCTestCase {
+    func testQueuedRefreshAfterRepositoryCloseCompletesWithFailuresWithoutRetainingRepository() throws {
+        var repository: PBGitRepository? = PBGitRepository()
+        weak let releasedRepository = repository
+        let statuses = expectation(description: "closed repository reports each failed component")
+        statuses.expectedFulfillmentCount = 3
+        let published = expectation(description: "closed repository publishes a failed snapshot")
+        let idle = expectation(description: "closed repository refresh finishes")
+        let coordinator = try PBIndexRefreshCoordinator(
+            repository: XCTUnwrap(repository), parser: PBIndexStatusParser(),
+            statusHandler: { success, message in
+                XCTAssertTrue(Thread.isMainThread)
+                XCTAssertFalse(success)
+                XCTAssertTrue(message.hasSuffix("failed"))
+                statuses.fulfill()
+            }, resultHandler: { result in
+                XCTAssertTrue(Thread.isMainThread)
+                XCTAssertEqual(result.mutationGeneration, 7)
+                XCTAssertNil(result.staged)
+                XCTAssertNil(result.unstaged)
+                XCTAssertNil(result.untracked)
+                published.fulfill()
+            }, idleHandler: {
+                XCTAssertTrue(Thread.isMainThread)
+                idle.fulfill()
+            }
+        )
+        repository = nil
+        XCTAssertNil(releasedRepository, "Queued index work must not keep a closed repository alive")
+
+        coordinator.refreshBareRepository(false, parentTree: "HEAD", mutationGeneration: 7)
+
+        wait(for: [statuses, published, idle], timeout: 2)
+    }
+
     private final class CommandRunnerFake: NSObject, PBIndexCommandRunning {
         struct Call {
             let arguments: [String]
@@ -98,8 +132,8 @@ final class IndexRefreshCoordinatorTests: XCTestCase {
         wait(for: [statusesDelivered, resultDelivered, idleDelivered], timeout: 2)
         XCTAssertEqual(statuses.map(\.0), [true, true, true])
         XCTAssertEqual(statuses.map(\.1), ["ls-files success", "diff-index success", "diff-files success"])
-        XCTAssertEqual(refreshResult?.untracked?["folder/spaced ü.txt"]?.status, 0)
-        XCTAssertEqual(refreshResult?.staged?["tracked.txt"]?.commitBlobSHA, oldSHA)
+        XCTAssertEqual(refreshResult?.untracked?[Data("folder/spaced ü.txt".utf8)]?.status, 0)
+        XCTAssertEqual(refreshResult?.staged?[Data("tracked.txt".utf8)]?.commitBlobSHA, oldSHA)
         XCTAssertEqual(refreshResult?.unstaged?.count, 0)
     }
 
@@ -156,19 +190,23 @@ final class IndexRefreshCoordinatorTests: XCTestCase {
         }
         let resultsDelivered = expectation(description: "two results")
         resultsDelivered.expectedFulfillmentCount = 2
+        var generations: [UInt] = []
         let idleDelivered = expectation(description: "one idle transition")
         let coordinator = PBIndexRefreshCoordinator(
             runner: runner,
             parser: PBIndexStatusParser(),
             statusHandler: { _, _ in },
-            resultHandler: { _ in resultsDelivered.fulfill() },
+            resultHandler: { result in
+                generations.append(result.mutationGeneration)
+                resultsDelivered.fulfill()
+            },
             idleHandler: { idleDelivered.fulfill() }
         )
 
-        coordinator.refreshBareRepository(false, parentTree: "HEAD")
+        coordinator.refreshBareRepository(false, parentTree: "HEAD", mutationGeneration: 3)
         wait(for: [firstCommands], timeout: 2)
-        coordinator.refreshBareRepository(false, parentTree: "first-pending")
-        coordinator.refreshBareRepository(false, parentTree: "latest-pending")
+        coordinator.refreshBareRepository(false, parentTree: "first-pending", mutationGeneration: 4)
+        coordinator.refreshBareRepository(false, parentTree: "latest-pending", mutationGeneration: 5)
         runner.complete(0)
         runner.complete(1)
         runner.complete(2)
@@ -181,6 +219,7 @@ final class IndexRefreshCoordinatorTests: XCTestCase {
 
         wait(for: [resultsDelivered, idleDelivered], timeout: 2)
         XCTAssertEqual(runner.arguments.count, 6)
+        XCTAssertEqual(generations, [3, 5], "The trailing replay must represent the latest mutation")
     }
 
     func testBareRefreshCompletesWithoutLaunchingCommands() {

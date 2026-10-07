@@ -5,18 +5,22 @@ import OSLog // swiftlint:disable:this unused_import
 // swift6-safety-justification: All fields are immutable after initialization, and status entries are immutable value snapshots.
 @objc(PBIndexRefreshResult)
 final nonisolated class IndexRefreshResult: NSObject, @unchecked Sendable {
-    @objc let staged: [String: IndexStatusEntry]?
-    @objc let unstaged: [String: IndexStatusEntry]?
-    @objc let untracked: [String: IndexStatusEntry]?
+    @objc let staged: [Data: IndexStatusEntry]?
+    @objc let unstaged: [Data: IndexStatusEntry]?
+    @objc let untracked: [Data: IndexStatusEntry]?
+    @objc let mutationGeneration: UInt
 
+    @objc(initWithStaged:unstaged:untracked:mutationGeneration:)
     init(
-        staged: [String: IndexStatusEntry]?,
-        unstaged: [String: IndexStatusEntry]?,
-        untracked: [String: IndexStatusEntry]?
+        staged: [Data: IndexStatusEntry]?,
+        unstaged: [Data: IndexStatusEntry]?,
+        untracked: [Data: IndexStatusEntry]?,
+        mutationGeneration: UInt = 0
     ) {
         self.staged = staged
         self.unstaged = unstaged
         self.untracked = untracked
+        self.mutationGeneration = mutationGeneration
         super.init()
     }
 }
@@ -24,9 +28,14 @@ final nonisolated class IndexRefreshResult: NSObject, @unchecked Sendable {
 // swift6-safety-justification: The coordinator accesses each cycle only on its private serial state queue.
 private final nonisolated class IndexRefreshCycle: @unchecked Sendable {
     var remainingComponents = 3
-    var staged: [String: IndexStatusEntry]?
-    var unstaged: [String: IndexStatusEntry]?
-    var untracked: [String: IndexStatusEntry]?
+    let mutationGeneration: UInt
+    var staged: [Data: IndexStatusEntry]?
+    var unstaged: [Data: IndexStatusEntry]?
+    var untracked: [Data: IndexStatusEntry]?
+
+    init(mutationGeneration: UInt) {
+        self.mutationGeneration = mutationGeneration
+    }
 }
 
 // Objective-C lifecycle callbacks call this through GitX-Swift.h.
@@ -41,6 +50,7 @@ final nonisolated class IndexRefreshCoordinator: NSObject, @unchecked Sendable {
     private struct Request: Sendable {
         let bareRepository: Bool
         let parentTree: String
+        let mutationGeneration: UInt
     }
 
     private enum Component: Sendable {
@@ -102,7 +112,14 @@ final nonisolated class IndexRefreshCoordinator: NSObject, @unchecked Sendable {
 
     @objc(refreshBareRepository:parentTree:)
     func refresh(bareRepository: Bool, parentTree: String) {
-        let request = Request(bareRepository: bareRepository, parentTree: parentTree)
+        refresh(bareRepository: bareRepository, parentTree: parentTree, mutationGeneration: 0)
+    }
+
+    @objc(refreshBareRepository:parentTree:mutationGeneration:)
+    func refresh(bareRepository: Bool, parentTree: String, mutationGeneration: UInt) {
+        let request = Request(
+            bareRepository: bareRepository, parentTree: parentTree, mutationGeneration: mutationGeneration
+        )
         stateQueue.async { [weak self] in
             guard let self else { return }
             if refreshInProgress {
@@ -131,11 +148,13 @@ final nonisolated class IndexRefreshCoordinator: NSObject, @unchecked Sendable {
     private func start(_ request: Request) {
         logger.debug("Started index refresh command fan-out")
         guard !request.bareRepository else {
-            complete(IndexRefreshResult(staged: nil, unstaged: nil, untracked: nil))
+            complete(IndexRefreshResult(
+                staged: nil, unstaged: nil, untracked: nil, mutationGeneration: request.mutationGeneration
+            ))
             return
         }
 
-        let cycle = IndexRefreshCycle()
+        let cycle = IndexRefreshCycle(mutationGeneration: request.mutationGeneration)
         launch(
             .untracked,
             arguments: ["ls-files", "--others", "--exclude-standard", "-z"],
@@ -168,7 +187,7 @@ final nonisolated class IndexRefreshCoordinator: NSObject, @unchecked Sendable {
         cycle: IndexRefreshCycle
     ) {
         var parseError: NSError?
-        let entries: [String: IndexStatusEntry]?
+        let entries: [Data: IndexStatusEntry]?
         if error != nil {
             entries = nil
         } else {
@@ -201,7 +220,8 @@ final nonisolated class IndexRefreshCoordinator: NSObject, @unchecked Sendable {
             IndexRefreshResult(
                 staged: cycle.staged,
                 unstaged: cycle.unstaged,
-                untracked: cycle.untracked
+                untracked: cycle.untracked,
+                mutationGeneration: cycle.mutationGeneration
             )
         )
     }

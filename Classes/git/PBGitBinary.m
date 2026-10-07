@@ -8,6 +8,7 @@
 
 #import "PBGitBinary.h"
 #import "PBTask.h"
+#import "GitX-Swift.h"
 
 @implementation PBGitBinary
 
@@ -50,9 +51,8 @@ static NSString *gitPath = nil;
 	if (!path)
 		return NO;
 
-	// `which`/`xcrun -f git` output includes a trailing newline; without trimming, fileExistsAtPath: is
-	// handed ".../git\n" and every dynamic-discovery fallback silently fails.
-	path = [path stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+	// Discovery commands add line terminators; spaces remain valid filename characters.
+	path = [PBGitOutputFormatting normalizedExecutableCandidate:path];
 	if (path.length == 0)
 		return NO;
 

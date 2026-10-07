@@ -9,6 +9,9 @@
 
 #import <XCTest/XCTest.h>
 
+// The app needs fixtures outside the runner's container, which macOS protects as another app's data.
+static NSString *const GitXUIFixtureRoot = @"/private/tmp/gitx-ui-fixtures";
+
 @interface GitXScreenshotTests : XCTestCase
 @property (nonatomic, strong) XCUIApplication *app;
 @property (nonatomic, strong) NSMutableArray<NSString *> *temporaryRepositoryPaths;
@@ -33,6 +36,7 @@
 		@"-AppleLanguages", @"(en)",
 		@"-AppleLocale", @"en_US_POSIX",
 		@"-NSAutomaticWindowAnimationsEnabled", @"NO",
+		@"-PBAutoFetchScope", @"0",
 		@"-PBGitXPreferenceViewIdentifier", @"General"
 	];
 	self.temporaryRepositoryPaths = [NSMutableArray array];
@@ -82,10 +86,10 @@
 
 - (NSDictionary<NSString *, NSString *> *)launchEnvironmentForRepository:(NSString *)repositoryPath
 {
-	NSString *isolatedHome = [NSTemporaryDirectory() stringByAppendingPathComponent:
-														 [NSString stringWithFormat:@"gitx-screenshot-home-%@", NSUUID.UUID.UUIDString]];
+	NSString *isolatedHome = [GitXUIFixtureRoot stringByAppendingPathComponent:
+													[NSString stringWithFormat:@"gitx-screenshot-home-%@", NSUUID.UUID.UUIDString]];
 	NSError *error = nil;
-	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtPath:isolatedHome
+	XCTAssertTrue([[NSFileManager defaultManager] createDirectoryAtPath:[isolatedHome stringByAppendingPathComponent:@"Library/Preferences"]
 											withIntermediateDirectories:YES
 															 attributes:nil
 																  error:&error],
@@ -94,6 +98,11 @@
 	return @{
 		@"CFFIXED_USER_HOME" : isolatedHome,
 		@"CFPREFERENCES_AVOID_DAEMON" : @"1",
+		@"GCM_INTERACTIVE" : @"never",
+		@"GIT_ASKPASS" : @"/usr/bin/false",
+		@"GIT_CONFIG_GLOBAL" : @"/dev/null",
+		@"GIT_CONFIG_NOSYSTEM" : @"1",
+		@"GIT_TERMINAL_PROMPT" : @"0",
 		@"GITX_UITEST_REPO" : repositoryPath,
 		@"GITX_UITEST_FORGE_STORAGE_ROOT" :
 			[isolatedHome stringByAppendingPathComponent:@"Library/Application Support/GitX/Forge"],
@@ -218,7 +227,7 @@
 
 - (NSString *)makeDirtyRepositoryFixture
 {
-	NSString *repositoryPath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"gitx-dirty-%@", NSUUID.UUID.UUIDString]];
+	NSString *repositoryPath = [GitXUIFixtureRoot stringByAppendingPathComponent:[NSString stringWithFormat:@"gitx-dirty-%@", NSUUID.UUID.UUIDString]];
 	[[NSFileManager defaultManager] createDirectoryAtPath:repositoryPath withIntermediateDirectories:YES attributes:nil error:nil];
 	[self.temporaryRepositoryPaths addObject:repositoryPath];
 	XCTAssertTrue(([self runGit:@[ @"init", @"-q", @"-b", @"main" ] inDirectory:repositoryPath]));

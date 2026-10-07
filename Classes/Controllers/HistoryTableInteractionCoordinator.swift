@@ -91,8 +91,8 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         let referenceIndex = hitReferenceIndex(cell: cell, x: location.x - tableView.frameOfCell(atColumn: column, row: row).origin.x)
 
         if referenceIndex >= 0 {
-            guard commit.refs.count > Int(referenceIndex),
-                  let ref = commit.refs.object(at: Int(referenceIndex)) as? PBGitRef,
+            guard let refs = commit.refs, refs.count > Int(referenceIndex),
+                  let ref = refs.object(at: Int(referenceIndex)) as? PBGitRef,
                   ref.isBranch,
                   commit.sha.isEmpty == false,
                   let repository = owner.repository,
@@ -203,8 +203,8 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
         guard commits.indices.contains(row), column >= 0 else { return }
         let cell = tableView.view(atColumn: column, row: row, makeIfNecessary: false)
         let index = hitReferenceIndex(cell: cell, x: location.x - tableView.frameOfCell(atColumn: column, row: row).origin.x)
-        guard index >= 0, commits[row].refs.count > Int(index),
-              let ref = commits[row].refs.object(at: Int(index)) as? PBGitRef
+        guard index >= 0, let refs = commits[row].refs, refs.count > Int(index),
+              let ref = refs.object(at: Int(index)) as? PBGitRef
         else { return }
         do {
             _ = try repository.checkoutRefish(ref)
@@ -248,7 +248,7 @@ final class HistoryTableInteractionCoordinator: NSObject, NSTableViewDelegate, N
               let commits = owner.commitController.arrangedObjects as? [PBGitCommit],
               commits.indices.contains(destinationRow),
               let sourceCommit = commits.first(where: { $0.sha == payload.sourceSHA }),
-              let reference = sourceCommit.refs.compactMap({ $0 as? PBGitRef }).first(where: {
+              let reference = sourceCommit.refs?.compactMap({ $0 as? PBGitRef }).first(where: {
                   $0.ref == payload.referenceName
               }),
               reference.isBranch,

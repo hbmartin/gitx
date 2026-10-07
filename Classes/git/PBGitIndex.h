@@ -48,7 +48,10 @@ extern NSString *PBGitIndexOperationFailed;
 // Whether we want the changes for amending,
 // or for making a new commit.
 @property (assign, getter=isAmend) BOOL amend;
-@property (weak, readonly) PBGitRepository *repository;
+@property (weak, readonly, nullable) PBGitRepository *repository;
+// Git mutation methods return synchronously. Rows remain at their last coherent
+// snapshot until the corresponding refresh completes; UI mutation controls wait.
+@property (readonly) BOOL mutationReconciliationPending;
 
 // A list of PBChangedFile's with differences between the work tree and the index
 // This method is KVO-aware, so changes when any of the index-modifying methods are called
@@ -78,6 +81,14 @@ extern NSString *PBGitIndexOperationFailed;
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;
 - (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context;
 - (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context ignoreWhitespace:(BOOL)ignoreWhitespace;
+- (nullable NSArray<NSString *> *)diffToolArgumentsForFile:(PBChangedFile *)file
+													staged:(BOOL)staged
+													 error:(NSError *_Nullable *_Nullable)error
+	NS_SWIFT_NAME(diffToolArguments(for:staged:error:)) __attribute__((swift_error(none)));
+- (nullable NSArray<NSString *> *)literalArgumentsForRawPath:(NSData *)rawPath
+											commandArguments:(NSArray<NSString *> *)commandArguments
+													   error:(NSError *_Nullable *_Nullable)error
+	NS_SWIFT_NAME(literalArguments(forRawPath:commandArguments:error:)) __attribute__((swift_error(none)));
 
 @end
 

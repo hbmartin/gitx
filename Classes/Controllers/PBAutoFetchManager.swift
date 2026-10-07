@@ -205,7 +205,8 @@ nonisolated class PBAutoFetchManager: NSObject, UNUserNotificationCenterDelegate
     @objc(taskForRepositoryURL:arguments:)
     dynamic func task(forRepositoryURL url: URL, arguments: [String]) -> PBTask {
         let task = PBTask(
-            launchPath: PBGitBinary.path(),
+            // An unavailable executable must produce the ordinary task launch error.
+            launchPath: PBGitBinary.path() ?? "",
             arguments: arguments,
             inDirectory: url.path
         )

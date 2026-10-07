@@ -1,0 +1,34 @@
+{
+  "sourceCommit": "bfe18f6188c4326b6f8b5e55dd5a1284b8a48b10",
+  "testedMergeCommit": "91bc7aa25851e3cf929edbd87ab43757ad9d6d06",
+  "baseCommit": "118b1f74db2f8bfa96abf280c744ad6da30ee264",
+  "workflowRun": 37579664547,
+  "job": 112658601391,
+  "artifactName": "GitXUI-results",
+  "artifactID": 11464988905,
+  "receiptRun": "verify-ui-37579664547-1",
+  "environment": {
+    "macOS": "26",
+    "Xcode": "26.6"
+  },
+  "preflightTests": 1,
+  "uiTests": 38,
+  "failures": 0,
+  "skipped": 0,
+  "captures": [
+    {
+      "filename": "final-partially-staged-addition.png",
+      "testIdentifier": "GitXScreenshotTests/testPartiallyStagedAdditionShowsOnlyTheIndexedContent",
+      "attachmentTitle": "partially-staged-addition-index-diff",
+      "sha256": "27ecae70e18acc47e60080ddeef33cc29c7f0dbd2471b2c7cc8825aa4e84722e",
+      "captureMethod": "Unmodified XCTest UI screenshot exported from the canonical hosted result bundle"
+    },
+    {
+      "filename": "final-hook-failure-push-choice.png",
+      "testIdentifier": "GitXScreenshotTests/testSpaceStagesFilesAndSuccessfulCommitPushesWithoutASecondConfirmation",
+      "attachmentTitle": "commit-hook-failure-preserves-push-choice",
+      "sha256": "7e82fdb857ed0ae23389065cc949f205c48bfe41896e8fcd9450723a98f6f225",
+      "captureMethod": "Unmodified XCTest UI screenshot exported from the canonical hosted result bundle"
+    }
+  ]
+}

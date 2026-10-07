@@ -1,0 +1,85 @@
+{
+  "purpose": "Diagnostic captures; no screenshot or pixel comparison tests.",
+  "captures": [
+    {
+      "file": "flow-stderr-limit.png",
+      "source": "XCTest attachment",
+      "test": "HistoryControllerTests/testHistoryFlowReportsExcessiveStderrWithoutMislabelingTheBlob()",
+      "run": "20261007T024920Z-49be6d1b97-99941",
+      "sourceCommit": "49be6d1b976668825d41190fd406218aa4c2c004",
+      "sha256": "e6679c495b0aaea8dc97273515fbeab95380058901be9469cc528b71cba2342a"
+    },
+    {
+      "file": "push-choice-checked.png",
+      "source": "XCTest attachment",
+      "test": "HistoryControllerTests/testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice()",
+      "run": "20261007T024920Z-49be6d1b97-99941",
+      "sourceCommit": "49be6d1b976668825d41190fd406218aa4c2c004",
+      "sha256": "681335b6adfcb956490973933cf74191db0661db9c1d6473026775f38955ab0e"
+    },
+    {
+      "file": "push-choice-unchecked.png",
+      "source": "XCTest attachment",
+      "test": "HistoryControllerTests/testPushChoicesSurviveActiveRemoteRefreshFailureAndExplicitRetryChoice()",
+      "run": "20261007T024920Z-49be6d1b97-99941",
+      "sourceCommit": "49be6d1b976668825d41190fd406218aa4c2c004",
+      "sha256": "f0ecb9da1325b34e838eda5865475918573bc4be221cba48387cf659724373a5"
+    },
+    {
+      "file": "raw-filename-unavailable.png",
+      "source": "XCTest attachment",
+      "test": "HistoryControllerTests/testStagingRawDisplayCollisionDisablesStringActionsAndShowsUnavailablePreview()",
+      "run": "20261007T024920Z-49be6d1b97-99941",
+      "sourceCommit": "49be6d1b976668825d41190fd406218aa4c2c004",
+      "sha256": "f107a4342b150da203c34bad684ff160413c5a4b1ba539a1b7148bce00e71091"
+    },
+    {
+      "file": "working-tree-raw-identity.png",
+      "source": "XCTest attachment",
+      "test": "HistoryControllerTests/testWorkingStateTreeAndDiffUseRawIdentityAcrossDisplayCollisionsAndDetachedParents()",
+      "run": "20261007T024920Z-49be6d1b97-99941",
+      "sourceCommit": "49be6d1b976668825d41190fd406218aa4c2c004",
+      "sha256": "cc1f80b6314a49ee3654bf371296cd048b0657193a51031fc6d9d5f25052abfc"
+    },
+    {
+      "file": "error-details.png",
+      "source": "XCTest attachment",
+      "test": "WindowControllerTests/testMessageSheetUsesValueDomainEqualityAndIncludesTaskDetailsOnce",
+      "run": "20261007T024920Z-49be6d1b97-99941",
+      "sourceCommit": "49be6d1b976668825d41190fd406218aa4c2c004",
+      "sha256": "fa18290d9eddcb8d29faab28392cc8369192eea31f71d471ebe0e867cd998532"
+    },
+    {
+      "file": "staged-image-fallback.png",
+      "source": "Canonical run_app.sh / observe_app.sh runtime diagnostic",
+      "scenario": "Staged image survives a missing worktree source",
+      "sourceCommit": "ed6c7e9a",
+      "note": "Captured during recovery UI verification; the later stat-cache reconciliation fix is separately covered by a real-Git regression test.",
+      "sha256": "85add2b0142b2a55a15ae41589c898b62255265949d329d18f17a2cd3b5d5986"
+    },
+    {
+      "file": "raw-filename-operation-availability.png",
+      "source": "Canonical run_app.sh / observe_app.sh runtime diagnostic",
+      "scenario": "Invalid byte identity remains visible and string-only preview is unavailable",
+      "sourceCommit": "ed6c7e9a",
+      "note": "Captured during recovery UI verification; the later stat-cache reconciliation fix is separately covered by a real-Git regression test.",
+      "sha256": "e3ed16ef782925a15b10ee24b96841ad9b31a31a398dead720683af46bacb060"
+    },
+    {
+      "file": "history-missing-path-fallback.png",
+      "source": "Canonical run_app.sh / observe_app.sh runtime diagnostic",
+      "scenario": "Vanished remembered file selects an available root item",
+      "sourceCommit": "ed6c7e9a",
+      "note": "Captured during recovery UI verification; the later stat-cache reconciliation fix is separately covered by a real-Git regression test.",
+      "sha256": "d50af373e0b0ced5c61123c4cd4f41f0070d00faf1affbf9176d8f1f0098d226"
+    },
+    {
+      "file": "staging-whitespace-preference.png",
+      "source": "Canonical run_app.sh / observe_app.sh runtime diagnostic",
+      "scenario": "Whitespace-only staging hunk remains complete with read-only preference disabled",
+      "sourceCommit": "ed6c7e9a",
+      "note": "Captured during recovery UI verification; the later stat-cache reconciliation fix is separately covered by a real-Git regression test.",
+      "sha256": "55e6145eabc3e994801e9453ff552e0a13d82f8383ea0c59e7f1b0cae85771f1"
+    }
+  ]
+}

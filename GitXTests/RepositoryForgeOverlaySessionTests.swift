@@ -132,6 +132,42 @@ final class RepositoryForgeOverlaySessionTests: XCTestCase, @unchecked Sendable 
         session.invalidate()
     }
 
+    func testInvalidationCancelsAnInFlightHistoryReadWithoutCachingAValue() async throws {
+        let remoteFacts = try facts(description: "Loaded before invalidation")
+        let historyStarted = expectation(description: "History read suspended")
+        let historyCancelled = expectation(description: "History read cancelled")
+        let reader = CancellableHistoryOverlayReaderDouble(
+            facts: remote(remoteFacts),
+            started: historyStarted,
+            cancelled: historyCancelled
+        )
+        let cache = OverlayCacheDouble(facts: nil)
+        let session = makeSession(reader: reader, cache: cache)
+        defer { session.invalidate() }
+        let factsLoaded = expectation(description: "Facts loaded before History demand")
+        _ = session.observeFacts { state in
+            if state.snapshot?.value == remoteFacts {
+                factsLoaded.fulfill()
+            }
+        }
+        session.start()
+        await fulfillment(of: [factsLoaded], timeout: 1)
+
+        session.requestHistoryOverlay(commit)
+        await fulfillment(of: [historyStarted], timeout: 1)
+        XCTAssertEqual(session.historyStates[commit], .loading(previous: nil))
+
+        session.invalidate()
+        await fulfillment(of: [historyCancelled], timeout: 1)
+
+        let cancellationCount = await reader.cancellationCount()
+        let storedHistory = await cache.storedHistory(for: commit)
+        XCTAssertEqual(cancellationCount, 1)
+        XCTAssertNil(storedHistory)
+        XCTAssertEqual(session.factsState.snapshot?.value, remoteFacts)
+        XCTAssertEqual(session.historyStates[commit], .loading(previous: nil))
+    }
+
     func testInvalidDisposableCacheDoesNotBlockFreshRepositoryFacts() async throws {
         let remoteFacts = try facts(description: "Fresh despite corrupt cache")
         let cache = OverlayCacheDouble(facts: nil, failsFactsRead: true)
@@ -1461,6 +1497,56 @@ private actor SuspendingOverlayReaderDouble: RepositoryForgeOverlayReading {
     func releaseNext() {
         guard !continuations.isEmpty else { return }
         continuations.removeFirst().resume()
+    }
+}
+
+private actor CancellableHistoryOverlayReaderDouble: RepositoryForgeOverlayReading {
+    private let facts: RepositoryForgeRemoteSnapshot<ForgeRepositoryFacts>
+    private let started: XCTestExpectation
+    private let cancelled: XCTestExpectation
+    private var historyContinuation: CheckedContinuation<RepositoryForgeRemoteSnapshot<ForgeHistoryOverlay>, Error>?
+    private var cancelledReads = 0
+
+    init(
+        facts: RepositoryForgeRemoteSnapshot<ForgeRepositoryFacts>,
+        started: XCTestExpectation,
+        cancelled: XCTestExpectation
+    ) {
+        self.facts = facts
+        self.started = started
+        self.cancelled = cancelled
+    }
+
+    func repositoryFacts(
+        request _: RepositoryForgeOverlayRemoteRequest
+    ) async throws -> RepositoryForgeRemoteSnapshot<ForgeRepositoryFacts> {
+        facts
+    }
+
+    func historyOverlay(
+        commit _: ForgeCommitID,
+        request _: RepositoryForgeOverlayRemoteRequest
+    ) async throws -> RepositoryForgeRemoteSnapshot<ForgeHistoryOverlay> {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                historyContinuation = continuation
+                started.fulfill()
+            }
+        } onCancel: {
+            Task { await self.cancelHistoryRead() }
+        }
+    }
+
+    func cancellationCount() -> Int {
+        cancelledReads
+    }
+
+    private func cancelHistoryRead() {
+        guard let continuation = historyContinuation else { return }
+        historyContinuation = nil
+        cancelledReads += 1
+        continuation.resume(throwing: CancellationError())
+        cancelled.fulfill()
     }
 }
 

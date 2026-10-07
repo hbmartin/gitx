@@ -3,6 +3,168 @@ import XCTest
 @MainActor
 // swift6-safety-justification: XCTest owns the test lifetime and all mutable access is confined to the main actor.
 final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
+    // swift6-safety-justification: KVO may invoke a Sendable callback; this recorder serializes every access with its lock.
+    private final nonisolated class KVORecorder<Value: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [Value] = []
+
+        func append(_ value: Value) {
+            lock.lock()
+            defer { lock.unlock() }
+            values.append(value)
+        }
+
+        func snapshot() -> [Value] {
+            lock.lock()
+            defer { lock.unlock() }
+            return values
+        }
+
+        func clear() {
+            lock.lock()
+            defer { lock.unlock() }
+            values.removeAll()
+        }
+    }
+
+    private final nonisolated class ChangedFileKVOObserver: NSObject {
+        let callbacks = KVORecorder<String>()
+
+        override func observeValue(
+            forKeyPath keyPath: String?,
+            of _: Any?,
+            change _: [NSKeyValueChangeKey: Any]?,
+            context _: UnsafeMutableRawPointer?
+        ) {
+            if let keyPath {
+                callbacks.append(keyPath)
+            }
+        }
+    }
+
+    func testChangedFileDefaultsAndAllStatusIconsPreserveObjectiveCContract() {
+        let changed = PBChangedFile(path: "folder/spaced ü.txt")
+        XCTAssertEqual(changed.path, "folder/spaced ü.txt")
+        XCTAssertEqual(changed.status, .NEW)
+        XCTAssertFalse(changed.hasStagedChanges)
+        XCTAssertFalse(changed.hasUnstagedChanges)
+        XCTAssertNil(changed.commitBlobSHA)
+        XCTAssertNil(changed.commitBlobMode)
+        for (status, imageName) in [
+            (PBChangedFileStatus.NEW, "new_file"),
+            (.MODIFIED, "empty_file"),
+            (.DELETED, "deleted_file"),
+        ] {
+            changed.status = status
+            XCTAssertEqual(changed.icon(), NSImage(named: imageName))
+        }
+    }
+
+    func testChangedFileCopySettersNullableMetadataAndKVC() {
+        let changed = PBChangedFile(path: "initial.txt")
+        let mutablePath = NSMutableString(string: "copied.txt")
+        changed.setValue(mutablePath, forKey: "path")
+        mutablePath.append("-mutated")
+        XCTAssertEqual(changed.path, "copied.txt")
+        changed.commitBlobSHA = "abc"
+        changed.commitBlobMode = "100644"
+        XCTAssertEqual(changed.value(forKey: "commitBlobSHA") as? String, "abc")
+        XCTAssertEqual(changed.value(forKey: "commitBlobMode") as? String, "100644")
+        changed.commitBlobSHA = nil
+        changed.commitBlobMode = nil
+        XCTAssertNil(changed.commitBlobSHA)
+        XCTAssertNil(changed.commitBlobMode)
+    }
+
+    func testChangedFileStatusAndMembershipRemainKVOObservable() {
+        let changed = PBChangedFile(path: "observed.txt")
+        let statuses = KVORecorder<Int>()
+        let memberships = KVORecorder<Bool>()
+        let statusObservation = changed.observe(\.status, options: [.new]) { object, _ in
+            // NS_ENUM values arrive through NSNumber in Objective-C KVO;
+            // reading the observed object preserves the imported enum contract.
+            statuses.append(object.status.rawValue)
+        }
+        let membershipObservation = changed.observe(\.hasStagedChanges, options: [.new]) { _, change in
+            if let value = change.newValue {
+                memberships.append(value)
+            }
+        }
+        changed.status = .MODIFIED
+        changed.hasStagedChanges = true
+        changed.hasStagedChanges = false
+        XCTAssertEqual(statuses.snapshot(), [PBChangedFileStatus.MODIFIED.rawValue])
+        XCTAssertEqual(memberships.snapshot(), [true, false])
+        withExtendedLifetime((statusObservation, membershipObservation)) {}
+    }
+
+    func testChangedFilePathDependenciesPublishExactRawIdentityAndFailClosedBoundaries() {
+        let rawBytes = Data([0x66, 0xFF])
+        let mutableBytes = NSMutableData(data: rawBytes)
+        let changed = PBChangedFile(path: "f\\xFF", rawPath: mutableBytes as Data)
+        mutableBytes.append(Data([0xFE]))
+        XCTAssertEqual(changed.rawPath, rawBytes, "The facade copies the raw initializer input")
+        XCTAssertNil(changed.safePath)
+        let observer = ChangedFileKVOObserver()
+        let keys = ["rawPath", "safePath"]
+        for key in keys {
+            changed.addObserver(observer, forKeyPath: key, options: [.new], context: nil)
+        }
+        defer { for key in keys {
+            changed.removeObserver(observer, forKeyPath: key)
+        } }
+
+        changed.path = "new ü.txt"
+        XCTAssertEqual(changed.rawPath, Data("new ü.txt".utf8))
+        XCTAssertEqual(changed.safePath, "new ü.txt")
+        XCTAssertEqual(Set(observer.callbacks.snapshot()), Set(keys), "Path changes publish both derived Cocoa properties")
+        observer.callbacks.clear()
+        changed.path = ""
+        XCTAssertTrue(changed.rawPath.isEmpty)
+        XCTAssertNil(changed.safePath)
+        XCTAssertEqual(Set(observer.callbacks.snapshot()), Set(keys))
+        changed.path = "invalid\0path"
+        XCTAssertEqual(changed.rawPath, Data("invalid\0path".utf8))
+        XCTAssertNil(changed.safePath)
+    }
+
+    func testChangedFileSideStatusesAndIconsPublishIndependentCocoaDependencies() {
+        let changed = PBChangedFile(path: "partial.txt")
+        changed.status = .MODIFIED
+        let observer = ChangedFileKVOObserver()
+        let keys = ["icon", "stagedStatus", "worktreeStatus", "stagedIcon", "worktreeIcon"]
+        for key in keys {
+            changed.addObserver(observer, forKeyPath: key, options: [.new], context: nil)
+        }
+        defer { for key in keys {
+            changed.removeObserver(observer, forKeyPath: key)
+        } }
+
+        changed.status = .DELETED
+        XCTAssertEqual(changed.stagedStatus, .DELETED)
+        XCTAssertEqual(changed.worktreeStatus, .DELETED)
+        for image in [changed.icon(), changed.stagedIcon(), changed.worktreeIcon()] {
+            XCTAssertEqual(image, NSImage(named: "deleted_file"))
+        }
+        XCTAssertEqual(Set(observer.callbacks.snapshot()), Set(keys), "The legacy setter publishes every derived icon and side status")
+        observer.callbacks.clear()
+
+        changed.stagedStatus = .NEW
+        XCTAssertEqual(changed.stagedIcon(), NSImage(named: "new_file"))
+        XCTAssertEqual(changed.worktreeStatus, .DELETED)
+        XCTAssertEqual(changed.worktreeIcon(), NSImage(named: "deleted_file"))
+        XCTAssertEqual(changed.status, .DELETED)
+        XCTAssertEqual(changed.icon(), NSImage(named: "deleted_file"))
+        XCTAssertEqual(Set(observer.callbacks.snapshot()), Set(["stagedStatus", "stagedIcon"]))
+        observer.callbacks.clear()
+
+        changed.worktreeStatus = .MODIFIED
+        XCTAssertEqual(changed.worktreeIcon(), NSImage(named: "empty_file"))
+        XCTAssertEqual(changed.stagedStatus, .NEW)
+        XCTAssertEqual(changed.stagedIcon(), NSImage(named: "new_file"))
+        XCTAssertEqual(Set(observer.callbacks.snapshot()), Set(["worktreeStatus", "worktreeIcon"]))
+    }
+
     private func file(
         _ path: String,
         status: PBChangedFileStatus = .MODIFIED,
@@ -173,6 +335,20 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testDefaultSortDescriptorsPreserveStableRawIdentityAndEqualIdentityComparison() {
+        let model = PBStagingListViewModel()
+        let first = file("same.txt", staged: true, unstaged: false)
+        let sameIdentity = file("same.txt", staged: true, unstaged: false)
+        let descriptors = model.sortDescriptors
+
+        XCTAssertEqual(descriptors.map(\.key), ["path", "rawPath"])
+        XCTAssertEqual(descriptors[1].compare(first, to: sameIdentity), .orderedSame)
+        XCTAssertEqual(descriptors[1].compare(sameIdentity, to: first), .orderedSame)
+        XCTAssertEqual((([sameIdentity, first] as NSArray).sortedArray(using: descriptors) as? [PBChangedFile])?.map(\.rawPath),
+                       [first.rawPath, first.rawPath])
+        XCTAssertEqual(model.files(in: .staged, fromChanges: [sameIdentity, first]).count, 2)
+    }
+
     func testFlattenedRowsSkipEmptySectionsAndKeepHeaderOrder() {
         let model = PBStagingListViewModel()
         let changes = [
@@ -267,7 +443,7 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(partialRows.count, 2)
 
         let payload = model.sectionedDragPayload(for: rows, selectedIndexes: IndexSet(partialRows))
-        XCTAssertEqual(payload.compactMap { $0["path"] as? String }, ["partial.txt", "partial.txt"])
+        XCTAssertEqual(payload.compactMap { $0["rawPath"] as? Data }, [Data("partial.txt".utf8), Data("partial.txt".utf8)])
         XCTAssertEqual(payload.compactMap { $0["sourceSection"] as? Int }, [0, 1])
 
         XCTAssertEqual(
@@ -295,10 +471,10 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
         let unstaged = file("unstaged.txt")
         let rows = model.flattenedRows(fromChanges: [staged, unstaged])
         let mixed: [[String: Any]] = [
-            ["path": "staged.txt", "sourceSection": PBStagingListSection.staged.rawValue],
-            ["path": "unstaged.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
-            ["path": "unstaged.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
-            ["path": "stale.txt", "sourceSection": PBStagingListSection.unstaged.rawValue],
+            ["rawPath": Data("staged.txt".utf8), "sourceSection": PBStagingListSection.staged.rawValue],
+            ["rawPath": Data("unstaged.txt".utf8), "sourceSection": PBStagingListSection.unstaged.rawValue],
+            ["rawPath": Data("unstaged.txt".utf8), "sourceSection": PBStagingListSection.unstaged.rawValue],
+            ["rawPath": Data("stale.txt".utf8), "sourceSection": PBStagingListSection.unstaged.rawValue],
         ]
 
         XCTAssertEqual(
@@ -324,10 +500,10 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
 
         let malformed: [Any] = [
             [0, 1],
-            [["path": "unstaged.txt"]],
-            [["path": "unstaged.txt", "sourceSection": "unstaged"]],
-            [["path": "unstaged.txt", "sourceSection": 1, "extra": true]],
-            [["path": "", "sourceSection": 1]],
+            [["rawPath": Data("unstaged.txt".utf8)]],
+            [["rawPath": Data("unstaged.txt".utf8), "sourceSection": "unstaged"]],
+            [["rawPath": Data("unstaged.txt".utf8), "sourceSection": 1, "extra": true]],
+            [["rawPath": Data("".utf8), "sourceSection": 1]],
         ]
         for propertyList in malformed {
             XCTAssertNil(model.resolvedDropFiles(
@@ -336,5 +512,43 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
                 destinationSection: .staged
             ))
         }
+    }
+
+    func testDisplayCollisionSelectionsAndDragsResolveByRawIdentity() throws {
+        let model = PBStagingListViewModel()
+        let invalid = PBChangedFile(path: "f\\xFF", rawPath: Data([0x66, 0xFF]))
+        invalid.hasUnstagedChanges = true
+        let literal = PBChangedFile(path: "f\\xFF")
+        literal.hasUnstagedChanges = true
+        let rows = model.flattenedRows(fromChanges: [invalid, literal])
+        let files = model.files(in: .unstaged, fromChanges: [invalid, literal])
+        XCTAssertEqual(files.map(\.rawPath), [literal.rawPath, invalid.rawPath])
+        XCTAssertEqual(model.resolvedFiles(for: .open, context: .sectioned,
+                                           stagedSelection: [], unstagedSelection: files).count, 2)
+        let rawRow = try XCTUnwrap(rows.firstIndex { $0.file === invalid })
+        let payload = model.sectionedDragPayload(for: rows, selectedIndexes: IndexSet(integer: rawRow))
+        let selected = try XCTUnwrap(model.resolvedDropFiles(fromPropertyList: payload, rows: rows, destinationSection: .staged))
+        XCTAssertEqual(selected.count, 1)
+        XCTAssertTrue(selected[0] === invalid)
+        XCTAssertNil(invalid.safePath)
+        XCTAssertEqual(literal.safePath, "f\\xFF")
+    }
+
+    func testEachSectionSortsAndRendersItsOwnStatus() {
+        let model = PBStagingListViewModel()
+        model.sortOrder = .status
+        let deletedUntracked = file("a.txt", staged: true, unstaged: true)
+        deletedUntracked.status = .DELETED
+        deletedUntracked.worktreeStatus = .NEW
+        let addedModified = file("b.txt", staged: true, unstaged: true)
+        addedModified.status = .NEW
+        addedModified.worktreeStatus = .MODIFIED
+        XCTAssertEqual(model.files(in: .staged, fromChanges: [addedModified, deletedUntracked]).map(\.path), ["a.txt", "b.txt"])
+        XCTAssertEqual(model.files(in: .unstaged, fromChanges: [addedModified, deletedUntracked]).map(\.path), ["b.txt", "a.txt"])
+        let cell = PBStagingFileCellView(frame: .zero)
+        cell.configure(with: deletedUntracked, checkboxState: NSControl.StateValue.mixed.rawValue, section: .staged)
+        XCTAssertTrue(cell.imageView?.image === deletedUntracked.stagedIcon())
+        cell.configure(with: deletedUntracked, checkboxState: NSControl.StateValue.mixed.rawValue, section: .unstaged)
+        XCTAssertTrue(cell.imageView?.image === deletedUntracked.worktreeIcon())
     }
 }

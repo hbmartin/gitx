@@ -339,6 +339,96 @@ final class ForgeApplicationCompositionTests: XCTestCase {
         XCTAssertEqual(probe.invocationThreads, [false, false])
     }
 
+    #if DEBUG
+        func testAutomaticCompositionStartupContainsFailureAndRemainsExplicitlyRetriable() async throws {
+            let original = PBApplicationComposition.shared()
+            defer { PBApplicationComposition.setShared(original) }
+            let probe = CompositionFactoryProbe()
+            let gate = CompositionStartupFailureGate()
+            let composition = try PBApplicationComposition(
+                userDefaults: makeDefaults(),
+                forgeStartupFailureProvider: { completion in
+                    probe.recordInvocation()
+                    gate.fail(completion: completion)
+                },
+                automaticallyStartsForgeServices: true
+            )
+            PBApplicationComposition.setShared(composition)
+            await gate.waitUntilStarted()
+            XCTAssertEqual(probe.invocationCount, 1)
+            gate.release()
+            await waitForAutomaticStartup(of: composition)
+            PBApplicationComposition.setShared(composition)
+            await waitForAutomaticStartup(of: composition)
+            XCTAssertEqual(probe.invocationCount, 1, "automatic startup runs once even after failure")
+            let retryError = await withCheckedContinuation { continuation in
+                composition.retryForgeServicesForTesting { continuation.resume(returning: $0) }
+            }
+            let retryNSError = retryError as NSError?
+            XCTAssertEqual(retryNSError?.domain, CompositionStartupFailureGate.failureDomain)
+            XCTAssertEqual(retryNSError?.code, CompositionStartupFailureGate.failureCode)
+            XCTAssertEqual(probe.invocationCount, 2)
+            XCTAssertEqual(probe.invocationThreads, [false, false])
+        }
+
+        func testCompositionWithAutomaticStartupDisabledHasNoPendingStartupTask() async throws {
+            let original = PBApplicationComposition.shared()
+            defer { PBApplicationComposition.setShared(original) }
+            let probe = CompositionFactoryProbe()
+            let composition = try PBApplicationComposition(
+                userDefaults: makeDefaults(),
+                forgeStartupFailureProvider: { completion in
+                    probe.recordInvocation()
+                    completion(NSError(domain: CompositionStartupFailureGate.failureDomain, code: 1))
+                },
+                automaticallyStartsForgeServices: false
+            )
+            PBApplicationComposition.setShared(composition)
+            await waitForAutomaticStartup(of: composition)
+            XCTAssertEqual(probe.invocationCount, 0)
+        }
+
+        func testExplicitCompositionStartupSucceedsWithIsolatedStorageAndRemainsAvailable() async throws {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ForgeExplicitCompositionStartup-\(UUID().uuidString)", isDirectory: true)
+            let key = "GITX_UITEST_FORGE_STORAGE_ROOT"
+            let originalStorage = getenv(key).map { String(cString: $0) }
+            XCTAssertEqual(setenv(key, root.path, 1), 0)
+            defer {
+                if let originalStorage {
+                    _ = setenv(key, originalStorage, 1)
+                } else {
+                    _ = unsetenv(key)
+                }
+                try? FileManager.default.removeItem(at: root)
+            }
+            let defaults = try makeDefaults()
+            defaults.set(false, forKey: "PBLoadForgeAvatars")
+            let composition = PBApplicationComposition(
+                userDefaults: defaults,
+                automaticallyStartsForgeServices: false
+            )
+            await waitForAutomaticStartup(of: composition)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.path), "disabled automatic startup stays lazy")
+
+            let firstError = await withCheckedContinuation { continuation in
+                composition.retryForgeServicesForTesting { continuation.resume(returning: $0) }
+            }
+            XCTAssertNil(firstError, "explicit startup publishes usable services on success")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("Forge.sqlite3").path))
+            let repeatedError = await withCheckedContinuation { continuation in
+                composition.retryForgeServicesForTesting { continuation.resume(returning: $0) }
+            }
+            XCTAssertNil(repeatedError, "subsequent explicit access retains the initialized services")
+        }
+
+        private func waitForAutomaticStartup(of composition: PBApplicationComposition) async {
+            await withCheckedContinuation { continuation in
+                composition.waitForAutomaticForgeServiceStartupForTesting { continuation.resume() }
+            }
+        }
+    #endif
+
     func testFactoryComposesCacheDurableAndRecoveryCopyRetentionAtDeterministicClock() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ForgeApplicationRetentionTests-\(UUID().uuidString)", isDirectory: true)
@@ -1540,6 +1630,65 @@ final class ForgeApplicationCompositionTests: XCTestCase {
 private enum CompositionFactoryError: Error, Equatable {
     case expectedFailure
 }
+
+#if DEBUG
+    // swift6-safety-justification: The lock protects the callback, startup flag, and all continuation waiters.
+    private final nonisolated class CompositionStartupFailureGate: @unchecked Sendable {
+        static let failureDomain = "GitXTests.CompositionStartup"
+        static let failureCode = 7
+        private let lock = NSLock()
+        private var started = false
+        private var released = false
+        private var failureCompletion: ((NSError) -> Void)?
+        private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func fail(completion: @escaping (NSError) -> Void) {
+            let (waiters, completesImmediately) = lock.withLock {
+                started = true
+                let waiters = startWaiters
+                startWaiters.removeAll()
+                if !released {
+                    failureCompletion = completion
+                }
+                return (waiters, released)
+            }
+            waiters.forEach { $0.resume() }
+            if completesImmediately {
+                completeFailure(completion)
+            }
+        }
+
+        func waitUntilStarted() async {
+            await withCheckedContinuation { continuation in
+                let resumesImmediately = lock.withLock {
+                    if started {
+                        return true
+                    }
+                    startWaiters.append(continuation)
+                    return false
+                }
+                if resumesImmediately {
+                    continuation.resume()
+                }
+            }
+        }
+
+        func release() {
+            let completion = lock.withLock {
+                released = true
+                defer { failureCompletion = nil }
+                return failureCompletion
+            }
+            if let completion {
+                completeFailure(completion)
+            }
+        }
+
+        private func completeFailure(_ completion: (NSError) -> Void) {
+            completion(NSError(domain: Self.failureDomain, code: Self.failureCode))
+        }
+    }
+#endif
 
 // swift6-safety-justification: The lock serializes all mutable probe counters and thread observations.
 private final nonisolated class CompositionFactoryProbe: @unchecked Sendable {

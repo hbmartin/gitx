@@ -2,6 +2,7 @@ import Foundation
 
 struct StagingDiffLoadRequest: Equatable, Sendable {
     let path: String
+    let rawPath: Data
     let status: Int
     let hasStagedChanges: Bool
     let staged: Bool
@@ -9,6 +10,20 @@ struct StagingDiffLoadRequest: Equatable, Sendable {
     let contextLines: UInt
     let workingDirectoryURL: URL?
     let syntheticUntracked: Bool
+
+    init(path: String, rawPath: Data? = nil, status: Int, hasStagedChanges: Bool, staged: Bool,
+         parentTree: String, contextLines: UInt, workingDirectoryURL: URL?, syntheticUntracked: Bool)
+    {
+        self.path = path
+        self.rawPath = rawPath ?? Data(path.utf8)
+        self.status = status
+        self.hasStagedChanges = hasStagedChanges
+        self.staged = staged
+        self.parentTree = parentTree
+        self.contextLines = contextLines
+        self.workingDirectoryURL = workingDirectoryURL
+        self.syntheticUntracked = syntheticUntracked
+    }
 }
 
 enum StagingDiffProduction: Equatable, Sendable {
@@ -142,7 +157,7 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
             }
         }
         let selection = requests
-            .map { "\($0.staged ? "s" : "u"):\($0.path)" }
+            .map { "\($0.staged ? "s" : "u"):\($0.rawPath.base64EncodedString())" }
             .joined(separator: "|")
         let contextLines = requests.first?.contextLines ?? 0
         return StagingDiffLoadOutput(

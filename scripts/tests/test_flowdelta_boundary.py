@@ -48,6 +48,31 @@ class FlowDeltaBoundaryTests(unittest.TestCase):
             ],
         )
 
+    def test_kind_qualified_imports_cannot_bypass_the_boundary(self) -> None:
+        for kind in ("typealias", "struct", "class", "enum", "protocol", "let", "var", "func"):
+            for prefix in ("", "@preconcurrency ", "internal "):
+                with self.subTest(kind=kind, prefix=prefix), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory)
+                    self.make_approved_seams(root)
+                    (root / "TypedImport.swift").write_text(
+                        f"{prefix}import {kind} FlowDeltaCore.Symbol\n"
+                    )
+
+                    self.assertEqual(
+                        self.module.boundary_failures(root),
+                        ["TypedImport.swift: imports FlowDelta outside an approved integration seam"],
+                    )
+
+    def test_kind_qualified_imports_are_allowed_in_the_approved_seams(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.make_approved_seams(root)
+            (root / "Controllers" / "HistoryFlowRevisionProvider.swift").write_text(
+                "@preconcurrency import struct FlowDeltaCore.AnalysisLimits\n"
+            )
+
+            self.assertEqual(self.module.boundary_failures(root), [])
+
 
 if __name__ == "__main__":
     unittest.main()
