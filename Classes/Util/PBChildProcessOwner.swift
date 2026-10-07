@@ -592,6 +592,13 @@ private final nonisolated class PBDispatchProcessExitMonitor: PBChildProcessExit
 }
 
 nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
+    /// Verify the supported legacy syscall independently of the host macOS version.
+    private let usesLegacyWorkingDirectoryAPI: Bool
+
+    init(usesLegacyWorkingDirectoryAPI: Bool = false) {
+        self.usesLegacyWorkingDirectoryAPI = usesLegacyWorkingDirectoryAPI
+    }
+
     private struct PreparedDescriptors {
         let standardInput: Int32?
         let standardOutput: Int32
@@ -610,7 +617,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
 
         if let workingDirectory = configuration.workingDirectory {
             try workingDirectory.withCString { path in
-                if #available(macOS 26.0, *) {
+                if #available(macOS 26.0, *), !usesLegacyWorkingDirectoryAPI {
                     try check(
                         posix_spawn_file_actions_addchdir(&fileActions, path),
                         operation: "configure child working directory"

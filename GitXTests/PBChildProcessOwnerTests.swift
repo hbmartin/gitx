@@ -1110,13 +1110,63 @@ final class PBChildProcessOwnerTests: XCTestCase {
     }
 
     func testPosixSpawnRunsInConfiguredWorkingDirectory() throws {
+        try assertSpawnRunsInConfiguredWorkingDirectory(system: PBPosixChildProcessSystem())
+    }
+
+    func testPosixSpawnLegacyWorkingDirectoryRunsInConfiguredDirectory() throws {
+        try assertSpawnRunsInConfiguredWorkingDirectory(
+            system: PBPosixChildProcessSystem(usesLegacyWorkingDirectoryAPI: true)
+        )
+    }
+
+    func testPosixSpawnLegacyWorkingDirectoryRejectsANonDirectoryWithoutClosingStdout() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let regularFile = directory.appendingPathComponent("regular-file")
+        try Data("not a directory".utf8).write(to: regularFile)
+        let output = Pipe()
+        defer { try? output.fileHandleForReading.close() }
+        defer { try? output.fileHandleForWriting.close() }
+        let descriptor = output.fileHandleForWriting.fileDescriptor
+        let system = PBPosixChildProcessSystem(usesLegacyWorkingDirectoryAPI: true)
+
+        let configuration = PBChildProcessConfiguration(
+            launchPath: "/bin/pwd",
+            arguments: [],
+            environment: ProcessInfo.processInfo.environment,
+            workingDirectory: regularFile.path,
+            standardInputFileDescriptor: nil,
+            standardOutputFileDescriptor: descriptor
+        )
+        do {
+            let processIdentifier = try system.spawn(configuration: configuration)
+            _ = kill(processIdentifier, SIGKILL)
+            _ = try waitForProcess(processIdentifier)
+            XCTFail("A regular file cannot become the child working directory")
+        } catch {
+            XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain)
+            XCTAssertEqual((error as NSError).code, Int(ENOTDIR))
+        }
+        XCTAssertGreaterThanOrEqual(fcntl(descriptor, F_GETFD), 0, "Spawn failure retains the caller's pipe ownership")
+        try output.fileHandleForWriting.close()
+        XCTAssertEqual(output.fileHandleForReading.readDataToEndOfFile(), Data())
+    }
+
+    private func assertSpawnRunsInConfiguredWorkingDirectory(system: PBPosixChildProcessSystem) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
         let outputPipe = try makePOSIXPipe()
         defer { Darwin.close(outputPipe.read) }
+        var outputWriteIsOpen = true
+        defer {
+            if outputWriteIsOpen {
+                Darwin.close(outputPipe.write)
+            }
+        }
 
-        let processIdentifier = try PBPosixChildProcessSystem().spawn(configuration: PBChildProcessConfiguration(
+        let processIdentifier = try system.spawn(configuration: PBChildProcessConfiguration(
             launchPath: "/bin/pwd",
             arguments: [],
             environment: ProcessInfo.processInfo.environment,
@@ -1125,6 +1175,7 @@ final class PBChildProcessOwnerTests: XCTestCase {
             standardOutputFileDescriptor: outputPipe.write
         ))
         XCTAssertEqual(Darwin.close(outputPipe.write), 0)
+        outputWriteIsOpen = false
         XCTAssertEqual(try waitForProcess(processIdentifier), 0)
         let output = FileHandle(fileDescriptor: outputPipe.read, closeOnDealloc: false).readDataToEndOfFile()
         let outputPath = try XCTUnwrap(String(data: output, encoding: .utf8))
