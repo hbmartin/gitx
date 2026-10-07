@@ -47,6 +47,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (readwrite) BOOL mutationReconciliationPending;
 @property NSUInteger mutationGeneration;
 @property NSUInteger reconciledMutationGeneration;
+@property NSUInteger postMutationStatCacheRefreshesPending;
 @end
 
 @implementation PBGitIndex
@@ -186,6 +187,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)refresh
 {
+	if (self.postMutationStatCacheRefreshesPending) {
+		NSLog(@"[GitX] Deferred index refresh until %lu post-mutation stat-cache refreshes finish",
+			  (unsigned long)self.postMutationStatCacheRefreshesPending);
+		return;
+	}
 	[self.refreshCoordinator refreshBareRepository:self.repository.isBareRepository
 										parentTree:self.parentTree
 								mutationGeneration:self.mutationGeneration];
@@ -230,6 +236,34 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	[self.refreshCoordinator refreshStatCacheForBareRepository:self.repository.isBareRepository
 													completion:^{
 														[weakSelf refresh];
+													}];
+}
+
+// Called after each Git mutation, including failures that may have changed an
+// earlier chunk. Cached patches can leave matching content with stale index stat
+// metadata, so no refresh may publish this generation until cache work finishes.
+- (void)reconcileAfterMutation
+{
+	if (self.repository.isBareRepository) {
+		// The stat-cache API deliberately has no callback for bare repositories.
+		self.postMutationStatCacheRefreshesPending--;
+		[self refresh];
+		return;
+	}
+	NSLog(@"[GitX] Refreshing index stat cache before reconciling mutation generation %lu",
+		  (unsigned long)self.mutationGeneration);
+	__weak PBGitIndex *weakSelf = self;
+	[self.refreshCoordinator refreshStatCacheForBareRepository:NO
+													completion:^{
+														PBGitIndex *strongSelf = weakSelf;
+														if (!strongSelf) return;
+														strongSelf.postMutationStatCacheRefreshesPending--;
+														NSLog(@"[GitX] Finished post-mutation stat-cache refresh (%lu remaining)",
+															  (unsigned long)strongSelf.postMutationStatCacheRefreshesPending);
+														// Errors still complete this callback. Retain normal snapshot failure
+														// handling, and fan out once for the latest mutation after all caches.
+														if (!strongSelf.postMutationStatCacheRefreshesPending)
+															[strongSelf refresh];
 													}];
 }
 
@@ -328,6 +362,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	// The commit exists even if the post-commit hook failed. Keep mutation
 	// controls disabled until Git reports the authoritative new index state.
 	self.mutationGeneration++;
+	self.postMutationStatCacheRefreshesPending++;
 	self.mutationReconciliationPending = YES;
 
 	NSDictionary *userInfo = @{
@@ -344,8 +379,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	self.amendEnvironment = nil;
 	if (self.amend)
 		self.amend = NO;
-	else
-		[self refresh];
+	[self reconcileAfterMutation];
 }
 
 - (void)postCommitUpdate:(NSString *)update
@@ -401,12 +435,13 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 {
 	if (!files.count) return YES;
 	self.mutationGeneration++;
+	self.postMutationStatCacheRefreshesPending++;
 	self.mutationReconciliationPending = YES;
 	NSArray<NSData *> *paths = [files valueForKey:@"rawPath"];
 	NSError *error = nil;
 	BOOL success = stage ? [self.mutationService stageRawPaths:paths error:&error] : [self.mutationService unstageRawPaths:paths parentTree:self.parentTree error:&error];
 	// A preceding chunk may have succeeded even if this call reports failure.
-	[self refresh];
+	[self reconcileAfterMutation];
 	if (!success) {
 		[self postOperationFailed:[PBIndexOperationErrorPresentation messageForOperation:(stage ? @"Staging files failed" : @"Unstaging files failed") error:error]];
 		return NO;
@@ -429,11 +464,12 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	NSArray<PBChangedFile *> *trackedFiles = [PBIndexFilePresentation discardableFilesFromFiles:discardFiles];
 	if (!trackedFiles.count) return;
 	self.mutationGeneration++;
+	self.postMutationStatCacheRefreshesPending++;
 	self.mutationReconciliationPending = YES;
 	NSArray<NSData *> *paths = [trackedFiles valueForKey:@"rawPath"];
 	NSError *error = nil;
 	BOOL success = [self.mutationService discardRawPaths:paths error:&error];
-	[self refresh];
+	[self reconcileAfterMutation];
 	if (!success) {
 		[self postOperationFailed:[PBIndexOperationErrorPresentation messageForOperation:@"Discarding changes failed" error:error]];
 		return;
@@ -443,17 +479,18 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;
 {
 	self.mutationGeneration++;
+	self.postMutationStatCacheRefreshesPending++;
 	self.mutationReconciliationPending = YES;
 	NSError *error = nil;
 	if (![self.mutationService applyPatch:hunk stage:stage reverse:reverse error:&error]) {
 		NSString *message = [PBIndexOperationErrorPresentation messageForOperation:@"Applying patch failed" error:error];
 		[self postOperationFailed:message];
-		[self refresh];
+		[self reconcileAfterMutation];
 		return NO;
 	}
 
 	// TODO: Try to be smarter about what to refresh
-	[self refresh];
+	[self reconcileAfterMutation];
 	return YES;
 }
 

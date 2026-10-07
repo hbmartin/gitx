@@ -2231,6 +2231,104 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try fixture.git(["show", ":broken-link"]), "missing-target")
     }
 
+    func testFirstPatchReconciliationRefreshesStatCacheBeforePublishingRows() throws {
+        let defaults = UserDefaults.standard
+        let defaultsDomain = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let previousWatcherPreference = defaults.persistentDomain(forName: defaultsDomain)?["PBUseRepositoryWatcher"]
+        defaults.set(false, forKey: "PBUseRepositoryWatcher")
+        NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        defer {
+            if let previousWatcherPreference {
+                defaults.set(previousWatcherPreference, forKey: "PBUseRepositoryWatcher")
+            } else {
+                defaults.removeObject(forKey: "PBUseRepositoryWatcher")
+            }
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: defaults)
+        }
+        try fixture.write(" second\n", to: "nested/tracked.txt")
+        let patch = try fixture.git(["diff", "--unified=0", "--", "nested/tracked.txt"])
+        let index = PBGitIndex(repository: repository)
+        let initial = expectation(forNotification: Notification.Name(PBGitIndexFinishedIndexRefresh), object: index)
+        index.refresh()
+        wait(for: [initial], timeout: 10)
+        let tracked = try XCTUnwrap(index.indexChanges.first { $0.path == "nested/tracked.txt" })
+        XCTAssertTrue(tracked.hasUnstagedChanges)
+        XCTAssertFalse(tracked.hasStagedChanges)
+        let pinnedIndex = UncheckedSendableBox(index)
+        let firstPublication = expectation(
+            forNotification: Notification.Name(PBGitIndexIndexUpdated), object: index
+        ) { _ in
+            XCTAssertTrue(Thread.isMainThread)
+            let firstRows = pinnedIndex.value.indexChanges
+            XCTAssertEqual(firstRows.count, 1)
+            XCTAssertTrue(firstRows.first?.hasStagedChanges == true)
+            XCTAssertFalse(
+                firstRows.first?.hasUnstagedChanges == true,
+                "The first accepted refresh must not publish a phantom unstaged row for the staged hunk"
+            )
+            return true
+        }
+
+        XCTAssertTrue(index.applyPatch(patch, stage: true, reverse: false))
+        XCTAssertTrue(index.mutationReconciliationPending)
+        index.refresh() // A watcher refresh may arrive before asynchronous stat-cache work finishes.
+        wait(for: [firstPublication], timeout: 10)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending })
+        XCTAssertTrue(tracked.hasStagedChanges)
+        XCTAssertFalse(tracked.hasUnstagedChanges)
+        XCTAssertEqual(try fixture.git(["diff-files", "-z"]), "")
+        XCTAssertEqual(try fixture.git(["show", ":0:nested/tracked.txt"]), " second\n")
+    }
+
+    func testMutationReconciliationContinuesWhenStatCacheRefreshFails() throws {
+        try fixture.write("stage despite stat refresh error\n", to: "nested/tracked.txt")
+        let index = PBGitIndex(repository: repository)
+        let initial = expectation(forNotification: Notification.Name(PBGitIndexFinishedIndexRefresh), object: index)
+        index.refresh()
+        wait(for: [initial], timeout: 10)
+        let tracked = try XCTUnwrap(index.indexChanges.first { $0.path == "nested/tracked.txt" })
+        let originalGit = try XCTUnwrap(PBGitBinary.path())
+        defer { XCTAssertTrue(PBGitBinary.accept(originalGit)) }
+        let marker = testArtifactDirectory.appendingPathComponent("failed-post-mutation-stat-refresh")
+        let wrapper = testArtifactDirectory.appendingPathComponent("git-fails-stat-refresh")
+        let script = """
+        #!/bin/sh
+        for argument in "$@"; do
+            if [ "$argument" = --refresh ]; then
+                : > \(shellSingleQuoted(marker.path))
+                echo "expected stat-cache refresh failure" >&2
+                exit 1
+            fi
+        done
+        exec /usr/bin/git "$@"
+        """
+        try script.write(to: wrapper, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        XCTAssertTrue(PBGitBinary.accept(wrapper.path))
+        let finished = expectation(forNotification: Notification.Name(PBGitIndexFinishedIndexRefresh), object: index)
+
+        XCTAssertTrue(index.stageFiles([tracked]))
+        XCTAssertTrue(index.mutationReconciliationPending)
+        wait(for: [finished], timeout: 10)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path), "Post-mutation reconciliation attempted to refresh the stat cache")
+        XCTAssertTrue(tracked.hasStagedChanges)
+        XCTAssertFalse(tracked.hasUnstagedChanges)
+    }
+
+    func testBareMutationReconciliationCompletesWithoutAStatCacheCallback() throws {
+        let bareRepository = try RepositoryTestGitRepository(url: URL(fileURLWithPath: fixture.remotePath))
+        let index = PBGitIndex(repository: bareRepository)
+        let finished = expectation(forNotification: Notification.Name(PBGitIndexFinishedIndexRefresh), object: index)
+
+        XCTAssertFalse(index.applyPatch("", stage: true, reverse: false))
+        XCTAssertTrue(index.mutationReconciliationPending)
+        wait(for: [finished], timeout: 10)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending })
+        XCTAssertTrue(index.indexChanges.isEmpty)
+        withExtendedLifetime(bareRepository) {}
+    }
+
     func testStagingAlwaysDisplaysWhitespaceAndAppliesTheDisplayedPatch() throws {
         let defaults = UserDefaults.standard
         let obsoleteKey = "PBStagingIgnoreWhitespace"

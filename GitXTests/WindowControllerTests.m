@@ -209,6 +209,21 @@ typedef NS_ENUM(NSInteger, PBOpenDisposition) {
 @property (nonatomic, strong) NSURL *testGitURL;
 @end
 
+@interface PBWindowBareRepositoryWithCompatibilityURL : PBWindowRepositoryWithoutGitURLs
+@end
+
+@implementation PBWindowBareRepositoryWithCompatibilityURL
+- (BOOL)isBareRepository
+{
+	return YES;
+}
+@end
+
+@interface PBWorkspaceActionCoordinator : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (NSArray<NSURL *> *)revealURLsFromRepresentedObject:(nullable id)object;
+@end
+
 @interface PBWelcomeWindowController : NSWindowController
 + (instancetype)shared;
 - (void)show;
@@ -3225,6 +3240,77 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertEqual(PBWindowTerminalCount, previousTerminalCount);
 }
 
+- (void)testRealBareRepositoryKeepsFinderAvailableWithoutWorkingDirectoryActions
+{
+	[self git:@[ @"symbolic-ref", @"HEAD", @"refs/heads/main" ] directory:self.remoteURL];
+	NSError *error = nil;
+	PBGitRepository *repository = [[PBGitRepository alloc] initWithURL:self.remoteURL error:&error];
+	XCTAssertNotNil(repository, @"%@", error);
+	XCTAssertTrue(repository.isBareRepository);
+	XCTAssertNil(repository.workingDirectoryURL, @"the real bare fixture exposes no checkout URL");
+	XCTAssertNotNil(repository.gitURL);
+	PBGitRepositoryDocument *document = [PBGitRepositoryDocument new];
+	[document setValue:repository forKey:@"_repository"];
+	PBGitWindowController *controller = [[PBGitWindowController alloc] initWithWindow:self.controller.window];
+	controller.document = document;
+	NSMenuItem *reveal = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Reveal in Finder", @"Real bare-repository test Finder menu title") action:@selector(revealInFinder:) keyEquivalent:@""];
+	NSMenuItem *terminal = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Open in Terminal", @"Real bare-repository test Terminal menu title") action:@selector(openInTerminal:) keyEquivalent:@""];
+	id previousTerminal = [NSUserDefaults.standardUserDefaults objectForKey:@"PBTerminalBundleIdentifier"];
+	[NSUserDefaults.standardUserDefaults setObject:@"com.apple.Terminal" forKey:@"PBTerminalBundleIdentifier"];
+	@try {
+		XCTAssertTrue([controller validateMenuItem:reveal]);
+		XCTAssertFalse([controller validateMenuItem:terminal]);
+		XCTAssertNil([controller selectedURLsFromSender:[self menuItemWithObject:@[ @"tracked.txt" ]]]);
+		NSUInteger previousTerminalCount = PBWindowTerminalCount;
+		[controller openInTerminal:self];
+		XCTAssertEqual(PBWindowTerminalCount, previousTerminalCount, @"direct Terminal actions must also reject a bare repository");
+		NSUInteger previousRevealCount = PBWindowWorkspaceRevealCount;
+		[controller revealInFinder:self];
+		XCTAssertEqual(PBWindowWorkspaceRevealCount, previousRevealCount + 1);
+	} @finally {
+		if (previousTerminal)
+			[NSUserDefaults.standardUserDefaults setObject:previousTerminal forKey:@"PBTerminalBundleIdentifier"];
+		else
+			[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBTerminalBundleIdentifier"];
+		[repository.revisionList cleanup];
+	}
+}
+
+- (void)testBareRepositoryRoleRejectsANonNilCompatibilityWorkingDirectoryURL
+{
+	PBWindowBareRepositoryWithCompatibilityURL *repository = [PBWindowBareRepositoryWithCompatibilityURL new];
+	repository.testWorkingDirectoryURL = [NSURL fileURLWithPath:@"/tmp/gitx-bare-compatibility-location" isDirectory:YES];
+	repository.testGitURL = [NSURL fileURLWithPath:@"/tmp/gitx-bare-role.git" isDirectory:YES];
+	XCTAssertTrue(repository.isBareRepository);
+	XCTAssertNotNil(repository.workingDirectoryURL);
+	PBGitRepositoryDocument *document = [PBGitRepositoryDocument new];
+	[document setValue:repository forKey:@"_repository"];
+	PBGitWindowController *controller = [[PBGitWindowController alloc] initWithWindow:self.controller.window];
+	controller.document = document;
+	NSMenuItem *reveal = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Reveal in Finder", @"Bare-role contract test Finder menu title") action:@selector(revealInFinder:) keyEquivalent:@""];
+	NSMenuItem *terminal = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Open in Terminal", @"Bare-role contract test Terminal menu title") action:@selector(openInTerminal:) keyEquivalent:@""];
+	PBWorkspaceActionCoordinator *coordinator = [[PBWorkspaceActionCoordinator alloc] initWithRepository:repository];
+	id previousTerminal = [NSUserDefaults.standardUserDefaults objectForKey:@"PBTerminalBundleIdentifier"];
+	[NSUserDefaults.standardUserDefaults setObject:@"com.apple.Terminal" forKey:@"PBTerminalBundleIdentifier"];
+	@try {
+		XCTAssertTrue([controller validateMenuItem:reveal]);
+		XCTAssertFalse([controller validateMenuItem:terminal]);
+		XCTAssertNil([controller selectedURLsFromSender:[self menuItemWithObject:@[ @"tracked.txt" ]]]);
+		XCTAssertEqualObjects([coordinator revealURLsFromRepresentedObject:nil], (@[ repository.gitURL ]));
+		NSUInteger previousTerminalCount = PBWindowTerminalCount;
+		[controller openInTerminal:self];
+		XCTAssertEqual(PBWindowTerminalCount, previousTerminalCount);
+		NSUInteger previousRevealCount = PBWindowWorkspaceRevealCount;
+		[controller revealInFinder:self];
+		XCTAssertEqual(PBWindowWorkspaceRevealCount, previousRevealCount + 1);
+	} @finally {
+		if (previousTerminal)
+			[NSUserDefaults.standardUserDefaults setObject:previousTerminal forKey:@"PBTerminalBundleIdentifier"];
+		else
+			[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBTerminalBundleIdentifier"];
+	}
+}
+
 - (void)testRepositoryOpeningCanonicalizesNestedLinkedAndBareRepositoriesInInputOrder
 {
 	NSURL *nestedURL = [self.repositoryURL URLByAppendingPathComponent:@"Sources/Ünicode/Nested" isDirectory:YES];
@@ -4631,11 +4717,18 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 												PBTaskTerminationStatusKey : @17,
 												PBTaskTerminationOutputKey : @"fatal output",
 											}];
-			NSError *outer = [NSError errorWithDomain:@"GitXTests.Message" code:1 userInfo:@{NSUnderlyingErrorKey : task}];
+			NSError *outer = [NSError errorWithDomain:@"GitXTests.Message" code:1 userInfo:@{NSUnderlyingErrorKey : task, NSLocalizedDescriptionKey : @"Git operation failed"}];
 			[PBRecoveryMessageSheet beginSheetWithError:outer windowController:self.controller completionHandler:nil];
 			NSString *info = PBRecoveryLastMessageSheet.infoView.string;
 			XCTAssertEqual([info componentsSeparatedByString:@"Task description"].count - 1, 1U);
 			XCTAssertEqual([info componentsSeparatedByString:@"Task reason"].count - 1, 1U);
+			if (code.integerValue == PBTaskNonZeroExitCodeError) {
+				[PBRecoveryLastMessageSheet.window orderFront:nil];
+				[PBRecoveryLastMessageSheet.window.contentView layoutSubtreeIfNeeded];
+				[PBRecoveryLastMessageSheet.infoView.layoutManager ensureLayoutForTextContainer:PBRecoveryLastMessageSheet.infoView.textContainer];
+				[PBRecoveryLastMessageSheet.window displayIfNeeded];
+				[self attachScreenshotOfView:PBRecoveryLastMessageSheet.window.contentView name:@"Recovery error details with value-equal task domain"];
+			}
 			[PBRecoveryLastMessageSheet.window orderOut:nil];
 		}
 	} @finally {

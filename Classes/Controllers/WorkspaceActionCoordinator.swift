@@ -13,10 +13,15 @@ final class WorkspaceActionCoordinator: NSObject {
         super.init()
     }
 
+    private var usableWorkingDirectoryURL: URL? {
+        guard !repository.isBare() else { return nil }
+        return repository.workingDirectoryURL()
+    }
+
     @objc(selectedURLsFromRepresentedObject:)
     func selectedURLs(from representedObject: Any?) -> [URL]? {
         guard let selectedFiles = representedObject as? [Any], !selectedFiles.isEmpty,
-              let workingDirectoryURL = repository.workingDirectoryURL() else { return nil }
+              let workingDirectoryURL = usableWorkingDirectoryURL else { return nil }
         let urls = selectedFiles.compactMap { file -> URL? in
             guard let path = relativePath(for: file) else { return nil }
             return workingDirectoryURL.appendingPathComponent(path)
@@ -51,7 +56,7 @@ final class WorkspaceActionCoordinator: NSObject {
         if let selected = selectedURLs(from: representedObject), !selected.isEmpty {
             return selected
         }
-        return [repository.workingDirectoryURL() ?? repository.gitURL()].compactMap { $0 }
+        return [usableWorkingDirectoryURL ?? repository.gitURL()].compactMap { $0 }
     }
 
     @objc(openURLs:)
@@ -93,16 +98,16 @@ final class WorkspaceActionCoordinator: NSObject {
     }
 
     @objc var hasWorkingDirectory: Bool {
-        repository.workingDirectoryURL() != nil
+        usableWorkingDirectoryURL != nil
     }
 
     @objc var hasRevealTarget: Bool {
-        repository.workingDirectoryURL() != nil || repository.gitURL() != nil
+        usableWorkingDirectoryURL != nil || repository.gitURL() != nil
     }
 
     @objc(openRepositoryInTerminal)
     func openRepositoryInTerminal() {
-        guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
+        guard let workingDirectoryURL = usableWorkingDirectoryURL else { return }
         logger.debug("Opening repository in terminal")
         TerminalLauncher.shared.open(directory: workingDirectoryURL, presenting: NSApp.keyWindow)
     }
