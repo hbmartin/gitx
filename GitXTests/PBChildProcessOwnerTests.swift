@@ -119,7 +119,9 @@ final class PBChildProcessOwnerTests: XCTestCase {
         var events: [String] {
             lock.lock()
             defer { lock.unlock() }
-            return storedEvents
+            // Assertions may iterate after the lock is released while probes append.
+            // Materialize their snapshot under the lock instead of sharing array storage.
+            return storedEvents.map { $0 }
         }
 
         func setLeaderExited(_ exited: Bool) {
