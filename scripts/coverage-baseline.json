@@ -128,7 +128,7 @@
     "Classes/Views/GLFileView.m": 0.9509,
     "Classes/Views/GitXTextView.m": 0.44,
     "Classes/Views/Milestone2DiagnosticPresenters.swift": 1.0,
-    "Classes/Views/Milestone3DiagnosticPresenters.swift": 0.9812,
+    "Classes/Views/Milestone3DiagnosticPresenters.swift": 0.9852,
     "Classes/Views/NativeContentModels.swift": 1.0,
     "Classes/Views/NativeContentRenderer.swift": 1.0,
     "Classes/Views/NativeContentTypography.swift": 1.0,
@@ -169,7 +169,7 @@
     "Classes/git/PBGitDefaults.m": 0.8493,
     "Classes/git/PBGitGrapher.mm": 0.9508,
     "Classes/git/PBGitHistoryGrapher.m": 0.8679,
-    "Classes/git/PBGitHistoryList.m": 0.9816,
+    "Classes/git/PBGitHistoryList.m": 0.9839,
     "Classes/git/PBGitIndex.m": 0.9807,
     "Classes/git/PBGitLane.mm": 1.0,
     "Classes/git/PBGitRef.m": 0.9021,
@@ -177,7 +177,7 @@
     "Classes/git/PBGitRepository.m": 0.9585,
     "Classes/git/PBGitRepositoryWatcher.m": 0.9751,
     "Classes/git/PBGitRepository_PBGitBinarySupport.m": 0.3857,
-    "Classes/git/PBGitRevList.m": 0.9417,
+    "Classes/git/PBGitRevList.m": 0.947,
     "Classes/git/PBGitRevSpecifier.m": 0.8969,
     "Classes/git/PBGitStash.m": 0.8695,
     "Classes/git/PBGitTree.m": 0.8443,
@@ -221,7 +221,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9218,
+  "minimumLineCoverage": 0.922,
   "target": "Half Dark.app",
   "version": 1
 }

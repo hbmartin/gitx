@@ -1,0 +1,246 @@
+{
+  "verified_at_utc": "2026-10-07T20:57:42.375328+00:00",
+  "result": "passed",
+  "build_receipt": "/Volumes/ExtStor/gitx/artifacts/verification/20261007T204958Z-cee604df67-97105/receipt.json",
+  "build_receipt_copy": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/build-receipt.json",
+  "receipt_sha256": "97c1a21c0b9b9a39050b6b221930edff2fac3845bcb9de5eb3b9ffdb79877af1",
+  "build_head": "cee604df671413b2dd8053c7798365f0fbbf0428",
+  "build_dirty": true,
+  "build_working_tree_fingerprint": "cee5b2d64238da9974613372471002b510030ab8dd77825adee8718c8a682084",
+  "app_bundle": "/Volumes/ExtStor/gitx/build/Half Dark.app",
+  "executable_sha256": "c7ecc56e3defeb4a63d254169df9096c858d07e55c360fc9493854ab3662cc10",
+  "fixture_manifest": "/private/tmp/gitx-push-review-runtime-vt9lfe00/fixture-manifest.json",
+  "sessions": [
+    {
+      "scenario": "settings-changed",
+      "pid": 473,
+      "repository_window_id": 22384,
+      "error_window_id": 22401,
+      "session": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/settings-session.txt",
+      "stdout": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/settings-stdout.txt",
+      "os_log": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/settings-os_log.txt",
+      "observations": [
+        "initial create-PR choice checked",
+        "nonfastforward retry contains frozen source and fetched OIDs",
+        "retry has no suppression checkbox",
+        "remote.origin.receivepack changed only while retry pending",
+        "retry refuses changed settings and requires fresh push",
+        "refs unchanged; no receive-pack placeholder or PR destination observed"
+      ]
+    },
+    {
+      "scenario": "lengthy-output",
+      "pid": 2261,
+      "repository_window_id": 22408,
+      "error_window_id": 22415,
+      "save_panel_window_ids": [
+        22419,
+        22426
+      ],
+      "session": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/lengthy-session.txt",
+      "stdout": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/lengthy-stdout.txt",
+      "os_log": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/lengthy-os_log.txt",
+      "observations": [
+        "hook failure returns promptly with both streams captured to EOF",
+        "head/tail summary explicitly indicates omitted bytes and redacts malformed dummy credential URL",
+        "native Save panel cancelled, original error action restored, reopened successfully",
+        "saved full report to fresh disposable destination",
+        "export button restored and completion logged",
+        "refs unchanged; no PR destination observed"
+      ]
+    }
+  ],
+  "stdout_capture_bytes": 174117,
+  "stderr_capture_bytes": 174220,
+  "omitted_stdout_display_bytes": 167938,
+  "omitted_stderr_display_bytes": 168041,
+  "export": {
+    "report": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/GitX-Push-Output.txt",
+    "byte_count": 348438,
+    "sha256": "49527de43ef262b873035fa87292537decc9bd615c7b47e03b742983a5fb9ab6",
+    "checks": {
+      "Standard output": true,
+      "Standard error": true,
+      "REVIEW_STDOUT_INITIAL": true,
+      "REVIEW_STDOUT_FINAL": true,
+      "REVIEW_STDERR_INITIAL": true,
+      "REVIEW_STDERR_FINAL": true,
+      "stdout diagnostic row 1500": true,
+      "stderr diagnostic row 1500": true,
+      "complete": true,
+      "EOF: yes": true,
+      "dummy_secret_absent": true,
+      "fixture_user_absent": true,
+      "redacted_marker": true,
+      "all_stdout_rows": true,
+      "all_stderr_rows": true
+    },
+    "refs": {
+      "source": "39183cd14f56ddb609679a5278f6309b603cc613",
+      "bare": "c31248aa4c727467e87322f4dc4676b4d9458842",
+      "status": ""
+    }
+  },
+  "final_refs": {
+    "settings-changed": {
+      "refs/heads/feature/milestone-2": "c5d497567b957909054e7fadca3d74fb759015e6",
+      "refs/remotes/origin/feature/milestone-2": "c31248aa4c727467e87322f4dc4676b4d9458842"
+    },
+    "settings-changed.git": {
+      "refs/heads/feature/milestone-2": "c31248aa4c727467e87322f4dc4676b4d9458842"
+    },
+    "lengthy-output": {
+      "refs/heads/feature/milestone-2": "39183cd14f56ddb609679a5278f6309b603cc613",
+      "refs/remotes/origin/feature/milestone-2": "c31248aa4c727467e87322f4dc4676b4d9458842"
+    },
+    "lengthy-output.git": {
+      "refs/heads/feature/milestone-2": "c31248aa4c727467e87322f4dc4676b4d9458842"
+    }
+  },
+  "privacy_log_checks": {
+    "settings": {
+      "dummy_secret_absent": true,
+      "fixture_user_absent": true,
+      "placeholder_not_logged": true,
+      "no_pull_request_open": true
+    },
+    "lengthy": {
+      "dummy_secret_absent": true,
+      "fixture_user_absent": true,
+      "placeholder_not_logged": true,
+      "no_pull_request_open": true
+    }
+  },
+  "screenshots": [
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/frozen-retry.png",
+      "sha256": "f041110cfbfbb643a3f79e30c63ba309f34e52cc4d06a1b78ae85bc9864cc257",
+      "bytes": 115630,
+      "dimensions": [
+        600,
+        1481
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": false
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/push-output-export-completed.png",
+      "sha256": "27acb79ddb909fb8c4080f7defc8446a72ac8435fa2e6970503305d18718fff3",
+      "bytes": 67723,
+      "dimensions": [
+        540,
+        304
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": true
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/push-output-head.png",
+      "sha256": "f292e6167848bd099b4a84590701419ba1a48f1b476255450ab43ed441cfe10d",
+      "bytes": 60379,
+      "dimensions": [
+        540,
+        304
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": true
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/push-output-omission.png",
+      "sha256": "3b0a539c49ac833c77bd8fadadf5ad58f45e7e411ba7ef058a5c664ce2d439f3",
+      "bytes": 67059,
+      "dimensions": [
+        540,
+        304
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": true
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/push-output-summary.png",
+      "sha256": "afb304e35e380ade6208da55b1943d1ffd909525dba7f098e38559df83a06bb2",
+      "bytes": 47083,
+      "dimensions": [
+        540,
+        304
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": true
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/push-output-tail.png",
+      "sha256": "878c709dcf82292db3448d35a8c3acab21ea718f30fcabf28ff700cb0110a550",
+      "bytes": 71349,
+      "dimensions": [
+        540,
+        304
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": true
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/save-push-output-panel-reopened.png",
+      "sha256": "cdc6fcbee4f786505ab9fb892e73af3e958272c3c518bcacc61a6d03e4cf6e28",
+      "bytes": 19221,
+      "dimensions": [
+        370,
+        182
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": true
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/save-push-output-panel.png",
+      "sha256": "eb934e10708c7b54e22caffacfb69c09c6579fcc808c9e1c5f5c671f945348b0",
+      "bytes": 16491,
+      "dimensions": [
+        370,
+        182
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": true
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/settings-changed-repository-window.png",
+      "sha256": "f041110cfbfbb643a3f79e30c63ba309f34e52cc4d06a1b78ae85bc9864cc257",
+      "bytes": 115630,
+      "dimensions": [
+        600,
+        1481
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": false
+    },
+    {
+      "path": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/settings-changed.png",
+      "sha256": "7420598157543dc284a9a4a9f210820efc698e1c0c9c5119a40d615206796d24",
+      "bytes": 21407,
+      "dimensions": [
+        540,
+        179
+      ],
+      "unedited": true,
+      "capture": "exact native window by recorded PID and observed window ID",
+      "suitable_for_attachment": true
+    }
+  ],
+  "canonical_stop_completed": true,
+  "initial_failed_attempt": {
+    "pid": 98906,
+    "session": "/private/tmp/gitx-push-review-runtime-vt9lfe00/diagnostics/initial-launch-session.txt",
+    "observation": "App and log process exited before first observer; no fresh crash report found. Persistent supervising PTY kept both canonical sessions alive. This is consistent with short exec process-group cleanup; no application push executed on failed attempt."
+  },
+  "limitations": [
+    "Repository-only canonical screenshot excludes attached native sheet. Captures selected for attachment therefore use exact observed native window IDs. Frozen-retry.png and settings-changed-repository-window.png are retained for provenance but are not useful attachment images.",
+    "Only local disposable transports were exercised; no network or user repository operation occurred."
+  ]
+}
