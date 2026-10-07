@@ -65,10 +65,11 @@ nonisolated struct PBChildProcessTerminationSchedule: Equatable, Sendable {
         terminationWasSent: Bool
     ) {
         let requestedTermination = Self.adding(Self.nanoseconds(for: gracePeriod), to: now)
-        terminationDeadline = min(terminationDeadline ?? requestedTermination, requestedTermination)
+        let earliestTermination = min(terminationDeadline ?? requestedTermination, requestedTermination)
+        terminationDeadline = earliestTermination
 
         guard let forceKillDelay else { return }
-        let forceKillBase = terminationWasSent ? now : terminationDeadline ?? requestedTermination
+        let forceKillBase = terminationWasSent ? now : earliestTermination
         let requestedForceKill = Self.adding(Self.nanoseconds(for: forceKillDelay), to: forceKillBase)
         forceKillDeadline = min(forceKillDeadline ?? requestedForceKill, requestedForceKill)
     }
