@@ -196,7 +196,8 @@
 
         let point = window?.contentView?.convert(event.locationInWindow, to: cell) ?? .zero
         let i = Int(cell.indexAt(x: point.x))
-        let clickedRef: PBGitRef? = (i >= 0 && i < commit.refs.count) ? commit.refs[i] as? PBGitRef : nil
+        let refs = commit.refs
+        let clickedRef: PBGitRef? = (i >= 0 && i < (refs?.count ?? 0)) ? refs?[i] as? PBGitRef : nil
 
         let selectedCommits = controller.selectedCommits
         let items: [NSMenuItem]

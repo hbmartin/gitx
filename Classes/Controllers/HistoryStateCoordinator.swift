@@ -139,8 +139,8 @@ final class HistoryStateCoordinator: NSObject {
             guard let index = children.firstIndex(where: {
                 ($0.value(forKey: "path") as? String) == component
             }) else {
-                NSLog("[GitX] Could not restore file-browser selection component: %@", component)
-                return nil
+                NSLog("[GitX] File-browser path component %@ disappeared; selecting the first available root item", component)
+                return IndexPath(index: 0)
             }
             result = result.appending(index)
             children = children[index].value(forKey: "children") as? [NSObject] ?? []

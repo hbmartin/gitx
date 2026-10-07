@@ -18,19 +18,40 @@ final class WorkspaceActionCoordinator: NSObject {
         guard let selectedFiles = representedObject as? [Any], !selectedFiles.isEmpty,
               let workingDirectoryURL = repository.workingDirectoryURL() else { return nil }
         let urls = selectedFiles.compactMap { file -> URL? in
-            let path: Any?
-            if let string = file as? String {
-                path = string
-            } else if let object = file as? NSObject, object.responds(to: NSSelectorFromString("path")) {
-                path = object.value(forKey: "path")
-            } else {
-                path = nil
-            }
-            guard let path = path as? String else { return nil }
+            guard let path = relativePath(for: file) else { return nil }
             return workingDirectoryURL.appendingPathComponent(path)
         }
         logger.debug("Normalized selected workspace paths")
         return urls
+    }
+
+    private func relativePath(for file: Any) -> String? {
+        if let path = file as? String {
+            return path
+        }
+        guard let object = file as? NSObject, object.responds(to: NSSelectorFromString("path")) else { return nil }
+        var path = object.value(forKey: "path") as? String
+        if object.responds(to: NSSelectorFromString("rawPath")), let identity = object.value(forKey: "rawPath") {
+            if object.responds(to: NSSelectorFromString("fullPath")) {
+                path = object.value(forKey: "fullPath") as? String
+            }
+            guard let bytes = identity as? Data, !bytes.isEmpty, !bytes.contains(0),
+                  let path, String(data: bytes, encoding: .utf8) == path, Data(path.utf8) == bytes
+            else {
+                logger.notice("Rejected workspace path with unavailable or mismatched raw filename identity")
+                return nil
+            }
+            return path
+        }
+        return path
+    }
+
+    @objc(revealURLsFromRepresentedObject:)
+    func revealURLs(from representedObject: Any?) -> [URL] {
+        if let selected = selectedURLs(from: representedObject), !selected.isEmpty {
+            return selected
+        }
+        return [repository.workingDirectoryURL() ?? repository.gitURL()].compactMap { $0 }
     }
 
     @objc(openURLs:)
@@ -73,6 +94,10 @@ final class WorkspaceActionCoordinator: NSObject {
 
     @objc var hasWorkingDirectory: Bool {
         repository.workingDirectoryURL() != nil
+    }
+
+    @objc var hasRevealTarget: Bool {
+        repository.workingDirectoryURL() != nil || repository.gitURL() != nil
     }
 
     @objc(openRepositoryInTerminal)

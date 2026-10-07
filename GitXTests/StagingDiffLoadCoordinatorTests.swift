@@ -146,9 +146,32 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
         await fulfillment(of: [secondDelivered], timeout: 2)
 
         XCTAssertEqual(identifiers.values, [
-            "staging:u:context.txt:ctx3",
-            "staging:u:context.txt:ctx8",
+            "staging:u:\(Data("context.txt".utf8).base64EncodedString()):ctx3",
+            "staging:u:\(Data("context.txt".utf8).base64EncodedString()):ctx8",
         ])
+    }
+
+    func testRawBytesParticipateInCacheIdentityWhenDisplayNamesCollide() async {
+        let firstDelivered = expectation(description: "raw filename delivered")
+        let secondDelivered = expectation(description: "literal filename delivered")
+        let identifiers = LockedValues<String>()
+        let coordinator = StagingDiffLoadCoordinator { _ in .success("preview") }
+        func collision(_ rawPath: Data) -> StagingDiffLoadRequest {
+            StagingDiffLoadRequest(path: "f\\xFF", rawPath: rawPath, status: 1,
+                                   hasStagedChanges: false, staged: false, parentTree: "HEAD",
+                                   contextLines: 3, workingDirectoryURL: nil, syntheticUntracked: false)
+        }
+        coordinator.schedule([collision(Data([0x66, 0xFF]))]) { output in
+            identifiers.append(output.cacheIdentifier)
+            firstDelivered.fulfill()
+        }
+        await fulfillment(of: [firstDelivered], timeout: 2)
+        coordinator.schedule([collision(Data("f\\xFF".utf8))]) { output in
+            identifiers.append(output.cacheIdentifier)
+            secondDelivered.fulfill()
+        }
+        await fulfillment(of: [secondDelivered], timeout: 2)
+        XCTAssertNotEqual(identifiers.values[0], identifiers.values[1])
     }
 
     private func request(

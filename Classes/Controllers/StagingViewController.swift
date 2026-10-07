@@ -23,6 +23,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     private var selectionCoalescer: RefreshCoalescer?
     private var pushCapabilityAvailable = false
     private var pendingCreatePullRequestAfterPush = false
+    private var pendingMutationObservation: NSKeyValueObservation?
 
     @objc let commitMessageView: PBCommitMessageView
     private let commitButton = NSButton(title: NSLocalizedString("Commit", comment: "Commit button in the staging pane"), target: nil, action: nil)
@@ -80,6 +81,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     @objc func closeView() {
         NotificationCenter.default.removeObserver(self)
+        pendingMutationObservation = nil
         selectionCoalescer?.cancel()
         selectionCoalescer = nil
         if amendButton.infoForBinding(.value) != nil {
@@ -130,7 +132,9 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         commitButton.setAccessibilityIdentifier("CommitButton")
         commitButton.isEnabled = false
 
-        amendButton.bind(NSBindingName.value, to: index, withKeyPath: "amend", options: nil)
+        amendButton.bind(NSBindingName.value, to: index, withKeyPath: "amend", options: [.conditionallySetsEnabled: false])
+        pushAfterCommitButton.target = self
+        pushAfterCommitButton.action = #selector(pushAfterCommitChanged(_:))
         pushAfterCommitButton.setAccessibilityIdentifier("PushAfterCommit")
         createPullRequestAfterPushButton.setAccessibilityIdentifier("GitX.Staging.CreatePullRequestAfterPush")
         createPullRequestAfterPushButton.setAccessibilityLabel("Create Pull Request after pushing this commit")
@@ -147,13 +151,17 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         fileListController.onSelectionChange = { [weak self] in
             self?.selectionCoalescer?.requestRefresh()
         }
+        pendingMutationObservation = index.observe(\.mutationReconciliationPending, options: [.initial, .new]) { [weak self] _, _ in
+            // swift6-safety-justification: PBGitIndex publishes mutation state on the main thread; initial observation is installed by loadView.
+            MainActor.assumeIsolated { self?.refreshOperationControls() }
+        }
     }
 
     /// Refreshes everything that can go stale while the pane is hidden.
     @objc func updateView() {
         reloadPushRemotes()
         fileListController.rearrange()
-        commitButton.isEnabled = fileListController.stagedFileCount > 0
+        refreshOperationControls()
         if fileListController.currentDiffRequests.isEmpty {
             fileListController.selectInitialFile()
         }
@@ -288,14 +296,15 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc private func openExternalDiff(_ sender: Any?) {
-        let requests = fileListController.currentDiffRequests
-        guard let request = requests.first else { return }
-        var arguments = ["difftool", "-y", "--no-prompt"]
-        if request.staged {
-            arguments.append("--cached")
+        guard let request = fileListController.currentDiffRequests.first else { return }
+        var error: NSError?
+        guard let arguments = index.diffToolArguments(for: request.file, staged: request.staged, error: &error) else {
+            if let error {
+                windowController?.showErrorSheet(error)
+            }
+            return
         }
-        arguments.append(contentsOf: ["--", request.file.path])
-        NSLog("[GitX] Launching external diff for %@", request.file.path)
+        NSLog("[GitX] Launching external diff for one supported filename")
         let task = repository.task(withArguments: arguments)
         task.perform(on: DispatchQueue.global(qos: .userInitiated)) { [weak self] _, error in
             guard let error else { return }
@@ -413,21 +422,18 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             }
         }
 
-        pushAfterCommitButton.isEnabled = presentation.canPush
-        pushRemotePopUpButton.isEnabled = presentation.canPush
-        createPullRequestAfterPushButton.isEnabled = presentation.canPush
+        pushCapabilityAvailable = presentation.canPush
+        refreshOperationControls()
         if presentation.canPush {
             var restoredChoice = wasAvailable ? livePushChoice : repositoryUISettings.pushAfterCommit
             if let failedSubmissionPushChoice {
                 restoredChoice = failedSubmissionPushChoice.boolValue
-                _ = commitWorkflowState.consumeRememberedPushChoice()
             }
             pushAfterCommitButton.state = restoredChoice ? .on : .off
         } else {
-            pushAfterCommitButton.state = .off
+            pushAfterCommitButton.state = failedSubmissionPushChoice?.boolValue == true ? .on : .off
             createPullRequestAfterPushButton.state = .off
         }
-        pushCapabilityAvailable = presentation.canPush
         NSLog(
             "[GitX] Reloaded staging push controls (remote count: %ld, can push: %@)",
             presentation.remoteNames.count,
@@ -437,7 +443,42 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     // MARK: Commit workflow
 
+    private var mutationControlsEnabled: Bool {
+        !index.mutationReconciliationPending && !commitWorkflowState.submissionActive
+    }
+
+    private func refreshOperationControls() {
+        guard isViewLoaded else { return }
+        let enabled = mutationControlsEnabled
+        commitButton.isEnabled = enabled && fileListController.stagedFileCount > 0
+        amendButton.isEnabled = enabled
+        pushAfterCommitButton.isEnabled = enabled && pushCapabilityAvailable
+        pushRemotePopUpButton.isEnabled = enabled && pushCapabilityAvailable
+        createPullRequestAfterPushButton.isEnabled = enabled && pushCapabilityAvailable
+    }
+
+    private func supportedPaths(for files: [PBChangedFile]) -> [String]? {
+        let paths = files.compactMap(\.safePath)
+        guard paths.count == files.count else {
+            NSLog("[GitX] Refused a string-only action for unsupported filename bytes")
+            windowController?.showMessageSheet(
+                NSLocalizedString("Filename unavailable for this action", comment: "Unsupported raw filename action title"),
+                infoText: Self.unsupportedFilenameExplanation
+            )
+            return nil
+        }
+        return paths
+    }
+
+    private static var unsupportedFilenameExplanation: String {
+        NSLocalizedString(
+            "This filename contains bytes that cannot be represented safely for this action. Whole-file Git staging operations remain available.",
+            comment: "Unsupported raw filename action explanation"
+        )
+    }
+
     private func commit(verify: Bool) {
+        guard mutationControlsEnabled else { return }
         let mergeHeadPath = repository.gitURL().map { ($0.path as NSString).appendingPathComponent("MERGE_HEAD") }
         let mergeInProgress = mergeHeadPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
         let stagedCount = fileListController.stagedFileCount
@@ -520,6 +561,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             canRemember: pushAfterCommitButton.isEnabled
         )
 
+        refreshOperationControls()
         fileListController.clearSelections()
         host?.isBusy = true
         commitMessageView.isEditable = false
@@ -538,9 +580,10 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     private func discardChanges(for files: [PBChangedFile], force: Bool) {
-        guard !files.isEmpty else { return }
+        guard mutationControlsEnabled, !files.isEmpty else { return }
         let performDiscard: () -> Void = { [weak self] in
-            self?.index.discardChanges(for: files)
+            guard let self, mutationControlsEnabled else { return }
+            index.discardChanges(for: files)
         }
         guard !force else {
             performDiscard()
@@ -568,12 +611,20 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc func toggleAmendCommit(_ sender: Any?) {
+        guard mutationControlsEnabled else { return }
         index.isAmend = !index.isAmend
     }
 
+    @objc func pushAfterCommitChanged(_: Any?) {
+        guard mutationControlsEnabled else { return }
+        commitWorkflowState.updateRememberedPushChoice(pushAfterCommitButton.state == .on)
+    }
+
     @objc func createPullRequestAfterPushChanged(_: Any?) {
+        guard mutationControlsEnabled else { return }
         if createPullRequestAfterPushButton.state == .on {
             pushAfterCommitButton.state = .on
+            pushAfterCommitChanged(nil)
         }
     }
 
@@ -604,6 +655,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc func prepareCommitMessage(_ sender: Any?) {
+        guard mutationControlsEnabled else { return }
         host?.isBusy = true
         if let prepared = index.createPrepareCommitMessage() {
             let replacementRange = NSRange(location: 0, length: (commitMessageView.string as NSString).length)
@@ -615,6 +667,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc func stageFiles(_ sender: Any?) {
+        guard mutationControlsEnabled else { return }
         let selection = actionSelection(for: .stage, sender: sender)
         guard !selection.files.isEmpty else { return }
         NSLog("[GitX] Staging %ld file(s) from the resolved action selection", selection.files.count)
@@ -622,6 +675,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc func unstageFiles(_ sender: Any?) {
+        guard mutationControlsEnabled else { return }
         let selection = actionSelection(for: .unstage, sender: sender)
         guard !selection.files.isEmpty else { return }
         NSLog("[GitX] Unstaging %ld file(s) from the resolved action selection", selection.files.count)
@@ -639,21 +693,24 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     @objc func openFiles(_ sender: Any?) {
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
         let files = actionSelection(for: .open, sender: sender).files
-        let urls = files.map { workingDirectoryURL.appendingPathComponent($0.path) }
+        guard let paths = supportedPaths(for: files) else { return }
+        let urls = paths.map { workingDirectoryURL.appendingPathComponent($0) }
         windowController?.open(urls)
     }
 
     @objc func revealInFinder(_ sender: Any?) {
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
         let files = actionSelection(for: .reveal, sender: sender).files
-        let urls = files.map { workingDirectoryURL.appendingPathComponent($0.path) }
+        guard let paths = supportedPaths(for: files) else { return }
+        let urls = paths.map { workingDirectoryURL.appendingPathComponent($0) }
         windowController?.revealURLs(inFinder: urls)
     }
 
     @objc func moveToTrash(_ sender: Any?) {
+        guard mutationControlsEnabled else { return }
         guard let workingDirectoryURL = repository.workingDirectoryURL() else { return }
         let files = actionSelection(for: .trash, sender: sender).files
-        guard !files.isEmpty else { return }
+        guard !files.isEmpty, let paths = supportedPaths(for: files) else { return }
 
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -665,23 +722,25 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         alert.addButton(withTitle: NSLocalizedString("OK", comment: "Move to trash alert - OK button"))
         alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Move to trash alert - Cancel button"))
         _ = windowController?.confirmDialog(alert, suppressionIdentifier: nil) { [weak self] in
+            guard let self, mutationControlsEnabled else { return }
             var anyTrashed = false
-            for file in files {
-                let fileURL = workingDirectoryURL.appendingPathComponent(file.path)
+            for path in paths {
+                let fileURL = workingDirectoryURL.appendingPathComponent(path)
                 if (try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)) != nil {
                     anyTrashed = true
                 }
             }
             if anyTrashed {
-                self?.index.refresh()
+                index.refresh()
             }
         }
     }
 
     @objc func ignoreFiles(_ sender: Any?) {
+        guard mutationControlsEnabled else { return }
         let files = actionSelection(for: .ignore, sender: sender).files
         guard !files.isEmpty else { return }
-        let paths = files.map(\.path).filter { !$0.isEmpty }
+        guard let paths = supportedPaths(for: files) else { return }
         do {
             try repository.ignoreFilePaths(paths)
         } catch {
@@ -712,7 +771,10 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     // MARK: Notifications
 
     @objc private func refreshFinished(_ notification: Notification) {
-        host?.isBusy = false
+        if !commitWorkflowState.submissionActive {
+            host?.isBusy = false
+        }
+        refreshOperationControls()
         host?.status = NSLocalizedString(
             "Index refresh finished",
             comment: "Message in status bar when refreshing the index is done"
@@ -743,6 +805,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
         let rememberedPushChoice = commitWorkflowState.pendingRememberedPushChoice
         let pushPlan = commitWorkflowState.consumePendingPush()
+        refreshOperationControls()
         let createPullRequestAfterPush = pendingCreatePullRequestAfterPush
         pendingCreatePullRequestAfterPush = false
         createPullRequestAfterPushButton.state = .off
@@ -771,6 +834,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         if let rememberedPushChoice = commitWorkflowState.cancelSubmission() {
             pushAfterCommitButton.state = rememberedPushChoice.boolValue ? .on : .off
         }
+        refreshOperationControls()
 
         let reason = notification.userInfo?["description"] as? String ?? ""
         host?.status = String(
@@ -794,6 +858,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         if let rememberedPushChoice = commitWorkflowState.cancelSubmission() {
             pushAfterCommitButton.state = rememberedPushChoice.boolValue ? .on : .off
         }
+        refreshOperationControls()
 
         let reason = notification.userInfo?["description"] as? String ?? ""
         host?.status = String(
@@ -820,7 +885,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     @objc private func indexChanged(_ notification: Notification) {
         fileListController.rearrange()
-        commitButton.isEnabled = fileListController.stagedFileCount > 0
+        refreshOperationControls()
     }
 
     @objc private func indexOperationFailed(_ notification: Notification) {
@@ -860,7 +925,14 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             return true
         }
         if action == #selector(openExternalDiff(_:)) {
-            return !fileListController.currentDiffRequests.isEmpty
+            guard let request = fileListController.currentDiffRequests.first else { return false }
+            var error: NSError?
+            let available = index.diffToolArguments(for: request.file, staged: request.staged, error: &error) != nil
+            menuItem.toolTip = available ? nil : error?.localizedDescription
+            return available
+        }
+        if CommitMenuPresenter.isMutation(action: action), !mutationControlsEnabled {
+            return false
         }
         if action == #selector(changeListLayout(_:)) {
             menuItem.state = fileListController.layout.rawValue == menuItem.tag ? .on : .off
@@ -875,17 +947,22 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         }
         let resolvedFiles = selection?.files ?? []
         let isInContextualMenu = menuItem.parent == nil
+        if CommitMenuPresenter.requiresStringPath(action: action), resolvedFiles.contains(where: { $0.safePath == nil }) {
+            menuItem.toolTip = Self.unsupportedFilenameExplanation
+            return false
+        }
+        menuItem.toolTip = nil
         let singleSelectionIsSubmodule = isInContextualMenu &&
             action == #selector(openFiles(_:)) &&
             resolvedFiles.count == 1 &&
-            (try? repository.submodule(atPath: resolvedFiles[0].path)) != nil
+            resolvedFiles[0].safePath.flatMap { try? repository.submodule(atPath: $0) } != nil
         let isAmend = action == #selector(toggleAmendCommit(_:)) && index.isAmend
         let prepareHookExists = action == #selector(prepareCommitMessage(_:)) &&
             repository.hookExists("prepare-commit-msg")
 
         func menuFiles(_ files: [PBChangedFile]) -> [CommitMenuFile] {
             files.map {
-                CommitMenuFile(path: $0.path, status: $0.status.rawValue, hasUnstagedChanges: $0.hasUnstagedChanges)
+                CommitMenuFile(path: $0.path, status: $0.worktreeStatus.rawValue, hasUnstagedChanges: $0.hasUnstagedChanges)
             }
         }
 

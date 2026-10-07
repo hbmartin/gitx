@@ -93,7 +93,7 @@ final nonisolated class StagingDiffRequest: NSObject {
 @objc(PBStagingListViewModel)
 final nonisolated class StagingListViewModel: NSObject {
     private enum DragPayloadKey {
-        static let path = "path"
+        static let rawPath = "rawPath"
         static let sourceSection = "sourceSection"
     }
 
@@ -103,7 +103,7 @@ final nonisolated class StagingListViewModel: NSObject {
     @objc(filesInSection:fromChanges:)
     func files(in section: StagingListSection, from changes: [PBChangedFile]) -> [PBChangedFile] {
         let predicate = filterPredicate(for: section)
-        return sorted(changes.filter { predicate.evaluate(with: $0) })
+        return sorted(changes.filter { predicate.evaluate(with: $0) }, section: section)
     }
 
     func filterPredicate(for section: StagingListSection) -> NSPredicate {
@@ -123,19 +123,31 @@ final nonisolated class StagingListViewModel: NSObject {
         }
     }
 
-    var sortDescriptors: [NSSortDescriptor] {
+    @objc var sortDescriptors: [NSSortDescriptor] {
+        sortDescriptors(for: .staged)
+    }
+
+    func sortDescriptors(for section: StagingListSection) -> [NSSortDescriptor] {
         let localizedPath = NSSortDescriptor(key: "path", ascending: true) { left, right in
             guard let left = left as? String, let right = right as? String else { return .orderedSame }
             let localized = left.localizedCaseInsensitiveCompare(right)
             return localized == .orderedSame ? left.compare(right, options: .literal) : localized
         }
+        let rawIdentity = NSSortDescriptor(key: "rawPath", ascending: true) { left, right in
+            guard let left = left as? Data, let right = right as? Data else { return .orderedSame }
+            if left == right {
+                return .orderedSame
+            }
+            return left.lexicographicallyPrecedes(right) ? .orderedAscending : .orderedDescending
+        }
         switch sortOrder {
         case .path:
-            return [localizedPath]
+            return [localizedPath, rawIdentity]
         case .status:
             return [
-                NSSortDescriptor(key: "status", ascending: false),
+                NSSortDescriptor(key: section == .staged ? "stagedStatus" : "worktreeStatus", ascending: false),
                 localizedPath,
+                rawIdentity,
             ]
         }
     }
@@ -203,7 +215,7 @@ final nonisolated class StagingListViewModel: NSObject {
         selectedIndexes.compactMap { index -> [String: Any]? in
             guard rows.indices.contains(index), let file = rows[index].file else { return nil }
             return [
-                DragPayloadKey.path: file.path,
+                DragPayloadKey.rawPath: file.rawPath,
                 DragPayloadKey.sourceSection: rows[index].section.rawValue,
             ]
         }
@@ -224,26 +236,26 @@ final nonisolated class StagingListViewModel: NSObject {
         destinationSection: StagingListSection
     ) -> [PBChangedFile]? {
         guard let dictionaries = propertyList as? [[String: Any]] else { return nil }
-        var entries: [(path: String, source: StagingListSection)] = []
+        var entries: [(rawPath: Data, source: StagingListSection)] = []
         for dictionary in dictionaries {
             guard dictionary.count == 2,
-                  let path = dictionary[DragPayloadKey.path] as? String,
-                  !path.isEmpty,
+                  let rawPath = dictionary[DragPayloadKey.rawPath] as? Data,
+                  !rawPath.isEmpty, !rawPath.contains(0),
                   let rawSection = dictionary[DragPayloadKey.sourceSection] as? Int,
                   let source = StagingListSection(rawValue: rawSection)
             else { return nil }
-            entries.append((path, source))
+            entries.append((rawPath, source))
         }
 
-        var seenPaths = Set<String>()
+        var seenPaths = Set<Data>()
         var resolved: [PBChangedFile] = []
         for entry in entries where entry.source != destinationSection {
-            guard !seenPaths.contains(entry.path),
+            guard !seenPaths.contains(entry.rawPath),
                   let file = rows.first(where: {
-                      $0.section == entry.source && $0.file?.path == entry.path
+                      $0.section == entry.source && $0.file?.rawPath == entry.rawPath
                   })?.file
             else { continue }
-            seenPaths.insert(entry.path)
+            seenPaths.insert(entry.rawPath)
             resolved.append(file)
         }
         return resolved
@@ -302,8 +314,8 @@ final nonisolated class StagingListViewModel: NSObject {
         return selected.filter(\.staged) + selected.filter { !$0.staged }
     }
 
-    private func sorted(_ files: [PBChangedFile]) -> [PBChangedFile] {
-        (files as NSArray).sortedArray(using: sortDescriptors).compactMap { $0 as? PBChangedFile }
+    private func sorted(_ files: [PBChangedFile], section: StagingListSection) -> [PBChangedFile] {
+        (files as NSArray).sortedArray(using: sortDescriptors(for: section)).compactMap { $0 as? PBChangedFile }
     }
 
     private func resolvedSplitFiles(
@@ -322,8 +334,8 @@ final nonisolated class StagingListViewModel: NSObject {
     }
 
     private func deduplicated(_ files: [PBChangedFile]) -> [PBChangedFile] {
-        var seenPaths = Set<String>()
-        return files.filter { seenPaths.insert($0.path).inserted }
+        var seenPaths = Set<Data>()
+        return files.filter { seenPaths.insert($0.rawPath).inserted }
     }
 }
 

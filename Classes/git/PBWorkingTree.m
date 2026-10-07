@@ -3,11 +3,14 @@
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitIndex.h"
 #import "PBChangedFile.h"
+#import "PBTask.h"
+#import "GitX-Swift.h"
 #include <string.h>
 
 @interface PBWorkingTree ()
 @property (nonatomic) NSMutableArray<PBWorkingTree *> *workingChildren;
 @property (nonatomic) NSString *workingStatus;
+@property (nonatomic, copy, readwrite, nullable) NSData *rawPath;
 @end
 
 @implementation PBWorkingTree
@@ -20,18 +23,26 @@
 	root.leaf = NO;
 	root.workingChildren = [NSMutableArray array];
 
-	NSMutableDictionary<NSString *, PBChangedFile *> *changes = [NSMutableDictionary dictionary];
-	for (PBChangedFile *file in repository.index.indexChanges) changes[file.path] = file;
+	NSMutableDictionary<NSData *, PBChangedFile *> *changes = [NSMutableDictionary dictionary];
+	for (PBChangedFile *file in repository.index.indexChanges) changes[file.rawPath] = file;
 
-	NSMutableOrderedSet<NSString *> *paths = [NSMutableOrderedSet orderedSet];
-	NSError *error = nil;
-	NSString *trackedAndUntracked = [repository outputOfTaskWithArguments:@[ @"ls-files", @"-co", @"--exclude-standard", @"-z" ] error:&error];
-	for (NSString *path in [trackedAndUntracked componentsSeparatedByString:@"\0"]) if (path.length) [paths addObject:path];
-	NSString *deleted = [repository outputOfTaskWithArguments:@[ @"ls-files", @"--deleted", @"-z" ] error:nil];
-	for (NSString *path in [deleted componentsSeparatedByString:@"\0"]) if (path.length) [paths addObject:path];
+	NSMutableOrderedSet<NSData *> *paths = [NSMutableOrderedSet orderedSet];
+	for (NSArray<NSString *> *arguments in @[ @[ @"ls-files", @"-co", @"--exclude-standard", @"-z" ], @[ @"ls-files", @"--deleted", @"-z" ] ]) {
+		PBTask *task = [repository taskWithArguments:arguments];
+		NSError *error = nil;
+		if ([task launchTask:&error])
+			[paths addObjectsFromArray:[PBIndexFilePresentation rawPathsFromData:task.standardOutputData]];
+		else
+			PBLogError(error);
+	}
 
 	NSMutableDictionary<NSString *, PBWorkingTree *> *nodes = [NSMutableDictionary dictionaryWithObject:root forKey:@""];
-	for (NSString *filePath in paths) {
+	for (NSData *rawPath in paths) {
+		NSString *filePath = [PBIndexFilePresentation safePathForRawPath:rawPath];
+		if (!filePath) {
+			NSLog(@"[GitX] Keeping unsupported working-tree filename in staging only: %@", [PBIndexFilePresentation displayPathForRawPath:rawPath]);
+			continue;
+		}
 		NSArray<NSString *> *components = [filePath pathComponents];
 		NSMutableString *accumulated = [NSMutableString string];
 		PBWorkingTree *parent = root;
@@ -53,14 +64,9 @@
 			parent = node;
 		}
 
-		PBChangedFile *change = changes[filePath];
-		if (change) {
-			NSMutableArray *states = [NSMutableArray array];
-			if (change.hasStagedChanges) [states addObject:@"staged"];
-			if (change.hasUnstagedChanges) [states addObject:(change.status == NEW ? @"untracked" : @"unstaged")];
-			if (change.status == DELETED) [states addObject:@"deleted"];
-			parent.workingStatus = [states componentsJoinedByString:@", "];
-		}
+		parent.rawPath = rawPath;
+		PBChangedFile *change = changes[rawPath];
+		if (change) parent.workingStatus = [PBIndexFilePresentation workingStatusForFile:change];
 	}
 
 	for (PBWorkingTree *node in nodes.allValues) {
@@ -81,24 +87,34 @@
 {
 	if (self.workingStatus.length == 0) return self.path;
 	NSString *symbol = @"M";
-	if ([self.workingStatus containsString:@"untracked"]) symbol = @"?";
-	else if ([self.workingStatus containsString:@"deleted"]) symbol = @"D";
-	else if ([self.workingStatus containsString:@"staged"] && ![self.workingStatus containsString:@"unstaged"]) symbol = @"S";
+	if ([self.workingStatus containsString:@"untracked"])
+		symbol = @"?";
+	else if ([self.workingStatus containsString:@"deleted"])
+		symbol = @"D";
+	else if ([self.workingStatus containsString:@"staged"] && ![self.workingStatus containsString:@"unstaged"])
+		symbol = @"S";
 	return [NSString stringWithFormat:@"%@  [%@]", self.path, symbol];
+}
+
+- (NSString *)fullPath
+{
+	if (self.leaf && self.rawPath) return [PBIndexFilePresentation safePathForRawPath:self.rawPath];
+	return [super fullPath];
 }
 
 - (NSURL *)workingFileURL
 {
-	return [self.repository.workingDirectoryURL URLByAppendingPathComponent:self.fullPath];
+	NSString *path = [PBIndexFilePresentation safePathForRawPath:self.rawPath];
+	return path ? [self.repository.workingDirectoryURL URLByAppendingPathComponent:path] : nil;
 }
 
 - (NSString *)contents
 {
-	if (!self.leaf) return @"";
+	if (!self.leaf || ![PBIndexFilePresentation pathMatchesRawPath:self.rawPath fullPath:self.fullPath]) return @"";
 	NSData *data = [NSData dataWithContentsOfURL:self.workingFileURL];
 	if (!data) {
 		NSError *error = nil;
-		NSString *indexed = [self.repository outputOfTaskWithArguments:@[ @"show", [@":" stringByAppendingString:self.fullPath] ] error:&error];
+		NSString *indexed = [self.repository outputOfTaskWithArguments:@[ @"show", [@":0:" stringByAppendingString:self.fullPath] ] error:&error];
 		return indexed ?: error.localizedDescription ?:
 													   @"";
 	}
@@ -129,17 +145,29 @@
 
 - (NSString *)blame
 {
-	if (!self.leaf) return @"";
+	if (!self.leaf || ![PBIndexFilePresentation pathMatchesRawPath:self.rawPath fullPath:self.fullPath]) return @"";
 	NSError *error = nil;
-	NSString *blame = [self.repository outputOfTaskWithArguments:@[ @"blame", @"-p", @"--", self.fullPath ] error:&error];
+	NSArray<NSString *> *arguments = [self.repository.index literalArgumentsForRawPath:self.rawPath commandArguments:@[ @"blame", @"-p" ] error:&error];
+	if (!arguments) {
+		PBLogError(error);
+		return @"";
+	}
+	NSString *blame = [self.repository outputOfTaskWithArguments:arguments error:&error];
 	return blame ?: [self porcelainForUntrackedContents:self.contents];
 }
 
 - (NSString *)log:(NSString *)format
 {
-	if (!self.leaf) return @"";
+	if (!self.leaf || ![PBIndexFilePresentation pathMatchesRawPath:self.rawPath fullPath:self.fullPath]) return @"";
 	NSError *error = nil;
-	return [self.repository outputOfTaskWithArguments:@[ @"log", [NSString stringWithFormat:@"--pretty=format:%@", format], @"--follow", @"--", self.fullPath ] error:&error] ?: @"";
+	NSArray<NSString *> *arguments = [self.repository.index literalArgumentsForRawPath:self.rawPath
+																	  commandArguments:@[ @"log", [NSString stringWithFormat:@"--pretty=format:%@", format], @"--follow" ]
+																				 error:&error];
+	if (!arguments) {
+		PBLogError(error);
+		return @"";
+	}
+	return [self.repository outputOfTaskWithArguments:arguments error:&error] ?: @"";
 }
 
 - (long long)fileSize
@@ -151,6 +179,7 @@
 
 - (NSString *)tmpFileNameForContents
 {
+	if (![PBIndexFilePresentation pathMatchesRawPath:self.rawPath fullPath:self.fullPath]) return nil;
 	if ([[NSFileManager defaultManager] fileExistsAtPath:self.workingFileURL.path]) return self.workingFileURL.path;
 	return [super tmpFileNameForContents];
 }

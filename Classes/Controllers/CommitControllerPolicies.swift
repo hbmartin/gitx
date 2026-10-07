@@ -127,14 +127,18 @@ final nonisolated class CommitWorkflowState: NSObject {
     @objc var pendingBranchRef: PBGitRef?
     @objc var pendingRemoteName: String?
     @objc var pendingRememberedPushChoice: NSNumber?
+    @objc private(set) var submissionActive = false
 
     @objc(beginSubmissionWithPushChoice:canRemember:)
     func beginSubmission(pushChoice: Bool, canRemember: Bool) {
+        guard !submissionActive else { return }
+        submissionActive = true
         pendingRememberedPushChoice = canRemember ? NSNumber(value: pushChoice) : nil
     }
 
     @objc(armWithBranchRef:remoteName:)
     func arm(branchRef: PBGitRef, remoteName: String) {
+        guard !submissionActive else { return }
         pendingBranchRef = branchRef
         pendingRemoteName = remoteName
         NSLog("[GitX] Armed commit-and-push workflow")
@@ -148,10 +152,12 @@ final nonisolated class CommitWorkflowState: NSObject {
         pendingBranchRef = nil
         pendingRemoteName = nil
         pendingRememberedPushChoice = nil
+        submissionActive = false
     }
 
     @objc(cancelSubmission)
     func cancelSubmission() -> NSNumber? {
+        submissionActive = false
         let rememberedPushChoice = pendingRememberedPushChoice
         pendingBranchRef = nil
         pendingRemoteName = nil
@@ -163,8 +169,16 @@ final nonisolated class CommitWorkflowState: NSObject {
 
     @objc(consumeRememberedPushChoice)
     func consumeRememberedPushChoice() -> NSNumber? {
+        guard !submissionActive else { return nil }
         defer { pendingRememberedPushChoice = nil }
         return pendingRememberedPushChoice
+    }
+
+    @objc(updateRememberedPushChoice:)
+    func updateRememberedPushChoice(_ choice: Bool) {
+        guard !submissionActive, pendingRememberedPushChoice != nil else { return }
+        pendingRememberedPushChoice = NSNumber(value: choice)
+        NSLog("[GitX] Updated retry push choice from the explicit checkbox action")
     }
 
     @objc(consumePendingPush)

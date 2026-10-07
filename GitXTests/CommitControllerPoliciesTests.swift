@@ -143,6 +143,51 @@ final class CommitControllerPoliciesTests: XCTestCase {
         XCTAssertNil(state.cancelSubmission())
     }
 
+    func testWorkflowStateRetainsBothPushChoicesThroughoutActiveSubmission() {
+        for choice in [true, false] {
+            let state = PBCommitWorkflowState()
+            state.beginSubmission(pushChoice: choice, canRemember: true)
+            XCTAssertNil(state.consumeRememberedPushChoice(), "remote refresh must not consume an active submission")
+            XCTAssertEqual(state.pendingRememberedPushChoice?.boolValue, choice)
+            XCTAssertEqual(state.cancelSubmission()?.boolValue, choice)
+            XCTAssertEqual(state.consumeRememberedPushChoice()?.boolValue, choice)
+            XCTAssertNil(state.pendingRememberedPushChoice)
+        }
+    }
+
+    func testWorkflowStateKeepsTheOriginalPushPlanAndChoiceDuringActiveSubmission() {
+        let state = PBCommitWorkflowState()
+        let originalBranch = PBGitRef(string: "refs/heads/original")
+        let replacementBranch = PBGitRef(string: "refs/heads/replacement")
+        state.arm(branchRef: originalBranch, remoteName: "origin")
+        state.beginSubmission(pushChoice: false, canRemember: true)
+        state.arm(branchRef: replacementBranch, remoteName: "replacement")
+        state.beginSubmission(pushChoice: true, canRemember: true)
+        XCTAssertEqual(state.pendingBranchRef, originalBranch)
+        XCTAssertEqual(state.pendingRemoteName, "origin")
+        XCTAssertEqual(state.pendingRememberedPushChoice, false)
+    }
+
+    func testWorkflowStateAcceptsExplicitRetryChangesOnlyAfterSubmissionEnds() {
+        let state = PBCommitWorkflowState()
+        XCTAssertFalse(state.submissionActive)
+        state.updateRememberedPushChoice(true)
+        XCTAssertNil(state.pendingRememberedPushChoice)
+        state.beginSubmission(pushChoice: false, canRemember: true)
+        XCTAssertTrue(state.submissionActive)
+        state.updateRememberedPushChoice(true)
+        XCTAssertEqual(state.pendingRememberedPushChoice, false)
+        XCTAssertEqual(state.cancelSubmission(), false)
+        XCTAssertFalse(state.submissionActive)
+        state.updateRememberedPushChoice(true)
+        XCTAssertEqual(state.consumeRememberedPushChoice(), true)
+        state.beginSubmission(pushChoice: true, canRemember: false)
+        XCTAssertTrue(state.submissionActive)
+        XCTAssertNil(state.pendingRememberedPushChoice)
+        state.clear()
+        XCTAssertFalse(state.submissionActive)
+    }
+
     func testMessagePolicyAddsDeduplicatesAndPreservesAmendThreshold() {
         let added = PBCommitMessagePolicy.messageByAddingSignOff(
             to: "Subject",

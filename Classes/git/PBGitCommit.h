@@ -40,7 +40,7 @@ extern NSString *const kGitXCommitType;
 @property (nonatomic, strong, readonly, nullable) NSString *SVNRevision;
 
 @property (nonatomic, copy, readonly) NSArray<GTOID *> *parents;
-@property (atomic, strong) NSMutableArray<PBGitRef *> *refs;
+@property (atomic, strong, nullable) NSMutableArray<PBGitRef *> *refs;
 
 // Graph metadata is produced off the main thread and consumed while AppKit draws. Keep publication atomic so
 // readers cannot observe a freshly allocated PBGraphCellInfo before its immutable contents are initialized.

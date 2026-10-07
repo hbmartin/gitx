@@ -275,6 +275,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @property (nonatomic, readonly) NSButton *overflowButton;
 - (void)configureWithFile:(PBChangedFile *)file checkboxState:(NSInteger)checkboxState
 	NS_SWIFT_NAME(configure(with:checkboxState:));
+- (void)configureWithFile:(PBChangedFile *)file checkboxState:(NSInteger)checkboxState section:(PBStagingListSection)section NS_SWIFT_NAME(configure(with:checkboxState:section:));
 @end
 
 @interface PBStagingSectionHeaderView : NSView
@@ -332,6 +333,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @interface PBStagingListViewModel : NSObject
+@property (nonatomic, readonly, copy) NSArray<NSSortDescriptor *> *sortDescriptors;
 @property (nonatomic, copy) NSString *searchText;
 @property (nonatomic) PBStagingFileSortOrder sortOrder;
 - (NSArray<PBChangedFile *> *)filesInSection:(PBStagingListSection)section
@@ -693,10 +695,11 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 
 @interface PBRepositoryStashService : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
-- (BOOL)saveWithKeepIndex:(BOOL)keepIndex error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (BOOL)saveWithKeepIndex:(BOOL)keepIndex error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
 @end
 
 @interface PBIndexStatusEntry : NSObject
+@property (nonatomic, copy, readonly) NSData *rawPath;
 @property (nonatomic, readonly) NSString *path;
 @property (nonatomic, readonly) NSInteger status;
 @property (nonatomic, readonly, nullable) NSString *commitBlobMode;
@@ -704,15 +707,18 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @end
 
 @interface PBIndexStatusParser : NSObject
-- (nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)parseTrackedData:(nullable NSData *)data
-															 error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
-- (nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)parseUntrackedData:(nullable NSData *)data
-															   error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
+- (nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)parseTrackedData:(nullable NSData *)data
+																	  error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)parseUntrackedData:(nullable NSData *)data
+																		error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
 @end
 
 @interface PBIndexFileSnapshot : NSObject
+@property (nonatomic, copy, readonly) NSData *rawPath;
 @property (nonatomic, readonly) NSString *path;
 @property (nonatomic) NSInteger status;
+@property (nonatomic) NSInteger stagedStatus;
+@property (nonatomic) NSInteger worktreeStatus;
 @property (nonatomic, nullable) NSString *commitBlobMode;
 @property (nonatomic, nullable) NSString *commitBlobSHA;
 @property (nonatomic) BOOL hasStagedChanges;
@@ -721,15 +727,40 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 					  status:(NSInteger)status
 			  commitBlobMode:(nullable NSString *)commitBlobMode
 			   commitBlobSHA:(nullable NSString *)commitBlobSHA
-		 hasStagedChanges:(BOOL)hasStagedChanges
-	  hasUnstagedChanges:(BOOL)hasUnstagedChanges;
+			hasStagedChanges:(BOOL)hasStagedChanges
+		  hasUnstagedChanges:(BOOL)hasUnstagedChanges;
+@end
+
+@interface PBIndexFileSnapshot (RawIdentity)
+- (instancetype)initWithPath:(NSString *)path rawPath:(NSData *)rawPath status:(NSInteger)status stagedStatus:(NSInteger)stagedStatus worktreeStatus:(NSInteger)worktreeStatus commitBlobMode:(nullable NSString *)commitBlobMode commitBlobSHA:(nullable NSString *)commitBlobSHA hasStagedChanges:(BOOL)hasStagedChanges hasUnstagedChanges:(BOOL)hasUnstagedChanges;
+@end
+
+@interface PBIndexFilePresentation : NSObject
++ (NSString *)displayPathForRawPath:(NSData *)rawPath NS_SWIFT_NAME(displayPath(forRawPath:));
++ (nullable NSString *)safePathForRawPath:(NSData *)rawPath NS_SWIFT_NAME(safePath(forRawPath:));
++ (NSArray<NSData *> *)rawPathsFromData:(NSData *)data NS_SWIFT_NAME(rawPaths(from:));
++ (BOOL)pathMatchesRawPath:(nullable NSData *)rawPath fullPath:(nullable NSString *)fullPath NS_SWIFT_NAME(pathMatchesRawPath(_:fullPath:));
++ (NSString *)imageNameForStatus:(NSInteger)status;
++ (NSString *)workingStatusForFile:(PBChangedFile *)file NS_SWIFT_NAME(workingStatus(for:));
++ (NSArray<PBChangedFile *> *)discardableFilesFromFiles:(NSArray<PBChangedFile *> *)files NS_SWIFT_NAME(discardableFiles(from:));
+@end
+
+@interface PBIndexWorkingStateSummary : NSObject
+@property (nonatomic, readonly) NSUInteger stagedCount;
+@property (nonatomic, readonly) NSUInteger unstagedCount;
+@property (nonatomic, readonly) NSUInteger untrackedCount;
+- (instancetype)initWithFiles:(NSArray<PBChangedFile *> *)files;
+@end
+
+@interface PBIndexOperationErrorPresentation : NSObject
++ (NSString *)messageForOperation:(NSString *)operation error:(nullable NSError *)error NS_SWIFT_NAME(message(forOperation:error:));
 @end
 
 @interface PBIndexSnapshotReducer : NSObject
 - (NSArray<PBIndexFileSnapshot *> *)reducePrevious:(NSArray<PBIndexFileSnapshot *> *)previous
-												 staged:(nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)staged
-												unstaged:(nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)unstaged
-											   untracked:(nullable NSDictionary<NSString *, PBIndexStatusEntry *> *)untracked;
+											staged:(nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)staged
+										  unstaged:(nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)unstaged
+										 untracked:(nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)untracked;
 @end
 
 @interface PBNativeContentSection : NSObject
@@ -836,50 +867,93 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 
 @protocol PBIndexCommandRunning <NSObject>
 - (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments
-										 input:(nullable NSString *)input
-								 environment:(nullable NSDictionary<NSString *, id> *)environment
-										 error:(NSError * _Nullable * _Nullable)error;
+									 input:(nullable NSString *)input
+							   environment:(nullable NSDictionary<NSString *, id> *)environment
+									 error:(NSError *_Nullable *_Nullable)error;
 - (void)dataWithArguments:(NSArray<NSString *> *)arguments
-                completion:(void (^)(NSData * _Nullable data, NSError * _Nullable error))completion;
+			   completion:(void (^)(NSData *_Nullable data, NSError *_Nullable error))completion;
+@end
+
+@protocol PBIndexBinaryCommandRunning <PBIndexCommandRunning>
+- (nullable NSString *)outputWithArguments:(NSArray<NSString *> *)arguments
+								 inputData:(nullable NSData *)inputData
+							   environment:(nullable NSDictionary<NSString *, id> *)environment
+									 error:(NSError *_Nullable *_Nullable)error;
+@end
+
+__attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
+@interface IndexRepositoryCommandRunner : NSObject<PBIndexBinaryCommandRunning>
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
 @end
 
 @interface PBIndexRefreshResult : NSObject
-@property (nonatomic, readonly, nullable) NSDictionary<NSString *, PBIndexStatusEntry *> *staged;
-@property (nonatomic, readonly, nullable) NSDictionary<NSString *, PBIndexStatusEntry *> *unstaged;
-@property (nonatomic, readonly, nullable) NSDictionary<NSString *, PBIndexStatusEntry *> *untracked;
+@property (nonatomic, readonly) NSUInteger mutationGeneration;
+- (instancetype)initWithStaged:(nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)staged unstaged:(nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)unstaged untracked:(nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)untracked mutationGeneration:(NSUInteger)mutationGeneration;
+@property (nonatomic, readonly, nullable) NSDictionary<NSData *, PBIndexStatusEntry *> *staged;
+@property (nonatomic, readonly, nullable) NSDictionary<NSData *, PBIndexStatusEntry *> *unstaged;
+@property (nonatomic, readonly, nullable) NSDictionary<NSData *, PBIndexStatusEntry *> *untracked;
+@end
+
+@interface PBIndexFileReconciliation : NSObject
+@property (nonatomic, copy, readonly) NSArray<PBChangedFile *> *files;
+@property (nonatomic, readonly) BOOL membershipChanged;
+- (instancetype)initWithFiles:(NSArray<PBChangedFile *> *)files result:(PBIndexRefreshResult *)result reducer:(PBIndexSnapshotReducer *)reducer;
+@end
+
+@interface PBGitIndex (RecoveryTesting)
+- (nullable NSArray<NSString *> *)literalArgumentsForRawPath:(NSData *)rawPath commandArguments:(NSArray<NSString *> *)commandArguments error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(literalArguments(forRawPath:commandArguments:error:)) __attribute__((swift_error(none)));
+- (void)applyRefreshResult:(PBIndexRefreshResult *)result NS_SWIFT_NAME(applyRefreshResult(_:));
+- (void)postIndexRefreshFinished NS_SWIFT_NAME(postIndexRefreshFinished());
+@end
+
+@interface PBIndexFileViewSnapshot : NSObject
+@property (nonatomic, copy, readonly) NSData *rawPath;
+@property (nonatomic, copy, readonly) NSString *path;
+@property (nonatomic, readonly) NSInteger stagedStatus;
+@property (nonatomic, readonly) NSInteger worktreeStatus;
+@property (nonatomic, readonly) BOOL hasStagedChanges;
+@property (nonatomic, readonly) BOOL hasUnstagedChanges;
++ (NSArray<PBIndexFileViewSnapshot *> *)snapshotsForFiles:(NSArray<PBChangedFile *> *)files NS_SWIFT_NAME(snapshots(forFiles:));
+- (PBChangedFile *)materializedFile;
 @end
 
 @interface PBIndexRefreshCoordinator : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository
+							parser:(PBIndexStatusParser *)parser
+					 statusHandler:(void (^)(BOOL success, NSString *message))statusHandler
+					 resultHandler:(void (^)(PBIndexRefreshResult *result))resultHandler
+					   idleHandler:(void (^)(void))idleHandler;
 - (instancetype)initWithRunner:(id<PBIndexCommandRunning>)runner
-                         parser:(PBIndexStatusParser *)parser
-                  statusHandler:(void (^)(BOOL success, NSString *message))statusHandler
-                  resultHandler:(void (^)(PBIndexRefreshResult *result))resultHandler
-                    idleHandler:(void (^)(void))idleHandler;
+						parser:(PBIndexStatusParser *)parser
+				 statusHandler:(void (^)(BOOL success, NSString *message))statusHandler
+				 resultHandler:(void (^)(PBIndexRefreshResult *result))resultHandler
+				   idleHandler:(void (^)(void))idleHandler;
 - (void)refreshBareRepository:(BOOL)bareRepository parentTree:(NSString *)parentTree;
+- (void)refreshBareRepository:(BOOL)bareRepository parentTree:(NSString *)parentTree mutationGeneration:(NSUInteger)mutationGeneration;
 - (void)refreshStatCacheForBareRepository:(BOOL)bareRepository completion:(void (^)(void))completion;
 @end
 
 @protocol PBIndexHookRunning <NSObject>
 - (BOOL)executeHook:(NSString *)name
-          arguments:(NSArray<NSString *> *)arguments
-              error:(NSError * _Nullable * _Nullable)error
-       outputHandler:(void (^)(NSData *data))outputHandler;
+		  arguments:(NSArray<NSString *> *)arguments
+			  error:(NSError *_Nullable *_Nullable)error
+	  outputHandler:(void (^)(NSData *data))outputHandler;
 @end
 
 typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
-    PBIndexCommitResultKindSuccess,
-    PBIndexCommitResultKindFailure,
-    PBIndexCommitResultKindHookFailure,
+	PBIndexCommitResultKindSuccess,
+	PBIndexCommitResultKindFailure,
+	PBIndexCommitResultKindHookFailure,
 };
 
 @interface PBIndexCommitRequest : NSObject
 - (instancetype)initWithMessage:(NSString *)message
-                         verify:(BOOL)verify
-                        gpgSign:(BOOL)gpgSign
-                          amend:(BOOL)amend
-                    environment:(nullable NSDictionary<NSString *, id> *)environment
-                     parentSHAs:(NSArray<NSString *> *)parentSHAs
-                        hasHead:(BOOL)hasHead;
+						 verify:(BOOL)verify
+						gpgSign:(BOOL)gpgSign
+						  amend:(BOOL)amend
+					environment:(nullable NSDictionary<NSString *, id> *)environment
+					 parentSHAs:(NSArray<NSString *> *)parentSHAs
+						hasHead:(BOOL)hasHead;
 @end
 
 @interface PBIndexCommitResult : NSObject
@@ -950,6 +1024,13 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 @end
 
 @interface PBIndexMutationService : NSObject
+- (nullable NSArray<NSString *> *)literalArgumentsForRawPath:(NSData *)rawPath commandArguments:(NSArray<NSString *> *)commandArguments error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(literalArguments(forRawPath:commandArguments:error:)) __attribute__((swift_error(none)));
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
+- (nullable NSArray<NSString *> *)diffToolArgumentsForRawPath:(NSData *)rawPath staged:(BOOL)staged error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(diffToolArguments(forRawPath:staged:error:)) __attribute__((swift_error(none)));
+- (BOOL)stageRawPaths:(NSArray<NSData *> *)paths error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (BOOL)unstageRawPaths:(NSArray<NSData *> *)paths parentTree:(NSString *)parentTree error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (BOOL)discardRawPaths:(NSArray<NSData *> *)paths error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+- (nullable NSString *)diffForRawPath:(NSData *)rawPath displayPath:(NSString *)displayPath status:(NSInteger)status hasStagedChanges:(BOOL)hasStagedChanges staged:(BOOL)staged parentTree:(NSString *)parentTree contextLines:(NSUInteger)contextLines ignoreWhitespace:(BOOL)ignoreWhitespace error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner;
 - (BOOL)stagePaths:(NSArray<NSString *> *)paths error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
 - (BOOL)unstagePaths:(NSArray<NSString *> *)paths parentTree:(NSString *)parentTree error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
@@ -970,6 +1051,10 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 					  contextLines:(NSUInteger)contextLines
 				  ignoreWhitespace:(BOOL)ignoreWhitespace
 							 error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+@end
+
+@interface PBIndexGitExecutableIdentity : NSObject
++ (NSString *)identityForPath:(NSString *)path NS_SWIFT_NAME(identity(forPath:));
 @end
 
 @interface PBCommitRemotePresentation : NSObject
@@ -1024,6 +1109,7 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 @property (nonatomic, strong, nullable) PBGitRef *pendingBranchRef;
 @property (nonatomic, copy, nullable) NSString *pendingRemoteName;
 @property (nonatomic, strong, nullable) NSNumber *pendingRememberedPushChoice;
+@property (nonatomic, readonly) BOOL submissionActive;
 - (void)beginSubmissionWithPushChoice:(BOOL)pushChoice canRemember:(BOOL)canRemember
 	NS_SWIFT_NAME(beginSubmission(pushChoice:canRemember:));
 - (void)armWithBranchRef:(PBGitRef *)branchRef remoteName:(NSString *)remoteName
@@ -1031,6 +1117,7 @@ typedef NS_ENUM(NSInteger, PBCommitSubmissionDisposition) {
 - (void)clear;
 - (nullable NSNumber *)cancelSubmission;
 - (nullable NSNumber *)consumeRememberedPushChoice;
+- (void)updateRememberedPushChoice:(BOOL)choice;
 - (nullable PBCommitPushPlan *)consumePendingPush;
 @end
 
@@ -1140,7 +1227,8 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @end
 
 @interface PBWorkingTree : PBGitTree
-+ (instancetype)rootForRepository:(PBGitRepository *)repository;
+@property (nonatomic, copy, readonly, nullable) NSData *rawPath;
++ (instancetype)rootForRepository:(PBGitRepository *)repository NS_SWIFT_NAME(root(for:));
 @end
 
 @interface PBQLTextView : NSTextView

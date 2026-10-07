@@ -14,9 +14,18 @@ private final nonisolated class HistoryFlatTreeRoot: PBGitTree {
 
 private struct HistoryChangedPath {
     let path: String
+    let rawPath: Data?
     let status: String
     let previousPath: String?
     let order: Int
+
+    init(path: String, rawPath: Data? = nil, status: String, previousPath: String?, order: Int) {
+        self.path = path
+        self.rawPath = rawPath
+        self.status = status
+        self.previousPath = previousPath
+        self.order = order
+    }
 
     var statusRank: Int {
         switch status.first {
@@ -64,8 +73,13 @@ final class HistoryTreePresentation: NSObject {
         let nodes: [PBGitTree]
         if commit is PBUncommittedChanges {
             let leaves = leafNodes(in: commit.tree)
-            let byPath = Dictionary(uniqueKeysWithValues: leaves.map { ($0.fullPath, $0) })
-            nodes = changes.compactMap { byPath[$0.path] }
+            var byRawPath: [Data: PBGitTree] = [:]
+            for case let leaf as PBWorkingTree in leaves {
+                if let rawPath = leaf.rawPath {
+                    byRawPath[rawPath] = leaf
+                }
+            }
+            nodes = changes.compactMap { $0.rawPath.flatMap { byRawPath[$0] } }
         } else {
             nodes = changes.map { change in
                 let node = PBGitTree()
@@ -78,10 +92,21 @@ final class HistoryTreePresentation: NSObject {
             }
         }
 
-        let metadataByPath = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
-        for node in nodes {
-            if let value = metadataByPath[node.fullPath] {
-                metadata[ObjectIdentifier(node)] = value
+        if commit is PBUncommittedChanges {
+            let byRawPath = Dictionary(uniqueKeysWithValues: changes.compactMap { change in
+                change.rawPath.map { ($0, change) }
+            })
+            for case let node as PBWorkingTree in nodes {
+                if let rawPath = node.rawPath, let value = byRawPath[rawPath] {
+                    metadata[ObjectIdentifier(node)] = value
+                }
+            }
+        } else {
+            let metadataByPath = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
+            for node in nodes {
+                if let value = metadataByPath[node.fullPath] {
+                    metadata[ObjectIdentifier(node)] = value
+                }
             }
         }
         root.flatChildren = sorted(nodes)
@@ -111,20 +136,25 @@ final class HistoryTreePresentation: NSObject {
     }
 
     private func workingChanges() -> [HistoryChangedPath] {
-        guard let output = try? repository.outputOfTask(withArguments: [
-            "status", "--porcelain=v1", "-z", "--untracked-files=all",
-        ]) else { return [] }
-        let tokens = output.components(separatedBy: "\0").filter { !$0.isEmpty }
+        let task = repository.task(withArguments: ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        guard (try? task.launch()) != nil else { return [] }
+        let tokens = IndexFilePresentation.rawPaths(data: task.standardOutputData)
         var result: [HistoryChangedPath] = []
         var index = 0
         while index < tokens.count {
             let record = tokens[index]
-            guard record.count >= 3 else { index += 1; continue }
-            let status = String(record.prefix(2)).trimmingCharacters(in: .whitespaces)
-            let path = String(record.dropFirst(3))
+            guard record.count >= 3, record[record.startIndex + 2] == 0x20,
+                  let statusField = String(data: record.prefix(2), encoding: .ascii) else { index += 1; continue }
+            let status = statusField.trimmingCharacters(in: .whitespaces)
+            let rawPath = Data(record.dropFirst(3))
             let rename = status.contains("R") || status.contains("C")
-            let previous = rename && index + 1 < tokens.count ? tokens[index + 1] : nil
-            result.append(HistoryChangedPath(path: path, status: status, previousPath: previous, order: result.count))
+            let previous = rename && index + 1 < tokens.count
+                ? IndexPathDisplayName.string(for: tokens[index + 1]) : nil
+            if let path = IndexFilePresentation.safePath(rawPath: rawPath) {
+                result.append(HistoryChangedPath(path: path, rawPath: rawPath, status: status, previousPath: previous, order: result.count))
+            } else {
+                NSLog("[GitX] Omitted unsupported filename from working-state tree: %@", IndexPathDisplayName.string(for: rawPath))
+            }
             index += rename ? 2 : 1
         }
         return result

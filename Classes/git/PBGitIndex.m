@@ -44,6 +44,9 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (retain) PBIndexCommitService *commitService;
 @property (retain) PBIndexCommitCoordinator *commitCoordinator;
 @property (retain) PBIndexRefreshCoordinator *refreshCoordinator;
+@property (readwrite) BOOL mutationReconciliationPending;
+@property NSUInteger mutationGeneration;
+@property NSUInteger reconciledMutationGeneration;
 @end
 
 @implementation PBGitIndex
@@ -91,6 +94,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 	_amend = newAmend;
 	self.amendEnvironment = nil;
+	// HEAD and HEAD^ describe different index snapshots. Invalidate a queued
+	// result for the previous comparison before publishing the new context.
+	self.mutationGeneration++;
+	self.mutationReconciliationPending = YES;
 
 	[self refresh];
 
@@ -144,6 +151,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 {
 	dispatch_async(dispatch_get_main_queue(), ^{
 		[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexFinishedIndexRefresh object:self];
+		if (self.reconciledMutationGeneration == self.mutationGeneration)
+			self.mutationReconciliationPending = NO;
 	});
 }
 
@@ -178,50 +187,30 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 - (void)refresh
 {
 	[self.refreshCoordinator refreshBareRepository:self.repository.isBareRepository
-										parentTree:self.parentTree];
+										parentTree:self.parentTree
+								mutationGeneration:self.mutationGeneration];
 }
 
 - (void)applyRefreshResult:(PBIndexRefreshResult *)result
 {
+	if (result.mutationGeneration != self.mutationGeneration) {
+		NSLog(@"[GitX] Discarded index refresh generation %lu before mutation generation %lu",
+			  (unsigned long)result.mutationGeneration, (unsigned long)self.mutationGeneration);
+		return;
+	}
+	self.reconciledMutationGeneration = result.mutationGeneration;
 	NSUInteger stagedCount = result.staged.count;
 	NSUInteger unstagedCount = result.unstaged.count;
 	NSUInteger untrackedCount = result.untracked.count;
 
-	NSMutableArray<PBIndexFileSnapshot *> *previous = [NSMutableArray arrayWithCapacity:self.files.count];
-	for (PBChangedFile *file in self.files) {
-		[previous addObject:[[PBIndexFileSnapshot alloc] initWithPath:file.path
-															   status:file.status
-													   commitBlobMode:file.commitBlobMode
-														commitBlobSHA:file.commitBlobSHA
-													 hasStagedChanges:file.hasStagedChanges
-												   hasUnstagedChanges:file.hasUnstagedChanges]];
-	}
-	NSArray<PBIndexFileSnapshot *> *snapshots = [self.snapshotReducer reducePrevious:previous
-																			  staged:result.staged
-																			unstaged:result.unstaged
-																		   untracked:result.untracked];
-	NSMutableDictionary<NSString *, PBChangedFile *> *existing = [NSMutableDictionary dictionaryWithCapacity:self.files.count];
-	for (PBChangedFile *file in self.files)
-		existing[file.path] = file;
-	NSMutableArray<PBChangedFile *> *reconciled = [NSMutableArray arrayWithCapacity:snapshots.count];
-	BOOL membershipChanged = snapshots.count != self.files.count;
-	for (PBIndexFileSnapshot *snapshot in snapshots) {
-		PBChangedFile *file = existing[snapshot.path];
-		if (!file) {
-			file = [[PBChangedFile alloc] initWithPath:snapshot.path];
-			membershipChanged = YES;
-		}
-		file.status = (PBChangedFileStatus)snapshot.status;
-		file.commitBlobMode = snapshot.commitBlobMode;
-		file.commitBlobSHA = snapshot.commitBlobSHA;
-		file.hasStagedChanges = snapshot.hasStagedChanges;
-		file.hasUnstagedChanges = snapshot.hasUnstagedChanges;
-		[reconciled addObject:file];
-	}
-	if (membershipChanged)
+	PBIndexFileReconciliation *reconciliation = [[PBIndexFileReconciliation alloc]
+		initWithFiles:self.files
+			   result:result
+			  reducer:self.snapshotReducer];
+	if (reconciliation.membershipChanged)
 		[self willChangeValueForKey:@"indexChanges"];
-	[self.files setArray:reconciled];
-	if (membershipChanged)
+	[self.files setArray:reconciliation.files];
+	if (reconciliation.membershipChanged)
 		[self didChangeValueForKey:@"indexChanges"];
 	NSLog(@"[GitX] Merged index refresh snapshots: %lu staged, %lu unstaged, %lu untracked",
 		  (unsigned long)stagedCount,
@@ -336,6 +325,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		[self postCommitHookFailure:result.message];
 		return;
 	}
+	// The commit exists even if the post-commit hook failed. Keep mutation
+	// controls disabled until Git reports the authoritative new index state.
+	self.mutationGeneration++;
+	self.mutationReconciliationPending = YES;
 
 	NSDictionary *userInfo = @{
 		@"success" : @(result.postCommitHookSucceeded),
@@ -346,9 +339,6 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexFinishedCommit
 														object:self
 													  userInfo:userInfo];
-	if (!result.postCommitHookSucceeded)
-		return;
-
 	self.repository.hasChanged = YES;
 
 	self.amendEnvironment = nil;
@@ -409,20 +399,18 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (BOOL)performStageOrUnstage:(BOOL)stage withFiles:(NSArray *)files
 {
-	NSArray<NSString *> *paths = [files valueForKey:@"path"];
+	if (!files.count) return YES;
+	self.mutationGeneration++;
+	self.mutationReconciliationPending = YES;
+	NSArray<NSData *> *paths = [files valueForKey:@"rawPath"];
 	NSError *error = nil;
-	BOOL success = stage ? [self.mutationService stagePaths:paths error:&error] : [self.mutationService unstagePaths:paths parentTree:self.parentTree error:&error];
+	BOOL success = stage ? [self.mutationService stageRawPaths:paths error:&error] : [self.mutationService unstageRawPaths:paths parentTree:self.parentTree error:&error];
+	// A preceding chunk may have succeeded even if this call reports failure.
+	[self refresh];
 	if (!success) {
-		[self postOperationFailed:[NSString stringWithFormat:@"Error in %@ files. Return value: %@", (stage ? @"staging" : @"unstaging"), error.userInfo[PBTaskTerminationStatusKey]]];
+		[self postOperationFailed:[PBIndexOperationErrorPresentation messageForOperation:(stage ? @"Staging files failed" : @"Unstaging files failed") error:error]];
 		return NO;
 	}
-	for (PBChangedFile *file in files) {
-		file.hasStagedChanges = stage;
-		file.hasUnstagedChanges = !stage;
-	}
-
-	[self postIndexUpdated];
-
 	return YES;
 }
 
@@ -438,26 +426,29 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)discardFiles
 {
-	NSArray<NSString *> *paths = [discardFiles valueForKey:@"path"];
+	NSArray<PBChangedFile *> *trackedFiles = [PBIndexFilePresentation discardableFilesFromFiles:discardFiles];
+	if (!trackedFiles.count) return;
+	self.mutationGeneration++;
+	self.mutationReconciliationPending = YES;
+	NSArray<NSData *> *paths = [trackedFiles valueForKey:@"rawPath"];
 	NSError *error = nil;
-	if (![self.mutationService discardPaths:paths error:&error]) {
-		[self postOperationFailed:[NSString stringWithFormat:@"Discarding changes failed with return value %@", error.userInfo[PBTaskTerminationStatusKey]]];
+	BOOL success = [self.mutationService discardRawPaths:paths error:&error];
+	[self refresh];
+	if (!success) {
+		[self postOperationFailed:[PBIndexOperationErrorPresentation messageForOperation:@"Discarding changes failed" error:error]];
 		return;
 	}
-
-	for (PBChangedFile *file in discardFiles)
-		if (file.status != NEW)
-			file.hasUnstagedChanges = NO;
-
-	[self postIndexUpdated];
 }
 
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;
 {
+	self.mutationGeneration++;
+	self.mutationReconciliationPending = YES;
 	NSError *error = nil;
 	if (![self.mutationService applyPatch:hunk stage:stage reverse:reverse error:&error]) {
-		NSString *message = [NSString stringWithFormat:@"Applying patch failed with return value %@. Error: %@", error.userInfo[PBTaskTerminationStatusKey], error.userInfo[PBTaskTerminationOutputKey]];
+		NSString *message = [PBIndexOperationErrorPresentation messageForOperation:@"Applying patch failed" error:error];
 		[self postOperationFailed:message];
+		[self refresh];
 		return NO;
 	}
 
@@ -472,17 +463,28 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	return [self diffForFile:file staged:staged contextLines:context ignoreWhitespace:NO];
 }
 
+- (nullable NSArray<NSString *> *)diffToolArgumentsForFile:(PBChangedFile *)file staged:(BOOL)staged error:(NSError *_Nullable *_Nullable)error
+{
+	return [self.mutationService diffToolArgumentsForRawPath:file.rawPath staged:staged error:error];
+}
+
+- (nullable NSArray<NSString *> *)literalArgumentsForRawPath:(NSData *)rawPath commandArguments:(NSArray<NSString *> *)commandArguments error:(NSError *_Nullable *_Nullable)error
+{
+	return [self.mutationService literalArgumentsForRawPath:rawPath commandArguments:commandArguments error:error];
+}
+
 - (nullable NSString *)diffForFile:(PBChangedFile *)file staged:(BOOL)staged contextLines:(NSUInteger)context ignoreWhitespace:(BOOL)ignoreWhitespace
 {
 	NSError *error = nil;
-	NSString *output = [self.mutationService diffForPath:file.path
-												  status:file.status
-										hasStagedChanges:file.hasStagedChanges
-												  staged:staged
-											  parentTree:self.parentTree
-											contextLines:context
-										ignoreWhitespace:ignoreWhitespace
-												   error:&error];
+	NSString *output = [self.mutationService diffForRawPath:file.rawPath
+												displayPath:file.path
+													 status:(staged ? file.stagedStatus : file.worktreeStatus)
+															hasStagedChanges:file.hasStagedChanges
+													 staged:staged
+												 parentTree:self.parentTree
+											   contextLines:context
+										   ignoreWhitespace:ignoreWhitespace
+													  error:&error];
 	if (!output)
 		PBLogError(error);
 	return output;

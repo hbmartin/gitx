@@ -4,6 +4,7 @@
 #import "PBGitRepository_PBGitBinarySupport.h"
 #import "PBGitIndex.h"
 #import "PBChangedFile.h"
+#import "GitX-Swift.h"
 
 @interface PBUncommittedChanges ()
 @property (nonatomic, weak) PBGitRepository *workingRepository;
@@ -26,17 +27,10 @@
 
 - (void)refreshFromRepository
 {
-	NSUInteger stagedCount = 0;
-	NSUInteger unstagedCount = 0;
-	NSUInteger untrackedCount = 0;
-	for (PBChangedFile *file in self.workingRepository.index.indexChanges) {
-		if (file.hasStagedChanges) stagedCount++;
-		if (file.hasUnstagedChanges && file.status != NEW) unstagedCount++;
-		if (file.hasUnstagedChanges && file.status == NEW) untrackedCount++;
-	}
-	self.stagedCount = stagedCount;
-	self.unstagedCount = unstagedCount;
-	self.untrackedCount = untrackedCount;
+	PBIndexWorkingStateSummary *summary = [[PBIndexWorkingStateSummary alloc] initWithFiles:self.workingRepository.index.indexChanges];
+	self.stagedCount = summary.stagedCount;
+	self.unstagedCount = summary.unstagedCount;
+	self.untrackedCount = summary.untrackedCount;
 	self.workingTree = nil;
 }
 

@@ -95,8 +95,10 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 
 - (NSString *)syntheticDiffForUntrackedFile:(PBChangedFile *)file
 {
+	NSString *safePath = file.safePath;
+	if (!safePath) return @"This filename cannot be represented for preview.";
 	NSString *contents = [historyController.repository.index diffForFile:file staged:NO contextLines:PBApplicationSettings.diffContextLines] ?: @"";
-	return [PBSyntheticUntrackedDiffFormatter diffForPath:file.path contents:contents];
+	return [PBSyntheticUntrackedDiffFormatter diffForPath:safePath contents:contents];
 }
 
 - (BOOL)isFileLoadGenerationCurrent:(NSUInteger)generation
@@ -125,7 +127,8 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 									 workingState:(BOOL)workingState
 										commitSHA:(NSString *)commitSHA
 										parentSHA:(nullable NSString *)parentSHA
-										  changes:(NSArray<PBChangedFile *> *)changes
+										  changes:(NSArray<PBIndexFileViewSnapshot *> *)changes
+								 selectedRawPaths:(NSDictionary<NSValue *, NSData *> *)selectedRawPaths
 									  imageSource:(NSDictionary<NSString *, id> *)imageSource
 									   generation:(NSUInteger)generation
 {
@@ -134,21 +137,29 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		if (![self isFileLoadGenerationCurrent:generation]) return @[];
 		if (!tree.leaf) continue;
 		if (workingState) {
+			NSData *rawPath = selectedRawPaths[[NSValue valueWithNonretainedObject:tree]];
+			if (![PBIndexFilePresentation pathMatchesRawPath:rawPath fullPath:tree.fullPath]) {
+				[sections addObject:@{PBNativeSectionTitleKey : tree.path ?: @"", PBNativeSectionTextKey : @"This filename cannot be represented for preview.", PBNativeSectionContextKey : @"readOnly"}];
+				continue;
+			}
 			PBChangedFile *change = nil;
-			for (PBChangedFile *candidate in changes) {
-				if ([candidate.path isEqualToString:tree.fullPath]) {
-					change = candidate;
+			for (PBIndexFileViewSnapshot *candidate in changes) {
+				if ([candidate.rawPath isEqualToData:rawPath]) {
+					change = [candidate materializedFile];
 					break;
 				}
 			}
 			if (!change) continue;
+			NSMutableDictionary<NSString *, id> *workingImageSource = [imageSource mutableCopy];
+			workingImageSource[@"rawPath"] = rawPath;
+			workingImageSource[@"safePath"] = [PBIndexFilePresentation safePathForRawPath:rawPath];
 			if (change.hasStagedChanges) {
-				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:PBApplicationSettings.diffContextLines] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:PBApplicationSettings.diffContextLines] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : workingImageSource}];
 			}
 			if (change.hasUnstagedChanges) {
-				BOOL untracked = change.status == NEW && !change.hasStagedChanges;
+				BOOL untracked = change.worktreeStatus == NEW;
 				NSString *diffText = untracked ? [self syntheticDiffForUntrackedFile:change] : [historyController.repository.index diffForFile:change staged:NO contextLines:PBApplicationSettings.diffContextLines];
-				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : imageSource}];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Unstaged — %@", tree.fullPath], PBNativeSectionTextKey : diffText ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : workingImageSource}];
 			}
 		} else {
 			NSString *base = parentSHA ?: PBEmptyTreeSHA;
@@ -183,13 +194,26 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 																			 parentSHA:parentSHA
 																		  workingState:workingState];
 	NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:imageRevisions workingTree:workingState];
-	NSArray<PBChangedFile *> *changes = [historyController.repository.index.indexChanges copy];
+	NSArray<PBIndexFileViewSnapshot *> *changes = [PBIndexFileViewSnapshot snapshotsForFiles:historyController.repository.index.indexChanges];
+	NSMutableDictionary<NSValue *, NSData *> *capturedRawPaths = [NSMutableDictionary dictionary];
+	if (workingState) {
+		for (PBWorkingTree *tree in selected) {
+			if ([tree isKindOfClass:PBWorkingTree.class] && tree.rawPath) capturedRawPaths[[NSValue valueWithNonretainedObject:tree]] = tree.rawPath;
+		}
+	}
+	NSDictionary<NSValue *, NSData *> *selectedRawPaths = [capturedRawPaths copy];
 	dispatch_async(self.fileLoadQueue, ^{
 		if (![self isFileLoadGenerationCurrent:generation]) return;
 		NSMutableArray *sections = [NSMutableArray array];
 		for (PBGitTree *file in selected) {
 			if (![self isFileLoadGenerationCurrent:generation]) return;
 			if (!file.leaf) continue;
+			if (workingState && ![PBIndexFilePresentation pathMatchesRawPath:selectedRawPaths[[NSValue valueWithNonretainedObject:file]] fullPath:file.fullPath]) {
+				[sections addObject:@{PBNativeSectionTitleKey : @"Preview unavailable",
+									  PBNativeSectionTextKey : @"This filename cannot be represented for preview.",
+									  PBNativeSectionEntriesKey : @[]}];
+				continue;
+			}
 			if (mode == PBFileModeSource || mode == PBFileModeBlame) {
 				[sections addObject:@{
 					PBNativeSectionTitleKey : file.fullPath ?: file.path,
@@ -201,7 +225,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 			}
 		}
 		if (mode == PBFileModeDiff)
-			sections = [[self diffSectionsForTrees:selected workingState:workingState commitSHA:commitSHA parentSHA:parentSHA changes:changes imageSource:imageSource generation:generation] mutableCopy];
+			sections = [[self diffSectionsForTrees:selected workingState:workingState commitSHA:commitSHA parentSHA:parentSHA changes:changes selectedRawPaths:selectedRawPaths imageSource:imageSource generation:generation] mutableCopy];
 		if (mode == PBFileModeDiff)
 			sections = [[PBNativeDiffSectionSettings applyToSections:sections repository:self->historyController.repository] mutableCopy];
 		if (![self isFileLoadGenerationCurrent:generation]) return;
@@ -233,6 +257,9 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 						   imageSource:(NSDictionary<NSString *, id> *)imageSource
 {
 	if ([imageSource[PBNativeImageSourceWorkingTreeKey] boolValue]) {
+		NSData *rawPath = imageSource[@"rawPath"];
+		NSString *safePath = imageSource[@"safePath"];
+		if ((rawPath || safePath) && (![rawPath isKindOfClass:NSData.class] || ![safePath isKindOfClass:NSString.class] || ![PBIndexFilePresentation pathMatchesRawPath:rawPath fullPath:path] || ![path isEqualToString:safePath])) return nil;
 		NSURL *workingTreeURL = imageSource[PBNativeImageSourceWorkingTreeURLKey];
 		NSData *data = [NSData dataWithContentsOfURL:[workingTreeURL URLByAppendingPathComponent:path]];
 		if (data.length) return data;
@@ -241,7 +268,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 	NSString *gitDirectory = imageSource[PBNativeImageSourceGitDirectoryKey];
 	if (!launchPath.length || !gitDirectory.length) return nil;
 	for (NSString *revision in imageSource[PBNativeImageSourceRevisionsKey] ?: @[]) {
-		NSString *object = [revision isEqualToString:@":"] ? [@":" stringByAppendingString:path] : [NSString stringWithFormat:@"%@:%@", revision, path];
+		NSString *object = [revision isEqualToString:@":"] ? [@":0:" stringByAppendingString:path] : [NSString stringWithFormat:@"%@:%@", revision, path];
 		NSArray<NSString *> *arguments = @[ [@"--git-dir=" stringByAppendingString:gitDirectory], @"show", object ];
 		PBTask *task = [PBTask taskWithLaunchPath:launchPath arguments:arguments inDirectory:imageSource[PBNativeImageSourceTaskDirectoryKey]];
 		if ([task launchTask:nil] && task.standardOutputData.length) return task.standardOutputData;

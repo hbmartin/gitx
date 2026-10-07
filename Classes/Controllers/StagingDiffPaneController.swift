@@ -14,13 +14,52 @@ private final class StagingDiffPaneDelegateAdapter: NSObject, PBNativeContentVie
         owner?.performDiffAction(action, patch: patch, in: view)
     }
 
-    func nativeContentView(
+    nonisolated func nativeContentView(
         _ view: PBNativeContentView,
         imageDataForPath path: String,
         section sectionIndex: UInt,
         imageSource: [String: Any]
     ) -> Data? {
-        owner?.imageData(forPath: path)
+        // NativeDiffRenderer requests images on its operation queue. Capture
+        // the current request identity on main, then perform file and Git IO
+        // on the caller's queue without reading the pane's mutable state.
+        let lookup: StagingImageLookup?
+        if Thread.isMainThread {
+            // swift6-safety-justification: The explicit main-thread branch guarantees AppKit and request-state access occurs on the main actor.
+            lookup = MainActor.assumeIsolated {
+                owner?.imageLookup(forPath: path, sectionIndex: Int(sectionIndex))
+            }
+        } else {
+            lookup = DispatchQueue.main.sync {
+                NSLog("[GitX] Resolving a staging image callback from the renderer queue")
+                return owner?.imageLookup(forPath: path, sectionIndex: Int(sectionIndex))
+            }
+        }
+        return lookup?.data()
+    }
+}
+
+/// Captured only after main-actor validation of the current raw filename.
+// swift6-safety-justification: Each lookup transfers its newly created, uniquely owned PBTask once to the synchronous image callback; the task is never shared or reused, and the URL is immutable.
+private final nonisolated class StagingImageLookup: @unchecked Sendable {
+    private let workingFileURL: URL?
+    private let indexTask: PBTask
+
+    init(workingFileURL: URL?, indexTask: PBTask) {
+        self.workingFileURL = workingFileURL
+        self.indexTask = indexTask
+    }
+
+    func data() -> Data? {
+        NSLog("[GitX] Reading staging image data on %@", Thread.isMainThread ? "main" : "renderer queue")
+        if let workingFileURL,
+           let data = try? Data(contentsOf: workingFileURL), !data.isEmpty
+        {
+            return data
+        }
+        guard (try? indexTask.launch()) != nil else { return nil }
+        let data = indexTask.standardOutputData
+        return data.isEmpty ? nil : data
     }
 }
 
@@ -31,7 +70,7 @@ private final class StagingDiffPaneDelegateAdapter: NSObject, PBNativeContentVie
 private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sendable {
     // Strong on purpose: production runs on the coordinator's background queue and can
     // outlive the pane, while the mutation service reaches the repository only through
-    // unowned references. This keeps the repository alive until queued work drains.
+    // weak references. This keeps the repository alive until queued work drains.
     // It is not a cycle — the repository never owns the staging pane.
     private let repository: PBGitRepository
     private let mutationService: IndexMutationService
@@ -52,7 +91,8 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
 
         var error: NSError?
         if let diff = mutationService.diff(
-            forPath: request.path,
+            forRawPath: request.rawPath,
+            displayPath: request.path,
             status: request.status,
             hasStagedChanges: request.hasStagedChanges,
             staged: request.staged,
@@ -75,13 +115,16 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
     private func syntheticUntrackedDiff(
         for request: StagingDiffLoadRequest
     ) -> StagingDiffProduction {
+        guard let safePath = IndexFilePresentation.safePath(rawPath: request.rawPath) else {
+            return .failure(NSLocalizedString("This filename contains bytes that cannot be represented for preview.", comment: "Unsupported raw filename preview"))
+        }
         guard let workingDirectoryURL = request.workingDirectoryURL else {
             return .failure(NSLocalizedString(
                 "The repository has no working directory.",
                 comment: "Detail shown when an untracked file diff cannot be loaded"
             ))
         }
-        let fileURL = workingDirectoryURL.appendingPathComponent(request.path)
+        let fileURL = workingDirectoryURL.appendingPathComponent(safePath)
         do {
             let fileManager = FileManager()
             let attributes = try fileManager.attributesOfItem(atPath: fileURL.path)
@@ -116,7 +159,7 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
                 fileMode.gitMode
             )
             return .success(SyntheticUntrackedDiffFormatterBridge.diff(
-                path: request.path,
+                path: safePath,
                 contents: contents,
                 fileMode: fileMode
             ))
@@ -161,6 +204,7 @@ final class StagingDiffPaneController: NSObject {
     @objc let contentView: PBNativeContentView
     private unowned let repository: PBGitRepository
     private var currentRequests: [StagingDiffRequest] = []
+    private var displayedRequests: [StagingDiffLoadRequest] = []
     private let delegateAdapter = StagingDiffPaneDelegateAdapter()
     private let loadCoordinator: StagingDiffLoadCoordinator
 
@@ -197,6 +241,7 @@ final class StagingDiffPaneController: NSObject {
         currentRequests = requests
         guard !requests.isEmpty else {
             loadCoordinator.invalidate()
+            displayedRequests = []
             contentView.showMessage(NSLocalizedString(
                 "No file selected",
                 comment: "Placeholder in the staging diff pane when no file is selected"
@@ -211,18 +256,20 @@ final class StagingDiffPaneController: NSObject {
             let file = request.file
             return StagingDiffLoadRequest(
                 path: file.path,
-                status: file.status.rawValue,
+                rawPath: file.rawPath,
+                status: (request.staged ? file.stagedStatus : file.worktreeStatus).rawValue,
                 hasStagedChanges: file.hasStagedChanges,
                 staged: request.staged,
                 parentTree: parentTree,
                 contextLines: contextLines,
                 workingDirectoryURL: workingDirectoryURL,
-                syntheticUntracked: file.status == .NEW && !file.hasStagedChanges
+                syntheticUntracked: !request.staged && file.worktreeStatus == .NEW
             )
         }
         NSLog("[GitX] Scheduling %ld staging diff section(s)", snapshots.count)
         loadCoordinator.schedule(snapshots) { [weak self] output in
             guard let self else { return }
+            displayedRequests = snapshots
             contentView.showDiffSections(
                 output.sections.map(nativeSection(from:)),
                 cacheIdentifier: output.cacheIdentifier,
@@ -238,6 +285,7 @@ final class StagingDiffPaneController: NSObject {
     @objc(showStateMessage:)
     func showStateMessage(_ message: String) {
         currentRequests = []
+        displayedRequests = []
         loadCoordinator.invalidate()
         contentView.showMessage(message)
     }
@@ -255,6 +303,7 @@ final class StagingDiffPaneController: NSObject {
     // MARK: Content-view actions (dispatched via the private delegate adapter)
 
     fileprivate func performDiffAction(_ action: String, patch: String, in view: PBNativeContentView) {
+        guard !repository.index.mutationReconciliationPending else { return }
         switch action {
         case "stage":
             NSLog("[GitX] Applying a partial stage patch from the staging pane")
@@ -273,26 +322,23 @@ final class StagingDiffPaneController: NSObject {
             alert.addButton(withTitle: NSLocalizedString("Discard", comment: "Confirm button of the discard hunk confirmation"))
             alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button of the discard hunk confirmation"))
             alert.beginSheetModal(for: window) { [weak self] response in
-                guard response == .alertFirstButtonReturn else { return }
+                guard response == .alertFirstButtonReturn, let self, !repository.index.mutationReconciliationPending else { return }
                 NSLog("[GitX] Discarding a hunk from the staging pane")
-                self?.repository.index.applyPatch(patch, stage: false, reverse: true)
+                repository.index.applyPatch(patch, stage: false, reverse: true)
             }
         default:
             NSLog("[GitX] Ignoring unknown staging diff action: %@", action)
         }
     }
 
-    fileprivate func imageData(forPath path: String) -> Data? {
-        if let workingDirectoryURL = repository.workingDirectoryURL(),
-           let data = try? Data(contentsOf: workingDirectoryURL.appendingPathComponent(path)),
-           !data.isEmpty
-        {
-            return data
-        }
-        let task = repository.task(withArguments: ["show", ":" + path])
-        guard (try? task.launch()) != nil else { return nil }
-        let data = task.standardOutputData
-        return data.isEmpty ? nil : data
+    fileprivate func imageLookup(forPath path: String, sectionIndex: Int) -> StagingImageLookup? {
+        guard displayedRequests.indices.contains(sectionIndex),
+              let safePath = IndexFilePresentation.safePath(rawPath: displayedRequests[sectionIndex].rawPath),
+              Data(path.utf8) == displayedRequests[sectionIndex].rawPath, path == safePath else { return nil }
+        return StagingImageLookup(
+            workingFileURL: repository.workingDirectoryURL()?.appendingPathComponent(path),
+            indexTask: repository.task(withArguments: ["show", ":0:" + path])
+        )
     }
 }
 

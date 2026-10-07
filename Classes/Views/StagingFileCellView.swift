@@ -58,9 +58,14 @@ final class StagingFileCellView: NSTableCellView {
 
     @objc(configureWithFile:checkboxState:)
     func configure(with file: PBChangedFile, checkboxState: Int) {
+        configure(with: file, checkboxState: checkboxState, section: .staged)
+    }
+
+    @objc(configureWithFile:checkboxState:section:)
+    func configure(with file: PBChangedFile, checkboxState: Int, section: StagingListSection) {
         pathField.stringValue = file.path
         pathField.toolTip = file.path
-        iconView.image = file.icon()
+        iconView.image = section == .staged ? file.stagedIcon() : file.worktreeIcon()
         checkbox.state = NSControl.StateValue(rawValue: checkboxState)
         checkbox.setAccessibilityLabel(String(
             format: NSLocalizedString(

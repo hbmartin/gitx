@@ -14,6 +14,8 @@ final class CommitTableInteractionCoordinator: NSObject {
     private weak var stagedFilesController: NSArrayController?
     private weak var unstagedTable: NSTableView?
     private weak var stagedTable: NSTableView?
+    private weak var pendingSelectionController: NSArrayController?
+    private var pendingSelectionIndex: Int?
 
     @objc(initWithRepository:index:unstagedFilesController:stagedFilesController:unstagedTable:stagedTable:)
     init(
@@ -34,26 +36,29 @@ final class CommitTableInteractionCoordinator: NSObject {
 
         unstagedTable.registerForDraggedTypes([Self.fileChangesPasteboardType])
         stagedTable.registerForDraggedTypes([Self.fileChangesPasteboardType])
+        NotificationCenter.default.addObserver(self, selector: #selector(indexDidUpdate(_:)), name: NSNotification.Name(PBGitIndexIndexUpdated), object: index)
     }
 
     @objc(stageSelectedFiles)
     func stageSelectedFiles() {
-        guard let controller = unstagedFilesController,
+        guard !index.mutationReconciliationPending, let controller = unstagedFilesController,
               let files = controller.selectedObjects as? [PBChangedFile]
         else { return }
         NSLog("[GitX] Staging %ld selected file(s)", files.count)
+        let selectionIndex = controller.selectionIndex
         index.stageFiles(files)
-        reselectNextFile(in: controller)
+        reselectNextFile(in: controller, currentSelectionIndex: selectionIndex)
     }
 
     @objc(unstageSelectedFiles)
     func unstageSelectedFiles() {
-        guard let controller = stagedFilesController,
+        guard !index.mutationReconciliationPending, let controller = stagedFilesController,
               let files = controller.selectedObjects as? [PBChangedFile]
         else { return }
         NSLog("[GitX] Unstaging %ld selected file(s)", files.count)
+        let selectionIndex = controller.selectionIndex
         index.unstageFiles(files)
-        reselectNextFile(in: controller)
+        reselectNextFile(in: controller, currentSelectionIndex: selectionIndex)
     }
 
     @objc(toggleStagingForTableView:)
@@ -93,13 +98,13 @@ final class CommitTableInteractionCoordinator: NSObject {
         guard let files = controller?.arrangedObjects as? [PBChangedFile],
               files.indices.contains(row)
         else { return }
-        (tableColumn.dataCell as? NSCell)?.image = files[row].icon()
+        (tableColumn.dataCell as? NSCell)?.image = tableView.tag == 0 ? files[row].worktreeIcon() : files[row].stagedIcon()
     }
 
     @objc(didDoubleClickTableView:)
     func didDoubleClick(_ tableView: NSTableView) {
         let controller = tableView === unstagedTable ? unstagedFilesController : stagedFilesController
-        guard let controller,
+        guard !index.mutationReconciliationPending, let controller,
               let files = files(in: controller, at: tableView.selectedRowIndexes)
         else { return }
 
@@ -118,70 +123,62 @@ final class CommitTableInteractionCoordinator: NSObject {
         from tableView: NSTableView,
         to pasteboard: NSPasteboard
     ) -> Bool {
-        pasteboard.declareTypes([Self.fileChangesPasteboardType, Self.filenamesPasteboardType], owner: self)
-
-        do {
-            let data = try NSKeyedArchiver.archivedData(
-                withRootObject: rowIndexes as NSIndexSet,
-                requiringSecureCoding: true
-            )
-            pasteboard.setData(data, forType: Self.fileChangesPasteboardType)
-        } catch {
-            NSLog("[GitX] Could not archive commit-table drag rows: %@", error.localizedDescription)
-            return false
-        }
-
         let controller = tableView.tag == 0 ? unstagedFilesController : stagedFilesController
-        guard let controller,
-              let files = files(in: controller, at: rowIndexes),
-              let workingDirectoryURL = repository.workingDirectoryURL()
-        else { return false }
-        let paths = files.map { workingDirectoryURL.appendingPathComponent($0.path).path }
-        pasteboard.setPropertyList(paths, forType: Self.filenamesPasteboardType)
+        guard let controller, let files = files(in: controller, at: rowIndexes), !files.isEmpty else { return false }
+        let source: StagingListSection = tableView.tag == 0 ? .unstaged : .staged
+        let rows = files.map { StagingListRow.file($0, section: source) }
+        let payload = StagingListViewModel().sectionedDragPayload(rows: rows, selectedIndexes: IndexSet(rows.indices))
+        let safePaths = files.compactMap(\.safePath)
+        let externalPaths = safePaths.count == files.count ? repository.workingDirectoryURL().map { url in
+            safePaths.map { url.appendingPathComponent($0).path }
+        } : nil
+        var types = [Self.fileChangesPasteboardType]
+        if externalPaths != nil {
+            types.append(Self.filenamesPasteboardType)
+        }
+        pasteboard.declareTypes(types, owner: self)
+        pasteboard.setPropertyList(payload, forType: Self.fileChangesPasteboardType)
+        if let paths = externalPaths {
+            pasteboard.setPropertyList(paths, forType: Self.filenamesPasteboardType)
+        }
         NSLog("[GitX] Prepared %ld commit-table file(s) for dragging", files.count)
         return true
     }
 
     @objc(validateDrop:inTableView:)
     func validateDrop(_ info: NSDraggingInfo, in tableView: NSTableView) -> NSDragOperation {
-        if let source = info.draggingSource as? NSTableView, source === tableView {
-            return []
-        }
+        guard !index.mutationReconciliationPending,
+              let files = dropFiles(info, destination: tableView), !files.isEmpty else { return [] }
         tableView.setDropRow(-1, dropOperation: .on)
         return .copy
     }
 
     @objc(acceptDrop:inTableView:)
     func acceptDrop(_ info: NSDraggingInfo, in tableView: NSTableView) -> Bool {
-        guard let rowData = info.draggingPasteboard.data(forType: Self.fileChangesPasteboardType) else {
-            return false
-        }
-
-        let rowIndexes: IndexSet
-        do {
-            guard let archivedIndexes = try NSKeyedUnarchiver.unarchivedObject(
-                ofClass: NSIndexSet.self,
-                from: rowData
-            ) else { return false }
-            rowIndexes = archivedIndexes as IndexSet
-        } catch {
-            NSLog("[GitX] Could not unarchive commit-table drag rows: %@", error.localizedDescription)
-            return false
-        }
-
-        let sourceController = tableView.tag == 0 ? stagedFilesController : unstagedFilesController
-        guard let sourceController,
-              let files = files(in: sourceController, at: rowIndexes)
-        else { return false }
-
+        guard !index.mutationReconciliationPending, let files = dropFiles(info, destination: tableView),
+              !files.isEmpty else { return false }
         if tableView.tag == 0 {
             NSLog("[GitX] Unstaging %ld dropped file(s)", files.count)
-            index.unstageFiles(files)
-        } else {
-            NSLog("[GitX] Staging %ld dropped file(s)", files.count)
-            index.stageFiles(files)
+            return index.unstageFiles(files)
         }
-        return true
+        NSLog("[GitX] Staging %ld dropped file(s)", files.count)
+        return index.stageFiles(files)
+    }
+
+    private func dropFiles(_ info: NSDraggingInfo, destination tableView: NSTableView) -> [PBChangedFile]? {
+        guard let source = info.draggingSource as? NSTableView,
+              (tableView === unstagedTable && source === stagedTable) ||
+              (tableView === stagedTable && source === unstagedTable) else { return nil }
+        let staged = (stagedFilesController?.arrangedObjects as? [PBChangedFile] ?? []).map {
+            StagingListRow.file($0, section: .staged)
+        }
+        let unstaged = (unstagedFilesController?.arrangedObjects as? [PBChangedFile] ?? []).map {
+            StagingListRow.file($0, section: .unstaged)
+        }
+        return StagingListViewModel().resolvedDropFiles(
+            from: info.draggingPasteboard.propertyList(forType: Self.fileChangesPasteboardType),
+            rows: staged + unstaged, destinationSection: tableView.tag == 0 ? .unstaged : .staged
+        )
     }
 
     private func files(in controller: NSArrayController, at indexes: IndexSet) -> [PBChangedFile]? {
@@ -191,8 +188,31 @@ final class CommitTableInteractionCoordinator: NSObject {
         return indexes.map { arrangedFiles[$0] }
     }
 
-    private func reselectNextFile(in controller: NSArrayController) {
-        let currentSelectionIndex = controller.selectionIndex
+    @objc func close() {
+        NotificationCenter.default.removeObserver(self)
+        pendingSelectionController = nil
+        pendingSelectionIndex = nil
+    }
+
+    @objc private func indexDidUpdate(_: Notification) {
+        guard let controller = pendingSelectionController, let currentSelectionIndex = pendingSelectionIndex else { return }
+        pendingSelectionController = nil
+        pendingSelectionIndex = nil
+        // Array controllers rearrange in the other index observers. Selection
+        // advances after those observers see this authoritative publication.
+        advanceSelection(in: controller, currentSelectionIndex: currentSelectionIndex)
+    }
+
+    private func reselectNextFile(in controller: NSArrayController, currentSelectionIndex: Int) {
+        if index.mutationReconciliationPending {
+            pendingSelectionController = controller
+            pendingSelectionIndex = currentSelectionIndex
+        } else {
+            advanceSelection(in: controller, currentSelectionIndex: currentSelectionIndex)
+        }
+    }
+
+    private func advanceSelection(in controller: NSArrayController, currentSelectionIndex: Int) {
         DispatchQueue.main.async { [weak controller] in
             guard let controller else { return }
             let selectionIndex = CommitSelectionPolicy.selectionIndex(

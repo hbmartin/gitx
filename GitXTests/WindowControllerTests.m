@@ -15,6 +15,7 @@
 #import "PBCreateTagSheet.h"
 #import "PBDiffWindowController.h"
 #import "PBGitCommit.h"
+#import "PBGitBinary.h"
 #import "PBGitDefaults.h"
 #import "PBGitHistoryController.h"
 #import "PBGitHistoryList.h"
@@ -25,6 +26,7 @@
 #import "PBGitRepositoryDocument.h"
 #import "PBGitRepositoryWatcher.h"
 #import "PBGitRevSpecifier.h"
+#import "PBGitRevisionCell.h"
 #import "PBGitSidebarControllerCompatibility.h"
 #import "PBGitStash.h"
 #import "PBGitTree.h"
@@ -45,6 +47,7 @@
 #import "PBTerminalUtil.h"
 #import "PBPrefsWindowController.h"
 #import "PBViewController.h"
+#import "PBWorkingTree.h"
 
 @implementation PBHistoryWindowControllerTestBase
 @end
@@ -164,6 +167,10 @@
 
 @interface GLFileView (WindowControllerTests)
 - (NSArray<NSDictionary *> *)historyEntriesForTree:(PBGitTree *)file;
+- (nullable NSData *)nativeContentView:(PBNativeContentView *)view
+					  imageDataForPath:(NSString *)path
+							   section:(NSUInteger)sectionIndex
+						   imageSource:(NSDictionary<NSString *, id> *)imageSource;
 - (void)splitView:(NSSplitView *)splitView resizeSubviewsWithOldSize:(NSSize)oldSize;
 @end
 
@@ -491,6 +498,7 @@ static NSString *PBWindowLastMessage;
 static NSString *PBWindowLastInfo;
 static NSString *PBWindowLastTerminalCommand;
 static NSURL *PBWindowLastTerminalDirectory;
+static NSUInteger PBWindowMissingGitPathRequestCount;
 static atomic_bool PBWindowUseSnapshotTaskFake;
 static NSData *PBWindowSnapshotData;
 static NSError *PBWindowSnapshotError;
@@ -774,6 +782,18 @@ static PBWindowCreateTagSheet *PBWindowCreateTagTestSheet;
 	PBWindowWorkspaceRevealCount++;
 }
 
+@end
+
+@interface PBGitBinary (WindowMissingExecutableTests)
++ (nullable NSString *)pb_window_missingGitExecutablePath;
+@end
+
+@implementation PBGitBinary (WindowMissingExecutableTests)
++ (nullable NSString *)pb_window_missingGitExecutablePath
+{
+	PBWindowMissingGitPathRequestCount++;
+	return nil;
+}
 @end
 
 @interface NSDocumentController (WindowControllerTests)
@@ -1145,6 +1165,56 @@ static NSUInteger PBRecoveryMessageSheetAcceptCount;
 	NSMutableArray<NSMenuItem *> *items = [NSMutableArray arrayWithCapacity:self.testMenuItems.count];
 	for (NSMenuItem *item in self.testMenuItems) [items addObject:item.copy];
 	return items;
+}
+@end
+
+@interface PBWindowCommitMenuRevisionCell : PBGitRevisionCell
+@end
+
+@implementation PBWindowCommitMenuRevisionCell
+- (int)indexAtX:(CGFloat)x
+{
+	return 0;
+}
+@end
+
+// Keep only AppKit hit-testing deterministic; the table, history controller,
+// and menu builder still execute the production context-menu route.
+// Match the generated Swift runtime name without inheriting the legacy header's
+// Objective-C ivar layout in this test-only declaration.
+__attribute__((objc_runtime_name("_TtC4GitX12PBCommitList")))
+@interface PBWindowRuntimeCommitList : NSTableView
+@property (nonatomic, weak) PBGitHistoryController *controller;
+@end
+
+@interface PBWindowCommitMenuDataSource : NSObject <NSTableViewDataSource>
+@end
+
+@implementation PBWindowCommitMenuDataSource
+- (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView
+{
+	return 1;
+}
+@end
+
+static NSTableView *PBWindowNativeCommitMenuTable;
+static PBGitRevisionCell *PBWindowCommitMenuCell;
+
+@interface NSTableView (WindowCommitMenuTests)
+- (NSInteger)pb_window_commitMenuClickedRow;
+- (NSView *)pb_window_commitMenuViewAtColumn:(NSInteger)column row:(NSInteger)row makeIfNecessary:(BOOL)makeIfNecessary;
+@end
+
+@implementation NSTableView (WindowCommitMenuTests)
+- (NSInteger)pb_window_commitMenuClickedRow
+{
+	if (self == PBWindowNativeCommitMenuTable) return 0;
+	return [self pb_window_commitMenuClickedRow];
+}
+- (NSView *)pb_window_commitMenuViewAtColumn:(NSInteger)column row:(NSInteger)row makeIfNecessary:(BOOL)makeIfNecessary
+{
+	if (self == PBWindowNativeCommitMenuTable && column == 0 && row == 0) return PBWindowCommitMenuCell;
+	return [self pb_window_commitMenuViewAtColumn:column row:row makeIfNecessary:makeIfNecessary];
 }
 @end
 
@@ -1622,8 +1692,19 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertNotNil(representation);
 	if (!representation) return;
 	[view cacheDisplayInRect:view.bounds toBitmapImageRep:representation];
+	NSImage *capturedView = [[NSImage alloc] initWithSize:view.bounds.size];
+	[capturedView addRepresentation:representation];
 	NSImage *screenshot = [[NSImage alloc] initWithSize:view.bounds.size];
-	[screenshot addRepresentation:representation];
+	// Content views can be transparent; diagnostic attachments need the same
+	// window background that makes the live labels and text readable.
+	[screenshot lockFocus];
+	[(view.window.backgroundColor ?: NSColor.windowBackgroundColor) setFill];
+	NSRectFill(NSMakeRect(0, 0, view.bounds.size.width, view.bounds.size.height));
+	[capturedView drawInRect:NSMakeRect(0, 0, view.bounds.size.width, view.bounds.size.height)
+					fromRect:NSZeroRect
+				   operation:NSCompositingOperationSourceOver
+					fraction:1];
+	[screenshot unlockFocus];
 	XCTAttachment *attachment = [XCTAttachment attachmentWithImage:screenshot];
 	attachment.name = name;
 	attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
@@ -1847,6 +1928,27 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	[window close];
 }
 
+- (void)testRepositoryWindowConstructsItsRefreshAndStatusCoordinatorsWithoutAGitExecutable
+{
+	PBGitRepositoryDocument *document = [PBGitRepositoryDocument new];
+	[document setValue:self.repository forKey:@"_repository"];
+	PBGitWindowController *controller = [PBGitWindowController new];
+	controller.document = document;
+	PBWindowMissingGitPathRequestCount = 0;
+	PBSwapClassMethods(PBGitBinary.class, @selector(path), @selector(pb_window_missingGitExecutablePath));
+	@try {
+		XCTAssertNoThrow([controller window]);
+		XCTAssertTrue(controller.isWindowLoaded);
+		XCTAssertNotNil(controller.historyViewController);
+		XCTAssertEqualObjects(controller.window.representedURL, self.repository.workingDirectoryURL);
+		XCTAssertGreaterThanOrEqual(PBWindowMissingGitPathRequestCount, 2U, @"both local coordinators accept missing executable discovery");
+	} @finally {
+		PBSwapClassMethods(PBGitBinary.class, @selector(path), @selector(pb_window_missingGitExecutablePath));
+		[controller.window orderOut:nil];
+		[controller.window close];
+	}
+}
+
 - (void)testContentStatusRefreshAndViewRoutingWithProgrammaticCollaborators
 {
 	NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 400, 300)];
@@ -1998,6 +2100,77 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertNil([self.controller selectedRef]);
 	((PBWindowTestWindow *)self.controller.window).testFirstResponder = self.controller.window.contentView;
 	XCTAssertNil([self.controller selectedRef]);
+}
+
+- (void)testCommitContextMenuUsesCommitActionsWithoutRefsAndCurrentBranchActionsWithRefs
+{
+	PBGitHistoryController *history = [[PBGitHistoryController alloc] initWithRepository:self.repository superController:self.controller];
+	// Menu construction is initialized with the controller's native view.
+	(void)history.view;
+	history.selectedCommits = @[ self.headCommit ];
+	PBWindowRuntimeCommitList *table = [[PBWindowRuntimeCommitList alloc] initWithFrame:NSMakeRect(0, 0, 400, 80)];
+	PBWindowCommitMenuDataSource *dataSource = [PBWindowCommitMenuDataSource new];
+	PBGitRevisionCell *cell = [[PBWindowCommitMenuRevisionCell alloc] initWithFrame:NSMakeRect(0, 0, 400, 22)];
+	cell.objectValue = self.headCommit;
+	table.dataSource = dataSource;
+	[table addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"SubjectColumn"]];
+	table.controller = history;
+	XCTAssertEqual(table.controller, history);
+	[table reloadData];
+	NSEvent *event = [NSEvent mouseEventWithType:NSEventTypeRightMouseDown
+										location:NSMakePoint(5, 5)
+								   modifierFlags:0
+									   timestamp:0
+									windowNumber:0
+										 context:nil
+									 eventNumber:0
+									  clickCount:1
+										pressure:1];
+	NSMutableArray *originalRefs = self.headCommit.refs;
+	PBWindowNativeCommitMenuTable = table;
+	PBWindowCommitMenuCell = cell;
+	PBSwapInstanceMethods(NSTableView.class, @selector(clickedRow), @selector(pb_window_commitMenuClickedRow));
+	PBSwapInstanceMethods(NSTableView.class, @selector(viewAtColumn:row:makeIfNecessary:), @selector(pb_window_commitMenuViewAtColumn:row:makeIfNecessary:));
+	@try {
+		// The setter normalizes nil to an empty array. An absent repository-map
+		// entry represents a commit whose refs have not been supplied.
+		[self.repository.refs removeObjectForKey:self.headCommit.OID];
+		XCTAssertNil(self.headCommit.refs);
+		NSMenu *commitMenu = [table menuForEvent:event];
+		XCTAssertNotNil(commitMenu);
+		XCTAssertFalse(commitMenu.autoenablesItems);
+		XCTAssertEqualObjects(table.selectedRowIndexes, [NSIndexSet indexSetWithIndex:0]);
+		NSMenuItem *checkoutCommit = [commitMenu itemWithTitle:@"Checkout Commit"];
+		XCTAssertNotNil(checkoutCommit);
+		XCTAssertTrue(checkoutCommit.isEnabled);
+		XCTAssertEqual(checkoutCommit.representedObject, self.headCommit);
+		XCTAssertTrue([commitMenu itemWithTitle:@"Copy SHA-1"].isEnabled);
+		XCTAssertFalse([commitMenu itemWithTitle:@"Diff with “main”"].isEnabled);
+		XCTAssertNil([commitMenu itemWithTitle:@"Copy Branch Name"]);
+
+		self.headCommit.refs = [NSMutableArray arrayWithObject:self.branchRef];
+		XCTAssertEqualObjects(self.headCommit.refs, (@[ self.branchRef ]));
+		NSMenu *branchMenu = [table menuForEvent:event];
+		XCTAssertNotNil(branchMenu);
+		NSMenuItem *checkoutBranch = [branchMenu itemWithTitle:@"Checkout “main”"];
+		XCTAssertNotNil(checkoutBranch);
+		XCTAssertFalse(checkoutBranch.isEnabled, @"the checked-out branch cannot be checked out again");
+		XCTAssertEqual(checkoutBranch.representedObject, self.branchRef);
+		XCTAssertTrue([branchMenu itemWithTitle:@"Copy Branch Name"].isEnabled);
+		XCTAssertTrue([branchMenu itemWithTitle:@"Fetch “origin”"].isEnabled);
+		XCTAssertFalse([branchMenu itemWithTitle:@"Diff with “main”"].isEnabled);
+		XCTAssertNil([branchMenu itemWithTitle:@"Checkout Commit"]);
+	} @finally {
+		PBSwapInstanceMethods(NSTableView.class, @selector(viewAtColumn:row:makeIfNecessary:), @selector(pb_window_commitMenuViewAtColumn:row:makeIfNecessary:));
+		PBSwapInstanceMethods(NSTableView.class, @selector(clickedRow), @selector(pb_window_commitMenuClickedRow));
+		PBWindowNativeCommitMenuTable = nil;
+		PBWindowCommitMenuCell = nil;
+		if (originalRefs)
+			self.headCommit.refs = originalRefs;
+		else
+			[self.repository.refs removeObjectForKey:self.headCommit.OID];
+		[history closeView];
+	}
 }
 
 - (void)testSidebarMenusSortingAndReferenceRemoval
@@ -2960,6 +3133,59 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 		[NSUserDefaults.standardUserDefaults removeObjectForKey:@"PBTerminalBundleIdentifier"];
 }
 
+- (void)testWorkspaceSelectionRejectsUnavailableAndMismatchedRawFilenameIdentity
+{
+	const unsigned char invalidBytes[] = {0xff};
+	PBChangedFile *invalid = [[PBChangedFile alloc] initWithPath:@"\\xff" rawPath:[NSData dataWithBytes:invalidBytes length:sizeof(invalidBytes)]];
+	PBChangedFile *mismatched = [[PBChangedFile alloc] initWithPath:@"display.txt" rawPath:[@"actual.txt" dataUsingEncoding:NSUTF8StringEncoding]];
+	PBChangedFile *valid = [[PBChangedFile alloc] initWithPath:@"nested/valid.txt" rawPath:[@"nested/valid.txt" dataUsingEncoding:NSUTF8StringEncoding]];
+	XCTAssertEqual([self.controller selectedURLsFromSender:[self menuItemWithObject:@[ invalid ]]].count, 0U);
+	XCTAssertEqual([self.controller selectedURLsFromSender:[self menuItemWithObject:@[ mismatched ]]].count, 0U);
+	NSArray<NSURL *> *validURLs = [self.controller selectedURLsFromSender:[self menuItemWithObject:@[ valid ]]];
+	XCTAssertEqualObjects(validURLs, (@[ [self.repository.workingDirectoryURL URLByAppendingPathComponent:@"nested/valid.txt"] ]));
+}
+
+- (void)testWorkspaceSelectionUsesWorkingTreeFullIdentityAndHistoricalPathCompatibility
+{
+	NSURL *directory = [self.repository.workingDirectoryURL URLByAppendingPathComponent:@"nested" isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:NULL]);
+	NSURL *fileURL = [directory URLByAppendingPathComponent:@"leaf.txt"];
+	XCTAssertTrue([@"nested working file\n" writeToURL:fileURL atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+	PBWorkingTree *root = [PBWorkingTree rootForRepository:self.repository];
+	PBWorkingTree *folder = nil;
+	for (PBWorkingTree *candidate in root.children) {
+		if ([candidate.path isEqualToString:@"nested"]) folder = candidate;
+	}
+	PBWorkingTree *leaf = folder.children.firstObject;
+	XCTAssertNotNil(leaf);
+	XCTAssertEqualObjects(leaf.path, @"leaf.txt");
+	XCTAssertEqualObjects(leaf.fullPath, @"nested/leaf.txt");
+	XCTAssertEqualObjects([self.controller selectedURLsFromSender:[self menuItemWithObject:@[ leaf ]]], (@[ fileURL ]));
+
+	PBGitTree *historical = [PBGitTree new];
+	historical.path = @"tracked.txt";
+	historical.leaf = YES;
+	XCTAssertFalse([historical respondsToSelector:@selector(rawPath)]);
+	XCTAssertEqualObjects([self.controller selectedURLsFromSender:[self menuItemWithObject:@[ historical ]]],
+						  (@[ [self.repository.workingDirectoryURL URLByAppendingPathComponent:@"tracked.txt"] ]));
+}
+
+- (void)testWorkspaceOpenFallsBackToTheSelectedURLWhenASubmoduleHasNoParentURL
+{
+	PBWindowSubmodule *submodule = [PBWindowSubmodule new];
+	submodule.path = @"OrphanedSubmodule";
+	self.repository.testSubmodule = submodule;
+	PBGitRepositoryDocument *document = [PBGitRepositoryDocument new];
+	[document setValue:self.repository forKey:@"_repository"];
+	PBGitWindowController *controller = [[PBGitWindowController alloc] initWithWindow:self.controller.window];
+	controller.document = document;
+	NSURL *selectedURL = [self.repository.workingDirectoryURL URLByAppendingPathComponent:submodule.path];
+	[controller openURLs:@[ selectedURL ]];
+	XCTAssertEqualObjects(PBWindowWorkspaceOpenedURLs, (@[ selectedURL ]));
+	XCTAssertEqual(PBWindowWorkspaceOpenCount, 1U);
+	XCTAssertEqual(PBWindowDocumentOpenCount, 0U);
+}
+
 - (void)testBareRepositoryDisablesAndSafelyIgnoresWorkingDirectoryActions
 {
 	PBWindowRepositoryWithoutGitURLs *bareRepository = [PBWindowRepositoryWithoutGitURLs new];
@@ -2975,6 +3201,27 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertFalse([controller validateMenuItem:terminal]);
 	XCTAssertNoThrow([controller revealInFinder:self]);
 	XCTAssertEqual(PBWindowWorkspaceRevealCount, previousRevealCount);
+}
+
+- (void)testBareRepositoryRevealUsesGitDirectoryWhileTerminalRemainsDisabled
+{
+	PBWindowRepositoryWithoutGitURLs *repository = [PBWindowRepositoryWithoutGitURLs new];
+	repository.testGitURL = [NSURL fileURLWithPath:@"/tmp/gitx-recovery-bare.git" isDirectory:YES];
+	PBGitRepositoryDocument *document = [PBGitRepositoryDocument new];
+	[document setValue:repository forKey:@"_repository"];
+	PBGitWindowController *controller = [[PBGitWindowController alloc] initWithWindow:self.controller.window];
+	controller.document = document;
+	NSMenuItem *reveal = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Reveal in Finder", @"Bare-repository test Finder menu title") action:@selector(revealInFinder:) keyEquivalent:@""];
+	NSMenuItem *terminal = [[NSMenuItem alloc] initWithTitle:NSLocalizedString(@"Open in Terminal", @"Bare-repository test Terminal menu title") action:@selector(openInTerminal:) keyEquivalent:@""];
+	XCTAssertTrue([controller validateMenuItem:reveal]);
+	XCTAssertFalse([controller validateMenuItem:terminal]);
+	NSUInteger previousRevealCount = PBWindowWorkspaceRevealCount;
+	[controller revealInFinder:self];
+	XCTAssertEqual(PBWindowWorkspaceRevealCount, previousRevealCount + 1);
+	XCTAssertNil([controller selectedURLsFromSender:[self menuItemWithObject:@[ @"tracked.txt" ]]]);
+	NSUInteger previousTerminalCount = PBWindowTerminalCount;
+	[controller openInTerminal:self];
+	XCTAssertEqual(PBWindowTerminalCount, previousTerminalCount);
 }
 
 - (void)testRepositoryOpeningCanonicalizesNestedLinkedAndBareRepositoriesInInputOrder
@@ -4370,6 +4617,61 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertEqualObjects(paths, (@[ @"file2.txt", @"file10.txt" ]));
 }
 
+- (void)testFileViewImageDataHandlesWorkingTreeAndIncompleteGitSources
+{
+	GLFileView *fileView = [GLFileView new];
+	PBNativeContentView *contentView = [[PBNativeContentView alloc] initWithFrame:NSZeroRect];
+	NSURL *directory = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString] isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:NULL]);
+	@try {
+		NSData *expected = [@"image-bytes" dataUsingEncoding:NSUTF8StringEncoding];
+		XCTAssertTrue([expected writeToURL:[directory URLByAppendingPathComponent:@"image.bin"] atomically:YES]);
+		NSDictionary *workingSource = @{PBNativeImageSourceWorkingTreeKey : @YES, PBNativeImageSourceWorkingTreeURLKey : directory};
+		XCTAssertEqualObjects([fileView nativeContentView:contentView imageDataForPath:@"image.bin" section:0 imageSource:workingSource], expected);
+		XCTAssertNil([fileView nativeContentView:contentView imageDataForPath:@"missing.bin" section:0 imageSource:workingSource]);
+		NSDictionary *incompleteSource = @{PBNativeImageSourceWorkingTreeKey : @NO};
+		XCTAssertNil([fileView nativeContentView:contentView imageDataForPath:@"missing.bin" section:0 imageSource:incompleteSource]);
+		NSString *escapedName = @"\\xff-image.bin";
+		XCTAssertTrue([expected writeToURL:[directory URLByAppendingPathComponent:escapedName] atomically:YES]);
+		const unsigned char invalidName[] = {0xff, '-', 'i', 'm', 'a', 'g', 'e', '.', 'b', 'i', 'n'};
+		NSMutableDictionary *unsafeSource = [workingSource mutableCopy];
+		unsafeSource[@"rawPath"] = [NSData dataWithBytes:invalidName length:sizeof(invalidName)];
+		unsafeSource[@"safePath"] = escapedName;
+		XCTAssertNil([fileView nativeContentView:contentView imageDataForPath:escapedName section:0 imageSource:unsafeSource], @"an escaped display name must not read the literal lookalike file");
+		unsafeSource[@"rawPath"] = [@"image.bin" dataUsingEncoding:NSUTF8StringEncoding];
+		unsafeSource[@"safePath"] = @"different.bin";
+		XCTAssertNil([fileView nativeContentView:contentView imageDataForPath:@"image.bin" section:0 imageSource:unsafeSource], @"callback and captured safe identity must agree");
+	} @finally {
+		[NSFileManager.defaultManager removeItemAtURL:directory error:NULL];
+	}
+}
+
+- (void)testFileViewImageDataUsesStageZeroForAColonPrefixedFilename
+{
+	NSString *path = @"1:foo";
+	NSData *expected = [@"staged-image-bytes" dataUsingEncoding:NSUTF8StringEncoding];
+	NSURL *fileURL = [self.repositoryURL URLByAppendingPathComponent:path];
+	XCTAssertTrue([expected writeToURL:fileURL atomically:YES]);
+	[self git:@[ @"add", @"--", path ] directory:self.repositoryURL];
+	XCTAssertTrue([NSFileManager.defaultManager removeItemAtURL:fileURL error:NULL]);
+	NSString *launchPath = PBGitBinary.path;
+	XCTAssertNotNil(launchPath);
+	if (!launchPath) return;
+	NSDictionary *source = @{
+		PBNativeImageSourceWorkingTreeKey : @YES,
+		PBNativeImageSourceWorkingTreeURLKey : self.repositoryURL,
+		PBNativeImageSourceGitLaunchPathKey : launchPath,
+		PBNativeImageSourceGitDirectoryKey : self.repository.gitURL.path,
+		PBNativeImageSourceTaskDirectoryKey : self.repositoryURL.path,
+		PBNativeImageSourceRevisionsKey : @[ @":" ],
+		@"rawPath" : [path dataUsingEncoding:NSUTF8StringEncoding],
+		@"safePath" : path,
+	};
+	GLFileView *fileView = [GLFileView new];
+	PBNativeContentView *contentView = [[PBNativeContentView alloc] initWithFrame:NSZeroRect];
+	XCTAssertEqualObjects([fileView nativeContentView:contentView imageDataForPath:path section:0 imageSource:source], expected);
+}
+
 - (void)testDialogsErrorsSettingsHookAndSuppressionBehavior
 {
 	[self.controller showMessageSheet:@"Message" infoText:@"Info"];
@@ -4483,23 +4785,29 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 		[PBRecoveryLastMessageSheet.window orderOut:nil];
 
 		for (NSNumber *code in @[ @(PBTaskNonZeroExitCodeError), @(PBTaskLaunchError) ]) {
-			NSError *taskError = [NSError errorWithDomain:PBTaskErrorDomain code:code.integerValue userInfo:@{
-				NSLocalizedDescriptionKey : @"Task description",
-				NSLocalizedFailureReasonErrorKey : @"Task reason",
-				PBTaskTerminationStatusKey : @17,
-				PBTaskTerminationOutputKey : @"fatal output",
-			}];
-			NSError *outer = [NSError errorWithDomain:@"GitXTests.Message" code:2 userInfo:@{
-				NSLocalizedDescriptionKey : @"Outer description",
-				NSLocalizedFailureReasonErrorKey : @"Outer reason",
-				NSLocalizedRecoverySuggestionErrorKey : @"Try again.",
-				NSUnderlyingErrorKey : taskError,
-			}];
+			NSError *taskError = [NSError errorWithDomain:PBTaskErrorDomain
+													 code:code.integerValue
+												 userInfo:@{
+													 NSLocalizedDescriptionKey : @"Task description",
+													 NSLocalizedFailureReasonErrorKey : @"Task reason",
+													 PBTaskTerminationStatusKey : @17,
+													 PBTaskTerminationOutputKey : @"fatal output",
+												 }];
+			NSError *outer = [NSError errorWithDomain:@"GitXTests.Message"
+												 code:2
+											 userInfo:@{
+												 NSLocalizedDescriptionKey : @"Outer description",
+												 NSLocalizedFailureReasonErrorKey : @"Outer reason",
+												 NSLocalizedRecoverySuggestionErrorKey : @"Try again.",
+												 NSUnderlyingErrorKey : taskError,
+											 }];
 			__block BOOL completed = NO;
-			[PBRecoveryMessageSheet beginSheetWithError:outer windowController:self.controller completionHandler:^(id sheet, NSModalResponse returnCode) {
-				completed = YES;
-				XCTAssertEqual(returnCode, NSModalResponseOK);
-			}];
+			[PBRecoveryMessageSheet beginSheetWithError:outer
+									   windowController:self.controller
+									  completionHandler:^(id sheet, NSModalResponse returnCode) {
+										  completed = YES;
+										  XCTAssertEqual(returnCode, NSModalResponseOK);
+									  }];
 			XCTAssertTrue(completed);
 			NSString *info = PBRecoveryLastMessageSheet.infoView.string;
 			XCTAssertTrue([info containsString:@"Outer reason"]);
@@ -4518,6 +4826,10 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 		XCTAssertEqualObjects(PBRecoveryLastMessageSheet.messageField.stringValue, longMessage);
 		XCTAssertEqualObjects(PBRecoveryLastMessageSheet.infoView.string, longInfo);
 		XCTAssertGreaterThan(PBRecoveryLastMessageSheet.window.frame.size.height, 179.0);
+		[PBRecoveryLastMessageSheet.window orderFront:nil];
+		[PBRecoveryLastMessageSheet.window.contentView layoutSubtreeIfNeeded];
+		[PBRecoveryLastMessageSheet.infoView.layoutManager ensureLayoutForTextContainer:PBRecoveryLastMessageSheet.infoView.textContainer];
+		[PBRecoveryLastMessageSheet.window displayIfNeeded];
 		[self attachScreenshotOfView:PBRecoveryLastMessageSheet.window.contentView name:@"Recovery error sheet wrapping and details"];
 	} @finally {
 		[PBRecoveryLastMessageSheet.window orderOut:nil];

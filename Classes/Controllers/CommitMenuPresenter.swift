@@ -82,6 +82,20 @@ private nonisolated enum CommitMenuAction: String {
 
 @objc(PBCommitMenuPresenter)
 final nonisolated class CommitMenuPresenter: NSObject {
+    static func isMutation(action: Selector) -> Bool {
+        switch CommitMenuAction(selector: action) {
+        case .stage, .unstage, .discard, .forceDiscard, .trash, .ignore, .amend, .prepare: true
+        default: false
+        }
+    }
+
+    static func requiresStringPath(action: Selector) -> Bool {
+        switch CommitMenuAction(selector: action) {
+        case .trash, .open, .ignore, .reveal: true
+        default: false
+        }
+    }
+
     @objc(presentationForAction:resolvedFiles:allowsTrash:isContextualMenu:singleSelectionIsSubmodule:isAmend:prepareHookExists:fallbackEnabled:)
     static func presentation(
         action: Selector?,

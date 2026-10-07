@@ -16,17 +16,33 @@ private enum IndexSnapshotError {
 
 @objc(PBIndexStatusEntry)
 final nonisolated class IndexStatusEntry: NSObject {
+    @objc let rawPath: Data
     @objc let path: String
     @objc let status: Int
     @objc let commitBlobMode: String?
     @objc let commitBlobSHA: String?
 
-    init(path: String, status: Int, commitBlobMode: String?, commitBlobSHA: String?) {
-        self.path = path
+    init(rawPath: Data, status: Int, commitBlobMode: String?, commitBlobSHA: String?) {
+        self.rawPath = rawPath
+        path = IndexPathDisplayName.string(for: rawPath)
         self.status = status
         self.commitBlobMode = commitBlobMode
         self.commitBlobSHA = commitBlobSHA
         super.init()
+    }
+}
+
+nonisolated enum IndexPathDisplayName {
+    static func string(for rawPath: Data) -> String {
+        if let path = String(data: rawPath, encoding: .utf8) {
+            return path
+        }
+        return rawPath.map { byte in
+            if (0x20 ... 0x7E).contains(byte), byte != 0x5C {
+                return String(UnicodeScalar(byte))
+            }
+            return String(format: "\\x%02X", byte)
+        }.joined()
     }
 }
 
@@ -36,21 +52,24 @@ final nonisolated class IndexStatusParser: NSObject {
     func parseTrackedData(
         _ data: Data?,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
-    ) -> [String: IndexStatusEntry]? {
+    ) -> [Data: IndexStatusEntry]? {
         do {
             let records = try records(from: data)
             guard records.count.isMultiple(of: 2) else {
                 throw IndexSnapshotError.malformed("Tracked index output contains an incomplete record")
             }
 
-            var entries: [String: IndexStatusEntry] = [:]
+            var entries: [Data: IndexStatusEntry] = [:]
             for index in stride(from: 0, to: records.count, by: 2) {
-                let fields = records[index].split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+                guard let statusRecord = String(data: records[index], encoding: .utf8) else {
+                    throw IndexSnapshotError.malformed("Tracked index output contains non-UTF-8 metadata")
+                }
+                let fields = statusRecord.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
                 guard fields.count >= 5, fields[0].hasPrefix(":") else {
                     throw IndexSnapshotError.malformed("Tracked index output contains a malformed status")
                 }
-                let path = records[index + 1]
-                guard !path.isEmpty else {
+                let rawPath = records[index + 1]
+                guard !rawPath.isEmpty else {
                     throw IndexSnapshotError.malformed("Tracked index output contains an empty path")
                 }
                 let status: Int
@@ -66,8 +85,8 @@ final nonisolated class IndexStatusParser: NSObject {
                 } else {
                     status = 1
                 }
-                entries[path] = IndexStatusEntry(
-                    path: path,
+                entries[rawPath] = IndexStatusEntry(
+                    rawPath: rawPath,
                     status: status,
                     commitBlobMode: String(fields[0].dropFirst()),
                     commitBlobSHA: fields[2]
@@ -84,13 +103,13 @@ final nonisolated class IndexStatusParser: NSObject {
     func parseUntrackedData(
         _ data: Data?,
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
-    ) -> [String: IndexStatusEntry]? {
+    ) -> [Data: IndexStatusEntry]? {
         do {
             let records = try records(from: data)
-            var entries: [String: IndexStatusEntry] = [:]
-            for path in records where !path.isEmpty {
-                entries[path] = IndexStatusEntry(
-                    path: path,
+            var entries: [Data: IndexStatusEntry] = [:]
+            for rawPath in records where !rawPath.isEmpty {
+                entries[rawPath] = IndexStatusEntry(
+                    rawPath: rawPath,
                     status: 0,
                     commitBlobMode: nil,
                     commitBlobSHA: nil
@@ -103,33 +122,43 @@ final nonisolated class IndexStatusParser: NSObject {
         }
     }
 
-    private func records(from data: Data?) throws -> [String] {
+    private func records(from data: Data?) throws -> [Data] {
         guard let data, !data.isEmpty else { return [] }
-        var payload = data
-        if payload.last == 0x00 {
-            payload.removeLast()
+        guard data.last == 0 else {
+            throw IndexSnapshotError.malformed("Index output contains an unterminated NUL record")
         }
+        var payload = data
+        payload.removeLast()
         guard !payload.isEmpty else { return [] }
-        // Split on NUL at the byte level and decode each field with a lossy UTF-8 fallback. A single
-        // non-UTF-8 path (e.g. latin-1 created on another OS) previously failed the whole-payload decode
-        // and silently froze the staged/unstaged/untracked list at its previous contents.
-        return payload
-            .split(separator: 0x00, omittingEmptySubsequences: false)
-            .map { String(decoding: $0, as: UTF8.self) }
+        var records: [Data] = []
+        var record = Data()
+        for byte in payload {
+            if byte == 0 {
+                records.append(record)
+                record = Data()
+            } else {
+                record.append(byte)
+            }
+        }
+        records.append(record)
+        return records
     }
 }
 
 @objc(PBIndexFileSnapshot)
 final nonisolated class IndexFileSnapshot: NSObject {
+    @objc let rawPath: Data
     @objc let path: String
     @objc var status: Int
+    @objc var stagedStatus: Int
+    @objc var worktreeStatus: Int
     @objc var commitBlobMode: String?
     @objc var commitBlobSHA: String?
     @objc var hasStagedChanges: Bool
     @objc var hasUnstagedChanges: Bool
 
     @objc(initWithPath:status:commitBlobMode:commitBlobSHA:hasStagedChanges:hasUnstagedChanges:)
-    init(
+    convenience init(
         path: String,
         status: Int,
         commitBlobMode: String?,
@@ -137,8 +166,36 @@ final nonisolated class IndexFileSnapshot: NSObject {
         hasStagedChanges: Bool,
         hasUnstagedChanges: Bool
     ) {
+        self.init(
+            path: path,
+            rawPath: Data(path.utf8),
+            status: status,
+            stagedStatus: status,
+            worktreeStatus: status,
+            commitBlobMode: commitBlobMode,
+            commitBlobSHA: commitBlobSHA,
+            hasStagedChanges: hasStagedChanges,
+            hasUnstagedChanges: hasUnstagedChanges
+        )
+    }
+
+    @objc(initWithPath:rawPath:status:stagedStatus:worktreeStatus:commitBlobMode:commitBlobSHA:hasStagedChanges:hasUnstagedChanges:)
+    init(
+        path: String,
+        rawPath: Data,
+        status: Int,
+        stagedStatus: Int,
+        worktreeStatus: Int,
+        commitBlobMode: String?,
+        commitBlobSHA: String?,
+        hasStagedChanges: Bool,
+        hasUnstagedChanges: Bool
+    ) {
         self.path = path
+        self.rawPath = rawPath
         self.status = status
+        self.stagedStatus = stagedStatus
+        self.worktreeStatus = worktreeStatus
         self.commitBlobMode = commitBlobMode
         self.commitBlobSHA = commitBlobSHA
         self.hasStagedChanges = hasStagedChanges
@@ -149,7 +206,10 @@ final nonisolated class IndexFileSnapshot: NSObject {
     convenience init(entry: IndexStatusEntry, staged: Bool, unstaged: Bool) {
         self.init(
             path: entry.path,
+            rawPath: entry.rawPath,
             status: entry.status,
+            stagedStatus: entry.status,
+            worktreeStatus: entry.status,
             commitBlobMode: entry.commitBlobMode,
             commitBlobSHA: entry.commitBlobSHA,
             hasStagedChanges: staged,
@@ -157,10 +217,20 @@ final nonisolated class IndexFileSnapshot: NSObject {
         )
     }
 
-    func applying(_ entry: IndexStatusEntry) {
+    func applyingStaged(_ entry: IndexStatusEntry) {
         status = entry.status
+        stagedStatus = entry.status
         commitBlobMode = entry.commitBlobMode
         commitBlobSHA = entry.commitBlobSHA
+    }
+
+    func applyingWorktree(_ entry: IndexStatusEntry) {
+        worktreeStatus = entry.status
+        if !hasStagedChanges {
+            status = entry.status
+            commitBlobMode = entry.commitBlobMode
+            commitBlobSHA = entry.commitBlobSHA
+        }
     }
 }
 
@@ -171,19 +241,23 @@ final nonisolated class IndexSnapshotReducer: NSObject {
     @objc(reducePrevious:staged:unstaged:untracked:)
     func reduce(
         previous: [IndexFileSnapshot],
-        staged: [String: IndexStatusEntry]?,
-        unstaged: [String: IndexStatusEntry]?,
-        untracked: [String: IndexStatusEntry]?
+        staged: [Data: IndexStatusEntry]?,
+        unstaged: [Data: IndexStatusEntry]?,
+        untracked: [Data: IndexStatusEntry]?
     ) -> [IndexFileSnapshot] {
-        var order = previous.map(\.path)
-        var snapshots = Dictionary(uniqueKeysWithValues: previous.map { ($0.path, copy($0)) })
+        var order: [Data] = []
+        var snapshots: [Data: IndexFileSnapshot] = [:]
+        for snapshot in previous where snapshots[snapshot.rawPath] == nil {
+            order.append(snapshot.rawPath)
+            snapshots[snapshot.rawPath] = copy(snapshot)
+        }
 
         if let staged {
             for snapshot in snapshots.values {
                 snapshot.hasStagedChanges = false
             }
             merge(staged, into: &snapshots, order: &order) { snapshot, entry in
-                snapshot.applying(entry)
+                snapshot.applyingStaged(entry)
                 snapshot.hasStagedChanges = true
             }
         }
@@ -196,28 +270,22 @@ final nonisolated class IndexSnapshotReducer: NSObject {
 
         if let unstaged {
             merge(unstaged, into: &snapshots, order: &order) { snapshot, entry in
-                if !snapshot.hasStagedChanges {
-                    snapshot.applying(entry)
-                }
+                snapshot.applyingWorktree(entry)
                 snapshot.hasUnstagedChanges = true
             }
         }
 
         if let untracked {
-            merge(untracked, into: &snapshots, order: &order) { snapshot, _ in
-                // Don't let an untracked entry erase a staged change for the same path. `git rm --cached foo`
-                // (keeping foo on disk) reports foo as both a staged deletion and an untracked file; clobbering
-                // the staged state here hid the staged deletion so the user could neither see nor unstage it.
-                if !snapshot.hasStagedChanges {
-                    snapshot.status = 0
-                }
+            merge(untracked, into: &snapshots, order: &order) { snapshot, entry in
+                snapshot.applyingWorktree(entry)
                 snapshot.hasUnstagedChanges = true
             }
         }
 
-        let result = order.compactMap { path -> IndexFileSnapshot? in
-            guard let snapshot = snapshots[path],
+        let result = order.compactMap { rawPath -> IndexFileSnapshot? in
+            guard let snapshot = snapshots[rawPath],
                   snapshot.hasStagedChanges || snapshot.hasUnstagedChanges else { return nil }
+            snapshot.status = snapshot.hasStagedChanges ? snapshot.stagedStatus : snapshot.worktreeStatus
             return snapshot
         }
         logger.debug("Reduced index snapshots to \(result.count) paths")
@@ -225,19 +293,20 @@ final nonisolated class IndexSnapshotReducer: NSObject {
     }
 
     private func merge(
-        _ entries: [String: IndexStatusEntry],
-        into snapshots: inout [String: IndexFileSnapshot],
-        order: inout [String],
+        _ entries: [Data: IndexStatusEntry],
+        into snapshots: inout [Data: IndexFileSnapshot],
+        order: inout [Data],
         update: (IndexFileSnapshot, IndexStatusEntry) -> Void
     ) {
-        for (path, entry) in entries {
+        for rawPath in entries.keys.sorted(by: { $0.lexicographicallyPrecedes($1) }) {
+            guard let entry = entries[rawPath] else { continue }
             let snapshot: IndexFileSnapshot
-            if let existing = snapshots[path] {
+            if let existing = snapshots[rawPath] {
                 snapshot = existing
             } else {
                 snapshot = IndexFileSnapshot(entry: entry, staged: false, unstaged: false)
-                snapshots[path] = snapshot
-                order.append(path)
+                snapshots[rawPath] = snapshot
+                order.append(rawPath)
             }
             update(snapshot, entry)
         }
@@ -246,12 +315,213 @@ final nonisolated class IndexSnapshotReducer: NSObject {
     private func copy(_ snapshot: IndexFileSnapshot) -> IndexFileSnapshot {
         IndexFileSnapshot(
             path: snapshot.path,
+            rawPath: snapshot.rawPath,
             status: snapshot.status,
+            stagedStatus: snapshot.stagedStatus,
+            worktreeStatus: snapshot.worktreeStatus,
             commitBlobMode: snapshot.commitBlobMode,
             commitBlobSHA: snapshot.commitBlobSHA,
             hasStagedChanges: snapshot.hasStagedChanges,
             hasUnstagedChanges: snapshot.hasUnstagedChanges
         )
+    }
+}
+
+// swiftlint:enable unused_declaration
+
+/// Objective-C retains atomic model properties and Cocoa wiring. These
+/// decisions consume snapshots and never treat an escaped label as a path.
+// Objective-C callers are not visible to SwiftLint's analyzer.
+// swiftlint:disable unused_declaration
+@objc(PBIndexFilePresentation)
+final nonisolated class IndexFilePresentation: NSObject {
+    @objc(displayPathForRawPath:)
+    static func displayPath(rawPath: Data) -> String {
+        IndexPathDisplayName.string(for: rawPath)
+    }
+
+    @objc(safePathForRawPath:)
+    static func safePath(rawPath: Data) -> String? {
+        guard !rawPath.isEmpty, !rawPath.contains(0) else { return nil }
+        return String(data: rawPath, encoding: .utf8)
+    }
+
+    @objc(rawPathsFromData:)
+    static func rawPaths(data: Data) -> [Data] {
+        guard data.isEmpty || data.last == 0 else { return [] }
+        return data.split(separator: 0).map { Data($0) }
+    }
+
+    @objc(pathMatchesRawPath:fullPath:)
+    static func pathMatches(rawPath: Data?, fullPath: String?) -> Bool {
+        guard let rawPath, let fullPath, let decoded = safePath(rawPath: rawPath) else { return false }
+        return decoded == fullPath && Data(fullPath.utf8) == rawPath
+    }
+
+    @objc(imageNameForStatus:)
+    static func imageName(status: Int) -> String {
+        switch status {
+        case 0: "new_file"
+        case 2: "deleted_file"
+        default: "empty_file"
+        }
+    }
+
+    @objc(workingStatusForFile:)
+    static func workingStatus(file: PBChangedFile) -> String {
+        var states: [String] = []
+        if file.hasStagedChanges {
+            states.append("staged")
+        }
+        if file.hasUnstagedChanges {
+            states.append(file.worktreeStatus == .NEW ? "untracked" : "unstaged")
+        }
+        if file.hasStagedChanges, file.stagedStatus == .DELETED {
+            states.append("deleted")
+        } else if file.hasUnstagedChanges, file.worktreeStatus == .DELETED {
+            states.append("deleted")
+        }
+        return states.joined(separator: ", ")
+    }
+
+    @objc(discardableFilesFromFiles:)
+    static func discardableFiles(files: [PBChangedFile]) -> [PBChangedFile] {
+        files.filter { $0.hasUnstagedChanges && $0.worktreeStatus != .NEW }
+    }
+}
+
+@objc(PBIndexWorkingStateSummary)
+final nonisolated class IndexWorkingStateSummary: NSObject {
+    @objc let stagedCount: UInt
+    @objc let unstagedCount: UInt
+    @objc let untrackedCount: UInt
+
+    @objc(initWithFiles:)
+    init(files: [PBChangedFile]) {
+        stagedCount = UInt(files.filter(\.hasStagedChanges).count)
+        unstagedCount = UInt(files.filter { $0.hasUnstagedChanges && $0.worktreeStatus != .NEW }.count)
+        untrackedCount = UInt(files.filter { $0.hasUnstagedChanges && $0.worktreeStatus == .NEW }.count)
+        super.init()
+    }
+}
+
+@objc(PBIndexOperationErrorPresentation)
+final nonisolated class IndexOperationErrorPresentation: NSObject {
+    @objc(messageForOperation:error:)
+    static func message(operation: String, error: NSError?) -> String {
+        guard let error else { return operation }
+        var parts = [operation, error.localizedDescription]
+        if let reason = error.localizedFailureReason, reason != error.localizedDescription {
+            parts.append(reason)
+        }
+        if let status = error.userInfo[PBTaskTerminationStatusKey] as? NSNumber {
+            parts.append(String(format: NSLocalizedString("Exit status: %@", comment: "Git process exit status in an index operation failure"), status))
+        }
+        if let output = error.userInfo[PBTaskTerminationOutputKey] as? String {
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                parts.append(trimmed)
+            }
+        }
+        return parts.joined(separator: "\n")
+    }
+}
+
+@objc(PBIndexFileReconciliation)
+final nonisolated class IndexFileReconciliation: NSObject {
+    @objc let files: [PBChangedFile]
+    @objc let membershipChanged: Bool
+
+    @objc(initWithFiles:result:reducer:)
+    init(files: [PBChangedFile], result: IndexRefreshResult, reducer: IndexSnapshotReducer) {
+        let previous = files.map {
+            IndexFileSnapshot(
+                path: $0.path, rawPath: $0.rawPath, status: $0.status.rawValue,
+                stagedStatus: $0.stagedStatus.rawValue, worktreeStatus: $0.worktreeStatus.rawValue,
+                commitBlobMode: $0.commitBlobMode, commitBlobSHA: $0.commitBlobSHA,
+                hasStagedChanges: $0.hasStagedChanges, hasUnstagedChanges: $0.hasUnstagedChanges
+            )
+        }
+        let snapshots = reducer.reduce(
+            previous: previous, staged: result.staged, unstaged: result.unstaged, untracked: result.untracked
+        )
+        var existing: [Data: PBChangedFile] = [:]
+        for file in files where existing[file.rawPath] == nil {
+            existing[file.rawPath] = file
+        }
+        let reconciled = snapshots.map { snapshot in
+            let file = existing[snapshot.rawPath] ?? PBChangedFile(path: snapshot.path, rawPath: snapshot.rawPath)
+            file.status = PBChangedFileStatus(rawValue: snapshot.status) ?? .MODIFIED
+            file.stagedStatus = PBChangedFileStatus(rawValue: snapshot.stagedStatus) ?? .MODIFIED
+            file.worktreeStatus = PBChangedFileStatus(rawValue: snapshot.worktreeStatus) ?? .MODIFIED
+            file.commitBlobMode = snapshot.commitBlobMode
+            file.commitBlobSHA = snapshot.commitBlobSHA
+            file.hasStagedChanges = snapshot.hasStagedChanges
+            file.hasUnstagedChanges = snapshot.hasUnstagedChanges
+            return file
+        }
+        let survivingPaths = Set(snapshots.map(\.rawPath))
+        for file in files where !survivingPaths.contains(file.rawPath) {
+            // Retained row references receive the same accepted clean state
+            // as the list that removes them. Pending/failed phases still keep
+            // their previous membership through the reducer above.
+            file.hasStagedChanges = false
+            file.hasUnstagedChanges = false
+            file.status = .MODIFIED
+            file.stagedStatus = .MODIFIED
+            file.worktreeStatus = .MODIFIED
+            file.commitBlobMode = nil
+            file.commitBlobSHA = nil
+        }
+        self.files = reconciled
+        membershipChanged = files.map { ObjectIdentifier($0) } != reconciled.map { ObjectIdentifier($0) }
+        super.init()
+    }
+}
+
+/// Captured on main before a history view queues work. Every field is an
+/// immutable copy, so refreshes cannot change the selected file underneath it.
+@objc(PBIndexFileViewSnapshot)
+final nonisolated class IndexFileViewSnapshot: NSObject {
+    @objc let rawPath: Data
+    @objc let path: String
+    @objc let stagedStatus: Int
+    @objc let worktreeStatus: Int
+    @objc let hasStagedChanges: Bool
+    @objc let hasUnstagedChanges: Bool
+    private let status: PBChangedFileStatus
+    private let commitBlobMode: String?
+    private let commitBlobSHA: String?
+
+    init(file: PBChangedFile) {
+        rawPath = file.rawPath
+        path = file.path
+        status = file.status
+        stagedStatus = file.stagedStatus.rawValue
+        worktreeStatus = file.worktreeStatus.rawValue
+        hasStagedChanges = file.hasStagedChanges
+        hasUnstagedChanges = file.hasUnstagedChanges
+        commitBlobMode = file.commitBlobMode
+        commitBlobSHA = file.commitBlobSHA
+        super.init()
+    }
+
+    @objc(snapshotsForFiles:)
+    static func snapshots(files: [PBChangedFile]) -> [IndexFileViewSnapshot] {
+        assert(Thread.isMainThread)
+        return files.map(IndexFileViewSnapshot.init)
+    }
+
+    @objc func materializedFile() -> PBChangedFile {
+        let file = PBChangedFile(path: path, rawPath: rawPath)
+        file.status = status
+        file.stagedStatus = PBChangedFileStatus(rawValue: stagedStatus) ?? .MODIFIED
+        file.worktreeStatus = PBChangedFileStatus(rawValue: worktreeStatus) ?? .MODIFIED
+        file.hasStagedChanges = hasStagedChanges
+        file.hasUnstagedChanges = hasUnstagedChanges
+        file.commitBlobMode = commitBlobMode
+        file.commitBlobSHA = commitBlobSHA
+        return file
     }
 }
 

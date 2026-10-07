@@ -1409,6 +1409,67 @@ final class GitXSwiftFeatureTests: XCTestCase {
         XCTAssertTrue(PBDiffCommandOptions.arguments.contains("--ignore-all-space"))
     }
 
+    func testReadOnlyWhitespacePreferencePreservesApplicableStagingPatches() throws {
+        let restore = preservePersistentDefault(forKey: "PBShowWhitespaceDifferences")
+        defer { restore() }
+        try withTemporaryDirectory { directory in
+            try runGit(["init", "--quiet", "--initial-branch=main"], in: directory)
+            try runGit(["config", "user.name", "GitX Test"], in: directory)
+            try runGit(["config", "user.email", "gitx-tests@example.invalid"], in: directory)
+            try runGit(["config", "commit.gpgsign", "false"], in: directory)
+            try runGit(["config", "core.hooksPath", "/dev/null"], in: directory)
+            let file = directory.appendingPathComponent("tracked.txt")
+            try "let value = 1\nlet second = 2\n".write(to: file, atomically: true, encoding: .utf8)
+            try runGit(["add", "--all"], in: directory)
+            try runGit(["commit", "--quiet", "-m", "initial"], in: directory)
+            let repository = try PBGitRepository(url: directory)
+            let service = PBIndexMutationService(repository: repository)
+            try "let value  = 1\nlet second = 2\n".write(to: file, atomically: true, encoding: .utf8)
+            for showWhitespace in [true, false] {
+                UserDefaults.standard.set(showWhitespace, forKey: "PBShowWhitespaceDifferences")
+                let readOnly = try capturedGit(["diff"] + PBDiffCommandOptions.arguments + ["--", "tracked.txt"], in: directory)
+                XCTAssertEqual(readOnly.isEmpty, !showWhitespace)
+                var error: NSError?
+                let patch = try XCTUnwrap(service.diff(
+                    forPath: "tracked.txt", status: 1, hasStagedChanges: false,
+                    staged: false, parentTree: "HEAD", contextLines: 3, error: &error
+                ))
+                XCTAssertNil(error)
+                XCTAssertTrue(patch.contains("+let value  = 1"))
+                XCTAssertTrue(service.applyPatch(patch, stage: true, reverse: false, error: &error))
+                XCTAssertNil(error)
+                XCTAssertTrue(try capturedGit(["diff", "--cached"], in: directory).contains("+let value  = 1"))
+                try runGit(["reset", "--quiet", "HEAD", "--", "tracked.txt"], in: directory)
+            }
+            try "let value  = 1\nlet second = 3\n".write(to: file, atomically: true, encoding: .utf8)
+            let mixed = try capturedGit(["diff"] + PBDiffCommandOptions.arguments + ["--", "tracked.txt"], in: directory)
+            XCTAssertTrue(mixed.contains("+let second = 3"))
+        }
+    }
+
+    private func capturedGit(_ arguments: [String], in directory: URL) throws -> String {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        task.arguments = arguments
+        task.currentDirectoryURL = directory
+        var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }
+        environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
+        environment["GIT_CONFIG_NOSYSTEM"] = "1"
+        task.environment = environment
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        try task.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard task.terminationStatus == 0 else {
+            throw NSError(domain: "GitXRecoveryGit", code: Int(task.terminationStatus), userInfo: [
+                NSLocalizedDescriptionKey: String(decoding: data, as: UTF8.self),
+            ])
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
     func testDockIconChoicesRenderAndApplyImmediately() throws {
         let restoreIconStyle = preservePersistentDefault(forKey: "PBApplicationIconStyle")
         let originalApplicationIcon = NSApplication.shared.applicationIconImage
@@ -1884,6 +1945,18 @@ final class GitXSwiftFeatureTests: XCTestCase {
             3
         )
         XCTAssertEqual(coordinator.adjustedScrollRow(selectionRow: 4, oldRow: 1, visibleRows: 3, contentCount: 10), 6)
+    }
+
+    func testHistoryTreeSelectionFallsBackWhenARememberedPathDisappears() {
+        let coordinator = PBHistoryStateCoordinator()
+        let leaf = TreeFixture(fullPath: "Sources/App.swift", path: "App.swift")
+        coordinator.saveFileBrowserSelection(selectedObjects: [leaf], hasContent: true)
+        let replacement = TreeFixture(fullPath: "README.md", path: "README.md")
+        XCTAssertEqual(coordinator.treeSelectionIndexPath(children: [replacement], treeMode: true), IndexPath(index: 0))
+        let emptyFolder = TreeFixture(fullPath: "Sources", path: "Sources")
+        XCTAssertEqual(coordinator.treeSelectionIndexPath(children: [emptyFolder, replacement], treeMode: true), IndexPath(index: 0))
+        XCTAssertNil(coordinator.treeSelectionIndexPath(children: [], treeMode: true))
+        XCTAssertNil(coordinator.treeSelectionIndexPath(children: [replacement], treeMode: false))
     }
 
     private func controls(in view: NSView) -> [NSControl] {
