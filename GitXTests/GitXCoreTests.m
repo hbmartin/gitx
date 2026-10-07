@@ -2523,7 +2523,11 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	}];
 	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
 	XCTAssertNotNil(tracked);
-	XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	}];
+	XCTAssertFalse(self.repository.index.mutationReconciliationPending);
+	XCTAssertTrue(tracked.hasStagedChanges);
 	return tracked;
 }
 
