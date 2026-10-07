@@ -2,6 +2,28 @@ import Darwin
 import XCTest
 
 final class PBTaskLifecycleTests: XCTestCase {
+    func testAddingForceKillToAGracefulRequestKeepsItsEarlierTerminationDeadline() {
+        var schedule = PBChildProcessTerminationSchedule()
+        schedule.mergeRequest(
+            now: 100,
+            gracePeriod: 10,
+            forceKillDelay: nil,
+            terminationWasSent: false
+        )
+        XCTAssertEqual(schedule.terminationDeadline, 10_000_000_100)
+        XCTAssertNil(schedule.forceKillDeadline)
+
+        // A later caller enables escalation without extending the original grace period.
+        schedule.mergeRequest(
+            now: 200,
+            gracePeriod: 40,
+            forceKillDelay: 20,
+            terminationWasSent: false
+        )
+        XCTAssertEqual(schedule.terminationDeadline, 10_000_000_100)
+        XCTAssertEqual(schedule.forceKillDeadline, 30_000_000_100)
+    }
+
     func testDiagnosticRedactionPreservesURLPrefixesAndBoundaries() {
         let cases = [
             ("123+.-abc://dummy:password@example.invalid/repo", "123+.-abc://[redacted]@example.invalid/repo"),
