@@ -1315,6 +1315,14 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 + (instancetype)rootForRepository:(PBGitRepository *)repository NS_SWIFT_NAME(root(for:));
 @end
 
+@interface PBWorkingTreePaths : NSObject
+- (instancetype)initWithFiles:(NSArray<PBChangedFile *> *)files;
+@property (nonatomic, readonly) NSArray<NSData *> *rawPaths;
+- (void)appendData:(NSData *)data NS_SWIFT_NAME(append(data:));
+- (nullable PBChangedFile *)fileForRawPath:(NSData *)rawPath NS_SWIFT_NAME(file(for:));
++ (nullable NSString *)validatedHierarchyPath:(NSString *)path;
+@end
+
 @interface PBQLTextView : NSTextView
 @end
 

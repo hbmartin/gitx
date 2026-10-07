@@ -378,11 +378,14 @@
 	self.selectedCommitDetailsIndex = [stateCoordinator detailModeForCurrentMode:self.detailMode selectionCount:self.selectedCommits.count];
 
 	switch (self.detailMode) {
-		case PBHistoryDetailModeTree:
+		case PBHistoryDetailModeTree: {
 			[self setStagingPaneVisible:NO];
-			self.gitTree = [treePresentation treeForCommit:firstSelectedCommit];
-			[self restoreFileBrowserSelection];
+			[stateCoordinator performAutomaticSelection:^{
+				self.gitTree = [self->treePresentation treeForCommit:firstSelectedCommit];
+				[self restoreFileBrowserSelection];
+			}];
 			break;
+		}
 		case PBHistoryDetailModeFlow:
 			// The Flow adapter observes the selection itself. The hidden Details
 			// and Tree panes keep their last content rather than rendering a diff
@@ -442,8 +445,10 @@
 	if (self.detailMode != PBHistoryDetailModeTree) return;
 	PBGitCommit *commit = self.selectedCommits.firstObject;
 	if (!commit) return;
-	self.gitTree = [treePresentation treeForCommit:commit];
-	[self restoreFileBrowserSelection];
+	[stateCoordinator performAutomaticSelection:^{
+		self.gitTree = [self->treePresentation treeForCommit:commit];
+		[self restoreFileBrowserSelection];
+	}];
 }
 
 - (void)outlineView:(NSOutlineView *)outlineView
@@ -545,8 +550,10 @@
 
 - (void)restoreFileBrowserSelection
 {
-	NSIndexPath *path = [stateCoordinator treeSelectionIndexPathForChildren:treeController.content treeMode:self.detailMode == PBHistoryDetailModeTree];
-	if (path) [treeController setSelectionIndexPath:path];
+	[stateCoordinator performAutomaticSelection:^{
+		NSIndexPath *path = [self->stateCoordinator treeSelectionIndexPathForChildren:self.treeController.content treeMode:self.detailMode == PBHistoryDetailModeTree];
+		if (path) [self.treeController setSelectionIndexPath:path];
+	}];
 }
 
 - (void)saveFileBrowserSelection

@@ -41,6 +41,42 @@ nonisolated enum IndexFilenameUTF8 {
     }
 }
 
+/// Keeps byte identity in Swift collections so common-prefix paths do not use
+/// Foundation's NSData hashing when assembling the working tree.
+@objc(PBWorkingTreePaths)
+final nonisolated class WorkingTreePaths: NSObject {
+    @objc private(set) var rawPaths: [Data] = []
+    private var seen = Set<Data>()
+    private var files: [Data: PBChangedFile] = [:]
+
+    @objc(initWithFiles:)
+    init(files: [PBChangedFile]) {
+        super.init()
+        for file in files {
+            self.files[file.rawPath] = file
+        }
+    }
+
+    @objc(appendData:)
+    func append(data: Data) {
+        for path in IndexFilePresentation.rawPaths(data: data) where seen.insert(path).inserted {
+            rawPaths.append(path)
+        }
+    }
+
+    @objc(fileForRawPath:)
+    func file(for rawPath: Data) -> PBChangedFile? {
+        files[rawPath]
+    }
+
+    @objc(validatedHierarchyPath:)
+    static func validatedHierarchyPath(_ path: String) -> String? {
+        let components = path.components(separatedBy: "/")
+        guard !path.contains("\0"), components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return nil }
+        return path
+    }
+}
+
 nonisolated enum IndexPathDisplayName {
     static func string(for rawPath: Data) -> String {
         if let path = IndexFilenameUTF8.decode(rawPath) {

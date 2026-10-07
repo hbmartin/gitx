@@ -1570,11 +1570,15 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	enumerator.oidsBeforeError = oids;
 	enumerator.firstOIDDelay = 0.25;
 	PBGitRevListScriptedEnumeratorStub *revisionList = [[PBGitRevListScriptedEnumeratorStub alloc]
-		initWithRepository:self.repository rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]] shouldGraph:YES];
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]
+			   shouldGraph:YES];
 	revisionList.scriptedEnumerator = enumerator;
 	revisionList.publicationSizes = [NSMutableArray array];
 	XCTestExpectation *completion = [self expectationWithDescription:@"timed walk completes after both publications"];
-	[revisionList loadRevisionsWithCompletionBlock:^{ [completion fulfill]; }];
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[completion fulfill];
+	}];
 	[self waitForExpectations:@[ completion ] timeout:5];
 	XCTAssertEqualObjects(revisionList.publicationSizes, (@[ @100, @20 ]));
 	XCTAssertEqualObjects([revisionList.commits valueForKey:@"OID"], (@[ head.OID ]));

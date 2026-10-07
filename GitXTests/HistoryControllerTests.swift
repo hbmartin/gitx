@@ -1681,6 +1681,80 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(contentView.textView(contentView.textView, clickedOnLink: link, at: UInt(range.location)))
     }
 
+    func testWorkingTreeFoldersRemainAvailableToOpeningAndQuickLook() throws {
+        let root = PBWorkingTree.root(for: repository)
+        let folder = try XCTUnwrap(root.children.first { $0.path == "nested" })
+        XCTAssertFalse(folder.leaf)
+        let expected = try XCTUnwrap(repository.workingDirectoryURL()).appendingPathComponent("nested").path
+        XCTAssertEqual(folder.tmpFileNameForContents(), expected)
+        historyController.gitTree = root
+        let node = try XCTUnwrap(waitForTreeNode(fullPath: "nested"))
+        historyController.treeController.setSelectionIndexPath(node.indexPath)
+        XCTAssertEqual(historyController.previewPanel(nil, previewItemAt: 0)?.previewItemURL?.path, expected)
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Working-Folder-Preview")
+        try FileManager.default.removeItem(atPath: expected)
+        XCTAssertNil(historyController.previewPanel(nil, previewItemAt: 0))
+        historyController.openSelectedFile(self)
+    }
+
+    func testAutomaticTreeFallbackPreservesRememberedFileUntilUserSelectsAnother() throws {
+        let previous = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = false
+        defer { PBApplicationSettings.changedFilesOnly = previous }
+        let original = try XCTUnwrap(repository.headCommit())
+        historyController.commitController.setSelectedObjects([original])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        let selected = try XCTUnwrap(waitForTreeNode(fullPath: "nested/tracked.txt"))
+        historyController.treeController.setSelectionIndexPath(selected.indexPath)
+        historyController.saveFileBrowserSelection()
+        try fixture.git(["rm", "nested/tracked.txt"])
+        try fixture.git(["commit", "-m", "temporarily absent"])
+        let absentSHA = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        historyController.refresh(self)
+        XCTAssertTrue(waitForCondition { self.repository.revisionList?.commits.contains { ($0 as? PBGitCommit)?.sha == absentSHA } == true })
+        let absent = try XCTUnwrap(loadedCommits().first { $0.sha == absentSHA })
+        XCTAssertNotEqual(absent.sha, original.sha)
+        historyController.commitController.content = [original, absent]
+        historyController.commitController.setSelectedObjects([absent])
+        historyController.updateKeys()
+        XCTAssertFalse(try flattenedTree(XCTUnwrap(historyController.gitTree)).contains { $0.fullPath == "nested/tracked.txt" })
+        historyController.commitController.setSelectedObjects([original])
+        historyController.updateKeys()
+        XCTAssertEqual((historyController.treeController.selectedObjects.first as? PBGitTree)?.fullPath, "nested/tracked.txt")
+        let other = try XCTUnwrap(waitForTreeNode(fullPath: "FlowSample.swift"))
+        historyController.treeController.setSelectionIndexPath(other.indexPath)
+        let deliberatelySelected = (other.representedObject as? PBGitTree)?.fullPath
+        historyController.commitController.setSelectedObjects([absent])
+        historyController.updateKeys()
+        historyController.commitController.setSelectedObjects([original])
+        historyController.updateKeys()
+        XCTAssertEqual((historyController.treeController.selectedObjects.first as? PBGitTree)?.fullPath, deliberatelySelected)
+    }
+
+    func testWorkingStateChangedTreeDeduplicatesTrackedDeletionAndUntrackedCopy() throws {
+        let previous = PBApplicationSettings.changedFilesOnly
+        defer { PBApplicationSettings.changedFilesOnly = previous }
+        try fixture.git(["rm", "--cached", "nested/tracked.txt"])
+        refreshIndex()
+        PBApplicationSettings.changedFilesOnly = true
+        let state = PBUncommittedChanges(repository: repository)
+        let presentation = PBHistoryTreePresentation(repository: repository)
+        let root = presentation.tree(for: state)
+        let nodes = root.children.filter { $0.fullPath == "nested/tracked.txt" }
+        XCTAssertEqual(nodes.count, 1)
+        let node = try XCTUnwrap(nodes.first)
+        XCTAssertEqual(presentation.displayTitle(for: node), "D  nested/tracked.txt")
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data("nested/tracked.txt".utf8) })
+        XCTAssertTrue(file.hasStagedChanges)
+        XCTAssertTrue(file.hasUnstagedChanges)
+        historyController.commitController.content = [state]
+        historyController.commitController.setSelectedObjects([state])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Deduplicated-Deletion-And-Untracked-Copy")
+    }
+
     func testWorkingStateTreeAndDiffUseRawIdentityAcrossDisplayCollisionsAndDetachedParents() throws {
         let oldChangedFilesOnly = PBApplicationSettings.changedFilesOnly
         defer { PBApplicationSettings.changedFilesOnly = oldChangedFilesOnly }

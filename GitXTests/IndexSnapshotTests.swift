@@ -5,11 +5,13 @@ final class IndexSnapshotTests: XCTestCase {
         private let listing: Data
         private let directory: URL
         private let failsScan: Bool
+        private let statusData: Data?
 
-        init(listing: Data, directory: URL, failsScan: Bool = false) {
+        init(listing: Data, directory: URL, failsScan: Bool = false, statusData: Data? = nil) {
             self.listing = listing
             self.directory = directory
             self.failsScan = failsScan
+            self.statusData = statusData
             super.init()
         }
 
@@ -18,6 +20,10 @@ final class IndexSnapshotTests: XCTestCase {
         }
 
         override func task(withArguments arguments: [Any]?) -> PBTask {
+            if (arguments as? [String])?.first == "status", let statusData {
+                let format = statusData.map { String(format: "\\%03o", $0) }.joined()
+                return PBTask(launchPath: "/usr/bin/printf", arguments: [format], inDirectory: nil)
+            }
             // PBWorkingTree uses the repository's Objective-C factory for byte output.
             if (arguments as? [String])?.contains("ls-files") == true {
                 if failsScan {
@@ -68,6 +74,44 @@ final class IndexSnapshotTests: XCTestCase {
 
         XCTAssertFalse(tree.leaf)
         XCTAssertTrue(tree.children.isEmpty)
+    }
+
+    func testWorkingTreePathCollectionUsesExactBytesAndPreservesFirstSeenOrder() {
+        let literal = PBChangedFile(path: "f\\xFF", rawPath: Data("f\\xFF".utf8))
+        let invalid = PBChangedFile(path: "f\\xFF", rawPath: Data([0x66, 0xFF]))
+        let paths = PBWorkingTreePaths(files: [literal, invalid])
+        var data = invalid.rawPath
+        data.append(0)
+        data.append(literal.rawPath)
+        data.append(0)
+        paths.append(data: data)
+        paths.append(data: data)
+        paths.append(data: Data())
+        paths.append(data: Data("unterminated".utf8))
+        XCTAssertEqual(paths.rawPaths, [invalid.rawPath, literal.rawPath])
+        XCTAssertTrue(paths.file(for: invalid.rawPath) === invalid)
+        XCTAssertTrue(paths.file(for: literal.rawPath) === literal)
+        XCTAssertNil(paths.file(for: Data("missing".utf8)))
+        for unsafe in ["", "/absolute", "../parent", "a/./b", "a//b", "a/", "nul\0path"] {
+            XCTAssertNil(PBWorkingTreePaths.validatedHierarchyPath(unsafe))
+        }
+        for safe in ["folder", "nested/folder", "\u{FEFF}folder", "literal..folder"] {
+            XCTAssertEqual(PBWorkingTreePaths.validatedHierarchyPath(safe), safe)
+        }
+    }
+
+    @MainActor
+    func testChangedTreePrefersTrackedStatusRegardlessOfRecordOrder() throws {
+        let previous = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = true
+        defer { PBApplicationSettings.changedFilesOnly = previous }
+        for records in ["?? same.txt\0D  same.txt\0", "D  same.txt\0?? same.txt\0"] {
+            let repository = WorkingTreeRepository(listing: Data("same.txt\0".utf8), directory: FileManager.default.temporaryDirectory, statusData: Data(records.utf8))
+            let presentation = PBHistoryTreePresentation(repository: repository)
+            let root = presentation.tree(for: PBUncommittedChanges(repository: repository))
+            XCTAssertEqual(root.children.count, 1)
+            XCTAssertEqual(try presentation.displayTitle(for: XCTUnwrap(root.children.first)), "D  same.txt")
+        }
     }
 
     func testFilenameDecodingPreservesBOMAndRoundTripsExactly() {

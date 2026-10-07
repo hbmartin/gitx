@@ -23,21 +23,19 @@
 	root.leaf = NO;
 	root.workingChildren = [NSMutableArray array];
 
-	NSMutableDictionary<NSData *, PBChangedFile *> *changes = [NSMutableDictionary dictionary];
-	for (PBChangedFile *file in repository.index.indexChanges) changes[file.rawPath] = file;
-
-	NSMutableOrderedSet<NSData *> *paths = [NSMutableOrderedSet orderedSet];
+	PBWorkingTreePaths *paths = [[PBWorkingTreePaths alloc] initWithFiles:repository.index.indexChanges ?: @[]];
 	for (NSArray<NSString *> *arguments in @[ @[ @"ls-files", @"-co", @"--exclude-standard", @"-z" ], @[ @"ls-files", @"--deleted", @"-z" ] ]) {
 		PBTask *task = [repository taskWithArguments:arguments];
+		task.separatesStandardError = YES;
 		NSError *error = nil;
 		if ([task launchTask:&error])
-			[paths addObjectsFromArray:[PBIndexFilePresentation rawPathsFromData:task.standardOutputData]];
+			[paths appendData:task.standardOutputData];
 		else
 			PBLogError(error);
 	}
 
 	NSMutableDictionary<NSString *, PBWorkingTree *> *nodes = [NSMutableDictionary dictionaryWithObject:root forKey:@""];
-	for (NSData *rawPath in paths) {
+	for (NSData *rawPath in paths.rawPaths) {
 		NSString *filePath = [PBIndexFilePresentation safePathForRawPath:rawPath];
 		if (!filePath) {
 			NSLog(@"[GitX] Keeping unsupported working-tree filename in staging only: %@", [PBIndexFilePresentation displayPathForRawPath:rawPath]);
@@ -65,7 +63,7 @@
 		}
 
 		parent.rawPath = rawPath;
-		PBChangedFile *change = changes[rawPath];
+		PBChangedFile *change = [paths fileForRawPath:rawPath];
 		if (change) parent.workingStatus = [PBIndexFilePresentation workingStatusForFile:change];
 	}
 
@@ -104,7 +102,7 @@
 
 - (NSURL *)workingFileURL
 {
-	NSString *path = [PBIndexFilePresentation safePathForRawPath:self.rawPath];
+	NSString *path = self.leaf ? [PBIndexFilePresentation safePathForRawPath:self.rawPath] : [PBWorkingTreePaths validatedHierarchyPath:self.fullPath];
 	return path ? [self.repository.workingDirectoryURL URLByAppendingPathComponent:path] : nil;
 }
 
@@ -179,8 +177,11 @@
 
 - (NSString *)tmpFileNameForContents
 {
-	if (![PBIndexFilePresentation pathMatchesRawPath:self.rawPath fullPath:self.fullPath]) return nil;
-	if ([[NSFileManager defaultManager] fileExistsAtPath:self.workingFileURL.path]) return self.workingFileURL.path;
+	if (self.leaf && ![PBIndexFilePresentation pathMatchesRawPath:self.rawPath fullPath:self.fullPath]) return nil;
+	NSURL *url = self.workingFileURL;
+	if (!url) return nil;
+	if ([[NSFileManager defaultManager] fileExistsAtPath:url.path]) return url.path;
+	if (!self.leaf) return nil;
 	return [super tmpFileNameForContents];
 }
 

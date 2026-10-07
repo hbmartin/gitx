@@ -28,8 +28,8 @@
 	if ([selectedFiles count] == 0)
 		return;
 	PBGitTree *tree = [selectedFiles objectAtIndex:0];
-	NSString *name = [tree tmpFileNameForContents];
-	[[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:name]];
+	NSURL *url = [PBHistoryFilePreview urlForTree:tree];
+	if (url) [[NSWorkspace sharedWorkspace] openURL:url];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem
@@ -248,7 +248,7 @@
 - (id<QLPreviewItem>)previewPanel:(id)panel previewItemAtIndex:(NSInteger)index
 {
 	PBGitTree *treeItem = (PBGitTree *)[[self.treeController selectedObjects] objectAtIndex:index];
-	NSURL *previewURL = [NSURL fileURLWithPath:[treeItem tmpFileNameForContents]];
+	NSURL *previewURL = [PBHistoryFilePreview urlForTree:treeItem];
 
 	return (id<QLPreviewItem>)previewURL;
 }

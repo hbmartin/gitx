@@ -137,9 +137,11 @@ final class HistoryTreePresentation: NSObject {
 
     private func workingChanges() -> [HistoryChangedPath] {
         let task = repository.task(withArguments: ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
+        task.separatesStandardError = true
         guard (try? task.launch()) != nil else { return [] }
         let tokens = IndexFilePresentation.rawPaths(data: task.standardOutputData)
         var result: [HistoryChangedPath] = []
+        var positions: [Data: Int] = [:]
         var index = 0
         while index < tokens.count {
             let record = tokens[index]
@@ -151,7 +153,14 @@ final class HistoryTreePresentation: NSObject {
             let previous = rename && index + 1 < tokens.count
                 ? IndexPathDisplayName.string(for: tokens[index + 1]) : nil
             if let path = IndexFilePresentation.safePath(rawPath: rawPath) {
-                result.append(HistoryChangedPath(path: path, rawPath: rawPath, status: status, previousPath: previous, order: result.count))
+                if let position = positions[rawPath] {
+                    if result[position].status == "??", status != "??" {
+                        result[position] = HistoryChangedPath(path: path, rawPath: rawPath, status: status, previousPath: previous, order: position)
+                    }
+                } else {
+                    positions[rawPath] = result.count
+                    result.append(HistoryChangedPath(path: path, rawPath: rawPath, status: status, previousPath: previous, order: result.count))
+                }
             } else {
                 NSLog("[GitX] Omitted unsupported filename from working-state tree: %@", IndexPathDisplayName.string(for: rawPath))
             }
@@ -208,6 +217,20 @@ final class HistoryTreePresentation: NSObject {
         @unknown default:
             return nodes
         }
+    }
+}
+
+/// Availability decisions are shared by opening and Quick Look; Cocoa callers
+/// never construct file URLs from missing temporary paths.
+@objc(PBHistoryFilePreview)
+final class HistoryFilePreview: NSObject {
+    @objc(urlForTree:)
+    static func url(for tree: PBGitTree) -> URL? {
+        guard let path = tree.tmpFileNameForContents(), !path.isEmpty else {
+            NSLog("[GitX] History preview path is unavailable for %@", tree.fullPath ?? "")
+            return nil
+        }
+        return URL(fileURLWithPath: path)
     }
 }
 
