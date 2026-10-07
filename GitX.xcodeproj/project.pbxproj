@@ -415,6 +415,10 @@
 		C137031CE257FFB1B354C3A8 /* GitXTestGitEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DC142ED4D85E60DE599B838 /* GitXTestGitEnvironment.swift */; };
 		9474297A52657CFFDC54AE68 /* GitXTestGitFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A9B26FDD3C352A3A70DC16 /* GitXTestGitFixture.swift */; };
 		653AEC053A6FE7B2FF308D6E /* GitXTestGitFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0FFF8AE72434DE9BE23C6D4 /* GitXTestGitFixtureTests.swift */; };
+		ACDCDCDFA10148E71A26D093 /* PBTaskDiagnosticCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A70140C7FED2C34172AFC63 /* PBTaskDiagnosticCapture.swift */; };
+		710F8276E4329A05F404E56F /* PBTaskDiagnosticRedactor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBE476AA3E87F68DC0B097A /* PBTaskDiagnosticRedactor.swift */; };
+		857B270C9142842F0B7764A9 /* PBTaskDiagnosticRedactor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDBE476AA3E87F68DC0B097A /* PBTaskDiagnosticRedactor.swift */; };
+		31A2DDAADC26DE4DC4E14053 /* PBTaskDiagnosticRedactorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 724D7C53CC66FB3F0E06EC48 /* PBTaskDiagnosticRedactorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1108,6 +1112,9 @@
 		7DC142ED4D85E60DE599B838 /* GitXTestGitEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXTestGitEnvironment.swift; sourceTree = "<group>"; };
 		A9A9B26FDD3C352A3A70DC16 /* GitXTestGitFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXTestGitFixture.swift; sourceTree = "<group>"; };
 		A0FFF8AE72434DE9BE23C6D4 /* GitXTestGitFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitXTestGitFixtureTests.swift; sourceTree = "<group>"; };
+		5A70140C7FED2C34172AFC63 /* PBTaskDiagnosticCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskDiagnosticCapture.swift; sourceTree = "<group>"; };
+		DDBE476AA3E87F68DC0B097A /* PBTaskDiagnosticRedactor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskDiagnosticRedactor.swift; sourceTree = "<group>"; };
+		724D7C53CC66FB3F0E06EC48 /* PBTaskDiagnosticRedactorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskDiagnosticRedactorTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1614,6 +1621,8 @@
 				C01400000000000000000011 /* IncrementalUTF8Decoder.swift */,
 				C0DE44300000000000000002 /* PBProcessEnvironment.h */,
 				C0DE44300000000000000003 /* PBProcessEnvironment.swift */,
+				5A70140C7FED2C34172AFC63 /* PBTaskDiagnosticCapture.swift */,
+				DDBE476AA3E87F68DC0B097A /* PBTaskDiagnosticRedactor.swift */,
 				C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */,
 			);
 			path = Util;
@@ -1777,6 +1786,7 @@
 				7DC142ED4D85E60DE599B838 /* GitXTestGitEnvironment.swift */,
 				A9A9B26FDD3C352A3A70DC16 /* GitXTestGitFixture.swift */,
 				A0FFF8AE72434DE9BE23C6D4 /* GitXTestGitFixtureTests.swift */,
+				724D7C53CC66FB3F0E06EC48 /* PBTaskDiagnosticRedactorTests.swift */,
 				C0DE80000000000000000002 /* PBTaskLifecycleTests.swift */,
 				C0DEB2000000000000000001 /* PBChildProcessOwnerTests.swift */,
 				C0DEB3000000000000000001 /* HistoryFlowRevisionProviderTests.swift */,
@@ -2247,6 +2257,8 @@
 				C0DE10000000000000000019 /* PBAutoFetchManager.swift in Sources */,
 				C0DE10000000000000000011 /* PBHighlighting.swift in Sources */,
 				C0DE44300000000000000001 /* PBProcessEnvironment.swift in Sources */,
+				ACDCDCDFA10148E71A26D093 /* PBTaskDiagnosticCapture.swift in Sources */,
+				710F8276E4329A05F404E56F /* PBTaskDiagnosticRedactor.swift in Sources */,
 				C0DEA1110000000000000001 /* PBTaskDiagnostics.swift in Sources */,
 				C0DE70000000000000000001 /* RepositoryRefreshCoordinator.swift in Sources */,
 				C0DE90000000000000000001 /* GitCommandRunning.swift in Sources */,
@@ -2501,6 +2513,8 @@
 				C137031CE257FFB1B354C3A8 /* GitXTestGitEnvironment.swift in Sources */,
 				9474297A52657CFFDC54AE68 /* GitXTestGitFixture.swift in Sources */,
 				653AEC053A6FE7B2FF308D6E /* GitXTestGitFixtureTests.swift in Sources */,
+				857B270C9142842F0B7764A9 /* PBTaskDiagnosticRedactor.swift in Sources */,
+				31A2DDAADC26DE4DC4E14053 /* PBTaskDiagnosticRedactorTests.swift in Sources */,
 				C0DE80000000000000000001 /* PBTaskLifecycleTests.swift in Sources */,
 				C0DEB2000000000000000002 /* PBChildProcessOwnerTests.swift in Sources */,
 				C0DEB3000000000000000002 /* HistoryFlowRevisionProviderTests.swift in Sources */,

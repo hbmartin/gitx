@@ -908,6 +908,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         private let configuration: PBChildProcessConfiguration
         private let terminationHandler: PBChildProcessOwner.TerminationHandler
         private let owner = PBChildProcessOwner()
+        @objc var retainLeaderUntilReleased = false
 
         @objc(
             initWithLaunchPath:arguments:environment:workingDirectory:standardInputFileDescriptor:standardOutputFileDescriptor:standardErrorFileDescriptor:terminationHandler:
@@ -936,7 +937,13 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
 
         @objc(launchAndReturnError:)
         func launch() throws {
-            try owner.launch(configuration: configuration, terminationHandler: terminationHandler)
+            try owner.launch(configuration: configuration,
+                             retainLeaderUntilReleased: retainLeaderUntilReleased,
+                             terminationHandler: terminationHandler)
+        }
+
+        @objc func releaseLeaderRetention() {
+            owner.releaseLeaderRetention()
         }
 
         @objc(requestTerminationAfterGracePeriod:forceKillAfter:)

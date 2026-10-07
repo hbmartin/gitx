@@ -607,6 +607,48 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 - (instancetype)initWithFrame:(NSRect)frameRect;
 @end
 
+@interface PBTaskDiagnosticPrefix : NSObject
+@property (nonatomic, readonly) NSData *data;
+@property (nonatomic, readonly) BOOL complete;
+@end
+
+@interface PBTaskDiagnosticArtifact : NSObject
+@property (nonatomic, readonly) NSString *redactedSummary;
+@property (nonatomic, readonly) BOOL captureComplete;
+@property (nonatomic, readonly, nullable) NSString *captureFailureDescription;
+- (PBTaskDiagnosticPrefix *)rawStandardOutputPrefixWithMaximumBytes:(NSInteger)maximumBytes NS_SWIFT_NAME(rawStandardOutputPrefix(maximumBytes:));
+- (void)forEachRawStandardErrorLineWithMaximumLineBytes:(NSInteger)maximumLineBytes body:(void (^)(NSString *line))body NS_SWIFT_NAME(forEachRawStandardErrorLine(maximumLineBytes:body:));
+- (BOOL)writeRedactedReportToURL:(NSURL *)url error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(writeRedactedReport(to:));
+- (void)discard;
+@end
+
+@interface PBTaskDiagnosticCapture : NSObject
+@property (nonatomic, readonly, nullable) PBTaskDiagnosticArtifact *artifact;
+- (void)appendStandardOutput:(NSData *)data;
+- (void)appendStandardError:(NSData *)data;
+- (void)finishStandardOutputWithReachedEOF:(BOOL)reachedEOF NS_SWIFT_NAME(finishStandardOutput(reachedEOF:));
+- (void)finishStandardErrorWithReachedEOF:(BOOL)reachedEOF NS_SWIFT_NAME(finishStandardError(reachedEOF:));
+- (PBTaskDiagnosticArtifact *)seal;
++ (void)cleanupStaleCaptures;
+@end
+
+#if DEBUG
+@interface PBTaskDiagnosticCaptureLifetimeProbe : NSObject
+@property (nonatomic, readonly) BOOL directoryExists;
+@property (nonatomic, readonly) NSUInteger directoryMode;
+@property (nonatomic, readonly) NSArray<NSNumber *> *rawFileModes;
+@property (nonatomic, readonly) BOOL writerDescriptorsAreCloseOnExec;
+@property (nonatomic, readonly) BOOL writersClosed;
+- (void)discardFixture;
+@end
+
+@interface PBTaskDiagnosticCaptureTestHarness : NSObject
++ (PBTaskDiagnosticCapture *)captureWithFault:(NSString *)fault NS_SWIFT_NAME(capture(fault:));
++ (nullable PBTaskDiagnosticCaptureLifetimeProbe *)lifetimeProbeForCapture:(PBTaskDiagnosticCapture *)capture NS_SWIFT_NAME(lifetimeProbe(for:));
++ (nullable PBTaskDiagnosticCaptureLifetimeProbe *)orphanProbeWithAge:(NSTimeInterval)age error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(orphanProbe(age:));
+@end
+#endif
+
 #pragma push_macro("stdout")
 #undef stdout
 #pragma push_macro("stderr")

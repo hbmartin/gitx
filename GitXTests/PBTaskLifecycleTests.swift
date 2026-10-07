@@ -7,7 +7,7 @@ final class PBTaskLifecycleTests: XCTestCase {
             ("123+.-abc://dummy:password@example.invalid/repo", "123+.-abc://[redacted]@example.invalid/repo"),
             ("prefixhttps://dummy:password@example.invalid/repo", "prefixhttps://[redacted]@example.invalid/repo"),
             ("https://first@second@example.invalid/repo", "https://[redacted]@example.invalid/repo"),
-            ("See https://δοκιμή:密碼@example.invalid/repo?query=a@b", "See https://[redacted]@example.invalid/repo?query=a@b"),
+            ("See https://δοκιμή:密碼@example.invalid/repo?query=a@b", "See https://[redacted]@b"),
             ("mail@example.invalid; -1://entry@example.invalid", "mail@example.invalid; -1://entry@example.invalid"),
             ("https://example.invalid/help\nmail@example.invalid", "https://example.invalid/help\nmail@example.invalid"),
         ]

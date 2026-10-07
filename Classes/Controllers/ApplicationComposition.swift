@@ -232,6 +232,7 @@ final nonisolated class ApplicationComposition: NSObject {
         )
         self.automaticallyStartsForgeServices = automaticallyStartsForgeServices
         super.init()
+        PBTaskDiagnosticCapture.cleanupStaleCaptures()
     }
 
     #if DEBUG
