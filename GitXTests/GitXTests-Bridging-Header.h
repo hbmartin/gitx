@@ -31,6 +31,11 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBCommitRecoveryRepository : PBGitRepository
+@property (nonatomic, copy, nullable) NSString *recoveryPatchOutput;
+@property (nonatomic) NSUInteger recoveryPatchInvocationCount;
+@end
+
 @interface PBRepositoryOpenCoordinator : NSObject
 @property (class, nonatomic, readonly) PBRepositoryOpenCoordinator *shared;
 - (void)openURLs:(NSArray<NSURL *> *)urls

@@ -912,47 +912,6 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 @implementation GitXRepositoryIntegrationTests
 
-- (void)testCommitPatchCharacterizesNewlineEmptyFailureAndCachedOutput
-{
-	NSError *error = nil;
-	GTReference *head = [self.repository.gtRepo headReferenceWithError:&error];
-	GTCommit *target = (GTCommit *)[head resolvedTarget];
-	XCTAssertNotNil(target, @"%@", error);
-	for (NSArray<NSString *> *example in @[
-			 @[ @"patch\n", @"patch+GitX" ],
-			 @[ @"", @"+GitX" ],
-			 @[ @"patch\n\n", @"patch\n+GitX" ],
-		 ]) {
-		PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
-		repository.recoveryPatchOutput = example[0];
-		PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
-		XCTAssertEqualObjects(commit.patch, example[1]);
-		repository.recoveryPatchOutput = @"changed output\n";
-		XCTAssertEqualObjects(commit.patch, example[1]);
-		XCTAssertEqual(repository.recoveryPatchInvocationCount, 1U);
-	}
-	PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
-	PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
-	XCTAssertNil(commit.patch);
-	XCTAssertNil(commit.patch);
-	XCTAssertEqual(repository.recoveryPatchInvocationCount, 2U, @"a failed export is retried rather than cached");
-}
-
-- (void)testCommitPatchPreservesFinalContentWhenOutputHasNoLineFeed
-{
-	NSError *error = nil;
-	GTReference *head = [self.repository.gtRepo headReferenceWithError:&error];
-	GTCommit *target = (GTCommit *)[head resolvedTarget];
-	XCTAssertNotNil(target, @"%@", error);
-	for (NSString *output in @[ @"patch-without-newline", @"patch🙂", @"patch\r", @"patch\r\n" ]) {
-		PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
-		repository.recoveryPatchOutput = output;
-		PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
-		NSString *expected = [output hasSuffix:@"\n"] ? [output substringToIndex:output.length - 1] : output;
-		XCTAssertEqualObjects(commit.patch, [expected stringByAppendingString:@"+GitX"]);
-	}
-}
-
 - (void)testCommitIdentityReferencesAndSVNMetadataCompatibility
 {
 	[self.repository readCurrentBranch];

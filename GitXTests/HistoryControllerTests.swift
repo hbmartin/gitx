@@ -3756,6 +3756,36 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Working State immutable copy actions preserve the clipboard")
     }
 
+    func testCommitPatchCharacterizesNewlineEmptyFailureAndCachedOutput() throws {
+        let target = try XCTUnwrap(repository.headCommit()).gtCommit
+        for (output, expected) in [("patch\n", "patch+GitX"), ("", "+GitX"), ("patch\n\n", "patch\n+GitX")] {
+            let fake = PBCommitRecoveryRepository()
+            fake.recoveryPatchOutput = output
+            let commit = PBGitCommit(repository: fake, andCommit: target)
+            XCTAssertEqual(commit.patch, expected)
+            fake.recoveryPatchOutput = "changed output\n"
+            XCTAssertEqual(commit.patch, expected)
+            XCTAssertEqual(fake.recoveryPatchInvocationCount, 1)
+        }
+        let fake = PBCommitRecoveryRepository()
+        let commit = PBGitCommit(repository: fake, andCommit: target)
+        XCTAssertNil(commit.patch)
+        XCTAssertNil(commit.patch)
+        XCTAssertEqual(fake.recoveryPatchInvocationCount, 2)
+    }
+
+    func testCommitPatchPreservesFinalContentWhenOutputHasNoLineFeed() throws {
+        let target = try XCTUnwrap(repository.headCommit()).gtCommit
+        for output in ["patch-without-newline", "patch🙂", "patch\r", "patch\r\n"] {
+            let fake = PBCommitRecoveryRepository()
+            fake.recoveryPatchOutput = output
+            let commit = PBGitCommit(repository: fake, andCommit: target)
+            var scalars = output.unicodeScalars
+            if scalars.last == "\n" { scalars.removeLast() }
+            XCTAssertEqual(commit.patch, String(scalars) + "+GitX")
+        }
+    }
+
     func testCopyActionsCharacterizeMultipleCommitFormattingAndEmptySelection() throws {
         let pasteboard = NSPasteboard.general
         let saved: [NSPasteboardItem] = pasteboard.pasteboardItems?.map { item in
