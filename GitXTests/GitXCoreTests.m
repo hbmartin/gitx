@@ -912,6 +912,16 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 @implementation GitXRepositoryIntegrationTests
 
+- (void)testPlainChangedFileIdentityIsNonnull
+{
+	PBChangedFile *file = [PBChangedFile new];
+	XCTAssertNotNil(file.path);
+	XCTAssertNotNil(file.rawPath);
+	XCTAssertEqual(file.path.length, 0U);
+	XCTAssertEqual(file.rawPath.length, 0U);
+	XCTAssertNil(file.safePath);
+}
+
 - (void)testCommitIdentityReferencesAndSVNMetadataCompatibility
 {
 	[self.repository readCurrentBranch];

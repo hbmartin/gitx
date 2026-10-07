@@ -175,6 +175,22 @@ final class IndexMutationServiceTests: XCTestCase {
                        "Unsafe selections must be rejected before any mutating reset chunk")
     }
 
+    func testLegacyUnstageRejectsMetacharactersInsideUnicodeGraphemes() {
+        for name in ["*️⃣.md", "*́.md", "?́.txt", "[́name].txt"] {
+            let runner = CommandRunnerFake()
+            let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
+            XCTAssertFalse(service.unstagePaths([name], parentTree: "HEAD", error: nil), name)
+            XCTAssertFalse(runner.calls.contains { $0.arguments.contains("--quiet") })
+        }
+    }
+
+    func testLegacyUnstageKeepsBOMBytesInArgument() {
+        let runner = CommandRunnerFake()
+        let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
+        XCTAssertTrue(service.unstagePaths(["\u{FEFF}notes"], parentTree: "HEAD", error: nil))
+        XCTAssertEqual(runner.calls.last?.arguments.last, "\u{FEFF}notes")
+    }
+
     func testDiscardUsesNulDelimitedInputAndReportsFailure() {
         let runner = CommandRunnerFake()
         runner.results = [.success(""), .failure(commandError)]
@@ -307,7 +323,7 @@ final class IndexMutationServiceTests: XCTestCase {
         XCTAssertTrue(service.unstageRawPaths([Data("ordinary.txt".utf8), invalid], parentTree: "HEAD", error: nil))
         XCTAssertEqual(runner.calls.last?.arguments, [
             "--literal-pathspecs", "reset", "--quiet", "HEAD",
-            "--pathspec-from-file=-", "--pathspec-file-nul",
+            "--pathspec-from-file=-", "--pathspec-file-nul", "--",
         ])
         var expected = Data("ordinary.txt\0".utf8)
         expected.append(invalid)
@@ -476,7 +492,7 @@ final class IndexMutationServiceTests: XCTestCase {
         for rawPath in [Data([0xFF]), Data(), Data("embedded\0nul".utf8)] {
             var error: NSError?
             XCTAssertNil(service.literalArguments(forRawPath: rawPath, commandArguments: ["log"], error: &error))
-            XCTAssertEqual(error?.code, 4)
+            XCTAssertEqual(error?.code, 5)
         }
         XCTAssertTrue(runner.calls.isEmpty, "Escaped display labels cannot become an executable filename")
     }
@@ -486,7 +502,7 @@ final class IndexMutationServiceTests: XCTestCase {
         let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
         var error: NSError?
         XCTAssertNil(service.diffToolArguments(forRawPath: Data([0xFF]), staged: false, error: &error))
-        XCTAssertEqual(error?.code, 4)
+        XCTAssertEqual(error?.code, 5)
         XCTAssertTrue(runner.calls.isEmpty)
         XCTAssertEqual(service.diffToolArguments(forRawPath: Data("ordinary.txt".utf8), staged: true, error: nil),
                        ["difftool", "-y", "--no-prompt", "--cached", "--", "ordinary.txt"])

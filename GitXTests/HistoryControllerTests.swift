@@ -1832,6 +1832,81 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(image, Data(contents.utf8))
     }
 
+    func testBOMFilesystemActionsAddressTheExactSelectedFilename() throws {
+        let names = ["notes.txt", "\u{FEFF}notes.txt", "\u{FEFF}"]
+        for name in names {
+            try fixture.write(name, to: name)
+        }
+        let pane = try openStagingPane()
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        let files = repository.index.indexChanges.filter { names.contains($0.path) }
+        XCTAssertEqual(files.count, names.count)
+        let physicalPath = try XCTUnwrap(fixture.path.withCString { realpath($0, nil) })
+        defer { free(physicalPath) }
+        let root = URL(fileURLWithPath: String(cString: physicalPath))
+        for file in files {
+            let expected = root.appendingPathComponent(file.path)
+            let open = NSMenuItem()
+            open.representedObject = PBStagingActionSelection(action: .open, files: [file])
+            pane.perform(NSSelectorFromString("openFiles:"), with: open)
+            XCTAssertEqual(stub.openedURLs.last, expected)
+            let reveal = NSMenuItem()
+            reveal.representedObject = PBStagingActionSelection(action: .reveal, files: [file])
+            pane.perform(NSSelectorFromString("revealInFinder:"), with: reveal)
+            XCTAssertEqual(stub.revealedURLs.last, expected)
+            var targets: [URL] = []
+            pane.trashItemHandler = { targets.append($0); return true }
+            let trash = NSMenuItem()
+            trash.representedObject = PBStagingActionSelection(action: .trash, files: [file])
+            waitForIndexUpdate { pane.perform(NSSelectorFromString("moveToTrash:"), with: trash) }
+            XCTAssertEqual(targets, [expected])
+            XCTAssertTrue(FileManager.default.fileExists(atPath: expected.path))
+        }
+    }
+
+    func testSelectedIgnoreFilenamesAreRootAnchoredLiteralsAndLineBreaksAreRejectedAtomically() throws {
+        let names = ["*.literal", "question?️⃣.md", "[bracket]", "#hash", "!bang", "back\\slash", " trailing space ", "nested/leaf"]
+        for name in names {
+            try fixture.write("literal", to: name)
+        }
+        try fixture.write("sibling", to: "other.literal")
+        try fixture.write("sibling", to: "other/nested/leaf")
+        let pane = try openStagingPane()
+        let files = repository.index.indexChanges.filter { names.contains($0.path) }
+        XCTAssertEqual(files.count, names.count)
+        let item = NSMenuItem()
+        item.representedObject = PBStagingActionSelection(action: .ignore, files: files)
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("ignoreFiles:"), with: item) }
+        for name in names {
+            XCTAssertNoThrow(try fixture.git(["check-ignore", "--quiet", "--", name]), name)
+        }
+        XCTAssertThrowsError(try fixture.git(["check-ignore", "--quiet", "--", "other.literal"]))
+        XCTAssertThrowsError(try fixture.git(["check-ignore", "--quiet", "--", "other/nested/leaf"]))
+        let ignoreURL = URL(fileURLWithPath: fixture.path).appendingPathComponent(".gitignore")
+        let before = try Data(contentsOf: ignoreURL)
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        for name in ["newline\nname", "return\rname"] {
+            let rejected = NSMenuItem()
+            rejected.representedObject = PBStagingActionSelection(action: .ignore, files: [PBChangedFile(path: "ordinary"), PBChangedFile(path: name)])
+            let count = stub.shownErrors.count
+            pane.perform(NSSelectorFromString("ignoreFiles:"), with: rejected)
+            XCTAssertEqual(stub.shownErrors.count, count + 1)
+            XCTAssertEqual(try Data(contentsOf: ignoreURL), before)
+        }
+    }
+
+    func testRootHEADFilenameDoesNotMakeRefreshOrResetAmbiguous() throws {
+        try fixture.write("literal HEAD file", to: "HEAD")
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data("HEAD".utf8) })
+        waitForIndexUpdate { XCTAssertTrue(repository.index.stageFiles([file])) }
+        XCTAssertTrue(repository.index.indexChanges.first { $0.rawPath == file.rawPath }?.hasStagedChanges == true)
+        XCTAssertTrue(repository.index.diff(for: file, staged: true, contextLines: 3)?.contains("literal HEAD file") == true)
+        waitForIndexUpdate { XCTAssertTrue(repository.index.unstageFiles([file])) }
+        XCTAssertFalse(repository.index.indexChanges.first { $0.rawPath == file.rawPath }?.hasStagedChanges == true)
+        withExtendedLifetime(pane) {}
+    }
+
     func testRealGitIndexPreservesRawFilenameAndEscapedLiteralSiblingWhenUnstaging() throws {
         let label = "index-collision\\xFF.txt"
         let rawPath = Data(Array("index-collision".utf8) + [0xFF] + Array(".txt".utf8))
@@ -3781,7 +3856,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             fake.recoveryPatchOutput = output
             let commit = PBGitCommit(repository: fake, andCommit: target)
             var scalars = output.unicodeScalars
-            if scalars.last == "\n" { scalars.removeLast() }
+            if scalars.last == "\n" {
+                scalars.removeLast()
+            }
             XCTAssertEqual(commit.patch, String(scalars) + "+GitX")
         }
     }

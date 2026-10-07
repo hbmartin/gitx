@@ -69,7 +69,7 @@ final nonisolated class IndexMutationService: NSObject {
     ) -> Bool {
         guard validate(rawPaths, error: outputError) else { return false }
         guard !rawPaths.isEmpty else { return true }
-        let decoded = rawPaths.compactMap { String(data: $0, encoding: .utf8) }
+        let decoded = rawPaths.compactMap { IndexFilenameUTF8.decode($0) }
         let allDecoded = decoded.count == rawPaths.count
         let legacySafe = allDecoded && decoded.allSatisfy(IndexGitPathCapabilities.isLegacyLiteral)
         // Prefer the byte-preserving reset command whenever supported. Git
@@ -87,12 +87,12 @@ final nonisolated class IndexMutationService: NSObject {
                 _ = try output(
                     arguments: prefix + [
                         "reset", "--quiet", parentTree,
-                        "--pathspec-from-file=-", "--pathspec-file-nul",
+                        "--pathspec-from-file=-", "--pathspec-file-nul", "--",
                     ],
                     inputData: nulDelimited(chunk)
                 )
             } else {
-                let paths = chunk.compactMap { String(data: $0, encoding: .utf8) }
+                let paths = chunk.compactMap { IndexFilenameUTF8.decode($0) }
                 _ = try runner.output(
                     arguments: prefix + ["reset", "--quiet", parentTree, "--"] + paths,
                     input: nil, environment: nil
@@ -282,7 +282,7 @@ final nonisolated class IndexMutationService: NSObject {
         error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?
     ) -> [String]? {
         guard let path = IndexFilePresentation.safePath(rawPath: rawPath) else {
-            outputError?.pointee = unsupportedLiteralPathError()
+            outputError?.pointee = unsupportedRepresentationError()
             return nil
         }
         let needsLiteral = !IndexGitPathCapabilities.isLegacyLiteral(path)
@@ -317,8 +317,8 @@ final nonisolated class IndexMutationService: NSObject {
         if let binaryRunner = runner as? IndexBinaryCommandRunning {
             return try binaryRunner.output(arguments: arguments, inputData: inputData, environment: nil)
         }
-        guard let input = String(data: inputData, encoding: .utf8) else {
-            throw unsupportedLiteralPathError()
+        guard let input = IndexFilenameUTF8.decode(inputData) else {
+            throw unsupportedRepresentationError()
         }
         return try runner.output(arguments: arguments, input: input, environment: nil)
     }
@@ -341,11 +341,18 @@ final nonisolated class IndexMutationService: NSObject {
             return false
         }
         let supportsBytes = runner is IndexBinaryCommandRunning
-        guard supportsBytes || paths.allSatisfy({ String(data: $0, encoding: .utf8) != nil }) else {
-            outputError?.pointee = unsupportedLiteralPathError()
+        guard supportsBytes || paths.allSatisfy({ IndexFilenameUTF8.decode($0) != nil }) else {
+            outputError?.pointee = unsupportedRepresentationError()
             return false
         }
         return true
+    }
+
+    private func unsupportedRepresentationError() -> NSError {
+        logger.error("Rejected an unsupported filename representation")
+        return NSError(domain: "PBGitIndexMutationError", code: 5, userInfo: [
+            NSLocalizedDescriptionKey: "This filename cannot be represented for this action. Whole-file byte-based Git operations remain available.",
+        ])
     }
 
     private func unsupportedLiteralPathError() -> NSError {
@@ -397,7 +404,7 @@ private nonisolated struct IndexGitPathCapabilities {
     let nulReset: Bool
 
     static func isLegacyLiteral(_ path: String) -> Bool {
-        !path.hasPrefix(":") && !path.contains { "*?[]\\".contains($0) }
+        !path.hasPrefix(":") && !path.unicodeScalars.contains { "*?[]\\".unicodeScalars.contains($0) }
     }
 
     static func probe(runner: IndexCommandRunning) -> Self {

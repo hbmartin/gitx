@@ -25,6 +25,11 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     private var pendingCreatePullRequestAfterPush = false
     private var pendingMutationObservation: NSKeyValueObservation?
 
+    /// A local filesystem seam keeps filename-target tests away from Trash.
+    @objc var trashItemHandler: (URL) -> Bool = { url in
+        (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) != nil
+    }
+
     @objc let commitMessageView: PBCommitMessageView
     private let commitButton = NSButton(title: NSLocalizedString("Commit", comment: "Commit button in the staging pane"), target: nil, action: nil)
     private let amendButton = NSButton(checkboxWithTitle: NSLocalizedString("Amend", comment: "Amend checkbox in the staging pane"), target: nil, action: nil)
@@ -726,7 +731,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             var anyTrashed = false
             for path in paths {
                 let fileURL = workingDirectoryURL.appendingPathComponent(path)
-                if (try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)) != nil {
+                if trashItemHandler(fileURL) {
                     anyTrashed = true
                 }
             }
@@ -742,7 +747,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         guard !files.isEmpty else { return }
         guard let paths = supportedPaths(for: files) else { return }
         do {
-            try repository.ignoreFilePaths(paths)
+            try repository.ignoreFilePaths(RepositoryIgnoreLiteralPatterns.patterns(for: paths))
         } catch {
             windowController?.showErrorSheet(error as NSError)
         }

@@ -32,9 +32,18 @@ final nonisolated class IndexStatusEntry: NSObject {
     }
 }
 
+/// Foundation's encoding initializer consumes a leading UTF-8 BOM. Filename
+/// decoding must preserve every byte, including a BOM-only name.
+nonisolated enum IndexFilenameUTF8 {
+    static func decode(_ bytes: Data) -> String? {
+        let value = String(decoding: bytes, as: UTF8.self)
+        return Data(value.utf8) == bytes ? value : nil
+    }
+}
+
 nonisolated enum IndexPathDisplayName {
     static func string(for rawPath: Data) -> String {
-        if let path = String(data: rawPath, encoding: .utf8) {
+        if let path = IndexFilenameUTF8.decode(rawPath) {
             return path
         }
         return rawPath.map { byte in
@@ -130,18 +139,7 @@ final nonisolated class IndexStatusParser: NSObject {
         var payload = data
         payload.removeLast()
         guard !payload.isEmpty else { return [] }
-        var records: [Data] = []
-        var record = Data()
-        for byte in payload {
-            if byte == 0 {
-                records.append(record)
-                record = Data()
-            } else {
-                record.append(byte)
-            }
-        }
-        records.append(record)
-        return records
+        return payload.split(separator: 0, omittingEmptySubsequences: false).map { Data($0) }
     }
 }
 
@@ -343,7 +341,7 @@ final nonisolated class IndexFilePresentation: NSObject {
     @objc(safePathForRawPath:)
     static func safePath(rawPath: Data) -> String? {
         guard !rawPath.isEmpty, !rawPath.contains(0) else { return nil }
-        return String(data: rawPath, encoding: .utf8)
+        return IndexFilenameUTF8.decode(rawPath)
     }
 
     @objc(rawPathsFromData:)

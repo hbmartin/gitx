@@ -251,6 +251,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 };
 
 @interface PBStagingActionSelection : NSObject
+- (instancetype)initWithAction:(PBStagingFileAction)action files:(NSArray<PBChangedFile *> *)files;
 @property (nonatomic, readonly) PBStagingFileAction action;
 @property (nonatomic, readonly) NSArray<PBChangedFile *> *files;
 @end
@@ -334,6 +335,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @interface PBStagingViewController : NSViewController
+@property (nonatomic, copy) BOOL (^trashItemHandler)(NSURL *);
 @property (nonatomic, readonly) PBStagingFileListController *fileListController;
 @property (nonatomic, readonly) PBStagingDiffPaneController *diffPaneController;
 @property (nonatomic, readonly) PBCommitMessageView *commitMessageView;

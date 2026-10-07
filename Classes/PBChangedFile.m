@@ -42,6 +42,11 @@
 	return [NSSet setWithObject:@"worktreeStatus"];
 }
 
+- (instancetype)init
+{
+	return [self initWithPath:@"" rawPath:[NSData data]];
+}
+
 - (id)initWithPath:(NSString *)p
 {
 	return [self initWithPath:p rawPath:[p dataUsingEncoding:NSUTF8StringEncoding]];

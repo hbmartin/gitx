@@ -70,6 +70,32 @@ final class IndexSnapshotTests: XCTestCase {
         XCTAssertTrue(tree.children.isEmpty)
     }
 
+    func testFilenameDecodingPreservesBOMAndRoundTripsExactly() {
+        for name in ["\u{FEFF}", "\u{FEFF}notes.txt", "notes.txt", "*️⃣.md", "*́.md"] {
+            let bytes = Data(name.utf8)
+            XCTAssertEqual(PBIndexFilePresentation.safePath(forRawPath: bytes), name)
+            XCTAssertEqual(PBIndexFilePresentation.displayPath(forRawPath: bytes), name)
+        }
+        XCTAssertNil(PBIndexFilePresentation.safePath(forRawPath: Data([0xFF])))
+        XCTAssertNil(PBIndexFilePresentation.safePath(forRawPath: Data()))
+        XCTAssertNil(PBIndexFilePresentation.safePath(forRawPath: Data([0])))
+    }
+
+    func testPlainChangedFileHasEmptyIdentityAndCannotBeAddressed() {
+        let file = PBChangedFile()
+        XCTAssertEqual(file.path, "")
+        XCTAssertEqual(file.rawPath, Data())
+        XCTAssertNil(file.safePath)
+    }
+
+    func testParserPreservesConsecutiveEmptyRecordValidation() {
+        XCTAssertEqual(parser.parseUntrackedData(Data([0, 0, 0]), error: nil)?.count, 0)
+        XCTAssertEqual(parser.parseUntrackedData(Data("a\0\0b\0".utf8), error: nil)?.count, 2)
+        var error: NSError?
+        XCTAssertNil(parser.parseTrackedData(Data(":100644 100644 a b M\0\0".utf8), error: &error))
+        XCTAssertNotNil(error)
+    }
+
     private let parser = PBIndexStatusParser()
     private let reducer = PBIndexSnapshotReducer()
 

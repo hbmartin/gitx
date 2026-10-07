@@ -116,7 +116,7 @@ final class IndexRefreshCoordinatorTests: XCTestCase {
             runner.arguments,
             [
                 ["ls-files", "--others", "--exclude-standard", "-z"],
-                ["diff-index", "--cached", "-z", "HEAD^"],
+                ["diff-index", "--cached", "-z", "HEAD^", "--"],
                 ["diff-files", "-z"],
             ]
         )
@@ -212,7 +212,7 @@ final class IndexRefreshCoordinatorTests: XCTestCase {
         runner.complete(2)
 
         wait(for: [replayCommands], timeout: 2)
-        XCTAssertEqual(runner.arguments[4], ["diff-index", "--cached", "-z", "latest-pending"])
+        XCTAssertEqual(runner.arguments[4], ["diff-index", "--cached", "-z", "latest-pending", "--"])
         runner.complete(3)
         runner.complete(4)
         runner.complete(5)
