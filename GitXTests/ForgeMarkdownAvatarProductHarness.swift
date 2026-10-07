@@ -321,7 +321,7 @@
                         primaryRepository: identity,
                         preferredAccount: accountID
                     )
-                    let repository = try PBGitRepository(url: repositoryURL)
+                    let repository = try GitXTestGitRepository(url: repositoryURL)
                     let successfulComposition = ApplicationComposition(
                         userDefaults: defaults,
                         forgeServices: ForgeApplicationServiceLoader { services },
@@ -529,7 +529,7 @@
                           in: repositoryURL
                       )
                 else { return proof }
-                let repository = try PBGitRepository(url: repositoryURL)
+                let repository = try GitXTestGitRepository(url: repositoryURL)
                 let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
                 let identity = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
                 composition.repositoryViewState(for: repository).forgeRepositoryBinding = try ForgeRepositoryBinding(
@@ -628,7 +628,7 @@
                     )
                     let madeController = PBGitWindowController(window: window)
                     controller = madeController
-                    let repository = try PBGitRepository(url: repositoryURL)
+                    let repository = try GitXTestGitRepository(url: repositoryURL)
                     let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
                     let identity = try ForgeRepositoryIdentity(forge: forge, owner: "hbmartin", name: "gitx")
                     ApplicationComposition.shared.repositoryViewState(for: repository)
@@ -876,7 +876,7 @@
                         automaticallyStartsForgeServices: false
                     ))
 
-                    let repository = try PBGitRepository(url: repositoryURL)
+                    let repository = try GitXTestGitRepository(url: repositoryURL)
                     let identity = try ForgeRepositoryIdentity(
                         forge: forge,
                         owner: "hbmartin",
@@ -1508,7 +1508,7 @@
             guard runGit(["init", "--quiet", "--initial-branch=main"], in: repositoryURL) else {
                 return false
             }
-            let repository = try PBGitRepository(url: repositoryURL)
+            let repository = try GitXTestGitRepository(url: repositoryURL)
             let windowController = PBGitWindowController()
             windowController.repository = repository
             guard let controller = RepositoryForgeCollaborationController(
@@ -2075,18 +2075,7 @@
         }
 
         private static func runGit(_ arguments: [String], in directory: URL) -> Bool {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = ["-C", directory.path] + arguments
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-                return process.terminationStatus == 0
-            } catch {
-                return false
-            }
+            (try? GitXTestGitFixture.run(arguments, in: directory)) != nil
         }
 
         private static func navigationDocument() -> ForgeMarkdownDocument {

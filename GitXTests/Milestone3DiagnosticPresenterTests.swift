@@ -472,7 +472,7 @@ import XCTest
             _ = try Self.runGit(["add", "M3Suggested.swift", "README.md"], in: directory)
             _ = try Self.runGit(["commit", "--quiet", "-m", "Diagnostic fixture"], in: directory)
             _ = try Self.runGit(["switch", "--quiet", "-c", "feature/milestone-3"], in: directory)
-            repository = try PBGitRepository(url: directory)
+            repository = try GitXTestGitRepository(url: directory)
         }
 
         func cleanup() {
@@ -489,31 +489,7 @@ import XCTest
         }
 
         private static func runGit(_ arguments: [String], in directory: URL) throws -> String {
-            let process = Process()
-            let pipe = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = arguments
-            process.currentDirectoryURL = directory
-            process.standardOutput = pipe
-            process.standardError = pipe
-            try process.run()
-            process.waitUntilExit()
-            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            guard process.terminationStatus == 0 else {
-                throw Milestone3DiagnosticRepositoryFixtureError.git(arguments: arguments, output: output)
-            }
-            return output
-        }
-    }
-
-    private enum Milestone3DiagnosticRepositoryFixtureError: LocalizedError {
-        case git(arguments: [String], output: String)
-
-        var errorDescription: String? {
-            switch self {
-            case let .git(arguments, output):
-                "git \(arguments.joined(separator: " ")) failed: \(output)"
-            }
+            try GitXTestGitFixture.run(arguments, in: directory).standardOutput
         }
     }
 #endif

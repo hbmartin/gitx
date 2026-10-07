@@ -4,6 +4,73 @@ import GitHubForgeAdapter
 import XCTest
 
 final class RepositoryPullRequestWorkflowAppTests: XCTestCase {
+    @MainActor
+    func testLocalPullRequestFixtureIgnoresInheritedGitDirectoryAndIndex() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("GitX-Hostile-Location-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let foreignGitDirectory = root.appendingPathComponent("foreign.git")
+        let foreignIndex = root.appendingPathComponent("foreign-index")
+        var inherited = ProcessInfo.processInfo.environment
+        inherited["GIT_DIR"] = foreignGitDirectory.path
+        inherited["GIT_INDEX_FILE"] = foreignIndex.path
+        let fixture = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/example/fixture.git", inheritedEnvironment: inherited)
+        defer { fixture.cleanup() }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent(".git/HEAD").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: foreignGitDirectory.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: foreignIndex.path))
+        XCTAssertEqual(try fixture.repository.outputOfTask(withArguments: ["show", "HEAD:tracked.txt"]), "fixture")
+    }
+
+    @MainActor
+    func testLocalPullRequestFixtureIgnoresInheritedHooksSigningTemplatesAndInjectedConfiguration() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("GitX-Hostile-Config-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let hooks = root.appendingPathComponent("hooks", isDirectory: true)
+        let template = root.appendingPathComponent("template", isDirectory: true)
+        try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: template, withIntermediateDirectories: true)
+        try "inherited-template\n".write(to: template.appendingPathComponent("inherited-template-marker"), atomically: true, encoding: .utf8)
+        let hook = hooks.appendingPathComponent("pre-commit")
+        try "#!/bin/sh\nprintf inherited-hook >\"$GITX_FIXTURE_HOOK_MARKER\"\nexit 9\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        let signingProgram = root.appendingPathComponent("signing-program")
+        try "#!/bin/sh\nprintf inherited-signing >\"$GITX_FIXTURE_SIGNING_MARKER\"\nexit 9\n".write(to: signingProgram, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: signingProgram.path)
+        let configuration = root.appendingPathComponent("gitconfig")
+        try """
+        [core]
+            hooksPath = \(hooks.path)
+        [commit]
+            gpgsign = true
+        [tag]
+            gpgsign = true
+        [gpg]
+            program = \(signingProgram.path)
+        [init]
+            templateDir = \(template.path)
+        """.write(to: configuration, atomically: true, encoding: .utf8)
+        let hookMarker = root.appendingPathComponent("hook-ran")
+        let signingMarker = root.appendingPathComponent("signing-ran")
+        var inherited = ProcessInfo.processInfo.environment
+        inherited["GIT_CONFIG_GLOBAL"] = configuration.path
+        inherited["GIT_CONFIG_SYSTEM"] = configuration.path
+        inherited["GIT_CONFIG_NOSYSTEM"] = "0"
+        inherited["GIT_CONFIG_COUNT"] = "1"
+        inherited["GIT_CONFIG_KEY_0"] = "core.hooksPath"
+        inherited["GIT_CONFIG_VALUE_0"] = hooks.path
+        inherited["GIT_CONFIG_PARAMETERS"] = "'commit.gpgsign=true'"
+        inherited["GITX_FIXTURE_HOOK_MARKER"] = hookMarker.path
+        inherited["GITX_FIXTURE_SIGNING_MARKER"] = signingMarker.path
+        let fixture = try LocalPullRequestRepositoryFixture(remoteURL: "https://github.com/example/fixture.git", inheritedEnvironment: inherited)
+        defer { fixture.cleanup() }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: hookMarker.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: signingMarker.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent(".git/inherited-template-marker").path))
+        XCTAssertEqual(try fixture.repository.outputOfTask(withArguments: ["log", "-1", "--format=%s"]), "Fixture")
+    }
+
     func testPostPushBrowserSuggestionRequiresUnavailableNativeCreationAndPreservesUncheckedSilence() {
         XCTAssertTrue(RepositoryPostPushBrowserSuggestionPolicy.shouldOpen(
             nativeCreationWasAvailable: false,
@@ -2188,23 +2255,23 @@ private final class LocalPullRequestRepositoryFixture {
     let directory: URL
     let repository: PBGitRepository
 
-    init(remoteURL: String) throws {
+    init(remoteURL: String, inheritedEnvironment: [String: String] = ProcessInfo.processInfo.environment) throws {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("GitX-PullRequest-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         do {
-            try Self.runGit(["init", "--quiet", "--initial-branch=main"], in: directory)
-            try Self.runGit(["config", "user.name", "GitX Tests"], in: directory)
-            try Self.runGit(["config", "user.email", "gitx-tests@example.invalid"], in: directory)
+            try Self.runGit(["init", "--quiet", "--initial-branch=main"], in: directory, inheritedEnvironment: inheritedEnvironment)
+            try Self.runGit(["config", "user.name", "GitX Tests"], in: directory, inheritedEnvironment: inheritedEnvironment)
+            try Self.runGit(["config", "user.email", "gitx-tests@example.invalid"], in: directory, inheritedEnvironment: inheritedEnvironment)
             try "fixture\n".write(
                 to: directory.appendingPathComponent("tracked.txt"),
                 atomically: true,
                 encoding: .utf8
             )
-            try Self.runGit(["add", "tracked.txt"], in: directory)
-            try Self.runGit(["commit", "--quiet", "-m", "Fixture"], in: directory)
-            try Self.runGit(["remote", "add", "origin", remoteURL], in: directory)
-            repository = try PBGitRepository(url: directory)
+            try Self.runGit(["add", "tracked.txt"], in: directory, inheritedEnvironment: inheritedEnvironment)
+            try Self.runGit(["commit", "--quiet", "-m", "Fixture"], in: directory, inheritedEnvironment: inheritedEnvironment)
+            try Self.runGit(["remote", "add", "origin", remoteURL], in: directory, inheritedEnvironment: inheritedEnvironment)
+            repository = try GitXTestGitRepository(url: directory)
         } catch {
             try? FileManager.default.removeItem(at: directory)
             throw error
@@ -2216,27 +2283,8 @@ private final class LocalPullRequestRepositoryFixture {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    private static func runGit(_ arguments: [String], in directory: URL) throws {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            let message = String(
-                data: output.fileHandleForReading.readDataToEndOfFile(),
-                encoding: .utf8
-            ) ?? "Git command failed"
-            throw FixtureError.gitFailed(arguments, process.terminationStatus, message)
-        }
-    }
-
-    private enum FixtureError: Error {
-        case gitFailed([String], Int32, String)
+    private static func runGit(_ arguments: [String], in directory: URL, inheritedEnvironment: [String: String]) throws {
+        try GitXTestGitFixture.run(arguments, in: directory, inheritedEnvironment: inheritedEnvironment)
     }
 }
 

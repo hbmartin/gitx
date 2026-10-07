@@ -71,6 +71,29 @@ final class GitXTestGitFixtureTests: XCTestCase {
         }
     }
 
+    func testFixtureRunnerStoresBinaryStandardInputWithoutChangingItsBytes() throws {
+        let directory = try makeRepository()
+        let data = Data([0, 0xFF, 0x0A, 0x7F])
+        let object = try GitXTestGitFixture.run(["hash-object", "-w", "--stdin"], in: directory, standardInput: data)
+            .standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let read = PBTask(launchPath: "/usr/bin/git", arguments: ["cat-file", "blob", object], inDirectory: directory.path)
+        GitXTestGitFixture.prepare(read)
+        try read.launch()
+        XCTAssertEqual(read.standardOutputData, data)
+    }
+
+    @MainActor
+    func testFixtureRepositoryTasksKeepExplicitOverridesAndTheirOriginalTimeout() throws {
+        let directory = try makeRepository()
+        let repository = try GitXTestGitRepository(url: directory)
+        defer { repository.revisionList?.cleanup() }
+        let task = repository.task(withArguments: ["-c", "alias.fixture-value=!printf '%s' \"$GITX_FIXTURE_TASK_VALUE\"", "fixture-value"])
+        task.additionalEnvironment = ["GITX_FIXTURE_TASK_VALUE": "explicit literal value"]
+        XCTAssertEqual(task.timeout, 30)
+        try task.launch()
+        XCTAssertEqual(task.standardOutputString(), "explicit literal value")
+    }
+
     private func makeRepository() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitX-Fixture-Runner-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

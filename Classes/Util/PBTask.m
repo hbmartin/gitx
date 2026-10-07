@@ -206,7 +206,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 		@synchronized(self) {
 			if (self.outputReadsInFlight || self.errorReadsInFlight) return;
 		}
-		[self.diagnosticCapture seal];
+		(void)[self.diagnosticCapture seal];
 	}
 
 	self.operationFinished = YES;

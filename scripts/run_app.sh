@@ -335,6 +335,20 @@ if (( reset_tcc )); then
 	echo "Reset TCC decisions for $bundle_identifier."
 fi
 
+# Isolate both fixture commands and the diagnostic app from inherited Git state.
+# Repository-local hooks stay available for intentional failure fixtures.
+for gitx_git_environment_key in "${!GIT_@}"; do
+	unset "$gitx_git_environment_key"
+done
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_COUNT=3
+export GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_1=tag.gpgsign GIT_CONFIG_VALUE_1=false
+export GIT_CONFIG_KEY_2=init.templateDir GIT_CONFIG_VALUE_2=/dev/null
+export GIT_AUTHOR_NAME="GitX Tests" GIT_AUTHOR_EMAIL="gitx-tests@example.invalid"
+export GIT_COMMITTER_NAME="GitX Tests" GIT_COMMITTER_EMAIL="gitx-tests@example.invalid"
+export GCM_INTERACTIVE=never GIT_ASKPASS=/usr/bin/false GIT_TERMINAL_PROMPT=0 LC_ALL=C
+
 make_fixture() {
 	local target=$1
 	rm -rf "$target"
@@ -345,8 +359,6 @@ make_fixture() {
 		# on a half-built repository.
 		set -e
 		cd "$target"
-		export GIT_CONFIG_GLOBAL=/dev/null
-		export GIT_CONFIG_NOSYSTEM=1
 		export GIT_AUTHOR_NAME="GitX Fixture"
 		export GIT_AUTHOR_EMAIL="fixture@gitx.invalid"
 		export GIT_COMMITTER_NAME="GitX Fixture"
@@ -471,11 +483,6 @@ rm -rf "${TMPDIR:-/tmp}/${bundle_identifier}.savedState"
 environment=(
 	"CFFIXED_USER_HOME=$isolated_home"
 	"CFPREFERENCES_AVOID_DAEMON=1"
-	"GCM_INTERACTIVE=never"
-	"GIT_ASKPASS=/usr/bin/false"
-	"GIT_CONFIG_GLOBAL=/dev/null"
-	"GIT_CONFIG_NOSYSTEM=1"
-	"GIT_TERMINAL_PROMPT=0"
 	"GITX_UITEST_FORGE_STORAGE_ROOT=$isolated_home/Library/Application Support/GitX/Forge"
 	"GITX_UITEST_REPO=$repository"
 )
