@@ -13,6 +13,7 @@
 #import "PBGitDefaults.h"
 #import "PBGitGrapher.h"
 #import "PBGitHistoryList.h"
+#import "PBGitHistoryGrapher.h"
 #import "PBGitHistoryController.h"
 #import "PBGitIndex.h"
 #import "PBGitRef.h"
@@ -38,9 +39,31 @@
 - (NSString *)pathForDiffHeaderAtIndex:(NSUInteger)headerIndex lines:(NSArray<NSString *> *)lines;
 @end
 
-@interface PBGitHistoryList (GitXCoreTests)
+@interface PBGitHistoryList (GitXCoreTests) <PBGitHistoryGrapherDelegate>
 - (NSSet<GTOID *> *)baseCommits;
 - (void)setCurrentRevList:(PBGitRevList *)parser;
+- (void)resetGraphing;
+- (NSInvocationOperation *)operationForCommits:(NSArray *)commits;
+- (void)updateProjectHistoryForRev:(PBGitRevSpecifier *)revision;
+@end
+
+// Hold the real invocation after its publication and legacy delegate callback
+// have reached the main queue. Releasing the semaphore is an observable test
+// boundary, not a timing assumption about when NSOperation becomes finished.
+@interface PBGitHistoryHeldGrapher : PBGitHistoryGrapher
+@property (nonatomic, strong) XCTestExpectation *callbacksDelivered;
+@property (nonatomic, strong) dispatch_semaphore_t releaseGraphing;
+@end
+
+@implementation PBGitHistoryHeldGrapher
+- (void)graphCommits:(NSArray *)commits
+{
+	[super graphCommits:commits];
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[self.callbacksDelivered fulfill];
+	});
+	dispatch_semaphore_wait(self.releaseGraphing, DISPATCH_TIME_FOREVER);
+}
 @end
 
 @interface PBGitBinary (GitXCoreTests)
@@ -2042,6 +2065,115 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	NSArray<PBGitCommit *> *invalid =
 		[self loadCommitsForRevision:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"missing..also-missing" ]]];
 	XCTAssertEqual(invalid.count, (NSUInteger)0);
+}
+
+- (nullable PBGitCommit *)historyCompletionTestHeadCommit
+{
+	NSError *error = nil;
+	GTReference *head = [self.repository.gtRepo headReferenceWithError:&error];
+	GTCommit *target = (GTCommit *)[head resolvedTarget];
+	XCTAssertNotNil(target, @"%@", error);
+	if (!target) return nil;
+	return [[PBGitCommit alloc] initWithRepository:self.repository andCommit:target];
+}
+
+- (PBGitHistoryList *)idleHistoryListWithParserCommits:(NSArray<PBGitCommit *> *)parserCommits
+{
+	PBGitHistoryList *history = [[PBGitHistoryList alloc] initWithRepository:self.repository];
+	history.projectRevList.commits = [parserCommits mutableCopy];
+	[history setCurrentRevList:history.projectRevList];
+	[history resetGraphing];
+	return history;
+}
+
+- (void)waitForGraphQueueToDrain:(NSOperationQueue *)queue
+{
+	NSPredicate *drained = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return queue.operationCount == 0;
+	}];
+	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:drained object:queue];
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
+- (void)waitForHistoryListToFinish:(PBGitHistoryList *)history
+{
+	NSPredicate *finished = [NSPredicate predicateWithBlock:^BOOL(__unused id object, __unused NSDictionary *bindings) {
+		return !history.isUpdating;
+	}];
+	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:finished object:history];
+	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
+- (void)testHistoryGrapherPublishesBeforeItsInvocationFinishes
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[ commit ]];
+	NSOperationQueue *queue = [history valueForKey:@"graphQueue"];
+	PBGitHistoryHeldGrapher *heldGrapher = [[PBGitHistoryHeldGrapher alloc]
+		initWithBaseCommits:[NSSet set]
+			viewAllBranches:YES
+					  queue:queue
+				   delegate:history];
+	heldGrapher.callbacksDelivered = [self expectationWithDescription:@"real grapher publication and early callback delivered"];
+	heldGrapher.releaseGraphing = dispatch_semaphore_create(0);
+	[history setValue:heldGrapher forKey:@"grapher"];
+	NSInvocationOperation *operation = [history operationForCommits:@[ commit ]];
+
+	@try {
+		[queue addOperation:operation];
+		[self waitForExpectations:@[ heldGrapher.callbacksDelivered ] timeout:10.0];
+		XCTAssertTrue(operation.executing);
+		XCTAssertFalse(operation.finished);
+		XCTAssertTrue(history.isUpdating, @"The invocation is still executing after its delegate callback");
+		XCTAssertEqualObjects([history.commits valueForKey:@"SHA"], (@[ commit.SHA ]));
+	} @finally {
+		dispatch_semaphore_signal(heldGrapher.releaseGraphing);
+	}
+
+	[self waitForGraphQueueToDrain:queue];
+	[history finishedGraphing];
+	XCTAssertFalse(history.isUpdating);
+	XCTAssertEqual(history.commits.count, (NSUInteger)1);
+	[history cleanup];
+}
+
+- (void)testHistoryFinishedGraphingClearsTheCurrentEmptySnapshot
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[]];
+	history.commits = [NSMutableArray arrayWithObject:commit];
+	XCTAssertTrue(history.isUpdating);
+
+	[history finishedGraphing];
+
+	XCTAssertFalse(history.isUpdating);
+	XCTAssertEqual(history.commits.count, (NSUInteger)0);
+	XCTAssertFalse([[history valueForKey:@"resetCommits"] boolValue]);
+	[history cleanup];
+}
+
+- (void)testHistoryParserFailureFinishesAndClearsTheOldSnapshot
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [[PBGitHistoryList alloc] initWithRepository:self.repository];
+	history.commits = [NSMutableArray arrayWithObject:commit];
+	history.projectRevList = [[PBGitRevListEnumeratorFailureStub alloc]
+		initWithRepository:self.repository
+					   rev:[PBGitRevSpecifier allBranchesRevSpec]
+			   shouldGraph:NO];
+
+	PBGitRevSpecifier *revision = self.repository.headRef;
+	XCTAssertNotNil(revision);
+	[history updateProjectHistoryForRev:revision];
+	XCTAssertTrue(history.isUpdating);
+	[self waitForHistoryListToFinish:history];
+
+	XCTAssertEqual(history.commits.count, (NSUInteger)0);
+	XCTAssertFalse(history.projectRevList.isParsing);
+	[history cleanup];
 }
 
 - (void)testNormalHistoryLoadPublishesEveryCommitOnce
