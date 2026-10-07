@@ -36,6 +36,24 @@ final class PBChildProcessOwnerTests: XCTestCase {
         }
     }
 
+    // swift6-safety-justification: The lock protects the clock's sequence position.
+    private final class CrossedDeadlineClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private let initialUptime = DispatchTime.now().uptimeNanoseconds
+        private var reads = 0
+
+        var terminationDeadline: DispatchTime {
+            DispatchTime(uptimeNanoseconds: initialUptime + 10_000_000)
+        }
+
+        func uptimeNanoseconds() -> UInt64 {
+            lock.lock()
+            defer { lock.unlock() }
+            reads += 1
+            return initialUptime + (reads < 3 ? 0 : 20_000_000)
+        }
+    }
+
     // swift6-safety-justification: The lock protects the fake monitor's mutable flags.
     private final class FakeExitMonitor: PBChildProcessExitMonitoring, @unchecked Sendable {
         private let lock = NSLock()
@@ -81,6 +99,12 @@ final class PBChildProcessOwnerTests: XCTestCase {
 
         func performSynchronously(_ operation: () -> Void) {
             queue.sync(execute: operation)
+        }
+
+        func notifyAfterDeadline(_ deadline: DispatchTime, expectation: XCTestExpectation) {
+            queue.asyncAfter(deadline: deadline) {
+                self.queue.async { expectation.fulfill() }
+            }
         }
     }
 
@@ -148,6 +172,14 @@ final class PBChildProcessOwnerTests: XCTestCase {
             lock.unlock()
             guard let monitor else { preconditionFailure("Launch must install the exit monitor first") }
             monitor.performSynchronously(operation)
+        }
+
+        func expectMonitorQueueAfterDeadline(_ deadline: DispatchTime, expectation: XCTestExpectation) {
+            lock.lock()
+            let monitor = storedMonitor
+            lock.unlock()
+            guard let monitor else { preconditionFailure("Launch must install the exit monitor first") }
+            monitor.notifyAfterDeadline(deadline, expectation: expectation)
         }
 
         func failNextSpawn() {
@@ -477,6 +509,38 @@ final class PBChildProcessOwnerTests: XCTestCase {
 
         XCTAssertEqual(recorder.statuses, [0])
         XCTAssertEqual(system.events.filter { $0.hasPrefix("signal:") }, ["signal:\(SIGTERM)", "signal:\(SIGKILL)"])
+    }
+
+    func testDeadlineCrossedDuringTimerSchedulingSendsTermBeforeKillAndReapsOnceAfterLeaseRelease() throws {
+        let system = FakeProcessSystem()
+        system.setProcessGroupMembers([4321, 4322])
+        let clock = CrossedDeadlineClock()
+        let owner = PBChildProcessOwner(
+            system: system, queueLabel: #function, uptimeNanoseconds: { clock.uptimeNanoseconds() }
+        )
+        let completed = expectation(description: "crossed-deadline leader reaped after lease release")
+        completed.assertForOverFulfill = true
+        let recorder = CompletionRecorder(expectation: completed)
+        try owner.launch(configuration: configuration(), retainLeaderUntilReleased: true) {
+            recorder.record($0, error: $1)
+        }
+
+        XCTAssertTrue(owner.requestTermination(gracePeriod: 0.01, forceKillDelay: 0))
+        XCTAssertEqual(system.events.filter { $0.hasPrefix("signal:") }, ["signal:\(SIGTERM)", "signal:\(SIGKILL)"])
+        XCTAssertTrue(recorder.statuses.isEmpty)
+        XCTAssertFalse(system.events.contains("reap"))
+
+        owner.releaseLeaderRetention()
+        wait(for: [completed], timeout: 1)
+        let staleTimerDrained = expectation(description: "serial queue passed the stale termination deadline")
+        system.expectMonitorQueueAfterDeadline(clock.terminationDeadline, expectation: staleTimerDrained)
+        wait(for: [staleTimerDrained], timeout: 1)
+
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertTrue(recorder.errors.isEmpty)
+        XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
+        XCTAssertEqual(system.events.filter { $0.hasPrefix("signal:") }, ["signal:\(SIGTERM)", "signal:\(SIGKILL)"])
+        XCTAssertFalse(owner.requestTermination(gracePeriod: 0, forceKillDelay: 0))
     }
 
     func testRetainedExitedLeaderSkipsForceKillWhenTheGroupHasNoDescendants() throws {

@@ -129,13 +129,16 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     private let queue: DispatchQueue
     private let queueKey = DispatchSpecificKey<Bool>()
     private let system: any PBChildProcessSystem
+    private let uptimeNanoseconds: @Sendable () -> UInt64
     private var state: State = .idle
 
     init(
         system: any PBChildProcessSystem = PBPosixChildProcessSystem(),
-        queueLabel: String = "org.gitx.PBChildProcessOwner"
+        queueLabel: String = "org.gitx.PBChildProcessOwner",
+        uptimeNanoseconds: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
     ) {
         self.system = system
+        self.uptimeNanoseconds = uptimeNanoseconds
         queue = DispatchQueue(label: queueLabel, qos: .userInitiated)
         queue.setSpecific(key: queueKey, value: true)
     }
@@ -195,7 +198,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             observeLeaderExit()
             guard case var .running(process) = state else { return false }
             process.schedule.mergeRequest(
-                now: DispatchTime.now().uptimeNanoseconds,
+                now: uptimeNanoseconds(),
                 gracePeriod: gracePeriod,
                 forceKillDelay: forceKillDelay,
                 terminationWasSent: process.terminationWasSent
@@ -232,7 +235,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
               let deadline = process.schedule.terminationDeadline
         else { return }
 
-        if deadline <= DispatchTime.now().uptimeNanoseconds {
+        if deadline <= uptimeNanoseconds() {
             sendTerminationSignal()
             return
         }
@@ -256,7 +259,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
               let deadline = process.schedule.forceKillDeadline
         else { return }
 
-        if deadline <= DispatchTime.now().uptimeNanoseconds {
+        if deadline <= uptimeNanoseconds() {
             sendForceKillSignal()
             return
         }
