@@ -1681,6 +1681,33 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(contentView.textView(contentView.textView, clickedOnLink: link, at: UInt(range.location)))
     }
 
+    func testHunkDiscardAndCancellationPreserveCurrentConfirmationBehavior() throws {
+        let original = try fixture.git(["show", "HEAD:nested/tracked.txt"])
+        try fixture.write("initial discard fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        for confirm in [true, false] {
+            let changed = "discard characterization \(confirm)\n"
+            try fixture.write(changed, to: "nested/tracked.txt")
+            waitForIndexUpdate { repository.index.refresh() }
+            try selectUnstagedFile("nested/tracked.txt", in: pane)
+            pane.diffPaneController.rerenderCurrentRequests()
+            XCTAssertTrue(waitForCondition { pane.diffPaneController.contentView.textView.string.contains("+" + changed.trimmingCharacters(in: .newlines)) })
+            try activateNativeDiffAction("Discard hunk", in: pane)
+            let window = try XCTUnwrap(windowController.window)
+            let sheet = try XCTUnwrap(window.attachedSheet)
+            window.endSheet(sheet, returnCode: confirm ? .alertFirstButtonReturn : .alertSecondButtonReturn)
+            if confirm {
+                XCTAssertTrue(waitForCondition {
+                    (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8)) == original && !self.repository.index.mutationReconciliationPending
+                })
+            } else {
+                pumpRunLoop()
+                XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8), changed)
+                XCTAssertFalse(repository.index.mutationReconciliationPending)
+            }
+        }
+    }
+
     func testWorkingTreeFoldersRemainAvailableToOpeningAndQuickLook() throws {
         let root = PBWorkingTree.root(for: repository)
         let folder = try XCTUnwrap(root.children.first { $0.path == "nested" })
