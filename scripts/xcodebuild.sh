@@ -349,7 +349,12 @@ case "$command" in
 			doctor_mode=ui
 		fi
 		;;
-	analyze|archive|smoke|build|build-tests|raw)
+	raw)
+		for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
+			case "$argument" in test|test-without-building) doctor_mode="test" ;; esac
+		done
+		;;
+	analyze|archive|smoke|build|build-tests)
 		;;
 	*)
 		echo "Unknown verification command: $command" >&2
@@ -409,13 +414,14 @@ xcode_test() {
 		while (( index < ${#arguments[@]} )); do
 			case "${arguments[$index]}" in
 				-only-testing|-skip-testing) index=$((index + 2)) ;;
-				-only-testing:*|-skip-testing:*) index=$((index + 1)) ;;
+				-only-testing:*|-skip-testing:*|-only-testing=*|-skip-testing=*) index=$((index + 1)) ;;
 				*) probe_arguments+=("${arguments[$index]}"); index=$((index + 1)) ;;
 			esac
 		done
 		case "$test_preset" in
-			address-undefined) probe_arguments+=(-enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES) ;;
-			thread-sanitizer) probe_arguments+=(-enableThreadSanitizer YES) ;;
+			correctness) probe_arguments=(-enableCodeCoverage YES "${probe_arguments[@]}") ;;
+			address-undefined) probe_arguments=(-enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES "${probe_arguments[@]}") ;;
+			thread-sanitizer) probe_arguments=(-enableThreadSanitizer YES "${probe_arguments[@]}") ;;
 		esac
 		run_step compile:host-preflight "$logs/$plan-host-build.log" "" \
 			"$xcodebuild" "${common[@]}" build-for-testing -testPlan GitXHostPreflight \
@@ -663,10 +669,68 @@ case "$command" in
 			result_path="$results/raw.xcresult"
 			raw_common+=( -resultBundlePath "$result_path" )
 		fi
-		run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" \
-			${raw_common[@]+"${raw_common[@]}"} \
-			MACOSX_DEPLOYMENT_TARGET="$deployment_target" \
-			${extra[@]+"${extra[@]}"} || exit $?
+		if (( is_test_action )); then
+			# Raw test actions use the same desktop/provenance protections while
+			# retaining explicit project, scheme, paths, signing and test options.
+			suite_arguments=() compile_arguments=() probe_arguments=()
+			raw_arguments=("${raw_common[@]}" "MACOSX_DEPLOYMENT_TARGET=$deployment_target" "${extra[@]}")
+			raw_plan=GitX
+			for ((index=0; index < ${#raw_arguments[@]}; index++)); do
+				argument=${raw_arguments[$index]}
+				case "$argument" in
+					test|test-without-building) continue ;;
+					-resultBundlePath)
+						result_path=${raw_arguments[$((index + 1))]}
+						suite_arguments+=("$argument" "$result_path")
+						index=$((index + 1)); continue ;;
+					-resultBundlePath=*)
+						result_path=${argument#*=}; suite_arguments+=("$argument"); continue ;;
+				esac
+				suite_arguments+=("$argument")
+				compile_arguments+=("$argument")
+				case "$argument" in
+					-testPlan)
+						raw_plan=${raw_arguments[$((index + 1))]}
+						suite_arguments+=("$raw_plan"); compile_arguments+=("$raw_plan")
+						index=$((index + 1)) ;;
+					-testPlan=*) raw_plan=${argument#*=} ;;
+					-only-testing|-skip-testing)
+						suite_arguments+=("${raw_arguments[$((index + 1))]}")
+						compile_arguments+=("${raw_arguments[$((index + 1))]}")
+						index=$((index + 1)) ;;
+					-only-testing:*|-skip-testing:*|-only-testing=*|-skip-testing=*) ;;
+					*) probe_arguments+=("$argument") ;;
+				esac
+			done
+			case "$raw_plan" in
+				GitX) probe_arguments=(-enableCodeCoverage YES "${probe_arguments[@]}") ;;
+				GitXAddressUndefined) probe_arguments=(-enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES "${probe_arguments[@]}") ;;
+				GitXThreadSanitizer) probe_arguments=(-enableThreadSanitizer YES "${probe_arguments[@]}") ;;
+			esac
+			run_step compile:host-preflight "$logs/raw-host-build.log" "" "$xcodebuild" build-for-testing \
+				"${probe_arguments[@]}" -testPlan GitXHostPreflight || exit $?
+			run_step compile:raw "$logs/raw-build.log" "" "$xcodebuild" build-for-testing "${compile_arguments[@]}" || exit $?
+			run_step signatures "$logs/raw-signatures.log" "" python3 "$root/scripts/workflow_session.py" signatures "$derived_data" || exit $?
+			snapshot="$results/raw-inputs.json"
+			python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || exit $?
+			run_step host-preflight "$logs/raw-host.log" "$results/raw-host.xcresult" \
+				python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" -- \
+				"$xcodebuild" test-without-building "${probe_arguments[@]}" -testPlan GitXHostPreflight \
+				-only-testing:GitXTests/GitXHostStartTests/testHostStarts -resultBundlePath "$results/raw-host.xcresult" || exit $?
+			run_step raw "$logs/raw.log" "$result_path" \
+				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw" -- \
+				"$xcodebuild" test-without-building "${suite_arguments[@]}"
+			raw_status=$?
+			run_step evidence "$logs/raw-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"
+			evidence_status=$?
+			(( raw_status == 0 )) || exit "$raw_status"
+			(( evidence_status == 0 )) || exit "$evidence_status"
+		else
+			run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" \
+				${raw_common[@]+"${raw_common[@]}"} \
+				MACOSX_DEPLOYMENT_TARGET="$deployment_target" \
+				${extra[@]+"${extra[@]}"} || exit $?
+		fi
 		;;
 esac
 

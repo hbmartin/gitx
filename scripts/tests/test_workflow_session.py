@@ -106,6 +106,46 @@ class WorkflowSessionTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"GITX_DERIVED_DATA": directory}):
                 self.assertEqual(session.cache_paths()["derivedData"], str(pathlib.Path(directory).resolve()))
 
+    def test_raw_test_execution_owns_desktop_but_compilation_does_not(self):
+        with mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode Test"):
+            for action in ("test", "test-without-building"):
+                resources, _ = session.entry_resources("xcodebuild.sh", ["raw", "--", action])
+                self.assertIn(f"desktop:{os.getuid()}", resources)
+            resources, _ = session.entry_resources("xcodebuild.sh", ["raw", "--", "build-for-testing"])
+            self.assertNotIn(f"desktop:{os.getuid()}", resources)
+
+    def test_interruption_stops_descendants_in_separate_process_groups(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            pid_file = root / "grandchild.pid"
+            command = "import subprocess,sys,time; p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],start_new_session=True);" \
+                "open(sys.argv[1],'w').write(str(p.pid));time.sleep(30)"
+            supervisor = subprocess.Popen([sys.executable, str(ROOT / "scripts/workflow_session.py"), "run", "--diagnostics", str(root), "--", sys.executable, "-c", command, str(pid_file)], stdout=subprocess.DEVNULL)
+            grandchild = None
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and (not pid_file.exists() or not pid_file.read_text()):
+                    time.sleep(.01)
+                grandchild = int(pid_file.read_text())
+                supervisor.terminate()
+                supervisor.wait(timeout=15)
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    state = subprocess.run(["ps", "-p", str(grandchild), "-o", "stat="], capture_output=True, text=True).stdout.strip()
+                    if not state or state.startswith("Z"):
+                        break
+                    time.sleep(.02)
+                self.assertTrue(not state or state.startswith("Z"), "Nested owned process survived interruption")
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.kill()
+                    supervisor.wait()
+                if grandchild:
+                    try:
+                        os.kill(grandchild, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
     def test_source_and_product_replacement_invalidate_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

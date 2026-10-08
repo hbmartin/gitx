@@ -326,6 +326,31 @@ def owned_processes(group):
             if len(line.split()) > 1 and line.split()[1] == str(group)]
 
 
+def descendant_processes(parent):
+    """Snapshot actual descendants, including nested supervisors' new groups."""
+    result = subprocess.run(["ps", "-axo", "pid=,ppid=,pgid=,comm="], capture_output=True, text=True)
+    table = {}
+    for line in result.stdout.splitlines():
+        fields = line.split(maxsplit=3)
+        if len(fields) == 4:
+            table[int(fields[0])] = (int(fields[1]), fields[2], fields[3])
+    descendants = {parent}
+    while True:
+        found = {pid for pid, (ppid, _, _) in table.items() if ppid in descendants}
+        if found <= descendants:
+            break
+        descendants.update(found)
+    records = []
+    for pid in descendants:
+        if pid not in table:
+            continue
+        started = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True).stdout.strip()
+        if started:
+            _, group, command = table[pid]
+            records.append({"pid": pid, "started": started, "process": f"{pid} {group} {command}"})
+    return records
+
+
 def detached_owned_processes(tag, existing):
     """Require an inherited session marker for hosts outside the process group.
 
@@ -422,8 +447,12 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     host_started = True
         if category:
             detached = detached_owned_processes(tag, existing) if desktop else []
+            # Every nested supervisor starts its own process group. A group
+            # signal alone would orphan its compiler and release the outer
+            # lease while that compiler still writes shared products.
+            descendants = descendant_processes(child.pid)
             with contextlib.suppress(OSError, subprocess.SubprocessError):
-                diagnostics(directory, child.pid, category, detached)
+                diagnostics(directory, child.pid, category, detached + descendants)
             print(f"\nVerification blocker: {category}. Diagnostics: {directory}", flush=True)
             if interrupted:
                 # Give a shell harness its EXIT trap before terminating owned
@@ -433,19 +462,16 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
                     os.kill(child.pid, signal.SIGTERM)
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     child.wait(timeout=3)
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(child.pid, signal.SIGTERM)
-            stop_detached(detached)
+            stop_detached(descendants + detached)
             try:
                 child.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(child.pid, signal.SIGKILL)
+                stop_detached(descendants, signal.SIGKILL)
                 child.wait()
-            if detached:
+            if descendants or detached:
                 # Identity is checked again before escalation; PID reuse never
                 # grants ownership of a replacement process.
-                stop_detached(detached, signal.SIGKILL)
+                stop_detached(descendants + detached, signal.SIGKILL)
             return 130 if interrupted else 124
         return child.wait()
     finally:
@@ -502,7 +528,7 @@ def entry_resources(entry, arguments, root=ROOT):
                 resources.append(paths[key])
     if entry == "run_app.sh" or "--stage-app" in arguments:
         resources.append(str(pathlib.Path(root) / "build/GitX.app"))
-    if entry in {"verify_static.sh", "run_app.sh"} or ("test" in arguments and not any(v in arguments for v in ("core", "forgekit"))):
+    if entry in {"verify_static.sh", "run_app.sh"} or (any(v in arguments for v in ("test", "test-without-building")) and not any(v in arguments for v in ("core", "forgekit"))):
         resources.append(f"desktop:{os.getuid()}")
     return resources, paths
 

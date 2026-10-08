@@ -479,12 +479,34 @@ class ScriptEntrypointTests(unittest.TestCase):
         result_bundles = [
             arguments[index + 1]
             for index, argument in enumerate(arguments[:-1])
-            if argument == "-resultBundlePath"
+            if argument == "-resultBundlePath" and not arguments[index + 1].endswith("raw-host.xcresult")
         ]
         self.assertEqual(len(result_bundles), 2)
         self.assertEqual(len(set(result_bundles)), 2)
         logs = list((self.root / "artifacts" / "verification").glob("*/Logs/raw.log"))
         self.assertEqual(len(logs), 2)
+
+    def test_raw_tests_compile_and_validate_before_bounded_execution(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        subprocess.run(
+            [script, "--raw", "--run-id", "raw-protected", "raw", "--", "test", "-testPlan", "GitXThreadSanitizer", "-only-testing:GitXTests/Contract", "CODE_SIGN_IDENTITY=-"],
+            check=True, capture_output=True, text=True, env=self.environment,
+        )
+        invocations = captured.read_text().split("__INVOCATION__")
+        host_build = next(value for value in invocations if "\nbuild-for-testing\n" in value and "GitXHostPreflight" in value)
+        self.assertIn("-enableThreadSanitizer\nYES", host_build)
+        self.assertNotIn("-only-testing:GitXTests/Contract", host_build)
+        self.assertIn("CODE_SIGN_IDENTITY=-", host_build)
+        suite = next(value for value in invocations if "\ntest-without-building\n" in value and "GitXThreadSanitizer" in value)
+        self.assertIn("-only-testing:GitXTests/Contract", suite)
+        receipt = self.receipt("raw-protected")
+        names = [step["name"] for step in receipt["steps"]]
+        self.assertLess(names.index("compile:raw"), names.index("host-preflight"))
+        self.assertLess(names.index("signatures"), names.index("raw"))
+        self.assertEqual(receipt["evidence"]["status"], "valid")
+        execution = next(step for step in receipt["steps"] if step["name"] == "raw")
+        self.assertIn("--startup-timeout", execution["command"])
 
     def test_xcodebuild_wrapper_reuses_shared_derived_data(self) -> None:
         script = self.install_script("xcodebuild.sh")
