@@ -15,6 +15,72 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testSectionedCheckboxesAndMixedDoubleClickUsePublishedFiles() throws {
+        try fixture.write("indexed\n", to: "control-staged.txt")
+        try fixture.git(["add", "control-staged.txt"])
+        try fixture.write("working\n", to: "control-unstaged.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.sectionedList)
+        let table = list.sectionedTable
+        func fileRow(_ path: String) throws -> Int {
+            try XCTUnwrap((0 ..< table.numberOfRows).first { row in
+                (table.view(atColumn: 0, row: row, makeIfNecessary: true) as? PBStagingFileCellView)?.pathField.stringValue == path
+            })
+        }
+        try table.selectRowIndexes(IndexSet([fileRow("control-staged.txt"), fileRow("control-unstaged.txt")]), byExtendingSelection: false)
+        waitForIndexUpdate { list.perform(NSSelectorFromString("didDoubleClickTable:"), with: table) }
+        XCTAssertEqual(try fixture.git(["diff", "--cached", "--name-only"]).trimmingCharacters(in: .newlines), "control-unstaged.txt")
+        let stagedCell = try XCTUnwrap(table.view(atColumn: 0, row: fileRow("control-unstaged.txt"), makeIfNecessary: true) as? PBStagingFileCellView)
+        waitForIndexUpdate { stagedCell.checkbox.performClick(nil) }
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+        let unstagedCell = try XCTUnwrap(table.view(atColumn: 0, row: fileRow("control-staged.txt"), makeIfNecessary: true) as? PBStagingFileCellView)
+        waitForIndexUpdate { unstagedCell.checkbox.performClick(nil) }
+        XCTAssertEqual(try fixture.git(["diff", "--cached", "--name-only"]).trimmingCharacters(in: .newlines), "control-staged.txt")
+        func header(_ title: String) throws -> PBStagingSectionHeaderView {
+            let headers: [PBStagingSectionHeaderView] = (0 ..< table.numberOfRows).compactMap {
+                table.view(atColumn: 0, row: $0, makeIfNecessary: true) as? PBStagingSectionHeaderView
+            }
+            return try XCTUnwrap(headers.first { $0.masterCheckbox.tag == (title == "Staged files" ? 1 : 0) })
+        }
+        let stagedHeader = try header("Staged files")
+        waitForIndexUpdate { stagedHeader.masterCheckbox.performClick(nil) }
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+        let unstagedHeader = try header("Unstaged files")
+        waitForIndexUpdate { unstagedHeader.masterCheckbox.performClick(nil) }
+        XCTAssertEqual(try Set(fixture.git(["diff", "--cached", "--name-only"]).split(separator: "\n").map(String.init)), ["control-staged.txt", "control-unstaged.txt"])
+        XCTAssertTrue(try fixture.git(["ls-files", "--others", "--exclude-standard"]).isEmpty)
+    }
+
+    func testHistoryWorkingPreviewCapturesBothSidesAndRoutesCommitLinks() throws {
+        let path = "selected-preview.txt"
+        try fixture.write("indexed snapshot\n", to: path)
+        try fixture.git(["add", "--", path])
+        try fixture.write("working snapshot\n", to: path)
+        _ = try openStagingPane()
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        let node = try XCTUnwrap(waitForTreeNode(fullPath: path))
+        historyController.treeController.setSelectionIndexPath(node.indexPath)
+        let fileView = try XCTUnwrap(historyController.value(forKey: "fileView") as? NSObject)
+        let mode = try XCTUnwrap(fileView.value(forKey: "modeControl") as? NSSegmentedControl)
+        let native = try XCTUnwrap(fileView.value(forKey: "nativeView") as? PBNativeContentView)
+        mode.selectedSegment = 3
+        fileView.perform(NSSelectorFromString("showFile"))
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("+indexed snapshot") && native.textView.string.contains("+working snapshot") })
+        let sections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
+        XCTAssertEqual(sections.count, 2)
+        let staged = try XCTUnwrap(sections[0][PBNativeSectionImageSourceKey] as? [String: Any])
+        let unstaged = try XCTUnwrap(sections[1][PBNativeSectionImageSourceKey] as? [String: Any])
+        XCTAssertEqual(staged[PBNativeImageSourceWorkingTreeKey] as? Bool, false)
+        XCTAssertEqual(staged[PBNativeImageSourceRevisionsKey] as? [String], [":"])
+        XCTAssertEqual(unstaged[PBNativeImageSourceWorkingTreeKey] as? Bool, true)
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Selected-Working-Preview-Both-Sides")
+        let head = try XCTUnwrap(repository.headCommit())
+        native.delegate?.nativeContentView?(native, selectCommit: head.sha)
+        XCTAssertTrue(waitForCondition { (self.historyController.commitController.selectedObjects.first as? PBGitCommit)?.sha == head.sha })
+    }
+
     func testStagingHeadersAndCountsReuseThePublishedPresentation() throws {
         try fixture.write("staged\n", to: "summary-staged.txt")
         try fixture.git(["add", "summary-staged.txt"])
