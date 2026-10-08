@@ -392,12 +392,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         stagedHeader.masterCheckbox.isEnabled = enabled && !(stagedFilesController.arrangedObjects as? [PBChangedFile] ?? []).isEmpty
         unstagedHeader.masterCheckbox.isEnabled = enabled && !(unstagedFilesController.arrangedObjects as? [PBChangedFile] ?? []).isEmpty
         for table in [unstagedTable, stagedTable, sectionedTable] {
-            let visibleRows = table.rows(in: table.visibleRect)
-            guard visibleRows.location != NSNotFound else { continue }
-            for row in visibleRows.location ..< NSMaxRange(visibleRows) {
-                if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? StagingFileCellView {
+            table.enumerateAvailableRowViews { rowView, _ in
+                if let cell = rowView.view(atColumn: 0) as? StagingFileCellView {
                     cell.checkbox.isEnabled = enabled
-                } else if let header = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? StagingSectionHeaderView {
+                } else if let header = rowView.view(atColumn: 0) as? StagingSectionHeaderView {
                     header.masterCheckbox.isEnabled = enabled
                 }
             }

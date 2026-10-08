@@ -559,15 +559,19 @@ final nonisolated class IndexFileViewSnapshot: NSObject {
 
     @objc(snapshotsForFiles:)
     static func snapshots(files: [PBChangedFile]) -> [IndexFileViewSnapshot] {
-        assert(Thread.isMainThread)
+        requireMainThread()
         return files.map(IndexFileViewSnapshot.init)
     }
 
     @objc(snapshotsForFiles:rawPaths:)
     static func snapshots(files: [PBChangedFile], rawPaths: [Data]) -> [IndexFileViewSnapshot] {
-        assert(Thread.isMainThread)
+        requireMainThread()
         let selected = Set(rawPaths)
         return files.compactMap { selected.contains($0.rawPath) ? IndexFileViewSnapshot(file: $0) : nil }
+    }
+
+    private static func requireMainThread() {
+        assert(Thread.isMainThread)
     }
 
     @objc func materializedFile() -> PBChangedFile {
