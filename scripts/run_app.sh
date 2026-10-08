@@ -17,6 +17,8 @@
 #   scripts/run_app.sh --no-build               # relaunch without rebuilding
 #   scripts/run_app.sh --m3 review              # deterministic Milestone 3 journey
 #   scripts/run_app.sh --repo /tmp/some-repo    # open an existing repository
+#   scripts/run_app.sh --repo /tmp/some-repo --preserve-git-environment
+#                                             # preserve identity, signing, and Git settings
 #   scripts/run_app.sh --stop                   # terminate app and log stream
 #
 # Milestone 2 scenarios: push-create, existing-pull-request, exact-checkout,
@@ -50,12 +52,17 @@ reset_tcc=0
 stop_only=0
 log_level=info
 ready_timeout=30
+preserve_git_environment=0
 
 while (( $# )); do
 	case "$1" in
 		--repo)
 			repository=${2:-}
 			shift 2 || exit 2
+			;;
+		--preserve-git-environment)
+			preserve_git_environment=1
+			shift
 			;;
 		--fixture)
 			if (( $# < 2 )); then
@@ -104,6 +111,11 @@ while (( $# )); do
 			;;
 	esac
 done
+
+if (( preserve_git_environment )) && [[ -z "$repository" || -n "$milestone2_scenario" || -n "$milestone3_scenario" ]]; then
+	echo "--preserve-git-environment requires --repo and cannot be used with generated scenario fixtures." >&2
+	exit 2
+fi
 
 # A pid file can outlive its process, and the kernel reuses pids, so only a
 # pid whose executable and start time still match what this script started may
@@ -335,19 +347,24 @@ if (( reset_tcc )); then
 	echo "Reset TCC decisions for $bundle_identifier."
 fi
 
-# Isolate both fixture commands and the diagnostic app from inherited Git state.
-# Repository-local hooks stay available for intentional failure fixtures.
-for gitx_git_environment_key in "${!GIT_@}"; do
-	unset "$gitx_git_environment_key"
-done
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
-export GIT_CONFIG_COUNT=3
-export GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false
-export GIT_CONFIG_KEY_1=tag.gpgsign GIT_CONFIG_VALUE_1=false
-export GIT_CONFIG_KEY_2=init.templateDir GIT_CONFIG_VALUE_2=/dev/null
-export GIT_AUTHOR_NAME="GitX Tests" GIT_AUTHOR_EMAIL="gitx-tests@example.invalid"
-export GIT_COMMITTER_NAME="GitX Tests" GIT_COMMITTER_EMAIL="gitx-tests@example.invalid"
-export GCM_INTERACTIVE=never GIT_ASKPASS=/usr/bin/false GIT_TERMINAL_PROMPT=0 LC_ALL=C
+# Preferences stay isolated in either mode. Only explicit existing-repository
+# launches may retain the caller's Git identity, signing, config, and helpers.
+if (( preserve_git_environment )); then
+	echo "Preserving the caller's Git environment for the existing repository."
+else
+	for gitx_git_environment_key in "${!GIT_@}"; do
+		unset "$gitx_git_environment_key"
+	done
+	export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
+	export GIT_CONFIG_COUNT=3
+	export GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false
+	export GIT_CONFIG_KEY_1=tag.gpgsign GIT_CONFIG_VALUE_1=false
+	export GIT_CONFIG_KEY_2=init.templateDir GIT_CONFIG_VALUE_2=/dev/null
+	export GIT_AUTHOR_NAME="GitX Tests" GIT_AUTHOR_EMAIL="gitx-tests@example.invalid"
+	export GIT_COMMITTER_NAME="GitX Tests" GIT_COMMITTER_EMAIL="gitx-tests@example.invalid"
+	export GCM_INTERACTIVE=never GIT_ASKPASS=/usr/bin/false GIT_TERMINAL_PROMPT=0 LC_ALL=C
+	echo "Using deterministic Git fixture identity and configuration (signing disabled)."
+fi
 
 make_fixture() {
 	local target=$1

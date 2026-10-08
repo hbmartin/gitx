@@ -1078,6 +1078,15 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertFalse(session.exists())
         self.assertFalse((session_directory / "app.pid").exists())
 
+    def test_run_app_documents_explicit_git_environment_mode(self) -> None:
+        script = self.install_script("run_app.sh")
+        result = subprocess.run([script, "--help"], check=True, capture_output=True, text=True, env=self.environment)
+        self.assertIn("--preserve-git-environment", result.stdout)
+        for arguments in ([], ["--repo", "/tmp/existing", "--m2", "push-create"], ["--repo", "/tmp/existing", "--m3", "review"]):
+            rejected = subprocess.run([script, "--preserve-git-environment", *arguments], capture_output=True, text=True, env=self.environment)
+            self.assertEqual(rejected.returncode, 2)
+            self.assertIn("requires --repo", rejected.stderr)
+
     def test_run_app_launches_use_unique_forge_storage_roots(self) -> None:
         script = self.install_script("run_app.sh")
         self.install_mock_peekaboo()
@@ -1110,13 +1119,23 @@ class ScriptEntrypointTests(unittest.TestCase):
             "GIT_CONFIG_KEY_0": "init.templateDir",
             "GIT_CONFIG_VALUE_0": str(self.root / "inherited-template"),
             "GIT_INDEX_FILE": str(self.root / "inherited-index"),
+            "GIT_AUTHOR_NAME": "Existing Author",
+            "GIT_COMMITTER_NAME": "Existing Committer",
+            "GIT_CONFIG_GLOBAL": str(self.root / "user.gitconfig"),
+            "GIT_CONFIG_SYSTEM": str(self.root / "system.gitconfig"),
+            "GIT_ASKPASS": "/custom/askpass",
+            "GIT_TERMINAL_PROMPT": "1",
+            "GCM_INTERACTIVE": "always",
+            "LC_ALL": "en_US.UTF-8",
         }
         sessions: list[dict[str, str]] = []
+        captured_environments: list[dict[str, str]] = []
 
         try:
-            for _ in range(2):
+            for preserve in (False, False, True):
                 subprocess.run(
-                    [script, "--no-build", "--repo", str(repository), "--timeout", "2"],
+                    [script, "--no-build", "--repo", str(repository), "--timeout", "2"]
+                    + (["--preserve-git-environment"] if preserve else []),
                     check=True,
                     capture_output=True,
                     text=True,
@@ -1130,6 +1149,10 @@ class ScriptEntrypointTests(unittest.TestCase):
                     .splitlines()
                 )
                 sessions.append(session)
+                captured_environments.append(dict(
+                    line.split("=", maxsplit=1)
+                    for line in launch_environment.read_text().splitlines() if "=" in line
+                ))
                 os.kill(int(session["app_pid"]), signal.SIGTERM)
                 os.kill(int(session["log_pid"]), signal.SIGTERM)
                 time.sleep(0.1)
@@ -1150,17 +1173,13 @@ class ScriptEntrypointTests(unittest.TestCase):
 
         homes = [session["isolated_home"] for session in sessions]
         roots = forge_roots.read_text().splitlines()
-        self.assertEqual(len(set(homes)), 2)
-        self.assertEqual(len(set(roots)), 2)
+        self.assertEqual(len(set(homes)), 3)
+        self.assertEqual(len(set(roots)), 3)
         self.assertEqual(
             roots,
             [f"{home}/Library/Application Support/GitX/Forge" for home in homes],
         )
-        captured = dict(
-            line.split("=", maxsplit=1)
-            for line in launch_environment.read_text().splitlines()
-            if "=" in line
-        )
+        captured = captured_environments[0]
         self.assertEqual(captured["GIT_CONFIG_GLOBAL"], "/dev/null")
         self.assertEqual(captured["GIT_CONFIG_NOSYSTEM"], "1")
         self.assertEqual(captured["GIT_TERMINAL_PROMPT"], "0")
@@ -1176,6 +1195,13 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(captured["GIT_CONFIG_VALUE_2"], "/dev/null")
         self.assertNotIn("GIT_CONFIG_PARAMETERS", captured)
         self.assertNotIn("GIT_INDEX_FILE", captured)
+        self.assertEqual(captured["GIT_AUTHOR_NAME"], "GitX Tests")
+        self.assertEqual(captured["GIT_COMMITTER_NAME"], "GitX Tests")
+        self.assertEqual(captured["LC_ALL"], "C")
+        preserved = captured_environments[2]
+        for key, value in environment.items():
+            if key.startswith("GIT_") or key in ("GCM_INTERACTIVE", "LC_ALL"):
+                self.assertEqual(preserved[key], value, key)
         self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 
     def test_run_app_cleans_an_isolated_home_when_launch_fails(self) -> None:
