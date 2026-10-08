@@ -42,6 +42,86 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    private final nonisolated class SortingReadFile: PBChangedFile {
+        var sortingReads = 0
+
+        override func value(forKey key: String) -> Any? {
+            if ["path", "rawPath", "stagedStatus", "worktreeStatus"].contains(key) {
+                sortingReads += 1
+            }
+            return super.value(forKey: key)
+        }
+    }
+
+    private func sortingFiles() -> [SortingReadFile] {
+        (0 ..< 16).reversed().map { value in
+            let file = SortingReadFile(path: String(format: "common/%02d.txt", value))
+            file.worktreeStatus = .MODIFIED
+            file.stagedStatus = .MODIFIED
+            file.hasStagedChanges = true
+            file.hasUnstagedChanges = true
+            return file
+        }
+    }
+
+    func testUnchangedOrderingInputsDoNotRepeatComparatorReads() {
+        let model = PBStagingListViewModel()
+        let files = sortingFiles()
+        let expected = model.files(in: .unstaged, fromChanges: files).map(\.rawPath)
+        XCTAssertGreaterThan(files.reduce(0) { $0 + $1.sortingReads }, 0, "The probe observes actual descriptor comparisons")
+        files.forEach { $0.sortingReads = 0 }
+        files[0].stagedStatus = .DELETED
+        model.searchText = "common/"
+        let reused = model.files(in: .unstaged, fromChanges: Array(files.reversed()))
+        XCTAssertEqual(reused.map(\.rawPath), expected)
+        XCTAssertEqual(files.reduce(0) { $0 + $1.sortingReads }, 0)
+        model.sortOrder = .status
+        files[0].worktreeStatus = .DELETED
+        let resorted = model.files(in: .unstaged, fromChanges: files)
+        XCTAssertTrue(resorted.first === files[0])
+        XCTAssertGreaterThan(files.reduce(0) { $0 + $1.sortingReads }, 0)
+        files.forEach { $0.sortingReads = 0 }
+        files[0].stagedStatus = .NEW
+        XCTAssertEqual(model.files(in: .unstaged, fromChanges: files).map(\.rawPath), resorted.map(\.rawPath))
+        XCTAssertEqual(files.reduce(0) { $0 + $1.sortingReads }, 0)
+    }
+
+    func testMasterCheckboxSummaryNeverInvokesSortingComparators() {
+        let model = PBStagingListViewModel()
+        let files = sortingFiles()
+        XCTAssertEqual(model.masterCheckboxState(forChanges: files, in: .staged), NSControl.StateValue.mixed.rawValue)
+        XCTAssertEqual(model.stagedFileCount(fromChanges: files), files.count)
+        XCTAssertEqual(files.reduce(0) { $0 + $1.sortingReads }, 0)
+    }
+
+    func testOrderingReuseIncludesLiteralUnicodePathBytesAndCurrentObjects() {
+        let composed = "caf\u{00E9}.txt"
+        let decomposed = "cafe\u{0301}.txt"
+        let firstRaw = Data("first identity".utf8)
+        let secondRaw = Data("second identity".utf8)
+        func changed(_ path: String, _ rawPath: Data) -> PBChangedFile {
+            let file = PBChangedFile(path: path, rawPath: rawPath)
+            file.hasUnstagedChanges = true
+            return file
+        }
+        let model = PBStagingListViewModel()
+        let previous = [changed(composed, firstRaw), changed(decomposed, secondRaw)]
+        let originalOrder = model.files(in: .unstaged, fromChanges: previous).map(\.rawPath)
+        let current = [changed(decomposed, firstRaw), changed(composed, secondRaw)]
+        let expected = PBStagingListViewModel().files(in: .unstaged, fromChanges: current).map(\.rawPath)
+        XCTAssertNotEqual(originalOrder, expected, "Literal comparison distinguishes the canonical spellings")
+        XCTAssertEqual(model.files(in: .unstaged, fromChanges: current).map(\.rawPath), expected)
+        let sorts = model.sortPassCount
+        let again = model.files(in: .unstaged, fromChanges: Array(current.reversed()))
+        XCTAssertEqual(again.map(\.rawPath), expected)
+        XCTAssertEqual(model.sortPassCount, sorts)
+        XCTAssertTrue(again.allSatisfy { file in current.contains { $0 === file } })
+        let duplicated = [current[0], current[0]]
+        XCTAssertEqual(model.files(in: .unstaged, fromChanges: duplicated).count, 2)
+        XCTAssertEqual(model.files(in: .unstaged, fromChanges: duplicated).count, 2)
+        XCTAssertEqual(model.files(in: .unstaged, fromChanges: [current[0]]).count, 1)
+    }
+
     func testRepeatedPresentationReadsRemapCurrentObjectsAndPreserveDragOrder() throws {
         let model = PBStagingListViewModel()
         let previous = [file("a.txt", staged: true, unstaged: false), file("b.txt")]

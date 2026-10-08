@@ -37,6 +37,33 @@ final class IndexSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedPreviewSnapshotsCaptureOnlyExactRawPathsAndRemainImmutable() {
+        let invalid = PBChangedFile(path: "invalid\\xFF.png", rawPath: Data([0xFF, 0x2E, 0x70, 0x6E, 0x67]))
+        invalid.hasStagedChanges = true
+        invalid.stagedStatus = .DELETED
+        invalid.commitBlobMode = "100644"
+        invalid.commitBlobSHA = "original blob"
+        let ordinary = PBChangedFile(path: "ordinary.png")
+        let files = [ordinary, invalid]
+        XCTAssertTrue(PBIndexFileViewSnapshot.snapshots(forFiles: files, rawPaths: []).isEmpty)
+        XCTAssertTrue(PBIndexFileViewSnapshot.snapshots(forFiles: files, rawPaths: [Data("ordinary".utf8)]).isEmpty)
+        let snapshots = PBIndexFileViewSnapshot.snapshots(forFiles: files, rawPaths: [invalid.rawPath, invalid.rawPath])
+        XCTAssertEqual(snapshots.map(\.rawPath), [invalid.rawPath])
+        let lookup = PBIndexFileViewSnapshotLookup(snapshots: snapshots + snapshots)
+        XCTAssertTrue(lookup.snapshot(rawPath: invalid.rawPath) === snapshots[0])
+        XCTAssertNil(lookup.snapshot(rawPath: ordinary.rawPath))
+        XCTAssertNil(PBIndexFileViewSnapshotLookup(snapshots: []).snapshot(rawPath: invalid.rawPath))
+        invalid.hasStagedChanges = false
+        invalid.stagedStatus = .NEW
+        invalid.commitBlobSHA = "replaced blob"
+        let captured = snapshots[0].materializedFile()
+        XCTAssertTrue(captured.hasStagedChanges)
+        XCTAssertEqual(captured.stagedStatus, .DELETED)
+        XCTAssertEqual(captured.commitBlobMode, "100644")
+        XCTAssertEqual(captured.commitBlobSHA, "original blob")
+    }
+
+    @MainActor
     func testWorkingStateImageSourcesPreserveRawIdentityAndUseTheRequestedSide() {
         let source: [String: Any] = [PBNativeImageSourceWorkingTreeKey: true,
                                      PBNativeImageSourceRevisionsKey: ["HEAD"],

@@ -15,6 +15,28 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testStagingHeadersAndCountsReuseThePublishedPresentation() throws {
+        try fixture.write("staged\n", to: "summary-staged.txt")
+        try fixture.git(["add", "summary-staged.txt"])
+        try fixture.write("unstaged\n", to: "summary-unstaged.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.sectionedList)
+        let table = list.sectionedTable
+        let sorts = list.viewModel.sortPassCount
+        for _ in 0 ..< 2 {
+            XCTAssertEqual(list.stagedFileCount, 1)
+            for row in 0 ..< table.numberOfRows {
+                let view = try XCTUnwrap(table.view(atColumn: 0, row: row, makeIfNecessary: true))
+                let expected: CGFloat = view is PBStagingSectionHeaderView ? 22 : 20
+                XCTAssertEqual(table.delegate?.tableView?(table, heightOfRow: row), expected)
+            }
+        }
+        XCTAssertEqual(list.viewModel.sortPassCount, sorts, "Headers and commit eligibility share the prepared lists")
+        list.rearrange()
+        XCTAssertEqual(list.viewModel.sortPassCount, sorts, "An unchanged publication reuses both section orders")
+    }
+
     func testCachedHunkLinksCannotActAfterAnotherIndexPublication() throws {
         try fixture.write("obsolete patch fixture\n", to: "nested/tracked.txt")
         let pane = try openStagingPane()

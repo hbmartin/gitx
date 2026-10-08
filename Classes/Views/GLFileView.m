@@ -133,6 +133,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 									   generation:(NSUInteger)generation
 {
 	NSMutableArray *sections = [NSMutableArray array];
+	PBIndexFileViewSnapshotLookup *lookup = workingState ? [[PBIndexFileViewSnapshotLookup alloc] initWithSnapshots:changes] : nil;
 	for (PBGitTree *tree in trees) {
 		if (![self isFileLoadGenerationCurrent:generation]) return @[];
 		if (!tree.leaf) continue;
@@ -142,13 +143,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 				[sections addObject:@{PBNativeSectionTitleKey : tree.path ?: @"", PBNativeSectionTextKey : @"This filename cannot be represented for preview.", PBNativeSectionContextKey : @"readOnly"}];
 				continue;
 			}
-			PBChangedFile *change = nil;
-			for (PBIndexFileViewSnapshot *candidate in changes) {
-				if ([candidate.rawPath isEqualToData:rawPath]) {
-					change = [candidate materializedFile];
-					break;
-				}
-			}
+			PBChangedFile *change = [[lookup snapshotForRawPath:rawPath] materializedFile];
 			if (!change) continue;
 			NSMutableDictionary<NSString *, id> *workingImageSource = [imageSource mutableCopy];
 			workingImageSource[@"rawPath"] = rawPath;
@@ -194,7 +189,6 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 																			 parentSHA:parentSHA
 																		  workingState:workingState];
 	NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:imageRevisions workingTree:workingState];
-	NSArray<PBIndexFileViewSnapshot *> *changes = [PBIndexFileViewSnapshot snapshotsForFiles:historyController.repository.index.indexChanges];
 	NSMutableDictionary<NSValue *, NSData *> *capturedRawPaths = [NSMutableDictionary dictionary];
 	if (workingState) {
 		for (PBWorkingTree *tree in selected) {
@@ -202,6 +196,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		}
 	}
 	NSDictionary<NSValue *, NSData *> *selectedRawPaths = [capturedRawPaths copy];
+	NSArray<PBIndexFileViewSnapshot *> *changes = workingState && mode == PBFileModeDiff ? [PBIndexFileViewSnapshot snapshotsForFiles:historyController.repository.index.indexChanges rawPaths:selectedRawPaths.allValues] : @[];
 	dispatch_async(self.fileLoadQueue, ^{
 		if (![self isFileLoadGenerationCurrent:generation]) return;
 		NSMutableArray *sections = [NSMutableArray array];

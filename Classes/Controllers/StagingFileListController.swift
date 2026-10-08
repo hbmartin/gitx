@@ -32,6 +32,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     // stable address distinguishes this class's KVO registrations.
     private nonisolated(unsafe) static var selectionContext = 0
 
+    @objc private dynamic var presentedStagedFiles: [PBChangedFile] = []
+    @objc private dynamic var presentedUnstagedFiles: [PBChangedFile] = []
+    private var presentation = StagingListPresentation(staged: [], unstaged: [], stagedFileCount: 0)
+
     private let index: PBGitIndex
     private let stagedHeader = StagingSectionHeaderView(frame: .zero)
     private let unstagedHeader = StagingSectionHeaderView(frame: .zero)
@@ -60,12 +64,6 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         for controller in [unstagedFilesController, stagedFilesController] {
             controller.automaticallyRearrangesObjects = false
             controller.preservesSelection = true
-            controller.bind(
-                NSBindingName.contentArray,
-                to: index,
-                withKeyPath: "indexChanges",
-                options: nil
-            )
         }
 
         unstagedTable = Self.makeTable(tag: 0, accessibilityIdentifier: "UnstagedFiles")
@@ -94,6 +92,9 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         view = container
 
         super.init()
+
+        stagedFilesController.bind(.contentArray, to: self, withKeyPath: "presentedStagedFiles", options: nil)
+        unstagedFilesController.bind(.contentArray, to: self, withKeyPath: "presentedUnstagedFiles", options: nil)
 
         splitView.addArrangedSubview(Self.makeSection(header: stagedHeader, table: stagedTable))
         splitView.addArrangedSubview(Self.makeSection(header: unstagedHeader, table: unstagedTable))
@@ -188,15 +189,14 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     /// Re-filters, re-sorts, and refreshes the section headers after an index
     /// update or a search/sort change.
     @objc func applyFilterAndSort() {
-        unstagedFilesController.filterPredicate = viewModel.filterPredicate(for: .unstaged)
-        stagedFilesController.filterPredicate = viewModel.filterPredicate(for: .staged)
-        unstagedFilesController.sortDescriptors = viewModel.sortDescriptors(for: .unstaged)
-        stagedFilesController.sortDescriptors = viewModel.sortDescriptors(for: .staged)
-
         rearrange()
     }
 
     @objc func rearrange() {
+        presentation = viewModel.presentation(from: index.indexChanges)
+        presentedStagedFiles = presentation.staged
+        presentedUnstagedFiles = presentation.unstaged
+        NSLog("[GitX] Published staging presentation for index revision %llu", UInt64(index.snapshotRevision))
         unstagedFilesController.rearrangeObjects()
         stagedFilesController.rearrangeObjects()
         rebuildSectionedRows()
@@ -240,7 +240,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     private func rebuildSectionedRows() {
-        sectionedRows = viewModel.flattenedRows(from: index.indexChanges)
+        sectionedRows = presentation.rows
         sectionedTable.reloadData()
         restoreSectionedSelectionFromControllers()
     }
@@ -295,7 +295,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc var stagedFileCount: Int {
-        viewModel.stagedFileCount(from: index.indexChanges)
+        presentation.stagedFileCount
     }
 
     @objc func clearSelections() {
@@ -368,16 +368,15 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     private func refreshHeaders() {
-        let changes = index.indexChanges
         stagedHeader.configure(
             title: NSLocalizedString("Staged files", comment: "Header of the staged section in the staging file list"),
-            fileCount: viewModel.files(in: .staged, from: changes).count,
-            masterState: viewModel.masterCheckboxState(for: changes, in: .staged)
+            fileCount: presentation.staged.count,
+            masterState: presentation.masterState(in: .staged)
         )
         unstagedHeader.configure(
             title: NSLocalizedString("Unstaged files", comment: "Header of the unstaged section in the staging file list"),
-            fileCount: viewModel.files(in: .unstaged, from: changes).count,
-            masterState: viewModel.masterCheckboxState(for: changes, in: .unstaged)
+            fileCount: presentation.unstaged.count,
+            masterState: presentation.masterState(in: .unstaged)
         )
     }
 
@@ -386,7 +385,9 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         stagedHeader.masterCheckbox.isEnabled = enabled && !(stagedFilesController.arrangedObjects as? [PBChangedFile] ?? []).isEmpty
         unstagedHeader.masterCheckbox.isEnabled = enabled && !(unstagedFilesController.arrangedObjects as? [PBChangedFile] ?? []).isEmpty
         for table in [unstagedTable, stagedTable, sectionedTable] {
-            for row in 0 ..< table.numberOfRows {
+            let visibleRows = table.rows(in: table.visibleRect)
+            guard visibleRows.location != NSNotFound else { continue }
+            for row in visibleRows.location ..< NSMaxRange(visibleRows) {
                 if let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? StagingFileCellView {
                     cell.checkbox.isEnabled = enabled
                 } else if let header = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? StagingSectionHeaderView {
@@ -524,17 +525,20 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
                 return created
             }()
         header.masterCheckbox.tag = section == .staged ? 1 : 0
-        let changes = index.indexChanges
         let title = section == .staged
             ? NSLocalizedString("Staged files", comment: "Header of the staged section in the staging file list")
             : NSLocalizedString("Unstaged files", comment: "Header of the unstaged section in the staging file list")
         header.configure(
             title: title,
-            fileCount: viewModel.files(in: section, from: changes).count,
-            masterState: viewModel.masterCheckboxState(for: changes, in: section)
+            fileCount: presentation.files(in: section).count,
+            masterState: presentation.masterState(in: section)
         )
         header.masterCheckbox.isEnabled = header.masterCheckbox.isEnabled && CommitSubmissionEligibility.allowsMutation(index)
         return header
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        tableView === sectionedTable && sectionedRows.indices.contains(row) && sectionedRows[row].isHeader ? 22 : 20
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {

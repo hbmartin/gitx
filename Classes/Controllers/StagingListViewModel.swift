@@ -87,6 +87,38 @@ final nonisolated class StagingDiffRequest: NSObject {
     }
 }
 
+/// One publication's reusable list content and summaries.
+nonisolated struct StagingListPresentation {
+    let staged: [PBChangedFile]
+    let unstaged: [PBChangedFile]
+    let stagedFileCount: Int
+
+    let rows: [StagingListRow]
+    private let stagedMasterState: Int
+
+    init(staged: [PBChangedFile], unstaged: [PBChangedFile], stagedFileCount: Int) {
+        self.staged = staged
+        self.unstaged = unstaged
+        self.stagedFileCount = stagedFileCount
+        stagedMasterState = staged.isEmpty ? NSControl.StateValue.off.rawValue :
+            (staged.contains(where: \.hasUnstagedChanges) ? NSControl.StateValue.mixed.rawValue : NSControl.StateValue.on.rawValue)
+        var rows: [StagingListRow] = []
+        for (section, files) in [(StagingListSection.staged, staged), (.unstaged, unstaged)] where !files.isEmpty {
+            rows.append(.header(section))
+            rows.append(contentsOf: files.map { .file($0, section: section) })
+        }
+        self.rows = rows
+    }
+
+    func files(in section: StagingListSection) -> [PBChangedFile] {
+        section == .staged ? staged : unstaged
+    }
+
+    func masterState(in section: StagingListSection) -> Int {
+        section == .staged ? stagedMasterState : NSControl.StateValue.off.rawValue
+    }
+}
+
 /// Pure presentation logic shared by both staging file-list layouts: section
 /// membership, search filtering, sorting, sectioned-row flattening, checkbox
 /// states, and the selection-to-diff derivation. Owns no views.
@@ -97,13 +129,67 @@ final nonisolated class StagingListViewModel: NSObject {
         static let sourceSection = "sourceSection"
     }
 
+    private nonisolated struct OrderingInput: Equatable {
+        let path: String
+        let status: Int
+
+        static func == (left: Self, right: Self) -> Bool {
+            left.status == right.status && left.path.utf8.elementsEqual(right.path.utf8)
+        }
+    }
+
+    private struct OrderingCache {
+        let inputs: [Data: OrderingInput]
+        let order: StagingFileSortOrder
+        let locale: String
+        let rawPaths: [Data]
+    }
+
+    private struct DragIdentity: Hashable {
+        let rawPath: Data
+        let section: Int
+    }
+
+    private var orderingCaches: [Int: OrderingCache] = [:]
+    @objc private(set) var sortPassCount: UInt = 0
+
+    func presentation(from changes: [PBChangedFile]) -> StagingListPresentation {
+        StagingListPresentation(staged: files(in: .staged, from: changes),
+                                unstaged: files(in: .unstaged, from: changes),
+                                stagedFileCount: stagedFileCount(from: changes))
+    }
+
     @objc var searchText = ""
     @objc var sortOrder: StagingFileSortOrder = .path
 
     @objc(filesInSection:fromChanges:)
     func files(in section: StagingListSection, from changes: [PBChangedFile]) -> [PBChangedFile] {
         let predicate = filterPredicate(for: section)
-        return sorted(changes.filter { predicate.evaluate(with: $0) }, section: section)
+        let files = changes.filter { predicate.evaluate(with: $0) }
+        var currentFiles: [Data: PBChangedFile] = [:]
+        var inputs: [Data: OrderingInput] = [:]
+        for file in files {
+            currentFiles[file.rawPath] = file
+            inputs[file.rawPath] = OrderingInput(path: file.path, status: sortOrder == .status
+                ? (section == .staged ? file.stagedStatus : file.worktreeStatus).rawValue : 0)
+        }
+        let locale = Locale.current.identifier
+        if currentFiles.count == files.count, let cached = orderingCaches[section.rawValue],
+           cached.inputs == inputs, cached.order == sortOrder, cached.locale == locale
+        {
+            NSLog("[GitX] Reused staging sort for section %ld with %ld file(s)", section.rawValue, files.count)
+            return cached.rawPaths.compactMap { currentFiles[$0] }
+        }
+        sortPassCount &+= 1
+        let ordered = sorted(files, section: section)
+        if currentFiles.count == files.count {
+            orderingCaches[section.rawValue] = OrderingCache(inputs: inputs, order: sortOrder, locale: locale,
+                                                             rawPaths: ordered.map(\.rawPath))
+        } else {
+            orderingCaches[section.rawValue] = nil
+        }
+        NSLog("[GitX] Sorted staging section %ld with %ld file(s)", section.rawValue, files.count)
+        return ordered
     }
 
     func filterPredicate(for section: StagingListSection) -> NSPredicate {
@@ -154,21 +240,14 @@ final nonisolated class StagingListViewModel: NSObject {
 
     @objc(flattenedRowsFromChanges:)
     func flattenedRows(from changes: [PBChangedFile]) -> [StagingListRow] {
-        var rows: [StagingListRow] = []
-        for section in [StagingListSection.staged, .unstaged] {
-            let files = files(in: section, from: changes)
-            guard !files.isEmpty else { continue }
-            rows.append(.header(section))
-            rows.append(contentsOf: files.map { .file($0, section: section) })
-        }
-        return rows
+        presentation(from: changes).rows
     }
 
     /// Commit eligibility is index membership, not presentation state. Search
     /// filtering affects visible rows and headers but never this total.
     @objc(stagedFileCountFromChanges:)
     func stagedFileCount(from changes: [PBChangedFile]) -> Int {
-        changes.filter(\.hasStagedChanges).count
+        changes.lazy.filter(\.hasStagedChanges).count
     }
 
     /// Resolves the file set for one command. Sectioned Open and Reveal use a
@@ -247,13 +326,19 @@ final nonisolated class StagingListViewModel: NSObject {
             entries.append((rawPath, source))
         }
 
+        var lookup: [DragIdentity: PBChangedFile] = [:]
+        for row in rows {
+            guard let file = row.file else { continue }
+            let key = DragIdentity(rawPath: file.rawPath, section: row.section.rawValue)
+            if lookup[key] == nil {
+                lookup[key] = file
+            }
+        }
         var seenPaths = Set<Data>()
         var resolved: [PBChangedFile] = []
         for entry in entries where entry.source != destinationSection {
             guard !seenPaths.contains(entry.rawPath),
-                  let file = rows.first(where: {
-                      $0.section == entry.source && $0.file?.rawPath == entry.rawPath
-                  })?.file
+                  let file = lookup[DragIdentity(rawPath: entry.rawPath, section: entry.source.rawValue)]
             else { continue }
             seenPaths.insert(entry.rawPath)
             resolved.append(file)
@@ -279,7 +364,8 @@ final nonisolated class StagingListViewModel: NSObject {
     /// changes; Unstaged always reads off so clicking it means "stage all".
     @objc(masterCheckboxStateForChanges:inSection:)
     func masterCheckboxState(for changes: [PBChangedFile], in section: StagingListSection) -> Int {
-        let files = files(in: section, from: changes)
+        let predicate = filterPredicate(for: section)
+        let files = changes.filter { predicate.evaluate(with: $0) }
         guard !files.isEmpty else { return NSControl.StateValue.off.rawValue }
         switch section {
         case .staged:

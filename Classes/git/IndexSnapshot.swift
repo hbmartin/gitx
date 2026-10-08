@@ -563,6 +563,13 @@ final nonisolated class IndexFileViewSnapshot: NSObject {
         return files.map(IndexFileViewSnapshot.init)
     }
 
+    @objc(snapshotsForFiles:rawPaths:)
+    static func snapshots(files: [PBChangedFile], rawPaths: [Data]) -> [IndexFileViewSnapshot] {
+        assert(Thread.isMainThread)
+        let selected = Set(rawPaths)
+        return files.compactMap { selected.contains($0.rawPath) ? IndexFileViewSnapshot(file: $0) : nil }
+    }
+
     @objc func materializedFile() -> PBChangedFile {
         let file = PBChangedFile(path: path, rawPath: rawPath)
         file.status = status
@@ -573,6 +580,27 @@ final nonisolated class IndexFileViewSnapshot: NSObject {
         file.commitBlobMode = commitBlobMode
         file.commitBlobSHA = commitBlobSHA
         return file
+    }
+}
+
+/// Immutable lookup transferred with the captured preview values.
+@objc(PBIndexFileViewSnapshotLookup)
+final nonisolated class IndexFileViewSnapshotLookup: NSObject {
+    private let byRawPath: [Data: IndexFileViewSnapshot]
+
+    @objc(initWithSnapshots:)
+    init(snapshots: [IndexFileViewSnapshot]) {
+        var lookup: [Data: IndexFileViewSnapshot] = [:]
+        for snapshot in snapshots where lookup[snapshot.rawPath] == nil {
+            lookup[snapshot.rawPath] = snapshot
+        }
+        byRawPath = lookup
+        super.init()
+    }
+
+    @objc(snapshotForRawPath:)
+    func snapshot(rawPath: Data) -> IndexFileViewSnapshot? {
+        byRawPath[rawPath]
     }
 }
 

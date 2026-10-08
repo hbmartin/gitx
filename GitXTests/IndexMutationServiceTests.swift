@@ -83,6 +83,7 @@ final class IndexMutationServiceTests: XCTestCase {
         }
     }
 
+    // swift6-safety-justification: The box transfers an immutable runner; writer and fixture state locks protect shared operations.
     private final class RunnerBox: @unchecked Sendable {
         let value: IndexRepositoryCommandRunner
         init(_ value: IndexRepositoryCommandRunner) {

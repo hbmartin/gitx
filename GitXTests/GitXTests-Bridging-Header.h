@@ -348,6 +348,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @interface PBStagingListViewModel : NSObject
+@property (nonatomic, readonly) NSUInteger sortPassCount;
 @property (nonatomic, readonly, copy) NSArray<NSSortDescriptor *> *sortDescriptors;
 @property (nonatomic, copy) NSString *searchText;
 @property (nonatomic) PBStagingFileSortOrder sortOrder;
@@ -994,6 +995,12 @@ __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 + (NSDictionary<NSString *, id> *)sourceFromWorkingSource:(NSDictionary<NSString *, id> *)source staged:(BOOL)staged NS_SWIFT_NAME(source(workingSource:staged:));
 @end
 
+@class PBIndexFileViewSnapshot;
+@interface PBIndexFileViewSnapshotLookup : NSObject
+- (instancetype)initWithSnapshots:(NSArray<PBIndexFileViewSnapshot *> *)snapshots;
+- (nullable PBIndexFileViewSnapshot *)snapshotForRawPath:(NSData *)rawPath NS_SWIFT_NAME(snapshot(rawPath:));
+@end
+
 @interface PBIndexFileViewSnapshot : NSObject
 @property (nonatomic, copy, readonly) NSData *rawPath;
 @property (nonatomic, copy, readonly) NSString *path;
@@ -1002,6 +1009,7 @@ __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 @property (nonatomic, readonly) BOOL hasStagedChanges;
 @property (nonatomic, readonly) BOOL hasUnstagedChanges;
 + (NSArray<PBIndexFileViewSnapshot *> *)snapshotsForFiles:(NSArray<PBChangedFile *> *)files NS_SWIFT_NAME(snapshots(forFiles:));
++ (NSArray<PBIndexFileViewSnapshot *> *)snapshotsForFiles:(NSArray<PBChangedFile *> *)files rawPaths:(NSArray<NSData *> *)rawPaths NS_SWIFT_NAME(snapshots(forFiles:rawPaths:));
 - (PBChangedFile *)materializedFile;
 @end
 
