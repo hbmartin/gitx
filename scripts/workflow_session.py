@@ -16,6 +16,7 @@ import json
 import os
 import pathlib
 import platform
+import plistlib
 import re
 import selectors
 import shutil
@@ -317,6 +318,17 @@ def verify_signatures(derived_data):
         result = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)], capture_output=True, text=True)
         if result.returncode:
             raise ValueError(f"signature: {bundle}: {result.stderr.strip()}; rebuild with the suite's signing and instrumentation")
+        if bundle.suffix == ".app" and any(bundle.glob("Contents/Frameworks/*.framework")):
+            metadata = subprocess.run(["/usr/bin/codesign", "-dv", "--verbose=4", str(bundle)], capture_output=True, text=True)
+            description = metadata.stdout + metadata.stderr
+            if "runtime)" in description and "TeamIdentifier=not set" in description:
+                entitlements = subprocess.run(["/usr/bin/codesign", "-d", "--entitlements", "-", "--xml", str(bundle)], capture_output=True)
+                try:
+                    allows_foreign = plistlib.loads(entitlements.stdout).get("com.apple.security.cs.disable-library-validation", False)
+                except (ValueError, plistlib.InvalidFileException):
+                    allows_foreign = False
+                if not allows_foreign:
+                    raise ValueError(f"signature-incompatible: {bundle}: an ad hoc hardened host cannot load non-platform frameworks with library validation. Use the canonical local test action (ENABLE_HARDENED_RUNTIME=NO); preserve ordinary Release build settings.")
     return [str(p) for p in bundles]
 
 
@@ -635,6 +647,9 @@ def main():
                 return 76
         return 0
     except (OSError, ValueError) as error:
+        if args.command == "signatures":
+            category = "signature-incompatible" if str(error).startswith("signature-incompatible:") else "signature-invalid"
+            print(f"Verification blocker: {category}.", file=sys.stderr)
         print(error, file=sys.stderr)
         return 2
 

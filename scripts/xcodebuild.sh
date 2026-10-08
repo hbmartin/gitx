@@ -435,12 +435,12 @@ xcode_test() {
 		esac
 		run_step compile:host-preflight "$logs/$plan-host-build.log" "" \
 			"$xcodebuild" "${common[@]}" build-for-testing -testPlan GitXHostPreflight \
-			CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
+			CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO ${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	# Compile before starting host deadlines, preserving suite instrumentation.
 	run_step "compile:$test_preset" "$logs/$plan-build.log" "" \
 		"$xcodebuild" "${common[@]}" build-for-testing -testPlan "$plan" \
-		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES "$@" || return $?
+		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@" || return $?
 	run_step signatures "$logs/$plan-signatures.log" "" python3 "$root/scripts/workflow_session.py" signatures "$derived_data" || return $?
 	local snapshot="$results/$plan-inputs.json"
 	python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || return $?
@@ -449,13 +449,13 @@ xcode_test() {
 			python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" -- \
 			"$xcodebuild" "${common[@]}" test-without-building -testPlan GitXHostPreflight \
 			-only-testing:GitXTests/GitXHostStartTests/testHostStarts \
-			-resultBundlePath "$results/$plan-host.xcresult" CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES \
+			-resultBundlePath "$results/$plan-host.xcresult" CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
 			${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
 	fi
 	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
 		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" -- \
 		"$xcodebuild" "${common[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
-		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES "$@"
+		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@"
 	local test_status=$?
 	run_step evidence "$logs/$plan-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"
 	local evidence_status=$?
@@ -509,7 +509,7 @@ case "$command" in
 	build-tests)
 		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		run_step build-tests "$logs/build-tests.log" "" "$xcodebuild" "${common[@]}" build-for-testing \
-			-testPlan GitX CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES \
+			-testPlan GitX CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
 			${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		;;
 	build)
@@ -668,6 +668,11 @@ case "$command" in
 		# Release Swift packages also need testable interfaces for app-hosted
 		# XCTest imports; ordinary release builds retain their normal settings.
 		(( is_test_build )) && raw_common+=( ENABLE_TESTABILITY=YES )
+		# Local ad hoc test hosts cannot use Release library validation with
+		# third-party signed frameworks. Production build/archive stays intact.
+		if (( is_test_build )) && [[ "$signing_mode" == "ad-hoc" ]]; then
+			raw_common+=( ENABLE_HARDENED_RUNTIME=NO )
+		fi
 		(( has_workspace || has_project )) || raw_common+=( -workspace "$workspace" )
 		(( has_scheme )) || raw_common+=( -scheme "$scheme" )
 		(( has_destination )) || raw_common+=( -destination "$destination" )

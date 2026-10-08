@@ -207,6 +207,20 @@ class WorkflowSessionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "signature"):
                     session.verify_signatures(directory)
 
+    def test_hardened_ad_hoc_host_signature_incompatibility_is_reported_before_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = pathlib.Path(directory) / "Build/Products/Release/Test.app"
+            (app / "Contents/Frameworks/Dependency.framework").mkdir(parents=True)
+            def signing(command, **kwargs):
+                if "--verbose=4" in command:
+                    return subprocess.CompletedProcess(command, 0, "", "flags=0x10002(adhoc,runtime)\nTeamIdentifier=not set\n")
+                if "--xml" in command:
+                    return subprocess.CompletedProcess(command, 0, b'<plist version="1.0"><dict/></plist>', b"")
+                return subprocess.CompletedProcess(command, 0, "", "")
+            with mock.patch.object(session.subprocess, "run", side_effect=signing):
+                with self.assertRaisesRegex(ValueError, "signature-incompatible"):
+                    session.verify_signatures(directory)
+
     def test_detached_hosts_require_session_evidence_and_pid_identity(self):
         table = "11 11 /app/GitX\n12 12 /app/GitX\n13 13 /app/GitX\n"
         responses = [subprocess.CompletedProcess([], 0, table, ""),

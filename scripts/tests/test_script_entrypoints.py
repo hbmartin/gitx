@@ -89,6 +89,23 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
 
+    def test_canonical_release_tests_allow_locally_signed_framework_loading(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        for command in (["build-tests"], ["test", "correctness", "-only-testing:GitXTests/GitXInteropContractTests"]):
+            subprocess.run([script, "--configuration", "Release", *command], check=True,
+                           capture_output=True, text=True, env=self.environment)
+        tests = [value for value in captured.read_text().split("__INVOCATION__")
+                 if "\nbuild-for-testing\n" in value or "\ntest-without-building\n" in value]
+        self.assertTrue(tests)
+        for invocation in tests:
+            self.assertIn("ENABLE_HARDENED_RUNTIME=NO", invocation)
+            self.assertIn("CODE_SIGN_IDENTITY=-", invocation)
+        captured.write_text("")
+        subprocess.run([script, "--configuration", "Release", "build"], check=True,
+                       capture_output=True, text=True, env=self.environment)
+        self.assertNotIn("ENABLE_HARDENED_RUNTIME=NO", captured.read_text())
+
     def install_mock_xcodebuild(
         self,
         products_directory: pathlib.Path,
