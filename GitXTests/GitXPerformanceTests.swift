@@ -38,6 +38,29 @@ final class GitXPerformanceTests: XCTestCase {
         return sorted[max(0, index)]
     }
 
+    func testPushCaptureSealingAndDeferredReportCost() throws {
+        let payload = Data(String(repeating: "remote: diagnostic output https://example.invalid/repo\n", count: 40000).utf8)
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        var sealing: [TimeInterval] = []
+        var exporting: [TimeInterval] = []
+        for _ in 0 ..< 5 {
+            let capture = PBTaskDiagnosticCapture()
+            capture.appendStandardError(payload)
+            capture.finishStandardOutput(reachedEOF: true)
+            capture.finishStandardError(reachedEOF: true)
+            var artifact: PBTaskDiagnosticArtifact?
+            sealing.append(elapsed { artifact = capture.seal() })
+            let result = try XCTUnwrap(artifact)
+            defer { result.discard() }
+            XCTAssertTrue(result.captureComplete)
+            try exporting.append(elapsedThrowing { try result.writeRedactedReport(to: destination) })
+            XCTAssertGreaterThan(try Data(contentsOf: destination).count, payload.count)
+        }
+        attachMeasurements("Push capture sealing (2.16 MB stderr)", samples: sealing)
+        attachMeasurements("Push capture export (2.16 MB stderr)", samples: exporting)
+    }
+
     private func attachMeasurements(
         _ name: String,
         cold: TimeInterval? = nil,
