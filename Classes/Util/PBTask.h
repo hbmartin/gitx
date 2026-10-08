@@ -81,6 +81,9 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 @property (readonly, retain) NSData *standardOutputData;
 /// The separate standard error stream, or empty data when streams are merged.
 @property (readonly, retain) NSData *standardErrorData;
+/// Explicitly distinguish a complete memory stream from a prefix or clipped tail.
+@property (readonly) BOOL standardOutputTruncated;
+@property (readonly) BOOL standardErrorTruncated;
 /// Keep standard error out of standard output. Defaults to NO for existing callers.
 @property BOOL separatesStandardError;
 /// Set to NO when an output chunk handler consumes a large stream. Defaults to YES.

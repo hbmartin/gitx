@@ -43,6 +43,15 @@ import Foundation
             store.withLock { store.failure }
         }
 
+        /// Excerpts are selected only after the complete captured prefix has
+        /// been redacted. No clipped raw suffix can enter presentation.
+        func redactedReadableStreams() -> (stdout: String, stderr: String)? {
+            store.withLock {
+                store.prepareReport()
+                return store.readableStreams
+            }
+        }
+
         override var description: String {
             "<private push diagnostic capture>"
         }
@@ -192,6 +201,7 @@ import Foundation
         private var sealed = false
         private var reportAvailable = false
         private var reportPreparationAttempted = false
+        var readableStreams: (stdout: String, stderr: String)?
         var outputBytes: Int64 = 0
         private var outputCaptureFailed = false
         private var errorBytes: Int64 = 0
@@ -303,6 +313,7 @@ import Foundation
             }
             var reportDescriptor: Int32 = -1
             do {
+                var excerpts: [String] = []
                 reportDescriptor = try io.create(directory.appendingPathComponent("report"), operation: "createReport")
                 _ = try io.write(Data("GitX push output\nCapture: \(state)\nInvalid UTF-8 and control bytes are escaped as \\xNN.\n".utf8), descriptor: reportDescriptor, operation: "redactionWrite")
                 for stream in [PBTaskDiagnosticStream.output, .error] {
@@ -312,23 +323,27 @@ import Foundation
                     let metadata = "\(title): \(byteCount) bytes; EOF: \(reachedEOF ? "yes" : "no")"
                     _ = try io.write(Data("\n\n\(metadata)\n".utf8), descriptor: reportDescriptor, operation: "redactionWrite")
                     var preview = PBTaskDiagnosticPreview()
+                    var excerpt = PBTaskDiagnosticExcerpt(keepsTail: stream == .error)
                     var renderer = PBTaskDiagnosticUTF8Renderer()
                     let source = try source(stream: stream)
                     let renderedOutput: (Data) throws -> Void = { chunk in
                         // swiftformat:disable:next redundantSelf
                         _ = try self.io.write(chunk, descriptor: reportDescriptor, operation: "redactionWrite")
                         preview.append(chunk)
+                        excerpt.append(chunk)
                     }
                     try PBTaskDiagnosticRedactor.redact(source: source, incomplete: !reachedEOF || failure != nil) { chunk in
                         try renderer.append(chunk, output: renderedOutput)
                     }
                     try renderer.finish(output: renderedOutput)
                     sections.append(metadata + "\n" + preview.text)
+                    excerpts.append(excerpt.text)
                 }
                 let completedReportDescriptor = reportDescriptor
                 reportDescriptor = -1
                 try io.close(completedReportDescriptor)
                 reportAvailable = true
+                readableStreams = (excerpts[0], excerpts[1])
                 summary = PBTaskDiagnosticPreview.bounded(sections.joined(separator: "\n\n"), maximumBytes: 16 * 1024)
                 // Swift's logger interpolation captures these values in an escaping autoclosure.
                 // swiftformat:disable:next redundantSelf
@@ -398,6 +413,7 @@ import Foundation
             }
             directory = nil
             reportAvailable = false
+            readableStreams = nil
             if leaseDescriptor >= 0 {
                 _ = Darwin.close(leaseDescriptor); leaseDescriptor = -1
             }
@@ -407,7 +423,7 @@ import Foundation
             let old = descriptor
             descriptor = -1
             guard old >= 0 else { return }
-            do { try io.close(old) } catch {
+            do { try io.close(old, operation: stream == .output ? "closeOutput" : "closeError") } catch {
                 failure = "Only part of the push output could be captured."
                 if stream == .output {
                     outputCaptureFailed = true
@@ -502,6 +518,39 @@ import Foundation
                 return PBTaskDiagnosticCaptureLifetimeProbe(directory: directory, store: nil, closeOnExec: false)
             }
         #endif
+    }
+
+    private nonisolated struct PBTaskDiagnosticExcerpt {
+        let keepsTail: Bool
+        private var bytes = Data()
+        private var count: Int64 = 0
+        private static let limit = 64 * 1024
+
+        mutating func append(_ chunk: Data) {
+            count += Int64(chunk.count)
+            if keepsTail {
+                bytes.append(chunk)
+                bytes = Data(bytes.suffix(Self.limit))
+            } else if bytes.count < Self.limit {
+                bytes.append(chunk.prefix(Self.limit - bytes.count))
+            }
+        }
+
+        var text: String {
+            guard count > Self.limit else { return String(decoding: bytes, as: UTF8.self) }
+            let metadata = "[truncated display excerpt; \(count) redacted bytes]\n"
+            var selected = keepsTail ? Data(bytes.suffix(Self.limit - metadata.utf8.count)) : Data(bytes.prefix(Self.limit - metadata.utf8.count))
+            if keepsTail {
+                while selected.first.map({ $0 & 0xC0 == 0x80 }) == true {
+                    selected.removeFirst()
+                }
+            } else {
+                while String(data: selected, encoding: .utf8) == nil {
+                    selected.removeLast()
+                }
+            }
+            return keepsTail ? metadata + String(decoding: selected, as: UTF8.self) : String(decoding: selected, as: UTF8.self) + "\n" + metadata.dropLast()
+        }
     }
 
     private nonisolated struct PBTaskDiagnosticPreview {
@@ -606,9 +655,12 @@ import Foundation
             }
         }
 
-        func close(_ descriptor: Int32) throws {
+        func close(_ descriptor: Int32, operation: String = "close") throws {
             let result = Darwin.close(descriptor)
             try failIfRequested("close")
+            if operation != "close" {
+                try failIfRequested(operation)
+            }
             guard result == 0 else { throw PBTaskDiagnosticStore.error() }
         }
 
@@ -709,6 +761,11 @@ import Foundation
 
         @objc(PBTaskDiagnosticCaptureTestHarness)
         final nonisolated class PBTaskDiagnosticCaptureTestHarness: NSObject {
+            @objc(readableExcerptsForArtifact:)
+            static func readableExcerpts(for artifact: PBTaskDiagnosticArtifact) -> [String]? {
+                artifact.redactedReadableStreams().map { [$0.stdout, $0.stderr] }
+            }
+
             @objc(captureWithFault:)
             static func capture(fault: String) -> PBTaskDiagnosticCapture {
                 PBTaskDiagnosticCapture(fault: fault)

@@ -12,6 +12,7 @@
 #import <fcntl.h>
 #import <math.h>
 #import <signal.h>
+#import <sys/ioctl.h>
 #import <sys/wait.h>
 
 NSString *const PBTaskErrorDomain = @"PBTaskErrorDomain";
@@ -40,6 +41,8 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 @property (retain) NSMutableData *standardOutputBuffer;
 @property (retain) NSData *standardErrorData;
 @property (retain) NSMutableData *standardErrorBuffer;
+@property BOOL standardOutputTruncated;
+@property BOOL standardErrorTruncated;
 @property BOOL didLogStandardErrorTruncation;
 @property (nullable, retain) NSPipe *outputPipe;
 @property (nullable, retain) NSPipe *errorPipe;
@@ -63,6 +66,10 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 @property BOOL diagnosticDrainScheduled;
 @property NSTimeInterval diagnosticDrainDeadline;
 @property NSUInteger diagnosticDrainGeneration;
+@property NSTimeInterval diagnosticLeaderExitTime;
+@property NSTimeInterval diagnosticLastProgressTime;
+@property NSTimeInterval diagnosticCleanupDeadline;
+@property NSTimeInterval executionDeadline;
 @property NSUInteger outputReadsInFlight;
 @property BOOL outputHandleClosePending;
 @property BOOL outputHandleClosed;
@@ -80,6 +87,10 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 - (void)scheduleDiagnosticDrainAfterDelay:(NSTimeInterval)delay;
 - (void)releaseDiagnosticLeaderWhenReadersFinish;
 - (void)deliverReaderBlock:(dispatch_block_t)block;
+- (void)armDiagnosticDrain;
+- (void)finishDiagnosticDrainWhenSafe;
+- (void)appendOutputData:(NSData *)data;
+- (void)appendErrorData:(NSData *)data;
 - (nullable NSPipe *)makePipe;
 - (NSArray<NSString *> *)validatedArgumentsForLaunch;
 - (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus
@@ -259,29 +270,127 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 - (void)scheduleDiagnosticDrainAfterDelay:(NSTimeInterval)delay
 {
 	if (!self.diagnosticCapture || self.operationFinished || !isfinite(delay) || delay > (double)INT64_MAX / NSEC_PER_SEC) return;
-	delay = MAX(0.0, delay);
-	NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + delay;
-	if (self.diagnosticDrainScheduled && self.diagnosticDrainDeadline <= deadline) return;
+	NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + MAX(0.0, delay);
+	if (!self.diagnosticCleanupDeadline || deadline < self.diagnosticCleanupDeadline)
+		self.diagnosticCleanupDeadline = deadline;
+	[self armDiagnosticDrain];
+}
+
+- (void)armDiagnosticDrain
+{
+	if (!self.diagnosticCapture || self.operationFinished || self.outputDrainExpired) return;
+	NSTimeInterval deadline = self.diagnosticCleanupDeadline ?: INFINITY;
+	if (self.diagnosticLeaderExitTime) {
+		deadline = MIN(deadline, [PBTaskDrainPolicy deadlineWithLeaderExit:self.diagnosticLeaderExitTime
+															  lastProgress:self.diagnosticLastProgressTime
+															  taskDeadline:self.executionDeadline]);
+	}
+	if (!isfinite(deadline) || (self.diagnosticDrainScheduled && self.diagnosticDrainDeadline == deadline)) return;
 	self.diagnosticDrainScheduled = YES;
 	self.diagnosticDrainDeadline = deadline;
 	NSUInteger generation = ++self.diagnosticDrainGeneration;
+	NSTimeInterval delay = MAX(0.0, deadline - NSProcessInfo.processInfo.systemUptime);
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), self.stateQueue, ^{
 		if (self.operationFinished || generation != self.diagnosticDrainGeneration) return;
-		if (self.leaderExitObserved && (!self.outputFinished || !self.errorFinished)) {
-			PBTaskLog(@"task %p: bounded drain after leader exit; stopping inherited writers", self);
-			[self.processSupervisor requestTerminationAfterGracePeriod:0 forceKillAfter:@(PBTaskTerminationGrace)];
-		}
+		// Prevent new reads before waiting for already accepted chunks. Do not
+		// close either descriptor until those chunks and buffered bytes are saved.
 		@synchronized(self) {
 			self.outputDrainExpired = YES;
+			self.outputReaderStopped = YES;
+			self.errorReaderStopped = YES;
 		}
-		[self stopOutputReaderAndCloseWhenSafe];
-		[self stopErrorReaderAndCloseWhenSafe];
-		@synchronized(self) {
-			if (!self.outputReadsInFlight) self.outputFinished = YES;
-			if (!self.errorReadsInFlight) self.errorFinished = YES;
-		}
-		[self finishIfReady];
+		self.outputPipe.fileHandleForReading.readabilityHandler = nil;
+		self.errorPipe.fileHandleForReading.readabilityHandler = nil;
+		[self finishDiagnosticDrainWhenSafe];
 	});
+}
+
+- (BOOL)drainBufferedHandle:(NSFileHandle *)handle output:(BOOL)isOutput
+{
+	BOOL alreadyClosed = isOutput ? self.outputHandleClosed : self.errorHandleClosed;
+	if (alreadyClosed || !handle) return isOutput ? self.outputFinished : self.errorFinished;
+	int descriptor = handle.fileDescriptor;
+	int flags = fcntl(descriptor, F_GETFL);
+	if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) < 0) return NO;
+	uint8_t buffer[64 * 1024];
+	int buffered = 0;
+	if (ioctl(descriptor, FIONREAD, &buffered) < 0) buffered = sizeof(buffer);
+	NSUInteger remaining = MAX(0, buffered);
+	for (;;) {
+		// Snapshot buffered bytes, then probe for EOF. A writer cannot extend
+		// this cleanup loop by continually refilling the pipe.
+		ssize_t count = read(descriptor, buffer, remaining ? MIN(remaining, sizeof(buffer)) : 1);
+		if (count > 0) {
+			NSData *data = [NSData dataWithBytes:buffer length:(NSUInteger)count];
+			if (isOutput)
+				[self appendOutputData:data];
+			else
+				[self appendErrorData:data];
+			if (!remaining) return NO;
+			remaining -= (NSUInteger)count;
+		} else if (count == 0) {
+			return YES;
+		} else if (errno != EINTR) {
+			return NO;
+		}
+	}
+}
+
+- (void)finishDiagnosticDrainWhenSafe
+{
+	if (!self.diagnosticCapture || !self.outputDrainExpired || self.operationFinished) return;
+	@synchronized(self) {
+		if (self.outputReadsInFlight || self.errorReadsInFlight) return;
+	}
+	BOOL outputEOF = [self drainBufferedHandle:self.outputPipe.fileHandleForReading output:YES];
+	BOOL errorEOF = [self drainBufferedHandle:self.errorPipe.fileHandleForReading output:NO];
+	[self.diagnosticCapture finishStandardOutputWithReachedEOF:outputEOF];
+	[self.diagnosticCapture finishStandardErrorWithReachedEOF:errorEOF];
+	if (!outputEOF || !errorEOF) {
+		NSLog(@"[GitX] PBTask bounded drain stopped before EOF; cleaning up owned writers");
+		[self.processSupervisor requestTerminationAfterGracePeriod:0 forceKillAfter:@(PBTaskTerminationGrace)];
+	}
+	self.outputFinished = YES;
+	self.errorFinished = YES;
+	[self stopOutputReaderAndCloseWhenSafe];
+	[self stopErrorReaderAndCloseWhenSafe];
+	[self finishIfReady];
+}
+
+- (void)appendOutputData:(NSData *)data
+{
+	[self.diagnosticCapture appendStandardOutput:data];
+	if (self.capturesStandardOutput) {
+		if (self.diagnosticCapture) {
+			NSUInteger remaining = PBTaskStandardErrorLimit - self.standardOutputBuffer.length;
+			if (data.length > remaining) self.standardOutputTruncated = YES;
+			if (remaining) [self.standardOutputBuffer appendData:[data subdataWithRange:NSMakeRange(0, MIN(remaining, data.length))]];
+		} else {
+			[self.standardOutputBuffer appendData:data];
+		}
+	}
+	if (self.outputChunkHandler) self.outputChunkHandler(data);
+	self.diagnosticLastProgressTime = NSProcessInfo.processInfo.systemUptime;
+	[self armDiagnosticDrain];
+}
+
+- (void)appendErrorData:(NSData *)data
+{
+	[self.diagnosticCapture appendStandardError:data];
+	[self.standardErrorBuffer appendData:data];
+	if (self.standardErrorBuffer.length > PBTaskStandardErrorLimit) {
+		self.standardErrorTruncated = YES;
+		NSUInteger cut = self.standardErrorBuffer.length - PBTaskStandardErrorLimit;
+		const uint8_t *bytes = self.standardErrorBuffer.bytes;
+		while (cut < self.standardErrorBuffer.length && (bytes[cut] & 0xC0) == 0x80) cut += 1;
+		if (!self.didLogStandardErrorTruncation) {
+			self.didLogStandardErrorTruncation = YES;
+			NSLog(@"[GitX] PBTask began truncating standard error at the 64 KiB cap");
+		}
+		[self.standardErrorBuffer replaceBytesInRange:NSMakeRange(0, cut) withBytes:NULL length:0];
+	}
+	self.diagnosticLastProgressTime = NSProcessInfo.processInfo.systemUptime;
+	[self armDiagnosticDrain];
 }
 
 - (void)stopErrorReaderAndCloseWhenSafe
@@ -318,7 +427,8 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 	if (self.diagnosticCapture) {
 		// A non-reaping exit notification starts bounded drainage while the leader
 		// still reserves its process group for safe descendant cleanup.
-		[self scheduleDiagnosticDrainAfterDelay:PBTaskOutputDrainGrace];
+		if (!self.diagnosticLeaderExitTime) self.diagnosticLeaderExitTime = NSProcessInfo.processInfo.systemUptime;
+		[self armDiagnosticDrain];
 		return;
 	}
 	if ((self.outputFinished && self.errorFinished) || self.outputDrainScheduled) return;
@@ -383,17 +493,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 				return;
 			}
 			if (data.length) {
-				[strongSelf.diagnosticCapture appendStandardOutput:data];
-				if (strongSelf.capturesStandardOutput) {
-					if (strongSelf.diagnosticCapture) {
-						NSUInteger remaining = PBTaskStandardErrorLimit - strongSelf.standardOutputBuffer.length;
-						if (remaining) [strongSelf.standardOutputBuffer appendData:[data subdataWithRange:NSMakeRange(0, MIN(remaining, data.length))]];
-					} else {
-						[strongSelf.standardOutputBuffer appendData:data];
-					}
-				}
-				PBTaskOutputChunkHandler outputChunkHandler = strongSelf.outputChunkHandler;
-				if (outputChunkHandler) outputChunkHandler(data);
+				[strongSelf appendOutputData:data];
 			} else if (!data.length) {
 				PBTaskLog(@"task %p: EOF, closing %d", strongSelf, handle.fileDescriptor);
 				strongSelf.outputFinished = YES;
@@ -402,13 +502,22 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 				[strongSelf finishIfReady];
 			}
 			if (shouldFinishAfterDrain && !strongSelf.outputFinished) {
-				strongSelf.outputFinished = YES;
-				[strongSelf finishIfReady];
+				if (strongSelf.diagnosticCapture)
+					[strongSelf finishDiagnosticDrainWhenSafe];
+				else {
+					strongSelf.outputFinished = YES;
+					[strongSelf finishIfReady];
+				}
 			}
 			if (closeOutputHandle) [handle closeFile];
 			// Forced errors can stop readers while a nonempty chunk is already
 			// accepted. Reevaluate only after preserving it and closing its handle.
-			if (strongSelf.diagnosticCapture && data.length) [strongSelf finishIfReady];
+			if (strongSelf.diagnosticCapture) {
+				if (strongSelf.outputDrainExpired)
+					[strongSelf finishDiagnosticDrainWhenSafe];
+				else if (data.length)
+					[strongSelf finishIfReady];
+			}
 		}];
 	};
 }
@@ -439,19 +548,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 				return;
 			}
 			if (data.length) {
-				[strongSelf.diagnosticCapture appendStandardError:data];
-				[strongSelf.standardErrorBuffer appendData:data];
-				if (strongSelf.standardErrorBuffer.length > PBTaskStandardErrorLimit) {
-					NSUInteger cut = strongSelf.standardErrorBuffer.length - PBTaskStandardErrorLimit;
-					const uint8_t *bytes = strongSelf.standardErrorBuffer.bytes;
-					while (cut < strongSelf.standardErrorBuffer.length && (bytes[cut] & 0xC0) == 0x80)
-						cut += 1;
-					if (!strongSelf.didLogStandardErrorTruncation) {
-						strongSelf.didLogStandardErrorTruncation = YES;
-						NSLog(@"[GitX] PBTask %p began truncating standard error at the 64 KiB cap; first discarded segment: %lu bytes at a UTF-8 boundary", strongSelf, (unsigned long)cut);
-					}
-					[strongSelf.standardErrorBuffer replaceBytesInRange:NSMakeRange(0, cut) withBytes:NULL length:0];
-				}
+				[strongSelf appendErrorData:data];
 			} else {
 				strongSelf.errorFinished = YES;
 				[strongSelf.diagnosticCapture finishStandardErrorWithReachedEOF:YES];
@@ -459,11 +556,20 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 				[strongSelf finishIfReady];
 			}
 			if (shouldFinishAfterDrain && !strongSelf.errorFinished) {
-				strongSelf.errorFinished = YES;
-				[strongSelf finishIfReady];
+				if (strongSelf.diagnosticCapture)
+					[strongSelf finishDiagnosticDrainWhenSafe];
+				else {
+					strongSelf.errorFinished = YES;
+					[strongSelf finishIfReady];
+				}
 			}
 			if (closeErrorHandle) [handle closeFile];
-			if (strongSelf.diagnosticCapture && data.length) [strongSelf finishIfReady];
+			if (strongSelf.diagnosticCapture) {
+				if (strongSelf.outputDrainExpired)
+					[strongSelf finishDiagnosticDrainWhenSafe];
+				else if (data.length)
+					[strongSelf finishIfReady];
+			}
 		}];
 	};
 }
@@ -539,6 +645,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 	dispatch_sync(self.stateQueue, ^{
 		NSAssert(!self.operationStarted, @"PBTask instances can only be performed once");
 		self.operationStarted = YES;
+		if (self.timeout > 0 && isfinite(self.timeout)) self.executionDeadline = NSProcessInfo.processInfo.systemUptime + self.timeout;
 		self.callbackQueue = queue;
 		self.resultHandler = resultHandler;
 		self.outputChunkHandler = outputChunkHandler;

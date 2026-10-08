@@ -81,11 +81,20 @@ final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
         }
         let complete = artifact.captureComplete
         let safeError = failure.map { error in
-            var readable = PBTaskDiagnostics.pushFailure(stdout: standardOutput, stderr: standardError,
+            let streams = artifact.redactedReadableStreams()
+            var readable: String
+            if let streams {
+                readable = PBTaskDiagnostics.formattedPushFailure(stdout: streams.stdout, stderr: streams.stderr,
+                                                                  porcelain: arguments.contains("--porcelain"))
+            } else {
+                let safeFallback = task.standardErrorTruncated
+                    ? "[Standard error excerpt unavailable: its original beginning was discarded.]" : standardError
+                readable = PBTaskDiagnostics.pushFailure(stdout: standardOutput, stderr: safeFallback,
                                                          porcelain: arguments.contains("--porcelain"),
-                                                         stdoutComplete: prefix.complete,
-                                                         stderrComplete: complete && task.standardErrorData.count < 64 * 1024)
-            if outputBytes.count >= 64 * 1024 || task.standardErrorData.count >= 64 * 1024 {
+                                                         stdoutComplete: !task.standardOutputTruncated && complete,
+                                                         stderrComplete: !task.standardErrorTruncated && complete)
+            }
+            if task.standardOutputTruncated || task.standardErrorTruncated || !artifact.captureComplete {
                 readable += "\n\n" + artifact.redactedSummary
             }
             return Self.capturedError(error, artifact: artifact, readable: readable)
@@ -96,7 +105,7 @@ final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
             terminationStatus: failure == nil ? 0 : failure?.userInfo[PBTaskTerminationStatusKey] as? NSNumber,
             error: safeError,
             standardOutputComplete: prefix.complete,
-            standardErrorComplete: complete,
+            standardErrorComplete: artifact.captureComplete,
             diagnosticArtifact: failure == nil ? nil : artifact,
             browserHintOutput: browserHint
         )

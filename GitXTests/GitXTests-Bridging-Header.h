@@ -629,6 +629,11 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 + (NSString *)displayArguments:(NSArray *)arguments;
 @end
 
+@interface PBTaskDrainPolicy : NSObject
++ (NSTimeInterval)deadlineWithLeaderExit:(NSTimeInterval)leaderExit lastProgress:(NSTimeInterval)lastProgress taskDeadline:(NSTimeInterval)taskDeadline
+	NS_SWIFT_NAME(deadline(leaderExit:lastProgress:taskDeadline:));
+@end
+
 @interface PBErrorMessagePresentation : NSObject
 + (NSString *)infoTextForError:(NSError *)error NS_SWIFT_NAME(infoText(for:));
 @end
@@ -680,6 +685,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @end
 
 @interface PBTaskDiagnosticCaptureTestHarness : NSObject
++ (nullable NSArray<NSString *> *)readableExcerptsForArtifact:(PBTaskDiagnosticArtifact *)artifact NS_SWIFT_NAME(readableExcerpts(for:));
 + (PBTaskDiagnosticCapture *)captureWithFault:(NSString *)fault NS_SWIFT_NAME(capture(fault:));
 + (nullable PBTaskDiagnosticCaptureLifetimeProbe *)lifetimeProbeForCapture:(PBTaskDiagnosticCapture *)capture NS_SWIFT_NAME(lifetimeProbe(for:));
 + (nullable PBTaskDiagnosticCaptureLifetimeProbe *)orphanProbeWithAge:(NSTimeInterval)age error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(orphanProbe(age:));

@@ -178,6 +178,44 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         XCTAssertTrue(artifact.captureComplete)
     }
 
+    func testDrainPolicyResetsIdleDeadlineWithoutExtendingHardOrTaskDeadlines() {
+        XCTAssertEqual(PBTaskDrainPolicy.deadline(leaderExit: 10, lastProgress: 9, taskDeadline: 0), 11)
+        XCTAssertEqual(PBTaskDrainPolicy.deadline(leaderExit: 10, lastProgress: 15, taskDeadline: 0), 16)
+        XCTAssertEqual(PBTaskDrainPolicy.deadline(leaderExit: 10, lastProgress: 25, taskDeadline: 0), 20)
+        XCTAssertEqual(PBTaskDrainPolicy.deadline(leaderExit: 10, lastProgress: 15, taskDeadline: 14), 14)
+    }
+
+    func testProductionDrainPreservesFiniteBufferedStreamsWithDelayedShortReaders() throws {
+        let task = ShortReaderTask(launchPath: "/bin/sh", arguments: ["-c", "printf finite-output; printf finite-error >&2"], inDirectory: nil)
+        task.readerGate = DispatchSemaphore(value: 0)
+        let capture = PBTaskDiagnosticCapture()
+        task.diagnosticCapture = capture
+        task.timeout = 15
+        let completed = expectation(description: "finite short-reader completion")
+        task.perform(on: .global(qos: .userInitiated)) { error in
+            XCTAssertNil(error)
+            completed.fulfill()
+        }
+        defer { task.readerGate.signal(); task.readerGate.signal(); task.terminate() }
+        waitForCondition("leader exited while both finite streams await reader delivery") {
+            task.value(forKey: "leaderExitObserved") as? Bool == true &&
+                (task.value(forKey: "outputReadsInFlight") as? Int ?? 0) > 0 &&
+                (task.value(forKey: "errorReadsInFlight") as? Int ?? 0) > 0
+        }
+        // Hold actual reader work until the production deadline requests closure.
+        // There is no descendant and all bytes are already buffered in the pipes.
+        waitForCondition("production drain deadline reached") { task.value(forKey: "outputDrainExpired") as? Bool == true }
+        task.readerGate.signal()
+        task.readerGate.signal()
+        wait(for: [completed], timeout: 15)
+        XCTAssertEqual(task.standardOutputData, Data("finite-output".utf8))
+        XCTAssertEqual(task.standardErrorData, Data("finite-error".utf8))
+        XCTAssertEqual(task.value(forKey: "terminationStatus") as? Int, 0)
+        let artifact = try XCTUnwrap(capture.artifact)
+        defer { artifact.discard() }
+        XCTAssertTrue(artifact.captureComplete)
+    }
+
     func testLegacySeparateReadersPreserveBinaryBytesAndKeepInvalidDiagnosticOutOfErrorText() {
         let task = PBTask(launchPath: "/bin/sh", arguments: ["-c", "printf '\\377error\\376' >&2; printf '\\000binary\\377'; exit 4"], inDirectory: nil)
         task.separatesStandardError = true
@@ -331,6 +369,45 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         XCTAssertEqual(task.standardErrorData, Data("final-error".utf8))
         XCTAssertTrue(task.value(forKey: "outputHandleClosed") as? Bool == true)
         XCTAssertTrue(task.value(forKey: "errorHandleClosed") as? Bool == true)
+    }
+
+    func testProductionDrainPreservesDescendantOutputReleasedAfterLeaderExit() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gate = directory.appendingPathComponent("gate")
+        XCTAssertEqual(mkfifo(gate.path, 0o600), 0)
+        let descriptor = Darwin.open(gate.path, O_RDWR | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return XCTFail("Could not open descendant gate") }
+        defer { _ = Darwin.close(descriptor) }
+        let capture = PBTaskDiagnosticCapture()
+        let task = PBTask(launchPath: "/bin/sh", arguments: ["-c", """
+        (printf ready > "$1/ready"; read permit < "$1/gate"; printf delayed-output; printf delayed-error >&2) &
+        exit 9
+        """, "fixture", directory.path], inDirectory: nil)
+        task.diagnosticCapture = capture
+        task.timeout = 5
+        defer { task.terminate() }
+        let completed = expectation(description: "descendant output after leader exit")
+        task.perform(on: .global(qos: .userInitiated)) { error in
+            XCTAssertEqual((error as NSError?)?.userInfo[PBTaskTerminationStatusKey] as? Int, 9)
+            completed.fulfill()
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        func ready() -> Bool {
+            task.value(forKey: "leaderExitObserved") as? Bool == true && FileManager.default.fileExists(atPath: directory.appendingPathComponent("ready").path)
+        }
+        while !ready(), ProcessInfo.processInfo.systemUptime < deadline {
+            _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.005))
+        }
+        XCTAssertTrue(ready(), "Release the descendant from observed exit state, before the idle deadline")
+        let permit = Data("continue\n".utf8)
+        XCTAssertEqual(permit.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }, permit.count)
+        wait(for: [completed], timeout: 10)
+        let artifact = try XCTUnwrap(capture.artifact)
+        defer { artifact.discard() }
+        XCTAssertTrue(artifact.captureComplete)
+        XCTAssertEqual(task.standardOutputData, Data("delayed-output".utf8))
+        XCTAssertEqual(task.standardErrorData, Data("delayed-error".utf8))
     }
 
     func testOptInCooperativeTerminationDrainsBothTrapMarkersBeforeCompletion() throws {
@@ -779,7 +856,7 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         }
 
         func testCoreCaptureFailureModesKeepSafeStaticFallbackAndPartialIntegrity() {
-            for fault in ["createDirectory", "createLease", "createOutput", "createError", "append", "partialAppend", "close", "createReport", "read", "redactionWrite"] {
+            for fault in ["createDirectory", "createLease", "createOutput", "createError", "append", "partialAppend", "close", "closeError", "createReport", "read", "redactionWrite"] {
                 let capture = PBTaskDiagnosticCaptureTestHarness.capture(fault: fault)
                 capture.appendStandardOutput(Data("https://user:secret@example.invalid/repo".utf8))
                 capture.finishStandardOutput(reachedEOF: true)

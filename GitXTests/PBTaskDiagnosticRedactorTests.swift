@@ -9,6 +9,8 @@ final class PBTaskDiagnosticRedactorTests: XCTestCase {
             "https://example.invalid:443/repo",
             "https://[::1]:443/repo failed: denied",
             "https://example.invalid/a@b?next=c:d",
+            "https://example.invalid/repo:42",
+            "https://[::1]:443/repo:42",
         ] {
             XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), input)
             XCTAssertEqual(PBTaskDiagnostics.redacted(input), input, "Objective-C app boundary")
@@ -34,6 +36,8 @@ final class PBTaskDiagnosticRedactorTests: XCTestCase {
     }
 
     func testCredentialURLsEmbeddedInOrdinaryURLQueriesAreStillRedacted() {
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://[::1]:443/?redirect=https://user:secret@other.invalid/repo"),
+                       "https://[::1]:443/?redirect=https://[redacted]@other.invalid/repo")
         let input = "https://example.invalid/?redirect=https://user:secret@other.invalid/repo"
         let expected = "https://example.invalid/?redirect=https://[redacted]@other.invalid/repo"
         XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), expected)
@@ -44,6 +48,28 @@ final class PBTaskDiagnosticRedactorTests: XCTestCase {
         for secret in ["secret/with/slashes", "secret?with=query", "secret#fragment", "secret with spaces", "密碼/更多", "secret@early/remaining-secret"] {
             XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://user:\(secret)@example.invalid/repo"),
                            "https://[redacted]@example.invalid/repo")
+        }
+    }
+
+    func testNumericAndSeparatorPrefixedMalformedUserinfoIsRedacted() throws {
+        for input in [
+            "https://user:123/fake-secret@example.invalid/repo",
+            "https://user:123 fake-secret@example.invalid/repo",
+            "https://user/name:fake-secret@example.invalid/repo",
+            "https://user?name:fake-secret@example.invalid/repo",
+            "https://user#name:fake-secret@example.invalid/repo",
+            "https://user name:fake-secret@example.invalid/repo",
+            "https://user:123/https://fake-secret@example.invalid/repo",
+        ] {
+            let bytes = Data(input.utf8)
+            for size in 1 ... bytes.count {
+                let source = PBTaskDiagnosticByteSource(length: Int64(bytes.count)) { offset, count in
+                    Data(bytes[Int(offset) ..< Int(offset) + count])
+                }
+                var output = Data()
+                try PBTaskDiagnosticRedactor.redact(source: source, incomplete: false, bufferSize: size) { output.append($0) }
+                XCTAssertFalse(String(decoding: output, as: UTF8.self).contains("fake-secret"), "\(input), chunk size \(size)")
+            }
         }
     }
 
@@ -75,6 +101,9 @@ final class PBTaskDiagnosticRedactorTests: XCTestCase {
     }
 
     func testIncompleteAuthorityIsMaskedBeforeItsSeparatorArrives() throws {
+        for input in ["https://user:123/unfinished-secret", "https://user/name:unfinished-secret"] {
+            XCTAssertFalse(PBTaskDiagnosticRedactor.redacted(input, incomplete: true).contains("unfinished-secret"))
+        }
         let input = Data("message\nhttps://user:secret/unfinished".utf8)
         let source = PBTaskDiagnosticByteSource(length: Int64(input.count)) { offset, count in
             Data(input[Int(offset) ..< Int(offset) + count])
@@ -112,6 +141,14 @@ final class PBTaskDiagnosticRedactorTests: XCTestCase {
     }
 
     func testMultipleURIsAndOrdinaryTextStayIndependent() {
+        let ambiguous = "https://user:123 fake-secret@localhost/path https://next:password@two.invalid/repo"
+        let safe = "https://[redacted]@localhost/path https://[redacted]@two.invalid/repo"
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(ambiguous), safe)
+        XCTAssertEqual(PBTaskDiagnostics.redacted(ambiguous), safe)
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://user/name:secret@one.invalid/repo contact owner@example.invalid"),
+                       "https://[redacted]@one.invalid/repo contact owner@example.invalid")
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://user/name:secret@one.invalid/path failed: denied https://next:password@two.invalid/repo"),
+                       "https://[redacted]@one.invalid/path failed: denied https://[redacted]@two.invalid/repo")
         XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://one.invalid https://user:password@two.invalid/path\nmail@example.invalid -1://entry@example.invalid"),
                        "https://one.invalid https://[redacted]@two.invalid/path\nmail@example.invalid -1://entry@example.invalid")
         XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("123+.-abc://user:password@example.invalid/repo"),
