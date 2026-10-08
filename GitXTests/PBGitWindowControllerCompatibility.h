@@ -31,6 +31,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)showCommitHookFailedSheet:(NSString *)messageText
 						 infoText:(NSString *)infoText
 					retryHandler:(nullable void (^)(void))retryHandler;
+- (void)showCommitHookFailedSheet:(NSString *)messageText infoText:(NSString *)infoText
+                     retryHandler:(nullable void (^)(void))retryHandler cancelHandler:(nullable void (^)(void))cancelHandler;
 - (void)showMessageSheet:(NSString *)messageText infoText:(NSString *)infoText;
 - (void)showErrorSheet:(NSError *)error;
 

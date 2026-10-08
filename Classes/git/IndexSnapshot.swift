@@ -444,7 +444,12 @@ final nonisolated class IndexOperationErrorPresentation: NSObject {
     @objc(messageForOperation:error:)
     static func message(operation: String, error: NSError?) -> String {
         guard let error else { return operation }
-        var parts = [operation, error.localizedDescription]
+        return operation + "\n" + detail(for: error)
+    }
+
+    @objc(detailForError:)
+    static func detail(for error: NSError) -> String {
+        var parts = [error.localizedDescription]
         if let reason = error.localizedFailureReason, reason != error.localizedDescription {
             parts.append(reason)
         }

@@ -127,6 +127,13 @@ final class CommitMenuPresenterTests: XCTestCase {
         XCTAssertTrue(reveal.enabled)
     }
 
+    func testCommitAndForceCommitRespectFallbackEligibility() {
+        for action in ["commit:", "forceCommit:"] {
+            XCTAssertTrue(presentation(action, fallback: true).enabled)
+            XCTAssertFalse(presentation(action, fallback: false).enabled)
+        }
+    }
+
     private func file(_ path: String, status: Int = 0, unstaged: Bool = true) -> PBCommitMenuFile {
         PBCommitMenuFile(path: path, status: status, hasUnstagedChanges: unstaged)
     }

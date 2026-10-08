@@ -42,6 +42,12 @@ final nonisolated class IndexCommitRequest: NSObject, @unchecked Sendable {
     @objc let parentSHAs: [String]
     @objc let hasHead: Bool
 
+    @objc(requestWithoutVerification)
+    func withoutVerification() -> IndexCommitRequest {
+        IndexCommitRequest(message: message, verify: false, gpgSign: gpgSign, amend: amend,
+                           environment: environment, parentSHAs: parentSHAs, hasHead: hasHead)
+    }
+
     @objc(initWithMessage:verify:gpgSign:amend:environment:parentSHAs:hasHead:)
     init(
         message: String,
@@ -175,6 +181,7 @@ private final nonisolated class IndexCommitEventSink: @unchecked Sendable {
 @objc(PBIndexCommitService)
 final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
     private let runner: IndexCommandRunning
+    private let writerCoordinator: IndexWriterCoordinator?
     private let hookRunner: IndexHookRunning
     private let gitDirectory: URL
     private let temporaryDirectory: URL
@@ -182,7 +189,9 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
 
     @objc(initWithRepository:)
     init(repository: PBGitRepository) {
-        runner = IndexRepositoryCommandRunner(repository: repository)
+        let nativeRunner = IndexRepositoryCommandRunner(repository: repository)
+        runner = nativeRunner
+        writerCoordinator = nativeRunner.writerCoordinator
         hookRunner = IndexRepositoryHookRunner(repository: repository)
         gitDirectory = repository.gitURL() ?? URL(fileURLWithPath: NSTemporaryDirectory())
         temporaryDirectory = FileManager.default.temporaryDirectory
@@ -197,6 +206,7 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
         temporaryDirectory: URL
     ) {
         self.runner = runner
+        writerCoordinator = (runner as? IndexRepositoryCommandRunner)?.writerCoordinator
         self.hookRunner = hookRunner
         self.gitDirectory = gitDirectory
         self.temporaryDirectory = temporaryDirectory
@@ -282,6 +292,13 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
         with request: IndexCommitRequest,
         sink: IndexCommitEventSink
     ) -> IndexCommitResult {
+        if let writerCoordinator {
+            return writerCoordinator.perform("commit submission") { performUnlockedCommit(with: request, sink: sink) }
+        }
+        return performUnlockedCommit(with: request, sink: sink)
+    }
+
+    private func performUnlockedCommit(with request: IndexCommitRequest, sink: IndexCommitEventSink) -> IndexCommitResult {
         let editMessageURL = gitDirectory.appendingPathComponent("COMMIT_EDITMSG")
         do {
             try request.message.write(to: editMessageURL, atomically: true, encoding: .utf8)
@@ -308,7 +325,7 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
                 arguments += ["-p", parent]
             }
         } else if request.hasHead {
-            arguments += ["-p", "HEAD"]
+            arguments += ["-p", request.parentSHAs.first ?? "HEAD"]
         }
         if request.gpgSign {
             arguments.append("--gpg-sign")

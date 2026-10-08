@@ -1031,6 +1031,14 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 };
 
 @interface PBIndexCommitRequest : NSObject
+@property (readonly) NSString *message;
+@property (readonly) BOOL verify;
+@property (readonly) BOOL gpgSign;
+@property (readonly) BOOL amend;
+@property (readonly, nullable) NSDictionary<NSString *, id> *environment;
+@property (readonly) NSArray<NSString *> *parentSHAs;
+@property (readonly) BOOL hasHead;
+- (PBIndexCommitRequest *)requestWithoutVerification NS_SWIFT_NAME(withoutVerification());
 - (instancetype)initWithMessage:(NSString *)message
 						 verify:(BOOL)verify
 						gpgSign:(BOOL)gpgSign
@@ -1108,6 +1116,7 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 @end
 
 @interface PBIndexMutationService : NSObject
+- (BOOL)stageRawPaths:(NSArray<NSData *> *)paths unstageRawPaths:(NSArray<NSData *> *)unstagePaths parentTree:(NSString *)parentTree error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(mutate(stageRawPaths:unstageRawPaths:parentTree:error:)) __attribute__((swift_error(none)));
 - (nullable NSArray<NSString *> *)literalArgumentsForRawPath:(NSData *)rawPath commandArguments:(NSArray<NSString *> *)commandArguments error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(literalArguments(forRawPath:commandArguments:error:)) __attribute__((swift_error(none)));
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 - (nullable NSArray<NSString *> *)diffToolArgumentsForRawPath:(NSData *)rawPath staged:(BOOL)staged error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(diffToolArguments(forRawPath:staged:error:)) __attribute__((swift_error(none)));

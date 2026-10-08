@@ -30,6 +30,29 @@ final nonisolated class IndexMutationService: NSObject {
         super.init()
     }
 
+    @objc(stageRawPaths:unstageRawPaths:parentTree:error:)
+    func mutate(stageRawPaths: [Data], unstageRawPaths: [Data], parentTree: String,
+                error outputError: AutoreleasingUnsafeMutablePointer<NSError?>?) -> Bool
+    {
+        let operation = {
+            var stageError: NSError?
+            var unstageError: NSError?
+            let staged = self.stageRawPaths(stageRawPaths, error: &stageError)
+            let unstaged = self.unstageRawPaths(unstageRawPaths, parentTree: parentTree, error: &unstageError)
+            let failures = [stageError, unstageError].compactMap { $0 }
+            if let failure = failures.first {
+                outputError?.pointee = NSError(domain: failure.domain, code: failure.code, userInfo: [
+                    NSLocalizedDescriptionKey: failures.map { IndexOperationErrorPresentation.detail(for: $0) }.joined(separator: "\n\n"),
+                ])
+            }
+            return staged && unstaged
+        }
+        if let native = runner as? IndexRepositoryCommandRunner {
+            return native.writerCoordinator.perform("stage then unstage batch", operation)
+        }
+        return operation()
+    }
+
     @objc(stagePaths:error:)
     func stagePaths(
         _ paths: [String],

@@ -190,7 +190,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         if menuItem.action == #selector(toggleAmendCommit(_:)) {
             menuItem.state = repository?.index.isAmend == true ? .on : .off
-            return repository?.isBare() != true
+            return repository.map { CommitSubmissionEligibility.allowsMutation($0.index) } ?? false
         }
         if menuItem.action == #selector(toggleRepositoryStatusBar(_:)) {
             menuItem.state = ApplicationSettings.repositoryStatusBarVisible ? .on : .off
@@ -480,7 +480,7 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     @IBAction dynamic func toggleAmendCommit(_ sender: Any?) {
         // Toggling amend refreshes the index against HEAD^, which repopulates indexChanges and pins the
         // Uncommitted Changes row even on a clean tree; the pending selection then lands on it.
-        guard let index = repository?.index else { return }
+        guard let index = repository?.index, CommitSubmissionEligibility.allowsMutation(index) else { return }
         index.isAmend.toggle()
         showUncommittedChanges(sender)
     }
@@ -1202,12 +1202,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         infoText: String,
         retryHandler: (() -> Void)?
     ) {
-        WindowDialogPresenter.showCommitHookFailedSheet(
-            messageText,
-            infoText: infoText,
-            retryHandler: retryHandler,
-            for: self
-        )
+        showCommitHookFailedSheet(messageText, infoText: infoText, retryHandler: retryHandler, cancelHandler: nil)
+    }
+
+    @objc open dynamic func showCommitHookFailedSheet(
+        _ messageText: String, infoText: String, retryHandler: (() -> Void)?, cancelHandler: (() -> Void)?
+    ) {
+        WindowDialogPresenter.showCommitHookFailedSheet(messageText, infoText: infoText,
+                                                        retryHandler: retryHandler, cancelHandler: cancelHandler, for: self)
     }
 
     @objc open dynamic func showMessageSheet(_ messageText: String, infoText: String) {

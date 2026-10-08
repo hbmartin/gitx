@@ -763,18 +763,17 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
 
     func reapIfExited(processIdentifier: pid_t) throws -> Int32? {
         var status: Int32 = 0
-        while true {
-            let result = waitpid(processIdentifier, &status, WNOHANG)
-            if result == processIdentifier {
-                return status
-            }
-            if result == 0 {
-                return nil
-            }
-            if result == -1, errno != EINTR {
-                throw posixError(errno, operation: "reap child process")
-            }
+        var result: pid_t
+        repeat {
+            result = waitpid(processIdentifier, &status, WNOHANG)
+        } while result != processIdentifier && result != 0 && (result != -1 || errno == EINTR)
+        if result == processIdentifier {
+            return status
         }
+        if result == 0 {
+            return nil
+        }
+        throw posixError(errno, operation: "reap child process")
     }
 
     func send(signal: Int32, toProcessGroup processGroup: pid_t) throws {

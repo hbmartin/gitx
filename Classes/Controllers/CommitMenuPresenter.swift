@@ -73,6 +73,8 @@ private nonisolated enum CommitMenuAction: String {
     case reveal = "revealInFinder:"
     case amend = "toggleAmendCommit:"
     case prepare = "prepareCommitMessage:"
+    case commit = "commit:"
+    case forceCommit = "forceCommit:"
 
     init?(selector: Selector?) {
         guard let selector else { return nil }
@@ -84,7 +86,7 @@ private nonisolated enum CommitMenuAction: String {
 final nonisolated class CommitMenuPresenter: NSObject {
     static func isMutation(action: Selector) -> Bool {
         switch CommitMenuAction(selector: action) {
-        case .stage, .unstage, .discard, .forceDiscard, .trash, .ignore, .amend, .prepare: true
+        case .stage, .unstage, .discard, .forceDiscard, .trash, .ignore, .amend, .prepare, .commit, .forceCommit: true
         default: false
         }
     }
@@ -233,6 +235,8 @@ final nonisolated class CommitMenuPresenter: NSObject {
             )
         case .amend:
             mutation = CommitMenuMutation(enabled: true, state: isAmend ? 1 : 0)
+        case .commit, .forceCommit:
+            mutation = CommitMenuMutation(enabled: fallbackEnabled)
         case .prepare:
             mutation = CommitMenuMutation(enabled: prepareHookExists)
         case nil:

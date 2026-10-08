@@ -169,28 +169,7 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
     }
 
     private func detail(for error: NSError) -> String {
-        var parts = [error.localizedDescription]
-        if let reason = error.localizedFailureReason,
-           reason != error.localizedDescription
-        {
-            parts.append(reason)
-        }
-        if let status = error.userInfo[PBTaskTerminationStatusKey] as? NSNumber {
-            parts.append(String(
-                format: NSLocalizedString(
-                    "Exit status: %@",
-                    comment: "Git process exit status in a staging diff failure"
-                ),
-                status
-            ))
-        }
-        if let output = error.userInfo[PBTaskTerminationOutputKey] as? String {
-            let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedOutput.isEmpty {
-                parts.append(trimmedOutput)
-            }
-        }
-        return parts.joined(separator: "\n")
+        IndexOperationErrorPresentation.detail(for: error)
     }
 }
 
@@ -303,7 +282,7 @@ final class StagingDiffPaneController: NSObject {
     // MARK: Content-view actions (dispatched via the private delegate adapter)
 
     fileprivate func performDiffAction(_ action: String, patch: String, in view: PBNativeContentView) {
-        guard !repository.index.mutationReconciliationPending else { return }
+        guard CommitSubmissionEligibility.allowsMutation(repository.index) else { return }
         switch action {
         case "stage":
             NSLog("[GitX] Applying a partial stage patch from the staging pane")
@@ -322,7 +301,7 @@ final class StagingDiffPaneController: NSObject {
             alert.addButton(withTitle: NSLocalizedString("Discard", comment: "Confirm button of the discard hunk confirmation"))
             alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button of the discard hunk confirmation"))
             alert.beginSheetModal(for: window) { [weak self] response in
-                guard response == .alertFirstButtonReturn, let self, !repository.index.mutationReconciliationPending else { return }
+                guard response == .alertFirstButtonReturn, let self, CommitSubmissionEligibility.allowsMutation(repository.index) else { return }
                 NSLog("[GitX] Discarding a hunk from the staging pane")
                 repository.index.applyPatch(patch, stage: false, reverse: true)
             }

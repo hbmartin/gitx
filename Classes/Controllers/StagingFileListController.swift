@@ -41,6 +41,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     private var syncingSectionedSelection = false
     private var syncingExclusiveSelection = false
     private var observingSelections = false
+    private var submissionObservation: NSKeyValueObservation?
     private var pendingObservation: NSKeyValueObservation?
 
     private struct SectionedDrop {
@@ -138,6 +139,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             controller.addObserver(self, forKeyPath: "selectionIndexes", options: [], context: &Self.selectionContext)
         }
         observingSelections = true
+        submissionObservation = index.observe(\.submissionActive, options: [.new]) { [weak self] _, _ in
+            // swift6-safety-justification: The index changes submission state on the main thread.
+            MainActor.assumeIsolated { self?.refreshMutationControls() }
+        }
         pendingObservation = index.observe(\.mutationReconciliationPending, options: [.initial, .new]) { [weak self] _, _ in
             // swift6-safety-justification: Staging actions and commit/refresh completion write this KVO property on main; the initial callback runs during this main-actor initializer.
             MainActor.assumeIsolated { self?.refreshMutationControls() }
@@ -273,7 +278,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     private func toggleSectionedSelection() {
-        guard !index.mutationReconciliationPending else { return }
+        guard CommitSubmissionEligibility.allowsMutation(index) else { return }
         var toStage: [PBChangedFile] = []
         var toUnstage: [PBChangedFile] = []
         for rowIndex in sectionedTable.selectedRowIndexes where sectionedRows.indices.contains(rowIndex) {
@@ -285,14 +290,8 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
                 toStage.append(file)
             }
         }
-        if !toStage.isEmpty {
-            NSLog("[GitX] Staging %ld file(s) from the sectioned list", toStage.count)
-            index.stageFiles(toStage)
-        }
-        if !toUnstage.isEmpty {
-            NSLog("[GitX] Unstaging %ld file(s) from the sectioned list", toUnstage.count)
-            index.unstageFiles(toUnstage)
-        }
+        NSLog("[GitX] Toggling one mixed batch: %ld staged, %ld unstaged", toStage.count, toUnstage.count)
+        index.stageFiles(toStage, unstageFiles: toUnstage)
     }
 
     @objc var stagedFileCount: Int {
@@ -383,7 +382,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc func refreshMutationControls() {
-        let enabled = !index.mutationReconciliationPending
+        let enabled = CommitSubmissionEligibility.allowsMutation(index)
         stagedHeader.masterCheckbox.isEnabled = enabled && !(stagedFilesController.arrangedObjects as? [PBChangedFile] ?? []).isEmpty
         unstagedHeader.masterCheckbox.isEnabled = enabled && !(unstagedFilesController.arrangedObjects as? [PBChangedFile] ?? []).isEmpty
         for table in [unstagedTable, stagedTable, sectionedTable] {
@@ -408,7 +407,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc private func masterCheckboxToggled(_ sender: NSButton) {
-        guard !index.mutationReconciliationPending else { return }
+        guard CommitSubmissionEligibility.allowsMutation(index) else { return }
         let stagedContext = sender.tag == 1
         let controller = stagedContext ? stagedFilesController : unstagedFilesController
         guard let files = controller.arrangedObjects as? [PBChangedFile], !files.isEmpty else {
@@ -425,7 +424,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc private func rowCheckboxToggled(_ sender: NSButton) {
-        guard !index.mutationReconciliationPending else { return }
+        guard CommitSubmissionEligibility.allowsMutation(index) else { return }
         guard let (isStagedSection, file, _) = rowContext(for: sender) else { return }
         if isStagedSection {
             NSLog("[GitX] Unstaging %@ from its row checkbox", file.path)
@@ -487,7 +486,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
                 checkboxState: viewModel.rowCheckboxState(for: file, in: sectionRow.section),
                 section: sectionRow.section
             )
-            cell.checkbox.isEnabled = !index.mutationReconciliationPending
+            cell.checkbox.isEnabled = CommitSubmissionEligibility.allowsMutation(index)
             return cell
         }
         guard let files = controller(for: tableView).arrangedObjects as? [PBChangedFile],
@@ -497,7 +496,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         let cell = makeFileCell(in: tableView)
         let section: StagingListSection = tableView.tag == 1 ? .staged : .unstaged
         cell.configure(with: file, checkboxState: viewModel.rowCheckboxState(for: file, in: section), section: section)
-        cell.checkbox.isEnabled = !index.mutationReconciliationPending
+        cell.checkbox.isEnabled = CommitSubmissionEligibility.allowsMutation(index)
         return cell
     }
 
@@ -534,7 +533,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             fileCount: viewModel.files(in: section, from: changes).count,
             masterState: viewModel.masterCheckboxState(for: changes, in: section)
         )
-        header.masterCheckbox.isEnabled = header.masterCheckbox.isEnabled && !index.mutationReconciliationPending
+        header.masterCheckbox.isEnabled = header.masterCheckbox.isEnabled && CommitSubmissionEligibility.allowsMutation(index)
         return header
     }
 
@@ -622,7 +621,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     private func sectionedDrop(_ info: NSDraggingInfo, row: Int) -> SectionedDrop? {
-        guard !index.mutationReconciliationPending, (info.draggingSource as? NSTableView) === sectionedTable,
+        guard CommitSubmissionEligibility.allowsMutation(index), (info.draggingSource as? NSTableView) === sectionedTable,
               let target = targetSection(forDropRow: row),
               let files = viewModel.resolvedDropFiles(
                   from: info.draggingPasteboard.propertyList(forType: Self.sectionedDragType),

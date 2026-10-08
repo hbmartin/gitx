@@ -19,7 +19,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
     @objc private func recordIndexPublication(_ notification: Notification) {
         guard let index = notification.object as? PBGitIndex else { return }
-        XCTAssertTrue(index.mutationReconciliationPending, "Pending clears only after refresh notifications")
+        if notification.name == Notification.Name(PBGitIndexIndexUpdated) {
+            XCTAssertTrue(index.mutationReconciliationPending, "Pending clears after the matching publication")
+        }
         indexPublicationEvents.append(notification.name == Notification.Name(PBGitIndexIndexUpdated) ? "updated" : "finished")
     }
 
@@ -98,6 +100,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         private(set) var shownMessages: [(message: String, info: String)] = []
         private(set) var hookFailureRetryHandlers: [() -> Void] = []
+        private(set) var hookFailureCancelHandlers: [() -> Void] = []
         private(set) var performedPushes = 0
 
         override func showMessageSheet(_ messageText: String, infoText: String) {
@@ -112,6 +115,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             shownMessages.append((messageText, infoText))
             if let retryHandler {
                 hookFailureRetryHandlers.append(retryHandler)
+            }
+        }
+
+        override func showCommitHookFailedSheet(_ messageText: String, infoText: String,
+                                                retryHandler: (() -> Void)?, cancelHandler: (() -> Void)?)
+        {
+            showCommitHookFailedSheet(messageText, infoText: infoText, retryHandler: retryHandler)
+            if let cancelHandler {
+                hookFailureCancelHandlers.append(cancelHandler)
             }
         }
 
@@ -1582,19 +1594,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(push.state, choice ? .on : .off)
         XCTAssertEqual(settings.pushAfterCommit, !choice, "Failed commits do not persist a preference")
 
-        let retryChoice = !choice
-        push.state = retryChoice ? .on : .off
-        let action = try XCTUnwrap(push.action, "Push choice needs an explicit change action")
-        XCTAssertTrue(NSApp.sendAction(action, to: push.target, from: push))
+        XCTAssertFalse(push.isEnabled, "The captured submission stays disabled until the hook decision")
         pane.perform(NSSelectorFromString("reloadPushRemotes"))
-        XCTAssertEqual(push.state, retryChoice ? .on : .off)
+        XCTAssertEqual(push.state, choice ? .on : .off)
         let completed = expectation(forNotification: NSNotification.Name(PBGitIndexFinishedCommit), object: repository.index)
         let stub = try XCTUnwrap(windowController as? HistoryWindowController)
         let pushesBefore = stub.performedPushes
         try XCTUnwrap(stub.hookFailureRetryHandlers.last)()
         wait(for: [completed], timeout: 15)
-        XCTAssertEqual(settings.pushAfterCommit, retryChoice)
-        XCTAssertEqual(stub.performedPushes, pushesBefore + (retryChoice ? 1 : 0))
+        XCTAssertEqual(settings.pushAfterCommit, choice)
+        XCTAssertEqual(stub.performedPushes, pushesBefore + (choice ? 1 : 0))
         refreshIndex()
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Push-Choice-Recovery")
     }
@@ -1709,11 +1718,19 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     func testWorkingTreeFoldersRemainAvailableToOpeningAndQuickLook() throws {
+        let previous = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = false
+        defer { PBApplicationSettings.changedFilesOnly = previous }
         let root = PBWorkingTree.root(for: repository)
         let folder = try XCTUnwrap(root.children.first { $0.path == "nested" })
         XCTAssertFalse(folder.leaf)
         let expected = try XCTUnwrap(repository.workingDirectoryURL()).appendingPathComponent("nested").path
         XCTAssertEqual(folder.tmpFileNameForContents(), expected)
+        let state = PBUncommittedChanges(repository: repository)
+        historyController.commitController.content = [state]
+        historyController.commitController.setSelectedObjects([state])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
         historyController.gitTree = root
         let node = try XCTUnwrap(waitForTreeNode(fullPath: "nested"))
         historyController.treeController.setSelectionIndexPath(node.indexPath)
@@ -2280,6 +2297,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             try fixture.write("created commit\n", to: path)
             try fixture.git(["add", path])
             if !hookSucceeds {
+                try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try "#!/bin/sh\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
@@ -3183,6 +3201,94 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testMatchingCompletedRefreshReleasesMutationPendingWithoutWaitingForGlobalIdle() throws {
+        refreshIndex()
+        let index = repository.index
+        let generation = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue + 1
+        index.setValue(generation, forKey: "mutationGeneration")
+        index.setValue(true, forKey: "mutationReconciliationPending")
+        let updated = expectation(forNotification: Notification.Name(PBGitIndexIndexUpdated), object: index)
+        index.applyRefreshResult(PBIndexRefreshResult(staged: nil, unstaged: nil, untracked: nil, mutationGeneration: generation))
+        wait(for: [updated], timeout: 3)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending }, "A settled failure publishes preserved snapshots and releases this mutation independently of global idle")
+    }
+
+    func testWindowAmendIsUnavailableWithoutARepository() {
+        let controller = PBGitWindowController()
+        let item = NSMenuItem(title: "Amend", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
+        XCTAssertFalse(controller.validateMenuItem(item))
+        controller.toggleAmendCommit(self)
+    }
+
+    func testWindowAmendAndCommitShortcutsRejectAnActiveSubmission() throws {
+        try fixture.write("submission fixture\n", to: "submission-fixture.txt")
+        try fixture.git(["add", "submission-fixture.txt"])
+        let pane = try openStagingPane()
+        pane.commitMessageView.string = "Eligibility fixture"
+        let finished = expectation(forNotification: Notification.Name(PBGitIndexFinishedCommit), object: repository.index)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        let amend = NSMenuItem(title: "Amend", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
+        XCTAssertFalse(windowController.validateMenuItem(amend))
+        for action in ["commit:", "forceCommit:"] {
+            XCTAssertFalse(pane.validate(NSMenuItem(title: action, action: NSSelectorFromString(action), keyEquivalent: "")))
+        }
+        let originalAmend = repository.index.isAmend
+        windowController.toggleAmendCommit(self)
+        XCTAssertEqual(repository.index.isAmend, originalAmend)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        repository.index.commit(withMessage: "Rejected late request", andVerify: false)
+        XCTAssertTrue(historyController.status?.contains("already") == true)
+        wait(for: [finished], timeout: 10)
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+    }
+
+    func testHookRetryPreservesAmendModeParentsAndOriginalMessage() throws {
+        let parents = try fixture.git(["show", "-s", "--format=%P", "HEAD"]).trimmingCharacters(in: .newlines)
+        try fixture.write("amend fixture\n", to: "amend-retry.txt")
+        try fixture.git(["add", "amend-retry.txt"])
+        let pane = try openStagingPane()
+        waitForIndexUpdate { repository.index.isAmend = true }
+        let hook = URL(fileURLWithPath: fixture.path).appendingPathComponent(".git/hooks/pre-commit")
+        try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        pane.commitMessageView.string = "Captured amend request"
+        let rejected = expectation(forNotification: Notification.Name(PBGitIndexCommitHookFailed), object: repository.index)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        wait(for: [rejected], timeout: 10)
+        XCTAssertTrue(repository.index.submissionActive)
+        XCTAssertTrue(repository.index.awaitingHookDecision)
+        XCTAssertFalse(pane.commitMessageView.isEditable)
+        windowController.toggleAmendCommit(self)
+        XCTAssertTrue(repository.index.isAmend)
+        pane.commitMessageView.string = "Programmatic composer replacement"
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Retained-Hook-Decision")
+        let completed = expectation(forNotification: Notification.Name(PBGitIndexFinishedCommit), object: repository.index)
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        try XCTUnwrap(stub.hookFailureRetryHandlers.last)()
+        wait(for: [completed], timeout: 10)
+        XCTAssertEqual(try fixture.git(["log", "-1", "--pretty=%s"]).trimmingCharacters(in: .newlines), "Captured amend request")
+        XCTAssertEqual(try fixture.git(["show", "-s", "--format=%P", "HEAD"]).trimmingCharacters(in: .newlines), parents)
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertFalse(repository.index.submissionActive)
+    }
+
+    func testMixedStageUnstageUsesOneGenerationAndUnstageWinsForAnOverlappingFile() throws {
+        try fixture.write("mixed first\n", to: "mixed.txt")
+        let pane = try openStagingPane()
+        let index = repository.index
+        let file = try XCTUnwrap(index.indexChanges.first { $0.path == "mixed.txt" })
+        let generation = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue
+        let revision = index.snapshotRevision
+        waitForIndexUpdate { XCTAssertTrue(index.stageFiles([file], unstageFiles: [file])) }
+        XCTAssertEqual(try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue, generation + 1)
+        XCTAssertGreaterThan(index.snapshotRevision, revision)
+        XCTAssertFalse(file.hasStagedChanges)
+        XCTAssertTrue(file.hasUnstagedChanges)
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+        XCTAssertEqual(pane.fileListController.stagedFileCount, 0)
+    }
+
     func testHookFailureLeavesHEADUnchangedAndAllowsAFreshSubmissionAfterCancellation() throws {
         try fixture.write("hook fixture\n", to: "hook-fixture.txt")
         try fixture.git(["add", "hook-fixture.txt"])
@@ -3197,7 +3303,12 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         pane.perform(NSSelectorFromString("commit:"), with: nil)
         wait(for: [rejected], timeout: 10)
         XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), before)
+        XCTAssertFalse(pane.commitMessageView.isEditable)
+        XCTAssertTrue(repository.index.awaitingHookDecision)
+        try XCTUnwrap((windowController as? HistoryWindowController)?.hookFailureCancelHandlers.last)()
+        XCTAssertFalse(repository.index.submissionActive)
         XCTAssertTrue(pane.commitMessageView.isEditable)
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
         try FileManager.default.removeItem(at: hook)
         pane.commitMessageView.string = "Fresh accepted request"
         let accepted = expectation(forNotification: Notification.Name(PBGitIndexFinishedCommit), object: repository.index)

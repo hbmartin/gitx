@@ -378,14 +378,10 @@
 	self.selectedCommitDetailsIndex = [stateCoordinator detailModeForCurrentMode:self.detailMode selectionCount:self.selectedCommits.count];
 
 	switch (self.detailMode) {
-		case PBHistoryDetailModeTree: {
+		case PBHistoryDetailModeTree:
 			[self setStagingPaneVisible:NO];
-			[stateCoordinator performAutomaticSelection:^{
-				self.gitTree = [self->treePresentation treeForCommit:firstSelectedCommit];
-				[self restoreFileBrowserSelection];
-			}];
+			[self rebuildFileBrowserTreeForCommit:firstSelectedCommit];
 			break;
-		}
 		case PBHistoryDetailModeFlow:
 			// The Flow adapter observes the selection itself. The hidden Details
 			// and Tree panes keep their last content rather than rendering a diff
@@ -445,6 +441,11 @@
 	if (self.detailMode != PBHistoryDetailModeTree) return;
 	PBGitCommit *commit = self.selectedCommits.firstObject;
 	if (!commit) return;
+	[self rebuildFileBrowserTreeForCommit:commit];
+}
+
+- (void)rebuildFileBrowserTreeForCommit:(PBGitCommit *)commit
+{
 	[stateCoordinator performAutomaticSelection:^{
 		self.gitTree = [self->treePresentation treeForCommit:commit];
 		[self restoreFileBrowserSelection];

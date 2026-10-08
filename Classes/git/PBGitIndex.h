@@ -52,6 +52,9 @@ extern NSString *PBGitIndexOperationFailed;
 // Git mutation methods return synchronously. Rows remain at their last coherent
 // snapshot until the corresponding refresh completes; UI mutation controls wait.
 @property (readonly) BOOL mutationReconciliationPending;
+@property (readonly) NSUInteger snapshotRevision;
+@property (readonly) BOOL submissionActive;
+@property (readonly) BOOL awaitingHookDecision;
 
 // A list of PBChangedFile's with differences between the work tree and the index
 // This method is KVO-aware, so changes when any of the index-modifying methods are called
@@ -71,10 +74,13 @@ extern NSString *PBGitIndexOperationFailed;
 - (nullable NSString *)createPrepareCommitMessage;
 
 - (void)commitWithMessage:(NSString *)commitMessage andVerify:(BOOL)doVerify;
+- (void)retryCommitWithoutVerification;
+- (void)cancelCommitSubmission;
 
 // Inter-file changes:
 - (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles;
 - (BOOL)unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles;
+- (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles;
 - (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)discardFiles;
 
 // Intra-file changes
