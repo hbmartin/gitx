@@ -299,6 +299,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @interface PBCommitTableInteractionCoordinator : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository index:(PBGitIndex *)index unstagedFilesController:(NSArrayController *)unstagedFilesController stagedFilesController:(NSArrayController *)stagedFilesController unstagedTable:(NSTableView *)unstagedTable stagedTable:(NSTableView *)stagedTable;
 - (void)stageSelectedFiles;
 - (void)unstageSelectedFiles;
 - (void)toggleStagingForTableView:(NSTableView *)tableView;
