@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		63A735203E9919B6FC5B1938 /* IndexCommitPublicationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */; };
 		C0DEA1110000000000000001 /* PBTaskDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */; };
 		C0DEF2000000000000000002 /* CommitCopyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF2000000000000000001 /* CommitCopyPolicy.swift */; };
 		C0DEF2000000000000000003 /* CommitCopyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF2000000000000000001 /* CommitCopyPolicy.swift */; };
@@ -672,6 +673,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexCommitPublicationTests.swift; sourceTree = "<group>"; };
 		C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskDiagnostics.swift; sourceTree = "<group>"; };
 		C0DEF2000000000000000001 /* CommitCopyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitCopyPolicy.swift; sourceTree = "<group>"; };
 		C0DEF1000000000000000001 /* RepositoryRejectedPushRecoveryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRejectedPushRecoveryPolicy.swift; sourceTree = "<group>"; };
@@ -1799,6 +1801,7 @@
 				C0DEE0000000000000000015 /* IndexMutationServiceTests.swift */,
 				C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */,
 				C0DEE0000000000000000017 /* IndexCommitServiceTests.swift */,
+				20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */,
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
 				C0DEAF000000000000000012 /* NativeContentModelsTests.swift */,
 				C0DEAE000000000000000012 /* NativeContentRendererTests.swift */,
@@ -2539,6 +2542,7 @@
 				C0DEE0000000000000000005 /* IndexMutationServiceTests.swift in Sources */,
 				C0DE57A600000000000000A2 /* StagingListViewModelTests.swift in Sources */,
 				C0DEE0000000000000000007 /* IndexCommitServiceTests.swift in Sources */,
+				63A735203E9919B6FC5B1938 /* IndexCommitPublicationTests.swift in Sources */,
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
 				C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */,
 				C0DEAE000000000000000002 /* NativeContentRendererTests.swift in Sources */,
