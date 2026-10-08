@@ -80,7 +80,7 @@
     "Classes/Controllers/RepositoryToolbarController.swift": 0.995,
     "Classes/Controllers/StagingDiffLoadCoordinator.swift": 0.9961,
     "Classes/Controllers/StagingDiffPaneController.swift": 0.9367,
-    "Classes/Controllers/StagingFileListController.swift": 0.8577,
+    "Classes/Controllers/StagingFileListController.swift": 0.9408,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
     "Classes/Controllers/StagingViewController.swift": 0.9335,
     "Classes/Controllers/WorkspaceActionCoordinator.swift": 0.9805,
@@ -125,7 +125,7 @@
     "Classes/Views/ForgeReadSurfaceRendering.swift": 1.0,
     "Classes/Views/ForgeReadSurfaceViewController.swift": 0.958,
     "Classes/Views/ForgeRepositoryCloneSheetController.swift": 0.5761,
-    "Classes/Views/GLFileView.m": 0.9511,
+    "Classes/Views/GLFileView.m": 0.9668,
     "Classes/Views/GitXTextView.m": 0.44,
     "Classes/Views/Milestone2DiagnosticPresenters.swift": 1.0,
     "Classes/Views/Milestone3DiagnosticPresenters.swift": 0.9852,
@@ -163,7 +163,7 @@
     "Classes/git/IndexCommitService.swift": 0.9672,
     "Classes/git/IndexMutationService.swift": 0.9769,
     "Classes/git/IndexRefreshCoordinator.swift": 1.0,
-    "Classes/git/IndexSnapshot.swift": 0.985,
+    "Classes/git/IndexSnapshot.swift": 0.9856,
     "Classes/git/PBGitBinary.m": 0.99,
     "Classes/git/PBGitCommit.m": 0.9881,
     "Classes/git/PBGitDefaults.m": 0.8493,
@@ -221,7 +221,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.9231,
+  "minimumLineCoverage": 0.924,
   "target": "Half Dark.app",
   "version": 1
 }
