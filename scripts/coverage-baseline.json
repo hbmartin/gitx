@@ -24,7 +24,7 @@
     "Classes/Controllers/GitHubPullRequestComposition.swift": 0.844,
     "Classes/Controllers/GitHubReadComposition.swift": 0.9973,
     "Classes/Controllers/GitXCoreAdapters.swift": 1.0,
-    "Classes/Controllers/HistoryFlowRevisionProvider.swift": 0.98,
+    "Classes/Controllers/HistoryFlowRevisionProvider.swift": 0.9818,
     "Classes/Controllers/HistoryForgeOverlayPresentation.swift": 0.9448,
     "Classes/Controllers/HistoryMenuBuilder.swift": 0.9666,
     "Classes/Controllers/HistoryStateCoordinator.swift": 1.0,
@@ -109,7 +109,7 @@
     "Classes/Util/PBError.m": 1.0,
     "Classes/Util/PBProcessEnvironment.swift": 1.0,
     "Classes/Util/PBTask.m": 1.0,
-    "Classes/Util/PBTaskDiagnosticCapture.swift": 0.9763,
+    "Classes/Util/PBTaskDiagnosticCapture.swift": 0.9775,
     "Classes/Util/PBTaskDiagnosticRedactor.swift": 1.0,
     "Classes/Util/PBTaskDiagnostics.swift": 1.0,
     "Classes/Util/PBTerminalUtil.m": 0.0625,
@@ -152,7 +152,7 @@
     "Classes/Views/PBSidebarTableViewCell.m": 1.0,
     "Classes/Views/PBSourceViewBadge.swift": 1.0,
     "Classes/Views/PBSourceViewItem.m": 0.899,
-    "Classes/Views/PushOutputExportCoordinator.swift": 0.9452,
+    "Classes/Views/PushOutputExportCoordinator.swift": 0.9534,
     "Classes/Views/QuickLookFilePromiseExporter.swift": 0.9365,
     "Classes/Views/RepositoryPullRequestReviewOverlayController.swift": 0.9282,
     "Classes/Views/StagingFileCellView.swift": 1.0,
@@ -169,7 +169,7 @@
     "Classes/git/PBGitDefaults.m": 0.8493,
     "Classes/git/PBGitGrapher.mm": 0.9508,
     "Classes/git/PBGitHistoryGrapher.m": 0.8679,
-    "Classes/git/PBGitHistoryList.m": 0.9839,
+    "Classes/git/PBGitHistoryList.m": 0.984,
     "Classes/git/PBGitIndex.m": 0.983,
     "Classes/git/PBGitLane.mm": 1.0,
     "Classes/git/PBGitRef.m": 0.9021,
@@ -199,7 +199,7 @@
     "Classes/git/RepositoryMutationService.swift": 0.9797,
     "Classes/git/RepositoryReferenceStore.swift": 0.9523,
     "Classes/git/RepositoryRefreshCoordinator.swift": 0.9948,
-    "Classes/git/RepositoryRemoteService.swift": 0.9652,
+    "Classes/git/RepositoryRemoteService.swift": 0.9655,
     "Classes/git/RepositoryStashService.swift": 1.0,
     "Classes/main.m": 1.0
   },
@@ -221,7 +221,7 @@
       "minimumLineCoverage": 0.8625
     }
   },
-  "minimumLineCoverage": 0.924,
+  "minimumLineCoverage": 0.9243,
   "target": "Half Dark.app",
   "version": 1
 }
