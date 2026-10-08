@@ -3,6 +3,8 @@ name: gitx-runtime-verification
 description: Build, launch, observe, and diagnose GitX with the repository's deterministic runtime harness. Use when manually verifying a GitX UI or lifecycle change, reproducing a Milestone 2 or Milestone 3 journey, collecting diagnostic screenshots or accessibility evidence, inspecting live logs, or investigating a launch/runtime failure after XCTest.
 ---
 
+Use the repo-local [development-workflow skill](../development-workflow/SKILL.md) for desktop leases, blocker diagnosis and provenance. The canonical staged bundle is `build/GitX.app` (display name Half Dark). Retain current diagnostic attachments and stop only processes owned by the runtime session.
+
 # GitX Runtime Verification
 
 Use the checked-in launch and observation scripts so a manual run has the same isolated preferences, deterministic repository fixtures, and noninteractive Git environment as the UI tests.

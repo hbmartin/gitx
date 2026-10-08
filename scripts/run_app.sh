@@ -29,9 +29,13 @@
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+if [[ "${GITX_GUARDED_ENTRY:-}" != "$root/scripts/run_app.sh" ]]; then
+	exec python3 "$root/scripts/workflow_session.py" guard "$root/scripts/run_app.sh" "$@"
+fi
+unset GITX_GUARDED_ENTRY
 cd "$root" || exit 2
 
-app_bundle="$root/build/Half Dark.app"
+app_bundle="$root/build/GitX.app"
 session_dir=$root/build/Logs/run-app
 log_file=
 stdout_file=
@@ -279,14 +283,8 @@ stop_session() {
 	(( failed == 0 ))
 }
 
-# Keep the shared PID and session records owned by one invocation at a time.
-# The lock is held by this shell's open descriptor through its EXIT trap.
+# The outer process holds the desktop and staged-bundle leases through exit.
 /bin/mkdir -p "$session_dir" || exit 2
-exec 9>"$session_dir/session.lock" || exit 2
-if ! /usr/bin/lockf -t 0 9; then
-	echo "Another run_app.sh invocation owns the runtime session; retry after it finishes." >&2
-	exit 75
-fi
 
 stop_session
 stop_status=$?
@@ -317,6 +315,11 @@ if [[ ! -x "$app_binary" ]]; then
 	echo "No executable at $app_binary." >&2
 	exit 2
 fi
+/usr/bin/codesign --verify --deep --strict "$app_bundle" || {
+	echo "Signature blocker: rebuild the staged app before launch." >&2
+	exit 3
+}
+python3 "$root/scripts/workflow_session.py" desktop || exit $?
 
 bundle_identifier=$(
 	/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_bundle/Contents/Info.plist" 2>/dev/null

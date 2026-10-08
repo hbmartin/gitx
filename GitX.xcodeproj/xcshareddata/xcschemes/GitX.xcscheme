@@ -65,6 +65,8 @@
          </BuildableReference>
       </MacroExpansion>
       <TestPlans>
+         <TestPlanReference reference = "container:GitXTests/GitXHostPreflight.xctestplan">
+         </TestPlanReference>
          <TestPlanReference
             reference = "container:GitXTests/GitX.xctestplan"
             default = "YES">

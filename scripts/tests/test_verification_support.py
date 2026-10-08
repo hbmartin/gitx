@@ -315,6 +315,7 @@ class DoctorTests(unittest.TestCase):
             set(plans),
             {
                 "correctness",
+                "host-preflight",
                 "ui-preflight",
                 "ui",
                 "address-undefined",

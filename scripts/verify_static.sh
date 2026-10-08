@@ -3,6 +3,10 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+if [[ "${GITX_GUARDED_ENTRY:-}" != "$root/scripts/verify_static.sh" ]]; then
+	exec python3 "$root/scripts/workflow_session.py" guard "$root/scripts/verify_static.sh" "$@"
+fi
+unset GITX_GUARDED_ENTRY
 cd "$root"
 
 base_ref=${1:-}

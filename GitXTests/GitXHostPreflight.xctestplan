@@ -1,0 +1,33 @@
+{
+  "configurations": [
+    {
+      "id": "1657108D-6EA8-48CB-A588-0F65D0310B1D",
+      "name": "Host startup",
+      "options": {
+        "mainThreadCheckerEnabled": true
+      }
+    }
+  ],
+  "defaultOptions": {
+    "codeCoverage": false,
+    "targetForVariableExpansion": {
+      "containerPath": "container:GitX.xcodeproj",
+      "identifier": "8D1107260486CEB800E47090",
+      "name": "GitX"
+    },
+    "testTimeoutsEnabled": true
+  },
+  "testTargets": [
+    {
+      "target": {
+        "containerPath": "container:GitX.xcodeproj",
+        "identifier": "C0DE2000000000000000000B",
+        "name": "GitXTests"
+      },
+      "selectedTests": [
+        "GitXHostStartTests/testHostStarts"
+      ]
+    }
+  ],
+  "version": 1
+}
