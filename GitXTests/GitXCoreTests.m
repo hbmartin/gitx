@@ -2213,6 +2213,12 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[ commit ]];
 	NSOperationQueue *queue = [history valueForKey:@"graphQueue"];
 	queue.suspended = YES;
+	PBGitHistoryGrapher *snapshotGrapher = [[PBGitHistoryGrapher alloc]
+		initWithBaseCommits:[NSSet set]
+			viewAllBranches:YES
+					  queue:queue
+				   delegate:history];
+	[history setValue:snapshotGrapher forKey:@"grapher"];
 	NSInvocationOperation *operation = [history operationForCommits:history.projectRevList.commits];
 	[queue addOperation:operation];
 	[history.projectRevList.commits removeAllObjects];

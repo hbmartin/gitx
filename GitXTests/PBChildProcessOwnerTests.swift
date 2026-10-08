@@ -472,6 +472,25 @@ final class PBChildProcessOwnerTests: XCTestCase {
         XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
     }
 
+    func testExitNotificationCanReleaseTheLeaderLeaseReentrantly() throws {
+        let system = FakeProcessSystem()
+        system.setLeaderExited(true)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "reentrant lease release reaps exactly once")
+        completed.assertForOverFulfill = true
+        let recorder = CompletionRecorder(expectation: completed)
+        try owner.launch(configuration: configuration(), retainLeaderUntilReleased: true,
+                         leaderExitHandler: { owner.releaseLeaderRetention() })
+        {
+            recorder.record($0, error: $1)
+        }
+        wait(for: [completed], timeout: 1)
+        system.triggerExitMonitor()
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertTrue(recorder.errors.isEmpty)
+        XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
+    }
+
     func testReleasingRetainedExitedLeaderStillCompletesDescendantEscalation() throws {
         let system = FakeProcessSystem()
         system.setLeaderExited(true)
