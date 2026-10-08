@@ -16,6 +16,8 @@ final class CommitTableInteractionCoordinator: NSObject {
     private weak var stagedTable: NSTableView?
     private weak var pendingSelectionController: NSArrayController?
     private var pendingSelectionIndex: Int?
+    private var selectionVersion: UInt = 0
+    private var selectionObservations: [NSKeyValueObservation] = []
 
     @objc(initWithRepository:index:unstagedFilesController:stagedFilesController:unstagedTable:stagedTable:)
     init(
@@ -37,6 +39,20 @@ final class CommitTableInteractionCoordinator: NSObject {
         unstagedTable.registerForDraggedTypes([Self.fileChangesPasteboardType])
         stagedTable.registerForDraggedTypes([Self.fileChangesPasteboardType])
         NotificationCenter.default.addObserver(self, selector: #selector(indexDidUpdate(_:)), name: NSNotification.Name(PBGitIndexIndexUpdated), object: index)
+        selectionObservations = [unstagedFilesController, stagedFilesController].map { controller in
+            controller.observe(\.selectionIndexes, options: []) { [weak self] _, _ in
+                // swift6-safety-justification: These Cocoa selection bindings are operated exclusively on the main thread.
+                MainActor.assumeIsolated {
+                    guard let self, !self.index.publishingSnapshot else { return }
+                    self.selectionVersion &+= 1
+                    if self.pendingSelectionIndex != nil {
+                        NSLog("[GitX] Cancelled delayed selection advancement after a new selection")
+                        self.pendingSelectionController = nil
+                        self.pendingSelectionIndex = nil
+                    }
+                }
+            }
+        }
     }
 
     @objc(stageSelectedFiles)
@@ -189,6 +205,9 @@ final class CommitTableInteractionCoordinator: NSObject {
     }
 
     @objc func close() {
+        selectionObservations.forEach { $0.invalidate() }
+        selectionObservations = []
+        selectionVersion &+= 1
         NotificationCenter.default.removeObserver(self)
         pendingSelectionController = nil
         pendingSelectionIndex = nil
@@ -213,8 +232,9 @@ final class CommitTableInteractionCoordinator: NSObject {
     }
 
     private func advanceSelection(in controller: NSArrayController, currentSelectionIndex: Int) {
-        DispatchQueue.main.async { [weak controller] in
-            guard let controller else { return }
+        let version = selectionVersion
+        DispatchQueue.main.async { [weak self, weak controller] in
+            guard let self, self.selectionVersion == version, let controller else { return }
             let selectionIndex = CommitSelectionPolicy.selectionIndex(
                 currentIndex: currentSelectionIndex,
                 arrangedCount: (controller.arrangedObjects as? [Any])?.count ?? 0

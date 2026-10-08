@@ -39,8 +39,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBRepositoryOpenCoordinator : NSObject
 @property (class, nonatomic, readonly) PBRepositoryOpenCoordinator *shared;
 - (void)openURLs:(NSArray<NSURL *> *)urls
-    sourceWindow:(nullable NSWindow *)sourceWindow
-      completion:(void (^)(NSArray<NSDocument *> *, NSArray<NSError *> *))completion;
+	sourceWindow:(nullable NSWindow *)sourceWindow
+	  completion:(void (^)(NSArray<NSDocument *> *, NSArray<NSError *> *))completion;
 @end
 
 @interface PBGitBinary (HistoryFlowTestSupport)
@@ -988,6 +988,10 @@ __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 - (nullable NSArray<NSString *> *)literalArgumentsForRawPath:(NSData *)rawPath commandArguments:(NSArray<NSString *> *)commandArguments error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(literalArguments(forRawPath:commandArguments:error:)) __attribute__((swift_error(none)));
 - (void)applyRefreshResult:(PBIndexRefreshResult *)result NS_SWIFT_NAME(applyRefreshResult(_:));
 - (void)postIndexRefreshFinished NS_SWIFT_NAME(postIndexRefreshFinished());
+@end
+
+@interface PBIndexPreviewImageSource : NSObject
++ (NSDictionary<NSString *, id> *)sourceFromWorkingSource:(NSDictionary<NSString *, id> *)source staged:(BOOL)staged NS_SWIFT_NAME(source(workingSource:staged:));
 @end
 
 @interface PBIndexFileViewSnapshot : NSObject

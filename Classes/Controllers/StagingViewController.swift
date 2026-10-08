@@ -920,6 +920,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     @objc private func indexChanged(_ notification: Notification) {
         fileListController.rearrange()
+        renderSelectedDiffs()
         refreshOperationControls()
     }
 

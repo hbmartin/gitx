@@ -4,7 +4,7 @@ import OSLog // swiftlint:disable:this unused_import
 
 private nonisolated enum RepositoryPullRequestDiffCommandOptions {
     static var arguments: [String] {
-        DiffCommandOptions.arguments
+        DiffCommandOptions.arguments.filter { $0 != "--ignore-all-space" }
     }
 }
 

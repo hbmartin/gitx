@@ -154,7 +154,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 			workingImageSource[@"rawPath"] = rawPath;
 			workingImageSource[@"safePath"] = [PBIndexFilePresentation safePathForRawPath:rawPath];
 			if (change.hasStagedChanges) {
-				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:PBApplicationSettings.diffContextLines] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : workingImageSource}];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:PBApplicationSettings.diffContextLines] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : [PBIndexPreviewImageSource sourceFromWorkingSource:workingImageSource staged:YES]}];
 			}
 			if (change.hasUnstagedChanges) {
 				BOOL untracked = change.worktreeStatus == NEW;
@@ -271,6 +271,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		NSString *object = [revision isEqualToString:@":"] ? [@":0:" stringByAppendingString:path] : [NSString stringWithFormat:@"%@:%@", revision, path];
 		NSArray<NSString *> *arguments = @[ [@"--git-dir=" stringByAppendingString:gitDirectory], @"show", object ];
 		PBTask *task = [PBTask taskWithLaunchPath:launchPath arguments:arguments inDirectory:imageSource[PBNativeImageSourceTaskDirectoryKey]];
+		task.separatesStandardError = YES;
 		if ([task launchTask:nil] && task.standardOutputData.length) return task.standardOutputData;
 	}
 	return nil;

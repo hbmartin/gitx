@@ -520,6 +520,18 @@ final nonisolated class IndexFileReconciliation: NSObject {
 
 /// Captured on main before a history view queues work. Every field is an
 /// immutable copy, so refreshes cannot change the selected file underneath it.
+@objc(PBIndexPreviewImageSource)
+final nonisolated class IndexPreviewImageSource: NSObject {
+    @objc(sourceFromWorkingSource:staged:)
+    static func source(workingSource: [String: Any], staged: Bool) -> [String: Any] {
+        guard staged else { return workingSource }
+        var source = workingSource
+        source[PBNativeImageSourceWorkingTreeKey] = false
+        source[PBNativeImageSourceRevisionsKey] = [":"]
+        return source
+    }
+}
+
 @objc(PBIndexFileViewSnapshot)
 final nonisolated class IndexFileViewSnapshot: NSObject {
     @objc let rawPath: Data

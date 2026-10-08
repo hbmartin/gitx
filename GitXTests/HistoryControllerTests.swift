@@ -15,6 +15,204 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testCachedHunkLinksCannotActAfterAnotherIndexPublication() throws {
+        try fixture.write("obsolete patch fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Stage hunk") })
+        let range = (native.textView.string as NSString).range(of: "Stage hunk")
+        let link = try XCTUnwrap(native.textView.textStorage?.attribute(.link, at: range.location, effectiveRange: nil))
+        let cachedPayloads = try XCTUnwrap(native.value(forKey: "linkPayloads") as? NSDictionary)
+        waitForIndexUpdate { repository.index.refresh() }
+        // Replay the cached render's immutable payload, even if a newer render replaced the text.
+        native.setValue(cachedPayloads, forKey: "linkPayloads")
+        XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+        XCTAssertFalse(repository.index.mutationReconciliationPending)
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+    }
+
+    func testAcceptedPublicationRefreshesAnUnchangedSelectedDiff() throws {
+        try fixture.write("first selected version\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("+first selected version") })
+        try fixture.write("second selected version\n", to: "nested/tracked.txt")
+        waitForIndexUpdate { repository.index.refresh() }
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("+second selected version") })
+        XCTAssertFalse(native.textView.string.contains("+first selected version"))
+    }
+
+    func testStagedImagePreviewUsesIndexBytesWhileWorktreePreviewUsesWorktreeBytes() throws {
+        let path = "preview-sides.png"
+        let indexed = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAS0lEQVR4nO3OsQ0AIAwDwYxDzQYMxpLU7BI2SApkufnC5csXY5+sdtcs99sHAAAA7AD1QdcDAADAD1AfdD0AAAD8APVB1wMAAMAOeNzXiIjVk5LGAAAAAElFTkSuQmCC"))
+        let worktree = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
+                                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                      isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let worktreeBytes = try XCTUnwrap(worktree.representation(using: .png, properties: [:]))
+        let url = URL(fileURLWithPath: fixture.path).appendingPathComponent(path)
+        try indexed.write(to: url)
+        try fixture.git(["add", "--", path])
+        try worktreeBytes.write(to: url)
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
+        for (staged, expectedBytes) in [(true, indexed), (false, worktreeBytes)] {
+            pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: staged)])
+            let native = pane.diffPaneController.contentView
+            XCTAssertTrue(waitForCondition { native.textView.string.contains((staged ? "Staged" : "Unstaged") + " — " + path) })
+            let bytes = native.delegate?.nativeContentView?(native, imageDataForPath: path, section: 0, imageSource: [:])
+            XCTAssertEqual(bytes, expectedBytes)
+        }
+    }
+
+    func testDiscardConfirmationRevalidatesItsSnapshotBeforeApplyingThePatch() throws {
+        let original = try fixture.git(["show", "HEAD:nested/tracked.txt"])
+        try fixture.write("initial discard fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        for invalidate in [false, true] {
+            let changed = "confirmation fixture \(invalidate)\n"
+            try fixture.write(changed, to: "nested/tracked.txt")
+            waitForIndexUpdate { repository.index.refresh() }
+            try selectUnstagedFile("nested/tracked.txt", in: pane)
+            waitForFreshDiffAuthority(in: pane, containing: "+" + changed.trimmingCharacters(in: .newlines))
+            try activateNativeDiffAction("Discard hunk", in: pane)
+            let window = try XCTUnwrap(windowController.window)
+            let sheet = try XCTUnwrap(window.attachedSheet)
+            if invalidate {
+                waitForIndexUpdate { repository.index.refresh() }
+            }
+            window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+            if invalidate {
+                pumpRunLoop()
+                XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8), changed)
+                XCTAssertFalse(repository.index.mutationReconciliationPending)
+            } else {
+                XCTAssertTrue(waitForCondition {
+                    (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8)) == original && !self.repository.index.mutationReconciliationPending
+                })
+            }
+        }
+    }
+
+    private final class PausedIndexRefresh: NSObject {
+        @objc(refreshBareRepository:parentTree:mutationGeneration:)
+        func refresh(bareRepository _: Bool, parentTree _: String, mutationGeneration _: UInt) {}
+
+        @objc(refreshStatCacheForBareRepository:completion:)
+        func refreshStatCache(bareRepository _: Bool, completion: @escaping () -> Void) {
+            completion()
+        }
+    }
+
+    func testDelayedSelectionAdvanceDoesNotReplaceANewerUserSelection() throws {
+        for name in ["selection-a.txt", "selection-b.txt", "selection-c.txt"] {
+            try fixture.write("selection fixture\n", to: name)
+        }
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.splitTables)
+        let index = repository.index
+        let controller = list.unstagedFilesController
+        let files = try XCTUnwrap(controller.arrangedObjects as? [PBChangedFile])
+        let first = try XCTUnwrap(files.first { $0.path == "selection-a.txt" })
+        let chosen = try XCTUnwrap(files.first { $0.path == "selection-c.txt" })
+        controller.setSelectedObjects([first])
+        let coordinator = try XCTUnwrap(index.value(forKey: "refreshCoordinator") as? NSObject)
+        index.setValue(PausedIndexRefresh(), forKey: "refreshCoordinator")
+        defer { index.setValue(coordinator, forKey: "refreshCoordinator"); index.refresh() }
+        list.interactionCoordinator.stageSelectedFiles()
+        XCTAssertTrue(index.mutationReconciliationPending)
+        controller.setSelectedObjects([chosen])
+        let generation = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue
+        let updated = expectation(forNotification: Notification.Name(PBGitIndexIndexUpdated), object: index)
+        index.applyRefreshResult(PBIndexRefreshResult(staged: nil, unstaged: nil, untracked: nil, mutationGeneration: generation))
+        index.postIndexRefreshFinished()
+        wait(for: [updated], timeout: 3)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending })
+        pumpRunLoop()
+        XCTAssertEqual((controller.selectedObjects as? [PBChangedFile])?.map(\.rawPath), [chosen.rawPath])
+    }
+
+    func testPullRequestReviewPatchRetainsWhitespaceOnlyAnchors() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "PBShowWhitespaceDifferences")
+        defaults.set(false, forKey: "PBShowWhitespaceDifferences")
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: "PBShowWhitespaceDifferences")
+            } else {
+                defaults.removeObject(forKey: "PBShowWhitespaceDifferences")
+            }
+        }
+        let baseSHA = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let existing = try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8)
+        try fixture.write(" " + existing, to: "nested/tracked.txt")
+        try fixture.git(["add", "nested/tracked.txt"])
+        try fixture.git(["commit", "-m", "Whitespace review fixture"])
+        let headSHA = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let identity = try ForgeRepositoryIdentity(forge: forge, owner: "gitx-tests", name: "gitx-tests")
+        let base = try ForgeBranchReference(repository: identity, name: ForgeRefName("base"), commit: ForgeCommitID(baseSHA))
+        let head = try ForgeBranchReference(repository: identity, name: ForgeRefName("head"), commit: ForgeCommitID(headSHA))
+        let diff = try await RepositoryLocalPullRequestChangesProvider(repository: repository).changes(repository: identity, base: base, head: head)
+        XCTAssertTrue(diff.patch.contains("@@"))
+        XCTAssertTrue(diff.patch.contains("+ " + existing.trimmingCharacters(in: .newlines)))
+    }
+
+    func testHunkLinksRejectIncorrectAuthorityAndSupersededLoads() throws {
+        try fixture.write("authority fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Stage hunk") })
+        let range = (native.textView.string as NSString).range(of: "Stage hunk")
+        let link = try XCTUnwrap(native.textView.textStorage?.attribute(.link, at: range.location, effectiveRange: nil) as? URL)
+        let payloads = try XCTUnwrap(native.value(forKey: "linkPayloads") as? [String: [String: Any]])
+        let payload = try XCTUnwrap(payloads[link.absoluteString])
+        let context = try XCTUnwrap(payload["actionContext"] as? [String: Any])
+        native.delegate?.nativeContentView?(native, performDiffAction: "stage", patch: "missing context")
+        native.delegate?.nativeContentView?(native, performDiffAction: "unknown", patch: "rejected", actionContext: context)
+        for (key, invalid) in [("rawPath", Data("different.txt".utf8) as Any),
+                               ("loadIdentity", UUID().uuidString),
+                               ("snapshotRevision", repository.index.snapshotRevision &+ 1),
+                               ("staged", true)]
+        {
+            var alteredContext = context
+            alteredContext[key] = invalid
+            var alteredPayload = payload
+            alteredPayload["actionContext"] = alteredContext
+            var alteredPayloads = payloads
+            alteredPayloads[link.absoluteString] = alteredPayload
+            native.setValue(alteredPayloads, forKey: "linkPayloads")
+            XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+            XCTAssertFalse(repository.index.mutationReconciliationPending)
+        }
+        pane.diffPaneController.rerenderCurrentRequests()
+        native.setValue(payloads, forKey: "linkPayloads")
+        XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+        XCTAssertFalse(repository.index.mutationReconciliationPending)
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+    }
+
+    func testNormalSelectionAdvanceKeepsTheNextPositionAfterStaging() throws {
+        for name in ["selection-a.txt", "selection-b.txt", "selection-c.txt"] {
+            try fixture.write("selection fixture\n", to: name)
+        }
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.splitTables)
+        let controller = list.unstagedFilesController
+        let files = try XCTUnwrap(controller.arrangedObjects as? [PBChangedFile])
+        let middle = try XCTUnwrap(files.first { $0.path == "selection-b.txt" })
+        controller.setSelectedObjects([middle])
+        waitForIndexUpdate { list.interactionCoordinator.stageSelectedFiles() }
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        pumpRunLoop()
+        XCTAssertEqual((controller.selectedObjects as? [PBChangedFile])?.map(\.path), ["selection-c.txt"])
+        XCTAssertFalse(repository.index.publishingSnapshot)
+    }
+
     private var indexPublicationEvents: [String] = []
 
     @objc private func recordIndexPublication(_ notification: Notification) {
@@ -1690,6 +1888,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(contentView.textView(contentView.textView, clickedOnLink: link, at: UInt(range.location)))
     }
 
+    private func waitForFreshDiffAuthority(in pane: PBStagingViewController, containing text: String) {
+        let native = pane.diffPaneController.contentView
+        let previous = (native.value(forKey: "currentDiffSections") as? [[String: Any]])?.first?[PBNativeSectionActionContextKey] as? NSDictionary
+        pane.diffPaneController.rerenderCurrentRequests()
+        XCTAssertTrue(waitForCondition {
+            guard native.textView.string.contains(text),
+                  let sections = native.value(forKey: "currentDiffSections") as? [[String: Any]],
+                  let current = sections.first?[PBNativeSectionActionContextKey] as? NSDictionary,
+                  current != previous,
+                  let payloads = native.value(forKey: "linkPayloads") as? [String: [String: Any]] else { return false }
+            return payloads.values.contains { ($0["actionContext"] as? NSDictionary) == current }
+        })
+    }
+
     func testHunkDiscardAndCancellationPreserveCurrentConfirmationBehavior() throws {
         let original = try fixture.git(["show", "HEAD:nested/tracked.txt"])
         try fixture.write("initial discard fixture\n", to: "nested/tracked.txt")
@@ -1699,8 +1911,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             try fixture.write(changed, to: "nested/tracked.txt")
             waitForIndexUpdate { repository.index.refresh() }
             try selectUnstagedFile("nested/tracked.txt", in: pane)
-            pane.diffPaneController.rerenderCurrentRequests()
-            XCTAssertTrue(waitForCondition { pane.diffPaneController.contentView.textView.string.contains("+" + changed.trimmingCharacters(in: .newlines)) })
+            waitForFreshDiffAuthority(in: pane, containing: "+" + changed.trimmingCharacters(in: .newlines))
             try activateNativeDiffAction("Discard hunk", in: pane)
             let window = try XCTUnwrap(windowController.window)
             let sheet = try XCTUnwrap(window.attachedSheet)

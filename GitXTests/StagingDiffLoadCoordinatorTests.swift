@@ -20,6 +20,41 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testDiffActionAuthorityRequiresExactIdentityAndValidSide() async {
+        let token = StagingDiffActionContext(snapshotRevision: 7, loadIdentity: UUID(), rawPath: Data([0xFF]), staged: false)
+        XCTAssertEqual(StagingDiffActionContext(dictionary: token.dictionary), token)
+        XCTAssertTrue(token.permits("stage"))
+        XCTAssertTrue(token.permits("discard"))
+        XCTAssertFalse(token.permits("unstage"))
+        XCTAssertFalse(token.permits("unknown"))
+        let staged = StagingDiffActionContext(snapshotRevision: 7, loadIdentity: token.loadIdentity, rawPath: token.rawPath, staged: true)
+        XCTAssertTrue(staged.permits("unstage"))
+        XCTAssertFalse(staged.permits("stage"))
+        XCTAssertFalse(staged.permits("discard"))
+        XCTAssertNotEqual(staged, token)
+        for (key, invalid) in [("snapshotRevision", "7" as Any), ("loadIdentity", "bad UUID"), ("rawPath", Data()), ("rawPath", Data([0])), ("staged", "true")] {
+            var dictionary = token.dictionary
+            dictionary[key] = invalid
+            XCTAssertNil(StagingDiffActionContext(dictionary: dictionary))
+        }
+        var extended = token.dictionary
+        extended["extra"] = true
+        XCTAssertNil(StagingDiffActionContext(dictionary: extended))
+        let delivered = expectation(description: "authority delivered")
+        var request = request(path: "context.txt")
+        request = StagingDiffLoadRequest(path: request.path, rawPath: request.rawPath, status: request.status,
+                                         hasStagedChanges: request.hasStagedChanges, staged: request.staged,
+                                         parentTree: request.parentTree, contextLines: request.contextLines,
+                                         workingDirectoryURL: request.workingDirectoryURL,
+                                         syntheticUntracked: request.syntheticUntracked, actionContext: token)
+        StagingDiffLoadCoordinator { _ in .success("patch") }.schedule([request]) { output in
+            XCTAssertEqual(output.sections.first?.actionContext, token)
+            XCTAssertFalse(output.cacheIdentifier.contains(token.loadIdentity.uuidString))
+            delivered.fulfill()
+        }
+        await fulfillment(of: [delivered], timeout: 3)
+    }
+
     func testSchedulingDoesNotWaitForDiffProduction() async {
         let producerStarted = expectation(description: "producer started")
         let schedulingReturned = expectation(description: "scheduling returned")

@@ -446,6 +446,7 @@ final nonisolated class NativeDiffRenderer: NSObject {
                     )
                 ))
             } else {
+                var sectionPayloads: [String: [String: Any]] = [:]
                 renderDiffText(
                     section.text,
                     context: section.context,
@@ -465,9 +466,15 @@ final nonisolated class NativeDiffRenderer: NSObject {
                     imageSource: section.imageSource,
                     imageDataProvider: imageDataProvider,
                     shouldCancel: shouldCancel,
-                    linkPayloads: &linkPayloads,
+                    linkPayloads: &sectionPayloads,
                     rendered: rendered
                 )
+                for (key, var payload) in sectionPayloads {
+                    if payload["type"] as? String == "diff", !section.actionContext.isEmpty {
+                        payload["actionContext"] = section.actionContext
+                    }
+                    linkPayloads[key] = payload
+                }
             }
         }
         return NativeRenderResult(attributedString: rendered, linkPayloads: linkPayloads)

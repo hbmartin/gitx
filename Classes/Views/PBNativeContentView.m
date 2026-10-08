@@ -10,6 +10,7 @@ NSString *const PBNativeSectionImageSourceKey = @"imageSource";
 NSString *const PBNativeSectionDiffLayoutKey = @"diffLayout";
 NSString *const PBNativeSectionSuppressionPatternsKey = @"suppressionPatterns";
 NSString *const PBNativeSectionStagingChromeKey = @"stagingChrome";
+NSString *const PBNativeSectionActionContextKey = @"actionContext";
 NSString *const PBNativeImageSourceRevisionsKey = @"revisions";
 NSString *const PBNativeImageSourceWorkingTreeKey = @"workingTree";
 NSString *const PBNativeImageSourceWorkingTreeURLKey = @"workingTreeURL";
@@ -563,7 +564,9 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 							  selectedIndexes:payload[@"selectedIndexes"]
 									  reverse:[payload[@"reverse"] boolValue]];
 		}
-		if (patch && [self.delegate respondsToSelector:@selector(nativeContentView:performDiffAction:patch:)])
+		if (patch && [self.delegate respondsToSelector:@selector(nativeContentView:performDiffAction:patch:actionContext:)])
+			[self.delegate nativeContentView:self performDiffAction:payload[@"action"] patch:patch actionContext:payload[@"actionContext"] ?: @{}];
+		else if (patch && [self.delegate respondsToSelector:@selector(nativeContentView:performDiffAction:patch:)])
 			[self.delegate nativeContentView:self performDiffAction:payload[@"action"] patch:patch];
 	} else if ([type isEqualToString:@"commit"]) {
 		if ([self.delegate respondsToSelector:@selector(nativeContentView:selectCommit:)])

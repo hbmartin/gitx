@@ -11,6 +11,7 @@ extern NSString *const PBNativeSectionImageSourceKey;
 extern NSString *const PBNativeSectionDiffLayoutKey;
 extern NSString *const PBNativeSectionSuppressionPatternsKey;
 extern NSString *const PBNativeSectionStagingChromeKey;
+extern NSString *const PBNativeSectionActionContextKey;
 extern NSString *const PBNativeImageSourceRevisionsKey;
 extern NSString *const PBNativeImageSourceWorkingTreeKey;
 extern NSString *const PBNativeImageSourceWorkingTreeURLKey;
@@ -23,6 +24,10 @@ extern NSString *const PBNativeImageSourceTaskDirectoryKey;
 @protocol PBNativeContentViewDelegate <NSObject>
 @optional
 - (void)nativeContentView:(PBNativeContentView *)view performDiffAction:(NSString *)action patch:(NSString *)patch;
+- (void)nativeContentView:(PBNativeContentView *)view
+		performDiffAction:(NSString *)action
+					patch:(NSString *)patch
+			actionContext:(NSDictionary<NSString *, id> *)actionContext;
 - (void)nativeContentView:(PBNativeContentView *)view selectCommit:(NSString *)sha;
 - (nullable NSData *)nativeContentView:(PBNativeContentView *)view
 					  imageDataForPath:(NSString *)path

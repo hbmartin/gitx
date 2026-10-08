@@ -46,6 +46,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (retain) PBIndexRefreshCoordinator *refreshCoordinator;
 @property (readwrite) BOOL mutationReconciliationPending;
 @property (readwrite) NSUInteger snapshotRevision;
+@property (readwrite) BOOL publishingSnapshot;
 @property (readwrite) BOOL submissionActive;
 @property (readwrite) BOOL awaitingHookDecision;
 @property (retain, nullable) PBIndexCommitRequest *retainedCommitRequest;
@@ -184,7 +185,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 {
 	NSUInteger publishedGeneration = self.reconciledMutationGeneration;
 	dispatch_async(dispatch_get_main_queue(), ^{
+		BOOL wasPublishing = self.publishingSnapshot;
+		self.publishingSnapshot = YES;
 		[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexIndexUpdated object:self];
+		self.publishingSnapshot = wasPublishing;
 		if (publishedGeneration == self.mutationGeneration && !self.postMutationStatCacheRefreshesPending) {
 			self.mutationReconciliationPending = NO;
 			NSLog(@"[GitX] Reconciled mutation %lu after publication %lu", (unsigned long)publishedGeneration, (unsigned long)self.snapshotRevision);
@@ -211,6 +215,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			  (unsigned long)result.mutationGeneration, (unsigned long)self.mutationGeneration);
 		return;
 	}
+	BOOL wasPublishing = self.publishingSnapshot;
+	self.publishingSnapshot = YES;
 	self.reconciledMutationGeneration = result.mutationGeneration;
 	self.snapshotRevision++;
 	NSLog(@"[GitX] Accepted index publication %lu for mutation %lu", (unsigned long)self.snapshotRevision, (unsigned long)result.mutationGeneration);
@@ -227,6 +233,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	[self.files setArray:reconciliation.files];
 	if (reconciliation.membershipChanged)
 		[self didChangeValueForKey:@"indexChanges"];
+	self.publishingSnapshot = wasPublishing;
 	NSLog(@"[GitX] Merged index refresh snapshots: %lu staged, %lu unstaged, %lu untracked",
 		  (unsigned long)stagedCount,
 		  (unsigned long)unstagedCount,

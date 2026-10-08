@@ -53,6 +53,8 @@ extern NSString *PBGitIndexOperationFailed;
 // snapshot until the corresponding refresh completes; UI mutation controls wait.
 @property (readonly) BOOL mutationReconciliationPending;
 @property (readonly) NSUInteger snapshotRevision;
+// Selection changes inside Cocoa publication are automatic, rather than user input.
+@property (readonly) BOOL publishingSnapshot;
 @property (readonly) BOOL submissionActive;
 @property (readonly) BOOL awaitingHookDecision;
 

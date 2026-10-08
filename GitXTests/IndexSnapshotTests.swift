@@ -37,6 +37,19 @@ final class IndexSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkingStateImageSourcesPreserveRawIdentityAndUseTheRequestedSide() {
+        let source: [String: Any] = [PBNativeImageSourceWorkingTreeKey: true,
+                                     PBNativeImageSourceRevisionsKey: ["HEAD"],
+                                     "rawPath": Data("image.png".utf8), "safePath": "image.png"]
+        let unstaged = PBIndexPreviewImageSource.source(workingSource: source, staged: false)
+        XCTAssertEqual(unstaged as NSDictionary, source as NSDictionary)
+        let staged = PBIndexPreviewImageSource.source(workingSource: source, staged: true)
+        XCTAssertEqual(staged[PBNativeImageSourceWorkingTreeKey] as? Bool, false)
+        XCTAssertEqual(staged[PBNativeImageSourceRevisionsKey] as? [String], [":"])
+        XCTAssertEqual(staged["rawPath"] as? Data, source["rawPath"] as? Data)
+        XCTAssertEqual(staged["safePath"] as? String, "image.png")
+    }
+
     func testWorkingTreeOmitsRawUnsupportedPathsAndPreservesSideBadgesAndBinaryContents() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXWorkingTreeBoundaries-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
