@@ -379,14 +379,17 @@ def coverage_diagnostics(policy, coverage, counts, root, result, receipt=None, b
                 try:
                     payload = json.loads(query.stdout)
                     records = payload.get(str(root / path), []) if isinstance(payload, dict) else payload
-                    uncovered = [str(item.get("lineNumber")) for item in records if item.get("isExecutable") and item.get("executionCount", 0) == 0]
+                    uncovered = [str(item.get("line", item.get("lineNumber"))) for item in records if item.get("isExecutable") and item.get("executionCount", 0) == 0 and ("line" in item or "lineNumber" in item)]
                     print("  Uncovered source lines: " + ", ".join(uncovered), file=sys.stderr)
                 except (ValueError, TypeError, AttributeError):
                     print("  Uncovered-line detail unavailable; inspect the retained xcresult.", file=sys.stderr)
 
 
 def compatible_comparison(current, previous):
+    current_plans = current.get("evidence", {}).get("inputsAfter", {}).get("plans")
+    previous_plans = previous.get("evidence", {}).get("inputsAfter", {}).get("plans")
     return bool(current.get("evidence", {}).get("status") == previous.get("evidence", {}).get("status") == "valid"
+        and current_plans is not None and current_plans == previous_plans
         and current.get("toolchain") == previous.get("toolchain")
         and current.get("invocation") == previous.get("invocation"))
 
@@ -472,9 +475,12 @@ def check(args) -> int:
             if proposed_failures:
                 print("Candidate policy failed validation; baseline unchanged.", file=sys.stderr)
                 return 1
-            write_json_atomic(args.policy, policy_payload(candidate))
-            policy = candidate
-            print(f"Raised coverage floors in {args.policy}")
+            if policy_payload(candidate) == policy_payload(policy):
+                print("No coverage floor increases; baseline unchanged.")
+            else:
+                write_json_atomic(args.policy, policy_payload(candidate))
+                policy = candidate
+                print(f"Raised coverage floors in {args.policy}")
         else:
             assert args.propose_improvements is not None
             if args.propose_improvements.resolve() == args.policy.resolve():

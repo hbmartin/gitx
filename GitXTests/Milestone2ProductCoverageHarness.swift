@@ -3,6 +3,7 @@
     import Darwin
     import ForgeKit
     import GitHubForgeAdapter
+    import Synchronization
 
     /// Objective-C-compatible entry points which execute the shipped app
     /// module's Milestone 2 seams. The app-hosted XCTest bundle deliberately
@@ -982,6 +983,27 @@
                 let missingChildReap = reportsPOSIXError(ECHILD) {
                     _ = try system.reapIfExited(processIdentifier: .max)
                 }
+                // Prove retry behavior through the app's adapter explicitly;
+                // real nonblocking waitid interruption is timing-dependent.
+                var interruptedObservationIsCorrect = true
+                for terminal in [false, true] {
+                    let attempts = Mutex(0)
+                    let interruptedSystem = PBPosixChildProcessSystem(observeExit: { identifier, information in
+                        attempts.withLock { count in
+                            count += 1
+                            if count == 1 {
+                                errno = EINTR
+                                return -1
+                            }
+                            information.pointee.si_pid = terminal ? identifier : 0
+                            information.pointee.si_code = CLD_EXITED
+                            return 0
+                        }
+                    })
+                    let observed = try interruptedSystem.exitStateWithoutReaping(processIdentifier: 42)
+                    interruptedObservationIsCorrect = interruptedObservationIsCorrect &&
+                        observed == (terminal ? .terminal : .running) && attempts.withLock { $0 } == 2
+                }
                 let missingGroupSignal = reportsPOSIXError(ESRCH) {
                     try system.send(signal: SIGTERM, toProcessGroup: .max)
                 }
@@ -1013,6 +1035,7 @@
                     missingChildObservation, missingChildReap, missingGroupSignal, invalidDescriptor,
                     schedule.terminationDeadline == 10_000_000_100 && schedule.forceKillDeadline == 30_000_000_100,
                     requested && failedSignalSystem.completedAfterEscalation,
+                    interruptedObservationIsCorrect,
                 ])
             } catch {
                 NSLog("Verification boundary proof failed: %@", error.localizedDescription)

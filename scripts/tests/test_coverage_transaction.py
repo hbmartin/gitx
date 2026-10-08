@@ -4,6 +4,8 @@ import pathlib
 import tempfile
 import argparse
 import json
+import contextlib
+import io
 import unittest
 from unittest import mock
 
@@ -46,7 +48,36 @@ class CoverageTransactionTests(unittest.TestCase):
 
     def test_instrumentation_comparison_requires_valid_compatible_evidence(self):
         coverage = load_script("check_coverage.py")
-        current = {"evidence": {"status": "valid"}, "toolchain": {"xcode": "27"}, "invocation": {"configuration": "Debug"}}
+        current = {"evidence": {"status": "valid", "inputsAfter": {"plans": "shared-plan-A"}}, "toolchain": {"xcode": "27"}, "invocation": {"configuration": "Debug"}}
         self.assertTrue(coverage.compatible_comparison(current, current))
         self.assertFalse(coverage.compatible_comparison(current, current | {"invocation": {"configuration": "Release"}}))
         self.assertFalse(coverage.compatible_comparison(current, {"toolchain": current["toolchain"], "invocation": current["invocation"]}))
+        self.assertFalse(coverage.compatible_comparison(current, current | {"evidence": {"status": "valid", "inputsAfter": {"plans": "shared-plan-B"}}}))
+
+    def test_no_improvement_keeps_existing_policy_inode_and_bytes(self):
+        coverage = load_script("check_coverage.py")
+        with tempfile.TemporaryDirectory() as directory:
+            policy = pathlib.Path(directory) / "policy.json"
+            original = b'{"version":1,"target":"Half Dark.app","minimumLineCoverage":0.8,"files":{"Classes/A.m":0.8}}\n'
+            policy.write_bytes(original)
+            inode = policy.stat().st_ino
+            report = {"targets": [{"name": "Half Dark.app", "lineCoverage": .8,
+                "files": [{"path": "/tmp/Classes/A.m", "lineCoverage": .8, "coveredLines": 8, "executableLines": 10}]}]}
+            with mock.patch.object(coverage, "xccov_report", return_value=report), mock.patch.object(coverage, "ratchet_evidence", return_value={}):
+                self.assertEqual(coverage.main([directory, "--policy", str(policy), "--record-improvements"]), 0)
+            self.assertEqual(policy.read_bytes(), original)
+            self.assertEqual(policy.stat().st_ino, inode)
+
+    def test_uncovered_line_diagnostics_support_current_xccov_archive_keys(self):
+        coverage = load_script("check_coverage.py")
+        policy = coverage.CoveragePolicy("Half Dark.app", .5, {"Classes/A.swift": .9}, {})
+        path = str(coverage.session.ROOT / "Classes/A.swift")
+        payload = {path: [{"line": 42, "isExecutable": True, "executionCount": 0},
+                          {"lineNumber": 44, "isExecutable": True, "executionCount": 0},
+                          {"line": 45, "isExecutable": True, "executionCount": 1}]}
+        output = io.StringIO()
+        response = coverage.subprocess.CompletedProcess([], 0, json.dumps(payload), "")
+        with mock.patch.object(coverage.session, "git", return_value=""), mock.patch.object(coverage.subprocess, "run", return_value=response), contextlib.redirect_stderr(output):
+            coverage.coverage_diagnostics(policy, {"Classes/A.swift": .8}, {"Classes/A.swift": (8, 10)}, coverage.session.ROOT, pathlib.Path("result"))
+        self.assertIn("Uncovered source lines: 42, 44", output.getvalue())
+        self.assertNotIn("None", output.getvalue())

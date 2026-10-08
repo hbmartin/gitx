@@ -520,10 +520,15 @@ def command_receipt_step(arguments: argparse.Namespace) -> int:
     missing_probe = arguments.name == "host-preflight" and arguments.exit_code == 0 and (not test_counts or not test_counts["total"])
     if missing_probe:
         failure_category = "host-probe-missing"
+    missing_execution = (arguments.exit_code == 0 and bool(arguments.xcresult) and
+        (arguments.name.startswith("test:") or arguments.name == "raw") and
+        (not test_counts or not test_counts["total"]))
+    if missing_execution:
+        failure_category = "test-selection-empty" if test_counts else "test-evidence-missing"
     step = {
         "name": arguments.name,
-        "status": "failed" if missing_probe else arguments.status,
-        "exitCode": 77 if missing_probe else arguments.exit_code,
+        "status": "failed" if missing_probe or missing_execution else arguments.status,
+        "exitCode": 77 if missing_probe else 78 if missing_execution else arguments.exit_code,
         "durationSeconds": round(arguments.duration, 3),
         "command": scrub_arguments(arguments.command),
         "log": relative_artifact(arguments.log),
@@ -541,6 +546,9 @@ def command_receipt_step(arguments: argparse.Namespace) -> int:
     if missing_probe:
         print("Host probe did not execute; inspect plan selection and rebuild test products.", file=sys.stderr)
         return 77
+    if missing_execution:
+        print("Test execution produced no verified test cases; inspect the exact test selection and retained result bundle.", file=sys.stderr)
+        return 78
     return 0
 
 
