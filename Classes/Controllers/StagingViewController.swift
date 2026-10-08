@@ -596,7 +596,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         guard mutationControlsEnabled, !files.isEmpty else { return }
         let performDiscard: () -> Void = { [weak self] in
             guard let self, mutationControlsEnabled else { return }
-            index.discardChanges(for: files)
+            index.discardChanges(for: files, completion: { _, _ in })
         }
         guard !force else {
             performDiscard()
@@ -684,7 +684,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         let selection = actionSelection(for: .stage, sender: sender)
         guard !selection.files.isEmpty else { return }
         NSLog("[GitX] Staging %ld file(s) from the resolved action selection", selection.files.count)
-        index.stageFiles(selection.files)
+        index.stageFiles(selection.files, completion: { _, _ in })
     }
 
     @objc func unstageFiles(_ sender: Any?) {
@@ -692,7 +692,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         let selection = actionSelection(for: .unstage, sender: sender)
         guard !selection.files.isEmpty else { return }
         NSLog("[GitX] Unstaging %ld file(s) from the resolved action selection", selection.files.count)
-        index.unstageFiles(selection.files)
+        index.unstageFiles(selection.files, completion: { _, _ in })
     }
 
     @objc func discardFiles(_ sender: Any?) {

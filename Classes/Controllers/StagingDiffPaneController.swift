@@ -300,10 +300,10 @@ final class StagingDiffPaneController: NSObject {
         switch action {
         case "stage":
             NSLog("[GitX] Applying a partial stage patch from the staging pane")
-            repository.index.applyPatch(patch, stage: true, reverse: false)
+            repository.index.applyPatch(patch, stage: true, reverse: false, completion: { _, _ in })
         case "unstage":
             NSLog("[GitX] Applying a partial unstage patch from the staging pane")
-            repository.index.applyPatch(patch, stage: true, reverse: true)
+            repository.index.applyPatch(patch, stage: true, reverse: true, completion: { _, _ in })
         case "discard":
             guard let window = view.window else { return }
             let alert = NSAlert()
@@ -317,7 +317,7 @@ final class StagingDiffPaneController: NSObject {
             alert.beginSheetModal(for: window) { [weak self] response in
                 guard response == .alertFirstButtonReturn, let self, acceptsAction(action, context: context) else { return }
                 NSLog("[GitX] Discarding a hunk from the staging pane")
-                repository.index.applyPatch(patch, stage: false, reverse: true)
+                repository.index.applyPatch(patch, stage: false, reverse: true, completion: { _, _ in })
             }
         default:
             NSLog("[GitX] Ignoring unknown staging diff action: %@", action)

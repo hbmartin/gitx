@@ -49,7 +49,7 @@ extern NSString *PBGitIndexOperationFailed;
 // or for making a new commit.
 @property (assign, getter=isAmend) BOOL amend;
 @property (weak, readonly, nullable) PBGitRepository *repository;
-// Git mutation methods return synchronously. Rows remain at their last coherent
+// Interactive methods report admission immediately and complete on main. Rows remain at their last coherent
 // snapshot until the corresponding refresh completes; UI mutation controls wait.
 @property (readonly) BOOL mutationReconciliationPending;
 @property (readonly) NSUInteger snapshotRevision;
@@ -84,6 +84,16 @@ extern NSString *PBGitIndexOperationFailed;
 - (BOOL)unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles;
 - (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles;
 - (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)discardFiles;
+
+// Asynchronous interactive operations. Boolean means admitted; completion is the actual result.
+- (BOOL)stageFiles:(NSArray<PBChangedFile *> *)files completion:(void (^)(BOOL, NSError *_Nullable))completion;
+- (BOOL)unstageFiles:(NSArray<PBChangedFile *> *)files completion:(void (^)(BOOL, NSError *_Nullable))completion;
+- (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles completion:(void (^)(BOOL, NSError *_Nullable))completion;
+- (BOOL)discardChangesForFiles:(NSArray<PBChangedFile *> *)files completion:(void (^)(BOOL, NSError *_Nullable))completion;
+- (BOOL)applyPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse completion:(void (^)(BOOL, NSError *_Nullable))completion;
+- (void)close;
+@property (readonly) NSUInteger writerPendingCount;
+@property (readonly) NSUInteger writerActiveCount;
 
 // Intra-file changes
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;

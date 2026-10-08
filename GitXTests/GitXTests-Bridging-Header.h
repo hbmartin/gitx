@@ -1156,14 +1156,14 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 									existingMessage:(nullable NSString *)existingMessage
 											  error:(NSError *_Nullable *_Nullable)error;
 - (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request
-                                  progress:(void (^)(NSString *message))progress;
+								  progress:(void (^)(NSString *message))progress;
 - (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request
-                              eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
+							  eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
 @end
 
 @interface PBIndexCommitCoordinator : NSObject
 - (instancetype)initWithService:(PBIndexCommitService *)service
-                     repository:(nullable PBGitRepository *)repository;
+					 repository:(nullable PBGitRepository *)repository;
 - (void)commitWithRequest:(PBIndexCommitRequest *)request
              eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
 @end
@@ -1210,6 +1210,23 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 					  contextLines:(NSUInteger)contextLines
 				  ignoreWhitespace:(BOOL)ignoreWhitespace
 							 error:(NSError *_Nullable *_Nullable)error __attribute__((swift_error(none)));
+@end
+
+@interface PBIndexWriterState : NSObject
+@property (readonly) NSInteger pendingCount;
+@property (readonly) NSInteger activeCount;
+@end
+
+@interface PBIndexMutationRequest : NSObject
+- (instancetype)initWithStagePaths:(NSArray<NSData *> *)stagePaths unstagePaths:(NSArray<NSData *> *)unstagePaths parentTree:(NSString *)parentTree;
+- (instancetype)initWithDiscardPaths:(NSArray<NSData *> *)discardPaths;
+- (instancetype)initWithPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse;
+@end
+
+@interface PBIndexMutationCoordinator : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository service:(PBIndexMutationService *)service stateHandler:(void (^)(PBIndexWriterState *))stateHandler;
+- (BOOL)scheduleRequest:(PBIndexMutationRequest *)request completion:(void (^)(BOOL, NSError *_Nullable))completion NS_SWIFT_NAME(schedule(request:completion:));
+- (void)close;
 @end
 
 @interface PBIndexGitExecutableIdentity : NSObject

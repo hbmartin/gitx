@@ -163,6 +163,7 @@
     "Classes/git/IndexCommandRunning.swift": 1.0,
     "Classes/git/IndexCommitCoordinator.swift": 1.0,
     "Classes/git/IndexCommitService.swift": 0.9672,
+    "Classes/git/IndexMutationCoordinator.swift": 0.9,
     "Classes/git/IndexMutationService.swift": 0.9769,
     "Classes/git/IndexReferenceTransaction.swift": 0.9,
     "Classes/git/IndexRefreshCoordinator.swift": 1.0,

@@ -298,7 +298,7 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
             }
         }
         NSLog("[GitX] Toggling one mixed batch: %ld staged, %ld unstaged", toStage.count, toUnstage.count)
-        index.stageFiles(toStage, unstageFiles: toUnstage)
+        index.stageFiles(toStage, unstageFiles: toUnstage, completion: { _, _ in })
     }
 
     @objc var stagedFileCount: Int {
@@ -422,10 +422,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         }
         if stagedContext {
             NSLog("[GitX] Unstaging all %ld staged file(s) from the master checkbox", files.count)
-            index.unstageFiles(files)
+            index.unstageFiles(files, completion: { _, _ in })
         } else {
             NSLog("[GitX] Staging all %ld unstaged file(s) from the master checkbox", files.count)
-            index.stageFiles(files)
+            index.stageFiles(files, completion: { _, _ in })
         }
     }
 
@@ -434,10 +434,10 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         guard let (isStagedSection, file, _) = rowContext(for: sender) else { return }
         if isStagedSection {
             NSLog("[GitX] Unstaging %@ from its row checkbox", file.path)
-            index.unstageFiles([file])
+            index.unstageFiles([file], completion: { _, _ in })
         } else {
             NSLog("[GitX] Staging %@ from its row checkbox", file.path)
-            index.stageFiles([file])
+            index.stageFiles([file], completion: { _, _ in })
         }
     }
 
@@ -621,12 +621,11 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
         }
         if drop.target == .staged {
             NSLog("[GitX] Staging %ld dropped file(s) in the sectioned list", drop.files.count)
-            index.stageFiles(drop.files)
+            return index.stageFiles(drop.files, completion: { _, _ in })
         } else {
             NSLog("[GitX] Unstaging %ld dropped file(s) in the sectioned list", drop.files.count)
-            index.unstageFiles(drop.files)
+            return index.unstageFiles(drop.files, completion: { _, _ in })
         }
-        return true
     }
 
     private func sectionedDrop(_ info: NSDraggingInfo, row: Int) -> SectionedDrop? {

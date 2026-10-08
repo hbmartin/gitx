@@ -21,6 +21,8 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */; };
+		DC57A0CECB698C04E264BFCD /* IndexMutationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */; };
 		C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */; };
 		93AE438FD876474BC6A41BDC /* PBTaskExecutionContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7B150E5E0722BB4332BFAA /* PBTaskExecutionContext.swift */; };
 		7CA0BD2D5EF9880C1B9B7CDC /* IndexReferenceTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A465309A7A4FEE502B0456E /* IndexReferenceTransaction.swift */; };
@@ -677,6 +679,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinatorTests.swift; sourceTree = "<group>"; };
+		0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinator.swift; sourceTree = "<group>"; };
 		42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexReferenceTransactionTests.swift; sourceTree = "<group>"; };
 		4E7B150E5E0722BB4332BFAA /* PBTaskExecutionContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskExecutionContext.swift; sourceTree = "<group>"; };
 		2A465309A7A4FEE502B0456E /* IndexReferenceTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexReferenceTransaction.swift; sourceTree = "<group>"; };
@@ -1596,6 +1600,7 @@
 				C0DEE0000000000000000016 /* IndexCommitService.swift */,
 				2A465309A7A4FEE502B0456E /* IndexReferenceTransaction.swift */,
 				4D5531F2F7F77637CAC34293 /* CommitHeadExpectation.swift */,
+				0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */,
 				C01400000000000000000012 /* IndexCommitCoordinator.swift */,
 				C0DEE0000000000000000018 /* IndexRefreshCoordinator.swift */,
 				C0DE70000000000000000003 /* RepositoryRefreshCoordinator.swift */,
@@ -1813,6 +1818,7 @@
 				C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */,
 				C0DEE0000000000000000017 /* IndexCommitServiceTests.swift */,
 				42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */,
+				D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */,
 				20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */,
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
 				C0DEAF000000000000000012 /* NativeContentModelsTests.swift */,
@@ -2336,6 +2342,7 @@
 				C0DEE0000000000000000006 /* IndexCommitService.swift in Sources */,
 				7CA0BD2D5EF9880C1B9B7CDC /* IndexReferenceTransaction.swift in Sources */,
 				2B26B9E50B179E62E23AA0CD /* CommitHeadExpectation.swift in Sources */,
+				DC57A0CECB698C04E264BFCD /* IndexMutationCoordinator.swift in Sources */,
 				C0DEE0000000000000000008 /* IndexRefreshCoordinator.swift in Sources */,
 				C0DEAF000000000000000001 /* NativeContentModels.swift in Sources */,
 				C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */,
@@ -2558,6 +2565,7 @@
 				C0DE57A600000000000000A2 /* StagingListViewModelTests.swift in Sources */,
 				C0DEE0000000000000000007 /* IndexCommitServiceTests.swift in Sources */,
 				C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */,
+				00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */,
 				63A735203E9919B6FC5B1938 /* IndexCommitPublicationTests.swift in Sources */,
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
 				C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */,

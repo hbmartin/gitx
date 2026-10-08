@@ -41,6 +41,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (retain) PBIndexStatusParser *statusParser;
 @property (retain) PBIndexSnapshotReducer *snapshotReducer;
 @property (retain) PBIndexMutationService *mutationService;
+@property (retain) PBIndexMutationCoordinator *mutationCoordinator;
+@property (readwrite) NSUInteger writerPendingCount;
+@property (readwrite) NSUInteger writerActiveCount;
+@property BOOL closed;
 @property (retain) PBIndexCommitService *commitService;
 @property (retain) PBIndexCommitCoordinator *commitCoordinator;
 @property (retain) PBIndexRefreshCoordinator *refreshCoordinator;
@@ -73,6 +77,12 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	_commitService = [[PBIndexCommitService alloc] initWithRepository:theRepository];
 	_commitCoordinator = [[PBIndexCommitCoordinator alloc] initWithService:_commitService repository:theRepository];
 	__weak PBGitIndex *weakSelf = self;
+	_mutationCoordinator = [[PBIndexMutationCoordinator alloc] initWithRepository:theRepository
+																		  service:_mutationService
+																	 stateHandler:^(PBIndexWriterState *state) {
+																		 weakSelf.writerPendingCount = state.pendingCount;
+																		 weakSelf.writerActiveCount = state.activeCount;
+																	 }];
 	_refreshCoordinator = [[PBIndexRefreshCoordinator alloc] initWithRepository:theRepository
 		parser:_statusParser
 		statusHandler:^(BOOL success, NSString *message) {
@@ -198,6 +208,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)refresh
 {
+	if (self.closed) return;
 	if (self.postMutationStatCacheRefreshesPending) {
 		NSLog(@"[GitX] Deferred index refresh until %lu post-mutation stat-cache refreshes finish",
 			  (unsigned long)self.postMutationStatCacheRefreshesPending);
@@ -210,6 +221,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)applyRefreshResult:(PBIndexRefreshResult *)result
 {
+	if (self.closed) return;
 	if (result.mutationGeneration != self.mutationGeneration) {
 		NSLog(@"[GitX] Discarded index refresh generation %lu before mutation generation %lu",
 			  (unsigned long)result.mutationGeneration, (unsigned long)self.mutationGeneration);
@@ -248,6 +260,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 // to avoid holding index.lock constantly.
 - (void)refreshStatCache
 {
+	if (self.closed) return;
 	__weak PBGitIndex *weakSelf = self;
 	[self.refreshCoordinator refreshStatCacheForBareRepository:self.repository.isBareRepository
 													completion:^{
@@ -319,7 +332,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)commitWithMessage:(NSString *)commitMessage andVerify:(BOOL)doVerify
 {
-	if (self.submissionActive || self.mutationReconciliationPending) {
+	if (self.closed || self.submissionActive || self.mutationReconciliationPending) {
 		[self postCommitUpdate:@"A commit is already in progress or the index is refreshing."];
 		return;
 	}
@@ -494,6 +507,77 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 													  userInfo:[NSDictionary dictionaryWithObject:description forKey:@"description"]];
 }
 
+- (void)close
+{
+	self.closed = YES;
+	[self.mutationCoordinator close];
+	[self cancelCommitSubmission];
+}
+
+- (BOOL)scheduleMutation:(PBIndexMutationRequest *)request operation:(NSString *)operation completion:(void (^)(BOOL, NSError *_Nullable))completion
+{
+	if (self.closed) return NO;
+	self.mutationGeneration++;
+	self.postMutationStatCacheRefreshesPending++;
+	self.mutationReconciliationPending = YES;
+	__weak PBGitIndex *weakSelf = self;
+	BOOL admitted = [self.mutationCoordinator scheduleRequest:request
+												   completion:^(BOOL success, NSError *error) {
+													   PBGitIndex *index = weakSelf;
+													   if (index && !index.closed) {
+														   [index reconcileAfterMutation];
+														   if (!success) [index postOperationFailed:[PBIndexOperationErrorPresentation messageForOperation:operation error:error]];
+													   }
+													   completion(success, error);
+												   }];
+	if (!admitted) {
+		self.postMutationStatCacheRefreshesPending--;
+		self.mutationReconciliationPending = self.postMutationStatCacheRefreshesPending != 0;
+	}
+	return admitted;
+}
+
+- (BOOL)stageFiles:(NSArray<PBChangedFile *> *)files completion:(void (^)(BOOL, NSError *_Nullable))completion
+{
+	return [self stageFiles:files unstageFiles:@[] completion:completion];
+}
+
+- (BOOL)unstageFiles:(NSArray<PBChangedFile *> *)files completion:(void (^)(BOOL, NSError *_Nullable))completion
+{
+	return [self stageFiles:@[] unstageFiles:files completion:completion];
+}
+
+- (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles completion:(void (^)(BOOL, NSError *_Nullable))completion
+{
+	if (self.closed) return NO;
+	if (!stageFiles.count && !unstageFiles.count) {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			completion(YES, nil);
+		});
+		return !self.closed;
+	}
+	PBIndexMutationRequest *request = [[PBIndexMutationRequest alloc] initWithStagePaths:[stageFiles valueForKey:@"rawPath"] unstagePaths:[unstageFiles valueForKey:@"rawPath"] parentTree:self.parentTree];
+	return [self scheduleMutation:request operation:@"Staging and unstaging files failed" completion:completion];
+}
+
+- (BOOL)discardChangesForFiles:(NSArray<PBChangedFile *> *)files completion:(void (^)(BOOL, NSError *_Nullable))completion
+{
+	if (self.closed) return NO;
+	NSArray<PBChangedFile *> *tracked = [PBIndexFilePresentation discardableFilesFromFiles:files];
+	if (!tracked.count) {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			completion(YES, nil);
+		});
+		return !self.closed;
+	}
+	return [self scheduleMutation:[[PBIndexMutationRequest alloc] initWithDiscardPaths:[tracked valueForKey:@"rawPath"]] operation:@"Discarding changes failed" completion:completion];
+}
+
+- (BOOL)applyPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse completion:(void (^)(BOOL, NSError *_Nullable))completion
+{
+	return [self scheduleMutation:[[PBIndexMutationRequest alloc] initWithPatch:patch stage:stage reverse:reverse] operation:@"Applying patch failed" completion:completion];
+}
+
 - (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles
 {
 	return [self stageFiles:stageFiles unstageFiles:@[]];
@@ -506,6 +590,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles
 {
+	if (self.closed) return NO;
 	if (!stageFiles.count && !unstageFiles.count) return YES;
 	self.mutationGeneration++;
 	self.postMutationStatCacheRefreshesPending++;
@@ -525,6 +610,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)discardFiles
 {
+	if (self.closed) return;
 	NSArray<PBChangedFile *> *trackedFiles = [PBIndexFilePresentation discardableFilesFromFiles:discardFiles];
 	if (!trackedFiles.count) return;
 	self.mutationGeneration++;
@@ -542,6 +628,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (BOOL)applyPatch:(NSString *)hunk stage:(BOOL)stage reverse:(BOOL)reverse;
 {
+	if (self.closed) return NO;
 	self.mutationGeneration++;
 	self.postMutationStatCacheRefreshesPending++;
 	self.mutationReconciliationPending = YES;

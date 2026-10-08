@@ -7,6 +7,7 @@
 //
 
 #import "PBGitRepositoryDocument.h"
+#import "PBGitIndex.h"
 #import "PBGitRepository.h"
 #import "PBGitWindowController.h"
 #import "PBGitRevSpecifier.h"
@@ -62,6 +63,7 @@ NSString *PBGitRepositoryDocumentType = @"Git Repository";
 	/* FIXME: Check that this deallocs the repo */
 	//	[revisionList cleanup];
 
+	[self.repository.index close];
 	[NSFileCoordinator removeFilePresenter:self];
 
 	[super close];

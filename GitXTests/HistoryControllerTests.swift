@@ -81,6 +81,70 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(waitForCondition { (self.historyController.commitController.selectedObjects.first as? PBGitCommit)?.sha == head.sha })
     }
 
+    func testInteractiveMutationAdmissionCompletesOnMainAndReconcilesActualResults() throws {
+        try fixture.write("asynchronous mutation fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        let index = repository.index
+        let file = try XCTUnwrap(index.indexChanges.first { $0.path == "nested/tracked.txt" })
+        var completions = 0
+        let staged = expectation(description: "asynchronous staging completes")
+        XCTAssertTrue(index.stageFiles([file], completion: { success, error in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(success)
+            XCTAssertNil(error)
+            XCTAssertTrue(index.mutationReconciliationPending)
+            completions += 1
+            staged.fulfill()
+        }))
+        XCTAssertTrue(index.mutationReconciliationPending)
+        XCTAssertEqual(completions, 0)
+        wait(for: [staged], timeout: 10)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending && index.writerPendingCount == 0 && index.writerActiveCount == 0 })
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(try fixture.git(["show", ":nested/tracked.txt"]), "asynchronous mutation fixture\n")
+        let unstaged = expectation(description: "asynchronous unstaging completes")
+        XCTAssertTrue(index.unstageFiles([file], completion: { success, error in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(success)
+            XCTAssertNil(error)
+            unstaged.fulfill()
+        }))
+        wait(for: [unstaged], timeout: 10)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending })
+        let discarded = expectation(description: "asynchronous discard completes")
+        XCTAssertTrue(index.discardChanges(for: [file], completion: { success, error in
+            XCTAssertTrue(success)
+            XCTAssertNil(error)
+            discarded.fulfill()
+        }))
+        wait(for: [discarded], timeout: 10)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending })
+        XCTAssertEqual(try fixture.git(["diff", "--name-only"]), "")
+        for action in [0, 1] {
+            let empty = expectation(description: "empty operation completes")
+            let completion: (Bool, Error?) -> Void = { success, error in XCTAssertTrue(Thread.isMainThread); XCTAssertTrue(success); XCTAssertNil(error); empty.fulfill() }
+            XCTAssertTrue(action == 0 ? index.stageFiles([], completion: completion) : index.discardChanges(for: [], completion: completion))
+            wait(for: [empty], timeout: 3)
+        }
+        let coordinator = try XCTUnwrap(index.value(forKey: "mutationCoordinator") as? PBIndexMutationCoordinator)
+        coordinator.close()
+        XCTAssertFalse(index.applyPatch("not admitted", stage: true, reverse: false, completion: { _, _ in XCTFail("Rejected operation completed") }))
+        XCTAssertFalse(index.mutationReconciliationPending)
+        XCTAssertEqual((index.value(forKey: "postMutationStatCacheRefreshesPending") as? NSNumber)?.uintValue, 0)
+        index.close()
+        XCTAssertFalse(index.stageFiles([file]))
+        XCTAssertFalse(index.unstageFiles([file]))
+        index.discardChanges(for: [file])
+        XCTAssertFalse(index.applyPatch("closed", stage: true, reverse: false))
+        index.applyRefreshResult(PBIndexRefreshResult(staged: nil, unstaged: nil, untracked: nil, mutationGeneration: 0))
+        XCTAssertFalse(index.stageFiles([], completion: { _, _ in XCTFail("Closed operation was admitted") }))
+        XCTAssertFalse(index.discardChanges(for: [], completion: { _, _ in XCTFail("Closed operation was admitted") }))
+        XCTAssertFalse(index.applyPatch("patch", stage: true, reverse: false, completion: { _, _ in XCTFail("Closed operation was admitted") }))
+        index.refresh()
+        index.refreshStatCache()
+        withExtendedLifetime(pane) {}
+    }
+
     func testStagingHeadersAndCountsReuseThePublishedPresentation() throws {
         try fixture.write("staged\n", to: "summary-staged.txt")
         try fixture.git(["add", "summary-staged.txt"])
@@ -215,6 +279,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         list.interactionCoordinator.stageSelectedFiles()
         XCTAssertTrue(index.mutationReconciliationPending)
         controller.setSelectedObjects([chosen])
+        XCTAssertTrue(waitForCondition { (index.value(forKey: "postMutationStatCacheRefreshesPending") as? NSNumber)?.uintValue == 0 })
         let generation = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue
         let updated = expectation(forNotification: Notification.Name(PBGitIndexIndexUpdated), object: index)
         index.applyRefreshResult(PBIndexRefreshResult(staged: nil, unstaged: nil, untracked: nil, mutationGeneration: generation))
