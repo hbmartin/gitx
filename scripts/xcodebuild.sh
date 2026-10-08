@@ -403,6 +403,16 @@ reject_managed_paths() {
 	done
 }
 
+# Xcode rejects duplicate singleton options. Inherit an explicit suite option
+# first; add a plan-derived probe default only when the caller supplied none.
+ensure_probe_option() {
+	local option=$1 value=$2 argument
+	for argument in ${probe_arguments[@]+"${probe_arguments[@]}"}; do
+		[[ "$argument" == "$option" || "$argument" == "$option="* ]] && return 0
+	done
+	probe_arguments+=("$option" "$value")
+}
+
 xcode_test() {
 	local test_preset=$1
 	local plan=$2
@@ -419,9 +429,9 @@ xcode_test() {
 			esac
 		done
 		case "$test_preset" in
-			correctness) probe_arguments=(-enableCodeCoverage YES "${probe_arguments[@]}") ;;
-			address-undefined) probe_arguments=(-enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES "${probe_arguments[@]}") ;;
-			thread-sanitizer) probe_arguments=(-enableThreadSanitizer YES "${probe_arguments[@]}") ;;
+			correctness) ensure_probe_option -enableCodeCoverage YES ;;
+			address-undefined) ensure_probe_option -enableAddressSanitizer YES; ensure_probe_option -enableUndefinedBehaviorSanitizer YES ;;
+			thread-sanitizer) ensure_probe_option -enableThreadSanitizer YES ;;
 		esac
 		run_step compile:host-preflight "$logs/$plan-host-build.log" "" \
 			"$xcodebuild" "${common[@]}" build-for-testing -testPlan GitXHostPreflight \
@@ -703,9 +713,9 @@ case "$command" in
 				esac
 			done
 			case "$raw_plan" in
-				GitX) probe_arguments=(-enableCodeCoverage YES "${probe_arguments[@]}") ;;
-				GitXAddressUndefined) probe_arguments=(-enableAddressSanitizer YES -enableUndefinedBehaviorSanitizer YES "${probe_arguments[@]}") ;;
-				GitXThreadSanitizer) probe_arguments=(-enableThreadSanitizer YES "${probe_arguments[@]}") ;;
+				GitX) ensure_probe_option -enableCodeCoverage YES ;;
+				GitXAddressUndefined) ensure_probe_option -enableAddressSanitizer YES; ensure_probe_option -enableUndefinedBehaviorSanitizer YES ;;
+				GitXThreadSanitizer) ensure_probe_option -enableThreadSanitizer YES ;;
 			esac
 			run_step compile:host-preflight "$logs/raw-host-build.log" "" "$xcodebuild" build-for-testing \
 				"${probe_arguments[@]}" -testPlan GitXHostPreflight || exit $?
