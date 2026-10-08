@@ -184,10 +184,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     private final class PausedIndexRefresh: NSObject {
+        /// PBGitIndex invokes these selectors on the coordinator injected through KVC.
         @objc(refreshBareRepository:parentTree:mutationGeneration:)
+        // swiftlint:disable:next unused_declaration
         func refresh(bareRepository _: Bool, parentTree _: String, mutationGeneration _: UInt) {}
 
         @objc(refreshStatCacheForBareRepository:completion:)
+        // swiftlint:disable:next unused_declaration
         func refreshStatCache(bareRepository _: Bool, completion: @escaping () -> Void) {
             completion()
         }
