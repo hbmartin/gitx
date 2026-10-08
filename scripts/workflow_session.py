@@ -96,6 +96,13 @@ def inputs(root=ROOT):
     names += [p for p in new if p.startswith(("Classes/", "GitXTests/", "GitXUITests/",
               "GitXCore/Sources/", "ForgeKit/Sources/", "scripts/", ".agents/skills/"))]
     files = {name: file_identity(root / name) for name in sorted(set(names)) if name}
+    # The canonical sdp phase regenerates this checked-in bridge header when a
+    # new configuration is built. Byte-identical output is still the same
+    # compiler input; content and mode changes remain invalidating.
+    generated = files.get("Resources/GitX.h")
+    if generated:
+        generated.pop("modifiedNs", None)
+        generated.pop("inode", None)
     dependencies = git(root, "submodule", "status", "--recursive")
     # Include edits in initialized dependencies; gitlinks alone miss dirty source.
     dependency_diffs = []
@@ -519,6 +526,13 @@ def guard(entry, arguments):
             env = leases.environment() | {"GITX_GUARDED_ENTRY": str(pathlib.Path(entry).resolve()),
                   "GITX_DERIVED_DATA": paths["derivedData"], "GITX_SWIFTPM_BUILD_ROOT": paths["swiftPM"],
                   "GITX_SOURCE_PACKAGE_CACHE": paths["sourcePackages"]}
+            if pathlib.Path(entry).name == "check_test_build_contracts.py":
+                # This command probes two configurations. Preserve explicit
+                # overrides, but do not turn its Debug default into a Release
+                # override for the second probe.
+                for variable in ("GITX_DERIVED_DATA", "GITX_SWIFTPM_BUILD_ROOT", "GITX_SOURCE_PACKAGE_CACHE"):
+                    if variable not in os.environ:
+                        env.pop(variable, None)
             before = inputs(root)
             atomic_json(receipt, owner | {"status": "running", "resources": resources, "paths": paths,
                                          "evidence": {"status": "pending", "inputsBefore": before}})

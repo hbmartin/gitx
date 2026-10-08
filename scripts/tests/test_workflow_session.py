@@ -123,6 +123,29 @@ class WorkflowSessionTests(unittest.TestCase):
             (product / "binary").write_text("second")
             self.assertNotEqual(identity, session.product_identity(root))
 
+    def test_generated_header_touch_is_valid_but_content_or_product_replacement_is_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            subprocess.run(["git", "init", "-q", root], check=True)
+            (root / "Resources").mkdir()
+            header = root / "Resources/GitX.h"
+            header.write_text("generated bridge")
+            subprocess.run(["git", "-C", root, "add", "Resources/GitX.h"], check=True)
+            before = session.inputs(root)
+            os.utime(header, ns=(header.stat().st_atime_ns, header.stat().st_mtime_ns + 1000000))
+            self.assertFalse(session.changed_inputs(before, session.inputs(root)))
+            header.write_text("changed bridge")
+            self.assertIn("source", session.changed_inputs(before, session.inputs(root)))
+            product = root / "Build/Products/Debug/Test.app"
+            product.mkdir(parents=True)
+            binary = product / "binary"
+            binary.write_bytes(b"identical bytes")
+            identity = session.product_identity(root)
+            replacement = product / "replacement"
+            replacement.write_bytes(binary.read_bytes())
+            replacement.replace(binary)
+            self.assertNotEqual(identity, session.product_identity(root))
+
     def test_historical_or_changed_resume_is_rejected(self):
         current = {"head": "a", "source": "b", "dependencies": "c", "plans": "d"}
         self.assertFalse(workflow.reusable({"status": "passed"}, current, ["test"]))
