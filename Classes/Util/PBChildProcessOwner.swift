@@ -598,9 +598,21 @@ private final nonisolated class PBDispatchProcessExitMonitor: PBChildProcessExit
 nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
     /// Verify the supported legacy syscall independently of the host macOS version.
     private let usesLegacyWorkingDirectoryAPI: Bool
+    private let observeExit: @Sendable (pid_t, UnsafeMutablePointer<siginfo_t>) -> Int32
+    private let inspectGroup: @Sendable (pid_t, UnsafeMutableRawPointer?, Int32) -> Int32
 
-    init(usesLegacyWorkingDirectoryAPI: Bool = false) {
+    init(
+        usesLegacyWorkingDirectoryAPI: Bool = false,
+        observeExit: @escaping @Sendable (pid_t, UnsafeMutablePointer<siginfo_t>) -> Int32 = {
+            waitid(P_PID, id_t($0), $1, WEXITED | WNOHANG | WNOWAIT)
+        },
+        inspectGroup: @escaping @Sendable (pid_t, UnsafeMutableRawPointer?, Int32) -> Int32 = {
+            proc_listpgrppids($0, $1, $2)
+        }
+    ) {
         self.usesLegacyWorkingDirectoryAPI = usesLegacyWorkingDirectoryAPI
+        self.observeExit = observeExit
+        self.inspectGroup = inspectGroup
     }
 
     private struct PreparedDescriptors {
@@ -746,7 +758,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
     func exitStateWithoutReaping(processIdentifier: pid_t) throws -> PBChildProcessExitState {
         var information = siginfo_t()
         while true {
-            if waitid(P_PID, id_t(processIdentifier), &information, WEXITED | WNOHANG | WNOWAIT) == 0 {
+            if observeExit(processIdentifier, &information) == 0 {
                 guard information.si_pid == processIdentifier else { return .running }
                 switch information.si_code {
                 case CLD_EXITED, CLD_KILLED, CLD_DUMPED:
@@ -788,7 +800,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
             var processIdentifiers = [pid_t](repeating: 0, count: capacity)
             errno = 0
             let processCount = processIdentifiers.withUnsafeMutableBytes { buffer in
-                proc_listpgrppids(
+                inspectGroup(
                     processGroup,
                     buffer.baseAddress,
                     Int32(buffer.count)

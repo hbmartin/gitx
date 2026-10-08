@@ -1,4 +1,5 @@
 import Darwin
+import Synchronization
 import XCTest
 
 final class PBChildProcessOwnerTests: XCTestCase {
@@ -1260,6 +1261,35 @@ final class PBChildProcessOwnerTests: XCTestCase {
 
     func testPosixGroupInspectionReportsAnAbsentGroupAsEmpty() throws {
         XCTAssertEqual(try PBPosixChildProcessSystem().processGroupMembers(processGroup: Int32.max), [])
+    }
+
+    func testPosixExitObservationRetriesInterruptionBeforeReportingTerminalState() throws {
+        let calls = Mutex(0)
+        let system = PBPosixChildProcessSystem(observeExit: { identifier, information in
+            calls.withLock { count in
+                count += 1
+                if count == 1 {
+                    errno = EINTR
+                    return -1
+                }
+                information.pointee.si_pid = identifier
+                information.pointee.si_code = CLD_EXITED
+                return 0
+            }
+        })
+        XCTAssertEqual(try system.exitStateWithoutReaping(processIdentifier: 42), .terminal)
+        XCTAssertEqual(calls.withLock { $0 }, 2)
+    }
+
+    func testPosixGroupInspectionPropagatesSystemFailure() {
+        let system = PBPosixChildProcessSystem(inspectGroup: { _, _, _ in
+            errno = EIO
+            return -1
+        })
+        XCTAssertThrowsError(try system.processGroupMembers(processGroup: 42)) { error in
+            XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain)
+            XCTAssertEqual((error as NSError).code, Int(EIO))
+        }
     }
 
     func testAppSupervisorRejectsInvalidStderrWithoutClosingConfiguredStdout() {

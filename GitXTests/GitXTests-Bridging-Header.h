@@ -55,6 +55,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 #if DEBUG
 @interface PBHistoryFlowRevisionProviderTestHarness : NSObject
++ (NSString *)unsupportedPathDescription:(NSString *)path;
 + (NSDictionary<NSString *, id> *)drainPipeWithFileDescriptor:(int)descriptor NS_SWIFT_NAME(drainPipe(fileDescriptor:));
 + (PBHistoryFlowRevisionProviderTestOperation *)cancelledBeforeLaunchWithGitExecutableURL:(NSURL *)gitExecutableURL
 																		completionHandler:(void (^)(NSString *_Nullable errorDescription))completionHandler

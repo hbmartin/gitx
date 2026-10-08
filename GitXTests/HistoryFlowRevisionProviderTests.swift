@@ -263,6 +263,11 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
 
     // The private pipe-drain harness is compiled only into Debug app builds.
     #if DEBUG
+        func testUnsupportedSourceErrorPreservesTheExactPath() {
+            XCTAssertEqual(PBHistoryFlowRevisionProviderTestHarness.unsupportedPathDescription("folder/密碼.txt"),
+                           "folder/密碼.txt is not in a language Flow can analyze.")
+        }
+
         func testPipeDescriptorFailuresRetainNoDataAndRequestOneProcessStop() throws {
             let writeOnly = open("/dev/null", O_WRONLY | O_CLOEXEC)
             XCTAssertGreaterThanOrEqual(writeOnly, 0)
