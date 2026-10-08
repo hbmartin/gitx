@@ -21,6 +21,10 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */; };
+		93AE438FD876474BC6A41BDC /* PBTaskExecutionContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E7B150E5E0722BB4332BFAA /* PBTaskExecutionContext.swift */; };
+		7CA0BD2D5EF9880C1B9B7CDC /* IndexReferenceTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A465309A7A4FEE502B0456E /* IndexReferenceTransaction.swift */; };
+		2B26B9E50B179E62E23AA0CD /* CommitHeadExpectation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D5531F2F7F77637CAC34293 /* CommitHeadExpectation.swift */; };
 		63A735203E9919B6FC5B1938 /* IndexCommitPublicationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */; };
 		C0DEA1110000000000000001 /* PBTaskDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */; };
 		C0DEF2000000000000000002 /* CommitCopyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DEF2000000000000000001 /* CommitCopyPolicy.swift */; };
@@ -673,6 +677,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexReferenceTransactionTests.swift; sourceTree = "<group>"; };
+		4E7B150E5E0722BB4332BFAA /* PBTaskExecutionContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskExecutionContext.swift; sourceTree = "<group>"; };
+		2A465309A7A4FEE502B0456E /* IndexReferenceTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexReferenceTransaction.swift; sourceTree = "<group>"; };
+		4D5531F2F7F77637CAC34293 /* CommitHeadExpectation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitHeadExpectation.swift; sourceTree = "<group>"; };
 		20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexCommitPublicationTests.swift; sourceTree = "<group>"; };
 		C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PBTaskDiagnostics.swift; sourceTree = "<group>"; };
 		C0DEF2000000000000000001 /* CommitCopyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommitCopyPolicy.swift; sourceTree = "<group>"; };
@@ -1586,6 +1594,8 @@
 				C0DEE0000000000000000013 /* IndexCommandRunning.swift */,
 				C0DEE0000000000000000014 /* IndexMutationService.swift */,
 				C0DEE0000000000000000016 /* IndexCommitService.swift */,
+				2A465309A7A4FEE502B0456E /* IndexReferenceTransaction.swift */,
+				4D5531F2F7F77637CAC34293 /* CommitHeadExpectation.swift */,
 				C01400000000000000000012 /* IndexCommitCoordinator.swift */,
 				C0DEE0000000000000000018 /* IndexRefreshCoordinator.swift */,
 				C0DE70000000000000000003 /* RepositoryRefreshCoordinator.swift */,
@@ -1655,6 +1665,7 @@
 				5A70140C7FED2C34172AFC63 /* PBTaskDiagnosticCapture.swift */,
 				DDBE476AA3E87F68DC0B097A /* PBTaskDiagnosticRedactor.swift */,
 				C0DEA1110000000000000002 /* PBTaskDiagnostics.swift */,
+				4E7B150E5E0722BB4332BFAA /* PBTaskExecutionContext.swift */,
 			);
 			path = Util;
 			sourceTree = "<group>";
@@ -1801,6 +1812,7 @@
 				C0DEE0000000000000000015 /* IndexMutationServiceTests.swift */,
 				C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */,
 				C0DEE0000000000000000017 /* IndexCommitServiceTests.swift */,
+				42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */,
 				20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */,
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
 				C0DEAF000000000000000012 /* NativeContentModelsTests.swift */,
@@ -2305,6 +2317,7 @@
 				710F8276E4329A05F404E56F /* PBTaskDiagnosticRedactor.swift in Sources */,
 				E59CEDC873BFE8A9D23FA6B7 /* PushOutputExportCoordinator.swift in Sources */,
 				C0DEA1110000000000000001 /* PBTaskDiagnostics.swift in Sources */,
+				93AE438FD876474BC6A41BDC /* PBTaskExecutionContext.swift in Sources */,
 				C0DE70000000000000000001 /* RepositoryRefreshCoordinator.swift in Sources */,
 				C0DE90000000000000000001 /* GitCommandRunning.swift in Sources */,
 				C0DE90000000000000000002 /* RepositoryRemoteService.swift in Sources */,
@@ -2321,6 +2334,8 @@
 				C0DEE0000000000000000003 /* IndexCommandRunning.swift in Sources */,
 				C0DEE0000000000000000004 /* IndexMutationService.swift in Sources */,
 				C0DEE0000000000000000006 /* IndexCommitService.swift in Sources */,
+				7CA0BD2D5EF9880C1B9B7CDC /* IndexReferenceTransaction.swift in Sources */,
+				2B26B9E50B179E62E23AA0CD /* CommitHeadExpectation.swift in Sources */,
 				C0DEE0000000000000000008 /* IndexRefreshCoordinator.swift in Sources */,
 				C0DEAF000000000000000001 /* NativeContentModels.swift in Sources */,
 				C0DEAE000000000000000001 /* NativeContentRenderer.swift in Sources */,
@@ -2542,6 +2557,7 @@
 				C0DEE0000000000000000005 /* IndexMutationServiceTests.swift in Sources */,
 				C0DE57A600000000000000A2 /* StagingListViewModelTests.swift in Sources */,
 				C0DEE0000000000000000007 /* IndexCommitServiceTests.swift in Sources */,
+				C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */,
 				63A735203E9919B6FC5B1938 /* IndexCommitPublicationTests.swift in Sources */,
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,
 				C0DEAF000000000000000002 /* NativeContentModelsTests.swift in Sources */,

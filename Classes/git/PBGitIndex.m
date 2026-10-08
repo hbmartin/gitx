@@ -331,25 +331,14 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		return;
 	}
 
-	NSMutableArray<NSString *> *parentSHAs = [NSMutableArray array];
-	if (self.amend) {
-		GTReference *headRef = [self.repository.gtRepo headReferenceWithError:NULL];
-		GTCommit *headCommit = [headRef resolvedTarget];
-		NSLog(@"[GitX] Amending commit with %lu preserved parent(s)", (unsigned long)headCommit.parentOIDs.count);
-		for (GTOID *parentOID in headCommit.parentOIDs)
-			[parentSHAs addObject:parentOID.SHA];
-	}
-
-	if (!self.amend && self.repository.headOID.SHA)
-		[parentSHAs addObject:self.repository.headOID.SHA];
 	BOOL gpgSign = [config boolForKey:@"commit.gpgSign"];
 	PBIndexCommitRequest *request = [[PBIndexCommitRequest alloc] initWithMessage:commitMessage
 																		   verify:doVerify
 																		  gpgSign:gpgSign
 																			amend:self.amend
 																	  environment:self.amendEnvironment
-																	   parentSHAs:parentSHAs
-																		  hasHead:[self.repository revisionExists:@"HEAD"]];
+																	   parentSHAs:@[]
+																		  hasHead:NO];
 	self.retainedCommitRequest = request;
 	self.submissionActive = YES;
 	[self submitCommitRequest:request];
@@ -366,7 +355,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 									 if (!strongSelf)
 										 return;
 									 NSAssert(NSThread.isMainThread, @"Commit events must be delivered on the main thread");
-									 if ([event isKindOfClass:PBIndexCommitPhaseEvent.class]) {
+									 if ([event isKindOfClass:PBIndexCommitPreparedEvent.class]) {
+										 strongSelf.retainedCommitRequest = ((PBIndexCommitPreparedEvent *)event).request;
+										 NSLog(@"[GitX] Retained freshly prepared HEAD expectation and commit parents");
+									 } else if ([event isKindOfClass:PBIndexCommitPhaseEvent.class]) {
 										 PBIndexCommitPhaseEvent *phaseEvent = (PBIndexCommitPhaseEvent *)event;
 										 [strongSelf postCommitUpdate:phaseEvent.displayName phase:phaseEvent.phase];
 									 } else if ([event isKindOfClass:PBIndexCommitOutputEvent.class]) {
@@ -385,7 +377,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 		self.mutationGeneration++;
 		self.postMutationStatCacheRefreshesPending++;
 		self.mutationReconciliationPending = YES;
-		[self cancelCommitSubmission];
+		[self endCommitSubmission];
 		[self reconcileAfterMutation];
 		[self postCommitFailure:result.message];
 		return;
@@ -401,7 +393,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	self.mutationGeneration++;
 	self.postMutationStatCacheRefreshesPending++;
 	self.mutationReconciliationPending = YES;
-	[self cancelCommitSubmission];
+	[self endCommitSubmission];
 
 	NSDictionary *userInfo = @{
 		@"success" : @(result.postCommitHookSucceeded),
@@ -428,6 +420,17 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 }
 
 - (void)cancelCommitSubmission
+{
+	[self.retainedCommitRequest cancel];
+	if (self.submissionActive && !self.awaitingHookDecision) {
+		// Keep admission closed until the owned worker has aborted and completed.
+		NSLog(@"[GitX] Requested cancellation of the active commit worker");
+		return;
+	}
+	[self endCommitSubmission];
+}
+
+- (void)endCommitSubmission
 {
 	BOOL reconcileHookChanges = self.awaitingHookDecision;
 	if (reconcileHookChanges) {

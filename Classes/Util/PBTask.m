@@ -600,7 +600,8 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 - (NSError *)launchErrorForException:(NSException *)exception underlyingError:(NSError *)underlyingError
 {
 	NSString *desc = @"Exception raised while launching task";
-	NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" failed to launch", [PBTaskDiagnostics redacted:self.launchPath]];
+	NSString *safePath = [self.launchPath isKindOfClass:NSString.class] ? [PBTaskDiagnostics redacted:self.launchPath] : @"<invalid executable>";
+	NSString *failureReason = [NSString stringWithFormat:@"The task \"%@\" failed to launch", safePath];
 	NSMutableDictionary *info = [@{
 		NSLocalizedDescriptionKey : desc,
 		NSLocalizedFailureReasonErrorKey : failureReason,
@@ -608,6 +609,24 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 	} mutableCopy];
 	if (underlyingError) info[NSUnderlyingErrorKey] = underlyingError;
 	return [NSError errorWithDomain:PBTaskErrorDomain code:PBTaskLaunchError userInfo:info];
+}
+
+- (nullable PBTaskExecutionContext *)executionContext:(NSError *_Nullable *_Nullable)error
+{
+	@try {
+		if (![self.launchPath isKindOfClass:NSString.class] || (self.currentDirectoryPath && ![self.currentDirectoryPath isKindOfClass:NSString.class]))
+			[NSException raise:NSInvalidArgumentException format:@"PBTask executable and directory must be strings"];
+		NSArray<NSString *> *arguments = [self validatedArgumentsForLaunch];
+		NSDictionary<NSString *, NSString *> *environment = [self environmentForLaunch];
+		for (id key in environment) {
+			if (![key isKindOfClass:NSString.class] || ![environment[key] isKindOfClass:NSString.class])
+				[NSException raise:NSInvalidArgumentException format:@"PBTask environment keys and values must be strings"];
+		}
+		return [[PBTaskExecutionContext alloc] initWithLaunchPath:self.launchPath arguments:arguments environment:environment workingDirectory:self.currentDirectoryPath];
+	} @catch (NSException *exception) {
+		if (error) *error = [self launchErrorForException:exception underlyingError:nil];
+		return nil;
+	}
 }
 
 - (nullable NSError *)recordProcessCompletionWithRawWaitStatus:(int32_t)rawWaitStatus

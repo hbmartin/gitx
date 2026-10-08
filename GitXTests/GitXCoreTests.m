@@ -3406,7 +3406,8 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	NSString *currentHead = [[self.fixture git:@[ @"rev-parse", @"HEAD" ] error:&error]
 		stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
 	XCTAssertEqualObjects(currentHead, originalHead);
-	XCTAssertEqualObjects(failure.userInfo[@"description"], @"Could not update HEAD");
+	XCTAssertTrue([failure.userInfo[@"description"] containsString:@"cannot lock ref"]);
+	XCTAssertTrue([failure.userInfo[@"description"] containsString:@"main.lock"]);
 }
 
 - (void)testRefreshStageAndUnstageTrackedAndUnicodePaths

@@ -31,6 +31,23 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBTaskExecutionContext : NSObject
+@property (readonly) NSString *launchPath;
+@property (readonly) NSArray<NSString *> *arguments;
+@property (readonly) NSDictionary<NSString *, NSString *> *environment;
+@property (readonly, nullable) NSString *workingDirectory;
+@end
+
+#if DEBUG
+@interface PBIndexReferenceCapabilityTestHarness : NSObject
++ (BOOL)requireWithTask:(PBTask *)task error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(require(task:));
+@end
+@interface PBIndexReferenceTransactionTestHarness : NSObject
++ (BOOL)exerciseWithLaunchPath:(NSString *)launchPath arguments:(NSArray<NSString *> *)arguments workingDirectory:(nullable NSString *)workingDirectory commands:(NSArray<NSString *> *)commands acknowledgements:(NSArray<NSString *> *)acknowledgements timeout:(NSTimeInterval)timeout cancelAfterAcknowledgement:(NSInteger)cancelAfter error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exercise(launchPath:arguments:workingDirectory:commands:acknowledgements:timeout:cancelAfterAcknowledgement:));
+@end
+#endif
+
+
 @interface PBCommitRecoveryRepository : PBGitRepository
 @property (nonatomic, copy, nullable) NSString *recoveryPatchOutput;
 @property (nonatomic) NSUInteger recoveryPatchInvocationCount;
@@ -680,7 +697,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly) NSArray<NSNumber *> *rawFileModes;
 @property (nonatomic, readonly) BOOL writerDescriptorsAreCloseOnExec;
 @property (nonatomic, readonly) BOOL writersClosed;
-- (BOOL)markStaleForCleanupAndReturnError:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(markStaleForCleanup());
+- (BOOL)markStaleForCleanupAndReturnError:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(markStaleForCleanup());
 - (void)discardFixture;
 @end
 
@@ -688,8 +705,8 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 + (nullable NSArray<NSString *> *)readableExcerptsForArtifact:(PBTaskDiagnosticArtifact *)artifact NS_SWIFT_NAME(readableExcerpts(for:));
 + (PBTaskDiagnosticCapture *)captureWithFault:(NSString *)fault NS_SWIFT_NAME(capture(fault:));
 + (nullable PBTaskDiagnosticCaptureLifetimeProbe *)lifetimeProbeForCapture:(PBTaskDiagnosticCapture *)capture NS_SWIFT_NAME(lifetimeProbe(for:));
-+ (nullable PBTaskDiagnosticCaptureLifetimeProbe *)orphanProbeWithAge:(NSTimeInterval)age error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(orphanProbe(age:));
-+ (nullable PBTaskDiagnosticCaptureLifetimeProbe *)unlockedLeasedOrphanProbeWithAge:(NSTimeInterval)age error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(unlockedLeasedOrphanProbe(age:));
++ (nullable PBTaskDiagnosticCaptureLifetimeProbe *)orphanProbeWithAge:(NSTimeInterval)age error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(orphanProbe(age:));
++ (nullable PBTaskDiagnosticCaptureLifetimeProbe *)unlockedLeasedOrphanProbeWithAge:(NSTimeInterval)age error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(unlockedLeasedOrphanProbe(age:));
 @end
 #endif
 
@@ -1055,6 +1072,14 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 	PBIndexCommitResultKindHookFailure,
 };
 
+@interface PBCommitHeadExpectation : NSObject
+@property (readonly, nullable) NSString *symbolicTarget;
+@property (readonly, nullable) NSString *expectedOID;
+@property (readonly) NSInteger objectIDWidth;
+- (BOOL)matchesExpectation:(PBCommitHeadExpectation *)other NS_SWIFT_NAME(matchesExpectation(_:));
+- (nullable instancetype)initWithSymbolicTarget:(nullable NSString *)symbolicTarget expectedOID:(nullable NSString *)expectedOID objectIDWidth:(NSInteger)objectIDWidth error:(NSError *_Nullable *_Nullable)error;
+@end
+
 @interface PBIndexCommitRequest : NSObject
 @property (readonly) NSString *message;
 @property (readonly) BOOL verify;
@@ -1063,6 +1088,9 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 @property (readonly, nullable) NSDictionary<NSString *, id> *environment;
 @property (readonly) NSArray<NSString *> *parentSHAs;
 @property (readonly) BOOL hasHead;
+@property (readonly, nullable) PBCommitHeadExpectation *headExpectation;
+- (void)cancel;
+- (PBIndexCommitRequest *)preparedWithHeadExpectation:(PBCommitHeadExpectation *)head parentSHAs:(NSArray<NSString *> *)parents NS_SWIFT_NAME(prepared(head:parents:));
 - (PBIndexCommitRequest *)requestWithoutVerification NS_SWIFT_NAME(withoutVerification());
 - (instancetype)initWithMessage:(NSString *)message
 						 verify:(BOOL)verify
@@ -1073,6 +1101,14 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 						hasHead:(BOOL)hasHead;
 @end
 
+@protocol PBIndexCommitReferenceRunning
+- (nullable PBIndexCommitRequest *)prepareCommitRequest:(PBIndexCommitRequest *)request error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(prepareCommitRequest(_:));
+- (BOOL)publishCommit:(NSString *)oid request:(PBIndexCommitRequest *)request subject:(NSString *)subject error:(NSError *_Nullable *_Nullable)error;
+@end
+
+@interface IndexRepositoryCommandRunner (CommitReferenceTests) <PBIndexCommitReferenceRunning>
+@end
+
 @interface PBIndexCommitResult : NSObject
 @property (nonatomic, readonly) PBIndexCommitResultKind kind;
 @property (nonatomic, readonly) NSString *message;
@@ -1081,15 +1117,19 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 @end
 
 typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
-    PBIndexCommitPhaseCreatingTree,
-    PBIndexCommitPhaseCreatingCommit,
-    PBIndexCommitPhaseRunningPreCommitHook,
-    PBIndexCommitPhaseRunningCommitMessageHook,
-    PBIndexCommitPhaseUpdatingHead,
-    PBIndexCommitPhaseRunningPostCommitHook,
+	PBIndexCommitPhaseCreatingTree,
+	PBIndexCommitPhaseCreatingCommit,
+	PBIndexCommitPhaseRunningPreCommitHook,
+	PBIndexCommitPhaseRunningCommitMessageHook,
+	PBIndexCommitPhaseUpdatingHead,
+	PBIndexCommitPhaseRunningPostCommitHook,
 };
 
 @interface PBIndexCommitEvent : NSObject
+@end
+
+@interface PBIndexCommitPreparedEvent : PBIndexCommitEvent
+@property (readonly) PBIndexCommitRequest *request;
 @end
 
 @interface PBIndexCommitPhaseEvent : PBIndexCommitEvent
@@ -1106,14 +1146,15 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 @end
 
 @interface PBIndexCommitService : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository;
 - (instancetype)initWithRunner:(id<PBIndexCommandRunning>)runner
-                     hookRunner:(id<PBIndexHookRunning>)hookRunner
-                   gitDirectory:(NSURL *)gitDirectory
-             temporaryDirectory:(NSURL *)temporaryDirectory;
+					hookRunner:(id<PBIndexHookRunning>)hookRunner
+				  gitDirectory:(NSURL *)gitDirectory
+			temporaryDirectory:(NSURL *)temporaryDirectory;
 - (nullable NSString *)prepareCommitMessageForAmend:(BOOL)amend
-                                            headSHA:(nullable NSString *)headSHA
-                                    existingMessage:(nullable NSString *)existingMessage
-                                              error:(NSError * _Nullable * _Nullable)error;
+											headSHA:(nullable NSString *)headSHA
+									existingMessage:(nullable NSString *)existingMessage
+											  error:(NSError *_Nullable *_Nullable)error;
 - (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request
                                   progress:(void (^)(NSString *message))progress;
 - (PBIndexCommitResult *)commitWithRequest:(PBIndexCommitRequest *)request

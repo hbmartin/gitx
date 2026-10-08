@@ -11,6 +11,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class PBTaskDiagnosticCapture;
+@class PBTaskExecutionContext;
 
 extern NSString *const PBTaskErrorDomain;
 extern NSString *const PBTaskUnderlyingExceptionKey;
@@ -71,6 +72,10 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 /// @return YES if the command execution was successful, no otherwise
 ///
 - (BOOL)launchTask:(NSError *_Nullable *_Nullable)error;
+
+/// Freeze validated executable inputs for an owned interactive process.
+/// Argument and environment exceptions remain inside PBTask's Objective-C boundary.
+- (nullable PBTaskExecutionContext *)executionContext:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(executionContext());
 
 /// Execute a task synchronously, reporting each raw output chunk before completion.
 - (BOOL)launchTaskWithOutputChunkHandler:(nullable PBTaskOutputChunkHandler)outputChunkHandler

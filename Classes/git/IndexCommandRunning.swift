@@ -28,6 +28,10 @@ protocol IndexBinaryCommandRunning: IndexCommandRunning {
 
 final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexBinaryCommandRunning {
     private weak var repository: PBGitRepository?
+    var repositoryForCommit: PBGitRepository? {
+        repository
+    }
+
     let writerCoordinator: IndexWriterCoordinator
 
     @objc(initWithRepository:)

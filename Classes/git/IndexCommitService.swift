@@ -41,14 +41,32 @@ final nonisolated class IndexCommitRequest: NSObject, @unchecked Sendable {
     @objc let environment: [String: Any]?
     @objc let parentSHAs: [String]
     @objc let hasHead: Bool
+    @objc let headExpectation: CommitHeadExpectation?
+    let cancellation: IndexCommitCancellation
 
     @objc(requestWithoutVerification)
     func withoutVerification() -> IndexCommitRequest {
         IndexCommitRequest(message: message, verify: false, gpgSign: gpgSign, amend: amend,
-                           environment: environment, parentSHAs: parentSHAs, hasHead: hasHead)
+                           environment: environment, parentSHAs: parentSHAs, hasHead: hasHead, headExpectation: headExpectation, cancellation: cancellation)
+    }
+
+    @objc(preparedWithHeadExpectation:parentSHAs:)
+    func prepared(head: CommitHeadExpectation, parents: [String]) -> IndexCommitRequest {
+        IndexCommitRequest(message: message, verify: verify, gpgSign: gpgSign, amend: amend,
+                           environment: environment, parentSHAs: parents, hasHead: head.expectedOID != nil,
+                           headExpectation: head, cancellation: cancellation)
+    }
+
+    @objc func cancel() {
+        cancellation.cancel()
     }
 
     @objc(initWithMessage:verify:gpgSign:amend:environment:parentSHAs:hasHead:)
+    convenience init(message: String, verify: Bool, gpgSign: Bool, amend: Bool, environment: [String: Any]?, parentSHAs: [String], hasHead: Bool) {
+        self.init(message: message, verify: verify, gpgSign: gpgSign, amend: amend, environment: environment,
+                  parentSHAs: parentSHAs, hasHead: hasHead, headExpectation: nil, cancellation: IndexCommitCancellation())
+    }
+
     init(
         message: String,
         verify: Bool,
@@ -56,7 +74,9 @@ final nonisolated class IndexCommitRequest: NSObject, @unchecked Sendable {
         amend: Bool,
         environment: [String: Any]?,
         parentSHAs: [String],
-        hasHead: Bool
+        hasHead: Bool,
+        headExpectation: CommitHeadExpectation?,
+        cancellation: IndexCommitCancellation
     ) {
         self.message = message
         self.verify = verify
@@ -65,6 +85,8 @@ final nonisolated class IndexCommitRequest: NSObject, @unchecked Sendable {
         self.environment = environment
         self.parentSHAs = parentSHAs
         self.hasHead = hasHead
+        self.headExpectation = headExpectation
+        self.cancellation = cancellation
         super.init()
     }
 }
@@ -128,6 +150,15 @@ enum IndexCommitPhase: Int, Sendable {
 // swift6-safety-justification: Commit events are immutable after initialization.
 @objc(PBIndexCommitEvent)
 nonisolated class IndexCommitEvent: NSObject, @unchecked Sendable {}
+
+// swift6-safety-justification: The prepared request is immutable and retains its original cancellation token.
+@objc(PBIndexCommitPreparedEvent)
+final nonisolated class IndexCommitPreparedEvent: IndexCommitEvent, @unchecked Sendable {
+    @objc let request: IndexCommitRequest
+    init(request: IndexCommitRequest) {
+        self.request = request; super.init()
+    }
+}
 
 // swift6-safety-justification: The phase and display name are immutable value snapshots.
 @objc(PBIndexCommitPhaseEvent)
@@ -299,36 +330,21 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
     }
 
     private func performUnlockedCommit(with request: IndexCommitRequest, sink: IndexCommitEventSink) -> IndexCommitResult {
+        let preparedRequest: IndexCommitRequest
+        guard let references = runner as? IndexCommitReferenceRunning else {
+            return failure("The Git adapter cannot safely publish prepared reference transactions.")
+        }
+        do {
+            preparedRequest = try references.prepareCommitRequest(request)
+            sink.send(IndexCommitPreparedEvent(request: preparedRequest))
+        } catch { return failure(IndexOperationErrorPresentation.detail(for: error as NSError)) }
+        let request = preparedRequest
         let editMessageURL = gitDirectory.appendingPathComponent("COMMIT_EDITMSG")
         do {
             try request.message.write(to: editMessageURL, atomically: true, encoding: .utf8)
         } catch {
             logger.error("Writing commit message failed")
-        }
-
-        sink.send(IndexCommitPhaseEvent(phase: .creatingTree))
-        let tree: String
-        do {
-            tree = try runner.output(arguments: ["write-tree"], input: nil, environment: nil)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            return failure("Failed to lookup tree")
-        }
-        // Accept SHA-1 (40) and SHA-256 (64) object IDs.
-        guard tree.count == 40 || tree.count == 64 else {
-            return failure("Creating tree failed")
-        }
-
-        var arguments = ["commit-tree", tree]
-        if request.amend {
-            for parent in request.parentSHAs {
-                arguments += ["-p", parent]
-            }
-        } else if request.hasHead {
-            arguments += ["-p", request.parentSHAs.first ?? "HEAD"]
-        }
-        if request.gpgSign {
-            arguments.append("--gpg-sign")
+            return failure("Could not save the commit message. \(IndexOperationErrorPresentation.detail(for: error as NSError))")
         }
 
         if request.verify {
@@ -352,6 +368,28 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
             }
         }
 
+        do { try request.cancellation.check() } catch { return failure(IndexOperationErrorPresentation.detail(for: error as NSError)) }
+        sink.send(IndexCommitPhaseEvent(phase: .creatingTree))
+        let tree: String
+        do {
+            tree = try runner.output(arguments: ["write-tree"], input: nil, environment: nil)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return failure("Failed to lookup tree")
+        }
+        // Accept SHA-1 (40) and SHA-256 (64) object IDs.
+        guard let head = request.headExpectation, CommitHeadExpectation.isObjectID(tree, width: head.objectIDWidth) else {
+            return failure("Creating tree failed")
+        }
+
+        var arguments = ["commit-tree", tree]
+        for parent in request.parentSHAs {
+            arguments += ["-p", parent]
+        }
+        if request.gpgSign {
+            arguments.append("--gpg-sign")
+        }
+
         sink.send(IndexCommitPhaseEvent(phase: .creatingCommit))
         let editedMessage = (try? String(contentsOf: editMessageURL, encoding: .utf8)) ?? request.message
         let commit: String
@@ -372,7 +410,7 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
             return failure("Could not create a commit object")
         }
         // Accept SHA-1 (40) and SHA-256 (64) object IDs.
-        guard commit.count == 40 || commit.count == 64 else {
+        guard CommitHeadExpectation.isObjectID(commit, width: head.objectIDWidth) else {
             return failure("Could not create a commit object")
         }
 
@@ -383,14 +421,8 @@ final nonisolated class IndexCommitService: NSObject, @unchecked Sendable {
             omittingEmptySubsequences: false
         ).first.map(String.init) ?? ""
         do {
-            _ = try runner.output(
-                arguments: ["update-ref", "-m", "commit: \(subject)", "HEAD", commit],
-                input: nil,
-                environment: nil
-            )
-        } catch {
-            return failure("Could not update HEAD")
-        }
+            try references.publishCommit(commit, request: request, subject: "commit: \(subject)")
+        } catch { return failure(IndexOperationErrorPresentation.detail(for: error as NSError)) }
 
         sink.send(IndexCommitPhaseEvent(phase: .runningPostCommitHook))
         let postCommitSucceeded: Bool
