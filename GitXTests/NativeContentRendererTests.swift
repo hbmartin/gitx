@@ -832,6 +832,53 @@ final class NativeContentRendererTests: XCTestCase {
         )
     }
 
+    // swift6-safety-justification: The lock protects image bytes read by the renderer while main replaces fixture data.
+    private final nonisolated class MutableImageProvider: NSObject, PBNativeContentViewDelegate, @unchecked Sendable {
+        private let lock = NSLock()
+        private var bytes: Data
+        init(bytes: Data) {
+            self.bytes = bytes; super.init()
+        }
+
+        func replace(_ bytes: Data) {
+            lock.lock(); self.bytes = bytes; lock.unlock()
+        }
+
+        func nativeContentView(_: PBNativeContentView, imageDataForPath _: String, section _: UInt, imageSource _: [String: Any]) -> Data? {
+            lock.lock(); defer { lock.unlock() }; return bytes
+        }
+    }
+
+    @MainActor
+    func testUnidentifiedImageContentCannotReuseAStaleBinaryRender() throws {
+        func imageBytes(_ width: Int) throws -> Data {
+            let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: width,
+                                                        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        }
+        let provider = try MutableImageProvider(bytes: imageBytes(8))
+        let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 220))
+        view.delegate = provider
+        view.setValue(NSMutableSet(array: ["0:image.png"]), forKey: "expandedImages")
+        let sections: [[String: Any]] = [[PBNativeSectionTextKey: "diff --git a/image.png b/image.png\nBinary files a/image.png and b/image.png differ\n"]]
+        func imageWidth() -> CGFloat? {
+            let text = view.textView.attributedString()
+            for position in 0 ..< text.length {
+                if let attachment = text.attribute(.attachment, at: position, effectiveRange: nil) as? NSTextAttachment {
+                    return attachment.image?.size.width
+                }
+            }
+            return nil
+        }
+        view.showDiffSections(sections, cacheIdentifier: "image-content", preserveScrollPosition: true)
+        wait(for: [expectation(for: NSPredicate { _, _ in imageWidth() == 8 }, evaluatedWith: view)], timeout: 10)
+        try provider.replace(imageBytes(16))
+        view.showDiffSections(sections, cacheIdentifier: "image-content", preserveScrollPosition: true)
+        wait(for: [expectation(for: NSPredicate { _, _ in imageWidth() == 16 }, evaluatedWith: view)], timeout: 10)
+        XCTAssertEqual(imageWidth(), 16)
+    }
+
     @MainActor
     func testFinalDiffCacheEvictsLeastRecentlyUsedIdentifier() {
         let view = PBNativeContentView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))

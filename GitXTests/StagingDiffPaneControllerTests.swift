@@ -26,19 +26,26 @@ final class StagingDiffPaneControllerTests: XCTestCase {
     private final nonisolated class BlockingIndexCommandRunner: NSObject, PBIndexCommandRunning, @unchecked Sendable {
         private let producerStarted: XCTestExpectation
         private let producerFinished: XCTestExpectation
+        private let parentResolved: XCTestExpectation
         private let gate = DispatchSemaphore(value: 0)
 
-        init(producerStarted: XCTestExpectation, producerFinished: XCTestExpectation) {
+        init(producerStarted: XCTestExpectation, producerFinished: XCTestExpectation, parentResolved: XCTestExpectation) {
             self.producerStarted = producerStarted
             self.producerFinished = producerFinished
+            self.parentResolved = parentResolved
             super.init()
         }
 
         func output(
-            withArguments _: [String],
+            withArguments arguments: [String],
             input _: String?,
             environment _: [String: Any]?
         ) throws -> String {
+            if arguments.first == "rev-parse" {
+                XCTAssertEqual(arguments, ["rev-parse", "--verify", "HEAD^{tree}"])
+                parentResolved.fulfill()
+                return "4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"
+            }
             producerStarted.fulfill()
             gate.wait()
             producerFinished.fulfill()
@@ -100,10 +107,12 @@ final class StagingDiffPaneControllerTests: XCTestCase {
     func testQueuedProductionRetainsRepositoryAfterPaneTeardownAndCompletes() async throws {
         let producerStarted = expectation(description: "queued producer started")
         let producerFinished = expectation(description: "queued producer finished")
+        let parentResolved = expectation(description: "queued producer resolves its parent through the command boundary")
         let repositoryReleased = expectation(description: "repository released after queued production")
         let runner = BlockingIndexCommandRunner(
             producerStarted: producerStarted,
-            producerFinished: producerFinished
+            producerFinished: producerFinished,
+            parentResolved: parentResolved
         )
         weak var weakRepository: PBGitRepository?
         var repository: LifetimeRepository? = LifetimeRepository {
@@ -133,7 +142,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         )
 
         runner.releaseProduction()
-        await fulfillment(of: [producerFinished, repositoryReleased], timeout: 2)
+        await fulfillment(of: [producerFinished, parentResolved, repositoryReleased], timeout: 2)
         XCTAssertNil(weakRepository)
     }
 }

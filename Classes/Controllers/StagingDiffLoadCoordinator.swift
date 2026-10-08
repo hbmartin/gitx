@@ -1,32 +1,54 @@
+import CryptoKit
 import Foundation
 
-/// Immutable authority of a rendered action, independent of its scroll cache key.
+/// Authority follows exact Git bytes and content, independent of refresh generations.
 nonisolated struct StagingDiffActionContext: Equatable, Sendable {
-    let snapshotRevision: UInt
-    let loadIdentity: UUID
     let rawPath: Data
     let staged: Bool
+    let parentTree: String
+    let contentIdentity: String
+    let contextLines: UInt
+    let status: Int
+    let hasStagedChanges: Bool
+    let visualIdentity: String
 
-    var dictionary: [String: Any] {
-        ["snapshotRevision": snapshotRevision, "loadIdentity": loadIdentity.uuidString,
-         "rawPath": rawPath, "staged": staged]
-    }
-
-    init(snapshotRevision: UInt, loadIdentity: UUID, rawPath: Data, staged: Bool) {
-        self.snapshotRevision = snapshotRevision
-        self.loadIdentity = loadIdentity
+    init(rawPath: Data, staged: Bool, parentTree: String, diff: String, contextLines: UInt,
+         status: Int, hasStagedChanges: Bool, visualIdentity: String = "")
+    {
         self.rawPath = rawPath
         self.staged = staged
+        self.parentTree = parentTree
+        self.contextLines = contextLines
+        self.status = status
+        self.hasStagedChanges = hasStagedChanges
+        self.visualIdentity = visualIdentity
+        var bytes = Data()
+        for part in [rawPath, Data((staged ? "staged" : "unstaged").utf8), Data(parentTree.utf8), Data(diff.utf8),
+                     Data(String(contextLines).utf8), Data(String(status).utf8), Data((hasStagedChanges ? "yes" : "no").utf8), Data(visualIdentity.utf8)]
+        {
+            bytes.append(Data(String(part.count).utf8)); bytes.append(0); bytes.append(part)
+        }
+        contentIdentity = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+    }
+
+    var dictionary: [String: Any] {
+        ["rawPath": rawPath, "staged": staged, "parentTree": parentTree, "contentIdentity": contentIdentity,
+         "contextLines": contextLines, "status": status, "hasStagedChanges": hasStagedChanges, "visualIdentity": visualIdentity]
     }
 
     init?(dictionary: [String: Any]) {
-        guard dictionary.count == 4,
-              let revision = dictionary["snapshotRevision"] as? UInt,
-              let identity = dictionary["loadIdentity"] as? String,
-              let uuid = UUID(uuidString: identity),
+        guard dictionary.count == 8,
               let path = dictionary["rawPath"] as? Data, !path.isEmpty, !path.contains(0),
-              let side = dictionary["staged"] as? Bool else { return nil }
-        self.init(snapshotRevision: revision, loadIdentity: uuid, rawPath: path, staged: side)
+              let side = dictionary["staged"] as? Bool,
+              let tree = dictionary["parentTree"] as? String, !tree.isEmpty,
+              let identity = dictionary["contentIdentity"] as? String, identity.utf8.count == 64,
+              identity.utf8.allSatisfy({ (48 ... 57).contains($0) || (97 ... 102).contains($0) }),
+              let lines = dictionary["contextLines"] as? UInt,
+              let status = dictionary["status"] as? Int,
+              let stagedChanges = dictionary["hasStagedChanges"] as? Bool,
+              let visual = dictionary["visualIdentity"] as? String else { return nil }
+        rawPath = path; staged = side; parentTree = tree; contentIdentity = identity
+        contextLines = lines; self.status = status; hasStagedChanges = stagedChanges; visualIdentity = visual
     }
 
     func permits(_ action: String) -> Bool {
@@ -48,10 +70,9 @@ struct StagingDiffLoadRequest: Equatable, Sendable {
     let contextLines: UInt
     let workingDirectoryURL: URL?
     let syntheticUntracked: Bool
-    let actionContext: StagingDiffActionContext?
 
     init(path: String, rawPath: Data? = nil, status: Int, hasStagedChanges: Bool, staged: Bool,
-         parentTree: String, contextLines: UInt, workingDirectoryURL: URL?, syntheticUntracked: Bool, actionContext: StagingDiffActionContext? = nil)
+         parentTree: String, contextLines: UInt, workingDirectoryURL: URL?, syntheticUntracked: Bool)
     {
         self.path = path
         self.rawPath = rawPath ?? Data(path.utf8)
@@ -62,12 +83,11 @@ struct StagingDiffLoadRequest: Equatable, Sendable {
         self.contextLines = contextLines
         self.workingDirectoryURL = workingDirectoryURL
         self.syntheticUntracked = syntheticUntracked
-        self.actionContext = actionContext
     }
 }
 
 enum StagingDiffProduction: Equatable, Sendable {
-    case success(String)
+    case validated(diff: String, parentTree: String, visualIdentity: String)
     case failure(String)
 }
 
@@ -97,8 +117,8 @@ struct StagingDiffLoadOutput: Equatable, Sendable {
 }
 
 /// Serializes staging-diff production while letting the main thread continue
-/// displaying the last completed result. Generations are intentionally not
-/// cancelled: completed obsolete work is discarded at the delivery boundary.
+/// displaying the last completed result. Superseded generations are skipped
+/// before production and between sections; running obsolete work cannot publish.
 // swift6-safety-justification: The producer and request values are Sendable, and stateLock protects all mutable state.
 final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
     typealias Producer = @Sendable (StagingDiffLoadRequest) -> StagingDiffProduction
@@ -143,7 +163,7 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
         )
 
         queue.async { [self] in
-            let output = load(requests, generation: generation)
+            guard let output = load(requests, generation: generation) else { return }
             DispatchQueue.main.async { [self] in
                 let isCurrent = mutateState { state in
                     guard state.latestGeneration == generation else { return false }
@@ -188,16 +208,25 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
     private func load(
         _ requests: [StagingDiffLoadRequest],
         generation: UInt
-    ) -> StagingDiffLoadOutput {
-        let sections = requests.map { request in
+    ) -> StagingDiffLoadOutput? {
+        var sections: [StagingDiffSectionDescriptor] = []
+        let start = ProcessInfo.processInfo.systemUptime
+        for request in requests {
+            guard mutateState({ $0.latestGeneration == generation }) else {
+                NSLog("[GitX] Skipped superseded staging producer generation %llu", UInt64(generation))
+                return nil
+            }
             NSLog(
                 "[GitX] Loading staging diff generation %llu for %@",
                 UInt64(generation),
                 request.path
             )
             switch producer(request) {
-            case let .success(diff):
-                return successfulSection(for: request, diff: diff)
+            case let .validated(diff, parentTree, visualIdentity):
+                let token = StagingDiffActionContext(rawPath: request.rawPath, staged: request.staged, parentTree: parentTree,
+                                                     diff: diff, contextLines: request.contextLines, status: request.status,
+                                                     hasStagedChanges: request.hasStagedChanges, visualIdentity: visualIdentity)
+                sections.append(successfulSection(for: request, diff: diff, actionContext: token))
             case let .failure(detail):
                 NSLog(
                     "[GitX] Staging diff generation %llu failed for %@: %@",
@@ -205,9 +234,10 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
                     request.path,
                     detail
                 )
-                return failedSection(for: request, detail: detail)
+                sections.append(failedSection(for: request, detail: detail))
             }
         }
+        NSLog("[GitX] Staging producer generation %llu produced %ld sections in %.3f ms", UInt64(generation), sections.count, (ProcessInfo.processInfo.systemUptime - start) * 1000)
         let selection = requests
             .map { "\($0.staged ? "s" : "u"):\($0.rawPath.base64EncodedString())" }
             .joined(separator: "|")
@@ -220,7 +250,8 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
 
     private func successfulSection(
         for request: StagingDiffLoadRequest,
-        diff: String
+        diff: String,
+        actionContext: StagingDiffActionContext
     ) -> StagingDiffSectionDescriptor {
         let sideTitle = request.staged
             ? NSLocalizedString("Staged", comment: "Staging diff section prefix for staged changes")
@@ -231,7 +262,7 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
             text: diff,
             context: request.staged ? "staged" : "unstaged",
             stagingChrome: true,
-            actionContext: request.actionContext
+            actionContext: actionContext
         )
     }
 

@@ -4,6 +4,46 @@ final class NativeContentModelsTests: XCTestCase {
     private let parser = PBDiffDocumentParser()
     private let patchBuilder = PBPartialPatchBuilder()
 
+    func testRenderReuseRequiresEveryVisualInputAndKnownImageContent() {
+        let base: [String: Any] = [PBNativeSectionTextKey: "@@ -1 +1 @@\n-old\n+new", PBNativeSectionPathKey: "file.txt",
+                                   PBNativeSectionContextKey: "unstaged", PBNativeSectionSuppressionPatternsKey: [],
+                                   PBNativeSectionActionContextKey: ["visualIdentity": ""]]
+        func identity(_ section: [String: Any], collapsed: Set<String> = [], expanded: Set<String> = [], layout: Int = 0) -> PBNativeDiffRenderIdentity {
+            PBNativeDiffRenderIdentity(sections: [section], collapsedFiles: collapsed, expandedImages: expanded, layout: layout)
+        }
+        let original = identity(base)
+        XCTAssertTrue(original.reusable)
+        XCTAssertTrue(original.matchesIdentity(identity(base)))
+        for (key, value) in [(PBNativeSectionTextKey, "changed" as Any), (PBNativeSectionPathKey, "other.txt"),
+                             (PBNativeSectionContextKey, "staged"), (PBNativeSectionSuppressionPatternsKey, ["*.txt"]),
+                             (PBNativeSectionActionContextKey, ["visualIdentity": "changed"])]
+        {
+            var changed = base; changed[key] = value
+            XCTAssertFalse(original.matchesIdentity(identity(changed)), key)
+        }
+        XCTAssertFalse(original.matchesIdentity(identity(base, collapsed: ["file.txt"])))
+        XCTAssertFalse(original.matchesIdentity(identity(base, expanded: ["file.txt"])))
+        XCTAssertFalse(original.matchesIdentity(identity(base, layout: 1)))
+        XCTAssertTrue(identity([:]).reusable)
+        for text in ["Binary files a/image.png and b/image.png differ", "GIT binary patch"] {
+            var binary = base; binary[PBNativeSectionTextKey] = text
+            let unknown = identity(binary)
+            XCTAssertFalse(unknown.reusable)
+            XCTAssertFalse(unknown.matchesIdentity(unknown))
+            XCTAssertFalse(original.matchesIdentity(unknown))
+            binary[PBNativeSectionActionContextKey] = ["visualIdentity": "image-digest"]
+            let known = identity(binary)
+            XCTAssertTrue(known.reusable); XCTAssertTrue(known.matchesIdentity(identity(binary)))
+            binary[PBNativeSectionActionContextKey] = ["visualIdentity": "new-image-digest"]
+            XCTAssertFalse(known.matchesIdentity(identity(binary)))
+            binary.removeValue(forKey: PBNativeSectionActionContextKey)
+            binary[PBNativeSectionImageSourceKey] = ["contentIdentity": "blob-id"]
+            XCTAssertTrue(identity(binary).reusable)
+            binary[PBNativeSectionImageSourceKey] = ["contentIdentity": ""]
+            XCTAssertFalse(identity(binary).reusable)
+        }
+    }
+
     func testSectionAdapterPreservesFallbacksAndTypedValues() {
         let pathOnly = PBNativeContentSection(dictionary: [
             PBNativeSectionPathKey: "Folder/ünicode.swift",

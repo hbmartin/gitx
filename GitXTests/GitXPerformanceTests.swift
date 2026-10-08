@@ -893,6 +893,48 @@ final class GitXPerformanceTests: XCTestCase {
         XCTAssertGreaterThan(checksum, 0)
     }
 
+    // swift6-safety-justification: The lock protects counts shared by the controlled producer and main-actor benchmark.
+    private final nonisolated class ProducerWork: @unchecked Sendable {
+        private let lock = NSLock()
+        private var paths: [String] = []
+        func append(_ path: String) {
+            lock.lock(); paths.append(path); lock.unlock()
+        }
+
+        var count: Int {
+            lock.lock(); defer { lock.unlock() }; return paths.count
+        }
+    }
+
+    func testSupersededStagingProductionReportsControlledWorkReduction() async {
+        let started = expectation(description: "controlled first producer started")
+        let completed = expectation(description: "current generation completed")
+        let gate = DispatchSemaphore(value: 0)
+        let work = ProducerWork()
+        let coordinator = StagingDiffLoadCoordinator { request in
+            work.append(request.path)
+            if request.path == "first" {
+                started.fulfill(); _ = gate.wait(timeout: .now() + 5)
+            }
+            return .validated(diff: "controlled diff", parentTree: "HEAD", visualIdentity: "")
+        }
+        func request(_ path: String) -> StagingDiffLoadRequest {
+            StagingDiffLoadRequest(path: path, status: 2, hasStagedChanges: false, staged: false,
+                                   parentTree: "HEAD", contextLines: 3, workingDirectoryURL: nil, syntheticUntracked: false)
+        }
+        let start = ProcessInfo.processInfo.systemUptime
+        coordinator.schedule([request("first"), request("obsolete-section")]) { _ in XCTFail("Obsolete publication") }
+        await fulfillment(of: [started], timeout: 3)
+        coordinator.schedule([request("obsolete-queued")]) { _ in XCTFail("Obsolete publication") }
+        coordinator.schedule([request("current")]) { _ in completed.fulfill() }
+        gate.signal()
+        await fulfillment(of: [completed], timeout: 3)
+        XCTAssertEqual(work.count, 2)
+        let evidence = XCTAttachment(string: "Scheduled sections: 4; produced sections: \(work.count); elapsed milliseconds: \((ProcessInfo.processInfo.systemUptime - start) * 1000). Controlled pre-fix regression produced 4 sections.")
+        evidence.name = "Superseded-Staging-Producer-Work"; evidence.lifetime = .keepAlways
+        add(evidence)
+    }
+
     func testCachedWorkingStateFeedbackMeetsBudget() {
         let fixture = diffFixture(
             fileCount: PBPerformanceBudgets.representativeChangedFileCount,
@@ -919,6 +961,7 @@ final class GitXPerformanceTests: XCTestCase {
         )
         wait(for: [rendered], timeout: 30)
 
+        let renderWorkBeforeReuse = view.diffRenderWorkCount
         var samples: [TimeInterval] = []
         for _ in 0 ..< 20 {
             view.showMessage("Loading…")
@@ -932,6 +975,10 @@ final class GitXPerformanceTests: XCTestCase {
             XCTAssertTrue(view.textView.string.contains(fixture.marker))
         }
 
+        XCTAssertEqual(view.diffRenderWorkCount, renderWorkBeforeReuse, "Twenty unchanged publications reuse the completed render")
+        let reuseEvidence = XCTAttachment(string: "Initial renderer jobs: \(renderWorkBeforeReuse); unchanged publications: 20; additional renderer jobs: \(view.diffRenderWorkCount - renderWorkBeforeReuse)")
+        reuseEvidence.name = "Unchanged-Publication-Render-Work"; reuseEvidence.lifetime = .keepAlways
+        add(reuseEvidence)
         attachMeasurements("Cached Working State feedback", samples: samples)
         XCTAssertLessThanOrEqual(
             percentile95(samples),

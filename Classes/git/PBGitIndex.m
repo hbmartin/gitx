@@ -578,6 +578,17 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	return [self scheduleMutation:[[PBIndexMutationRequest alloc] initWithPatch:patch stage:stage reverse:reverse] operation:@"Applying patch failed" completion:completion];
 }
 
+- (BOOL)applyPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse authorization:(PBIndexPatchAuthorization *)authorization completion:(void (^)(BOOL, NSError *_Nullable))completion
+{
+	return [self scheduleMutation:[[PBIndexMutationRequest alloc] initWithPatch:patch stage:stage reverse:reverse authorization:authorization] operation:@"Applying patch failed" completion:completion];
+}
+
+- (BOOL)discardChangesForFiles:(NSArray<PBChangedFile *> *)files authorization:(PBIndexPatchAuthorization *)authorization completion:(void (^)(BOOL, NSError *_Nullable))completion
+{
+	NSArray<PBChangedFile *> *tracked = [PBIndexFilePresentation discardableFilesFromFiles:files];
+	return [self scheduleMutation:[[PBIndexMutationRequest alloc] initWithDiscardPaths:[tracked valueForKey:@"rawPath"] authorization:authorization] operation:@"Discarding changes failed" completion:completion];
+}
+
 - (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles
 {
 	return [self stageFiles:stageFiles unstageFiles:@[]];

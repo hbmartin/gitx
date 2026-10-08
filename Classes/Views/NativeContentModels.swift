@@ -518,3 +518,43 @@ final nonisolated class PartialPatchBuilder: NSObject {
 }
 
 // swiftlint:enable unused_declaration
+
+// Objective-C renderer consumers are invisible to the Swift analyzer.
+// swiftlint:disable unused_declaration
+
+/// Every visual input participates in reuse; an image without an immutable
+/// content identity must be produced again even if its diff text is unchanged.
+@objc(PBNativeDiffRenderIdentity)
+final nonisolated class NativeDiffRenderIdentity: NSObject {
+    private let sections: NSArray
+    private let collapsed: Set<String>
+    private let expanded: Set<String>
+    private let layout: Int
+    @objc let reusable: Bool
+
+    @objc(initWithSections:collapsedFiles:expandedImages:layout:)
+    init(sections: [[String: Any]], collapsedFiles: Set<String>, expandedImages: Set<String>, layout: Int) {
+        self.sections = sections as NSArray
+        collapsed = collapsedFiles
+        expanded = expandedImages
+        self.layout = layout
+        reusable = sections.allSatisfy { section in
+            let text = (section[PBNativeSectionTextKey] as? String ?? "") as NSString
+            guard text.range(of: "Binary files ").location != NSNotFound || text.range(of: "GIT binary patch").location != NSNotFound else { return true }
+            let action = section[PBNativeSectionActionContextKey] as? [String: Any]
+            let image = section[PBNativeSectionImageSourceKey] as? [String: Any]
+            // Staging supplies a digest or index blob. Other image providers
+            // must supply a content identity before their output can be reused.
+            return !(action?["visualIdentity"] as? String ?? "").isEmpty ||
+                !(image?["contentIdentity"] as? String ?? "").isEmpty
+        }
+        super.init()
+    }
+
+    @objc(matchesIdentity:)
+    func matches(_ other: NativeDiffRenderIdentity) -> Bool {
+        reusable && other.reusable && layout == other.layout && collapsed == other.collapsed && expanded == other.expanded && sections.isEqual(other.sections)
+    }
+}
+
+// swiftlint:enable unused_declaration

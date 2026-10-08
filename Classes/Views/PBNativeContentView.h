@@ -37,6 +37,7 @@ extern NSString *const PBNativeImageSourceTaskDirectoryKey;
 
 /// Shared, selectable AppKit renderer for source, blame, history, and diff content.
 @interface PBNativeContentView : NSView <NSTextViewDelegate>
+@property (nonatomic, readonly) NSUInteger diffRenderWorkCount;
 
 @property (nonatomic, weak, nullable) id<PBNativeContentViewDelegate> delegate;
 @property (nonatomic, readonly) NSTextView *textView;

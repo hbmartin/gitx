@@ -14,9 +14,11 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     let patch: String
     let stage: Bool
     let reverse: Bool
+    let authorization: PBIndexPatchAuthorization?
 
     @objc(initWithStagePaths:unstagePaths:parentTree:)
     init(stagePaths: [Data], unstagePaths: [Data], parentTree: String) {
+        authorization = nil
         operation = .paths
         self.stagePaths = stagePaths.map(Self.copy)
         self.unstagePaths = unstagePaths.map(Self.copy)
@@ -26,7 +28,13 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     }
 
     @objc(initWithDiscardPaths:)
-    init(discardPaths: [Data]) {
+    convenience init(discardPaths: [Data]) {
+        self.init(discardPaths: discardPaths, authorization: nil)
+    }
+
+    @objc(initWithDiscardPaths:authorization:)
+    init(discardPaths: [Data], authorization: PBIndexPatchAuthorization?) {
+        self.authorization = authorization
         operation = .discard
         stagePaths = discardPaths.map(Self.copy); unstagePaths = []
         parentTree = ""; patch = ""; stage = false; reverse = false
@@ -34,7 +42,13 @@ final nonisolated class IndexMutationRequest: NSObject, Sendable {
     }
 
     @objc(initWithPatch:stage:reverse:)
-    init(patch: String, stage: Bool, reverse: Bool) {
+    convenience init(patch: String, stage: Bool, reverse: Bool) {
+        self.init(patch: patch, stage: stage, reverse: reverse, authorization: nil)
+    }
+
+    @objc(initWithPatch:stage:reverse:authorization:)
+    init(patch: String, stage: Bool, reverse: Bool, authorization: PBIndexPatchAuthorization?) {
+        self.authorization = authorization
         operation = .patch
         stagePaths = []; unstagePaths = []; parentTree = ""
         self.patch = patch; self.stage = stage; self.reverse = reverse
@@ -110,8 +124,16 @@ final nonisolated class IndexMutationCoordinator: NSObject, @unchecked Sendable 
                 let success: Bool
                 switch request.operation {
                 case .paths: success = service.mutate(stageRawPaths: request.stagePaths, unstageRawPaths: request.unstagePaths, parentTree: request.parentTree, error: &error)
-                case .discard: success = service.discardRawPaths(request.stagePaths, error: &error)
-                case .patch: success = service.applyPatch(request.patch, stage: request.stage, reverse: request.reverse, error: &error)
+                case .discard:
+                    do {
+                        try request.authorization?.validate()
+                        success = service.discardRawPaths(request.stagePaths, error: &error)
+                    } catch let validationError { success = false; error = validationError as NSError }
+                case .patch:
+                    do {
+                        try request.authorization?.validate()
+                        success = service.applyPatch(request.patch, stage: request.stage, reverse: request.reverse, error: &error)
+                    } catch let validationError { success = false; error = validationError as NSError }
                 }
                 result = (success, error)
             }
@@ -127,5 +149,18 @@ final nonisolated class IndexMutationCoordinator: NSObject, @unchecked Sendable 
             }
         })
         return true
+    }
+}
+
+// swift6-safety-justification: Immutable validation captures only value snapshots and a Sendable producer; AppKit eligibility is read through a synchronous main-queue boundary.
+@objc(PBIndexPatchAuthorization)
+final nonisolated class PBIndexPatchAuthorization: NSObject, @unchecked Sendable {
+    private let validation: @Sendable () throws -> Void
+    init(validation: @escaping @Sendable () throws -> Void) {
+        self.validation = validation; super.init()
+    }
+
+    func validate() throws {
+        try validation()
     }
 }

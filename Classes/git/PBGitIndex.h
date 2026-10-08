@@ -10,6 +10,7 @@
 
 @class PBGitRepository;
 @class PBChangedFile;
+@class PBIndexPatchAuthorization;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -91,6 +92,8 @@ extern NSString *PBGitIndexOperationFailed;
 - (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles completion:(void (^)(BOOL, NSError *_Nullable))completion;
 - (BOOL)discardChangesForFiles:(NSArray<PBChangedFile *> *)files completion:(void (^)(BOOL, NSError *_Nullable))completion;
 - (BOOL)applyPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse completion:(void (^)(BOOL, NSError *_Nullable))completion;
+- (BOOL)applyPatch:(NSString *)patch stage:(BOOL)stage reverse:(BOOL)reverse authorization:(PBIndexPatchAuthorization *)authorization completion:(void (^)(BOOL, NSError *_Nullable))completion;
+- (BOOL)discardChangesForFiles:(NSArray<PBChangedFile *> *)files authorization:(PBIndexPatchAuthorization *)authorization completion:(void (^)(BOOL, NSError *_Nullable))completion;
 - (void)close;
 @property (readonly) NSUInteger writerPendingCount;
 @property (readonly) NSUInteger writerActiveCount;

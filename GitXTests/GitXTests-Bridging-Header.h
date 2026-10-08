@@ -878,6 +878,12 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 										 untracked:(nullable NSDictionary<NSData *, PBIndexStatusEntry *> *)untracked;
 @end
 
+@interface PBNativeDiffRenderIdentity : NSObject
+@property (nonatomic, readonly) BOOL reusable;
+- (instancetype)initWithSections:(NSArray<NSDictionary<NSString *, id> *> *)sections collapsedFiles:(NSSet<NSString *> *)collapsedFiles expandedImages:(NSSet<NSString *> *)expandedImages layout:(NSInteger)layout;
+- (BOOL)matchesIdentity:(PBNativeDiffRenderIdentity *)identity;
+@end
+
 @interface PBNativeContentSection : NSObject
 @property (nonatomic, readonly) NSString *title;
 @property (nonatomic, readonly) NSString *text;
@@ -1165,7 +1171,7 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 - (instancetype)initWithService:(PBIndexCommitService *)service
 					 repository:(nullable PBGitRepository *)repository;
 - (void)commitWithRequest:(PBIndexCommitRequest *)request
-             eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
+			 eventHandler:(void (^)(PBIndexCommitEvent *event))eventHandler;
 @end
 
 @interface PBIncrementalUTF8Decoder : NSObject

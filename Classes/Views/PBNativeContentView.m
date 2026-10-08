@@ -49,6 +49,8 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 @property (nonatomic) PBNativeDiffRenderer *diffRenderer;
 @property (nonatomic) NSMutableDictionary<NSString *, PBNativeRenderResult *> *cachedDiffResults;
 @property (nonatomic) NSMutableDictionary<NSString *, NSArray<NSDictionary *> *> *cachedDiffSections;
+@property (nonatomic) NSMutableDictionary<NSString *, PBNativeDiffRenderIdentity *> *cachedDiffIdentities;
+@property (nonatomic, readwrite) NSUInteger diffRenderWorkCount;
 @property (nonatomic) NSMutableDictionary<NSString *, NSValue *> *cachedDiffScrollOrigins;
 @property (nonatomic) NSMutableArray<NSString *> *cachedDiffIdentifierOrder;
 @property (nonatomic, nullable) NSString *currentDiffCacheIdentifier;
@@ -67,6 +69,7 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 	_expandedImages = [NSMutableSet set];
 	_cachedDiffResults = [NSMutableDictionary dictionary];
 	_cachedDiffSections = [NSMutableDictionary dictionary];
+	_cachedDiffIdentities = [NSMutableDictionary dictionary];
 	_cachedDiffScrollOrigins = [NSMutableDictionary dictionary];
 	_cachedDiffIdentifierOrder = [NSMutableArray array];
 	_renderQueue = [[NSOperationQueue alloc] init];
@@ -169,6 +172,7 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 		[self.cachedDiffIdentifierOrder removeObjectAtIndex:0];
 		[self.cachedDiffResults removeObjectForKey:expiredIdentifier];
 		[self.cachedDiffSections removeObjectForKey:expiredIdentifier];
+		[self.cachedDiffIdentities removeObjectForKey:expiredIdentifier];
 		[self.cachedDiffScrollOrigins removeObjectForKey:expiredIdentifier];
 		NSLog(@"[GitX] Evicted native diff cache entry %@", expiredIdentifier);
 	}
@@ -320,6 +324,7 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 	// survive render invalidation so reselected diffs restore their position.
 	[self.cachedDiffResults removeAllObjects];
 	[self.cachedDiffSections removeAllObjects];
+	[self.cachedDiffIdentities removeAllObjects];
 }
 
 - (void)rerenderCurrentContentWithScrollOrigin:(NSValue *)scrollOrigin
@@ -495,19 +500,23 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 	[self touchDiffCacheIdentifier:cacheIdentifier];
 	NSUInteger generation = ++self.renderGeneration;
 	PBNativeRenderResult *cachedResult = cacheIdentifier ? self.cachedDiffResults[cacheIdentifier] : nil;
-	NSArray<NSDictionary *> *cachedSections = cacheIdentifier ? self.cachedDiffSections[cacheIdentifier] : nil;
-	if (cachedResult) {
+	PBNativeDiffRenderIdentity *identity = [[PBNativeDiffRenderIdentity alloc] initWithSections:sourceSections collapsedFiles:self.collapsedFiles expandedImages:self.expandedImages layout:PBApplicationSettings.diffLayout];
+	PBNativeDiffRenderIdentity *cachedIdentity = cacheIdentifier ? self.cachedDiffIdentities[cacheIdentifier] : nil;
+	if (cachedResult && cachedIdentity && [identity matchesIdentity:cachedIdentity]) {
 		[self setRenderedString:cachedResult.attributedString
 					 generation:generation
 				   linkPayloads:cachedResult.linkPayloads
 				   scrollOrigin:savedScrollOrigin];
-		if ([cachedSections isEqualToArray:sourceSections]) return;
+		NSLog(@"[GitX] Reused unchanged diff render for %@", cacheIdentifier);
+		return;
 	}
 	NSArray<PBNativeContentSection *> *copiedSections = [PBNativeContentSection sectionsWithDictionaries:sourceSections];
 	NSSet<NSString *> *collapsedFiles = [self.collapsedFiles copy];
 	NSSet<NSString *> *expandedImages = [self.expandedImages copy];
 	id<PBNativeContentViewDelegate> delegate = self.delegate;
 	PBNativeDiffRenderer *renderer = self.diffRenderer;
+	self.diffRenderWorkCount++;
+	NSLog(@"[GitX] Producing diff render %lu for %@", (unsigned long)self.diffRenderWorkCount, cacheIdentifier ?: @"uncached");
 	[self enqueueRenderWork:^(BOOL (^shouldCancel)(void)) {
 		NSData * (^imageDataProvider)(NSString *, NSInteger, NSDictionary<NSString *, id> *) =
 			^NSData *(NSString *path, NSInteger sectionIndex, NSDictionary<NSString *, id> *imageSource) {
@@ -525,6 +534,7 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 			if (cacheIdentifier) {
 				self.cachedDiffResults[cacheIdentifier] = result;
 				self.cachedDiffSections[cacheIdentifier] = sourceSections;
+				self.cachedDiffIdentities[cacheIdentifier] = identity;
 				[self touchDiffCacheIdentifier:cacheIdentifier];
 			}
 			NSValue *replacementScrollOrigin = preserveScrollPosition ?
@@ -544,6 +554,7 @@ static const NSUInteger PBNativeDiffCacheEntryLimit = 8;
 	if (cacheIdentifier) {
 		[self.cachedDiffResults removeObjectForKey:cacheIdentifier];
 		[self.cachedDiffSections removeObjectForKey:cacheIdentifier];
+		[self.cachedDiffIdentities removeObjectForKey:cacheIdentifier];
 	}
 	[self showDiffSections:self.currentDiffSections
 			   cacheIdentifier:cacheIdentifier

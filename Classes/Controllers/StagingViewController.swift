@@ -155,7 +155,9 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         }
         selectionCoalescer = coalescer
         fileListController.onSelectionChange = { [weak self] in
-            self?.selectionCoalescer?.requestRefresh()
+            guard let self else { return }
+            diffPaneController.updateSelection(fileListController.currentDiffRequests)
+            selectionCoalescer?.requestRefresh()
         }
         submissionObservation = index.observe(\.submissionActive, options: [.new]) { [weak self] _, _ in
             // swift6-safety-justification: The index changes submission state on the main thread.
@@ -457,10 +459,14 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         CommitSubmissionEligibility.allowsMutation(index) && !commitWorkflowState.submissionActive
     }
 
+    private var commitControlsEnabled: Bool {
+        mutationControlsEnabled && fileListController.stagedFileCount > 0
+    }
+
     private func refreshOperationControls() {
         guard isViewLoaded else { return }
         let enabled = mutationControlsEnabled
-        commitButton.isEnabled = enabled && fileListController.stagedFileCount > 0
+        commitButton.isEnabled = commitControlsEnabled
         amendButton.isEnabled = enabled
         pushAfterCommitButton.isEnabled = enabled && pushCapabilityAvailable
         pushRemotePopUpButton.isEnabled = enabled && pushCapabilityAvailable
@@ -592,25 +598,49 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         commitProgressSheet = nil
     }
 
+    private var discardSelectionIdentity: [String] {
+        fileListController.currentDiffRequests.map { ($0.staged ? "s:" : "u:") + $0.file.rawPath.base64EncodedString() }
+    }
+
     private func discardChanges(for files: [PBChangedFile], force: Bool) {
         guard mutationControlsEnabled, !files.isEmpty else { return }
-        let performDiscard: () -> Void = { [weak self] in
-            guard let self, mutationControlsEnabled else { return }
-            index.discardChanges(for: files, completion: { _, _ in })
+        if force {
+            index.discardChanges(for: files, completion: { _, _ in }); return
         }
-        guard !force else {
-            performDiscard()
-            return
+        let selection = discardSelectionIdentity
+        let expectedAmend = index.isAmend
+        let eligibility: @MainActor @Sendable () -> Bool = { [weak self] in
+            guard let self else { return false }
+            return selection == discardSelectionIdentity && !index.submissionActive && index.isAmend == expectedAmend
         }
-        let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Discard changes", comment: "Title for Discard Changes sheet")
-        alert.informativeText = NSLocalizedString(
-            "Are you sure you wish to discard the changes to this file?\n\nYou cannot undo this operation.",
-            comment: "Informative text for Discard Changes sheet"
-        )
-        alert.addButton(withTitle: NSLocalizedString("OK", comment: "OK button in Discard Changes sheet"))
-        alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button in Discard Changes sheet"))
-        _ = windowController?.confirmDialog(alert, suppressionIdentifier: nil, forAction: performDiscard)
+        diffPaneController.prepareDiscard(files: files, eligibility: eligibility) { [weak self] authorization, error in
+            guard let self else { return }
+            guard let authorization, error == nil, mutationControlsEnabled, eligibility() else {
+                presentStaleDiscard(error)
+                return
+            }
+            let alert = NSAlert()
+            alert.messageText = NSLocalizedString("Discard changes", comment: "Title for Discard Changes sheet")
+            alert.informativeText = NSLocalizedString(
+                "Are you sure you wish to discard the changes to this file?\n\nYou cannot undo this operation.",
+                comment: "Informative text for Discard Changes sheet"
+            )
+            alert.addButton(withTitle: NSLocalizedString("OK", comment: "OK button in Discard Changes sheet"))
+            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button in Discard Changes sheet"))
+            _ = windowController?.confirmDialog(alert, suppressionIdentifier: nil) { [weak self] in
+                guard let self else { return }
+                guard mutationControlsEnabled, eligibility() else { presentStaleDiscard(nil); return }
+                if !index.discardChanges(for: files, authorization: authorization, completion: { _, _ in }) {
+                    presentStaleDiscard(nil)
+                }
+            }
+        }
+    }
+
+    private func presentStaleDiscard(_ error: NSError?) {
+        NotificationCenter.default.post(name: Notification.Name(PBGitIndexOperationFailed), object: index,
+                                        userInfo: ["description": error?.localizedDescription ?? "The selected diff or repository state changed. Refresh and retry this action."])
+        diffPaneController.rerenderCurrentRequests()
     }
 
     // MARK: Actions
@@ -920,7 +950,8 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     @objc private func indexChanged(_ notification: Notification) {
         fileListController.rearrange()
-        renderSelectedDiffs()
+        diffPaneController.updateSelection(fileListController.currentDiffRequests)
+        selectionCoalescer?.requestRefresh()
         refreshOperationControls()
     }
 
@@ -969,6 +1000,9 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         }
         if CommitMenuPresenter.isMutation(action: action), !mutationControlsEnabled {
             return false
+        }
+        if action == #selector(commit(_:)) || action == #selector(forceCommit(_:)) {
+            return commitControlsEnabled
         }
         if action == #selector(changeListLayout(_:)) {
             menuItem.state = fileListController.layout.rawValue == menuItem.tag ? .on : .off
