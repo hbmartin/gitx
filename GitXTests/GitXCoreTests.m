@@ -2206,6 +2206,23 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
 }
 
+- (void)testHistoryGraphOperationOwnsAnImmutableParserSnapshot
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[ commit ]];
+	NSOperationQueue *queue = [history valueForKey:@"graphQueue"];
+	queue.suspended = YES;
+	NSInvocationOperation *operation = [history operationForCommits:history.projectRevList.commits];
+	[queue addOperation:operation];
+	[history.projectRevList.commits removeAllObjects];
+	queue.suspended = NO;
+	[self waitForGraphQueueToDrain:queue];
+	[self waitForHistoryListToFinish:history];
+	XCTAssertEqualObjects([history.commits valueForKey:@"SHA"], (@[ commit.SHA ]));
+	[history cleanup];
+}
+
 - (void)testHistoryGrapherPublishesBeforeItsInvocationFinishes
 {
 	PBGitCommit *commit = [self historyCompletionTestHeadCommit];

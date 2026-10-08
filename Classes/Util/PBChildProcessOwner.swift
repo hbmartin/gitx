@@ -95,6 +95,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         let processIdentifier: pid_t
         let processGroup: pid_t
         let terminationHandler: TerminationHandler
+        let leaderExitHandler: (@Sendable () -> Void)?
         var exitMonitor: (any PBChildProcessExitMonitoring)?
         var schedule = PBChildProcessTerminationSchedule()
         var terminationWasSent = false
@@ -147,6 +148,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     func launch(
         configuration: PBChildProcessConfiguration,
         retainLeaderUntilReleased: Bool = false,
+        leaderExitHandler: (@Sendable () -> Void)? = nil,
         terminationHandler: @escaping TerminationHandler
     ) throws {
         try queue.sync {
@@ -162,7 +164,8 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             var process = RunningProcess(
                 processIdentifier: processIdentifier,
                 processGroup: processIdentifier,
-                terminationHandler: terminationHandler
+                terminationHandler: terminationHandler,
+                leaderExitHandler: leaderExitHandler
             )
             process.retainLeaderUntilReleased = retainLeaderUntilReleased
             let exitMonitor = system.makeExitMonitor(
@@ -379,6 +382,9 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 Self.logger.info(
                     "Observed child exit pid=\(process.processIdentifier, privacy: .public) without reaping"
                 )
+                process.leaderExitHandler?()
+                guard case let .running(current) = state else { return }
+                process = current
             }
 
             if process.retainLeaderUntilReleased {
@@ -921,6 +927,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         private let terminationHandler: PBChildProcessOwner.TerminationHandler
         private let owner = PBChildProcessOwner()
         @objc var retainLeaderUntilReleased = false
+        @objc var leaderExitHandler: (@Sendable () -> Void)?
 
         @objc(
             initWithLaunchPath:arguments:environment:workingDirectory:standardInputFileDescriptor:standardOutputFileDescriptor:standardErrorFileDescriptor:terminationHandler:
@@ -951,6 +958,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         func launch() throws {
             try owner.launch(configuration: configuration,
                              retainLeaderUntilReleased: retainLeaderUntilReleased,
+                             leaderExitHandler: leaderExitHandler,
                              terminationHandler: terminationHandler)
         }
 

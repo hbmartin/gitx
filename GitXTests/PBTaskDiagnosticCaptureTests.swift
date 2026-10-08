@@ -4,7 +4,7 @@ import ObjectiveC
 import XCTest
 
 final class PBTaskDiagnosticCaptureTests: XCTestCase {
-    private final class HeldOutputWriterTask: PBTask {
+    private class HeldOutputWriterTask: PBTask {
         private var pipeCount = 0
         // PBTask's test-only Objective-C initializer can leave Swift subclass
         // fields zero-initialized. Zero deliberately selects stdout.
@@ -35,6 +35,18 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         }
 
         deinit { releaseWriter() }
+    }
+
+    /// Reader ownership tests release their own gates; the separate real-drain
+    /// tests exercise the production post-exit deadline and descendant cleanup.
+    private final class HeldOutputAndDrainTask: HeldOutputWriterTask {
+        @objc(scheduleOutputDrainAfterTaskExit)
+        func holdPostExitDrain() {} // swiftlint:disable:this unused_declaration
+    }
+
+    private final class HeldPostExitDrainTask: PBTask {
+        @objc(scheduleOutputDrainAfterTaskExit)
+        func holdPostExitDrain() {} // swiftlint:disable:this unused_declaration
     }
 
     func testLegacySeparateReadersDrainConcurrentLargeStreamsBeforeFailureCompletion() {
@@ -184,7 +196,7 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         guard descriptor >= 0 else { return XCTFail("Could not open fixture gate") }
         defer { _ = Darwin.close(descriptor) }
         let capture = PBTaskDiagnosticCapture()
-        let task = PBTask(launchPath: "/bin/sh", arguments: ["-c", """
+        let task = HeldPostExitDrainTask(launchPath: "/bin/sh", arguments: ["-c", """
         printf '%s' "$$" > "$1/leader"
         (printf ready > "$1/ready"; read permit < "$1/gate"; printf final-output; printf final-error >&2) &
         exit 0
@@ -249,7 +261,7 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         XCTAssertTrue(capture.artifact === artifact)
     }
 
-    func testOptInTimeoutKillsResistantDescendantWhileLeaderRemainsLeased() throws {
+    func testOptInExitedLeaderKillsResistantDescendantWithoutTimeoutAndMarksIncompleteDrain() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let capture = PBTaskDiagnosticCapture()
@@ -262,13 +274,11 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         task.timeout = 1
         defer { task.terminate() }
 
-        XCTAssertThrowsError(try task.launch()) { error in
-            XCTAssertEqual((error as NSError).domain, PBTaskErrorDomain)
-            XCTAssertEqual((error as NSError).code, Int(PBTaskErrorCode.timeoutError.rawValue))
-        }
+        try task.launch()
+        XCTAssertEqual(task.value(forKey: "terminationStatus") as? Int, 0)
         let artifact = try XCTUnwrap(capture.artifact)
         defer { artifact.discard() }
-        XCTAssertTrue(artifact.captureComplete)
+        XCTAssertFalse(artifact.captureComplete)
         XCTAssertEqual(task.standardErrorData, Data("ready".utf8))
         let descendant = try XCTUnwrap(processIdentifier(at: directory.appendingPathComponent("descendant")))
         waitForCondition("resistant descendant terminated") { self.processHasTerminated(descendant) }
@@ -311,17 +321,15 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
 
     #endif
 
-    func testOptInTimeoutBoundsDrainWhenAParentWriterPreventsEOF() throws {
+    func testOptInExitedLeaderBoundsDrainWithoutReportingTimeoutWhenAParentWriterPreventsEOF() throws {
         let capture = PBTaskDiagnosticCapture()
         let task = HeldOutputWriterTask(launchPath: "/usr/bin/printf", arguments: ["retained-prefix"], inDirectory: nil)
         task.diagnosticCapture = capture
         task.timeout = 0.25
         defer { task.releaseWriter(); task.terminate() }
 
-        XCTAssertThrowsError(try task.launch()) { error in
-            XCTAssertEqual((error as NSError).domain, PBTaskErrorDomain)
-            XCTAssertEqual((error as NSError).code, Int(PBTaskErrorCode.timeoutError.rawValue))
-        }
+        try task.launch()
+        XCTAssertEqual(task.value(forKey: "terminationStatus") as? Int, 0)
 
         XCTAssertGreaterThanOrEqual(task.heldOutputDescriptor, 0)
         let artifact = try XCTUnwrap(capture.artifact)
@@ -337,7 +345,7 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
     func testOptInStopsEachReaderAtItsOwnEOFWhileOtherStreamRemainsOpen() throws {
         for heldPipeNumber in [1, 2] {
             let capture = PBTaskDiagnosticCapture()
-            let task = HeldOutputWriterTask(launchPath: "/bin/sh", arguments: ["-c", "printf output; printf error >&2"], inDirectory: nil)
+            let task = HeldOutputAndDrainTask(launchPath: "/bin/sh", arguments: ["-c", "printf output; printf error >&2"], inDirectory: nil)
             task.heldPipeNumber = heldPipeNumber
             task.diagnosticCapture = capture
             task.timeout = 15
@@ -374,7 +382,7 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let capture = PBTaskDiagnosticCapture()
-        let task = HeldOutputWriterTask(launchPath: "/bin/sh", arguments: ["-c", "printf '%s' \"$$\" > \"$1/leader\"; exit 0", "fixture", directory.path], inDirectory: nil)
+        let task = HeldOutputAndDrainTask(launchPath: "/bin/sh", arguments: ["-c", "printf '%s' \"$$\" > \"$1/leader\"; exit 0", "fixture", directory.path], inDirectory: nil)
         task.diagnosticCapture = capture
         task.timeout = 15
         defer { task.releaseWriter(); task.terminate() }

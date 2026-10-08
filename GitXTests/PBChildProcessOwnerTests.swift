@@ -433,9 +433,12 @@ final class PBChildProcessOwnerTests: XCTestCase {
         completed.assertForOverFulfill = true
         let recorder = CompletionRecorder(expectation: completed)
 
-        try owner.launch(configuration: configuration(), retainLeaderUntilReleased: true) {
+        let observed = expectation(description: "leader exit observed while its lease remains held")
+        observed.assertForOverFulfill = true
+        try owner.launch(configuration: configuration(), retainLeaderUntilReleased: true, leaderExitHandler: { observed.fulfill() }) {
             recorder.record($0, error: $1)
         }
+        wait(for: [observed], timeout: 1)
         XCTAssertTrue(recorder.statuses.isEmpty)
         XCTAssertFalse(system.events.contains("reap"))
 

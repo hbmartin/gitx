@@ -214,7 +214,9 @@
 
 - (NSInvocationOperation *)operationForCommits:(NSArray *)newCommits
 {
-	NSInvocationOperation *operation = [[NSInvocationOperation alloc] initWithTarget:grapher selector:@selector(graphCommits:) object:newCommits];
+	NSArray *snapshot = [newCommits copy];
+	NSLog(@"[GitX] Enqueued immutable History graph snapshot with %lu commits", (unsigned long)snapshot.count);
+	NSInvocationOperation *operation = [[NSInvocationOperation alloc] initWithTarget:grapher selector:@selector(graphCommits:) object:snapshot];
 	__weak typeof(self) weakSelf = self;
 	__weak NSOperationQueue *sourceQueue = graphQueue;
 	__weak PBGitRevList *sourceParser = currentRevList;
