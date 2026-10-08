@@ -8,6 +8,7 @@ final nonisolated class ErrorMessagePresentation: NSObject { // swiftlint:disabl
     static func infoText(for error: NSError) -> String {
         var parts: [String] = []
         let artifact = PushDiagnosticOwnership.artifact(for: error)
+        let readable = PushDiagnosticOwnership.readableOutput(for: error)
         append(localizedString(
             for: error,
             key: NSLocalizedFailureReasonErrorKey,
@@ -26,7 +27,10 @@ final nonisolated class ErrorMessagePresentation: NSObject { // swiftlint:disabl
         guard let taskError = error.userInfo[NSUnderlyingErrorKey] as? NSError,
               taskError.domain == PBTaskErrorDomain
         else {
-            append(artifact?.redactedSummary, to: &parts)
+            append(readable ?? artifact?.redactedSummary, to: &parts)
+            if readable != nil {
+                append(artifact?.captureFailureDescription, to: &parts)
+            }
             return parts.joined(separator: "\n\n")
         }
 
@@ -46,15 +50,18 @@ final nonisolated class ErrorMessagePresentation: NSObject { // swiftlint:disabl
                 "Return code: %@",
                 comment: "PBGitXMessageSheet - task return code header"
             ), status))
-            if artifact == nil, let output = taskError.userInfo[PBTaskTerminationOutputKey] as? String, !output.isEmpty {
+            if artifact == nil, readable == nil, let output = taskError.userInfo[PBTaskTerminationOutputKey] as? String, !output.isEmpty {
                 parts.append(NSLocalizedString(
                     "Output:",
                     comment: "PBGitXMessageSheet - task output header"
                 ) + "\n" + output)
             }
         }
-        if let artifact {
-            parts.append("Output:\n" + artifact.redactedSummary)
+        if let output = readable ?? artifact?.redactedSummary, !output.isEmpty {
+            parts.append(NSLocalizedString("Output:", comment: "PBGitXMessageSheet - push output header") + "\n" + output)
+            if readable != nil {
+                append(artifact?.captureFailureDescription, to: &parts)
+            }
         }
         return parts.joined(separator: "\n\n")
     }

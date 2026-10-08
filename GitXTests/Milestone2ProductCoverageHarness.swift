@@ -720,6 +720,12 @@
             RepositoryGitCommandRunner(repository: repository).push(arguments: arguments)
         }
 
+        @objc static func reviewPushCommandResult(repository: PBGitRepository, arguments: [String], captureFault: String) -> PBRepositoryPushCommandResult {
+            RepositoryGitCommandRunner(repository: repository, makeCapture: {
+                PBTaskDiagnosticCaptureTestHarness.capture(fault: captureFault)
+            }).push(arguments: arguments)
+        }
+
         @objc static func reviewPushRepeatedCallbacksProof() -> UInt64 {
             do {
                 let local = try HarnessLocalRepository(remoteURL: "/tmp/unavailable-review-remote")

@@ -647,10 +647,11 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         }
 
         func testCoreCleanupRemovesUnlockedLeasedOrphanWhileLiveCaptureSurvives() throws {
-            let orphan = try PBTaskDiagnosticCaptureTestHarness.unlockedLeasedOrphanProbe(age: 0)
+            let orphan = try PBTaskDiagnosticCaptureTestHarness.unlockedLeasedOrphanProbe(age: 48 * 60 * 60)
             let capture = PBTaskDiagnosticCapture()
             let live = try XCTUnwrap(PBTaskDiagnosticCaptureTestHarness.lifetimeProbe(for: capture))
             defer { orphan.discardFixture(); capture.seal().discard() }
+            try live.markStaleForCleanup()
             XCTAssertTrue(orphan.directoryExists)
             XCTAssertEqual(orphan.directoryMode, 0o700)
             XCTAssertEqual(orphan.rawFileModes.last, NSNumber(value: 0o600))
@@ -658,13 +659,20 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
 
             PBTaskDiagnosticCapture.cleanupStaleCaptures()
 
-            XCTAssertFalse(orphan.directoryExists, "An unlocked lease identifies an abandoned capture regardless of age")
+            XCTAssertFalse(orphan.directoryExists, "An old unlocked lease identifies an abandoned capture")
             XCTAssertTrue(live.directoryExists, "Cleanup must preserve an actively locked capture")
             XCTAssertFalse(live.writersClosed)
             XCTAssertNil(capture.artifact)
             PBTaskDiagnosticCapture.cleanupStaleCaptures()
             XCTAssertFalse(orphan.directoryExists)
             XCTAssertTrue(live.directoryExists)
+        }
+
+        func testCleanupPreservesFreshUnlockedLeaseDuringCaptureRegistration() throws {
+            let fresh = try PBTaskDiagnosticCaptureTestHarness.unlockedLeasedOrphanProbe(age: 0)
+            defer { fresh.discardFixture() }
+            PBTaskDiagnosticCapture.cleanupStaleCaptures()
+            XCTAssertTrue(fresh.directoryExists)
         }
 
         func testCoreCaptureFailureModesKeepSafeStaticFallbackAndPartialIntegrity() {
@@ -675,11 +683,25 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
                 capture.finishStandardError(reachedEOF: true)
                 let artifact = capture.seal()
                 defer { artifact.discard() }
+                let summary = artifact.redactedSummary
                 XCTAssertFalse(artifact.captureComplete, fault)
                 XCTAssertNotNil(artifact.captureFailureDescription, fault)
-                XCTAssertFalse(artifact.redactedSummary.contains("secret"), fault)
-                XCTAssertLessThanOrEqual(artifact.redactedSummary.utf8.count, 16 * 1024, fault)
+                XCTAssertFalse(summary.contains("secret"), fault)
+                XCTAssertLessThanOrEqual(summary.utf8.count, 16 * 1024, fault)
             }
+        }
+
+        func testSealingDoesNotPrepareAReportUntilSummaryOrExportIsRequested() {
+            let capture = PBTaskDiagnosticCaptureTestHarness.capture(fault: "createReport")
+            capture.appendStandardError(Data("remote: useful diagnostic\n".utf8))
+            capture.finishStandardOutput(reachedEOF: true)
+            capture.finishStandardError(reachedEOF: true)
+            let artifact = capture.seal()
+            defer { artifact.discard() }
+            XCTAssertTrue(artifact.captureComplete)
+            XCTAssertNil(artifact.captureFailureDescription)
+            XCTAssertTrue(artifact.redactedSummary.contains("could not be prepared"))
+            XCTAssertFalse(artifact.captureComplete)
         }
 
         func testCoreShortAndInterruptedWritesPreserveEveryByte() throws {
@@ -736,6 +758,24 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         artifact.forEachRawStandardErrorLine(maximumLineBytes: 0) { _ in XCTFail("Invalid line limit must not deliver data") }
         artifact.discard()
         XCTAssertFalse(artifact.rawStandardOutputPrefix(maximumBytes: 64 * 1024).complete)
+    }
+
+    func testMatchingErrorLineStopsAtTheFirstCandidateAndSkipsIncompleteFinalLines() {
+        for reachedEOF in [true, false] {
+            let capture = PBTaskDiagnosticCapture()
+            capture.appendStandardError(Data("first\nmatch\nfinal".utf8))
+            capture.finishStandardOutput(reachedEOF: true)
+            capture.finishStandardError(reachedEOF: reachedEOF)
+            let artifact = capture.seal()
+            defer { artifact.discard() }
+            var visited: [String] = []
+            XCTAssertEqual(artifact.firstRawStandardErrorLine(maximumLineBytes: 128) { line in
+                visited.append(line)
+                return line == "match"
+            }, "match")
+            XCTAssertEqual(visited, ["first", "match"])
+            XCTAssertEqual(artifact.firstRawStandardErrorLine(maximumLineBytes: 128) { $0 == "final" }, reachedEOF ? "final" : nil)
+        }
     }
 
     func testCoreRawLineIteratorRequiresCompleteCaptureForUnterminatedFinalHint() {

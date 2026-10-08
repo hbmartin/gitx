@@ -33,6 +33,13 @@ final class PBTaskDiagnosticRedactorTests: XCTestCase {
         }
     }
 
+    func testCredentialURLsEmbeddedInOrdinaryURLQueriesAreStillRedacted() {
+        let input = "https://example.invalid/?redirect=https://user:secret@other.invalid/repo"
+        let expected = "https://example.invalid/?redirect=https://[redacted]@other.invalid/repo"
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), expected)
+        XCTAssertEqual(PBTaskDiagnostics.redacted(input), expected)
+    }
+
     func testConservativeRedactionHandlesMalformedAndCombinedUserinfo() {
         for secret in ["secret/with/slashes", "secret?with=query", "secret#fragment", "secret with spaces", "密碼/更多", "secret@early/remaining-secret"] {
             XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://user:\(secret)@example.invalid/repo"),

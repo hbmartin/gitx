@@ -644,6 +644,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly, nullable) NSString *captureFailureDescription;
 - (PBTaskDiagnosticPrefix *)rawStandardOutputPrefixWithMaximumBytes:(NSInteger)maximumBytes NS_SWIFT_NAME(rawStandardOutputPrefix(maximumBytes:));
 - (void)forEachRawStandardErrorLineWithMaximumLineBytes:(NSInteger)maximumLineBytes body:(void (^)(NSString *line))body NS_SWIFT_NAME(forEachRawStandardErrorLine(maximumLineBytes:body:));
+- (nullable NSString *)firstRawStandardErrorLineWithMaximumLineBytes:(NSInteger)maximumLineBytes matching:(BOOL (^)(NSString *line))body NS_SWIFT_NAME(firstRawStandardErrorLine(maximumLineBytes:matching:));
 - (BOOL)writeRedactedReportToURL:(NSURL *)url error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(writeRedactedReport(to:));
 - (void)discard;
 @end
@@ -674,6 +675,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly) NSArray<NSNumber *> *rawFileModes;
 @property (nonatomic, readonly) BOOL writerDescriptorsAreCloseOnExec;
 @property (nonatomic, readonly) BOOL writersClosed;
+- (BOOL)markStaleForCleanupAndReturnError:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(markStaleForCleanup());
 - (void)discardFixture;
 @end
 
@@ -723,6 +725,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 + (uint64_t)verificationBoundaryProof;
 + (nullable NSString *)reviewHistoryOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewHistoryOutput(repository:arguments:));
 + (PBRepositoryPushCommandResult *)reviewPushCommandResultWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments NS_SWIFT_NAME(reviewPushCommandResult(repository:arguments:));
++ (PBRepositoryPushCommandResult *)reviewPushCommandResultWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments captureFault:(NSString *)captureFault NS_SWIFT_NAME(reviewPushCommandResult(repository:arguments:captureFault:));
 + (uint64_t)reviewPushRepeatedCallbacksProof;
 + (nullable NSString *)reviewGeneralOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewGeneralOutput(repository:arguments:));
 + (BOOL)reviewGeneralLaunchWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewGeneralLaunch(repository:arguments:));

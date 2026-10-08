@@ -9,14 +9,14 @@ nonisolated struct PBTaskDiagnosticByteSource {
 nonisolated enum PBTaskDiagnosticRedactor {
     static let bufferSize = 64 * 1024
 
-    static func redacted(_ text: String) -> String {
+    static func redacted(_ text: String, incomplete: Bool = false) -> String {
         let data = Data(text.utf8)
         var result = Data()
         let source = PBTaskDiagnosticByteSource(length: Int64(data.count)) { offset, count in
             Data(data[Int(offset) ..< Int(offset) + count])
         }
         // The in-memory source and sink cannot fail.
-        try? redact(source: source, incomplete: false) { result.append($0) }
+        try? redact(source: source, incomplete: incomplete) { result.append($0) }
         return String(decoding: result, as: UTF8.self)
     }
 
@@ -121,6 +121,10 @@ nonisolated enum PBTaskDiagnosticRedactor {
         }
         let ambiguous = colon != nil && !numericPort
         let credentials = ambiguous || lastAt != nil
+        if !credentials {
+            // Continue scanning ordinary paths and queries for independent URLs.
+            return AuthoritySpan(end: end, lastAt: nil, ambiguous: false)
+        }
         var malformedUserinfo = false
         // A normal URL ends at whitespace. Malformed userinfo can contain spaces
         // before its @, but ordinary text following the host stays independent.

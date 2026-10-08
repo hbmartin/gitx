@@ -26,7 +26,6 @@ private final nonisolated class PushReviewTaskRepository: PBGitRepository {
     var script = "exit 1"
     var forcesShortTimeout = false
     var forcesReasonlessFailure = false
-
     override func task(withArguments _: [Any]?) -> PBTask {
         let task = forcesReasonlessFailure
             ? PushReviewReasonlessTask(launchPath: "/bin/sh", arguments: [], inDirectory: nil)
@@ -70,6 +69,36 @@ final class PushReviewDiagnosticsTests: XCTestCase {
             XCTAssertEqual(error.localizedFailureReason, "Controlled launch failure")
             XCTAssertNil(result.terminationStatus)
             XCTAssertFalse(try XCTUnwrap(result.diagnosticArtifact).captureComplete)
+        #else
+            throw XCTSkip("Shipped runner boundary is exposed by the Debug harness")
+        #endif
+    }
+
+    func testCaptureFailuresRetainBoundedGitDiagnosticsAndReadablePorcelain() throws {
+        #if DEBUG
+            for fault in ["createDirectory", "createReport", "redactionWrite"] {
+                let repository = PushReviewTaskRepository()
+                repository.script = "printf '!\\trefs/heads/main:refs/heads/main\\t[rejected] (protected branch)\\n'; printf 'remote: permission denied for https://user:secret@example.invalid/repo\\n' >&2; exit 1"
+                let result = PBMilestone2ProductCoverageHarness.reviewPushCommandResult(repository: repository, arguments: ["push", "--porcelain"], captureFault: fault)
+                let artifact = try XCTUnwrap(result.diagnosticArtifact)
+                defer { artifact.discard() }
+                XCTAssertTrue(result.standardOutput.contains("[rejected]"), fault)
+                XCTAssertFalse(result.standardErrorComplete, "Failed diagnostic capture must not claim complete evidence")
+                XCTAssertEqual(result.standardOutputComplete, fault != "createDirectory")
+                let taskError = try XCTUnwrap(result.error) as NSError
+                let outer = NSError(domain: "GitX.PushReview.Fixture", code: 1, userInfo: [NSUnderlyingErrorKey: taskError])
+                let text = PBErrorMessagePresentation.infoText(for: outer)
+                XCTAssertTrue(text.contains("refs/heads/main → refs/heads/main: [rejected] (protected branch)"), fault)
+                XCTAssertTrue(text.contains("permission denied"), fault)
+                XCTAssertFalse(text.contains("secret"), fault)
+            }
+            let repository = PushReviewTaskRepository()
+            repository.script = "printf '!\\thttps://user:secret@example.invalid/repo\\trejected\\n'; exit 1"
+            let result = PBMilestone2ProductCoverageHarness.reviewPushCommandResult(repository: repository, arguments: ["push", "--porcelain"])
+            defer { result.diagnosticArtifact?.discard() }
+            let task = try XCTUnwrap(result.error) as NSError
+            let outer = NSError(domain: "GitX.PushReview.Fixture", code: 1, userInfo: [NSUnderlyingErrorKey: task])
+            XCTAssertFalse(PBErrorMessagePresentation.infoText(for: outer).contains("secret"), "Formatting must not obscure a URL before redaction")
         #else
             throw XCTSkip("Shipped runner boundary is exposed by the Debug harness")
         #endif
@@ -127,7 +156,9 @@ final class PushReviewDiagnosticsTests: XCTestCase {
             XCTAssertNil(result.error)
             XCTAssertEqual(result.standardOutput, "Done\n")
             XCTAssertTrue(result.standardOutputComplete)
-            XCTAssertEqual(result.browserHintOutput, "https://example.invalid/team/repo/pull/new/feature")
+            XCTAssertEqual(result.browserHintOutput, "remote: https://example.invalid/team/repo/pull/new/feature")
+            XCTAssertEqual(PBRepositoryRemoteURLCoordinator.shared.firstHTTPURL(in: result.browserHintOutput)?.absoluteString,
+                           "https://example.invalid/team/repo/pull/new/feature", "The browser consumer must accept the filtered server hint")
             XCTAssertNil(result.diagnosticArtifact)
             let retainedCapture = try XCTUnwrap(repository.tasks.last?.diagnosticCapture?.artifact)
             XCTAssertFalse(retainedCapture.captureComplete, "Successful output is discarded after extracting the browser hint")
@@ -200,6 +231,13 @@ final class PushReviewDiagnosticsTests: XCTestCase {
             XCTAssertTrue(buttons.contains { $0.title == "Save Push Output…" && $0.action != nil && $0.target != nil })
             let closeButton = try XCTUnwrap(buttons.first { $0.action == NSSelectorFromString("closeMessageSheet:") },
                                             buttons.map { "\($0.title): \($0.action.map(NSStringFromSelector) ?? "nil")" }.joined(separator: ", "))
+            let exportButton = try XCTUnwrap(buttons.first { $0.identifier?.rawValue == "GitX.Push.SaveOutput" })
+            var visited = Set<ObjectIdentifier>()
+            var next: NSView? = closeButton
+            while let view = next, visited.insert(ObjectIdentifier(view)).inserted {
+                next = view.nextKeyView
+            }
+            XCTAssertTrue(visited.contains(ObjectIdentifier(exportButton)), "Export must be reachable through the sheet's key view loop")
             try attachScreenshot(of: sheet, named: "Review-Fixes-Push-Output-Summary-And-Export")
             closeButton.performClick(nil)
             let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in window.attachedSheet == nil }, object: nil)
@@ -242,6 +280,13 @@ final class PushReviewDiagnosticsTests: XCTestCase {
         XCTAssertEqual(PBRepositoryRemoteURLCoordinator.shared.firstHTTPURL(in: output)?.absoluteString,
                        "https://example.invalid/team/repo/pull/new/feature")
         XCTAssertNil(PBRepositoryRemoteURLCoordinator.shared.firstHTTPURL(in: "To https://example.invalid/team/repo.git\nDone\n"))
+        XCTAssertNil(PBRepositoryRemoteURLCoordinator.shared.firstHTTPURL(in: "client hook: https://example.invalid/arbitrary\n"))
+        XCTAssertEqual(PBRepositoryRemoteURLCoordinator.shared.firstHTTPURL(in: "remote:\t https://example.invalid/pull/new/feature\n")?.absoluteString,
+                       "https://example.invalid/pull/new/feature")
+        XCTAssertEqual(PBRepositoryRemoteURLCoordinator.shared.firstHTTPURL(in: "remote: ftp://example.invalid/unsupported\nremote: http://example.invalid/pull/new/feature\n")?.absoluteString,
+                       "http://example.invalid/pull/new/feature")
+        XCTAssertEqual(PBRepositoryRemoteURLCoordinator.shared.firstHTTPURL(in: "client: https://example.invalid/wrong\nremote: https://user:secret@example.invalid/unsafe https://example.invalid/pull/new/feature\n")?.absoluteString,
+                       "https://example.invalid/pull/new/feature")
     }
 
     func testMalformedCredentialAuthorityDoesNotExposeSecrets() {
@@ -262,6 +307,10 @@ final class PushReviewDiagnosticsTests: XCTestCase {
             let repository = try RepositoryTestGitRepository(url: directory)
             defer { repository.revisionList?.cleanup() }
             XCTAssertEqual(try PBMilestone2ProductCoverageHarness.reviewHistoryOutput(repository: repository, arguments: ["log", "--format=%H", "-1"]), expected)
+            let controlled = PushReviewTaskRepository()
+            controlled.script = "printf 'machine-readable-stdout\\n'; printf 'warning on stderr\\n' >&2"
+            XCTAssertEqual(try PBMilestone2ProductCoverageHarness.reviewHistoryOutput(repository: controlled, arguments: ["log"]), "machine-readable-stdout\n")
+            XCTAssertEqual(controlled.tasks.last?.standardErrorData, Data("warning on stderr\n".utf8))
         #else
             throw XCTSkip("Shipped runner boundary is exposed by the Debug harness")
         #endif
