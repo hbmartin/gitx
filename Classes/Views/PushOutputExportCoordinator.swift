@@ -4,6 +4,19 @@ import os
 /// Opaque capture ownership crosses only error presentation and active exports.
 nonisolated enum PushDiagnosticOwnership {
     static let errorKey = "PBTaskDiagnosticArtifact"
+    static let readableOutputKey = "PBTaskReadablePushOutput"
+
+    static func readableOutput(for error: NSError) -> String? {
+        var current: NSError? = error
+        var seen = Set<ObjectIdentifier>()
+        while let candidate = current, seen.insert(ObjectIdentifier(candidate)).inserted {
+            if let text = candidate.userInfo[readableOutputKey] as? String, !text.isEmpty {
+                return text
+            }
+            current = candidate.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return nil
+    }
 
     static func artifact(for error: NSError) -> PBTaskDiagnosticArtifact? {
         var current: NSError? = error
@@ -57,6 +70,14 @@ nonisolated enum PushDiagnosticOwnership {
             window.isReleasedWhenClosed = false
             let button = NSButton()
             let state = PushOutputExportProofState(artifact: artifact, destination: destination, window: window)
+            let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+            parent.isReleasedWhenClosed = false
+            if scenario == "dismissed-sheet" {
+                parent.makeKeyAndOrderFront(nil)
+                parent.beginSheet(window, completionHandler: nil)
+            } else if scenario == "closed-window" {
+                window.makeKeyAndOrderFront(nil)
+            }
             let coordinator: PushOutputExportCoordinator
             if scenario == "real-success" || scenario == "real-failure" {
                 coordinator = PushOutputExportCoordinator(artifact: artifact, destinationPresenter: state.presentDestination)
@@ -73,6 +94,7 @@ nonisolated enum PushDiagnosticOwnership {
                     window.endSheet(sheet)
                 }
                 window.close()
+                parent.close()
                 try? FileManager.default.removeItem(at: directory)
                 artifact.discard()
             }
@@ -103,15 +125,22 @@ nonisolated enum PushDiagnosticOwnership {
                 state.responses[1](.cancel, nil)
             case "windowless":
                 break
-            case "success", "writing", "failure-retry":
+            case "success", "writing", "failure-retry", "dismissed-sheet", "closed-window":
                 state.responses[0](.OK, destination)
                 await state.waitForWriter(count: 1)
                 state.facts["buttonDisabledDuringWrite"] = button.isEnabled ? 0 : 1
                 if scenario == "writing" {
                     coordinator.saveOutput(button)
                 }
-                let failure = scenario == "failure-retry" ? NSError(domain: "GitX.Export.Proof", code: 7, userInfo: [NSLocalizedDescriptionKey: "Controlled export failure"]) : nil
+                if scenario == "dismissed-sheet" {
+                    parent.endSheet(window)
+                    window.orderOut(nil)
+                } else if scenario == "closed-window" {
+                    window.close()
+                }
+                let failure = ["failure-retry", "dismissed-sheet", "closed-window"].contains(scenario) ? NSError(domain: "GitX.Export.Proof", code: 7, userInfo: [NSLocalizedDescriptionKey: "Controlled export failure"]) : nil
                 await state.finishWrite(with: failure)
+                state.facts["dismissedWindowVisible"] = window.isVisible ? 1 : 0
                 state.facts["buttonEnabledAfterWrite"] = button.isEnabled ? 1 : 0
                 if scenario == "failure-retry" {
                     coordinator.saveOutput(button)
@@ -290,10 +319,12 @@ final class PushOutputExportCoordinator: NSObject {
         button.frame.origin = NSPoint(x: 98, y: 12)
         button.autoresizingMask = [.maxXMargin, .maxYMargin]
         content.addSubview(button)
+        window?.recalculateKeyViewLoop()
     }
 
     @objc func saveOutput(_ sender: NSButton) {
         guard !isExporting, let window = sender.window else { return }
+        let presentation = PushOutputExportPresentation(window: window)
         isExporting = true
         var responseHandled = false
         destinationPresenter(window) { [self] response, destination in
@@ -310,7 +341,11 @@ final class PushOutputExportCoordinator: NSObject {
                 sender.isEnabled = true
                 if let failure {
                     logger.error("Redacted push output export failed")
-                    failurePresenter(failure, window)
+                    if let currentWindow = presentation.currentWindow {
+                        failurePresenter(failure, currentWindow)
+                    } else {
+                        logger.info("Suppressed late export failure after its presentation was dismissed")
+                    }
                 } else {
                     logger.info("Redacted push output export completed")
                 }
@@ -323,7 +358,7 @@ final class PushOutputExportCoordinator: NSObject {
 
     private static func presentDestination(for window: NSWindow, response: @escaping DestinationResponse) {
         let panel = NSSavePanel()
-        panel.title = "Save Push Output"
+        panel.title = NSLocalizedString("Save Push Output", comment: "Push output save panel title")
         panel.nameFieldStringValue = "GitX-Push-Output.txt"
         panel.canCreateDirectories = true
         panel.beginSheetModal(for: window) { result in response(result, panel.url) }
@@ -338,8 +373,36 @@ final class PushOutputExportCoordinator: NSObject {
 
     private static func presentFailure(_ error: NSError, for window: NSWindow) {
         let alert = NSAlert()
-        alert.messageText = "Could Not Save Push Output"
+        alert.messageText = NSLocalizedString("Could Not Save Push Output", comment: "Push output export failure title")
         alert.informativeText = error.localizedDescription
         alert.beginSheetModal(for: window, completionHandler: nil)
+    }
+}
+
+/// A detached write retains its capture, while error presentation belongs to the
+/// sheet or window that was visible when the user requested the export.
+@MainActor
+private struct PushOutputExportPresentation {
+    private weak var window: NSWindow?
+    private weak var parent: NSWindow?
+    private let wasSheet: Bool
+    private let wasVisible: Bool
+
+    init(window: NSWindow) {
+        self.window = window
+        parent = window.sheetParent
+        wasSheet = window.sheetParent != nil
+        wasVisible = window.isVisible
+    }
+
+    var currentWindow: NSWindow? {
+        guard let window else { return nil }
+        if wasSheet, parent == nil || window.sheetParent !== parent {
+            return nil
+        }
+        if wasVisible, !window.isVisible {
+            return nil
+        }
+        return window
     }
 }

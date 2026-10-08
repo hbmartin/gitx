@@ -557,13 +557,16 @@ final nonisolated class RepositoryRemoteService: NSObject {
         let statusKind = failedPushStatusKind(result: result)
         let witnessCount = snapshot.map { RepositoryPushReflogEvidence.witnesses(sourceOID: $0.sourceOID, reflogOIDs: $0.reflogOIDs).count } ?? 0
         logger.info("Failed push recovery decision: \(outcome, privacy: .public) [task=\(statusKind, privacy: .public), statusComplete=\(result.standardOutputComplete), diagnosticsComplete=\(result.standardErrorComplete), witnesses=\(witnessCount), reflogCapped=\(snapshot?.reflogIsTruncated ?? false)]")
-        let diagnostic = result.diagnosticArtifact?.redactedSummary
+        let diagnostic = PushDiagnosticOwnership.readableOutput(for: error)
             ?? PBTaskDiagnostics.pushFailure(stdout: result.standardOutput, stderr: result.standardError,
-                                             porcelain: arguments.contains("--porcelain"))
+                                             porcelain: arguments.contains("--porcelain"),
+                                             stdoutComplete: result.standardOutputComplete,
+                                             stderrComplete: result.standardErrorComplete)
         var diagnostics: [String: Any] = [
             NSLocalizedDescriptionKey: PBTaskDiagnostics.redacted(error.localizedDescription),
             NSLocalizedFailureReasonErrorKey: PBTaskDiagnostics.redacted(error.localizedFailureReason ?? error.localizedDescription),
             PBTaskTerminationOutputKey: diagnostic,
+            PushDiagnosticOwnership.readableOutputKey: diagnostic,
         ]
         diagnostics[PBTaskTerminationStatusKey] = result.terminationStatus
         if let artifact = result.diagnosticArtifact {

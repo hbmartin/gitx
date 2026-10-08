@@ -23,7 +23,13 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     private var selectionCoalescer: RefreshCoalescer?
     private var pushCapabilityAvailable = false
     private var pendingCreatePullRequestAfterPush = false
+    private var submissionObservation: NSKeyValueObservation?
     private var pendingMutationObservation: NSKeyValueObservation?
+
+    /// A local filesystem seam keeps filename-target tests away from Trash.
+    @objc var trashItemHandler: (URL) -> Bool = { url in
+        (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) != nil
+    }
 
     @objc let commitMessageView: PBCommitMessageView
     private let commitButton = NSButton(title: NSLocalizedString("Commit", comment: "Commit button in the staging pane"), target: nil, action: nil)
@@ -150,6 +156,10 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         selectionCoalescer = coalescer
         fileListController.onSelectionChange = { [weak self] in
             self?.selectionCoalescer?.requestRefresh()
+        }
+        submissionObservation = index.observe(\.submissionActive, options: [.new]) { [weak self] _, _ in
+            // swift6-safety-justification: The index changes submission state on the main thread.
+            MainActor.assumeIsolated { self?.refreshOperationControls() }
         }
         pendingMutationObservation = index.observe(\.mutationReconciliationPending, options: [.initial, .new]) { [weak self] _, _ in
             // swift6-safety-justification: PBGitIndex publishes mutation state on the main thread; initial observation is installed by loadView.
@@ -444,7 +454,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     // MARK: Commit workflow
 
     private var mutationControlsEnabled: Bool {
-        !index.mutationReconciliationPending && !commitWorkflowState.submissionActive
+        CommitSubmissionEligibility.allowsMutation(index) && !commitWorkflowState.submissionActive
     }
 
     private func refreshOperationControls() {
@@ -478,7 +488,10 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     private func commit(verify: Bool) {
-        guard mutationControlsEnabled else { return }
+        guard mutationControlsEnabled else {
+            host?.status = NSLocalizedString("A commit is already in progress or the index is refreshing.", comment: "Rejected late commit invocation")
+            return
+        }
         let mergeHeadPath = repository.gitURL().map { ($0.path as NSString).appendingPathComponent("MERGE_HEAD") }
         let mergeInProgress = mergeHeadPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
         let stagedCount = fileListController.stagedFileCount
@@ -726,7 +739,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
             var anyTrashed = false
             for path in paths {
                 let fileURL = workingDirectoryURL.appendingPathComponent(path)
-                if (try? FileManager.default.trashItem(at: fileURL, resultingItemURL: nil)) != nil {
+                if trashItemHandler(fileURL) {
                     anyTrashed = true
                 }
             }
@@ -742,7 +755,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
         guard !files.isEmpty else { return }
         guard let paths = supportedPaths(for: files) else { return }
         do {
-            try repository.ignoreFilePaths(paths)
+            try repository.ignoreFilePaths(RepositoryIgnoreLiteralPatterns.patterns(for: paths))
         } catch {
             windowController?.showErrorSheet(error as NSError)
         }
@@ -851,29 +864,51 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
     }
 
     @objc private func commitHookFailed(_ notification: Notification) {
-        pendingCreatePullRequestAfterPush = false
         finishCommitProgressSheet()
+        let retained = index.awaitingHookDecision
+        if retained {
+            commitWorkflowState.awaitHookDecision()
+            commitMessageView.isEditable = false
+        } else {
+            endCancelledHookSubmission()
+        }
+        refreshOperationControls()
+        let reason = notification.userInfo?["description"] as? String ?? ""
+        host?.status = String(format: NSLocalizedString("Commit hook failed: %@", comment: "Commit hook failure status"), reason)
+        windowController?.showCommitHookFailedSheet(
+            NSLocalizedString("Commit hook failed", comment: "Commit hook failure sheet title"),
+            infoText: reason,
+            retryHandler: { [weak self] in
+                guard let self else { return }
+                if self.index.awaitingHookDecision {
+                    self.commitWorkflowState.retrySubmission()
+                    self.host?.isBusy = true
+                    if let windowController = self.windowController {
+                        let sheet = CommitProgressSheetController(repositoryWindowController: windowController)
+                        sheet.begin(withPhase: NSLocalizedString("Preparing commit…", comment: "Retry commit progress phase"))
+                        self.commitProgressSheet = sheet
+                    }
+                    self.index.retryCommitWithoutVerification()
+                } else {
+                    self.forceCommit(self)
+                }
+            },
+            cancelHandler: { [weak self] in
+                guard let self else { return }
+                self.index.cancelCommitSubmission()
+                self.endCancelledHookSubmission()
+            }
+        )
+    }
+
+    private func endCancelledHookSubmission() {
+        pendingCreatePullRequestAfterPush = false
         host?.isBusy = false
         commitMessageView.isEditable = true
         if let rememberedPushChoice = commitWorkflowState.cancelSubmission() {
             pushAfterCommitButton.state = rememberedPushChoice.boolValue ? .on : .off
         }
         refreshOperationControls()
-
-        let reason = notification.userInfo?["description"] as? String ?? ""
-        host?.status = String(
-            format: NSLocalizedString(
-                "Commit hook failed: %@",
-                comment: "Message in status bar when running a commit hook failed, including the reason for the failure"
-            ),
-            reason
-        )
-        windowController?.showCommitHookFailedSheet(
-            NSLocalizedString("Commit hook failed", comment: "Title for sheet that running a commit hook has failed"),
-            infoText: reason
-        ) { [weak self] in
-            self?.forceCommit(self)
-        }
     }
 
     @objc private func amendMessageAvailable(_ notification: Notification) {
@@ -885,6 +920,7 @@ final class StagingViewController: NSViewController, NSTextViewDelegate, NSMenuD
 
     @objc private func indexChanged(_ notification: Notification) {
         fileListController.rearrange()
+        renderSelectedDiffs()
         refreshOperationControls()
     }
 

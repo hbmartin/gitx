@@ -1,6 +1,42 @@
 import XCTest
 
 final class CommitControllerPoliciesTests: XCTestCase {
+    private final nonisolated class ImmediatelySettledIndex: PBGitIndex {
+        var onStage: (() -> Void)?
+
+        override func stageFiles(_ files: [PBChangedFile]) -> Bool {
+            onStage?()
+            return !files.isEmpty
+        }
+    }
+
+    @MainActor
+    func testAlreadySettledStagingAdvancesTheCapturedSelectionPosition() {
+        let repository = PBGitRepository()
+        let index = ImmediatelySettledIndex(repository: repository)
+        let files = [PBChangedFile(path: "first.txt"), PBChangedFile(path: "second.txt")]
+        let unstaged = NSArrayController(content: files)
+        let staged = NSArrayController()
+        let unstagedTable = NSTableView()
+        let stagedTable = NSTableView()
+        let coordinator = PBCommitTableInteractionCoordinator(repository: repository, index: index,
+                                                              unstagedFilesController: unstaged, stagedFilesController: staged,
+                                                              unstagedTable: unstagedTable, stagedTable: stagedTable)
+        defer { coordinator.perform(NSSelectorFromString("close")) }
+        unstaged.setSelectionIndex(0)
+        index.onStage = {
+            unstaged.content = [files[1]]
+            unstaged.rearrangeObjects()
+            unstaged.setSelectionIndexes(IndexSet())
+        }
+        coordinator.stageSelectedFiles()
+        XCTAssertTrue(unstaged.selectedObjects.isEmpty, "Advancement remains queued after the synchronous publication")
+        let advanced = expectation(for: NSPredicate { _, _ in unstaged.selectionIndex == 0 }, evaluatedWith: unstaged)
+        wait(for: [advanced], timeout: 3)
+        XCTAssertEqual((unstaged.selectedObjects as? [PBChangedFile])?.map(\.rawPath), [files[1].rawPath])
+        XCTAssertFalse(index.mutationReconciliationPending)
+    }
+
     func testRemotePresentationUsesExistingPrecedenceAndPushEligibility() {
         let sorted = PBCommitRemotePresentationPolicy.sortedRemoteNames(["zebra", "Origin", "backup"])
         XCTAssertEqual(sorted, ["backup", "Origin", "zebra"])

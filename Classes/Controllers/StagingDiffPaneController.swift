@@ -11,7 +11,13 @@ private final class StagingDiffPaneDelegateAdapter: NSObject, PBNativeContentVie
     weak var owner: StagingDiffPaneController?
 
     func nativeContentView(_ view: PBNativeContentView, performDiffAction action: String, patch: String) {
-        owner?.performDiffAction(action, patch: patch, in: view)
+        owner?.performDiffAction(action, patch: patch, context: [:], in: view)
+    }
+
+    func nativeContentView(_ view: PBNativeContentView, performDiffAction action: String,
+                           patch: String, actionContext: [String: Any])
+    {
+        owner?.performDiffAction(action, patch: patch, context: actionContext, in: view)
     }
 
     nonisolated func nativeContentView(
@@ -169,28 +175,7 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
     }
 
     private func detail(for error: NSError) -> String {
-        var parts = [error.localizedDescription]
-        if let reason = error.localizedFailureReason,
-           reason != error.localizedDescription
-        {
-            parts.append(reason)
-        }
-        if let status = error.userInfo[PBTaskTerminationStatusKey] as? NSNumber {
-            parts.append(String(
-                format: NSLocalizedString(
-                    "Exit status: %@",
-                    comment: "Git process exit status in a staging diff failure"
-                ),
-                status
-            ))
-        }
-        if let output = error.userInfo[PBTaskTerminationOutputKey] as? String {
-            let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedOutput.isEmpty {
-                parts.append(trimmedOutput)
-            }
-        }
-        return parts.joined(separator: "\n")
+        IndexOperationErrorPresentation.detail(for: error)
     }
 }
 
@@ -203,6 +188,7 @@ final class StagingDiffPaneController: NSObject {
 
     @objc let contentView: PBNativeContentView
     private unowned let repository: PBGitRepository
+    private var currentLoadIdentity: UUID?
     private var currentRequests: [StagingDiffRequest] = []
     private var displayedRequests: [StagingDiffLoadRequest] = []
     private let delegateAdapter = StagingDiffPaneDelegateAdapter()
@@ -238,6 +224,8 @@ final class StagingDiffPaneController: NSObject {
 
     @objc(renderRequests:)
     func render(_ requests: [StagingDiffRequest]) {
+        let loadIdentity = UUID()
+        currentLoadIdentity = loadIdentity
         currentRequests = requests
         guard !requests.isEmpty else {
             loadCoordinator.invalidate()
@@ -263,7 +251,10 @@ final class StagingDiffPaneController: NSObject {
                 parentTree: parentTree,
                 contextLines: contextLines,
                 workingDirectoryURL: workingDirectoryURL,
-                syntheticUntracked: !request.staged && file.worktreeStatus == .NEW
+                syntheticUntracked: !request.staged && file.worktreeStatus == .NEW,
+                actionContext: StagingDiffActionContext(snapshotRevision: index.snapshotRevision,
+                                                        loadIdentity: loadIdentity, rawPath: file.rawPath,
+                                                        staged: request.staged)
             )
         }
         NSLog("[GitX] Scheduling %ld staging diff section(s)", snapshots.count)
@@ -284,6 +275,7 @@ final class StagingDiffPaneController: NSObject {
 
     @objc(showStateMessage:)
     func showStateMessage(_ message: String) {
+        currentLoadIdentity = nil
         currentRequests = []
         displayedRequests = []
         loadCoordinator.invalidate()
@@ -297,13 +289,14 @@ final class StagingDiffPaneController: NSObject {
             PBNativeSectionTextKey: descriptor.text,
             PBNativeSectionContextKey: descriptor.context,
             PBNativeSectionStagingChromeKey: descriptor.stagingChrome,
+            PBNativeSectionActionContextKey: descriptor.actionContext?.dictionary ?? [:],
         ]
     }
 
     // MARK: Content-view actions (dispatched via the private delegate adapter)
 
-    fileprivate func performDiffAction(_ action: String, patch: String, in view: PBNativeContentView) {
-        guard !repository.index.mutationReconciliationPending else { return }
+    fileprivate func performDiffAction(_ action: String, patch: String, context: [String: Any], in view: PBNativeContentView) {
+        guard acceptsAction(action, context: context) else { return }
         switch action {
         case "stage":
             NSLog("[GitX] Applying a partial stage patch from the staging pane")
@@ -322,7 +315,7 @@ final class StagingDiffPaneController: NSObject {
             alert.addButton(withTitle: NSLocalizedString("Discard", comment: "Confirm button of the discard hunk confirmation"))
             alert.addButton(withTitle: NSLocalizedString("Cancel", comment: "Cancel button of the discard hunk confirmation"))
             alert.beginSheetModal(for: window) { [weak self] response in
-                guard response == .alertFirstButtonReturn, let self, !repository.index.mutationReconciliationPending else { return }
+                guard response == .alertFirstButtonReturn, let self, acceptsAction(action, context: context) else { return }
                 NSLog("[GitX] Discarding a hunk from the staging pane")
                 repository.index.applyPatch(patch, stage: false, reverse: true)
             }
@@ -331,13 +324,28 @@ final class StagingDiffPaneController: NSObject {
         }
     }
 
+    private func acceptsAction(_ action: String, context: [String: Any]) -> Bool {
+        guard let token = StagingDiffActionContext(dictionary: context), token.permits(action),
+              token.snapshotRevision == repository.index.snapshotRevision,
+              token.loadIdentity == currentLoadIdentity,
+              currentRequests.contains(where: { $0.file.rawPath == token.rawPath && $0.staged == token.staged }),
+              CommitSubmissionEligibility.allowsMutation(repository.index)
+        else {
+            NSLog("[GitX] Rejected obsolete diff action %@ at snapshot revision %llu", action, UInt64(repository.index.snapshotRevision))
+            return false
+        }
+        return true
+    }
+
     fileprivate func imageLookup(forPath path: String, sectionIndex: Int) -> StagingImageLookup? {
         guard displayedRequests.indices.contains(sectionIndex),
               let safePath = IndexFilePresentation.safePath(rawPath: displayedRequests[sectionIndex].rawPath),
               Data(path.utf8) == displayedRequests[sectionIndex].rawPath, path == safePath else { return nil }
+        let task = repository.task(withArguments: ["show", ":0:" + path])
+        task.separatesStandardError = true
         return StagingImageLookup(
-            workingFileURL: repository.workingDirectoryURL()?.appendingPathComponent(path),
-            indexTask: repository.task(withArguments: ["show", ":0:" + path])
+            workingFileURL: displayedRequests[sectionIndex].staged ? nil : repository.workingDirectoryURL()?.appendingPathComponent(path),
+            indexTask: task
         )
     }
 }

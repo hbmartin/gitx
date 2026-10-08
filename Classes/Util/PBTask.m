@@ -52,6 +52,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 @property BOOL cancellationRequested;
 @property BOOL operationStarted;
 @property BOOL taskFinished;
+@property BOOL leaderExitObserved;
 @property BOOL outputFinished;
 @property BOOL errorFinished;
 @property BOOL operationFinished;
@@ -266,6 +267,10 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 	NSUInteger generation = ++self.diagnosticDrainGeneration;
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), self.stateQueue, ^{
 		if (self.operationFinished || generation != self.diagnosticDrainGeneration) return;
+		if (self.leaderExitObserved && (!self.outputFinished || !self.errorFinished)) {
+			PBTaskLog(@"task %p: bounded drain after leader exit; stopping inherited writers", self);
+			[self.processSupervisor requestTerminationAfterGracePeriod:0 forceKillAfter:@(PBTaskTerminationGrace)];
+		}
 		@synchronized(self) {
 			self.outputDrainExpired = YES;
 		}
@@ -311,8 +316,8 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 - (void)scheduleOutputDrainAfterTaskExit
 {
 	if (self.diagnosticCapture) {
-		// Normal captured pushes release ownership only after real EOF. A supervisor
-		// error can complete ownership early; that path still gets bounded pipe cleanup.
+		// A non-reaping exit notification starts bounded drainage while the leader
+		// still reserves its process group for safe descendant cleanup.
 		[self scheduleDiagnosticDrainAfterDelay:PBTaskOutputDrainGrace];
 		return;
 	}
@@ -618,6 +623,15 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 								  });
 							  }];
 				self.processSupervisor.retainLeaderUntilReleased = self.diagnosticCapture != nil;
+				self.processSupervisor.leaderExitHandler = ^{
+					PBTask *strongSelf = weakSelf;
+					if (!strongSelf) return;
+					dispatch_async(strongSelf.stateQueue, ^{
+						if (strongSelf.operationFinished) return;
+						strongSelf.leaderExitObserved = YES;
+						[strongSelf scheduleOutputDrainAfterTaskExit];
+					});
+				};
 				if (![self.processSupervisor launchAndReturnError:&launchError])
 					self.processSupervisor = nil;
 			}
@@ -638,7 +652,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 			dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)), self.stateQueue, ^{
 				PBTask *strongSelf = weakSelf;
 				if (!strongSelf) return;
-				if (strongSelf.operationFinished || strongSelf.taskFinished) return;
+				if (strongSelf.operationFinished || strongSelf.taskFinished || strongSelf.leaderExitObserved) return;
 				if ([strongSelf.processSupervisor requestTimeoutTerminationWithForceKillAfter:PBTaskTerminationGrace]) {
 					strongSelf.forcedError = [strongSelf timeoutError];
 					[strongSelf scheduleDiagnosticDrainAfterDelay:PBTaskTerminationGrace + PBTaskOutputDrainGrace];

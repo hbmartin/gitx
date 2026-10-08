@@ -19,9 +19,11 @@ protocol GitEvidenceCommandRunning: GitCommandRunning {
 
 final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
     private unowned let repository: PBGitRepository
+    private let makeCapture: @Sendable () -> PBTaskDiagnosticCapture
 
-    init(repository: PBGitRepository) {
+    init(repository: PBGitRepository, makeCapture: @escaping @Sendable () -> PBTaskDiagnosticCapture = PBTaskDiagnosticCapture.init) {
         self.repository = repository
+        self.makeCapture = makeCapture
     }
 
     func output(arguments: [String]) throws -> String {
@@ -49,10 +51,10 @@ final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
 
     func push(arguments: [String]) -> PBRepositoryPushCommandResult {
         let task = repository.task(withArguments: arguments)
-        let capture = PBTaskDiagnosticCapture()
+        let capture = makeCapture()
         task.diagnosticCapture = capture
         task.separatesStandardError = true
-        task.capturesStandardOutput = false
+        task.capturesStandardOutput = true
         task.timeout = 600
         task.additionalEnvironment = Self.protectedHistoryEnvironment(task.additionalEnvironment ?? [:])
         let failure: NSError?
@@ -64,23 +66,33 @@ final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
         }
         let artifact = capture.seal()
         let prefix = artifact.rawStandardOutputPrefix(maximumBytes: 64 * 1024)
+        let outputBytes = task.standardOutputData.count > prefix.data.count ? task.standardOutputData : prefix.data
+        let standardOutput = String(decoding: outputBytes, as: UTF8.self)
+        let standardError = String(decoding: task.standardErrorData, as: UTF8.self)
         let browserHint: String
         if failure == nil {
-            var firstURL: URL?
-            artifact.forEachRawStandardErrorLine(maximumLineBytes: 64 * 1024) { line in
-                if firstURL == nil {
-                    firstURL = RepositoryPushBrowserHintPolicy.firstURL(in: line)
-                }
+            let hintLine = artifact.firstRawStandardErrorLine(maximumLineBytes: 64 * 1024) { line in
+                RepositoryPushBrowserHintPolicy.firstURL(in: line) != nil
             }
-            browserHint = firstURL?.absoluteString ?? ""
+            browserHint = RepositoryPushBrowserHintPolicy.firstURL(in: hintLine ?? standardError)
+                .map { "remote: " + $0.absoluteString } ?? ""
         } else {
             browserHint = ""
         }
         let complete = artifact.captureComplete
-        let safeError = failure.map { Self.capturedError($0, artifact: artifact) }
+        let safeError = failure.map { error in
+            var readable = PBTaskDiagnostics.pushFailure(stdout: standardOutput, stderr: standardError,
+                                                         porcelain: arguments.contains("--porcelain"),
+                                                         stdoutComplete: prefix.complete,
+                                                         stderrComplete: complete && task.standardErrorData.count < 64 * 1024)
+            if outputBytes.count >= 64 * 1024 || task.standardErrorData.count >= 64 * 1024 {
+                readable += "\n\n" + artifact.redactedSummary
+            }
+            return Self.capturedError(error, artifact: artifact, readable: readable)
+        }
         let result = PBRepositoryPushCommandResult(
-            standardOutput: String(decoding: prefix.data, as: UTF8.self),
-            standardError: String(decoding: task.standardErrorData, as: UTF8.self),
+            standardOutput: standardOutput,
+            standardError: standardError,
             terminationStatus: failure == nil ? 0 : failure?.userInfo[PBTaskTerminationStatusKey] as? NSNumber,
             error: safeError,
             standardOutputComplete: prefix.complete,
@@ -107,10 +119,11 @@ final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
         return environment
     }
 
-    private static func capturedError(_ error: NSError, artifact: PBTaskDiagnosticArtifact) -> NSError {
+    private static func capturedError(_ error: NSError, artifact: PBTaskDiagnosticArtifact, readable: String) -> NSError {
         var info = error.userInfo
         info[PushDiagnosticOwnership.errorKey] = artifact
-        info[PBTaskTerminationOutputKey] = artifact.redactedSummary
+        info[PBTaskTerminationOutputKey] = readable
+        info[PushDiagnosticOwnership.readableOutputKey] = readable
         info[NSLocalizedDescriptionKey] = PBTaskDiagnostics.redacted(error.localizedDescription)
         info[NSLocalizedFailureReasonErrorKey] = PBTaskDiagnostics.redacted(error.localizedFailureReason ?? error.localizedDescription)
         if error.domain == PBTaskErrorDomain, error.code == Int(PBTaskErrorCode.timeoutError.rawValue) {

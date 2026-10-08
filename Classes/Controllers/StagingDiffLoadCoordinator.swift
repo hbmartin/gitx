@@ -1,5 +1,43 @@
 import Foundation
 
+/// Immutable authority of a rendered action, independent of its scroll cache key.
+nonisolated struct StagingDiffActionContext: Equatable, Sendable {
+    let snapshotRevision: UInt
+    let loadIdentity: UUID
+    let rawPath: Data
+    let staged: Bool
+
+    var dictionary: [String: Any] {
+        ["snapshotRevision": snapshotRevision, "loadIdentity": loadIdentity.uuidString,
+         "rawPath": rawPath, "staged": staged]
+    }
+
+    init(snapshotRevision: UInt, loadIdentity: UUID, rawPath: Data, staged: Bool) {
+        self.snapshotRevision = snapshotRevision
+        self.loadIdentity = loadIdentity
+        self.rawPath = rawPath
+        self.staged = staged
+    }
+
+    init?(dictionary: [String: Any]) {
+        guard dictionary.count == 4,
+              let revision = dictionary["snapshotRevision"] as? UInt,
+              let identity = dictionary["loadIdentity"] as? String,
+              let uuid = UUID(uuidString: identity),
+              let path = dictionary["rawPath"] as? Data, !path.isEmpty, !path.contains(0),
+              let side = dictionary["staged"] as? Bool else { return nil }
+        self.init(snapshotRevision: revision, loadIdentity: uuid, rawPath: path, staged: side)
+    }
+
+    func permits(_ action: String) -> Bool {
+        switch action {
+        case "stage", "discard": !staged
+        case "unstage": staged
+        default: false
+        }
+    }
+}
+
 struct StagingDiffLoadRequest: Equatable, Sendable {
     let path: String
     let rawPath: Data
@@ -10,9 +48,10 @@ struct StagingDiffLoadRequest: Equatable, Sendable {
     let contextLines: UInt
     let workingDirectoryURL: URL?
     let syntheticUntracked: Bool
+    let actionContext: StagingDiffActionContext?
 
     init(path: String, rawPath: Data? = nil, status: Int, hasStagedChanges: Bool, staged: Bool,
-         parentTree: String, contextLines: UInt, workingDirectoryURL: URL?, syntheticUntracked: Bool)
+         parentTree: String, contextLines: UInt, workingDirectoryURL: URL?, syntheticUntracked: Bool, actionContext: StagingDiffActionContext? = nil)
     {
         self.path = path
         self.rawPath = rawPath ?? Data(path.utf8)
@@ -23,6 +62,7 @@ struct StagingDiffLoadRequest: Equatable, Sendable {
         self.contextLines = contextLines
         self.workingDirectoryURL = workingDirectoryURL
         self.syntheticUntracked = syntheticUntracked
+        self.actionContext = actionContext
     }
 }
 
@@ -31,12 +71,24 @@ enum StagingDiffProduction: Equatable, Sendable {
     case failure(String)
 }
 
-struct StagingDiffSectionDescriptor: Equatable, Sendable {
+nonisolated struct StagingDiffSectionDescriptor: Equatable, Sendable {
     let title: String
     let path: String
     let text: String
     let context: String
     let stagingChrome: Bool
+    let actionContext: StagingDiffActionContext?
+
+    init(title: String, path: String, text: String, context: String, stagingChrome: Bool,
+         actionContext: StagingDiffActionContext? = nil)
+    {
+        self.title = title
+        self.path = path
+        self.text = text
+        self.context = context
+        self.stagingChrome = stagingChrome
+        self.actionContext = actionContext
+    }
 }
 
 struct StagingDiffLoadOutput: Equatable, Sendable {
@@ -178,7 +230,8 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
             path: request.path,
             text: diff,
             context: request.staged ? "staged" : "unstaged",
-            stagingChrome: true
+            stagingChrome: true,
+            actionContext: request.actionContext
         )
     }
 

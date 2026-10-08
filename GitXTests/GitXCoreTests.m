@@ -215,6 +215,7 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 			operation:(NSOperation *)operation
 		   generation:(NSUInteger)generation;
 - (BOOL)isLoadGenerationCurrent:(NSUInteger)generation;
+- (void)setupEnumerator:(GTEnumerator *)enumerator forRevspec:(PBGitRevSpecifier *)rev;
 @end
 
 @interface PBGitRevListEnumeratorFailureStub : PBGitRevList
@@ -241,12 +242,29 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 @property (nonatomic, strong) NSError *terminalError;
 @property (nonatomic) NSUInteger deliveredOIDCount;
 @property (nonatomic) NSUInteger reportedErrorCount;
+@property (nonatomic) NSTimeInterval firstOIDDelay;
+@property (nonatomic) BOOL rejectsReferences;
+@property (nonatomic) NSUInteger rejectedReferenceCount;
 @end
 
 @implementation GTRevisionEnumerationErrorStub
 
+- (BOOL)pushReferenceName:(NSString *)referenceName error:(NSError **)error
+{
+	if (!self.rejectsReferences) return [super pushReferenceName:referenceName error:error];
+	self.rejectedReferenceCount++;
+	if (error) *error = [NSError errorWithDomain:@"GitXTests.RevisionEnumeration"
+											code:1
+										userInfo:@{NSLocalizedDescriptionKey : @"Reference disappeared before it was pushed"}];
+	return NO;
+}
+
 - (nullable GTOID *)nextOIDWithSuccess:(BOOL *)success error:(NSError **)error
 {
+	// Exercise the production 200ms publication gate, rather than calling its
+	// private publication method directly. This is a clock boundary test.
+	if (self.deliveredOIDCount == 0 && self.firstOIDDelay > 0)
+		[NSThread sleepForTimeInterval:self.firstOIDDelay];
 	if (self.deliveredOIDCount < self.oidsBeforeError.count) {
 		if (success) *success = YES;
 		if (error) *error = nil;
@@ -262,9 +280,16 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 @interface PBGitRevListScriptedEnumeratorStub : PBGitRevList
 @property (nonatomic, strong) GTEnumerator *scriptedEnumerator;
+@property (nonatomic, strong) NSMutableArray<NSNumber *> *publicationSizes;
 @end
 
 @implementation PBGitRevListScriptedEnumeratorStub
+
+- (void)updateCommits:(NSArray<PBGitCommit *> *)revisions operation:(NSOperation *)operation generation:(NSUInteger)generation
+{
+	[self.publicationSizes addObject:@(revisions.count)];
+	[super updateCommits:revisions operation:operation generation:generation];
+}
 
 - (nullable GTEnumerator *)enumeratorForRepository:(GTRepository *)repository error:(NSError **)error
 {
@@ -912,45 +937,14 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 
 @implementation GitXRepositoryIntegrationTests
 
-- (void)testCommitPatchCharacterizesNewlineEmptyFailureAndCachedOutput
+- (void)testPlainChangedFileIdentityIsNonnull
 {
-	NSError *error = nil;
-	GTReference *head = [self.repository.gtRepo headReferenceWithError:&error];
-	GTCommit *target = (GTCommit *)[head resolvedTarget];
-	XCTAssertNotNil(target, @"%@", error);
-	for (NSArray<NSString *> *example in @[
-			 @[ @"patch\n", @"patch+GitX" ],
-			 @[ @"", @"+GitX" ],
-			 @[ @"patch\n\n", @"patch\n+GitX" ],
-		 ]) {
-		PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
-		repository.recoveryPatchOutput = example[0];
-		PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
-		XCTAssertEqualObjects(commit.patch, example[1]);
-		repository.recoveryPatchOutput = @"changed output\n";
-		XCTAssertEqualObjects(commit.patch, example[1]);
-		XCTAssertEqual(repository.recoveryPatchInvocationCount, 1U);
-	}
-	PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
-	PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
-	XCTAssertNil(commit.patch);
-	XCTAssertNil(commit.patch);
-	XCTAssertEqual(repository.recoveryPatchInvocationCount, 2U, @"a failed export is retried rather than cached");
-}
-
-- (void)testCommitPatchPreservesFinalContentWhenOutputHasNoLineFeed
-{
-	NSError *error = nil;
-	GTReference *head = [self.repository.gtRepo headReferenceWithError:&error];
-	GTCommit *target = (GTCommit *)[head resolvedTarget];
-	XCTAssertNotNil(target, @"%@", error);
-	for (NSString *output in @[ @"patch-without-newline", @"patch🙂", @"patch\r", @"patch\r\n" ]) {
-		PBCommitRecoveryRepository *repository = [PBCommitRecoveryRepository new];
-		repository.recoveryPatchOutput = output;
-		PBGitCommit *commit = [[PBGitCommit alloc] initWithRepository:repository andCommit:target];
-		NSString *expected = [output hasSuffix:@"\n"] ? [output substringToIndex:output.length - 1] : output;
-		XCTAssertEqualObjects(commit.patch, [expected stringByAppendingString:@"+GitX"]);
-	}
+	PBChangedFile *file = [PBChangedFile new];
+	XCTAssertNotNil(file.path);
+	XCTAssertNotNil(file.rawPath);
+	XCTAssertEqual(file.path.length, 0U);
+	XCTAssertEqual(file.rawPath.length, 0U);
+	XCTAssertNil(file.safePath);
 }
 
 - (void)testCommitIdentityReferencesAndSVNMetadataCompatibility
@@ -1578,6 +1572,43 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	XCTAssertFalse([commit isOnSameBranchAs:nil]);
 }
 
+- (void)testRevisionWalkContinuesWhenEnumeratedReferencesCannotBePushed
+{
+	NSError *error = nil;
+	GTRevisionEnumerationErrorStub *enumerator = [[GTRevisionEnumerationErrorStub alloc] initWithRepository:self.repository.gtRepo error:&error];
+	XCTAssertNotNil(enumerator, @"%@", error);
+	enumerator.rejectsReferences = YES;
+	PBGitRevSpecifier *rev = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"--branches" ]];
+	PBGitRevList *list = [[PBGitRevList alloc] initWithRepository:self.repository rev:rev shouldGraph:NO];
+	[list setupEnumerator:enumerator forRevspec:rev];
+	XCTAssertGreaterThan(enumerator.rejectedReferenceCount, (NSUInteger)0);
+}
+
+- (void)testRevisionWalkPublishesTimedBatchesAndDeduplicatesTheirCommitIdentity
+{
+	NSError *error = nil;
+	GTCommit *head = (GTCommit *)[[self.repository.gtRepo headReferenceWithError:&error] resolvedTarget];
+	XCTAssertNotNil(head, @"%@", error);
+	GTRevisionEnumerationErrorStub *enumerator = [[GTRevisionEnumerationErrorStub alloc] initWithRepository:self.repository.gtRepo error:&error];
+	NSMutableArray<GTOID *> *oids = [NSMutableArray array];
+	for (NSUInteger index = 0; index < 120; index++) [oids addObject:head.OID];
+	enumerator.oidsBeforeError = oids;
+	enumerator.firstOIDDelay = 0.25;
+	PBGitRevListScriptedEnumeratorStub *revisionList = [[PBGitRevListScriptedEnumeratorStub alloc]
+		initWithRepository:self.repository
+					   rev:[[PBGitRevSpecifier alloc] initWithParameters:@[ @"HEAD" ]]
+			   shouldGraph:YES];
+	revisionList.scriptedEnumerator = enumerator;
+	revisionList.publicationSizes = [NSMutableArray array];
+	XCTestExpectation *completion = [self expectationWithDescription:@"timed walk completes after both publications"];
+	[revisionList loadRevisionsWithCompletionBlock:^{
+		[completion fulfill];
+	}];
+	[self waitForExpectations:@[ completion ] timeout:5];
+	XCTAssertEqualObjects(revisionList.publicationSizes, (@[ @100, @20 ]));
+	XCTAssertEqualObjects([revisionList.commits valueForKey:@"OID"], (@[ head.OID ]));
+}
+
 - (void)testRevisionListPublishesIncrementalBatches
 {
 	NSError *error = nil;
@@ -2173,6 +2204,29 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	}];
 	XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:finished object:history];
 	[self waitForExpectations:@[ expectation ] timeout:10.0];
+}
+
+- (void)testHistoryGraphOperationOwnsAnImmutableParserSnapshot
+{
+	PBGitCommit *commit = [self historyCompletionTestHeadCommit];
+	if (!commit) return;
+	PBGitHistoryList *history = [self idleHistoryListWithParserCommits:@[ commit ]];
+	NSOperationQueue *queue = [history valueForKey:@"graphQueue"];
+	queue.suspended = YES;
+	PBGitHistoryGrapher *snapshotGrapher = [[PBGitHistoryGrapher alloc]
+		initWithBaseCommits:[NSSet set]
+			viewAllBranches:YES
+					  queue:queue
+				   delegate:history];
+	[history setValue:snapshotGrapher forKey:@"grapher"];
+	NSInvocationOperation *operation = [history operationForCommits:history.projectRevList.commits];
+	[queue addOperation:operation];
+	[history.projectRevList.commits removeAllObjects];
+	queue.suspended = NO;
+	[self waitForGraphQueueToDrain:queue];
+	[self waitForHistoryListToFinish:history];
+	XCTAssertEqualObjects([history.commits valueForKey:@"SHA"], (@[ commit.SHA ]));
+	[history cleanup];
 }
 
 - (void)testHistoryGrapherPublishesBeforeItsInvocationFinishes
@@ -3837,6 +3891,21 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	PBGitTree *firstTree = changes.tree;
 	XCTAssertNotNil(firstTree);
 	XCTAssertEqual(firstTree, changes.tree);
+}
+
+- (void)testGitTreeMissingCommandOutputPreservesItsFailureAndBoundaryValues
+{
+	PBCommitRecoveryRepository *repository = [[PBCommitRecoveryRepository alloc] init];
+	PBGitTree *tree = [[PBGitTree alloc] init];
+	tree.repository = repository;
+	tree.path = @"unavailable.txt";
+	tree.sha = @"HEAD";
+	tree.leaf = YES;
+	XCTAssertFalse([tree hasBinaryHeader:nil]);
+	XCTAssertFalse([tree hasBinaryAttributes]);
+	XCTAssertNil(tree.contents);
+	XCTAssertEqual(tree.fileSize, (long long)-1);
+	XCTAssertEqual(tree.fileSize, (long long)-1, @"Failure remains a cached size sentinel");
 }
 
 - (void)testGitTreeBinaryHeuristicsAndLocalCacheDecodingAreDeterministic

@@ -16,6 +16,8 @@ final class CommitTableInteractionCoordinator: NSObject {
     private weak var stagedTable: NSTableView?
     private weak var pendingSelectionController: NSArrayController?
     private var pendingSelectionIndex: Int?
+    private var selectionVersion: UInt = 0
+    private var selectionObservations: [NSKeyValueObservation] = []
 
     @objc(initWithRepository:index:unstagedFilesController:stagedFilesController:unstagedTable:stagedTable:)
     init(
@@ -37,11 +39,25 @@ final class CommitTableInteractionCoordinator: NSObject {
         unstagedTable.registerForDraggedTypes([Self.fileChangesPasteboardType])
         stagedTable.registerForDraggedTypes([Self.fileChangesPasteboardType])
         NotificationCenter.default.addObserver(self, selector: #selector(indexDidUpdate(_:)), name: NSNotification.Name(PBGitIndexIndexUpdated), object: index)
+        selectionObservations = [unstagedFilesController, stagedFilesController].map { controller in
+            controller.observe(\.selectionIndexes, options: []) { [weak self] _, _ in
+                // swift6-safety-justification: These Cocoa selection bindings are operated exclusively on the main thread.
+                MainActor.assumeIsolated {
+                    guard let self, !self.index.publishingSnapshot else { return }
+                    self.selectionVersion &+= 1
+                    if self.pendingSelectionIndex != nil {
+                        NSLog("[GitX] Cancelled delayed selection advancement after a new selection")
+                        self.pendingSelectionController = nil
+                        self.pendingSelectionIndex = nil
+                    }
+                }
+            }
+        }
     }
 
     @objc(stageSelectedFiles)
     func stageSelectedFiles() {
-        guard !index.mutationReconciliationPending, let controller = unstagedFilesController,
+        guard CommitSubmissionEligibility.allowsMutation(index), let controller = unstagedFilesController,
               let files = controller.selectedObjects as? [PBChangedFile]
         else { return }
         NSLog("[GitX] Staging %ld selected file(s)", files.count)
@@ -52,7 +68,7 @@ final class CommitTableInteractionCoordinator: NSObject {
 
     @objc(unstageSelectedFiles)
     func unstageSelectedFiles() {
-        guard !index.mutationReconciliationPending, let controller = stagedFilesController,
+        guard CommitSubmissionEligibility.allowsMutation(index), let controller = stagedFilesController,
               let files = controller.selectedObjects as? [PBChangedFile]
         else { return }
         NSLog("[GitX] Unstaging %ld selected file(s)", files.count)
@@ -104,7 +120,7 @@ final class CommitTableInteractionCoordinator: NSObject {
     @objc(didDoubleClickTableView:)
     func didDoubleClick(_ tableView: NSTableView) {
         let controller = tableView === unstagedTable ? unstagedFilesController : stagedFilesController
-        guard !index.mutationReconciliationPending, let controller,
+        guard CommitSubmissionEligibility.allowsMutation(index), let controller,
               let files = files(in: controller, at: tableView.selectedRowIndexes)
         else { return }
 
@@ -147,7 +163,7 @@ final class CommitTableInteractionCoordinator: NSObject {
 
     @objc(validateDrop:inTableView:)
     func validateDrop(_ info: NSDraggingInfo, in tableView: NSTableView) -> NSDragOperation {
-        guard !index.mutationReconciliationPending,
+        guard CommitSubmissionEligibility.allowsMutation(index),
               let files = dropFiles(info, destination: tableView), !files.isEmpty else { return [] }
         tableView.setDropRow(-1, dropOperation: .on)
         return .copy
@@ -155,7 +171,7 @@ final class CommitTableInteractionCoordinator: NSObject {
 
     @objc(acceptDrop:inTableView:)
     func acceptDrop(_ info: NSDraggingInfo, in tableView: NSTableView) -> Bool {
-        guard !index.mutationReconciliationPending, let files = dropFiles(info, destination: tableView),
+        guard CommitSubmissionEligibility.allowsMutation(index), let files = dropFiles(info, destination: tableView),
               !files.isEmpty else { return false }
         if tableView.tag == 0 {
             NSLog("[GitX] Unstaging %ld dropped file(s)", files.count)
@@ -189,6 +205,9 @@ final class CommitTableInteractionCoordinator: NSObject {
     }
 
     @objc func close() {
+        selectionObservations.forEach { $0.invalidate() }
+        selectionObservations = []
+        selectionVersion &+= 1
         NotificationCenter.default.removeObserver(self)
         pendingSelectionController = nil
         pendingSelectionIndex = nil
@@ -204,7 +223,7 @@ final class CommitTableInteractionCoordinator: NSObject {
     }
 
     private func reselectNextFile(in controller: NSArrayController, currentSelectionIndex: Int) {
-        if index.mutationReconciliationPending {
+        if !CommitSubmissionEligibility.allowsMutation(index) {
             pendingSelectionController = controller
             pendingSelectionIndex = currentSelectionIndex
         } else {
@@ -213,8 +232,9 @@ final class CommitTableInteractionCoordinator: NSObject {
     }
 
     private func advanceSelection(in controller: NSArrayController, currentSelectionIndex: Int) {
-        DispatchQueue.main.async { [weak controller] in
-            guard let controller else { return }
+        let version = selectionVersion
+        DispatchQueue.main.async { [weak self, weak controller] in
+            guard let self, self.selectionVersion == version, let controller else { return }
             let selectionIndex = CommitSelectionPolicy.selectionIndex(
                 currentIndex: currentSelectionIndex,
                 arrangedCount: (controller.arrangedObjects as? [Any])?.count ?? 0

@@ -508,8 +508,10 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	XCUIElement *trackedFile = unstagedTable.staticTexts[@"tracked.swift"];
 	XCTAssertTrue([trackedFile waitForExistenceWithTimeout:10]);
 	[self.app activate];
-	XCUICoordinate *tableOrigin = [unstagedTable coordinateWithNormalizedOffset:CGVectorMake(0, 0)];
-	[[tableOrigin coordinateWithOffset:CGVectorMake(50, 10)] click];
+	[trackedFile click];
+	XCUIElement *trackedRow = [unstagedTable.tableRows containingType:XCUIElementTypeStaticText identifier:@"tracked.swift"].firstMatch;
+	XCTNSPredicateExpectation *trackedSelection = [[XCTNSPredicateExpectation alloc] initWithPredicate:[NSPredicate predicateWithFormat:@"selected == YES"] object:trackedRow];
+	[self waitForExpectations:@[ trackedSelection ] timeout:5];
 	[unstagedTable typeKey:XCUIKeyboardKeySpace modifierFlags:0];
 	XCTAssertTrue([stagedTable.staticTexts[@"tracked.swift"] waitForExistenceWithTimeout:10], @"Space should move the selected file to Staged Changes");
 

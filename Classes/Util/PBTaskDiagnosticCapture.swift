@@ -29,7 +29,10 @@ import Foundation
         }
 
         @objc var redactedSummary: String {
-            store.withLock { store.summary }
+            store.withLock {
+                store.prepareReport()
+                return store.summary
+            }
         }
 
         @objc var captureComplete: Bool {
@@ -58,19 +61,30 @@ import Foundation
 
         @objc(forEachRawStandardErrorLineWithMaximumLineBytes:body:)
         func forEachRawStandardErrorLine(maximumLineBytes: Int, body: (String) -> Void) {
+            _ = firstRawStandardErrorLine(maximumLineBytes: maximumLineBytes) { line in
+                body(line)
+                return false
+            }
+        }
+
+        @objc(firstRawStandardErrorLineWithMaximumLineBytes:matching:)
+        func firstRawStandardErrorLine(maximumLineBytes: Int, matching body: (String) -> Bool) -> String? {
             guard maximumLineBytes > 0,
-                  let source = store.withLock({ try? store.source(stream: .error) }) else { return }
+                  let source = store.withLock({ try? store.source(stream: .error) }) else { return nil }
             let finalLineComplete = store.withLock { store.errorPrefixComplete }
             let lineLimit = min(64 * 1024, maximumLineBytes)
             var offset: Int64 = 0
             var line = Data()
             var oversized = false
             while offset < source.length {
-                guard let chunk = try? store.withLock({ try source.read(offset, Int(min(Int64(PBTaskDiagnosticRedactor.bufferSize), source.length - offset))) }), !chunk.isEmpty else { return }
+                guard let chunk = try? store.withLock({ try source.read(offset, Int(min(Int64(PBTaskDiagnosticRedactor.bufferSize), source.length - offset))) }), !chunk.isEmpty else { return nil }
                 for byte in chunk {
                     if byte == 10 {
                         if !oversized {
-                            body(String(decoding: line, as: UTF8.self))
+                            let text = String(decoding: line, as: UTF8.self)
+                            if body(text) {
+                                return text
+                            }
                         }
                         line.removeAll(keepingCapacity: true)
                         oversized = false
@@ -86,8 +100,12 @@ import Foundation
                 offset += Int64(chunk.count)
             }
             if finalLineComplete, !oversized, !line.isEmpty {
-                body(String(decoding: line, as: UTF8.self))
+                let text = String(decoding: line, as: UTF8.self)
+                if body(text) {
+                    return text
+                }
             }
+            return nil
         }
 
         @objc(writeRedactedReportToURL:error:)
@@ -173,6 +191,7 @@ import Foundation
         private var leaseDescriptor: Int32 = -1
         private var sealed = false
         private var reportAvailable = false
+        private var reportPreparationAttempted = false
         var outputBytes: Int64 = 0
         private var outputCaptureFailed = false
         private var errorBytes: Int64 = 0
@@ -262,7 +281,15 @@ import Foundation
             sealed = true
             closeWriter(&outputDescriptor, stream: .output)
             closeWriter(&errorDescriptor, stream: .error)
-            let state = outputEOF && errorEOF && failure == nil ? "complete" : "incomplete"
+            // Successful pushes need only their bounded status and server hint.
+            // The full escaped/redacted copy is deferred until presentation/export.
+            Self.logger.info("Sealed private push capture without preparing a report")
+        }
+
+        func prepareReport() {
+            guard sealed, !reportPreparationAttempted else { return }
+            reportPreparationAttempted = true
+            let state = complete ? "complete" : "incomplete"
             var sections = ["Push output capture: \(state)."]
             if let failure {
                 sections.append(failure)
@@ -332,6 +359,7 @@ import Foundation
         }
 
         func export(to destination: URL) throws {
+            prepareReport()
             guard reportAvailable, let directory, destination.isFileURL else { throw Self.error() }
             let temporary = destination.deletingLastPathComponent().appendingPathComponent(".gitx-push-output-\(UUID().uuidString)")
             let descriptor = try io.create(temporary, operation: "exportOpen")
@@ -408,14 +436,18 @@ import Foundation
                 guard lstat(directory.path, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFDIR,
                       metadata.st_uid == getuid(), metadata.st_mode & 0o777 == 0o700
                 else { continue }
+                // Lease creation and flock are separate syscalls. A fresh unlocked
+                // lease may still belong to its creator; apply the orphan grace to
+                // both registered and not-yet-registered directories.
+                let age = Date().timeIntervalSince1970 - Double(metadata.st_mtimespec.tv_sec)
+                guard age >= 24 * 60 * 60 else { continue }
                 let descriptor = Darwin.open(directory.appendingPathComponent("lease").path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
                 guard descriptor >= 0 else {
                     // A crash can precede lease creation. A day-old orphan is safe to
                     // remove; fresh directories may belong to an in-progress creator.
                     let missingLease = errno == ENOENT
-                    let age = Date().timeIntervalSince1970 - Double(metadata.st_mtimespec.tv_sec)
                     let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
-                    if missingLease, age >= 24 * 60 * 60,
+                    if missingLease,
                        let names, Set(names).isSubset(of: ["stdout", "stderr", "report"])
                     {
                         try? FileManager.default.removeItem(at: directory)
@@ -656,6 +688,11 @@ import Foundation
             @objc var writersClosed: Bool {
                 guard let store else { return true }
                 return store.withLock { store.writersClosed }
+            }
+
+            @objc(markStaleForCleanupAndReturnError:)
+            func markStaleForCleanup() throws {
+                try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -48 * 60 * 60)], ofItemAtPath: directory.path)
             }
 
             @objc func discardFixture() {

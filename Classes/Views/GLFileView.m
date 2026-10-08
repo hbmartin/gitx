@@ -133,6 +133,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 									   generation:(NSUInteger)generation
 {
 	NSMutableArray *sections = [NSMutableArray array];
+	PBIndexFileViewSnapshotLookup *lookup = workingState ? [[PBIndexFileViewSnapshotLookup alloc] initWithSnapshots:changes] : nil;
 	for (PBGitTree *tree in trees) {
 		if (![self isFileLoadGenerationCurrent:generation]) return @[];
 		if (!tree.leaf) continue;
@@ -142,19 +143,13 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 				[sections addObject:@{PBNativeSectionTitleKey : tree.path ?: @"", PBNativeSectionTextKey : @"This filename cannot be represented for preview.", PBNativeSectionContextKey : @"readOnly"}];
 				continue;
 			}
-			PBChangedFile *change = nil;
-			for (PBIndexFileViewSnapshot *candidate in changes) {
-				if ([candidate.rawPath isEqualToData:rawPath]) {
-					change = [candidate materializedFile];
-					break;
-				}
-			}
+			PBChangedFile *change = [[lookup snapshotForRawPath:rawPath] materializedFile];
 			if (!change) continue;
 			NSMutableDictionary<NSString *, id> *workingImageSource = [imageSource mutableCopy];
 			workingImageSource[@"rawPath"] = rawPath;
 			workingImageSource[@"safePath"] = [PBIndexFilePresentation safePathForRawPath:rawPath];
 			if (change.hasStagedChanges) {
-				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:PBApplicationSettings.diffContextLines] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : workingImageSource}];
+				[sections addObject:@{PBNativeSectionTitleKey : [NSString stringWithFormat:@"Staged — %@", tree.fullPath], PBNativeSectionTextKey : [historyController.repository.index diffForFile:change staged:YES contextLines:PBApplicationSettings.diffContextLines] ?: @"", PBNativeSectionContextKey : @"readOnly", PBNativeSectionImageSourceKey : [PBIndexPreviewImageSource sourceFromWorkingSource:workingImageSource staged:YES]}];
 			}
 			if (change.hasUnstagedChanges) {
 				BOOL untracked = change.worktreeStatus == NEW;
@@ -194,7 +189,6 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 																			 parentSHA:parentSHA
 																		  workingState:workingState];
 	NSDictionary<NSString *, id> *imageSource = [self imageSourceForRevisions:imageRevisions workingTree:workingState];
-	NSArray<PBIndexFileViewSnapshot *> *changes = [PBIndexFileViewSnapshot snapshotsForFiles:historyController.repository.index.indexChanges];
 	NSMutableDictionary<NSValue *, NSData *> *capturedRawPaths = [NSMutableDictionary dictionary];
 	if (workingState) {
 		for (PBWorkingTree *tree in selected) {
@@ -202,6 +196,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		}
 	}
 	NSDictionary<NSValue *, NSData *> *selectedRawPaths = [capturedRawPaths copy];
+	NSArray<PBIndexFileViewSnapshot *> *changes = workingState && mode == PBFileModeDiff ? [PBIndexFileViewSnapshot snapshotsForFiles:historyController.repository.index.indexChanges rawPaths:selectedRawPaths.allValues] : @[];
 	dispatch_async(self.fileLoadQueue, ^{
 		if (![self isFileLoadGenerationCurrent:generation]) return;
 		NSMutableArray *sections = [NSMutableArray array];
@@ -271,6 +266,7 @@ typedef NS_ENUM(NSInteger, PBFileMode) {
 		NSString *object = [revision isEqualToString:@":"] ? [@":0:" stringByAppendingString:path] : [NSString stringWithFormat:@"%@:%@", revision, path];
 		NSArray<NSString *> *arguments = @[ [@"--git-dir=" stringByAppendingString:gitDirectory], @"show", object ];
 		PBTask *task = [PBTask taskWithLaunchPath:launchPath arguments:arguments inDirectory:imageSource[PBNativeImageSourceTaskDirectoryKey]];
+		task.separatesStandardError = YES;
 		if ([task launchTask:nil] && task.standardOutputData.length) return task.standardOutputData;
 	}
 	return nil;

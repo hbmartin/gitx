@@ -32,9 +32,54 @@ final nonisolated class IndexStatusEntry: NSObject {
     }
 }
 
+/// Foundation's encoding initializer consumes a leading UTF-8 BOM. Filename
+/// decoding must preserve every byte, including a BOM-only name.
+nonisolated enum IndexFilenameUTF8 {
+    static func decode(_ bytes: Data) -> String? {
+        let value = String(decoding: bytes, as: UTF8.self)
+        return Data(value.utf8) == bytes ? value : nil
+    }
+}
+
+/// Keeps byte identity in Swift collections so common-prefix paths do not use
+/// Foundation's NSData hashing when assembling the working tree.
+@objc(PBWorkingTreePaths)
+final nonisolated class WorkingTreePaths: NSObject {
+    @objc private(set) var rawPaths: [Data] = []
+    private var seen = Set<Data>()
+    private var files: [Data: PBChangedFile] = [:]
+
+    @objc(initWithFiles:)
+    init(files: [PBChangedFile]) {
+        super.init()
+        for file in files {
+            self.files[file.rawPath] = file
+        }
+    }
+
+    @objc(appendData:)
+    func append(data: Data) {
+        for path in IndexFilePresentation.rawPaths(data: data) where seen.insert(path).inserted {
+            rawPaths.append(path)
+        }
+    }
+
+    @objc(fileForRawPath:)
+    func file(for rawPath: Data) -> PBChangedFile? {
+        files[rawPath]
+    }
+
+    @objc(validatedHierarchyPath:)
+    static func validatedHierarchyPath(_ path: String) -> String? {
+        let components = path.components(separatedBy: "/")
+        guard !path.contains("\0"), components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return nil }
+        return path
+    }
+}
+
 nonisolated enum IndexPathDisplayName {
     static func string(for rawPath: Data) -> String {
-        if let path = String(data: rawPath, encoding: .utf8) {
+        if let path = IndexFilenameUTF8.decode(rawPath) {
             return path
         }
         return rawPath.map { byte in
@@ -130,18 +175,7 @@ final nonisolated class IndexStatusParser: NSObject {
         var payload = data
         payload.removeLast()
         guard !payload.isEmpty else { return [] }
-        var records: [Data] = []
-        var record = Data()
-        for byte in payload {
-            if byte == 0 {
-                records.append(record)
-                record = Data()
-            } else {
-                record.append(byte)
-            }
-        }
-        records.append(record)
-        return records
+        return payload.split(separator: 0, omittingEmptySubsequences: false).map { Data($0) }
     }
 }
 
@@ -343,7 +377,7 @@ final nonisolated class IndexFilePresentation: NSObject {
     @objc(safePathForRawPath:)
     static func safePath(rawPath: Data) -> String? {
         guard !rawPath.isEmpty, !rawPath.contains(0) else { return nil }
-        return String(data: rawPath, encoding: .utf8)
+        return IndexFilenameUTF8.decode(rawPath)
     }
 
     @objc(rawPathsFromData:)
@@ -410,7 +444,12 @@ final nonisolated class IndexOperationErrorPresentation: NSObject {
     @objc(messageForOperation:error:)
     static func message(operation: String, error: NSError?) -> String {
         guard let error else { return operation }
-        var parts = [operation, error.localizedDescription]
+        return operation + "\n" + detail(for: error)
+    }
+
+    @objc(detailForError:)
+    static func detail(for error: NSError) -> String {
+        var parts = [error.localizedDescription]
         if let reason = error.localizedFailureReason, reason != error.localizedDescription {
             parts.append(reason)
         }
@@ -481,6 +520,18 @@ final nonisolated class IndexFileReconciliation: NSObject {
 
 /// Captured on main before a history view queues work. Every field is an
 /// immutable copy, so refreshes cannot change the selected file underneath it.
+@objc(PBIndexPreviewImageSource)
+final nonisolated class IndexPreviewImageSource: NSObject {
+    @objc(sourceFromWorkingSource:staged:)
+    static func source(workingSource: [String: Any], staged: Bool) -> [String: Any] {
+        guard staged else { return workingSource }
+        var source = workingSource
+        source[PBNativeImageSourceWorkingTreeKey] = false
+        source[PBNativeImageSourceRevisionsKey] = [":"]
+        return source
+    }
+}
+
 @objc(PBIndexFileViewSnapshot)
 final nonisolated class IndexFileViewSnapshot: NSObject {
     @objc let rawPath: Data
@@ -508,8 +559,19 @@ final nonisolated class IndexFileViewSnapshot: NSObject {
 
     @objc(snapshotsForFiles:)
     static func snapshots(files: [PBChangedFile]) -> [IndexFileViewSnapshot] {
-        assert(Thread.isMainThread)
+        requireMainThread()
         return files.map(IndexFileViewSnapshot.init)
+    }
+
+    @objc(snapshotsForFiles:rawPaths:)
+    static func snapshots(files: [PBChangedFile], rawPaths: [Data]) -> [IndexFileViewSnapshot] {
+        requireMainThread()
+        let selected = Set(rawPaths)
+        return files.compactMap { selected.contains($0.rawPath) ? IndexFileViewSnapshot(file: $0) : nil }
+    }
+
+    private static func requireMainThread() {
+        assert(Thread.isMainThread)
     }
 
     @objc func materializedFile() -> PBChangedFile {
@@ -522,6 +584,27 @@ final nonisolated class IndexFileViewSnapshot: NSObject {
         file.commitBlobMode = commitBlobMode
         file.commitBlobSHA = commitBlobSHA
         return file
+    }
+}
+
+/// Immutable lookup transferred with the captured preview values.
+@objc(PBIndexFileViewSnapshotLookup)
+final nonisolated class IndexFileViewSnapshotLookup: NSObject {
+    private let byRawPath: [Data: IndexFileViewSnapshot]
+
+    @objc(initWithSnapshots:)
+    init(snapshots: [IndexFileViewSnapshot]) {
+        var lookup: [Data: IndexFileViewSnapshot] = [:]
+        for snapshot in snapshots where lookup[snapshot.rawPath] == nil {
+            lookup[snapshot.rawPath] = snapshot
+        }
+        byRawPath = lookup
+        super.init()
+    }
+
+    @objc(snapshotForRawPath:)
+    func snapshot(rawPath: Data) -> IndexFileViewSnapshot? {
+        byRawPath[rawPath]
     }
 }
 

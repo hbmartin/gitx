@@ -15,11 +15,302 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testSectionedCheckboxesAndMixedDoubleClickUsePublishedFiles() throws {
+        try fixture.write("indexed\n", to: "control-staged.txt")
+        try fixture.git(["add", "control-staged.txt"])
+        try fixture.write("working\n", to: "control-unstaged.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.sectionedList)
+        let table = list.sectionedTable
+        func fileRow(_ path: String) throws -> Int {
+            try XCTUnwrap((0 ..< table.numberOfRows).first { row in
+                (table.view(atColumn: 0, row: row, makeIfNecessary: true) as? PBStagingFileCellView)?.pathField.stringValue == path
+            })
+        }
+        try table.selectRowIndexes(IndexSet([fileRow("control-staged.txt"), fileRow("control-unstaged.txt")]), byExtendingSelection: false)
+        waitForIndexUpdate { list.perform(NSSelectorFromString("didDoubleClickTable:"), with: table) }
+        XCTAssertEqual(try fixture.git(["diff", "--cached", "--name-only"]).trimmingCharacters(in: .newlines), "control-unstaged.txt")
+        let stagedCell = try XCTUnwrap(table.view(atColumn: 0, row: fileRow("control-unstaged.txt"), makeIfNecessary: true) as? PBStagingFileCellView)
+        waitForIndexUpdate { stagedCell.checkbox.performClick(nil) }
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+        let unstagedCell = try XCTUnwrap(table.view(atColumn: 0, row: fileRow("control-staged.txt"), makeIfNecessary: true) as? PBStagingFileCellView)
+        waitForIndexUpdate { unstagedCell.checkbox.performClick(nil) }
+        XCTAssertEqual(try fixture.git(["diff", "--cached", "--name-only"]).trimmingCharacters(in: .newlines), "control-staged.txt")
+        func header(_ title: String) throws -> PBStagingSectionHeaderView {
+            let headers: [PBStagingSectionHeaderView] = (0 ..< table.numberOfRows).compactMap {
+                table.view(atColumn: 0, row: $0, makeIfNecessary: true) as? PBStagingSectionHeaderView
+            }
+            return try XCTUnwrap(headers.first { $0.masterCheckbox.tag == (title == "Staged files" ? 1 : 0) })
+        }
+        let stagedHeader = try header("Staged files")
+        waitForIndexUpdate { stagedHeader.masterCheckbox.performClick(nil) }
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+        let unstagedHeader = try header("Unstaged files")
+        waitForIndexUpdate { unstagedHeader.masterCheckbox.performClick(nil) }
+        XCTAssertEqual(try Set(fixture.git(["diff", "--cached", "--name-only"]).split(separator: "\n").map(String.init)), ["control-staged.txt", "control-unstaged.txt"])
+        XCTAssertTrue(try fixture.git(["ls-files", "--others", "--exclude-standard"]).isEmpty)
+    }
+
+    func testHistoryWorkingPreviewCapturesBothSidesAndRoutesCommitLinks() throws {
+        let path = "selected-preview.txt"
+        try fixture.write("indexed snapshot\n", to: path)
+        try fixture.git(["add", "--", path])
+        try fixture.write("working snapshot\n", to: path)
+        _ = try openStagingPane()
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        let node = try XCTUnwrap(waitForTreeNode(fullPath: path))
+        historyController.treeController.setSelectionIndexPath(node.indexPath)
+        let fileView = try XCTUnwrap(historyController.value(forKey: "fileView") as? NSObject)
+        let mode = try XCTUnwrap(fileView.value(forKey: "modeControl") as? NSSegmentedControl)
+        let native = try XCTUnwrap(fileView.value(forKey: "nativeView") as? PBNativeContentView)
+        mode.selectedSegment = 3
+        fileView.perform(NSSelectorFromString("showFile"))
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("+indexed snapshot") && native.textView.string.contains("+working snapshot") })
+        let sections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
+        XCTAssertEqual(sections.count, 2)
+        let staged = try XCTUnwrap(sections[0][PBNativeSectionImageSourceKey] as? [String: Any])
+        let unstaged = try XCTUnwrap(sections[1][PBNativeSectionImageSourceKey] as? [String: Any])
+        XCTAssertEqual(staged[PBNativeImageSourceWorkingTreeKey] as? Bool, false)
+        XCTAssertEqual(staged[PBNativeImageSourceRevisionsKey] as? [String], [":"])
+        XCTAssertEqual(unstaged[PBNativeImageSourceWorkingTreeKey] as? Bool, true)
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Selected-Working-Preview-Both-Sides")
+        let head = try XCTUnwrap(repository.headCommit())
+        native.delegate?.nativeContentView?(native, selectCommit: head.sha)
+        XCTAssertTrue(waitForCondition { (self.historyController.commitController.selectedObjects.first as? PBGitCommit)?.sha == head.sha })
+    }
+
+    func testStagingHeadersAndCountsReuseThePublishedPresentation() throws {
+        try fixture.write("staged\n", to: "summary-staged.txt")
+        try fixture.git(["add", "summary-staged.txt"])
+        try fixture.write("unstaged\n", to: "summary-unstaged.txt")
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.sectionedList)
+        let table = list.sectionedTable
+        let sorts = list.viewModel.sortPassCount
+        for _ in 0 ..< 2 {
+            XCTAssertEqual(list.stagedFileCount, 1)
+            for row in 0 ..< table.numberOfRows {
+                let view = try XCTUnwrap(table.view(atColumn: 0, row: row, makeIfNecessary: true))
+                let expected: CGFloat = view is PBStagingSectionHeaderView ? 22 : 20
+                XCTAssertEqual(table.delegate?.tableView?(table, heightOfRow: row), expected)
+            }
+        }
+        XCTAssertEqual(list.viewModel.sortPassCount, sorts, "Headers and commit eligibility share the prepared lists")
+        list.rearrange()
+        XCTAssertEqual(list.viewModel.sortPassCount, sorts, "An unchanged publication reuses both section orders")
+    }
+
+    func testCachedHunkLinksCannotActAfterAnotherIndexPublication() throws {
+        try fixture.write("obsolete patch fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Stage hunk") })
+        let range = (native.textView.string as NSString).range(of: "Stage hunk")
+        let link = try XCTUnwrap(native.textView.textStorage?.attribute(.link, at: range.location, effectiveRange: nil))
+        let cachedPayloads = try XCTUnwrap(native.value(forKey: "linkPayloads") as? NSDictionary)
+        waitForIndexUpdate { repository.index.refresh() }
+        // Replay the cached render's immutable payload, even if a newer render replaced the text.
+        native.setValue(cachedPayloads, forKey: "linkPayloads")
+        XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+        XCTAssertFalse(repository.index.mutationReconciliationPending)
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+    }
+
+    func testAcceptedPublicationRefreshesAnUnchangedSelectedDiff() throws {
+        try fixture.write("first selected version\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("+first selected version") })
+        try fixture.write("second selected version\n", to: "nested/tracked.txt")
+        waitForIndexUpdate { repository.index.refresh() }
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("+second selected version") })
+        XCTAssertFalse(native.textView.string.contains("+first selected version"))
+    }
+
+    func testStagedImagePreviewUsesIndexBytesWhileWorktreePreviewUsesWorktreeBytes() throws {
+        let path = "preview-sides.png"
+        let indexed = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAS0lEQVR4nO3OsQ0AIAwDwYxDzQYMxpLU7BI2SApkufnC5csXY5+sdtcs99sHAAAA7AD1QdcDAADAD1AfdD0AAAD8APVB1wMAAMAOeNzXiIjVk5LGAAAAAElFTkSuQmCC"))
+        let worktree = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 8, pixelsHigh: 8,
+                                                      bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                      isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let worktreeBytes = try XCTUnwrap(worktree.representation(using: .png, properties: [:]))
+        let url = URL(fileURLWithPath: fixture.path).appendingPathComponent(path)
+        try indexed.write(to: url)
+        try fixture.git(["add", "--", path])
+        try worktreeBytes.write(to: url)
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
+        for (staged, expectedBytes) in [(true, indexed), (false, worktreeBytes)] {
+            pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: staged)])
+            let native = pane.diffPaneController.contentView
+            XCTAssertTrue(waitForCondition { native.textView.string.contains((staged ? "Staged" : "Unstaged") + " — " + path) })
+            let bytes = native.delegate?.nativeContentView?(native, imageDataForPath: path, section: 0, imageSource: [:])
+            XCTAssertEqual(bytes, expectedBytes)
+        }
+    }
+
+    func testDiscardConfirmationRevalidatesItsSnapshotBeforeApplyingThePatch() throws {
+        let original = try fixture.git(["show", "HEAD:nested/tracked.txt"])
+        try fixture.write("initial discard fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        for invalidate in [false, true] {
+            let changed = "confirmation fixture \(invalidate)\n"
+            try fixture.write(changed, to: "nested/tracked.txt")
+            waitForIndexUpdate { repository.index.refresh() }
+            try selectUnstagedFile("nested/tracked.txt", in: pane)
+            waitForFreshDiffAuthority(in: pane, containing: "+" + changed.trimmingCharacters(in: .newlines))
+            try activateNativeDiffAction("Discard hunk", in: pane)
+            let window = try XCTUnwrap(windowController.window)
+            let sheet = try XCTUnwrap(window.attachedSheet)
+            if invalidate {
+                waitForIndexUpdate { repository.index.refresh() }
+            }
+            window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+            if invalidate {
+                pumpRunLoop()
+                XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8), changed)
+                XCTAssertFalse(repository.index.mutationReconciliationPending)
+            } else {
+                XCTAssertTrue(waitForCondition {
+                    (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8)) == original && !self.repository.index.mutationReconciliationPending
+                })
+            }
+        }
+    }
+
+    private final class PausedIndexRefresh: NSObject {
+        /// PBGitIndex invokes these selectors on the coordinator injected through KVC.
+        @objc(refreshBareRepository:parentTree:mutationGeneration:)
+        // swiftlint:disable:next unused_declaration
+        func refresh(bareRepository _: Bool, parentTree _: String, mutationGeneration _: UInt) {}
+
+        @objc(refreshStatCacheForBareRepository:completion:)
+        // swiftlint:disable:next unused_declaration
+        func refreshStatCache(bareRepository _: Bool, completion: @escaping () -> Void) {
+            completion()
+        }
+    }
+
+    func testDelayedSelectionAdvanceDoesNotReplaceANewerUserSelection() throws {
+        for name in ["selection-a.txt", "selection-b.txt", "selection-c.txt"] {
+            try fixture.write("selection fixture\n", to: name)
+        }
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.splitTables)
+        let index = repository.index
+        let controller = list.unstagedFilesController
+        let files = try XCTUnwrap(controller.arrangedObjects as? [PBChangedFile])
+        let first = try XCTUnwrap(files.first { $0.path == "selection-a.txt" })
+        let chosen = try XCTUnwrap(files.first { $0.path == "selection-c.txt" })
+        controller.setSelectedObjects([first])
+        let coordinator = try XCTUnwrap(index.value(forKey: "refreshCoordinator") as? NSObject)
+        index.setValue(PausedIndexRefresh(), forKey: "refreshCoordinator")
+        defer { index.setValue(coordinator, forKey: "refreshCoordinator"); index.refresh() }
+        list.interactionCoordinator.stageSelectedFiles()
+        XCTAssertTrue(index.mutationReconciliationPending)
+        controller.setSelectedObjects([chosen])
+        let generation = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue
+        let updated = expectation(forNotification: Notification.Name(PBGitIndexIndexUpdated), object: index)
+        index.applyRefreshResult(PBIndexRefreshResult(staged: nil, unstaged: nil, untracked: nil, mutationGeneration: generation))
+        index.postIndexRefreshFinished()
+        wait(for: [updated], timeout: 3)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending })
+        pumpRunLoop()
+        XCTAssertEqual((controller.selectedObjects as? [PBChangedFile])?.map(\.rawPath), [chosen.rawPath])
+    }
+
+    func testPullRequestReviewPatchRetainsWhitespaceOnlyAnchors() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.object(forKey: "PBShowWhitespaceDifferences")
+        defaults.set(false, forKey: "PBShowWhitespaceDifferences")
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: "PBShowWhitespaceDifferences")
+            } else {
+                defaults.removeObject(forKey: "PBShowWhitespaceDifferences")
+            }
+        }
+        let baseSHA = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let existing = try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8)
+        try fixture.write(" " + existing, to: "nested/tracked.txt")
+        try fixture.git(["add", "nested/tracked.txt"])
+        try fixture.git(["commit", "-m", "Whitespace review fixture"])
+        let headSHA = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        let forge = try ForgeIdentity(kind: .github, origin: ForgeOrigin(host: "github.com"))
+        let identity = try ForgeRepositoryIdentity(forge: forge, owner: "gitx-tests", name: "gitx-tests")
+        let base = try ForgeBranchReference(repository: identity, name: ForgeRefName("base"), commit: ForgeCommitID(baseSHA))
+        let head = try ForgeBranchReference(repository: identity, name: ForgeRefName("head"), commit: ForgeCommitID(headSHA))
+        let diff = try await RepositoryLocalPullRequestChangesProvider(repository: repository).changes(repository: identity, base: base, head: head)
+        XCTAssertTrue(diff.patch.contains("@@"))
+        XCTAssertTrue(diff.patch.contains("+ " + existing.trimmingCharacters(in: .newlines)))
+    }
+
+    func testHunkLinksRejectIncorrectAuthorityAndSupersededLoads() throws {
+        try fixture.write("authority fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Stage hunk") })
+        let range = (native.textView.string as NSString).range(of: "Stage hunk")
+        let link = try XCTUnwrap(native.textView.textStorage?.attribute(.link, at: range.location, effectiveRange: nil) as? URL)
+        let payloads = try XCTUnwrap(native.value(forKey: "linkPayloads") as? [String: [String: Any]])
+        let payload = try XCTUnwrap(payloads[link.absoluteString])
+        let context = try XCTUnwrap(payload["actionContext"] as? [String: Any])
+        native.delegate?.nativeContentView?(native, performDiffAction: "stage", patch: "missing context")
+        native.delegate?.nativeContentView?(native, performDiffAction: "unknown", patch: "rejected", actionContext: context)
+        for (key, invalid) in [("rawPath", Data("different.txt".utf8) as Any),
+                               ("loadIdentity", UUID().uuidString),
+                               ("snapshotRevision", repository.index.snapshotRevision &+ 1),
+                               ("staged", true)]
+        {
+            var alteredContext = context
+            alteredContext[key] = invalid
+            var alteredPayload = payload
+            alteredPayload["actionContext"] = alteredContext
+            var alteredPayloads = payloads
+            alteredPayloads[link.absoluteString] = alteredPayload
+            native.setValue(alteredPayloads, forKey: "linkPayloads")
+            XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+            XCTAssertFalse(repository.index.mutationReconciliationPending)
+        }
+        pane.diffPaneController.rerenderCurrentRequests()
+        native.setValue(payloads, forKey: "linkPayloads")
+        XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+        XCTAssertFalse(repository.index.mutationReconciliationPending)
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+    }
+
+    func testNormalSelectionAdvanceKeepsTheNextPositionAfterStaging() throws {
+        for name in ["selection-a.txt", "selection-b.txt", "selection-c.txt"] {
+            try fixture.write("selection fixture\n", to: name)
+        }
+        let pane = try openStagingPane()
+        let list = pane.fileListController
+        list.setListLayout(.splitTables)
+        let controller = list.unstagedFilesController
+        let files = try XCTUnwrap(controller.arrangedObjects as? [PBChangedFile])
+        let middle = try XCTUnwrap(files.first { $0.path == "selection-b.txt" })
+        controller.setSelectedObjects([middle])
+        waitForIndexUpdate { list.interactionCoordinator.stageSelectedFiles() }
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        pumpRunLoop()
+        XCTAssertEqual((controller.selectedObjects as? [PBChangedFile])?.map(\.path), ["selection-c.txt"])
+        XCTAssertFalse(repository.index.publishingSnapshot)
+    }
+
     private var indexPublicationEvents: [String] = []
 
     @objc private func recordIndexPublication(_ notification: Notification) {
         guard let index = notification.object as? PBGitIndex else { return }
-        XCTAssertTrue(index.mutationReconciliationPending, "Pending clears only after refresh notifications")
+        if notification.name == Notification.Name(PBGitIndexIndexUpdated) {
+            XCTAssertTrue(index.mutationReconciliationPending, "Pending clears after the matching publication")
+        }
         indexPublicationEvents.append(notification.name == Notification.Name(PBGitIndexIndexUpdated) ? "updated" : "finished")
     }
 
@@ -98,6 +389,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
 
         private(set) var shownMessages: [(message: String, info: String)] = []
         private(set) var hookFailureRetryHandlers: [() -> Void] = []
+        private(set) var hookFailureCancelHandlers: [() -> Void] = []
         private(set) var performedPushes = 0
 
         override func showMessageSheet(_ messageText: String, infoText: String) {
@@ -112,6 +404,15 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             shownMessages.append((messageText, infoText))
             if let retryHandler {
                 hookFailureRetryHandlers.append(retryHandler)
+            }
+        }
+
+        override func showCommitHookFailedSheet(_ messageText: String, infoText: String,
+                                                retryHandler: (() -> Void)?, cancelHandler: (() -> Void)?)
+        {
+            showCommitHookFailedSheet(messageText, infoText: infoText, retryHandler: retryHandler)
+            if let cancelHandler {
+                hookFailureCancelHandlers.append(cancelHandler)
             }
         }
 
@@ -1582,19 +1883,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(push.state, choice ? .on : .off)
         XCTAssertEqual(settings.pushAfterCommit, !choice, "Failed commits do not persist a preference")
 
-        let retryChoice = !choice
-        push.state = retryChoice ? .on : .off
-        let action = try XCTUnwrap(push.action, "Push choice needs an explicit change action")
-        XCTAssertTrue(NSApp.sendAction(action, to: push.target, from: push))
+        XCTAssertFalse(push.isEnabled, "The captured submission stays disabled until the hook decision")
         pane.perform(NSSelectorFromString("reloadPushRemotes"))
-        XCTAssertEqual(push.state, retryChoice ? .on : .off)
+        XCTAssertEqual(push.state, choice ? .on : .off)
         let completed = expectation(forNotification: NSNotification.Name(PBGitIndexFinishedCommit), object: repository.index)
         let stub = try XCTUnwrap(windowController as? HistoryWindowController)
         let pushesBefore = stub.performedPushes
         try XCTUnwrap(stub.hookFailureRetryHandlers.last)()
         wait(for: [completed], timeout: 15)
-        XCTAssertEqual(settings.pushAfterCommit, retryChoice)
-        XCTAssertEqual(stub.performedPushes, pushesBefore + (retryChoice ? 1 : 0))
+        XCTAssertEqual(settings.pushAfterCommit, choice)
+        XCTAssertEqual(stub.performedPushes, pushesBefore + (choice ? 1 : 0))
         refreshIndex()
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Push-Choice-Recovery")
     }
@@ -1679,6 +1977,128 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             contentView.textView.textStorage?.attribute(.link, at: range.location, effectiveRange: nil)
         )
         XCTAssertTrue(contentView.textView(contentView.textView, clickedOnLink: link, at: UInt(range.location)))
+    }
+
+    private func waitForFreshDiffAuthority(in pane: PBStagingViewController, containing text: String) {
+        let native = pane.diffPaneController.contentView
+        let previous = (native.value(forKey: "currentDiffSections") as? [[String: Any]])?.first?[PBNativeSectionActionContextKey] as? NSDictionary
+        pane.diffPaneController.rerenderCurrentRequests()
+        XCTAssertTrue(waitForCondition {
+            guard native.textView.string.contains(text),
+                  let sections = native.value(forKey: "currentDiffSections") as? [[String: Any]],
+                  let current = sections.first?[PBNativeSectionActionContextKey] as? NSDictionary,
+                  current != previous,
+                  let payloads = native.value(forKey: "linkPayloads") as? [String: [String: Any]] else { return false }
+            return payloads.values.contains { ($0["actionContext"] as? NSDictionary) == current }
+        })
+    }
+
+    func testHunkDiscardAndCancellationPreserveCurrentConfirmationBehavior() throws {
+        let original = try fixture.git(["show", "HEAD:nested/tracked.txt"])
+        try fixture.write("initial discard fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        for confirm in [true, false] {
+            let changed = "discard characterization \(confirm)\n"
+            try fixture.write(changed, to: "nested/tracked.txt")
+            waitForIndexUpdate { repository.index.refresh() }
+            try selectUnstagedFile("nested/tracked.txt", in: pane)
+            waitForFreshDiffAuthority(in: pane, containing: "+" + changed.trimmingCharacters(in: .newlines))
+            try activateNativeDiffAction("Discard hunk", in: pane)
+            let window = try XCTUnwrap(windowController.window)
+            let sheet = try XCTUnwrap(window.attachedSheet)
+            window.endSheet(sheet, returnCode: confirm ? .alertFirstButtonReturn : .alertSecondButtonReturn)
+            if confirm {
+                XCTAssertTrue(waitForCondition {
+                    (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8)) == original && !self.repository.index.mutationReconciliationPending
+                })
+            } else {
+                pumpRunLoop()
+                XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8), changed)
+                XCTAssertFalse(repository.index.mutationReconciliationPending)
+            }
+        }
+    }
+
+    func testWorkingTreeFoldersRemainAvailableToOpeningAndQuickLook() throws {
+        let previous = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = false
+        defer { PBApplicationSettings.changedFilesOnly = previous }
+        let root = PBWorkingTree.root(for: repository)
+        let folder = try XCTUnwrap(root.children.first { $0.path == "nested" })
+        XCTAssertFalse(folder.leaf)
+        let expected = try XCTUnwrap(repository.workingDirectoryURL()).appendingPathComponent("nested").path
+        XCTAssertEqual(folder.tmpFileNameForContents(), expected)
+        let state = PBUncommittedChanges(repository: repository)
+        historyController.commitController.content = [state]
+        historyController.commitController.setSelectedObjects([state])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        historyController.gitTree = root
+        let node = try XCTUnwrap(waitForTreeNode(fullPath: "nested"))
+        historyController.treeController.setSelectionIndexPath(node.indexPath)
+        XCTAssertEqual(historyController.previewPanel(nil, previewItemAt: 0)?.previewItemURL?.path, expected)
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Working-Folder-Preview")
+        try FileManager.default.removeItem(atPath: expected)
+        XCTAssertNil(historyController.previewPanel(nil, previewItemAt: 0))
+        historyController.openSelectedFile(self)
+    }
+
+    func testAutomaticTreeFallbackPreservesRememberedFileUntilUserSelectsAnother() throws {
+        let previous = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = false
+        defer { PBApplicationSettings.changedFilesOnly = previous }
+        let original = try XCTUnwrap(repository.headCommit())
+        historyController.commitController.setSelectedObjects([original])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        let selected = try XCTUnwrap(waitForTreeNode(fullPath: "nested/tracked.txt"))
+        historyController.treeController.setSelectionIndexPath(selected.indexPath)
+        historyController.saveFileBrowserSelection()
+        try fixture.git(["rm", "nested/tracked.txt"])
+        try fixture.git(["commit", "-m", "temporarily absent"])
+        let absentSHA = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        historyController.refresh(self)
+        XCTAssertTrue(waitForCondition { self.repository.revisionList?.commits.contains { ($0 as? PBGitCommit)?.sha == absentSHA } == true })
+        let absent = try XCTUnwrap(loadedCommits().first { $0.sha == absentSHA })
+        XCTAssertNotEqual(absent.sha, original.sha)
+        historyController.commitController.content = [original, absent]
+        historyController.commitController.setSelectedObjects([absent])
+        historyController.updateKeys()
+        XCTAssertFalse(try flattenedTree(XCTUnwrap(historyController.gitTree)).contains { $0.fullPath == "nested/tracked.txt" })
+        historyController.commitController.setSelectedObjects([original])
+        historyController.updateKeys()
+        XCTAssertEqual((historyController.treeController.selectedObjects.first as? PBGitTree)?.fullPath, "nested/tracked.txt")
+        let other = try XCTUnwrap(waitForTreeNode(fullPath: "FlowSample.swift"))
+        historyController.treeController.setSelectionIndexPath(other.indexPath)
+        let deliberatelySelected = (other.representedObject as? PBGitTree)?.fullPath
+        historyController.commitController.setSelectedObjects([absent])
+        historyController.updateKeys()
+        historyController.commitController.setSelectedObjects([original])
+        historyController.updateKeys()
+        XCTAssertEqual((historyController.treeController.selectedObjects.first as? PBGitTree)?.fullPath, deliberatelySelected)
+    }
+
+    func testWorkingStateChangedTreeDeduplicatesTrackedDeletionAndUntrackedCopy() throws {
+        let previous = PBApplicationSettings.changedFilesOnly
+        defer { PBApplicationSettings.changedFilesOnly = previous }
+        try fixture.git(["rm", "--cached", "nested/tracked.txt"])
+        refreshIndex()
+        PBApplicationSettings.changedFilesOnly = true
+        let state = PBUncommittedChanges(repository: repository)
+        let presentation = PBHistoryTreePresentation(repository: repository)
+        let root = presentation.tree(for: state)
+        let nodes = root.children.filter { $0.fullPath == "nested/tracked.txt" }
+        XCTAssertEqual(nodes.count, 1)
+        let node = try XCTUnwrap(nodes.first)
+        XCTAssertEqual(presentation.displayTitle(for: node), "D  nested/tracked.txt")
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data("nested/tracked.txt".utf8) })
+        XCTAssertTrue(file.hasStagedChanges)
+        XCTAssertTrue(file.hasUnstagedChanges)
+        historyController.commitController.content = [state]
+        historyController.commitController.setSelectedObjects([state])
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.updateKeys()
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Deduplicated-Deletion-And-Untracked-Copy")
     }
 
     func testWorkingStateTreeAndDiffUseRawIdentityAcrossDisplayCollisionsAndDetachedParents() throws {
@@ -1830,6 +2250,81 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let delegate = try XCTUnwrap(view.delegate)
         let image = delegate.nativeContentView?(view, imageDataForPath: path, section: 0, imageSource: [:])
         XCTAssertEqual(image, Data(contents.utf8))
+    }
+
+    func testBOMFilesystemActionsAddressTheExactSelectedFilename() throws {
+        let names = ["notes.txt", "\u{FEFF}notes.txt", "\u{FEFF}"]
+        for name in names {
+            try fixture.write(name, to: name)
+        }
+        let pane = try openStagingPane()
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        let files = repository.index.indexChanges.filter { names.contains($0.path) }
+        XCTAssertEqual(files.count, names.count)
+        let physicalPath = try XCTUnwrap(fixture.path.withCString { realpath($0, nil) })
+        defer { free(physicalPath) }
+        let root = URL(fileURLWithPath: String(cString: physicalPath))
+        for file in files {
+            let expected = root.appendingPathComponent(file.path)
+            let open = NSMenuItem()
+            open.representedObject = PBStagingActionSelection(action: .open, files: [file])
+            pane.perform(NSSelectorFromString("openFiles:"), with: open)
+            XCTAssertEqual(stub.openedURLs.last, expected)
+            let reveal = NSMenuItem()
+            reveal.representedObject = PBStagingActionSelection(action: .reveal, files: [file])
+            pane.perform(NSSelectorFromString("revealInFinder:"), with: reveal)
+            XCTAssertEqual(stub.revealedURLs.last, expected)
+            var targets: [URL] = []
+            pane.trashItemHandler = { targets.append($0); return true }
+            let trash = NSMenuItem()
+            trash.representedObject = PBStagingActionSelection(action: .trash, files: [file])
+            waitForIndexUpdate { pane.perform(NSSelectorFromString("moveToTrash:"), with: trash) }
+            XCTAssertEqual(targets, [expected])
+            XCTAssertTrue(FileManager.default.fileExists(atPath: expected.path))
+        }
+    }
+
+    func testSelectedIgnoreFilenamesAreRootAnchoredLiteralsAndLineBreaksAreRejectedAtomically() throws {
+        let names = ["*.literal", "question?️⃣.md", "[bracket]", "#hash", "!bang", "back\\slash", " trailing space ", "nested/leaf"]
+        for name in names {
+            try fixture.write("literal", to: name)
+        }
+        try fixture.write("sibling", to: "other.literal")
+        try fixture.write("sibling", to: "other/nested/leaf")
+        let pane = try openStagingPane()
+        let files = repository.index.indexChanges.filter { names.contains($0.path) }
+        XCTAssertEqual(files.count, names.count)
+        let item = NSMenuItem()
+        item.representedObject = PBStagingActionSelection(action: .ignore, files: files)
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("ignoreFiles:"), with: item) }
+        for name in names {
+            XCTAssertNoThrow(try fixture.git(["check-ignore", "--quiet", "--", name]), name)
+        }
+        XCTAssertThrowsError(try fixture.git(["check-ignore", "--quiet", "--", "other.literal"]))
+        XCTAssertThrowsError(try fixture.git(["check-ignore", "--quiet", "--", "other/nested/leaf"]))
+        let ignoreURL = URL(fileURLWithPath: fixture.path).appendingPathComponent(".gitignore")
+        let before = try Data(contentsOf: ignoreURL)
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        for name in ["newline\nname", "return\rname"] {
+            let rejected = NSMenuItem()
+            rejected.representedObject = PBStagingActionSelection(action: .ignore, files: [PBChangedFile(path: "ordinary"), PBChangedFile(path: name)])
+            let count = stub.shownErrors.count
+            pane.perform(NSSelectorFromString("ignoreFiles:"), with: rejected)
+            XCTAssertEqual(stub.shownErrors.count, count + 1)
+            XCTAssertEqual(try Data(contentsOf: ignoreURL), before)
+        }
+    }
+
+    func testRootHEADFilenameDoesNotMakeRefreshOrResetAmbiguous() throws {
+        try fixture.write("literal HEAD file", to: "HEAD")
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data("HEAD".utf8) })
+        waitForIndexUpdate { XCTAssertTrue(repository.index.stageFiles([file])) }
+        XCTAssertTrue(repository.index.indexChanges.first { $0.rawPath == file.rawPath }?.hasStagedChanges == true)
+        XCTAssertTrue(repository.index.diff(for: file, staged: true, contextLines: 3)?.contains("literal HEAD file") == true)
+        waitForIndexUpdate { XCTAssertTrue(repository.index.unstageFiles([file])) }
+        XCTAssertFalse(repository.index.indexChanges.first { $0.rawPath == file.rawPath }?.hasStagedChanges == true)
+        withExtendedLifetime(pane) {}
     }
 
     func testRealGitIndexPreservesRawFilenameAndEscapedLiteralSiblingWhenUnstaging() throws {
@@ -2104,6 +2599,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             try fixture.write("created commit\n", to: path)
             try fixture.git(["add", path])
             if !hookSucceeds {
+                try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try "#!/bin/sh\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
@@ -3007,6 +3503,123 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testMatchingCompletedRefreshReleasesMutationPendingWithoutWaitingForGlobalIdle() throws {
+        refreshIndex()
+        let index = repository.index
+        let generation = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue + 1
+        index.setValue(generation, forKey: "mutationGeneration")
+        index.setValue(true, forKey: "mutationReconciliationPending")
+        let updated = expectation(forNotification: Notification.Name(PBGitIndexIndexUpdated), object: index)
+        index.applyRefreshResult(PBIndexRefreshResult(staged: nil, unstaged: nil, untracked: nil, mutationGeneration: generation))
+        wait(for: [updated], timeout: 3)
+        XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending }, "A settled failure publishes preserved snapshots and releases this mutation independently of global idle")
+    }
+
+    func testWindowAmendIsUnavailableWithoutARepository() {
+        let controller = PBGitWindowController()
+        let item = NSMenuItem(title: "Amend", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
+        XCTAssertFalse(controller.validateMenuItem(item))
+        controller.toggleAmendCommit(self)
+    }
+
+    func testWindowAmendAndCommitShortcutsRejectAnActiveSubmission() throws {
+        try fixture.write("submission fixture\n", to: "submission-fixture.txt")
+        try fixture.git(["add", "submission-fixture.txt"])
+        let pane = try openStagingPane()
+        pane.commitMessageView.string = "Eligibility fixture"
+        let finished = expectation(forNotification: Notification.Name(PBGitIndexFinishedCommit), object: repository.index)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        let amend = NSMenuItem(title: "Amend", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
+        XCTAssertFalse(windowController.validateMenuItem(amend))
+        for action in ["commit:", "forceCommit:"] {
+            XCTAssertFalse(pane.validate(NSMenuItem(title: action, action: NSSelectorFromString(action), keyEquivalent: "")))
+        }
+        let originalAmend = repository.index.isAmend
+        windowController.toggleAmendCommit(self)
+        XCTAssertEqual(repository.index.isAmend, originalAmend)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        repository.index.commit(withMessage: "Rejected late request", andVerify: false)
+        XCTAssertTrue(historyController.status?.contains("already") == true)
+        wait(for: [finished], timeout: 10)
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+    }
+
+    func testHookRetryPreservesAmendModeParentsAndOriginalMessage() throws {
+        let parents = try fixture.git(["show", "-s", "--format=%P", "HEAD"]).trimmingCharacters(in: .newlines)
+        try fixture.write("amend fixture\n", to: "amend-retry.txt")
+        try fixture.git(["add", "amend-retry.txt"])
+        let pane = try openStagingPane()
+        waitForIndexUpdate { repository.index.isAmend = true }
+        let hook = URL(fileURLWithPath: fixture.path).appendingPathComponent(".git/hooks/pre-commit")
+        try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        pane.commitMessageView.string = "Captured amend request"
+        let rejected = expectation(forNotification: Notification.Name(PBGitIndexCommitHookFailed), object: repository.index)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        wait(for: [rejected], timeout: 10)
+        XCTAssertTrue(repository.index.submissionActive)
+        XCTAssertTrue(repository.index.awaitingHookDecision)
+        XCTAssertFalse(pane.commitMessageView.isEditable)
+        windowController.toggleAmendCommit(self)
+        XCTAssertTrue(repository.index.isAmend)
+        pane.commitMessageView.string = "Programmatic composer replacement"
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Retained-Hook-Decision")
+        let completed = expectation(forNotification: Notification.Name(PBGitIndexFinishedCommit), object: repository.index)
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        try XCTUnwrap(stub.hookFailureRetryHandlers.last)()
+        wait(for: [completed], timeout: 10)
+        XCTAssertEqual(try fixture.git(["log", "-1", "--pretty=%s"]).trimmingCharacters(in: .newlines), "Captured amend request")
+        XCTAssertEqual(try fixture.git(["show", "-s", "--format=%P", "HEAD"]).trimmingCharacters(in: .newlines), parents)
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertFalse(repository.index.submissionActive)
+    }
+
+    func testMixedStageUnstageUsesOneGenerationAndUnstageWinsForAnOverlappingFile() throws {
+        try fixture.write("mixed first\n", to: "mixed.txt")
+        let pane = try openStagingPane()
+        let index = repository.index
+        let file = try XCTUnwrap(index.indexChanges.first { $0.path == "mixed.txt" })
+        let generation = try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue
+        let revision = index.snapshotRevision
+        waitForIndexUpdate { XCTAssertTrue(index.stageFiles([file], unstageFiles: [file])) }
+        XCTAssertEqual(try XCTUnwrap(index.value(forKey: "mutationGeneration") as? NSNumber).uintValue, generation + 1)
+        XCTAssertGreaterThan(index.snapshotRevision, revision)
+        XCTAssertFalse(file.hasStagedChanges)
+        XCTAssertTrue(file.hasUnstagedChanges)
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+        XCTAssertEqual(pane.fileListController.stagedFileCount, 0)
+    }
+
+    func testHookFailureLeavesHEADUnchangedAndAllowsAFreshSubmissionAfterCancellation() throws {
+        try fixture.write("hook fixture\n", to: "hook-fixture.txt")
+        try fixture.git(["add", "hook-fixture.txt"])
+        let pane = try openStagingPane()
+        let hook = URL(fileURLWithPath: fixture.path).appendingPathComponent(".git/hooks/pre-commit")
+        try FileManager.default.createDirectory(at: hook.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\necho rejected >&2\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        let before = try fixture.git(["rev-parse", "HEAD"])
+        pane.commitMessageView.string = "Original rejected request"
+        let rejected = expectation(forNotification: Notification.Name(PBGitIndexCommitHookFailed), object: repository.index)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        wait(for: [rejected], timeout: 10)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), before)
+        XCTAssertFalse(pane.commitMessageView.isEditable)
+        XCTAssertTrue(repository.index.awaitingHookDecision)
+        try XCTUnwrap((windowController as? HistoryWindowController)?.hookFailureCancelHandlers.last)()
+        XCTAssertFalse(repository.index.submissionActive)
+        XCTAssertTrue(pane.commitMessageView.isEditable)
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        try FileManager.default.removeItem(at: hook)
+        pane.commitMessageView.string = "Fresh accepted request"
+        let accepted = expectation(forNotification: Notification.Name(PBGitIndexFinishedCommit), object: repository.index)
+        pane.perform(NSSelectorFromString("commit:"), with: nil)
+        wait(for: [accepted], timeout: 10)
+        XCTAssertEqual(try fixture.git(["log", "-1", "--pretty=%s"]).trimmingCharacters(in: .newlines), "Fresh accepted request")
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+    }
+
     func testStagingPaneCommitWorkflowComposerAndNotifications() throws {
         try fixture.write("compose body\n", to: "compose.txt")
         try fixture.git(["add", "compose.txt"])
@@ -3754,6 +4367,85 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         historyController.commitList.reloadData()
         pumpRunLoop()
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Working State immutable copy actions preserve the clipboard")
+    }
+
+    func testExportedRootOrdinaryAndMergePatchesRoundTripThroughApplyAndAm() throws {
+        try fixture.git(["merge", "--quiet", "--no-ff", "feature", "-m", "merge export fixture"])
+        let mergeSHA = try fixture.git(["rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        historyController.refresh(self)
+        XCTAssertTrue(waitForCondition { self.repository.revisionList?.commits.contains { ($0 as? PBGitCommit)?.sha == mergeSHA } == true })
+        let commits = loadedCommits()
+        let root = try XCTUnwrap(commits.first { $0.parents.isEmpty })
+        let ordinary = try XCTUnwrap(commits.first { $0.parents.count == 1 })
+        let merge = try XCTUnwrap(commits.first { $0.sha == mergeSHA })
+        XCTAssertEqual(merge.parents.count, 2)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXPatchRoundTrip-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for (offset, commit) in [root, ordinary, merge].enumerated() {
+            let patch = try XCTUnwrap(commit.patch)
+            XCTAssertFalse(patch.isEmpty)
+            let arguments = commit.parents.count > 1
+                ? ["show", "--first-parent", "-m", "--patch", "--format=email", commit.sha]
+                : ["format-patch", "-1", "--stdout", commit.sha]
+            let original = try fixture.git(arguments)
+            XCTAssertTrue(patch.hasPrefix(original), "Git's original text must remain verbatim")
+            let patchURL = directory.appendingPathComponent("\(offset).patch")
+            try Data(patch.utf8).write(to: patchURL)
+            let expectedTree = try fixture.git(["rev-parse", commit.sha + "^{tree}"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            for useAm in [false, true] {
+                let clone = directory.appendingPathComponent("clone-\(offset)-\(useAm)")
+                try fixture.git(["clone", "--quiet", "--no-local", fixture.path, clone.path])
+                @discardableResult
+                func git(_ arguments: [String]) throws -> String {
+                    try fixture.git(["-C", clone.path] + arguments)
+                }
+                try git(["config", "user.name", "Patch Round Trip"])
+                try git(["config", "user.email", "patch@example.invalid"])
+                if let parent = commit.parents.first {
+                    try git(["checkout", "--quiet", "--detach", parent.sha])
+                } else {
+                    try git(["checkout", "--quiet", "--orphan", "empty-patch-base"])
+                    try git(["rm", "--quiet", "-rf", "--ignore-unmatch", "."])
+                }
+                if useAm {
+                    try git(["am", "--quiet", patchURL.path])
+                    XCTAssertEqual(try git(["rev-parse", "HEAD^{tree}"]).trimmingCharacters(in: .whitespacesAndNewlines), expectedTree)
+                } else {
+                    try git(["apply", "--index", patchURL.path])
+                    XCTAssertEqual(try git(["write-tree"]).trimmingCharacters(in: .whitespacesAndNewlines), expectedTree)
+                }
+            }
+        }
+    }
+
+    func testCommitPatchCharacterizesNewlineEmptyFailureAndCachedOutput() throws {
+        let target = try XCTUnwrap(repository.headCommit()).gtCommit
+        for (output, expected) in [("patch\n", "patch\n\n-- \n+GitX\n"), ("", ""), ("patch\n\n", "patch\n\n\n-- \n+GitX\n")] {
+            let fake = PBCommitRecoveryRepository()
+            fake.recoveryPatchOutput = output
+            let commit = PBGitCommit(repository: fake, andCommit: target)
+            XCTAssertEqual(commit.patch, expected)
+            fake.recoveryPatchOutput = "changed output\n"
+            XCTAssertEqual(commit.patch, expected)
+            XCTAssertEqual(fake.recoveryPatchInvocationCount, 1)
+        }
+        let fake = PBCommitRecoveryRepository()
+        let commit = PBGitCommit(repository: fake, andCommit: target)
+        XCTAssertNil(commit.patch)
+        XCTAssertNil(commit.patch)
+        XCTAssertEqual(fake.recoveryPatchInvocationCount, 2)
+    }
+
+    func testCommitPatchPreservesFinalContentWhenOutputHasNoLineFeed() throws {
+        let target = try XCTUnwrap(repository.headCommit()).gtCommit
+        for output in ["patch-without-newline", "patch🙂", "patch\r", "patch\r\n"] {
+            let fake = PBCommitRecoveryRepository()
+            fake.recoveryPatchOutput = output
+            let commit = PBGitCommit(repository: fake, andCommit: target)
+            let terminated = output.unicodeScalars.last == "\n" ? output : output + "\n"
+            XCTAssertEqual(commit.patch, terminated + "\n-- \n+GitX\n")
+        }
     }
 
     func testCopyActionsCharacterizeMultipleCommitFormattingAndEmptySelection() throws {

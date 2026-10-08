@@ -135,3 +135,20 @@ final nonisolated class RepositoryIgnoreFileService: NSObject {
 }
 
 // swiftlint:enable unused_declaration
+
+/// Selected filenames are literals; the existing append API still accepts Git
+/// patterns for callers that intentionally supply them.
+nonisolated enum RepositoryIgnoreLiteralPatterns {
+    static func patterns(for paths: [String]) throws -> [String] {
+        guard paths.allSatisfy({ !$0.unicodeScalars.contains(where: { $0 == "\n" || $0 == "\r" }) }) else {
+            throw NSError(domain: "PBRepositoryIgnoreFilenameError", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "A filename containing a line break cannot be added to .gitignore.",
+            ])
+        }
+        return paths.map { path in
+            "/" + path.unicodeScalars.map { scalar in
+                "*?[]\\!# ".unicodeScalars.contains(scalar) ? "\\" + String(scalar) : String(scalar)
+            }.joined()
+        }
+    }
+}

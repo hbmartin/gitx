@@ -36,6 +36,128 @@ final class IndexMutationServiceTests: XCTestCase {
         withExtendedLifetime(repository) {}
     }
 
+    func testNativeFilenameOutputExcludesWarningsAndRetainsRealFailures() {
+        for fails in [false, true] {
+            let repository = ScriptedRepository(script: "printf 'file\\000'; printf 'warning: diagnostic\\n' >&2; exit \(fails ? 1 : 0)")
+            let runner = IndexRepositoryCommandRunner(repository: repository)
+            let completed = expectation(description: "filename command completes")
+            runner.data(withArguments: ["ls-files", "-z"]) { data, error in
+                if fails {
+                    XCTAssertNotNil(error)
+                } else {
+                    XCTAssertNil(error)
+                    XCTAssertEqual(data, Data("file\0".utf8))
+                }
+                completed.fulfill()
+            }
+            wait(for: [completed], timeout: 3)
+            withExtendedLifetime(repository) {}
+        }
+    }
+
+    private final class ControlledTask: PBTask {
+        private let body: () -> Void
+        init(body: @escaping () -> Void) {
+            self.body = body
+            super.init()
+        }
+
+        override func launch() throws {
+            body()
+        }
+
+        override var standardOutputData: Data {
+            Data("result\n".utf8)
+        }
+    }
+
+    private final class ControlledRepository: PBGitRepository {
+        let makeBody: (String) -> (() -> Void)
+        init(makeBody: @escaping (String) -> (() -> Void)) {
+            self.makeBody = makeBody
+            super.init()
+        }
+
+        override func task(withArguments arguments: [Any]?) -> PBTask {
+            ControlledTask(body: makeBody((arguments as? [String])?.last ?? ""))
+        }
+    }
+
+    // swift6-safety-justification: The box transfers an immutable runner; writer and fixture state locks protect shared operations.
+    private final class RunnerBox: @unchecked Sendable {
+        let value: IndexRepositoryCommandRunner
+        init(_ value: IndexRepositoryCommandRunner) {
+            self.value = value
+        }
+    }
+
+    func testRepositoryRunnersHoldOneWriterThroughProcessCompletion() {
+        verifyWriterOrdering(asynchronous: false)
+    }
+
+    func testAsynchronousStatCacheWriterSharesTheLockWhileReadsRemainParallel() {
+        verifyWriterOrdering(asynchronous: true)
+    }
+
+    private func verifyWriterOrdering(asynchronous: Bool) {
+        let firstEntered = DispatchSemaphore(value: 0)
+        let secondAllocated = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let stateLock = NSLock()
+        var firstFinished = false
+        let overlap = expectation(description: "writers must not overlap")
+        overlap.isInverted = true
+        let firstCompleted = expectation(description: "first writer completes")
+        let secondCompleted = expectation(description: "second writer completes")
+        let repository = ControlledRepository { label in
+            if label == "second" {
+                secondAllocated.signal()
+            }
+            return {
+                if label == "first" {
+                    firstEntered.signal()
+                    XCTAssertEqual(release.wait(timeout: .now() + 5), .success)
+                    stateLock.lock(); firstFinished = true; stateLock.unlock()
+                } else if label == "second" {
+                    stateLock.lock(); let overlapping = !firstFinished; stateLock.unlock()
+                    if overlapping {
+                        overlap.fulfill()
+                    }
+                }
+            }
+        }
+        let first = RunnerBox(IndexRepositoryCommandRunner(repository: repository))
+        let second = RunnerBox(IndexRepositoryCommandRunner(repository: repository))
+        DispatchQueue.global().async {
+            do { _ = try first.value.output(withArguments: ["update-index", "first"], input: nil, environment: nil) }
+            catch { XCTFail("Writer failed: \(error)") }
+            firstCompleted.fulfill()
+        }
+        XCTAssertEqual(firstEntered.wait(timeout: .now() + 2), .success)
+        do {
+            let output = try first.value.output(withArguments: ["ls-files", "read"], input: nil, environment: nil)
+            XCTAssertEqual(output, "result\n")
+        } catch { XCTFail("Parallel read failed: \(error)") }
+        if asynchronous {
+            second.value.data(withArguments: ["update-index", "second"]) { data, error in
+                XCTAssertNil(error)
+                XCTAssertEqual(data, Data("result\n".utf8))
+                secondCompleted.fulfill()
+            }
+        } else {
+            DispatchQueue.global().async {
+                do { _ = try second.value.output(withArguments: ["update-index", "second"], input: nil, environment: nil) }
+                catch { XCTFail("Writer failed: \(error)") }
+                secondCompleted.fulfill()
+            }
+        }
+        XCTAssertEqual(secondAllocated.wait(timeout: .now() + 2), .success)
+        wait(for: [overlap], timeout: 0.2)
+        release.signal()
+        wait(for: [firstCompleted, secondCompleted], timeout: 3)
+        withExtendedLifetime(repository) {}
+    }
+
     private final class CommandRunnerFake: NSObject, PBIndexBinaryCommandRunning {
         struct Call {
             let arguments: [String]
@@ -79,6 +201,19 @@ final class IndexMutationServiceTests: XCTestCase {
         ) {
             completion(nil, nil)
         }
+    }
+
+    func testMixedBatchAttemptsBothGroupsInStageThenUnstageOrderAndCombinesFailures() {
+        let runner = CommandRunnerFake()
+        runner.results = [.failure(commandError), .failure(commandError)]
+        let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
+        var error: NSError?
+        let path = Data("both.txt".utf8)
+        XCTAssertFalse(service.mutate(stageRawPaths: [path], unstageRawPaths: [path], parentTree: "HEAD", error: &error))
+        XCTAssertNotNil(error)
+        XCTAssertEqual(runner.calls.first?.arguments.first, "update-index")
+        XCTAssertEqual(runner.calls.last?.arguments, ["reset", "--quiet", "HEAD", "--", "both.txt"])
+        XCTAssertEqual(error?.localizedDescription.components(separatedBy: "expected failure").count, 3)
     }
 
     private let commandError = NSError(
@@ -173,6 +308,22 @@ final class IndexMutationServiceTests: XCTestCase {
         XCTAssertNotNil(error)
         XCTAssertFalse(runner.calls.contains { $0.arguments.contains("--quiet") },
                        "Unsafe selections must be rejected before any mutating reset chunk")
+    }
+
+    func testLegacyUnstageRejectsMetacharactersInsideUnicodeGraphemes() {
+        for name in ["*️⃣.md", "*́.md", "?́.txt", "[́name].txt"] {
+            let runner = CommandRunnerFake()
+            let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
+            XCTAssertFalse(service.unstagePaths([name], parentTree: "HEAD", error: nil), name)
+            XCTAssertFalse(runner.calls.contains { $0.arguments.contains("--quiet") })
+        }
+    }
+
+    func testLegacyUnstageKeepsBOMBytesInArgument() {
+        let runner = CommandRunnerFake()
+        let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
+        XCTAssertTrue(service.unstagePaths(["\u{FEFF}notes"], parentTree: "HEAD", error: nil))
+        XCTAssertEqual(runner.calls.last?.arguments.last, "\u{FEFF}notes")
     }
 
     func testDiscardUsesNulDelimitedInputAndReportsFailure() {
@@ -307,7 +458,7 @@ final class IndexMutationServiceTests: XCTestCase {
         XCTAssertTrue(service.unstageRawPaths([Data("ordinary.txt".utf8), invalid], parentTree: "HEAD", error: nil))
         XCTAssertEqual(runner.calls.last?.arguments, [
             "--literal-pathspecs", "reset", "--quiet", "HEAD",
-            "--pathspec-from-file=-", "--pathspec-file-nul",
+            "--pathspec-from-file=-", "--pathspec-file-nul", "--",
         ])
         var expected = Data("ordinary.txt\0".utf8)
         expected.append(invalid)
@@ -476,7 +627,7 @@ final class IndexMutationServiceTests: XCTestCase {
         for rawPath in [Data([0xFF]), Data(), Data("embedded\0nul".utf8)] {
             var error: NSError?
             XCTAssertNil(service.literalArguments(forRawPath: rawPath, commandArguments: ["log"], error: &error))
-            XCTAssertEqual(error?.code, 4)
+            XCTAssertEqual(error?.code, 5)
         }
         XCTAssertTrue(runner.calls.isEmpty, "Escaped display labels cannot become an executable filename")
     }
@@ -486,7 +637,7 @@ final class IndexMutationServiceTests: XCTestCase {
         let service = PBIndexMutationService(repository: PBGitRepository(), runner: runner)
         var error: NSError?
         XCTAssertNil(service.diffToolArguments(forRawPath: Data([0xFF]), staged: false, error: &error))
-        XCTAssertEqual(error?.code, 4)
+        XCTAssertEqual(error?.code, 5)
         XCTAssertTrue(runner.calls.isEmpty)
         XCTAssertEqual(service.diffToolArguments(forRawPath: Data("ordinary.txt".utf8), staged: true, error: nil),
                        ["difftool", "-y", "--no-prompt", "--cached", "--", "ordinary.txt"])

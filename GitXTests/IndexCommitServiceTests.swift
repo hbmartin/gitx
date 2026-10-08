@@ -102,6 +102,20 @@ final class IndexCommitServiceTests: XCTestCase {
         try super.tearDownWithError()
     }
 
+    func testRetryRequestChangesOnlyVerificationAndKeepsAmendParentsAndEnvironment() {
+        let request = PBIndexCommitRequest(message: "original", verify: true, gpgSign: true, amend: true,
+                                           environment: ["GIT_AUTHOR_DATE": "original date"], parentSHAs: ["first", "second"], hasHead: true)
+        let retry = request.withoutVerification()
+        XCTAssertFalse(retry.verify)
+        XCTAssertTrue(request.verify)
+        XCTAssertEqual(retry.message, request.message)
+        XCTAssertEqual(retry.gpgSign, request.gpgSign)
+        XCTAssertEqual(retry.amend, request.amend)
+        XCTAssertEqual(retry.parentSHAs, request.parentSHAs)
+        XCTAssertEqual(retry.environment?["GIT_AUTHOR_DATE"] as? String, "original date")
+        XCTAssertEqual(retry.hasHead, request.hasHead)
+    }
+
     func testPrepareCommitMessageRunsHookTrimsOneNewlineAndCleansTemporaryFile() throws {
         let runner = CommandRunnerFake()
         let hooks = HookRunnerFake()

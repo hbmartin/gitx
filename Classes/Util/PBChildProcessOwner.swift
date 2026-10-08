@@ -95,6 +95,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
         let processIdentifier: pid_t
         let processGroup: pid_t
         let terminationHandler: TerminationHandler
+        let leaderExitHandler: (@Sendable () -> Void)?
         var exitMonitor: (any PBChildProcessExitMonitoring)?
         var schedule = PBChildProcessTerminationSchedule()
         var terminationWasSent = false
@@ -147,6 +148,7 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
     func launch(
         configuration: PBChildProcessConfiguration,
         retainLeaderUntilReleased: Bool = false,
+        leaderExitHandler: (@Sendable () -> Void)? = nil,
         terminationHandler: @escaping TerminationHandler
     ) throws {
         try queue.sync {
@@ -162,7 +164,8 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
             var process = RunningProcess(
                 processIdentifier: processIdentifier,
                 processGroup: processIdentifier,
-                terminationHandler: terminationHandler
+                terminationHandler: terminationHandler,
+                leaderExitHandler: leaderExitHandler
             )
             process.retainLeaderUntilReleased = retainLeaderUntilReleased
             let exitMonitor = system.makeExitMonitor(
@@ -379,6 +382,9 @@ final nonisolated class PBChildProcessOwner: @unchecked Sendable {
                 Self.logger.info(
                     "Observed child exit pid=\(process.processIdentifier, privacy: .public) without reaping"
                 )
+                process.leaderExitHandler?()
+                guard case let .running(current) = state else { return }
+                process = current
             }
 
             if process.retainLeaderUntilReleased {
@@ -598,9 +604,21 @@ private final nonisolated class PBDispatchProcessExitMonitor: PBChildProcessExit
 nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
     /// Verify the supported legacy syscall independently of the host macOS version.
     private let usesLegacyWorkingDirectoryAPI: Bool
+    private let observeExit: @Sendable (pid_t, UnsafeMutablePointer<siginfo_t>) -> Int32
+    private let inspectGroup: @Sendable (pid_t, UnsafeMutableRawPointer?, Int32) -> Int32
 
-    init(usesLegacyWorkingDirectoryAPI: Bool = false) {
+    init(
+        usesLegacyWorkingDirectoryAPI: Bool = false,
+        observeExit: @escaping @Sendable (pid_t, UnsafeMutablePointer<siginfo_t>) -> Int32 = {
+            waitid(P_PID, id_t($0), $1, WEXITED | WNOHANG | WNOWAIT)
+        },
+        inspectGroup: @escaping @Sendable (pid_t, UnsafeMutableRawPointer?, Int32) -> Int32 = {
+            proc_listpgrppids($0, $1, $2)
+        }
+    ) {
         self.usesLegacyWorkingDirectoryAPI = usesLegacyWorkingDirectoryAPI
+        self.observeExit = observeExit
+        self.inspectGroup = inspectGroup
     }
 
     private struct PreparedDescriptors {
@@ -746,7 +764,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
     func exitStateWithoutReaping(processIdentifier: pid_t) throws -> PBChildProcessExitState {
         var information = siginfo_t()
         while true {
-            if waitid(P_PID, id_t(processIdentifier), &information, WEXITED | WNOHANG | WNOWAIT) == 0 {
+            if observeExit(processIdentifier, &information) == 0 {
                 guard information.si_pid == processIdentifier else { return .running }
                 switch information.si_code {
                 case CLD_EXITED, CLD_KILLED, CLD_DUMPED:
@@ -763,18 +781,17 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
 
     func reapIfExited(processIdentifier: pid_t) throws -> Int32? {
         var status: Int32 = 0
-        while true {
-            let result = waitpid(processIdentifier, &status, WNOHANG)
-            if result == processIdentifier {
-                return status
-            }
-            if result == 0 {
-                return nil
-            }
-            if result == -1, errno != EINTR {
-                throw posixError(errno, operation: "reap child process")
-            }
+        var result: pid_t
+        repeat {
+            result = waitpid(processIdentifier, &status, WNOHANG)
+        } while result != processIdentifier && result != 0 && (result != -1 || errno == EINTR)
+        if result == processIdentifier {
+            return status
         }
+        if result == 0 {
+            return nil
+        }
+        throw posixError(errno, operation: "reap child process")
     }
 
     func send(signal: Int32, toProcessGroup processGroup: pid_t) throws {
@@ -789,7 +806,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
             var processIdentifiers = [pid_t](repeating: 0, count: capacity)
             errno = 0
             let processCount = processIdentifiers.withUnsafeMutableBytes { buffer in
-                proc_listpgrppids(
+                inspectGroup(
                     processGroup,
                     buffer.baseAddress,
                     Int32(buffer.count)
@@ -910,6 +927,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         private let terminationHandler: PBChildProcessOwner.TerminationHandler
         private let owner = PBChildProcessOwner()
         @objc var retainLeaderUntilReleased = false
+        @objc var leaderExitHandler: (@Sendable () -> Void)?
 
         @objc(
             initWithLaunchPath:arguments:environment:workingDirectory:standardInputFileDescriptor:standardOutputFileDescriptor:standardErrorFileDescriptor:terminationHandler:
@@ -940,6 +958,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         func launch() throws {
             try owner.launch(configuration: configuration,
                              retainLeaderUntilReleased: retainLeaderUntilReleased,
+                             leaderExitHandler: leaderExitHandler,
                              terminationHandler: terminationHandler)
         }
 

@@ -9,14 +9,14 @@ nonisolated struct PBTaskDiagnosticByteSource {
 nonisolated enum PBTaskDiagnosticRedactor {
     static let bufferSize = 64 * 1024
 
-    static func redacted(_ text: String) -> String {
+    static func redacted(_ text: String, incomplete: Bool = false) -> String {
         let data = Data(text.utf8)
         var result = Data()
         let source = PBTaskDiagnosticByteSource(length: Int64(data.count)) { offset, count in
             Data(data[Int(offset) ..< Int(offset) + count])
         }
         // The in-memory source and sink cannot fail.
-        try? redact(source: source, incomplete: false) { result.append($0) }
+        try? redact(source: source, incomplete: incomplete) { result.append($0) }
         return String(decoding: result, as: UTF8.self)
     }
 
@@ -30,12 +30,7 @@ nonisolated enum PBTaskDiagnosticRedactor {
         let cursor = Cursor(source: source, bufferSize: chunkSize)
         var offset: Int64 = 0
         var copiedThrough: Int64 = 0
-        var tokenStart: Int64 = 0
         var tokenHasLetter = false
-        var authorityStart: Int64?
-        var authorityHasColon = false
-        var lastAt: Int64?
-
         func copy(until end: Int64) throws {
             while copiedThrough < end {
                 let count = Int(min(Int64(chunkSize), end - copiedThrough))
@@ -46,63 +41,107 @@ nonisolated enum PBTaskDiagnosticRedactor {
             }
         }
 
-        func finishAuthority(at end: Int64, stopped: Bool = false) throws {
-            guard let start = authorityStart else { return }
-            if stopped || (lastAt == nil && authorityHasColon), start < end {
-                // Neither a capture cutoff nor a complete malformed authority
-                // establishes where its userinfo would have ended.
-                try copy(until: start)
-                let replacement = stopped ? "[redacted incomplete authority]" : "[redacted ambiguous authority]"
-                try output(Data(replacement.utf8))
-                copiedThrough = end
-            } else if let lastAt {
-                try copy(until: start)
-                try output(Data("[redacted]@".utf8))
-                copiedThrough = lastAt + 1
-            }
-        }
-
         while offset < source.length {
             let byte = try cursor.byte(at: offset)
-            if authorityStart != nil, byte == 10 || byte == 13 {
-                try finishAuthority(at: offset)
-                authorityStart = nil
-                authorityHasColon = false
-                lastAt = nil
-            }
             if byte == 58, tokenHasLetter,
                offset + 2 < source.length,
                try cursor.byte(at: offset + 1) == 47,
                try cursor.byte(at: offset + 2) == 47
             {
-                // A later URL is a boundary even when malformed userinfo contains spaces.
-                // A URL-looking substring can itself be part of malformed userinfo.
-                // Preserve ordinary independent URLs while hiding an ambiguous prefix.
-                try finishAuthority(at: tokenStart, stopped: authorityHasColon)
-                offset += 3
-                authorityStart = offset
-                authorityHasColon = false
-                lastAt = nil
-                tokenStart = offset
+                let start = offset + 3
+                let span = try authoritySpan(start: start, cursor: cursor, length: source.length)
+                let stopped = incomplete && span.end == source.length
+                if start < span.end, stopped || (span.lastAt == nil && span.ambiguous) {
+                    try copy(until: start)
+                    try output(Data((stopped ? "[redacted incomplete authority]" : "[redacted ambiguous authority]").utf8))
+                    copiedThrough = span.end
+                } else if let lastAt = span.lastAt {
+                    try copy(until: start)
+                    try output(Data("[redacted]@".utf8))
+                    copiedThrough = lastAt + 1
+                }
+                offset = span.end
                 tokenHasLetter = false
                 continue
-            }
-            if authorityStart != nil, byte == 64 {
-                lastAt = offset
-            }
-            if authorityStart != nil, byte == 58 {
-                authorityHasColon = true
             }
             if isSchemeByte(byte) {
                 tokenHasLetter = tokenHasLetter || isLetter(byte)
             } else {
-                tokenStart = offset + 1
                 tokenHasLetter = false
             }
             offset += 1
         }
-        try finishAuthority(at: source.length, stopped: incomplete)
         try copy(until: source.length)
+    }
+
+    private struct AuthoritySpan {
+        let end: Int64
+        let lastAt: Int64?
+        let ambiguous: Bool
+    }
+
+    /// Only authority bytes decide whether this is userinfo. Once credentials
+    /// are suspected, malformed separators and nested schemes remain inside the
+    /// redacted span; they never become a new, independently copied URL.
+    private static func authoritySpan(start: Int64, cursor: Cursor, length: Int64) throws -> AuthoritySpan {
+        var end = start
+        var colon: Int64?
+        var lastAt: Int64?
+        var bracketed = false
+        while end < length {
+            let byte = try cursor.byte(at: end)
+            if byte <= 32 || byte == 47 || byte == 63 || byte == 35 {
+                break
+            }
+            if byte == 91 {
+                bracketed = true
+            }
+            if byte == 93 {
+                bracketed = false
+            }
+            if byte == 58, !bracketed, colon == nil {
+                colon = end
+            }
+            if byte == 64 {
+                lastAt = end
+            }
+            end += 1
+        }
+        var numericPort = false
+        if let colon, lastAt == nil, colon + 1 < end {
+            numericPort = true
+            var position = colon + 1
+            while position < end {
+                let byte = try cursor.byte(at: position)
+                if !(48 ... 57).contains(byte) {
+                    numericPort = false
+                }
+                position += 1
+            }
+        }
+        let ambiguous = colon != nil && !numericPort
+        let credentials = ambiguous || lastAt != nil
+        if !credentials {
+            // Continue scanning ordinary paths and queries for independent URLs.
+            return AuthoritySpan(end: end, lastAt: nil, ambiguous: false)
+        }
+        var malformedUserinfo = false
+        // A normal URL ends at whitespace. Malformed userinfo can contain spaces
+        // before its @, but ordinary text following the host stays independent.
+        while end < length {
+            let byte = try cursor.byte(at: end)
+            if byte == 10 || byte == 13 || (byte <= 32 && (!credentials || (lastAt != nil && !malformedUserinfo))) {
+                break
+            }
+            if credentials, lastAt == nil, byte <= 32 || byte == 47 || byte == 63 || byte == 35 {
+                malformedUserinfo = true
+            }
+            if credentials, byte == 64 {
+                lastAt = end
+            }
+            end += 1
+        }
+        return AuthoritySpan(end: end, lastAt: lastAt, ambiguous: ambiguous)
     }
 
     private static func isLetter(_ byte: UInt8) -> Bool {

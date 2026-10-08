@@ -17,6 +17,7 @@ final nonisolated class NativeContentSection: NSObject {
     @objc let diffLayout: Int
     @objc let suppressionPatterns: [String]
     @objc let stagingChrome: Bool
+    @objc let actionContext: [String: Any]
 
     @objc(initWithDictionary:)
     init(dictionary: [String: Any]) {
@@ -33,6 +34,7 @@ final nonisolated class NativeContentSection: NSObject {
             ApplicationSettings.diffLayout.rawValue
         suppressionPatterns = dictionary[PBNativeSectionSuppressionPatternsKey] as? [String] ?? []
         stagingChrome = (dictionary[PBNativeSectionStagingChromeKey] as? NSNumber)?.boolValue ?? false
+        actionContext = dictionary[PBNativeSectionActionContextKey] as? [String: Any] ?? [:]
         super.init()
     }
 

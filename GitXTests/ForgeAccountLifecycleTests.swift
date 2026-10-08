@@ -1127,9 +1127,9 @@ final class ForgeAccountLifecycleTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let script = """
-        printf '%s' "$$" > "$1"
-        printf '%s' "$GH_TOKEN" >&2
         trap 'exit 0' TERM INT
+        printf '%s' "$GH_TOKEN" >&2
+        printf '%s\\n' "$$" > "$1"
         while :; do :; done
         """
         let secret = "cancellation-secret"
@@ -1794,34 +1794,40 @@ final class ForgeAccountLifecycleTests: XCTestCase {
     }
 
     private nonisolated static func readProcessID(fromFIFO url: URL) async throws -> pid_t {
-        // swift6-safety-justification: The detached worker exclusively owns the blocking FIFO descriptor until EOF.
-        try await Task.detached(priority: .userInitiated) {
-            let descriptor = open(url.path, O_RDONLY)
-            guard descriptor >= 0 else {
-                throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-            }
-            defer { close(descriptor) }
-            var data = Data()
-            var buffer = [UInt8](repeating: 0, count: 32)
-            while true {
-                let count = buffer.withUnsafeMutableBytes { bytes in
-                    read(descriptor, bytes.baseAddress, bytes.count)
+        // Blocking fixture IO belongs on GCD, outside the cooperative Swift executor.
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let descriptor = open(url.path, O_RDONLY | O_CLOEXEC)
+                    guard descriptor >= 0 else {
+                        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                    }
+                    defer { close(descriptor) }
+                    var data = Data()
+                    var buffer = [UInt8](repeating: 0, count: 32)
+                    while !data.contains(10) {
+                        let count = buffer.withUnsafeMutableBytes { bytes in
+                            read(descriptor, bytes.baseAddress, bytes.count)
+                        }
+                        if count > 0 {
+                            data.append(contentsOf: buffer.prefix(count))
+                        } else if count == 0 {
+                            break
+                        } else if errno != EINTR {
+                            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+                        }
+                    }
+                    guard let text = String(data: data, encoding: .utf8),
+                          let processID = pid_t(text.trimmingCharacters(in: .newlines))
+                    else {
+                        throw ForgeCLIProcessTestError.invalidProcessID
+                    }
+                    continuation.resume(returning: processID)
+                } catch {
+                    continuation.resume(throwing: error)
                 }
-                if count > 0 {
-                    data.append(contentsOf: buffer.prefix(count))
-                } else if count == 0 {
-                    break
-                } else if errno != EINTR {
-                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-                }
             }
-            guard let text = String(data: data, encoding: .utf8),
-                  let processID = pid_t(text)
-            else {
-                throw ForgeCLIProcessTestError.invalidProcessID
-            }
-            return processID
-        }.value
+        }
     }
 }
 

@@ -2,6 +2,44 @@ import Foundation
 import XCTest
 
 final class PBTaskDiagnosticRedactorTests: XCTestCase {
+    func testOrdinaryURLBoundariesPreservePortsPathsAndFollowingDiagnostics() {
+        for input in [
+            "https://example.invalid/repo failed: permission denied",
+            "https://example.invalid/repo contact owner@example.invalid",
+            "https://example.invalid:443/repo",
+            "https://[::1]:443/repo failed: denied",
+            "https://example.invalid/a@b?next=c:d",
+        ] {
+            XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), input)
+            XCTAssertEqual(PBTaskDiagnostics.redacted(input), input, "Objective-C app boundary")
+        }
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://user:secret@example.invalid/repo failed: denied"),
+                       "https://[redacted]@example.invalid/repo failed: denied")
+    }
+
+    func testNestedSchemeLikeCredentialFragmentsAreEntirelyRedactedAtEveryChunkBoundary() throws {
+        let text = "before https://user:prefix/privateScheme://remainingSecret@example.invalid/repo after: diagnostic"
+        let input = Data(text.utf8)
+        XCTAssertEqual(PBTaskDiagnostics.redacted(text),
+                       "before https://[redacted]@example.invalid/repo after: diagnostic")
+        for size in 1 ... input.count {
+            var result = Data()
+            let source = PBTaskDiagnosticByteSource(length: Int64(input.count)) { offset, count in
+                Data(input[Int(offset) ..< Int(offset) + count])
+            }
+            try PBTaskDiagnosticRedactor.redact(source: source, incomplete: false, bufferSize: size) { result.append($0) }
+            XCTAssertEqual(String(decoding: result, as: UTF8.self),
+                           "before https://[redacted]@example.invalid/repo after: diagnostic", "chunk size \(size)")
+        }
+    }
+
+    func testCredentialURLsEmbeddedInOrdinaryURLQueriesAreStillRedacted() {
+        let input = "https://example.invalid/?redirect=https://user:secret@other.invalid/repo"
+        let expected = "https://example.invalid/?redirect=https://[redacted]@other.invalid/repo"
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), expected)
+        XCTAssertEqual(PBTaskDiagnostics.redacted(input), expected)
+    }
+
     func testConservativeRedactionHandlesMalformedAndCombinedUserinfo() {
         for secret in ["secret/with/slashes", "secret?with=query", "secret#fragment", "secret with spaces", "密碼/更多", "secret@early/remaining-secret"] {
             XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://user:\(secret)@example.invalid/repo"),

@@ -45,6 +45,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 @property (retain) PBIndexCommitCoordinator *commitCoordinator;
 @property (retain) PBIndexRefreshCoordinator *refreshCoordinator;
 @property (readwrite) BOOL mutationReconciliationPending;
+@property (readwrite) NSUInteger snapshotRevision;
+@property (readwrite) BOOL publishingSnapshot;
+@property (readwrite) BOOL submissionActive;
+@property (readwrite) BOOL awaitingHookDecision;
+@property (retain, nullable) PBIndexCommitRequest *retainedCommitRequest;
 @property NSUInteger mutationGeneration;
 @property NSUInteger reconciledMutationGeneration;
 @property NSUInteger postMutationStatCacheRefreshesPending;
@@ -152,8 +157,6 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 {
 	dispatch_async(dispatch_get_main_queue(), ^{
 		[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexFinishedIndexRefresh object:self];
-		if (self.reconciledMutationGeneration == self.mutationGeneration)
-			self.mutationReconciliationPending = NO;
 	});
 }
 
@@ -180,8 +183,16 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)postIndexUpdated
 {
+	NSUInteger publishedGeneration = self.reconciledMutationGeneration;
 	dispatch_async(dispatch_get_main_queue(), ^{
+		BOOL wasPublishing = self.publishingSnapshot;
+		self.publishingSnapshot = YES;
 		[[NSNotificationCenter defaultCenter] postNotificationName:PBGitIndexIndexUpdated object:self];
+		self.publishingSnapshot = wasPublishing;
+		if (publishedGeneration == self.mutationGeneration && !self.postMutationStatCacheRefreshesPending) {
+			self.mutationReconciliationPending = NO;
+			NSLog(@"[GitX] Reconciled mutation %lu after publication %lu", (unsigned long)publishedGeneration, (unsigned long)self.snapshotRevision);
+		}
 	});
 }
 
@@ -204,7 +215,11 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			  (unsigned long)result.mutationGeneration, (unsigned long)self.mutationGeneration);
 		return;
 	}
+	BOOL wasPublishing = self.publishingSnapshot;
+	self.publishingSnapshot = YES;
 	self.reconciledMutationGeneration = result.mutationGeneration;
+	self.snapshotRevision++;
+	NSLog(@"[GitX] Accepted index publication %lu for mutation %lu", (unsigned long)self.snapshotRevision, (unsigned long)result.mutationGeneration);
 	NSUInteger stagedCount = result.staged.count;
 	NSUInteger unstagedCount = result.unstaged.count;
 	NSUInteger untrackedCount = result.untracked.count;
@@ -218,6 +233,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	[self.files setArray:reconciliation.files];
 	if (reconciliation.membershipChanged)
 		[self didChangeValueForKey:@"indexChanges"];
+	self.publishingSnapshot = wasPublishing;
 	NSLog(@"[GitX] Merged index refresh snapshots: %lu staged, %lu unstaged, %lu untracked",
 		  (unsigned long)stagedCount,
 		  (unsigned long)unstagedCount,
@@ -303,6 +319,10 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 
 - (void)commitWithMessage:(NSString *)commitMessage andVerify:(BOOL)doVerify
 {
+	if (self.submissionActive || self.mutationReconciliationPending) {
+		[self postCommitUpdate:@"A commit is already in progress or the index is refreshing."];
+		return;
+	}
 	NSError *error = nil;
 	GTConfiguration *config = [self.repository.gtRepo configurationWithError:&error];
 	if (!config) {
@@ -320,6 +340,8 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 			[parentSHAs addObject:parentOID.SHA];
 	}
 
+	if (!self.amend && self.repository.headOID.SHA)
+		[parentSHAs addObject:self.repository.headOID.SHA];
 	BOOL gpgSign = [config boolForKey:@"commit.gpgSign"];
 	PBIndexCommitRequest *request = [[PBIndexCommitRequest alloc] initWithMessage:commitMessage
 																		   verify:doVerify
@@ -328,6 +350,14 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 																	  environment:self.amendEnvironment
 																	   parentSHAs:parentSHAs
 																		  hasHead:[self.repository revisionExists:@"HEAD"]];
+	self.retainedCommitRequest = request;
+	self.submissionActive = YES;
+	[self submitCommitRequest:request];
+}
+
+- (void)submitCommitRequest:(PBIndexCommitRequest *)request
+{
+	self.awaitingHookDecision = NO;
 	NSLog(@"[GitX] Scheduling interactive commit orchestration");
 	__weak PBGitIndex *weakSelf = self;
 	[self.commitCoordinator commitWithRequest:request
@@ -352,10 +382,17 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	NSAssert(NSThread.isMainThread, @"Commit completion must be handled on the main thread");
 	NSLog(@"[GitX] Handling interactive commit completion (kind: %ld)", (long)result.kind);
 	if (result.kind == PBIndexCommitResultKindFailure) {
+		self.mutationGeneration++;
+		self.postMutationStatCacheRefreshesPending++;
+		self.mutationReconciliationPending = YES;
+		[self cancelCommitSubmission];
+		[self reconcileAfterMutation];
 		[self postCommitFailure:result.message];
 		return;
 	}
 	if (result.kind == PBIndexCommitResultKindHookFailure) {
+		self.awaitingHookDecision = YES;
+		NSLog(@"[GitX] Retained commit request while awaiting hook decision");
 		[self postCommitHookFailure:result.message];
 		return;
 	}
@@ -364,6 +401,7 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	self.mutationGeneration++;
 	self.postMutationStatCacheRefreshesPending++;
 	self.mutationReconciliationPending = YES;
+	[self cancelCommitSubmission];
 
 	NSDictionary *userInfo = @{
 		@"success" : @(result.postCommitHookSucceeded),
@@ -380,6 +418,28 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 	if (self.amend)
 		self.amend = NO;
 	[self reconcileAfterMutation];
+}
+
+- (void)retryCommitWithoutVerification
+{
+	if (!self.submissionActive || !self.awaitingHookDecision || !self.retainedCommitRequest) return;
+	NSLog(@"[GitX] Retrying immutable commit request without verification");
+	[self submitCommitRequest:[self.retainedCommitRequest requestWithoutVerification]];
+}
+
+- (void)cancelCommitSubmission
+{
+	BOOL reconcileHookChanges = self.awaitingHookDecision;
+	if (reconcileHookChanges) {
+		self.mutationGeneration++;
+		self.postMutationStatCacheRefreshesPending++;
+		self.mutationReconciliationPending = YES;
+	}
+	NSLog(@"[GitX] Ended commit submission");
+	self.retainedCommitRequest = nil;
+	self.awaitingHookDecision = NO;
+	self.submissionActive = NO;
+	if (reconcileHookChanges) [self reconcileAfterMutation];
 }
 
 - (void)postCommitUpdate:(NSString *)update
@@ -431,32 +491,33 @@ NS_ENUM(NSUInteger, PBGitIndexOperation){
 													  userInfo:[NSDictionary dictionaryWithObject:description forKey:@"description"]];
 }
 
-- (BOOL)performStageOrUnstage:(BOOL)stage withFiles:(NSArray *)files
-{
-	if (!files.count) return YES;
-	self.mutationGeneration++;
-	self.postMutationStatCacheRefreshesPending++;
-	self.mutationReconciliationPending = YES;
-	NSArray<NSData *> *paths = [files valueForKey:@"rawPath"];
-	NSError *error = nil;
-	BOOL success = stage ? [self.mutationService stageRawPaths:paths error:&error] : [self.mutationService unstageRawPaths:paths parentTree:self.parentTree error:&error];
-	// A preceding chunk may have succeeded even if this call reports failure.
-	[self reconcileAfterMutation];
-	if (!success) {
-		[self postOperationFailed:[PBIndexOperationErrorPresentation messageForOperation:(stage ? @"Staging files failed" : @"Unstaging files failed") error:error]];
-		return NO;
-	}
-	return YES;
-}
-
 - (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles
 {
-	return [self performStageOrUnstage:YES withFiles:stageFiles];
+	return [self stageFiles:stageFiles unstageFiles:@[]];
 }
 
 - (BOOL)unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles
 {
-	return [self performStageOrUnstage:NO withFiles:unstageFiles];
+	return [self stageFiles:@[] unstageFiles:unstageFiles];
+}
+
+- (BOOL)stageFiles:(NSArray<PBChangedFile *> *)stageFiles unstageFiles:(NSArray<PBChangedFile *> *)unstageFiles
+{
+	if (!stageFiles.count && !unstageFiles.count) return YES;
+	self.mutationGeneration++;
+	self.postMutationStatCacheRefreshesPending++;
+	self.mutationReconciliationPending = YES;
+	NSError *error = nil;
+	BOOL success = [self.mutationService stageRawPaths:[stageFiles valueForKey:@"rawPath"]
+									   unstageRawPaths:[unstageFiles valueForKey:@"rawPath"]
+											parentTree:self.parentTree
+												 error:&error];
+	[self reconcileAfterMutation];
+	if (!success) {
+		NSString *operation = stageFiles.count && unstageFiles.count ? @"Staging and unstaging files failed" : (stageFiles.count ? @"Staging files failed" : @"Unstaging files failed");
+		[self postOperationFailed:[PBIndexOperationErrorPresentation messageForOperation:operation error:error]];
+	}
+	return success;
 }
 
 - (void)discardChangesForFiles:(NSArray<PBChangedFile *> *)discardFiles

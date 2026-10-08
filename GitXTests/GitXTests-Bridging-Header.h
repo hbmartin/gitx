@@ -31,11 +31,16 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@interface PBCommitRecoveryRepository : PBGitRepository
+@property (nonatomic, copy, nullable) NSString *recoveryPatchOutput;
+@property (nonatomic) NSUInteger recoveryPatchInvocationCount;
+@end
+
 @interface PBRepositoryOpenCoordinator : NSObject
 @property (class, nonatomic, readonly) PBRepositoryOpenCoordinator *shared;
 - (void)openURLs:(NSArray<NSURL *> *)urls
-    sourceWindow:(nullable NSWindow *)sourceWindow
-      completion:(void (^)(NSArray<NSDocument *> *, NSArray<NSError *> *))completion;
+	sourceWindow:(nullable NSWindow *)sourceWindow
+	  completion:(void (^)(NSArray<NSDocument *> *, NSArray<NSError *> *))completion;
 @end
 
 @interface PBGitBinary (HistoryFlowTestSupport)
@@ -48,7 +53,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)cancel;
 @end
 
+#if DEBUG
 @interface PBHistoryFlowRevisionProviderTestHarness : NSObject
++ (NSString *)unsupportedPathDescription:(NSString *)path;
 + (NSDictionary<NSString *, id> *)drainPipeWithFileDescriptor:(int)descriptor NS_SWIFT_NAME(drainPipe(fileDescriptor:));
 + (PBHistoryFlowRevisionProviderTestOperation *)cancelledBeforeLaunchWithGitExecutableURL:(NSURL *)gitExecutableURL
 																		completionHandler:(void (^)(NSString *_Nullable errorDescription))completionHandler
@@ -61,6 +68,7 @@ NS_ASSUME_NONNULL_BEGIN
 													  maximumBlobBytes:(NSInteger)maximumBlobBytes
 													 completionHandler:(void (^)(NSData *_Nullable data, NSString *_Nullable errorDescription))completionHandler;
 @end
+#endif
 
 @interface PBChildProcessSupervisor : NSObject
 - (instancetype)initWithLaunchPath:(NSString *)launchPath
@@ -246,6 +254,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 };
 
 @interface PBStagingActionSelection : NSObject
+- (instancetype)initWithAction:(PBStagingFileAction)action files:(NSArray<PBChangedFile *> *)files;
 @property (nonatomic, readonly) PBStagingFileAction action;
 @property (nonatomic, readonly) NSArray<PBChangedFile *> *files;
 @end
@@ -293,6 +302,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @interface PBCommitTableInteractionCoordinator : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository index:(PBGitIndex *)index unstagedFilesController:(NSArrayController *)unstagedFilesController stagedFilesController:(NSArrayController *)stagedFilesController unstagedTable:(NSTableView *)unstagedTable stagedTable:(NSTableView *)stagedTable;
 - (void)stageSelectedFiles;
 - (void)unstageSelectedFiles;
 - (void)toggleStagingForTableView:(NSTableView *)tableView;
@@ -329,6 +339,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @interface PBStagingViewController : NSViewController
+@property (nonatomic, copy) BOOL (^trashItemHandler)(NSURL *);
 @property (nonatomic, readonly) PBStagingFileListController *fileListController;
 @property (nonatomic, readonly) PBStagingDiffPaneController *diffPaneController;
 @property (nonatomic, readonly) PBCommitMessageView *commitMessageView;
@@ -341,6 +352,7 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 @end
 
 @interface PBStagingListViewModel : NSObject
+@property (nonatomic, readonly) NSUInteger sortPassCount;
 @property (nonatomic, readonly, copy) NSArray<NSSortDescriptor *> *sortDescriptors;
 @property (nonatomic, copy) NSString *searchText;
 @property (nonatomic) PBStagingFileSortOrder sortOrder;
@@ -632,6 +644,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly, nullable) NSString *captureFailureDescription;
 - (PBTaskDiagnosticPrefix *)rawStandardOutputPrefixWithMaximumBytes:(NSInteger)maximumBytes NS_SWIFT_NAME(rawStandardOutputPrefix(maximumBytes:));
 - (void)forEachRawStandardErrorLineWithMaximumLineBytes:(NSInteger)maximumLineBytes body:(void (^)(NSString *line))body NS_SWIFT_NAME(forEachRawStandardErrorLine(maximumLineBytes:body:));
+- (nullable NSString *)firstRawStandardErrorLineWithMaximumLineBytes:(NSInteger)maximumLineBytes matching:(BOOL (^)(NSString *line))body NS_SWIFT_NAME(firstRawStandardErrorLine(maximumLineBytes:matching:));
 - (BOOL)writeRedactedReportToURL:(NSURL *)url error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(writeRedactedReport(to:));
 - (void)discard;
 @end
@@ -662,6 +675,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @property (nonatomic, readonly) NSArray<NSNumber *> *rawFileModes;
 @property (nonatomic, readonly) BOOL writerDescriptorsAreCloseOnExec;
 @property (nonatomic, readonly) BOOL writersClosed;
+- (BOOL)markStaleForCleanupAndReturnError:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(markStaleForCleanup());
 - (void)discardFixture;
 @end
 
@@ -711,6 +725,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 + (uint64_t)verificationBoundaryProof;
 + (nullable NSString *)reviewHistoryOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewHistoryOutput(repository:arguments:));
 + (PBRepositoryPushCommandResult *)reviewPushCommandResultWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments NS_SWIFT_NAME(reviewPushCommandResult(repository:arguments:));
++ (PBRepositoryPushCommandResult *)reviewPushCommandResultWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments captureFault:(NSString *)captureFault NS_SWIFT_NAME(reviewPushCommandResult(repository:arguments:captureFault:));
 + (uint64_t)reviewPushRepeatedCallbacksProof;
 + (nullable NSString *)reviewGeneralOutputWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewGeneralOutput(repository:arguments:));
 + (BOOL)reviewGeneralLaunchWithRepository:(PBGitRepository *)repository arguments:(NSArray<NSString *> *)arguments error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(reviewGeneralLaunch(repository:arguments:));
@@ -983,6 +998,16 @@ __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 - (void)postIndexRefreshFinished NS_SWIFT_NAME(postIndexRefreshFinished());
 @end
 
+@interface PBIndexPreviewImageSource : NSObject
++ (NSDictionary<NSString *, id> *)sourceFromWorkingSource:(NSDictionary<NSString *, id> *)source staged:(BOOL)staged NS_SWIFT_NAME(source(workingSource:staged:));
+@end
+
+@class PBIndexFileViewSnapshot;
+@interface PBIndexFileViewSnapshotLookup : NSObject
+- (instancetype)initWithSnapshots:(NSArray<PBIndexFileViewSnapshot *> *)snapshots;
+- (nullable PBIndexFileViewSnapshot *)snapshotForRawPath:(NSData *)rawPath NS_SWIFT_NAME(snapshot(rawPath:));
+@end
+
 @interface PBIndexFileViewSnapshot : NSObject
 @property (nonatomic, copy, readonly) NSData *rawPath;
 @property (nonatomic, copy, readonly) NSString *path;
@@ -991,6 +1016,7 @@ __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 @property (nonatomic, readonly) BOOL hasStagedChanges;
 @property (nonatomic, readonly) BOOL hasUnstagedChanges;
 + (NSArray<PBIndexFileViewSnapshot *> *)snapshotsForFiles:(NSArray<PBChangedFile *> *)files NS_SWIFT_NAME(snapshots(forFiles:));
++ (NSArray<PBIndexFileViewSnapshot *> *)snapshotsForFiles:(NSArray<PBChangedFile *> *)files rawPaths:(NSArray<NSData *> *)rawPaths NS_SWIFT_NAME(snapshots(forFiles:rawPaths:));
 - (PBChangedFile *)materializedFile;
 @end
 
@@ -1024,6 +1050,14 @@ typedef NS_ENUM(NSInteger, PBIndexCommitResultKind) {
 };
 
 @interface PBIndexCommitRequest : NSObject
+@property (readonly) NSString *message;
+@property (readonly) BOOL verify;
+@property (readonly) BOOL gpgSign;
+@property (readonly) BOOL amend;
+@property (readonly, nullable) NSDictionary<NSString *, id> *environment;
+@property (readonly) NSArray<NSString *> *parentSHAs;
+@property (readonly) BOOL hasHead;
+- (PBIndexCommitRequest *)requestWithoutVerification NS_SWIFT_NAME(withoutVerification());
 - (instancetype)initWithMessage:(NSString *)message
 						 verify:(BOOL)verify
 						gpgSign:(BOOL)gpgSign
@@ -1101,6 +1135,7 @@ typedef NS_ENUM(NSInteger, PBIndexCommitPhase) {
 @end
 
 @interface PBIndexMutationService : NSObject
+- (BOOL)stageRawPaths:(NSArray<NSData *> *)paths unstageRawPaths:(NSArray<NSData *> *)unstagePaths parentTree:(NSString *)parentTree error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(mutate(stageRawPaths:unstageRawPaths:parentTree:error:)) __attribute__((swift_error(none)));
 - (nullable NSArray<NSString *> *)literalArgumentsForRawPath:(NSData *)rawPath commandArguments:(NSArray<NSString *> *)commandArguments error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(literalArguments(forRawPath:commandArguments:error:)) __attribute__((swift_error(none)));
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 - (nullable NSArray<NSString *> *)diffToolArgumentsForRawPath:(NSData *)rawPath staged:(BOOL)staged error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(diffToolArguments(forRawPath:staged:error:)) __attribute__((swift_error(none)));
@@ -1306,6 +1341,14 @@ extern NSString *kPBGitRepositoryEventTypeUserInfoKey;
 @interface PBWorkingTree : PBGitTree
 @property (nonatomic, copy, readonly, nullable) NSData *rawPath;
 + (instancetype)rootForRepository:(PBGitRepository *)repository NS_SWIFT_NAME(root(for:));
+@end
+
+@interface PBWorkingTreePaths : NSObject
+- (instancetype)initWithFiles:(NSArray<PBChangedFile *> *)files;
+@property (nonatomic, readonly) NSArray<NSData *> *rawPaths;
+- (void)appendData:(NSData *)data NS_SWIFT_NAME(append(data:));
+- (nullable PBChangedFile *)fileForRawPath:(NSData *)rawPath NS_SWIFT_NAME(file(for:));
++ (nullable NSString *)validatedHierarchyPath:(NSString *)path;
 @end
 
 @interface PBQLTextView : NSTextView

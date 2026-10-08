@@ -1,4 +1,5 @@
 import Darwin
+import Synchronization
 import XCTest
 
 final class PBChildProcessOwnerTests: XCTestCase {
@@ -432,9 +433,12 @@ final class PBChildProcessOwnerTests: XCTestCase {
         completed.assertForOverFulfill = true
         let recorder = CompletionRecorder(expectation: completed)
 
-        try owner.launch(configuration: configuration(), retainLeaderUntilReleased: true) {
+        let observed = expectation(description: "leader exit observed while its lease remains held")
+        observed.assertForOverFulfill = true
+        try owner.launch(configuration: configuration(), retainLeaderUntilReleased: true, leaderExitHandler: { observed.fulfill() }) {
             recorder.record($0, error: $1)
         }
+        wait(for: [observed], timeout: 1)
         XCTAssertTrue(recorder.statuses.isEmpty)
         XCTAssertFalse(system.events.contains("reap"))
 
@@ -466,6 +470,25 @@ final class PBChildProcessOwnerTests: XCTestCase {
 
         XCTAssertEqual(recorder.statuses, [0])
         XCTAssertFalse(system.events.contains { $0.hasPrefix("signal:") })
+    }
+
+    func testExitNotificationCanReleaseTheLeaderLeaseReentrantly() throws {
+        let system = FakeProcessSystem()
+        system.setLeaderExited(true)
+        let owner = PBChildProcessOwner(system: system, queueLabel: #function)
+        let completed = expectation(description: "reentrant lease release reaps exactly once")
+        completed.assertForOverFulfill = true
+        let recorder = CompletionRecorder(expectation: completed)
+        try owner.launch(configuration: configuration(), retainLeaderUntilReleased: true,
+                         leaderExitHandler: { owner.releaseLeaderRetention() })
+        {
+            recorder.record($0, error: $1)
+        }
+        wait(for: [completed], timeout: 1)
+        system.triggerExitMonitor()
+        XCTAssertEqual(recorder.statuses, [0])
+        XCTAssertTrue(recorder.errors.isEmpty)
+        XCTAssertEqual(system.events.filter { $0 == "reap" }, ["reap"])
     }
 
     func testReleasingRetainedExitedLeaderStillCompletesDescendantEscalation() throws {
@@ -1260,6 +1283,35 @@ final class PBChildProcessOwnerTests: XCTestCase {
 
     func testPosixGroupInspectionReportsAnAbsentGroupAsEmpty() throws {
         XCTAssertEqual(try PBPosixChildProcessSystem().processGroupMembers(processGroup: Int32.max), [])
+    }
+
+    func testPosixExitObservationRetriesInterruptionBeforeReportingTerminalState() throws {
+        let calls = Mutex(0)
+        let system = PBPosixChildProcessSystem(observeExit: { identifier, information in
+            calls.withLock { count in
+                count += 1
+                if count == 1 {
+                    errno = EINTR
+                    return -1
+                }
+                information.pointee.si_pid = identifier
+                information.pointee.si_code = CLD_EXITED
+                return 0
+            }
+        })
+        XCTAssertEqual(try system.exitStateWithoutReaping(processIdentifier: 42), .terminal)
+        XCTAssertEqual(calls.withLock { $0 }, 2)
+    }
+
+    func testPosixGroupInspectionPropagatesSystemFailure() {
+        let system = PBPosixChildProcessSystem(inspectGroup: { _, _, _ in
+            errno = EIO
+            return -1
+        })
+        XCTAssertThrowsError(try system.processGroupMembers(processGroup: 42)) { error in
+            XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain)
+            XCTAssertEqual((error as NSError).code, Int(EIO))
+        }
     }
 
     func testAppSupervisorRejectsInvalidStderrWithoutClosingConfiguredStdout() {

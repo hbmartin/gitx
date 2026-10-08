@@ -261,43 +261,52 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(sizeMessage, "Git returned non-UTF-8 data for blob size for File.swift.")
     }
 
-    func testPipeDescriptorFailuresRetainNoDataAndRequestOneProcessStop() throws {
-        let writeOnly = open("/dev/null", O_WRONLY | O_CLOEXEC)
-        XCTAssertGreaterThanOrEqual(writeOnly, 0)
-        defer {
-            if writeOnly >= 0 {
-                Darwin.close(writeOnly)
+    // The private pipe-drain harness is compiled only into Debug app builds.
+    #if DEBUG
+        func testUnsupportedSourceErrorPreservesTheExactPath() {
+            XCTAssertEqual(PBHistoryFlowRevisionProviderTestHarness.unsupportedPathDescription("folder/密碼.txt"),
+                           "folder/密碼.txt is not in a language Flow can analyze.")
+        }
+
+        func testPipeDescriptorFailuresRetainNoDataAndRequestOneProcessStop() throws {
+            let writeOnly = open("/dev/null", O_WRONLY | O_CLOEXEC)
+            XCTAssertGreaterThanOrEqual(writeOnly, 0)
+            defer {
+                if writeOnly >= 0 {
+                    Darwin.close(writeOnly)
+                }
+            }
+            for descriptor in [-1, writeOnly] {
+                let result = PBHistoryFlowRevisionProviderTestHarness.drainPipe(fileDescriptor: descriptor)
+                XCTAssertEqual(result["data"] as? Data, Data())
+                XCTAssertEqual(result["didExceedLimit"] as? Bool, false)
+                XCTAssertEqual(result["stopCount"] as? Int, 1)
+                let message = try XCTUnwrap(result["failure"] as? String)
+                XCTAssertEqual(message, "Could not read git output: \(String(cString: strerror(EBADF)))")
+            }
+            XCTAssertGreaterThanOrEqual(fcntl(writeOnly, F_GETFD), 0, "The runner retains descriptor closure ownership")
+        }
+
+        func testBufferedPipeEOFAndOutputBoundariesPreserveBytesAndDescriptorOwnership() throws {
+            for byteCount in [0, 1024, 1025] {
+                let source = Pipe()
+                defer { try? source.fileHandleForReading.close() }
+                let bytes = Data((0 ..< byteCount).map { UInt8($0 % 251) })
+                try source.fileHandleForWriting.write(contentsOf: bytes)
+                try source.fileHandleForWriting.close()
+
+                let descriptor = source.fileHandleForReading.fileDescriptor
+                let result = PBHistoryFlowRevisionProviderTestHarness.drainPipe(fileDescriptor: descriptor)
+
+                XCTAssertEqual(result["data"] as? Data, Data(bytes.prefix(1024)))
+                XCTAssertEqual(result["didExceedLimit"] as? Bool, byteCount > 1024)
+                XCTAssertEqual(result["stopCount"] as? Int, byteCount > 1024 ? 1 : 0)
+                XCTAssertEqual(result["failure"] as? String, "")
+                XCTAssertGreaterThanOrEqual(fcntl(descriptor, F_GETFD), 0, "The runner retains descriptor closure ownership")
             }
         }
-        for descriptor in [-1, writeOnly] {
-            let result = PBHistoryFlowRevisionProviderTestHarness.drainPipe(fileDescriptor: descriptor)
-            XCTAssertEqual(result["data"] as? Data, Data())
-            XCTAssertEqual(result["didExceedLimit"] as? Bool, false)
-            XCTAssertEqual(result["stopCount"] as? Int, 1)
-            let message = try XCTUnwrap(result["failure"] as? String)
-            XCTAssertEqual(message, "Could not read git output: \(String(cString: strerror(EBADF)))")
-        }
-        XCTAssertGreaterThanOrEqual(fcntl(writeOnly, F_GETFD), 0, "The runner retains descriptor closure ownership")
-    }
 
-    func testBufferedPipeEOFAndOutputBoundariesPreserveBytesAndDescriptorOwnership() throws {
-        for byteCount in [0, 1024, 1025] {
-            let source = Pipe()
-            defer { try? source.fileHandleForReading.close() }
-            let bytes = Data((0 ..< byteCount).map { UInt8($0 % 251) })
-            try source.fileHandleForWriting.write(contentsOf: bytes)
-            try source.fileHandleForWriting.close()
-
-            let descriptor = source.fileHandleForReading.fileDescriptor
-            let result = PBHistoryFlowRevisionProviderTestHarness.drainPipe(fileDescriptor: descriptor)
-
-            XCTAssertEqual(result["data"] as? Data, Data(bytes.prefix(1024)))
-            XCTAssertEqual(result["didExceedLimit"] as? Bool, byteCount > 1024)
-            XCTAssertEqual(result["stopCount"] as? Int, byteCount > 1024 ? 1 : 0)
-            XCTAssertEqual(result["failure"] as? String, "")
-            XCTAssertGreaterThanOrEqual(fcntl(descriptor, F_GETFD), 0, "The runner retains descriptor closure ownership")
-        }
-    }
+    #endif
 
     func testChangedFileAndBlobLimitsAreEnforced() async throws {
         let fixture = try RepositoryFixture()

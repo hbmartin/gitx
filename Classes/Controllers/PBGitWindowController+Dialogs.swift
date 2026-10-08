@@ -10,6 +10,7 @@ enum WindowDialogPresenter {
         _ messageText: String,
         infoText: String,
         retryHandler: (() -> Void)?,
+        cancelHandler: (() -> Void)?,
         for windowController: PBGitWindowController
     ) {
         PBCommitHookFailedSheet.begin(
@@ -19,6 +20,8 @@ enum WindowDialogPresenter {
         ) { _, response in
             if response == .OK {
                 retryHandler?()
+            } else {
+                cancelHandler?()
             }
         }
     }

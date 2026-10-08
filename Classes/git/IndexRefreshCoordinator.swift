@@ -162,7 +162,7 @@ final nonisolated class IndexRefreshCoordinator: NSObject, @unchecked Sendable {
         )
         launch(
             .staged,
-            arguments: ["diff-index", "--cached", "-z", request.parentTree],
+            arguments: ["diff-index", "--cached", "-z", request.parentTree, "--"],
             cycle: cycle
         )
         launch(.unstaged, arguments: ["diff-files", "-z"], cycle: cycle)

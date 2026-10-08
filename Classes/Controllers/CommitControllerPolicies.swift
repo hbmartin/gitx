@@ -58,6 +58,12 @@ final nonisolated class CommitRemotePresentationPolicy: NSObject {
     }
 }
 
+nonisolated enum CommitSubmissionEligibility {
+    static func allowsMutation(_ index: PBGitIndex) -> Bool {
+        !index.mutationReconciliationPending && !index.submissionActive && index.repository?.isBare() != true
+    }
+}
+
 @objc(PBCommitSubmissionDisposition)
 enum CommitSubmissionDisposition: Int {
     case accepted
@@ -128,6 +134,17 @@ final nonisolated class CommitWorkflowState: NSObject {
     @objc var pendingRemoteName: String?
     @objc var pendingRememberedPushChoice: NSNumber?
     @objc private(set) var submissionActive = false
+    @objc private(set) var awaitingHookDecision = false
+
+    @objc func awaitHookDecision() {
+        guard submissionActive else { return }
+        awaitingHookDecision = true
+    }
+
+    @objc func retrySubmission() {
+        guard awaitingHookDecision else { return }
+        awaitingHookDecision = false
+    }
 
     @objc(beginSubmissionWithPushChoice:canRemember:)
     func beginSubmission(pushChoice: Bool, canRemember: Bool) {
@@ -153,11 +170,13 @@ final nonisolated class CommitWorkflowState: NSObject {
         pendingRemoteName = nil
         pendingRememberedPushChoice = nil
         submissionActive = false
+        awaitingHookDecision = false
     }
 
     @objc(cancelSubmission)
     func cancelSubmission() -> NSNumber? {
         submissionActive = false
+        awaitingHookDecision = false
         let rememberedPushChoice = pendingRememberedPushChoice
         pendingBranchRef = nil
         pendingRemoteName = nil

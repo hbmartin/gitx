@@ -38,6 +38,29 @@ final class GitXPerformanceTests: XCTestCase {
         return sorted[max(0, index)]
     }
 
+    func testPushCaptureSealingAndDeferredReportCost() throws {
+        let payload = Data(String(repeating: "remote: diagnostic output https://example.invalid/repo\n", count: 40000).utf8)
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: destination) }
+        var sealing: [TimeInterval] = []
+        var exporting: [TimeInterval] = []
+        for _ in 0 ..< 5 {
+            let capture = PBTaskDiagnosticCapture()
+            capture.appendStandardError(payload)
+            capture.finishStandardOutput(reachedEOF: true)
+            capture.finishStandardError(reachedEOF: true)
+            var artifact: PBTaskDiagnosticArtifact?
+            sealing.append(elapsed { artifact = capture.seal() })
+            let result = try XCTUnwrap(artifact)
+            defer { result.discard() }
+            XCTAssertTrue(result.captureComplete)
+            try exporting.append(elapsedThrowing { try result.writeRedactedReport(to: destination) })
+            XCTAssertGreaterThan(try Data(contentsOf: destination).count, payload.count)
+        }
+        attachMeasurements("Push capture sealing (2.16 MB stderr)", samples: sealing)
+        attachMeasurements("Push capture export (2.16 MB stderr)", samples: exporting)
+    }
+
     private func attachMeasurements(
         _ name: String,
         cold: TimeInterval? = nil,
@@ -186,6 +209,84 @@ final class GitXPerformanceTests: XCTestCase {
         RepositoryTestGitEnvironment.prepare(task)
         try task.launch()
         return task.standardOutputString() ?? ""
+    }
+
+    func testCommonPrefixRawPathCollectionAndLookupScaling() {
+        for count in [5000, 20000] {
+            let files = (0 ..< count).map { value -> PBChangedFile in
+                PBChangedFile(path: String(repeating: "common-prefix/", count: 24) + "\(value).txt")
+            }
+            var bytes = Data()
+            for file in files {
+                bytes.append(file.rawPath); bytes.append(0)
+            }
+            var samples: [TimeInterval] = []
+            for _ in 0 ..< 10 {
+                samples.append(elapsed {
+                    let collection = PBWorkingTreePaths(files: files)
+                    collection.append(data: bytes)
+                    XCTAssertEqual(collection.rawPaths, files.map(\.rawPath))
+                    XCTAssertTrue(collection.file(for: files[count / 2].rawPath) === files[count / 2])
+                })
+            }
+            attachMeasurements("Raw paths \(count)", samples: samples)
+        }
+    }
+
+    func testLargeDragPayloadLookupScaling() throws {
+        for count in [5000, 20000] {
+            let model = PBStagingListViewModel()
+            let files = (0 ..< count).map { PBChangedFile(path: "common-directory/\($0).txt") }
+            for file in files {
+                file.hasUnstagedChanges = true
+            }
+            let rows = model.flattenedRows(fromChanges: files)
+            let payload = model.sectionedDragPayload(for: rows, selectedIndexes: IndexSet(rows.indices))
+            var samples: [TimeInterval] = []
+            for _ in 0 ..< 10 {
+                try samples.append(elapsedThrowing {
+                    let selected = try XCTUnwrap(model.resolvedDropFiles(fromPropertyList: payload, rows: rows, destinationSection: .staged))
+                    XCTAssertEqual(selected.map(\.rawPath), rows.compactMap { $0.file?.rawPath })
+                })
+            }
+            attachMeasurements("Drag lookup \(count)", samples: samples)
+        }
+    }
+
+    func testUnchangedFiftyThousandFilePresentationReusesSortOrder() {
+        let model = PBStagingListViewModel()
+        let files = (0 ..< 50000).reversed().map { value -> PBChangedFile in
+            let file = PBChangedFile(path: "common-directory/\(value).txt")
+            file.hasStagedChanges = true
+            file.hasUnstagedChanges = true
+            return file
+        }
+        let cold = elapsed { XCTAssertEqual(model.flattenedRows(fromChanges: files).count, 100_002) }
+        let sorts = model.sortPassCount
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 10 {
+            samples.append(elapsed {
+                XCTAssertEqual(model.flattenedRows(fromChanges: files).count, 100_002)
+                XCTAssertEqual(model.stagedFileCount(fromChanges: files), 50000)
+                XCTAssertEqual(model.masterCheckboxState(forChanges: files, in: .staged), NSControl.StateValue.mixed.rawValue)
+            })
+            XCTAssertEqual(model.sortPassCount, sorts)
+        }
+        attachMeasurements("Unchanged presentation 50000", cold: cold, samples: samples)
+    }
+
+    func testSingleFilePreviewSnapshotsOnlyTheRequestedWorkingState() {
+        let files = (0 ..< 50000).map { PBChangedFile(path: "common-directory/\($0).txt") }
+        let wanted = files[25000]
+        var samples: [TimeInterval] = []
+        for _ in 0 ..< 10 {
+            samples.append(elapsed {
+                let snapshots = PBIndexFileViewSnapshot.snapshots(forFiles: files, rawPaths: [wanted.rawPath])
+                XCTAssertEqual(snapshots.map(\.rawPath), [wanted.rawPath])
+                XCTAssertEqual(snapshots.first?.materializedFile().path, wanted.path)
+            })
+        }
+        attachMeasurements("Single file preview from 50000", samples: samples)
     }
 
     func testLargeCommitSelectionValidationPerformance() throws {

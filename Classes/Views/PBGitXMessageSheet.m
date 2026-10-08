@@ -74,10 +74,10 @@ void PBShowGitXErrorSheet(NSError *error, NSWindowController *windowController)
 	NSString *infoText = [PBErrorMessagePresentation infoTextForError:error];
 	NSLog(@"[GitX] Prepared error sheet details without requiring optional task fields");
 
+	[PBPushOutputExportCoordinator installOnWindow:sheet.window error:error];
 	[sheet beginMessageSheetWithMessageText:[error localizedDescription]
 								   infoText:infoText
 						  completionHandler:handler];
-	[PBPushOutputExportCoordinator installOnWindow:sheet.window error:error];
 }
 
 - (IBAction)closeMessageSheet:(id)sender

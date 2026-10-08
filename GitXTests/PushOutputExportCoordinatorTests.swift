@@ -66,6 +66,16 @@ final class PushOutputExportCoordinatorTests: XCTestCase {
             XCTAssertEqual(result["finished"], 2)
         }
 
+        func testDismissedSheetDoesNotReceiveLateExportFailure() async {
+            for scenario in ["dismissed-sheet", "closed-window"] {
+                let result = await facts(for: scenario)
+                XCTAssertEqual(result["writes"], 1, scenario)
+                XCTAssertEqual(result["finished"], 1, scenario)
+                XCTAssertEqual(result["failures"], 0, scenario)
+                XCTAssertEqual(result["dismissedWindowVisible"], 0, scenario)
+            }
+        }
+
         func testDefaultWriterSavesFullRedactedReport() async {
             let result = await facts(for: "real-success")
             XCTAssertEqual(result["reportContainsDiagnostic"], 1)
@@ -163,6 +173,20 @@ final class PushOutputExportCoordinatorTests: XCTestCase {
             XCTAssertTrue(info.hasPrefix("Operation failed"))
             XCTAssertTrue(info.contains("nested output"))
             XCTAssertFalse(info.contains("The underlying task failed:"))
+        }
+
+        func testNonTaskReadableFailureRetainsGitOutputAndCaptureFailureDetails() {
+            let capture = PBTaskDiagnosticCaptureTestHarness.capture(fault: "createDirectory")
+            let artifact = capture.seal()
+            defer { artifact.discard() }
+            let error = NSError(domain: "GitX.Export.Tests", code: 1,
+                                userInfo: [NSLocalizedFailureReasonErrorKey: "Push failed",
+                                           "PBTaskReadablePushOutput": "remote: permission denied",
+                                           "PBTaskDiagnosticArtifact": artifact])
+            let text = PBErrorMessagePresentation.infoText(for: error)
+            XCTAssertTrue(text.contains("permission denied"))
+            XCTAssertTrue(text.contains("could not be captured"))
+            XCTAssertFalse(text.contains("The underlying task failed:"))
         }
 
         func testMalformedArtifactFallsBackToLegacyTaskOutputWithoutCoercion() {

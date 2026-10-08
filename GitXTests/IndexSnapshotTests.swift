@@ -5,11 +5,13 @@ final class IndexSnapshotTests: XCTestCase {
         private let listing: Data
         private let directory: URL
         private let failsScan: Bool
+        private let statusData: Data?
 
-        init(listing: Data, directory: URL, failsScan: Bool = false) {
+        init(listing: Data, directory: URL, failsScan: Bool = false, statusData: Data? = nil) {
             self.listing = listing
             self.directory = directory
             self.failsScan = failsScan
+            self.statusData = statusData
             super.init()
         }
 
@@ -18,6 +20,10 @@ final class IndexSnapshotTests: XCTestCase {
         }
 
         override func task(withArguments arguments: [Any]?) -> PBTask {
+            if (arguments as? [String])?.first == "status", let statusData {
+                let format = statusData.map { String(format: "\\%03o", $0) }.joined()
+                return PBTask(launchPath: "/usr/bin/printf", arguments: [format], inDirectory: nil)
+            }
             // PBWorkingTree uses the repository's Objective-C factory for byte output.
             if (arguments as? [String])?.contains("ls-files") == true {
                 if failsScan {
@@ -31,6 +37,46 @@ final class IndexSnapshotTests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedPreviewSnapshotsCaptureOnlyExactRawPathsAndRemainImmutable() {
+        let invalid = PBChangedFile(path: "invalid\\xFF.png", rawPath: Data([0xFF, 0x2E, 0x70, 0x6E, 0x67]))
+        invalid.hasStagedChanges = true
+        invalid.stagedStatus = .DELETED
+        invalid.commitBlobMode = "100644"
+        invalid.commitBlobSHA = "original blob"
+        let ordinary = PBChangedFile(path: "ordinary.png")
+        let files = [ordinary, invalid]
+        XCTAssertTrue(PBIndexFileViewSnapshot.snapshots(forFiles: files, rawPaths: []).isEmpty)
+        XCTAssertTrue(PBIndexFileViewSnapshot.snapshots(forFiles: files, rawPaths: [Data("ordinary".utf8)]).isEmpty)
+        let snapshots = PBIndexFileViewSnapshot.snapshots(forFiles: files, rawPaths: [invalid.rawPath, invalid.rawPath])
+        XCTAssertEqual(snapshots.map(\.rawPath), [invalid.rawPath])
+        let lookup = PBIndexFileViewSnapshotLookup(snapshots: snapshots + snapshots)
+        XCTAssertTrue(lookup.snapshot(rawPath: invalid.rawPath) === snapshots[0])
+        XCTAssertNil(lookup.snapshot(rawPath: ordinary.rawPath))
+        XCTAssertNil(PBIndexFileViewSnapshotLookup(snapshots: []).snapshot(rawPath: invalid.rawPath))
+        invalid.hasStagedChanges = false
+        invalid.stagedStatus = .NEW
+        invalid.commitBlobSHA = "replaced blob"
+        let captured = snapshots[0].materializedFile()
+        XCTAssertTrue(captured.hasStagedChanges)
+        XCTAssertEqual(captured.stagedStatus, .DELETED)
+        XCTAssertEqual(captured.commitBlobMode, "100644")
+        XCTAssertEqual(captured.commitBlobSHA, "original blob")
+    }
+
+    @MainActor
+    func testWorkingStateImageSourcesPreserveRawIdentityAndUseTheRequestedSide() {
+        let source: [String: Any] = [PBNativeImageSourceWorkingTreeKey: true,
+                                     PBNativeImageSourceRevisionsKey: ["HEAD"],
+                                     "rawPath": Data("image.png".utf8), "safePath": "image.png"]
+        let unstaged = PBIndexPreviewImageSource.source(workingSource: source, staged: false)
+        XCTAssertEqual(unstaged as NSDictionary, source as NSDictionary)
+        let staged = PBIndexPreviewImageSource.source(workingSource: source, staged: true)
+        XCTAssertEqual(staged[PBNativeImageSourceWorkingTreeKey] as? Bool, false)
+        XCTAssertEqual(staged[PBNativeImageSourceRevisionsKey] as? [String], [":"])
+        XCTAssertEqual(staged["rawPath"] as? Data, source["rawPath"] as? Data)
+        XCTAssertEqual(staged["safePath"] as? String, "image.png")
+    }
+
     func testWorkingTreeOmitsRawUnsupportedPathsAndPreservesSideBadgesAndBinaryContents() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXWorkingTreeBoundaries-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -68,6 +114,70 @@ final class IndexSnapshotTests: XCTestCase {
 
         XCTAssertFalse(tree.leaf)
         XCTAssertTrue(tree.children.isEmpty)
+    }
+
+    func testWorkingTreePathCollectionUsesExactBytesAndPreservesFirstSeenOrder() {
+        let literal = PBChangedFile(path: "f\\xFF", rawPath: Data("f\\xFF".utf8))
+        let invalid = PBChangedFile(path: "f\\xFF", rawPath: Data([0x66, 0xFF]))
+        let paths = PBWorkingTreePaths(files: [literal, invalid])
+        var data = invalid.rawPath
+        data.append(0)
+        data.append(literal.rawPath)
+        data.append(0)
+        paths.append(data: data)
+        paths.append(data: data)
+        paths.append(data: Data())
+        paths.append(data: Data("unterminated".utf8))
+        XCTAssertEqual(paths.rawPaths, [invalid.rawPath, literal.rawPath])
+        XCTAssertTrue(paths.file(for: invalid.rawPath) === invalid)
+        XCTAssertTrue(paths.file(for: literal.rawPath) === literal)
+        XCTAssertNil(paths.file(for: Data("missing".utf8)))
+        for unsafe in ["", "/absolute", "../parent", "a/./b", "a//b", "a/", "nul\0path"] {
+            XCTAssertNil(PBWorkingTreePaths.validatedHierarchyPath(unsafe))
+        }
+        for safe in ["folder", "nested/folder", "\u{FEFF}folder", "literal..folder"] {
+            XCTAssertEqual(PBWorkingTreePaths.validatedHierarchyPath(safe), safe)
+        }
+    }
+
+    @MainActor
+    func testChangedTreePrefersTrackedStatusRegardlessOfRecordOrder() throws {
+        let previous = PBApplicationSettings.changedFilesOnly
+        PBApplicationSettings.changedFilesOnly = true
+        defer { PBApplicationSettings.changedFilesOnly = previous }
+        for records in ["?? same.txt\0D  same.txt\0", "D  same.txt\0?? same.txt\0"] {
+            let repository = WorkingTreeRepository(listing: Data("same.txt\0".utf8), directory: FileManager.default.temporaryDirectory, statusData: Data(records.utf8))
+            let presentation = PBHistoryTreePresentation(repository: repository)
+            let root = presentation.tree(for: PBUncommittedChanges(repository: repository))
+            XCTAssertEqual(root.children.count, 1)
+            XCTAssertEqual(try presentation.displayTitle(for: XCTUnwrap(root.children.first)), "D  same.txt")
+        }
+    }
+
+    func testFilenameDecodingPreservesBOMAndRoundTripsExactly() {
+        for name in ["\u{FEFF}", "\u{FEFF}notes.txt", "notes.txt", "*️⃣.md", "*́.md"] {
+            let bytes = Data(name.utf8)
+            XCTAssertEqual(PBIndexFilePresentation.safePath(forRawPath: bytes), name)
+            XCTAssertEqual(PBIndexFilePresentation.displayPath(forRawPath: bytes), name)
+        }
+        XCTAssertNil(PBIndexFilePresentation.safePath(forRawPath: Data([0xFF])))
+        XCTAssertNil(PBIndexFilePresentation.safePath(forRawPath: Data()))
+        XCTAssertNil(PBIndexFilePresentation.safePath(forRawPath: Data([0])))
+    }
+
+    func testPlainChangedFileHasEmptyIdentityAndCannotBeAddressed() {
+        let file = PBChangedFile()
+        XCTAssertEqual(file.path, "")
+        XCTAssertEqual(file.rawPath, Data())
+        XCTAssertNil(file.safePath)
+    }
+
+    func testParserPreservesConsecutiveEmptyRecordValidation() {
+        XCTAssertEqual(parser.parseUntrackedData(Data([0, 0, 0]), error: nil)?.count, 0)
+        XCTAssertEqual(parser.parseUntrackedData(Data("a\0\0b\0".utf8), error: nil)?.count, 2)
+        var error: NSError?
+        XCTAssertNil(parser.parseTrackedData(Data(":100644 100644 a b M\0\0".utf8), error: &error))
+        XCTAssertNotNil(error)
     }
 
     private let parser = PBIndexStatusParser()

@@ -14,18 +14,23 @@ final nonisolated class PBTaskDiagnostics: NSObject {
         arguments.map { redacted($0) }.joined(separator: " ")
     }
 
-    static func pushFailure(stdout: String, stderr: String, porcelain: Bool) -> String {
+    static func pushFailure(stdout: String, stderr: String, porcelain: Bool,
+                            stdoutComplete: Bool = true, stderrComplete: Bool = true) -> String
+    {
+        let safeStandardOutput = PBTaskDiagnosticRedactor.redacted(stdout, incomplete: !stdoutComplete)
         let output: String
         if porcelain {
-            output = stdout.components(separatedBy: "\n").compactMap { line -> String? in
+            output = safeStandardOutput.components(separatedBy: "\n").compactMap { line -> String? in
                 guard !line.isEmpty, line != "Done" else { return nil }
                 let fields = line.components(separatedBy: "\t")
                 guard fields.count == 3 else { return line }
                 return "\(fields[1].replacingOccurrences(of: ":", with: " → ")): \(fields[2])"
             }.joined(separator: "\n")
         } else {
-            output = stdout
+            output = safeStandardOutput
         }
-        return redacted([output, stderr].filter { !$0.isEmpty }.joined(separator: "\n"))
+        return [output,
+                PBTaskDiagnosticRedactor.redacted(stderr, incomplete: !stderrComplete)]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
     }
 }

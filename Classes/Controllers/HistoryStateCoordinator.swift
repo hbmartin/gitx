@@ -38,6 +38,15 @@ nonisolated enum HistoryDetailMode: Int {
 @objc(PBHistoryStateCoordinator)
 final class HistoryStateCoordinator: NSObject {
     private var savedTreePath: [String] = []
+    private var automaticSelection = false
+
+    @objc(performAutomaticSelection:)
+    func performAutomaticSelection(_ update: () -> Void) {
+        let previous = automaticSelection
+        automaticSelection = true
+        defer { automaticSelection = previous }
+        update()
+    }
 
     @objc(normalizedSelection:)
     func normalizedSelection(_ selection: [PBGitCommit]) -> [PBGitCommit] {
@@ -111,6 +120,7 @@ final class HistoryStateCoordinator: NSObject {
 
     @objc(saveFileBrowserSelectionFromSelectedObjects:hasContent:)
     func saveFileBrowserSelection(selectedObjects: [NSObject], hasContent: Bool) {
+        guard !automaticSelection else { return }
         guard hasContent,
               let fullPath = selectedObjects.first?.value(forKey: "fullPath") as? String
         else {
