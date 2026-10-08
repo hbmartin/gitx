@@ -53,6 +53,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)cancel;
 @end
 
+#if DEBUG
 @interface PBHistoryFlowRevisionProviderTestHarness : NSObject
 + (NSDictionary<NSString *, id> *)drainPipeWithFileDescriptor:(int)descriptor NS_SWIFT_NAME(drainPipe(fileDescriptor:));
 + (PBHistoryFlowRevisionProviderTestOperation *)cancelledBeforeLaunchWithGitExecutableURL:(NSURL *)gitExecutableURL
@@ -66,6 +67,7 @@ NS_ASSUME_NONNULL_BEGIN
 													  maximumBlobBytes:(NSInteger)maximumBlobBytes
 													 completionHandler:(void (^)(NSData *_Nullable data, NSString *_Nullable errorDescription))completionHandler;
 @end
+#endif
 
 @interface PBChildProcessSupervisor : NSObject
 - (instancetype)initWithLaunchPath:(NSString *)launchPath
