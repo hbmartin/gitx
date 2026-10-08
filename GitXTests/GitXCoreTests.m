@@ -215,6 +215,7 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 			operation:(NSOperation *)operation
 		   generation:(NSUInteger)generation;
 - (BOOL)isLoadGenerationCurrent:(NSUInteger)generation;
+- (void)setupEnumerator:(GTEnumerator *)enumerator forRevspec:(PBGitRevSpecifier *)rev;
 @end
 
 @interface PBGitRevListEnumeratorFailureStub : PBGitRevList
@@ -242,9 +243,21 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 @property (nonatomic) NSUInteger deliveredOIDCount;
 @property (nonatomic) NSUInteger reportedErrorCount;
 @property (nonatomic) NSTimeInterval firstOIDDelay;
+@property (nonatomic) BOOL rejectsReferences;
+@property (nonatomic) NSUInteger rejectedReferenceCount;
 @end
 
 @implementation GTRevisionEnumerationErrorStub
+
+- (BOOL)pushReferenceName:(NSString *)referenceName error:(NSError **)error
+{
+	if (!self.rejectsReferences) return [super pushReferenceName:referenceName error:error];
+	self.rejectedReferenceCount++;
+	if (error) *error = [NSError errorWithDomain:@"GitXTests.RevisionEnumeration"
+											code:1
+										userInfo:@{NSLocalizedDescriptionKey : @"Reference disappeared before it was pushed"}];
+	return NO;
+}
 
 - (nullable GTOID *)nextOIDWithSuccess:(BOOL *)success error:(NSError **)error
 {
@@ -1557,6 +1570,18 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	XCTAssertEqual(commit.treeContents.count, commit.tree.children.count);
 	XCTAssertEqual(commit.hash, commit.OID.hash);
 	XCTAssertFalse([commit isOnSameBranchAs:nil]);
+}
+
+- (void)testRevisionWalkContinuesWhenEnumeratedReferencesCannotBePushed
+{
+	NSError *error = nil;
+	GTRevisionEnumerationErrorStub *enumerator = [[GTRevisionEnumerationErrorStub alloc] initWithRepository:self.repository.gtRepo error:&error];
+	XCTAssertNotNil(enumerator, @"%@", error);
+	enumerator.rejectsReferences = YES;
+	PBGitRevSpecifier *rev = [[PBGitRevSpecifier alloc] initWithParameters:@[ @"--branches" ]];
+	PBGitRevList *list = [[PBGitRevList alloc] initWithRepository:self.repository rev:rev shouldGraph:NO];
+	[list setupEnumerator:enumerator forRevspec:rev];
+	XCTAssertGreaterThan(enumerator.rejectedReferenceCount, (NSUInteger)0);
 }
 
 - (void)testRevisionWalkPublishesTimedBatchesAndDeduplicatesTheirCommitIdentity
@@ -3843,6 +3868,21 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	PBGitTree *firstTree = changes.tree;
 	XCTAssertNotNil(firstTree);
 	XCTAssertEqual(firstTree, changes.tree);
+}
+
+- (void)testGitTreeMissingCommandOutputPreservesItsFailureAndBoundaryValues
+{
+	PBCommitRecoveryRepository *repository = [[PBCommitRecoveryRepository alloc] init];
+	PBGitTree *tree = [[PBGitTree alloc] init];
+	tree.repository = repository;
+	tree.path = @"unavailable.txt";
+	tree.sha = @"HEAD";
+	tree.leaf = YES;
+	XCTAssertFalse([tree hasBinaryHeader:nil]);
+	XCTAssertFalse([tree hasBinaryAttributes]);
+	XCTAssertNil(tree.contents);
+	XCTAssertEqual(tree.fileSize, (long long)-1);
+	XCTAssertEqual(tree.fileSize, (long long)-1, @"Failure remains a cached size sentinel");
 }
 
 - (void)testGitTreeBinaryHeuristicsAndLocalCacheDecodingAreDeterministic

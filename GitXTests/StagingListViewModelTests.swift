@@ -42,6 +42,27 @@ final class StagingListViewModelTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testRepeatedPresentationReadsRemapCurrentObjectsAndPreserveDragOrder() throws {
+        let model = PBStagingListViewModel()
+        let previous = [file("a.txt", staged: true, unstaged: false), file("b.txt")]
+        XCTAssertEqual(model.files(in: .staged, fromChanges: previous).map(\.path), ["a.txt"])
+        XCTAssertEqual(model.files(in: .unstaged, fromChanges: previous).map(\.path), ["b.txt"])
+        let currentA = file("a.txt", staged: true, unstaged: true)
+        let currentB = file("b.txt")
+        let current = [currentB, currentA]
+        let arranged = model.files(in: .staged, fromChanges: current)
+        XCTAssertTrue(arranged.first === currentA)
+        XCTAssertEqual(model.masterCheckboxState(forChanges: current, in: .staged), NSControl.StateValue.mixed.rawValue)
+        XCTAssertEqual(model.stagedFileCount(fromChanges: current), 1)
+        let rows = model.flattenedRows(fromChanges: current)
+        let indexes = IndexSet(rows.indices.filter { rows[$0].section == .unstaged && rows[$0].file != nil })
+        let payload = model.sectionedDragPayload(for: rows, selectedIndexes: indexes).reversed()
+        let resolved = try XCTUnwrap(model.resolvedDropFiles(fromPropertyList: Array(payload) + Array(payload), rows: rows, destinationSection: .staged))
+        XCTAssertEqual(resolved.map(\.path), ["b.txt", "a.txt"])
+        XCTAssertTrue(resolved[0] === currentB)
+        XCTAssertTrue(resolved[1] === currentA)
+    }
+
     func testChangedFileDefaultsAndAllStatusIconsPreserveObjectiveCContract() {
         let changed = PBChangedFile(path: "folder/spaced ü.txt")
         XCTAssertEqual(changed.path, "folder/spaced ü.txt")
