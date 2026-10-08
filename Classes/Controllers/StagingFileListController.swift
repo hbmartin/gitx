@@ -193,12 +193,19 @@ final class StagingFileListController: NSObject, NSTableViewDelegate, NSTableVie
     }
 
     @objc func rearrange() {
+        let stagedSelection = Set((stagedFilesController.selectedObjects as? [PBChangedFile] ?? []).map(\.rawPath))
+        let unstagedSelection = Set((unstagedFilesController.selectedObjects as? [PBChangedFile] ?? []).map(\.rawPath))
+        let wasSyncingSelection = syncingExclusiveSelection
+        syncingExclusiveSelection = true
+        defer { syncingExclusiveSelection = wasSyncingSelection }
         presentation = viewModel.presentation(from: index.indexChanges)
         presentedStagedFiles = presentation.staged
         presentedUnstagedFiles = presentation.unstaged
         NSLog("[GitX] Published staging presentation for index revision %llu", UInt64(index.snapshotRevision))
         unstagedFilesController.rearrangeObjects()
         stagedFilesController.rearrangeObjects()
+        stagedFilesController.setSelectedObjects(presentation.staged.filter { stagedSelection.contains($0.rawPath) })
+        unstagedFilesController.setSelectedObjects(presentation.unstaged.filter { unstagedSelection.contains($0.rawPath) })
         rebuildSectionedRows()
         refreshHeaders()
         refreshMutationControls()
