@@ -342,7 +342,12 @@ def inventory(root, receipt=None, now=None):
         resources.update(p / name for name in ("SourcePackages", "SwiftPM", "DerivedData") if (p / name).exists())
         consider([p], "cache", {p: snapshot}, resources, snapshot["modified"])
     print(f"Cleanup inventory: inspected {len(entries)} runs and {len(cache_directories)} cache directories", file=sys.stderr, flush=True)
-    total = fingerprint(artifact)["bytes"] if artifact.exists() else 0
+    # Reuse the run snapshots already collected. A second complete traversal
+    # doubled the cost of inspecting large legacy analyzer/result inventories.
+    total = sum(entry["snapshot"]["bytes"] for entry in entries.values())
+    if artifact.exists():
+        total += artifact.lstat().st_blocks * 512
+        total += sum(fingerprint(p)["bytes"] for p in artifact.iterdir() if p not in entries)
     remaining = total
     selected = []
     for c in sorted(candidates, key=lambda c: (c["modified"], c["paths"])):
