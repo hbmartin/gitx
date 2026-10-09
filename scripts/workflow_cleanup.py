@@ -451,25 +451,42 @@ def eligibility(root, receipt):
 
 
 def run_cleanup(root, receipt, inherited=None):
+    import dev_workflow as workflow
     root = pathlib.Path(root).resolve()
     pending, reason = eligibility(root, receipt)
     if reason:
         return {"status": "deferred", "reason": reason}
+    verification = read_json(receipt)
+    verified_inputs = verification["inputsAfter"]
+    resources = {str(pathlib.Path(receipt).resolve().parent), str(root / "build/GitX.app")}
+    resources.update(str((root / s["receipt"]).resolve().parent) for s in verification["steps"] if s.get("receipt"))
+    toolchain = session.cache_paths(root)["toolchain"]
+    for _, command in workflow.full_profile(root):
+        if pathlib.Path(command[0]).suffix == ".sh":
+            resources.update(session.entry_resources(pathlib.Path(command[0]).name, command[1:], root, toolchain=toolchain)[0])
     directory = state_directory(root)
     ledger_path = records.common_directory(root) / "ledger.json"
     owner = {"runId": "cleanup-" + uuid.uuid4().hex[:12], "pid": os.getpid(), "receipt": str(receipt)}
     report = None
-    with session.Leases([str(records.common_directory(root) / "cleanup"), str(ledger_path)], owner, inherited=inherited):
-        # Ledger references cannot change between inventory and deletion.
+    resources.update((str(records.common_directory(root) / "cleanup"), str(ledger_path)))
+    with session.Leases(resources, owner, inherited=inherited):
+        # Manual cleanup holds the same product leases as automatic cleanup.
+        # Ledger references and managed verification output cannot change while
+        # discovery scans the potentially large historical diagnostic tree.
+        _, reason = eligibility(root, receipt)
+        if reason or read_json(pending_path(root)) != pending:
+            return {"status": "deferred", "reason": reason or "newer commit queued"}
         report = inventory(root, receipt)
         report.update(status="complete", committedHead=pending["head"], receipt=str(receipt),
                       deleted=[], skipped=[], failed=[], reclaimedBytes=0, startedAt=records.now())
-        for candidate in report["candidates"]:
+        _, reason = eligibility(root, receipt)
+        for index, candidate in enumerate(report["candidates"]):
             try:
                 with session.Leases(candidate["resources"], owner, inherited=inherited):
                     current_pending = read_json(pending_path(root))
-                    if current_pending != pending or session.git(root, "rev-parse", "HEAD") != pending["head"]:
-                        report["skipped"].append(candidate | {"reason": "newer commit queued"})
+                    if reason or current_pending != pending or session.changed_inputs(verified_inputs, session.inputs(root)):
+                        stop_reason = reason or ("newer commit queued" if current_pending != pending else "commit-or-inputs-changed")
+                        report["skipped"].extend(c | {"reason": stop_reason} for c in report["candidates"][index:])
                         break
                     if any(fingerprint(p) != snapshot for p, snapshot in candidate["snapshots"].items()):
                         report["skipped"].append(candidate | {"reason": "directory changed after inventory"})

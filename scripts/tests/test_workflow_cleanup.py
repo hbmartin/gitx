@@ -296,6 +296,64 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue(old.exists())
         self.assertTrue(cleanup.pending_path(self.root).exists())
 
+    def test_source_edit_during_inventory_prevents_deletion(self):
+        old = self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        original = cleanup.inventory
+        def changed(*args, **kwargs):
+            report = original(*args, **kwargs)
+            (self.root / 'source.txt').write_text('edited during inventory')
+            return report
+        with mock.patch.object(cleanup, 'inventory', side_effect=changed):
+            report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'partial')
+        self.assertTrue(old.exists())
+        self.assertTrue(cleanup.pending_path(self.root).exists())
+
+    def test_staged_app_change_during_inventory_prevents_deletion(self):
+        old = self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        original = cleanup.inventory
+        def changed(*args, **kwargs):
+            report = original(*args, **kwargs)
+            (self.root / 'build/GitX.app/binary').write_bytes(b'changed app')
+            return report
+        with mock.patch.object(cleanup, 'inventory', side_effect=changed):
+            report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'partial')
+        self.assertTrue(old.exists())
+        self.assertTrue(cleanup.pending_path(self.root).exists())
+
+    def test_manual_cleanup_requires_lease_on_verified_app(self):
+        old = self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        app = self.root / 'build/GitX.app'
+        with session.Leases([str(app)], {'runId': 'staging', 'pid': os.getpid(), 'receipt': 'other'}, inherited={}):
+            with self.assertRaises(session.ResourceBusy):
+                cleanup.run_cleanup(self.root, receipt, inherited={})
+        self.assertTrue(old.exists())
+        self.assertTrue(cleanup.pending_path(self.root).exists())
+
+    def test_source_edit_between_deletions_preserves_remaining_candidates(self):
+        first = self.run_directory('first', 12)
+        second = self.run_directory('second', 10)
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        remove = shutil.rmtree
+        def changed(path, **kwargs):
+            remove(path, **kwargs)
+            if pathlib.Path(path) == first:
+                (self.root / 'source.txt').write_text('edited during deletion')
+        with mock.patch.object(cleanup.shutil, 'rmtree', side_effect=changed):
+            report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'partial')
+        self.assertFalse(first.exists())
+        self.assertTrue(second.exists())
+        self.assertTrue(cleanup.pending_path(self.root).exists())
+
     def test_directory_replacement_after_inventory_is_skipped(self):
         old = self.run_directory('old')
         cleanup.queue_commit(self.root)
