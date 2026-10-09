@@ -277,23 +277,25 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Mixed-Selection-Tracked-Discard")
     }
 
-    func testWholeFileDiscardAuthorizesDeletedNonUTF8FilenameWithoutTextDecoding() async throws {
-        let rawPath = Data(Array("tracked-".utf8) + [255] + Array(".txt".utf8))
-        let directory = URL(fileURLWithPath: fixture.path)
-        // APFS rejects creation of non-UTF-8 names. A deleted tracked index
-        // entry still exercises real Git's byte protocol and authorization.
-        let original = Data("original raw filename\n".utf8)
-        let oid = try GitXTestGitFixture.run(["hash-object", "-w", "--stdin"], in: directory, standardInput: original).standardOutput.trimmingCharacters(in: .newlines)
-        var input = Data("100644 \(oid)\t".utf8); input.append(rawPath); input.append(0)
-        try GitXTestGitFixture.run(["update-index", "-z", "--index-info"], in: directory, standardInput: input)
-        try fixture.git(["commit", "-qm", "raw tracked path"])
-        // update-index --refresh also rejects this name on APFS, so capture
-        // the tracked deletion directly rather than requiring a UI refresh.
-        let file = PBChangedFile(path: "tracked-\\xFF.txt", rawPath: rawPath)
-        file.status = .DELETED
-        file.hasUnstagedChanges = true
-        try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: IndexRepositoryCommandRunner(repository: repository), files: [file])
-    }
+    #if DEBUG
+        func testWholeFileDiscardAuthorizesDeletedNonUTF8FilenameWithoutTextDecoding() async throws {
+            let rawPath = Data(Array("tracked-".utf8) + [255] + Array(".txt".utf8))
+            let directory = URL(fileURLWithPath: fixture.path)
+            // APFS rejects creation of non-UTF-8 names. A deleted tracked index
+            // entry still exercises real Git's byte protocol and authorization.
+            let original = Data("original raw filename\n".utf8)
+            let oid = try GitXTestGitFixture.run(["hash-object", "-w", "--stdin"], in: directory, standardInput: original).standardOutput.trimmingCharacters(in: .newlines)
+            var input = Data("100644 \(oid)\t".utf8); input.append(rawPath); input.append(0)
+            try GitXTestGitFixture.run(["update-index", "-z", "--index-info"], in: directory, standardInput: input)
+            try fixture.git(["commit", "-qm", "raw tracked path"])
+            // update-index --refresh also rejects this name on APFS, so capture
+            // the tracked deletion directly rather than requiring a UI refresh.
+            let file = PBChangedFile(path: "tracked-\\xFF.txt", rawPath: rawPath)
+            file.status = .DELETED
+            file.hasUnstagedChanges = true
+            try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: IndexRepositoryCommandRunner(repository: repository), files: [file])
+        }
+    #endif
 
     func testWholeFileDiscardRejectsChangedStateBeforeShowingConfirmation() throws {
         let controller = try XCTUnwrap(windowController as? HistoryWindowController)
