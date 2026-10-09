@@ -271,6 +271,35 @@ class RegressionGuardrailTests(unittest.TestCase):
         for records in ([first, later], [later, first]):
             self.assertEqual(guard.assess_checks(["correctness"], [], records)[0], "failed")
 
+    def test_resumed_workflow_failure_uses_its_latest_update_not_old_finish(self):
+        payload = {"schemaVersion": 2, "profile": "full", "status": "failed", "evidenceStatus": "valid",
+                   "finishedAt": "2026-10-09T12:00:00Z", "updatedAt": "2026-10-09T14:00:00Z",
+                   "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
+                   "steps": [{"name": "static", "status": "failed", "exitCode": 1,
+                   "command": dict(guard.dev_workflow.full_profile(self.root))["static"], "evidenceStatus": "valid",
+                   "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs, "toolchain": self.context.toolchain}]}
+        failed = guard.inspect_workflow(self.root / "resumed.json", payload, self.context)[0]
+        passed = {"check": "static", "validity": "valid", "status": "passed", "finishedAt": "2026-10-09T13:00:00+00:00", "receipt": "earlier", "tests": []}
+        self.assertEqual(guard.assess_checks(["static"], [], [failed, passed])[0], "failed")
+
+    def test_untimed_adverse_observation_cannot_be_hidden_by_a_timed_pass(self):
+        passed = {"check": "static", "validity": "valid", "status": "passed", "finishedAt": "2026-10-09T13:00:00+00:00", "receipt": "passed", "tests": []}
+        for status in ("failed", "blocked"):
+            adverse = dict(passed, status=status, finishedAt="", receipt="untimed")
+            self.assertEqual(guard.assess_checks(["static"], [], [passed, adverse])[0], status)
+
+    def test_same_time_failure_takes_precedence_over_a_blocker(self):
+        failed = {"check": "static", "validity": "valid", "status": "failed", "finishedAt": "2026-10-09T13:00:00+00:00", "receipt": "a", "tests": []}
+        blocked = dict(failed, status="blocked", receipt="z")
+        self.assertEqual(guard.assess_checks(["static"], [], [failed, blocked])[0], "failed")
+
+    def test_performance_test_evidence_uses_the_canonical_release_configuration(self):
+        contract = copy.deepcopy(self.catalogue["contracts"][0])
+        contract["tests"][0]["check"] = "performance"
+        record = {"check": "performance", "validity": "valid", "status": "passed", "finishedAt": "2026-10-09T13:00:00+00:00", "receipt": "performance",
+                  "tests": [{"identifier": "GitXTests/ContractTests/testNormal", "configuration": "Release", "result": "Passed"}]}
+        self.assertEqual(guard.assess_checks(["performance"], [contract], [record])[0], "ready")
+
     def test_real_assertions_remain_failed_even_with_infrastructure_category(self):
         path, payload = self.receipt(status="failed", result="Failed")
         payload["steps"][0]["failureCategory"] = "test-infrastructure"

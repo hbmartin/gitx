@@ -330,13 +330,17 @@ def receipt_check(payload):
 
 
 def timestamp(payload):
-    value = payload.get("finishedAt") or payload.get("updatedAt")
-    if not value:
-        return ""
-    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        raise ValueError("Receipt timestamps must include a timezone")
-    return parsed.astimezone(dt.timezone.utc).isoformat()
+    times = []
+    for key in ("finishedAt", "updatedAt"):
+        value = payload.get(key)
+        if value:
+            parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                raise ValueError("Receipt timestamps must include a timezone")
+            times.append(parsed.astimezone(dt.timezone.utc))
+    # Resuming a finished workflow can retain its previous finishedAt while a
+    # new attempt updates updatedAt and fails. Never let that old finish hide it.
+    return max(times).isoformat() if times else ""
 
 
 def observed_status(payload):
@@ -399,7 +403,7 @@ def inspect_receipt(path, context, expected_check=None):
             record["reasons"].append("Receipt did not finish")
         if payload.get("entry") and not record["finishedAt"]:
             # Coordination receipts currently have no wall-clock timestamp.
-            # They remain valid observations but cannot supersede timed runs.
+            # Nonpassing observations cannot be safely ordered around a pass.
             record["finishedAt"] = ""
         if not record["check"]:
             record["reasons"].append("Unrecognized verification check")
@@ -476,7 +480,9 @@ def assess_checks(checks, contracts, records):
         candidates = [r for r in records if r["check"] == name and r["validity"] == "valid"]
         if candidates:
             # A later failure supersedes an earlier success; input order cannot hide it.
-            latest = max(candidates, key=lambda r: (r["finishedAt"], r["status"] != "passed", r["receipt"]))
+            untimed = [r for r in candidates if not r["finishedAt"] and r["status"] != "passed"]
+            severity = {"failed": 3, "blocked": 2, "passed": 0}
+            latest = max(untimed or candidates, key=lambda r: (r["finishedAt"], severity.get(r["status"], 1), r["receipt"]))
             chosen[name] = latest
             status = latest["status"] if latest["status"] in {"passed", "failed", "blocked"} else "incomplete"
             assessed.append({"check": name, "status": status, "receipt": latest["receipt"]})
@@ -486,7 +492,7 @@ def assess_checks(checks, contracts, records):
         for test in contract["tests"]:
             check = test.get("check", "correctness")
             outcomes = chosen.get(check, {}).get("tests", [])
-            configuration = "Release" if check == "release-contracts" else "Debug"
+            configuration = "Release" if check in {"release-contracts", "performance"} else "Debug"
             matches = [t for t in outcomes if t["identifier"] == test["identifier"]
                        and t.get("configuration") == configuration]
             statuses = {m["result"] for m in matches}
@@ -529,7 +535,7 @@ def render(report):
             lines.append(f"  {item['contract']} {item['identifier']}: {item['status']}")
     for item in report.get("receipts", []):
         if item["validity"] != "valid":
-            lines.append(f"  Invalid evidence {item['receipt']}: {'; '.join(item['reasons'])}")
+            lines.append(f"  Invalid evidence {item['receipt']} (observed {item['status']}): {'; '.join(item['reasons'])}")
     lines.append("Policy findings do not block execution. Existing test and coverage failures remain authoritative.")
     lines.append("Report: " + report["reportPath"])
     return "\n".join(lines)
