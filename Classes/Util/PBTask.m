@@ -271,7 +271,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 {
 	if (!self.diagnosticCapture || self.operationFinished || !isfinite(delay) || delay > (double)INT64_MAX / NSEC_PER_SEC) return;
 	NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + MAX(0.0, delay);
-	if (!self.diagnosticCleanupDeadline || deadline < self.diagnosticCleanupDeadline)
+	if (self.diagnosticCleanupDeadline == 0 || deadline < self.diagnosticCleanupDeadline)
 		self.diagnosticCleanupDeadline = deadline;
 	[self armDiagnosticDrain];
 }
@@ -279,8 +279,8 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 - (void)armDiagnosticDrain
 {
 	if (!self.diagnosticCapture || self.operationFinished || self.outputDrainExpired) return;
-	NSTimeInterval deadline = self.diagnosticCleanupDeadline ?: INFINITY;
-	if (self.diagnosticLeaderExitTime) {
+	NSTimeInterval deadline = self.diagnosticCleanupDeadline != 0 ? self.diagnosticCleanupDeadline : INFINITY;
+	if (self.diagnosticLeaderExitTime != 0) {
 		deadline = MIN(deadline, [PBTaskDrainPolicy deadlineWithLeaderExit:self.diagnosticLeaderExitTime
 															  lastProgress:self.diagnosticLastProgressTime
 															  taskDeadline:self.executionDeadline]);
@@ -427,7 +427,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 	if (self.diagnosticCapture) {
 		// A non-reaping exit notification starts bounded drainage while the leader
 		// still reserves its process group for safe descendant cleanup.
-		if (!self.diagnosticLeaderExitTime) self.diagnosticLeaderExitTime = NSProcessInfo.processInfo.systemUptime;
+		if (self.diagnosticLeaderExitTime == 0) self.diagnosticLeaderExitTime = NSProcessInfo.processInfo.systemUptime;
 		[self armDiagnosticDrain];
 		return;
 	}
