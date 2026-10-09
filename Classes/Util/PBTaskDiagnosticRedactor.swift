@@ -128,6 +128,12 @@ nonisolated enum PBTaskDiagnosticRedactor {
             if byte == 10 || byte == 13 {
                 break
             }
+            // Inspect malformed credentials within the URL, but an ordinary
+            // host/path ends at whitespace. Following diagnostics and email
+            // addresses must not become userinfo or trigger repeated scans.
+            if byte <= 32, authorityHasHostSyntax, !initiallyAmbiguous, authorityAt == nil {
+                break
+            }
             if byte <= 32, let lastAt,
                try authorityAt != nil || hasHostSyntax(start: lastAt + 1, end: end, cursor: cursor)
             {

@@ -2,6 +2,25 @@ import Foundation
 import XCTest
 
 final class PBTaskDiagnosticRedactorTests: XCTestCase {
+    func testOrdinaryURLDoesNotConsumeFollowingColonAndEmailDiagnostics() {
+        let input = "fatal: https://github.com/org/repo.git: contact admin@corp.com https://user:secret@other.invalid/repo"
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), "fatal: https://github.com/org/repo.git: contact admin@corp.com https://[redacted]@other.invalid/repo")
+        XCTAssertEqual(PBTaskDiagnosticRedactor.redacted("https://user.name:123/private-secret@example.invalid/repo"), "https://[redacted]@example.invalid/repo")
+    }
+
+    func testManyOrdinaryURLsRequireBoundedSourceReads() throws {
+        let data = Data(String(repeating: "https://example.invalid/repo:42 ", count: 300).utf8)
+        var readBytes = 0
+        let source = PBTaskDiagnosticByteSource(length: Int64(data.count)) { offset, count in
+            readBytes += count
+            return Data(data[Int(offset) ..< Int(offset) + count])
+        }
+        var result = Data()
+        try PBTaskDiagnosticRedactor.redact(source: source, incomplete: false, bufferSize: 64) { result.append($0) }
+        XCTAssertEqual(result, data)
+        XCTAssertLessThanOrEqual(readBytes, data.count * 4)
+    }
+
     func testOrdinaryURLBoundariesPreservePortsPathsAndFollowingDiagnostics() {
         for input in [
             "https://example.invalid/repo failed: permission denied",
