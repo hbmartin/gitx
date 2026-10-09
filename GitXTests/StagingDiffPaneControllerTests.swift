@@ -2,6 +2,60 @@ import XCTest
 
 @MainActor
 final class StagingDiffPaneControllerTests: XCTestCase {
+    // swift6-safety-justification: Immutable status fixtures and lock-protected command counts are shared only with the serial producer/writer queues.
+    private final nonisolated class StatusRunner: NSObject, PBIndexRawOutputCommandRunning, @unchecked Sendable {
+        private let lock = NSLock()
+        private var statusCommands = 0
+        private var diffCommands = 0
+        private var treeCommands = 0
+
+        var counts: [Int] {
+            lock.lock(); defer { lock.unlock() }
+            return [statusCommands, diffCommands, treeCommands]
+        }
+
+        func rawOutput(withArguments arguments: [String], environment: [String: Any]?) throws -> Data {
+            XCTAssertEqual(environment?["GIT_OPTIONAL_LOCKS"] as? String, "0")
+            lock.lock(); statusCommands += 1; lock.unlock()
+            if arguments.contains("diff-files") {
+                let paths = arguments.dropFirst((arguments.firstIndex(of: "--") ?? arguments.count) + 1)
+                return Data(paths.map { ":100644 100644 \(String(repeating: "a", count: 40)) \(String(repeating: "0", count: 40)) M\0\($0)\0" }.joined().utf8)
+            }
+            return Data()
+        }
+
+        func output(withArguments arguments: [String], input _: String?, environment _: [String: Any]?) throws -> String {
+            lock.lock(); defer { lock.unlock() }
+            XCTAssertFalse(arguments.contains("-z"), "Status must use the runner's byte output")
+            if arguments.first == "rev-parse" {
+                treeCommands += 1
+                return "4b825dc642cb6eb9a060e54bf8d69288fbee4904\n"
+            }
+            diffCommands += 1
+            return "diff --git a/selected.txt b/selected.txt\n"
+        }
+
+        func data(withArguments _: [String], completion: @escaping (Data?, Error?) -> Void) {
+            XCTFail("Revalidation must use the synchronous command boundary")
+            completion(nil, nil)
+        }
+    }
+
+    #if DEBUG
+        func testDiscardRevalidationUsesInjectedByteRunnerAndBatchesStatusFor300Files() async throws {
+            let repository = LifetimeRepository(onDeinit: {})
+            let runner = StatusRunner()
+            let files = (0 ..< 300).map { index in
+                let file = PBChangedFile(path: "selected-\(index).txt")
+                file.status = .MODIFIED
+                file.hasUnstagedChanges = true
+                return file
+            }
+            try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: files)
+            XCTAssertEqual(runner.counts, [6, 600, 2])
+        }
+    #endif
+
     // swift6-safety-justification: The repository crosses only into the serial producer queue,
     // and its immutable deinit callback is safe to invoke from whichever queue releases it.
     private final nonisolated class LifetimeRepository: PBGitRepository, @unchecked Sendable {

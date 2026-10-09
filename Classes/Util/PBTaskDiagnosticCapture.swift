@@ -526,6 +526,10 @@ import Foundation
         private var count: Int64 = 0
         private static let limit = 64 * 1024
 
+        init(keepsTail: Bool) {
+            self.keepsTail = keepsTail
+        }
+
         mutating func append(_ chunk: Data) {
             count += Int64(chunk.count)
             if keepsTail {

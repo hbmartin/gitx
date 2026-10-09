@@ -64,6 +64,7 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 @property BOOL outputDrainExpired;
 @property BOOL diagnosticLeaderReleased;
 @property BOOL diagnosticDrainScheduled;
+@property BOOL diagnosticDrainFinished;
 @property NSTimeInterval diagnosticDrainDeadline;
 @property NSUInteger diagnosticDrainGeneration;
 @property NSTimeInterval diagnosticLeaderExitTime;
@@ -342,6 +343,14 @@ static const NSUInteger PBTaskStandardErrorLimit = 64 * 1024;
 	@synchronized(self) {
 		if (self.outputReadsInFlight || self.errorReadsInFlight) return;
 	}
+	// Finished/closed readers can represent a deadline rather than EOF. Preserve
+	// the first drain's actual EOF observations when two accepted reader callbacks
+	// both reevaluate completion before the retained leader is released.
+	if (self.diagnosticDrainFinished) {
+		[self finishIfReady];
+		return;
+	}
+	self.diagnosticDrainFinished = YES;
 	BOOL outputEOF = [self drainBufferedHandle:self.outputPipe.fileHandleForReading output:YES];
 	BOOL errorEOF = [self drainBufferedHandle:self.errorPipe.fileHandleForReading output:NO];
 	[self.diagnosticCapture finishStandardOutputWithReachedEOF:outputEOF];

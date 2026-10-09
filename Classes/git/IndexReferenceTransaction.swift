@@ -9,7 +9,7 @@ import Foundation
 private final nonisolated class ReferenceTransactionExit: @unchecked Sendable {
     private let lock = NSLock()
     private var result: (Int32, NSError?)?
-    private var observed = false
+    private var observedAt: TimeInterval?
     let semaphore = DispatchSemaphore(value: 0)
 
     func complete(status: Int32, error: NSError?) {
@@ -26,11 +26,15 @@ private final nonisolated class ReferenceTransactionExit: @unchecked Sendable {
     }
 
     func observeLeader() {
-        lock.lock(); observed = true; lock.unlock()
+        lock.lock(); observedAt = ProcessInfo.processInfo.systemUptime; lock.unlock()
     }
 
     var leaderObserved: Bool {
-        lock.lock(); defer { lock.unlock() }; return observed
+        leaderExitTime != nil
+    }
+
+    var leaderExitTime: TimeInterval? {
+        lock.lock(); defer { lock.unlock() }; return observedAt
     }
 }
 
@@ -52,8 +56,11 @@ final nonisolated class IndexReferenceTransaction {
     private var outputEOF = false
     private var committed = false
     private var commitAcknowledged = false
+    private var commitRequested = false
+    private var lastProgress = ProcessInfo.processInfo.systemUptime
     private var launched = false
     private var closed = false
+    private var aborting = false
     private let checkCancellation: () throws -> Void
 
     init(timeout: TimeInterval = 30, checkCancellation: @escaping () throws -> Void = {}) {
@@ -102,12 +109,18 @@ final nonisolated class IndexReferenceTransaction {
 
     func send(_ command: String) throws {
         guard launched, !closed, input >= 0 else { throw failure("The commit publication transaction is closed.") }
+        try checkBeforePublicationCancellation()
+        // Once any commit bytes may reach Git, cancellation cannot roll back
+        // publication. Settle its acknowledgement and actual exit instead.
+        if command == "commit\n" {
+            commitRequested = true
+        }
         let bytes = Data(command.utf8)
         try bytes.withUnsafeBytes { buffer in
             var offset = 0
             while offset < buffer.count {
                 guard remainingTime > 0 else { throw failure("Commit publication timed out after 30 seconds.") }
-                try checkCancellation()
+                try checkBeforePublicationCancellation()
                 let count = Darwin.write(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
                 if count > 0 {
                     offset += count
@@ -125,7 +138,7 @@ final nonisolated class IndexReferenceTransaction {
     func acknowledge(_ expected: String) throws {
         guard launched, !closed else { throw failure("The commit publication transaction is closed.") }
         while true {
-            try checkCancellation()
+            try checkBeforePublicationCancellation()
             try readAvailable()
             if let newline = outputBytes.firstIndex(of: 10) {
                 let line = String(decoding: outputBytes[..<newline], as: UTF8.self)
@@ -148,20 +161,28 @@ final nonisolated class IndexReferenceTransaction {
         input = -1
         while !outputEOF || !diagnosticEOF {
             try readAvailable()
+            if drainExpired {
+                guard commitAcknowledged else { throw failure("Git stopped with diagnostic writers still open.") }
+                // The leader's publication has finished; only its owned
+                // descendants can still retain these pipes. Keep status and
+                // accepted diagnostics while bounding their lifetime.
+                owner.requestTermination(gracePeriod: 0, forceKillDelay: 0.2)
+                NSLog("[GitX] Commit published; bounded cleanup of inherited diagnostic writers")
+                break
+            }
             if !outputEOF || !diagnosticEOF {
                 try waitForIO(writing: false)
             }
         }
         owner.releaseLeaderRetention()
         while exit.value == nil {
-            try checkCancellation()
+            try checkBeforePublicationCancellation()
             guard remainingTime > 0 else { throw failure("Commit publication timed out after 30 seconds.") }
             _ = exit.semaphore.wait(timeout: .now() + min(0.1, remainingTime))
         }
         let (status, error) = exit.value!
-        try readAvailable()
         if let error {
-            throw error
+            throw failure(error.localizedDescription)
         }
         guard status == 0, outputBytes.isEmpty else { throw failure("Git could not complete commit publication.") }
         committed = true
@@ -171,18 +192,38 @@ final nonisolated class IndexReferenceTransaction {
 
     func abortAndClose() {
         guard !closed else { return }
+        aborting = true
         backstop?.cancel()
         guard !committed else { closeAll(); return }
         if input >= 0 {
             // EOF also aborts an uncommitted transaction; this best-effort abort
             // must never wait for a child that has already stopped responding.
-            let bytes = Data("abort\n".utf8)
-            _ = bytes.withUnsafeBytes { Darwin.write(input, $0.baseAddress, $0.count) }
+            if !commitRequested {
+                let bytes = Data("abort\n".utf8)
+                _ = bytes.withUnsafeBytes { Darwin.write(input, $0.baseAddress, $0.count) }
+            }
             close(input)
             input = -1
         }
         if launched, exit.value == nil {
-            owner.requestTermination(gracePeriod: 0, forceKillDelay: 0.2)
+            // EOF/abort lets Git release prepared locks and run cooperative
+            // aborted hooks before process-group escalation is necessary.
+            let gracefulDeadline = DispatchTime.now() + min(1, remainingTime)
+            while !exit.leaderObserved, exit.value == nil, DispatchTime.now() < gracefulDeadline {
+                _ = try? readAvailable()
+                var waits: [pollfd] = []
+                if !outputEOF {
+                    waits.append(pollfd(fd: output, events: Int16(POLLIN), revents: 0))
+                }
+                if !diagnosticEOF {
+                    waits.append(pollfd(fd: diagnostic, events: Int16(POLLIN), revents: 0))
+                }
+                _ = poll(&waits, nfds_t(waits.count), 10)
+            }
+            _ = try? readAvailable()
+            if !exit.leaderObserved || !outputEOF || !diagnosticEOF {
+                owner.requestTermination(gracePeriod: 0, forceKillDelay: 0.2)
+            }
             owner.releaseLeaderRetention()
             _ = exit.semaphore.wait(timeout: .now() + 0.5)
         }
@@ -208,10 +249,14 @@ final nonisolated class IndexReferenceTransaction {
         guard descriptor >= 0, !(isDiagnostic ? diagnosticEOF : outputEOF) else { return }
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
+            if drainExpired {
+                return
+            }
             guard remainingTime > 0 else { throw failure("Commit publication timed out after 30 seconds.") }
-            try checkCancellation()
+            try checkBeforePublicationCancellation()
             let count = Darwin.read(descriptor, &buffer, buffer.count)
             if count > 0 {
+                lastProgress = ProcessInfo.processInfo.systemUptime
                 if isDiagnostic {
                     let available = 64 * 1024 - diagnosticBytes.count
                     diagnosticTruncated = diagnosticTruncated || count > available
@@ -238,12 +283,18 @@ final nonisolated class IndexReferenceTransaction {
     }
 
     private func waitForIO(writing: Bool) throws {
-        var descriptors = [pollfd(fd: output, events: Int16(POLLIN), revents: 0),
-                           pollfd(fd: diagnostic, events: Int16(POLLIN), revents: 0)]
+        var descriptors: [pollfd] = []
+        if !outputEOF {
+            descriptors.append(pollfd(fd: output, events: Int16(POLLIN), revents: 0))
+        }
+        if !diagnosticEOF {
+            descriptors.append(pollfd(fd: diagnostic, events: Int16(POLLIN), revents: 0))
+        }
         if writing {
             descriptors.append(pollfd(fd: input, events: Int16(POLLOUT), revents: 0))
         }
-        let milliseconds = Int32(min(1000, max(1, remainingTime * 1000)))
+        let drainTime = drainDeadline.map { max(0, $0 - ProcessInfo.processInfo.systemUptime) } ?? remainingTime
+        let milliseconds = Int32(min(100, max(1, min(remainingTime, drainTime) * 1000)))
         let result = poll(&descriptors, nfds_t(descriptors.count), milliseconds)
         if result < 0, errno != EINTR {
             throw failure("Could not wait for commit publication acknowledgement.")
@@ -256,6 +307,22 @@ final nonisolated class IndexReferenceTransaction {
     private func close(_ descriptor: Int32) {
         if descriptors.remove(descriptor) != nil {
             _ = Darwin.close(descriptor)
+        }
+    }
+
+    private var drainDeadline: TimeInterval? {
+        guard let observed = exit.leaderExitTime else { return nil }
+        return PBTaskDrainPolicy.deadline(leaderExit: observed, lastProgress: lastProgress,
+                                          taskDeadline: ProcessInfo.processInfo.systemUptime + remainingTime)
+    }
+
+    private var drainExpired: Bool {
+        drainDeadline.map { ProcessInfo.processInfo.systemUptime >= $0 } ?? false
+    }
+
+    private func checkBeforePublicationCancellation() throws {
+        if !commitRequested, !aborting {
+            try checkCancellation()
         }
     }
 
@@ -272,8 +339,8 @@ final nonisolated class IndexReferenceTransaction {
 
     private func failure(_ description: String) -> NSError {
         let diagnostic = PBTaskDiagnosticRedactor.redacted(String(decoding: diagnosticBytes, as: UTF8.self), incomplete: diagnosticTruncated || !diagnosticEOF)
-        let description = commitAcknowledged
-            ? description + " Git acknowledged the commit; it may already be published. Review the refreshed repository before submitting again."
+        let description = commitRequested
+            ? description + " Git received a commit request; it may already be published. Review the refreshed repository before submitting again."
             : description
         return NSError(domain: "PBGitCommitPublicationError", code: 1, userInfo: [
             NSLocalizedDescriptionKey: description,
@@ -299,6 +366,10 @@ final nonisolated class IndexReferenceTransaction {
             try transaction.launch(context: context)
             for (index, command) in commands.enumerated() {
                 try transaction.send(command)
+                // -2 exercises cancellation between sending commit and its ack.
+                if cancelAfterAcknowledgement == -2, command == "commit\n" {
+                    cancellation.cancel()
+                }
                 try transaction.acknowledge(acknowledgements[index])
                 if index == cancelAfterAcknowledgement {
                     cancellation.cancel()

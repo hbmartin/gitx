@@ -1012,6 +1012,22 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 									 error:(NSError *_Nullable *_Nullable)error;
 @end
 
+@protocol PBIndexRawOutputCommandRunning <PBIndexCommandRunning>
+- (nullable NSData *)rawOutputWithArguments:(NSArray<NSString *> *)arguments
+								environment:(nullable NSDictionary<NSString *, id> *)environment
+									  error:(NSError *_Nullable *_Nullable)error;
+@end
+
+#if DEBUG
+@interface PBStagingDiffRevalidationTestHarness : NSObject
++ (void)prepareAndValidateWithRepository:(PBGitRepository *)repository
+								  runner:(id<PBIndexCommandRunning>)runner
+								   files:(NSArray<PBChangedFile *> *)files
+							  completion:(void (^)(NSError *_Nullable error))completion
+	NS_SWIFT_NAME(prepareAndValidate(repository:runner:files:completion:));
+@end
+#endif
+
 __attribute__((objc_runtime_name("_TtC4GitX28IndexRepositoryCommandRunner")))
 @interface IndexRepositoryCommandRunner : NSObject<PBIndexBinaryCommandRunning>
 - (instancetype)initWithRepository:(PBGitRepository *)repository;

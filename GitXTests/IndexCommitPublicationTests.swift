@@ -192,14 +192,35 @@ final class IndexCommitPublicationTests: XCTestCase, @unchecked Sendable {
         let tree = try git(["write-tree"])
         let other = try GitXTestGitFixture.run(["commit-tree", tree, "-p", base], in: directory, standardInput: Data("Other parent\n".utf8)).standardOutput.trimmingCharacters(in: .newlines)
         try write(other + "\n", to: ".git/MERGE_HEAD")
+        try write("merge message\n", to: ".git/MERGE_MSG")
+        try write("no-ff\n", to: ".git/MERGE_MODE")
         repository = try GitXTestGitRepository(url: directory)
         try submitAndSettle("Merge parents", verify: false)
         XCTAssertEqual(try git(["show", "-s", "--format=%P", "HEAD"]), base + " " + other)
-        try? FileManager.default.removeItem(at: directory.appendingPathComponent(".git/MERGE_HEAD"))
+        for marker in ["MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(".git/" + marker).path))
+        }
         repository.index.isAmend = true
         XCTAssertTrue(observe { !self.repository.index.mutationReconciliationPending })
         try submitAndSettle("Amended merge", verify: false)
         XCTAssertEqual(try git(["show", "-s", "--format=%P", "HEAD"]), base + " " + other)
+    }
+
+    func testHookChangingMergeStateRefusesPublicationAndPreservesItsMarkers() throws {
+        try seed()
+        let original = try git(["rev-parse", "HEAD"])
+        try write(original + "\n", to: ".git/MERGE_HEAD")
+        try write("original merge\n", to: ".git/MERGE_MSG")
+        try hook("printf 'changed merge\\n' > .git/MERGE_MSG")
+        repository = try GitXTestGitRepository(url: directory)
+        let observation = Observation()
+        let observer = failureObserver { observation.failure = $0 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        try submitAndSettle("Changed merge state", verify: true)
+        XCTAssertNotNil(observation.failure)
+        XCTAssertEqual(try git(["rev-parse", "HEAD"]), original)
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent(".git/MERGE_MSG"), encoding: .utf8), "changed merge\n")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent(".git/MERGE_HEAD").path))
     }
 
     func testCancellingAnOwnedPreparedTransactionReleasesAllReferenceLocks() throws {

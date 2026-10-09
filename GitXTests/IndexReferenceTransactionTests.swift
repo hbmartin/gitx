@@ -77,7 +77,7 @@ final class IndexReferenceTransactionTests: XCTestCase {
     }
 
     #if DEBUG
-        func testUnsupportedPreparedTransactionsAreCachedByExecutableIdentity() throws {
+        func testFailedCapabilityProbesAreRetriedAndSuccessIsCachedByExecutableIdentity() throws {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXCapability-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: directory) }
@@ -93,14 +93,45 @@ final class IndexReferenceTransactionTests: XCTestCase {
             for _ in 0 ..< 2 {
                 XCTAssertThrowsError(try probe()) { error in
                     XCTAssertEqual((error as NSError).code, 4)
-                    XCTAssertTrue(error.localizedDescription.contains("Select a Git version"))
+                    XCTAssertTrue(error.localizedDescription.contains("retry"))
                 }
             }
-            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8), "probe\n")
+            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8), "probe\nprobe\n")
             try install("while read command; do printf '%s: ok\\n' \"$command\"; done\n")
             try probe()
             try probe()
-            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8), "probe\nprobe\n")
+            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8), "probe\nprobe\nprobe\n")
+        }
+
+        func testCancellationAfterCommitAcknowledgementStillSettlesPublication() throws {
+            try exercise("while read command; do printf '%s: ok\\n' \"$command\"; done", commands: ["commit\n"], acknowledgements: ["commit: ok"], cancelAfter: 0)
+        }
+
+        func testCancellationBetweenCommitSendAndAcknowledgementStillSettlesPublication() throws {
+            try exercise("read command; /bin/sleep 0.05; printf 'commit: ok\\n'", commands: ["commit\n"], acknowledgements: ["commit: ok"], cancelAfter: -2)
+        }
+
+        func testAbortAllowsCooperativePeerCleanupBeforeEscalation() throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXAbort-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let script = "read command; printf 'wrong\\n'; read command; test \"$command\" = abort || exit 7; /bin/sleep 0.3; printf cleaned > cleanup"
+            XCTAssertThrowsError(try PBIndexReferenceTransactionTestHarness.exercise(launchPath: "/bin/sh", arguments: ["-c", script], workingDirectory: directory.path, commands: ["prepare\n"], acknowledgements: ["prepare: ok"], timeout: 3, cancelAfterAcknowledgement: -1))
+            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("cleanup"), encoding: .utf8), "cleaned")
+        }
+
+        func testPublishedCommitDoesNotFailWhenAnOwnedDescendantRetainsStderr() throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXPublished-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let script = "read command; printf 'commit: ok\\n'; /bin/sh -c 'trap \"\" TERM; printf \"%s\" \"$$\" > writer.pid; exec /bin/sleep 30' >&2 & exit 0"
+            try PBIndexReferenceTransactionTestHarness.exercise(launchPath: "/bin/bash", arguments: ["-c", script], workingDirectory: directory.path, commands: ["commit\n"], acknowledgements: ["commit: ok"], timeout: 5, cancelAfterAcknowledgement: -1)
+            let pid = try XCTUnwrap(Int32(String(contentsOf: directory.appendingPathComponent("writer.pid"), encoding: .utf8)))
+            let limit = Date().addingTimeInterval(3)
+            while kill(pid, 0) == 0, Date() < limit {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            XCTAssertEqual(kill(pid, 0), -1)
         }
 
         func testOwnedProtocolAcknowledgementsAndFiniteDiagnosticsComplete() throws {

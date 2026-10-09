@@ -590,6 +590,15 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
             evidence["packageProducts"] = session.package_products(package_path)
         evidence["results"] = {step["xcresult"]: session.tree_identity(ROOT / step["xcresult"])
             for step in payload["steps"] if step.get("xcresult")}
+        if payload["invocation"]["preset"] == "analyze":
+            # The analyzer intentionally deletes its temporary DerivedData after
+            # finishing. Preserve durable diagnostic identities for assessment;
+            # ordinary app/test products still require their original identity.
+            evidence["analysisArtifacts"] = {step["log"]: session.tree_identity(ROOT / step["log"])
+                for step in payload["steps"] if step.get("log")}
+            analyzer_output = arguments.path.parent / "Results/Analyzer"
+            if analyzer_output.exists():
+                evidence["analysisArtifacts"][str(analyzer_output)] = session.tree_identity(analyzer_output)
     run_directory = arguments.path.parent
     bundle_suffixes = {".app", ".xcarchive", ".xcresult"}
     discovered: set[str | None] = set()

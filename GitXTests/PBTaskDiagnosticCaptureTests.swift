@@ -558,6 +558,39 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         }
     }
 
+    func testRepeatedDeadlineDrainNeverUpgradesAClosedIncompleteStreamToEOF() throws {
+        let capture = PBTaskDiagnosticCapture()
+        let task = HeldOutputAndDrainTask(launchPath: "/usr/bin/printf", arguments: ["https://ghp_secret"], inDirectory: nil)
+        task.diagnosticCapture = capture
+        task.timeout = 15
+        defer { task.releaseWriter(); task.terminate() }
+        let completed = expectation(description: "bounded capture completes")
+        task.perform(on: .global(qos: .userInitiated)) { error in
+            XCTAssertNil(error)
+            completed.fulfill()
+        }
+        let queue = try XCTUnwrap(task.value(forKey: "stateQueue") as? DispatchQueue)
+        waitForCondition("leader exited and accepted reads drained") {
+            queue.sync {
+                task.value(forKey: "leaderExitObserved") as? Bool == true
+                    && task.value(forKey: "errorFinished") as? Bool == true
+                    && (task.value(forKey: "outputReadsInFlight") as? NSNumber)?.intValue == 0
+                    && task.value(forKey: "standardOutputBuffer") as? Data == Data("https://ghp_secret".utf8)
+            }
+        }
+        queue.sync {
+            task.setValue(true, forKey: "outputDrainExpired")
+            task.perform(NSSelectorFromString("finishDiagnosticDrainWhenSafe"))
+            task.perform(NSSelectorFromString("finishDiagnosticDrainWhenSafe"))
+        }
+        wait(for: [completed], timeout: 10)
+        let artifact = try XCTUnwrap(capture.artifact)
+        defer { artifact.discard() }
+        XCTAssertFalse(artifact.captureComplete)
+        XCTAssertFalse(artifact.rawStandardOutputPrefix(maximumBytes: 1024).complete)
+        XCTAssertFalse(artifact.redactedSummary.contains("ghp_secret"))
+    }
+
     func testOptInForcedErrorCompletesAfterTheLastAcceptedNonemptyRead() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

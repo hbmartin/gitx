@@ -322,6 +322,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testUnmergedAndDanglingSymlinkImagesRetainUsableDiffSections() throws {
+        let conflict = "conflict-preview.png"
+        let blob = try fixture.git(["rev-parse", "HEAD:nested/tracked.txt"]).trimmingCharacters(in: .newlines)
+        let records = (1 ... 3).map { "100644 \(blob) \($0)\t\(conflict)\n" }.joined()
+        try GitXTestGitFixture.run(["update-index", "--index-info"], in: URL(fileURLWithPath: fixture.path), standardInput: Data(records.utf8))
+        try fixture.write("conflicted image contents\n", to: conflict)
+        let link = "dangling-preview.png"
+        try FileManager.default.createSymbolicLink(atPath: fixture.path + "/" + link, withDestinationPath: "missing-image-target")
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == conflict })
+        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Staged — " + conflict) })
+        let conflictSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
+        let expected = try fixture.git(["diff-index", "-U3", "--cached", "HEAD", "--", conflict])
+        XCTAssertEqual(conflictSections.first?[PBNativeSectionTextKey] as? String, expected)
+        try attachScreenshot(of: native, named: "Staging-Unmerged-Image-Diff")
+        let untracked = try XCTUnwrap(repository.index.indexChanges.first { $0.path == link })
+        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: untracked, staged: false)])
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("missing-image-target") })
+        let linkSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
+        XCTAssertTrue((linkSections.first?[PBNativeSectionTextKey] as? String)?.contains("120000") == true)
+        try attachScreenshot(of: native, named: "Staging-Dangling-Image-Symlink-Diff")
+    }
+
     func testDiscardConfirmationRevalidatesItsSnapshotBeforeApplyingThePatch() throws {
         let original = try fixture.git(["show", "HEAD:nested/tracked.txt"])
         try fixture.write("initial discard fixture\n", to: "nested/tracked.txt")
@@ -5022,27 +5047,36 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(open.isEnabled)
     }
 
-    func testWorkingStateTextDragPreservesPasteboard() {
+    func testWorkingStateTextDragPreservesPasteboard() throws {
         let working = PBUncommittedChanges(repository: repository)
-        historyController.commitController.content = [working]
+        let committed = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.content = [working, committed]
         historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let workingRow = try XCTUnwrap(arranged.firstIndex { $0 === working })
         let table = CommitListFake()
-        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ShortSHAColumn")))
-        table.testRow = 0
-        table.testColumn = 0
+        for column in ["ShortSHAColumn", "SubjectColumn", "AuthorColumn"] {
+            table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column)))
+        }
+        table.testRow = workingRow
         table.revisionCell.referenceIndex = -1
         let coordinator = tableCoordinator
         let original = historyController.commitList
         historyController.setValue(table, forKey: "commitList")
         defer { historyController.setValue(original, forKey: "commitList") }
-        let pasteboard = freshPasteboard()
-        pasteboard.setString("preserve drag clipboard", forType: .string)
-        let changeCount = pasteboard.changeCount
-        let types = pasteboard.types
-        XCTAssertFalse(coordinator.tableView(table, writeRowsWith: IndexSet(integer: 0), to: pasteboard))
-        XCTAssertEqual(pasteboard.string(forType: .string), "preserve drag clipboard")
-        XCTAssertEqual(pasteboard.changeCount, changeCount)
-        XCTAssertEqual(pasteboard.types, types)
+        for column in 0 ..< table.numberOfColumns {
+            table.testColumn = column
+            for rows in [IndexSet(integer: workingRow), IndexSet(integersIn: 0 ..< arranged.count)] {
+                let pasteboard = freshPasteboard()
+                pasteboard.setString("preserve drag clipboard", forType: .string)
+                let changeCount = pasteboard.changeCount
+                let types = pasteboard.types
+                XCTAssertFalse(coordinator.tableView(table, writeRowsWith: rows, to: pasteboard))
+                XCTAssertEqual(pasteboard.string(forType: .string), "preserve drag clipboard")
+                XCTAssertEqual(pasteboard.changeCount, changeCount)
+                XCTAssertEqual(pasteboard.types, types)
+            }
+        }
     }
 
     func testTablePasteboardDropCheckoutAndResponderInteractions() throws {

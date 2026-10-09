@@ -241,6 +241,13 @@ class ReceiptTests(unittest.TestCase):
 
 
 class DoctorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Destination/toolchain fixtures must not require generated libraries
+        # from a previous build of the real checkout.
+        dependencies = mock.patch("check_test_build_contracts.dependency_checks", return_value=[])
+        dependencies.start()
+        self.addCleanup(dependencies.stop)
+
     def test_destination_matching_honors_every_requested_component(self) -> None:
         output = """
             { platform: macOS, arch: arm64, id: host, name: This Mac }

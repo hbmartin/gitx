@@ -92,14 +92,18 @@ private final nonisolated class IndexPreparedReferenceCapabilities: @unchecked S
                 return error
             }
             return NSError(domain: "PBGitCommitPublicationError", code: 4, userInfo: [
-                NSLocalizedDescriptionKey: "The selected Git executable cannot prepare reference transactions. Select a Git version supporting update-ref --stdin start/prepare/commit/abort before committing. Browsing and staging remain available.",
+                NSLocalizedDescriptionKey: "Could not verify prepared reference transactions. Resolve the underlying Git error and retry. If this Git version lacks update-ref --stdin start/prepare/commit/abort, select a supported Git executable before committing. Browsing and staging remain available.",
                 NSUnderlyingErrorKey: error,
             ])
         }
         if case let .failure(error) = result, (error as NSError).code == 3 {
             throw error
         }
-        results[identity] = result
+        // Repository/configuration, launch and resource errors do not establish
+        // an executable's capability. Only a successful probe is reusable.
+        if case .success = result {
+            results[identity] = result
+        }
         try result.get()
     }
 }
@@ -109,12 +113,16 @@ nonisolated extension IndexRepositoryCommandRunner: IndexCommitReferenceRunning 
         try request.cancellation.check()
         try IndexPreparedReferenceCapabilities.shared.require(context: referenceContext(subject: "GitX capability probe", capabilityProbe: true), cancellation: request.cancellation)
         let head = try readCommitHead()
+        guard let directory = repositoryForCommit?.gitURL() else { throw CommitHeadExpectation.movementError("The repository closed before commit preparation.") }
+        let mergeState = try IndexCommitMergeState(directory: directory)
         if let expected = request.headExpectation {
             guard expected.matches(head) else { throw CommitHeadExpectation.movementError() }
+            try request.mergeState?.validate()
             return request
         }
         var parents: [String] = []
         if request.amend {
+            guard mergeState.mergeHead == nil else { throw CommitHeadExpectation.movementError("Finish the current merge before amending a commit.") }
             guard let oid = head.expectedOID else { throw CommitHeadExpectation.movementError("There is no HEAD commit to amend. Submit a new commit instead.") }
             let line = try output(arguments: ["rev-list", "--parents", "-n", "1", oid], input: nil, environment: nil)
             let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
@@ -124,16 +132,14 @@ nonisolated extension IndexRepositoryCommandRunner: IndexCommitReferenceRunning 
             if let oid = head.expectedOID {
                 parents.append(oid)
             }
-            if let directory = repositoryForCommit?.gitURL() {
-                let mergeURL = directory.appendingPathComponent("MERGE_HEAD")
-                if FileManager.default.fileExists(atPath: mergeURL.path) {
-                    let mergeHeads = try String(contentsOf: mergeURL, encoding: .utf8).split(whereSeparator: \.isWhitespace).map(String.init)
-                    for oid in mergeHeads {
-                        guard CommitHeadExpectation.isObjectID(oid, width: head.objectIDWidth) else { throw CommitHeadExpectation.movementError("MERGE_HEAD contains an invalid parent identity.") }
-                        _ = try output(arguments: ["cat-file", "-e", "\(oid)^{commit}"], input: nil, environment: nil)
-                        if !parents.contains(oid) {
-                            parents.append(oid)
-                        }
+            if let mergeHead = mergeState.mergeHead {
+                guard let text = String(data: mergeHead, encoding: .utf8) else { throw CommitHeadExpectation.movementError("MERGE_HEAD contains invalid text.") }
+                let mergeHeads = text.split(whereSeparator: \.isWhitespace).map(String.init)
+                for oid in mergeHeads {
+                    guard CommitHeadExpectation.isObjectID(oid, width: head.objectIDWidth) else { throw CommitHeadExpectation.movementError("MERGE_HEAD contains an invalid parent identity.") }
+                    _ = try output(arguments: ["cat-file", "-e", "\(oid)^{commit}"], input: nil, environment: nil)
+                    if !parents.contains(oid) {
+                        parents.append(oid)
                     }
                 }
             }
@@ -141,7 +147,8 @@ nonisolated extension IndexRepositoryCommandRunner: IndexCommitReferenceRunning 
         guard parents.allSatisfy({ CommitHeadExpectation.isObjectID($0, width: head.objectIDWidth) }), try head.matches(readCommitHead()) else {
             throw CommitHeadExpectation.movementError()
         }
-        return request.prepared(head: head, parents: parents)
+        try mergeState.validate()
+        return request.prepared(head: head, parents: parents, mergeState: mergeState)
     }
 
     func publishCommit(_ oid: String, request: IndexCommitRequest, subject: String) throws {
@@ -164,10 +171,12 @@ nonisolated extension IndexRepositoryCommandRunner: IndexCommitReferenceRunning 
         // update HEAD locks both its symbolic identity and the resolved reference.
         // Inspect identity only after prepare; an old OID alone misses branch switches.
         guard try expected.matches(readCommitHead(timeout: transaction.remainingTime)) else { throw CommitHeadExpectation.movementError() }
+        try request.mergeState?.validate()
         try request.cancellation.check()
         try transaction.send("commit\n")
         try transaction.acknowledge("commit: ok")
         try transaction.finish()
+        request.mergeState?.clearAfterPublication()
     }
 
     private func referenceContext(subject: String, capabilityProbe: Bool = false) throws -> PBTaskExecutionContext {
@@ -204,6 +213,51 @@ nonisolated extension IndexRepositoryCommandRunner: IndexCommitReferenceRunning 
         let target = try query(["symbolic-ref", "-q", "HEAD"], absentAllowed: true)
         let oid = try query(["rev-parse", "--verify", "-q", "HEAD^{commit}"], absentAllowed: true)
         return try CommitHeadExpectation(symbolicTarget: target, expectedOID: oid, objectIDWidth: width)
+    }
+}
+
+/// Freeze the merge inputs alongside parents. Retry cannot adopt another
+/// merge, and publication cleans up only the state belonging to this request.
+nonisolated struct IndexCommitMergeState: Sendable {
+    private let directory: URL
+    private let markers: [String: Data]
+    private static let names = ["MERGE_MSG", "MERGE_MODE", "MERGE_HEAD"]
+    var mergeHead: Data? {
+        markers["MERGE_HEAD"]
+    }
+
+    init(directory: URL) throws {
+        self.directory = directory
+        var snapshot: [String: Data] = [:]
+        for name in Self.names {
+            let url = directory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: url.path) {
+                snapshot[name] = try Data(contentsOf: url)
+            }
+        }
+        markers = snapshot
+    }
+
+    func validate() throws {
+        guard try IndexCommitMergeState(directory: directory).markers == markers else {
+            throw CommitHeadExpectation.movementError("Merge state changed while the commit was being prepared. Your message is preserved. Review the repository and submit again.")
+        }
+    }
+
+    func clearAfterPublication() {
+        guard mergeHead != nil else { return }
+        do {
+            try validate()
+            // MERGE_HEAD is the active-state marker and is removed last.
+            for name in Self.names where markers[name] != nil {
+                try FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+            }
+            NSLog("[GitX] Published merge commit and cleared its preparation markers")
+        } catch {
+            // Publication succeeded. Preserve newer/changed markers and never
+            // report a failed commit or suppress the post-commit hook here.
+            NSLog("[GitX] Commit published; merge cleanup needs review: %@", error.localizedDescription)
+        }
     }
 }
 

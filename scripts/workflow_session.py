@@ -303,8 +303,9 @@ def desktop_checks():
     output = result.stdout
     console = "Name :" in output and "Name : loginwindow" not in output and f"UID : {os.getuid()}" in output
     display = subprocess.run(["/usr/sbin/ioreg", "-n", "IODisplayWrangler", "-r"], text=True, capture_output=True)
-    locked = '"CGSSessionScreenIsLocked" = Yes' in subprocess.run(
+    lock_properties = subprocess.run(
         ["/usr/sbin/ioreg", "-n", "Root", "-d", "1"], capture_output=True, text=True).stdout
+    locked = bool(re.search(r'"CGSSessionScreenIsLocked"\s*=\s*Yes\b', lock_properties))
     checks = [{"name": "console-session", "status": "passed" if console else "failed",
                "detail": "Active local console user." if console else "Switch to this user's macOS desktop before retrying."},
               {"name": "display", "status": "passed" if display.stdout and not locked else "failed",
