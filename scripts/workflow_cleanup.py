@@ -37,7 +37,13 @@ def configuration(root):
 
 
 def state_directory(root):
-    return records.common_directory(root) / "cleanup" / session.digest(str(pathlib.Path(root).resolve()).encode())[:16]
+    common = records.common_directory(root)
+    common = common.parent.resolve() / common.name
+    directory = common / "cleanup" / session.digest(str(pathlib.Path(root).resolve()).encode())[:16]
+    for path in (common, common / "cleanup", directory, directory / "reports"):
+        if path.is_symlink():
+            raise ValueError(f"Refusing symlink cleanup state: {path}")
+    return directory
 
 
 def pending_path(root):

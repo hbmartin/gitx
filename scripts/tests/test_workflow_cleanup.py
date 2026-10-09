@@ -408,6 +408,30 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue(pathlib.Path(result['report']).is_file(), 'The newly saved report must survive retention')
         self.assertEqual(len(list(reports.glob('*.json'))), 20)
 
+    def test_report_directory_symlink_prevents_deletion_and_external_writes(self):
+        old = self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        reports = cleanup.state_directory(self.root) / 'reports'
+        outside = self.base / 'outside-reports'
+        outside.mkdir()
+        for i in range(21):
+            self.write(outside / f'20000101-{i:02}.json', {'source': True})
+        reports.symlink_to(outside, target_is_directory=True)
+        original = {p.name: p.read_bytes() for p in outside.iterdir()}
+        with self.assertRaisesRegex(ValueError, 'symlink cleanup state'):
+            cleanup.run_cleanup(self.root, receipt)
+        self.assertTrue(old.exists())
+        self.assertEqual({p.name: p.read_bytes() for p in outside.iterdir()}, original)
+
+    def test_queue_refuses_symlink_workflow_state(self):
+        outside = self.base / 'outside-state'
+        outside.mkdir()
+        cleanup.records.common_directory(self.root).symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink cleanup state'):
+            cleanup.queue_commit(self.root)
+        self.assertEqual(list(outside.iterdir()), [])
+
     def test_busy_cache_inside_run_prevents_parent_deletion(self):
         old = self.run_directory('old')
         cache = old / 'DerivedData'
