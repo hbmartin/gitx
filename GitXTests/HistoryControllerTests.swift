@@ -322,6 +322,31 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testUnmergedAndDanglingSymlinkImagesRetainUsableDiffSections() throws {
+        let conflict = "conflict-preview.png"
+        let blob = try fixture.git(["rev-parse", "HEAD:nested/tracked.txt"]).trimmingCharacters(in: .newlines)
+        let records = (1 ... 3).map { "100644 \(blob) \($0)\t\(conflict)\n" }.joined()
+        try GitXTestGitFixture.run(["update-index", "--index-info"], in: URL(fileURLWithPath: fixture.path), standardInput: Data(records.utf8))
+        try fixture.write("conflicted image contents\n", to: conflict)
+        let link = "dangling-preview.png"
+        try FileManager.default.createSymbolicLink(atPath: fixture.path + "/" + link, withDestinationPath: "missing-image-target")
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == conflict })
+        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Staged — " + conflict) })
+        let conflictSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
+        let expected = try fixture.git(["diff-index", "-U3", "--cached", "HEAD", "--", conflict])
+        XCTAssertEqual(conflictSections.first?[PBNativeSectionTextKey] as? String, expected)
+        try attachScreenshot(of: native, named: "Staging-Unmerged-Image-Diff")
+        let untracked = try XCTUnwrap(repository.index.indexChanges.first { $0.path == link })
+        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: untracked, staged: false)])
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("missing-image-target") })
+        let linkSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
+        XCTAssertTrue((linkSections.first?[PBNativeSectionTextKey] as? String)?.contains("120000") == true)
+        try attachScreenshot(of: native, named: "Staging-Dangling-Image-Symlink-Diff")
+    }
+
     func testDiscardConfirmationRevalidatesItsSnapshotBeforeApplyingThePatch() throws {
         let original = try fixture.git(["show", "HEAD:nested/tracked.txt"])
         try fixture.write("initial discard fixture\n", to: "nested/tracked.txt")

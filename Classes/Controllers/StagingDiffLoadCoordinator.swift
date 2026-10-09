@@ -12,6 +12,12 @@ nonisolated struct StagingDiffActionContext: Equatable, Sendable {
     let hasStagedChanges: Bool
     let visualIdentity: String
 
+    init(request: StagingDiffLoadRequest, diff: String, parentTree: String, visualIdentity: String) {
+        self.init(rawPath: request.rawPath, staged: request.staged, parentTree: parentTree, diff: diff,
+                  contextLines: request.contextLines, status: request.status,
+                  hasStagedChanges: request.hasStagedChanges, visualIdentity: visualIdentity)
+    }
+
     init(rawPath: Data, staged: Bool, parentTree: String, diff: String, contextLines: UInt,
          status: Int, hasStagedChanges: Bool, visualIdentity: String = "")
     {
@@ -223,9 +229,7 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
             )
             switch producer(request) {
             case let .validated(diff, parentTree, visualIdentity):
-                let token = StagingDiffActionContext(rawPath: request.rawPath, staged: request.staged, parentTree: parentTree,
-                                                     diff: diff, contextLines: request.contextLines, status: request.status,
-                                                     hasStagedChanges: request.hasStagedChanges, visualIdentity: visualIdentity)
+                let token = StagingDiffActionContext(request: request, diff: diff, parentTree: parentTree, visualIdentity: visualIdentity)
                 sections.append(successfulSection(for: request, diff: diff, actionContext: token))
             case let .failure(detail):
                 NSLog(

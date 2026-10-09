@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Darwin
 
 // Objective-C callers are not visible to SwiftLint's analyzer.
 // swiftlint:disable unused_declaration
@@ -75,7 +76,7 @@ private final nonisolated class StagingImageLookup: @unchecked Sendable {
 /// untracked diffs read only the snapshotted working-directory URL.
 private nonisolated enum StagingTextProduction { case success(String); case failure(String) }
 
-// swift6-safety-justification: Immutable requests cross load and writer queues; each Git command owns its task, and the service locks its capability cache.
+// swift6-safety-justification: Immutable requests cross load and writer queues; each Git command owns its task, and the capability/image caches are lock-protected.
 private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sendable {
     // Strong on purpose: production runs on the coordinator's background queue and can
     // outlive the pane, while the mutation service reaches the repository only through
@@ -84,6 +85,8 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
     private let repository: PBGitRepository
     private let mutationService: IndexMutationService
     private let runner: IndexCommandRunning
+    private let imageCacheLock = NSLock()
+    private var imageHashes: [String: String] = [:]
 
     init(repository: PBGitRepository, runner: IndexCommandRunning? = nil) {
         self.repository = repository
@@ -92,43 +95,98 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
         mutationService = IndexMutationService(repository: repository, runner: commands)
     }
 
-    func produce(_ request: StagingDiffLoadRequest) -> StagingDiffProduction {
+    func produce(_ request: StagingDiffLoadRequest, resolvedTree: String? = nil) -> StagingDiffProduction {
         switch produceText(request) {
         case let .success(diff):
             do {
-                let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-                let tree = request.parentTree == emptyTree ? emptyTree : try runner.output(arguments: ["rev-parse", "--verify", request.parentTree + "^{tree}"], input: nil, environment: nil).trimmingCharacters(in: .newlines)
-                let visual = try imageIdentity(request)
+                let tree = try resolvedTree ?? parentTreeIdentity(request.parentTree)
+                // Unknown visual input must disable reuse/authorization, while
+                // retaining the diff and conflict details already produced.
+                let visual: String
+                do { visual = try imageIdentity(request) }
+                catch {
+                    NSLog("[GitX] Image identity unavailable for %@: %@", request.path, error.localizedDescription)
+                    visual = "unavailable:" + UUID().uuidString
+                }
                 return .validated(diff: diff, parentTree: tree, visualIdentity: visual)
             } catch { return .failure(detail(for: error as NSError)) }
         case let .failure(error): return .failure(error)
         }
     }
 
-    func revalidate(_ request: StagingDiffLoadRequest) -> StagingDiffProduction {
-        guard let path = IndexFilePresentation.safePath(rawPath: request.rawPath) else { return .failure("The selected filename cannot be represented.") }
+    func revalidate(_ requests: [StagingDiffLoadRequest]) -> [StagingDiffProduction] {
+        guard let first = requests.first else { return [] }
         do {
-            func data(_ arguments: [String]) throws -> Data {
-                let task = repository.task(withArguments: ["--literal-pathspecs"] + arguments + ["--", path])
-                task.separatesStandardError = true
-                task.additionalEnvironment = ["GIT_OPTIONAL_LOCKS": "0"]
-                try task.launch()
-                return task.standardOutputData
+            guard requests.allSatisfy({ $0.parentTree == first.parentTree }) else {
+                throw NSError(domain: "PBGitIndexMutationError", code: 8)
             }
-            let parser = IndexStatusParser()
-            var error: NSError?
-            guard let staged = try parser.parseTrackedData(data(["diff-index", "--cached", "-z", request.parentTree]), error: &error),
-                  let unstaged = try parser.parseTrackedData(data(["diff-files", "-z"]), error: &error),
-                  let untracked = try parser.parseUntrackedData(data(["ls-files", "--others", "--exclude-standard", "-z"]), error: &error)
-            else { throw error ?? NSError(domain: "PBGitIndexMutationError", code: 8) }
-            let actual = request.staged ? staged[request.rawPath] : unstaged[request.rawPath] ?? untracked[request.rawPath]
-            guard actual?.status == request.status, (staged[request.rawPath] != nil) == request.hasStagedChanges,
-                  (untracked[request.rawPath] != nil) == request.syntheticUntracked
-            else {
-                return .failure("The selected file's staging state changed. Refresh and retry this action.")
+            let tree = try parentTreeIdentity(first.parentTree)
+            // Bound argv while sharing the three status queries across selected
+            // files. Each file still gets its exact diff and visual identity.
+            var groups: [[StagingDiffLoadRequest]] = []
+            var group: [StagingDiffLoadRequest] = []
+            var size = 0
+            for request in requests {
+                guard let path = IndexFilePresentation.safePath(rawPath: request.rawPath) else {
+                    throw NSError(domain: "PBGitIndexMutationError", code: 8, userInfo: [NSLocalizedDescriptionKey: "The selected filename cannot be represented."])
+                }
+                if !group.isEmpty, size + path.utf8.count + 1 > 32 * 1024 {
+                    groups.append(group); group = []; size = 0
+                }
+                group.append(request); size += path.utf8.count + 1
             }
-            return produce(request)
-        } catch { return .failure(detail(for: error as NSError)) }
+            if !group.isEmpty {
+                groups.append(group)
+            }
+            var results: [StagingDiffProduction] = []
+            for group in groups {
+                let paths = group.compactMap { IndexFilePresentation.safePath(rawPath: $0.rawPath) }
+                func data(_ arguments: [String]) throws -> Data {
+                    let arguments = ["--literal-pathspecs"] + arguments + ["--"] + paths
+                    let environment: [String: Any] = ["GIT_OPTIONAL_LOCKS": "0"]
+                    if let raw = runner as? IndexRawOutputCommandRunning {
+                        return try raw.rawOutput(arguments: arguments, environment: environment)
+                    }
+                    return try Data(runner.output(arguments: arguments, input: nil, environment: environment).utf8)
+                }
+                let parser = IndexStatusParser()
+                var error: NSError?
+                guard let staged = try parser.parseTrackedData(data(["diff-index", "--cached", "-z", first.parentTree]), error: &error),
+                      let unstaged = try parser.parseTrackedData(data(["diff-files", "-z"]), error: &error),
+                      let untracked = try parser.parseUntrackedData(data(["ls-files", "--others", "--exclude-standard", "-z"]), error: &error)
+                else { throw error ?? NSError(domain: "PBGitIndexMutationError", code: 8) }
+                results += group.map { request in
+                    let actual = request.staged ? staged[request.rawPath] : unstaged[request.rawPath] ?? untracked[request.rawPath]
+                    guard actual?.status == request.status, (staged[request.rawPath] != nil) == request.hasStagedChanges,
+                          (untracked[request.rawPath] != nil) == request.syntheticUntracked
+                    else { return .failure("The selected file's staging state changed. Refresh and retry this action.") }
+                    return produce(request, resolvedTree: tree)
+                }
+            }
+            NSLog("[GitX] Revalidated %ld selected files in %ld status batches", requests.count, groups.count)
+            return results
+        } catch { return requests.map { _ in .failure(detail(for: error as NSError)) } }
+    }
+
+    private func parentTreeIdentity(_ parentTree: String) throws -> String {
+        let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        return parentTree == emptyTree ? emptyTree : try runner.output(arguments: ["rev-parse", "--verify", parentTree + "^{tree}"], input: nil, environment: nil).trimmingCharacters(in: .newlines)
+    }
+
+    func actionIdentities(_ requests: [StagingDiffLoadRequest]) throws -> [StagingDiffActionContext] {
+        try zip(requests, revalidate(requests)).map { request, production in
+            guard case let .validated(diff, tree, visual) = production else { throw StagingDiffPaneController.staleActionError() }
+            return StagingDiffActionContext(request: request, diff: diff, parentTree: tree, visualIdentity: visual)
+        }
+    }
+
+    func authorization(requests: [StagingDiffLoadRequest], identities: [StagingDiffActionContext],
+                       eligibility: @escaping @MainActor @Sendable () -> Bool) -> PBIndexPatchAuthorization
+    {
+        PBIndexPatchAuthorization { [weak self] in
+            guard let self, DispatchQueue.main.sync(execute: { eligibility() }),
+                  try actionIdentities(requests) == identities else { throw StagingDiffPaneController.staleActionError() }
+        }
     }
 
     private func imageIdentity(_ request: StagingDiffLoadRequest) throws -> String {
@@ -145,10 +203,56 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
         if request.status == PBChangedFileStatus.DELETED.rawValue {
             return "absent:worktree"
         }
-        let bytes = try Data(contentsOf: url)
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
-        return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() + ":" + String(mode)
+        var hash = SHA256()
+        if attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+            let destination = try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
+            hash.update(data: Data(destination.utf8))
+            if !FileManager.default.fileExists(atPath: url.path) {
+                return "symlink:" + hash.finalize().map { String(format: "%02x", $0) }.joined() + ":" + String(mode)
+            }
+        }
+        try hash.update(data: Data(imageContentHash(url).utf8))
+        return hash.finalize().map { String(format: "%02x", $0) }.joined() + ":" + String(mode)
+    }
+
+    private func imageContentHash(_ url: URL) throws -> String {
+        let file = try FileHandle(forReadingFrom: url)
+        defer { try? file.close() }
+        func identity(descriptor: Int32?) throws -> String {
+            var status = stat()
+            let result = descriptor.map { fstat($0, &status) } ?? stat(url.path, &status)
+            guard result == 0 else { throw POSIXError(.EIO) }
+            return "\(status.st_dev):\(status.st_ino):\(status.st_mode):\(status.st_size):\(status.st_mtimespec.tv_sec):\(status.st_mtimespec.tv_nsec):\(status.st_ctimespec.tv_sec):\(status.st_ctimespec.tv_nsec)"
+        }
+        let key = try identity(descriptor: file.fileDescriptor)
+        imageCacheLock.lock()
+        let cached = imageHashes[key]
+        imageCacheLock.unlock()
+        var hash = SHA256()
+        if cached == nil {
+            while let bytes = try file.read(upToCount: 64 * 1024), !bytes.isEmpty {
+                hash.update(data: bytes)
+            }
+        }
+        // An edit or path replacement during hashing cannot authorize a patch
+        // using bytes from an older descriptor. ctime protects restored mtimes.
+        guard try identity(descriptor: file.fileDescriptor) == key, try identity(descriptor: nil) == key else {
+            throw NSError(domain: "PBGitIndexMutationError", code: 8, userInfo: [NSLocalizedDescriptionKey: "Image content changed while its diff was being loaded."])
+        }
+        if let cached {
+            NSLog("[GitX] Reused unchanged staging image identity for %@", url.lastPathComponent)
+            return cached
+        }
+        let result = hash.finalize().map { String(format: "%02x", $0) }.joined()
+        imageCacheLock.lock()
+        if imageHashes.count >= 64 {
+            imageHashes.removeAll()
+        }
+        imageHashes[key] = result
+        imageCacheLock.unlock()
+        return result
     }
 
     private func produceText(_ request: StagingDiffLoadRequest) -> StagingTextProduction {
@@ -277,7 +381,7 @@ final class StagingDiffPaneController: NSObject {
         contentView = PBNativeContentView(frame: .zero)
         let production = IndexMutationStagingDiffProducer(repository: repository, runner: diffRunner)
         producer = production
-        loadCoordinator = StagingDiffLoadCoordinator(producer: production.produce)
+        loadCoordinator = StagingDiffLoadCoordinator(producer: { production.produce($0) })
         let savedContext = UserDefaults.standard.object(forKey: Self.contextLinesKey) as? Int
         contextLines = UInt(max(0, savedContext ?? 3))
         super.init()
@@ -425,20 +529,8 @@ final class StagingDiffPaneController: NSObject {
         let writer = IndexRepositoryCommandRunner(repository: repository).writerCoordinator
         writer.schedule("capture discard confirmation", work: { [producer] () -> (PBIndexPatchAuthorization?, NSError?) in
             do {
-                let identities = try requests.map { request -> StagingDiffActionContext in
-                    guard case let .validated(diff, tree, visual) = producer.revalidate(request) else { throw Self.staleActionError() }
-                    return StagingDiffActionContext(rawPath: request.rawPath, staged: false, parentTree: tree, diff: diff,
-                                                    contextLines: request.contextLines, status: request.status, hasStagedChanges: request.hasStagedChanges, visualIdentity: visual)
-                }
-                let authorization = PBIndexPatchAuthorization { [weak producer] in
-                    guard let producer, DispatchQueue.main.sync(execute: { eligibility() }) else { throw Self.staleActionError() }
-                    for (request, identity) in zip(requests, identities) {
-                        guard case let .validated(diff, tree, visual) = producer.revalidate(request) else { throw Self.staleActionError() }
-                        let fresh = StagingDiffActionContext(rawPath: request.rawPath, staged: false, parentTree: tree, diff: diff,
-                                                             contextLines: request.contextLines, status: request.status, hasStagedChanges: request.hasStagedChanges, visualIdentity: visual)
-                        guard fresh == identity else { throw Self.staleActionError() }
-                    }
-                }
+                let identities = try producer.actionIdentities(requests)
+                let authorization = producer.authorization(requests: requests, identities: identities, eligibility: eligibility)
                 return (authorization, nil)
             } catch { return (nil, error as NSError) }
         }, completion: { result in
@@ -480,20 +572,13 @@ final class StagingDiffPaneController: NSObject {
             return token.permits(action) && stillSelected(token) && !repository.index.submissionActive && repository.index.isAmend == expectedAmend
         }
         let producer = producer
-        let authorization = PBIndexPatchAuthorization { [weak producer] in
-            guard let producer, DispatchQueue.main.sync(execute: { eligibility() }) else { throw Self.staleActionError() }
-            guard case let .validated(diff, tree, visual) = producer.revalidate(request) else { throw Self.staleActionError() }
-            let fresh = StagingDiffActionContext(rawPath: request.rawPath, staged: request.staged, parentTree: tree,
-                                                 diff: diff, contextLines: request.contextLines, status: request.status,
-                                                 hasStagedChanges: request.hasStagedChanges, visualIdentity: visual)
-            guard fresh == token else { throw Self.staleActionError() }
-        }
+        let authorization = producer.authorization(requests: [request], identities: [token], eligibility: eligibility)
         if !repository.index.applyPatch(patch, stage: stage, reverse: reverse, authorization: authorization, completion: { _, _ in }) {
             rejectAction()
         }
     }
 
-    private nonisolated static func staleActionError() -> NSError {
+    fileprivate nonisolated static func staleActionError() -> NSError {
         NSError(domain: "PBGitIndexMutationError", code: 8, userInfo: [NSLocalizedDescriptionKey: "The selected diff or repository state changed. Refresh and retry this action."])
     }
 
@@ -509,5 +594,28 @@ final class StagingDiffPaneController: NSObject {
         )
     }
 }
+
+#if DEBUG
+    /// Drive the actual capture and writer revalidation without presenting a sheet.
+    @objc(PBStagingDiffRevalidationTestHarness)
+    final class StagingDiffRevalidationTestHarness: NSObject {
+        @objc(prepareAndValidateWithRepository:runner:files:completion:)
+        static func prepareAndValidate(repository: PBGitRepository, runner: IndexCommandRunning, files: [PBChangedFile],
+                                       completion: @escaping @MainActor @Sendable (NSError?) -> Void)
+        {
+            let pane = StagingDiffPaneController(repository: repository, diffRunner: runner)
+            pane.prepareDiscard(files: files, eligibility: { true }) { authorization, error in
+                guard let authorization else { completion(error); return }
+                let writer = IndexRepositoryCommandRunner(repository: repository).writerCoordinator
+                writer.schedule("test confirmed discard revalidation", work: { [pane] () -> NSError? in
+                    withExtendedLifetime(pane) {
+                        do { try authorization.validate(); return nil }
+                        catch { return error as NSError }
+                    }
+                }, completion: { error in DispatchQueue.main.async { completion(error) } })
+            }
+        }
+    }
+#endif
 
 // swiftlint:enable unused_declaration

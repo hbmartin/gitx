@@ -26,7 +26,14 @@ protocol IndexBinaryCommandRunning: IndexCommandRunning {
     ) throws -> String
 }
 
-final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexBinaryCommandRunning {
+/// Synchronous byte output preserves NUL-delimited status records, including
+/// rename sources that cannot be decoded as UTF-8. Text adapters remain valid.
+@objc(PBIndexRawOutputCommandRunning)
+protocol IndexRawOutputCommandRunning: IndexCommandRunning {
+    nonisolated func rawOutput(arguments: [String], environment: [String: Any]?) throws -> Data
+}
+
+final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexBinaryCommandRunning, IndexRawOutputCommandRunning {
     private weak var repository: PBGitRepository?
     var repositoryForCommit: PBGitRepository? {
         repository
@@ -88,6 +95,19 @@ final nonisolated class IndexRepositoryCommandRunner: NSObject, IndexBinaryComma
             coordinator.schedule(arguments.joined(separator: " "), launch)
         } else {
             DispatchQueue.global(qos: .userInitiated).async(execute: launch)
+        }
+    }
+
+    func rawOutput(arguments: [String], environment: [String: Any]?) throws -> Data {
+        guard let repository else { throw Self.closedRepositoryError() }
+        let task = repository.task(withArguments: arguments)
+        task.separatesStandardError = true
+        if let environment {
+            task.additionalEnvironment = environment
+        }
+        return try perform(arguments: arguments) {
+            try task.launch()
+            return task.standardOutputData
         }
     }
 
