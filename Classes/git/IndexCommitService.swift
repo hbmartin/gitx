@@ -43,18 +43,25 @@ final nonisolated class IndexCommitRequest: NSObject, @unchecked Sendable {
     @objc let hasHead: Bool
     @objc let headExpectation: CommitHeadExpectation?
     let cancellation: IndexCommitCancellation
+    let mergeState: IndexCommitMergeState?
 
     @objc(requestWithoutVerification)
     func withoutVerification() -> IndexCommitRequest {
         IndexCommitRequest(message: message, verify: false, gpgSign: gpgSign, amend: amend,
-                           environment: environment, parentSHAs: parentSHAs, hasHead: hasHead, headExpectation: headExpectation, cancellation: cancellation)
+                           environment: environment, parentSHAs: parentSHAs, hasHead: hasHead, headExpectation: headExpectation, cancellation: cancellation, mergeState: mergeState)
     }
 
     @objc(preparedWithHeadExpectation:parentSHAs:)
     func prepared(head: CommitHeadExpectation, parents: [String]) -> IndexCommitRequest {
         IndexCommitRequest(message: message, verify: verify, gpgSign: gpgSign, amend: amend,
                            environment: environment, parentSHAs: parents, hasHead: head.expectedOID != nil,
-                           headExpectation: head, cancellation: cancellation)
+                           headExpectation: head, cancellation: cancellation, mergeState: mergeState)
+    }
+
+    func prepared(head: CommitHeadExpectation, parents: [String], mergeState: IndexCommitMergeState) -> IndexCommitRequest {
+        IndexCommitRequest(message: message, verify: verify, gpgSign: gpgSign, amend: amend,
+                           environment: environment, parentSHAs: parents, hasHead: head.expectedOID != nil,
+                           headExpectation: head, cancellation: cancellation, mergeState: mergeState)
     }
 
     @objc func cancel() {
@@ -76,7 +83,8 @@ final nonisolated class IndexCommitRequest: NSObject, @unchecked Sendable {
         parentSHAs: [String],
         hasHead: Bool,
         headExpectation: CommitHeadExpectation?,
-        cancellation: IndexCommitCancellation
+        cancellation: IndexCommitCancellation,
+        mergeState: IndexCommitMergeState? = nil
     ) {
         self.message = message
         self.verify = verify
@@ -87,6 +95,7 @@ final nonisolated class IndexCommitRequest: NSObject, @unchecked Sendable {
         self.hasHead = hasHead
         self.headExpectation = headExpectation
         self.cancellation = cancellation
+        self.mergeState = mergeState
         super.init()
     }
 }
