@@ -234,6 +234,55 @@ final class PushOutputExportCoordinatorTests: XCTestCase {
             }
         }
 
+        func testDefaultSavePanelUsesItsOwnerAndCancellationAllowsAnotherRequest() async throws {
+            let artifact = makeArtifact("save panel ownership")
+            defer { artifact.discard() }
+            let error = NSError(domain: PBTaskErrorDomain, code: 4, userInfo: ["PBTaskDiagnosticArtifact": artifact])
+            let button = try XCTUnwrap(PBPushOutputExportCoordinatorTestHarness.button(for: error))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView?.addSubview(button)
+            window.makeKeyAndOrderFront(nil)
+            defer {
+                if let sheet = window.attachedSheet {
+                    window.endSheet(sheet, returnCode: .cancel)
+                }
+                window.close()
+            }
+            for attempt in 0 ..< 2 {
+                button.performClick(nil)
+                let presented = await waitForPresentation { window.attachedSheet != nil }
+                XCTAssertTrue(presented)
+                let sheet = try XCTUnwrap(window.attachedSheet)
+                XCTAssertTrue(sheet.sheetParent === window)
+                if let panel = sheet as? NSSavePanel {
+                    XCTAssertEqual(panel.nameFieldStringValue, "GitX-Push-Output.txt")
+                    XCTAssertTrue(panel.canCreateDirectories)
+                    if attempt == 0 {
+                        try attachScreenshot(of: panel, named: "Export-Native-Save-Panel-Owner")
+                    }
+                    panel.cancel(nil)
+                } else {
+                    if attempt == 0 {
+                        try attachScreenshot(of: sheet, named: "Export-Native-Save-Panel-Owner")
+                    }
+                    window.endSheet(sheet, returnCode: .cancel)
+                    sheet.orderOut(nil)
+                }
+                let dismissed = await waitForPresentation { window.attachedSheet == nil }
+                XCTAssertTrue(dismissed)
+                XCTAssertTrue(button.isEnabled)
+            }
+        }
+
+        private func waitForPresentation(_ state: @MainActor () -> Bool) async -> Bool {
+            let deadline = Date().addingTimeInterval(5)
+            while !state(), Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return state()
+        }
+
         private func facts(for scenario: String) async -> [String: NSNumber] {
             let result = await withCheckedContinuation { continuation in
                 PBPushOutputExportCoordinatorTestHarness.exportProof(scenario: scenario) { facts in
