@@ -154,9 +154,15 @@ def cache_paths(root=ROOT, configuration="Debug", instrumentation="plain", devel
         toolchain = subprocess.check_output([str(pathlib.Path(developer) / "usr/bin/xcodebuild"), "-version"], timeout=15).decode().strip()
     except (OSError, subprocess.SubprocessError):
         toolchain = str(developer)
-    base = pathlib.Path.home() / "Library/Caches/GitX/Verification"
+    base = pathlib.Path(os.environ.get("GITX_VERIFICATION_CACHE_ROOT",
+                                     pathlib.Path.home() / "Library/Caches/GitX/Verification")).expanduser()
+    if not base.is_absolute():
+        base = root / base
+    base = base.resolve()
     base = base / digest(str(root).encode())[:16] / digest(toolchain.encode())[:16]
-    partition = base / configuration / instrumentation
+    # Counter updates are part of instrumentation identity. Never reuse the
+    # products previously compiled with racing, non-atomic coverage counters.
+    partition = base / configuration / ("correctness-atomic" if instrumentation == "correctness" else instrumentation)
     return {"derivedData": str(pathlib.Path(os.environ.get("GITX_DERIVED_DATA", partition / "DerivedData")).expanduser().resolve()),
             "swiftPM": str(pathlib.Path(os.environ.get("GITX_SWIFTPM_BUILD_ROOT", partition / "SwiftPM")).expanduser().resolve()),
             "sourcePackages": str(pathlib.Path(os.environ.get("GITX_SOURCE_PACKAGE_CACHE", base / "SourcePackages")).expanduser().resolve()),
@@ -496,6 +502,24 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             keeper.wait()
 
 
+def uses_atomic_coverage(arguments):
+    if "raw" in arguments:
+        arguments = arguments[arguments.index("raw") + 1:]
+        plan = "GitX"
+        for index, argument in enumerate(arguments):
+            if argument == "-testPlan" and index + 1 < len(arguments):
+                plan = arguments[index + 1]
+            elif argument.startswith("-testPlan="):
+                plan = argument.partition("=")[2]
+        return plan == "GitX" and any(action in arguments for action in ("test", "test-without-building", "build-for-testing"))
+    if "build-tests" in arguments:
+        return True
+    if "test" not in arguments:
+        return False
+    arguments = arguments[arguments.index("test") + 1:]
+    return arguments[:1] == ["correctness"] or arguments[:2] == ["-testPlan", "GitX"]
+
+
 def entry_resources(entry, arguments, root=ROOT):
     configuration = "Release" if "archive" in arguments and "raw" not in arguments else "Debug"
     for index, value in enumerate(arguments[:-1]):
@@ -514,6 +538,8 @@ def entry_resources(entry, arguments, root=ROOT):
             instrumentation = plan_instrumentation.get(arguments[index + 1], "plain")
         if value in {"-enableAddressSanitizer", "-enableThreadSanitizer", "-enableCodeCoverage"} and arguments[index + 1] == "YES":
             instrumentation = {"-enableAddressSanitizer": "address-undefined", "-enableThreadSanitizer": "thread-sanitizer", "-enableCodeCoverage": "correctness"}[value]
+    if entry == "xcodebuild.sh" and uses_atomic_coverage(arguments):
+        instrumentation = "correctness"
     developer = None
     for index, value in enumerate(arguments[:-1]):
         if value == "--developer-dir":
@@ -605,6 +631,8 @@ def main():
     paths = sub.add_parser("paths")
     paths.add_argument("--configuration", default="Debug")
     paths.add_argument("--instrumentation", default="plain")
+    counters = sub.add_parser("coverage-mode")
+    counters.add_argument("arguments", nargs=argparse.REMAINDER)
     signature = sub.add_parser("signatures")
     signature.add_argument("derived_data")
     sub.add_parser("desktop")
@@ -619,6 +647,8 @@ def main():
             return guard(args.entry, args.arguments)
         if args.command == "paths":
             print(json.dumps(cache_paths(configuration=args.configuration, instrumentation=args.instrumentation)))
+        if args.command == "coverage-mode":
+            print("atomic" if uses_atomic_coverage(args.arguments) else "unchanged")
         if args.command == "run":
             command = args.arguments[1:] if args.arguments[:1] == ["--"] else args.arguments
             inherited = Leases([], {"runId": os.environ.get("GITX_SESSION_ID", "command")})

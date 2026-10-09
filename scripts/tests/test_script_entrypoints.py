@@ -767,7 +767,45 @@ class ScriptEntrypointTests(unittest.TestCase):
                 self.assertIn("$(inherited)", value)
                 self.assertIn("WORKFLOW_CHARACTERIZATION", value)
         for flag in flags:
-            self.assertIn(flag, self.receipt("compiler-flags")["invocation"]["arguments"])
+            self.assertTrue(any(flag in argument for argument in
+                                self.receipt("compiler-flags")["invocation"]["arguments"]))
+
+    def test_correctness_records_atomic_counters_for_all_compilation_entrypoints(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        commands = (["build-tests"],
+                    ["test", "correctness", "-only-testing:GitXTests/ExampleTests"],
+                    ["test", "-testPlan", "GitX", "-only-testing:GitXTests/ExampleTests"],
+                    ["raw", "--", "build-for-testing", "-testPlan=GitX"],
+                    ["raw", "--", "test", "-only-testing:GitXTests/ExampleTests"])
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                captured.write_text("")
+                run_id = f"atomic-{index}"
+                subprocess.run([script, "--run-id", run_id, *command], check=True,
+                               capture_output=True, text=True, env=self.environment)
+                builds = [value.splitlines() for value in captured.read_text().split("__INVOCATION__")
+                          if "\nbuild-for-testing\n" in value]
+                self.assertTrue(builds)
+                for arguments in builds:
+                    self.assertIn("OTHER_SWIFT_FLAGS=$(inherited) -Xllvm -instrprof-atomic-counter-update-all", arguments)
+                    self.assertIn("OTHER_CFLAGS=$(inherited) -fprofile-update=atomic", arguments)
+                recorded = self.receipt(run_id)["invocation"]["arguments"]
+                self.assertTrue(any("-instrprof-atomic-counter-update-all" in value for value in recorded))
+                self.assertTrue(any("-fprofile-update=atomic" in value for value in recorded))
+
+    def test_non_coverage_commands_keep_existing_counter_mode(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        for index, command in enumerate((["build"], ["test", "performance"],
+                                         ["test", "address-undefined"], ["test", "thread-sanitizer"],
+                                         ["raw", "--", "build-for-testing", "-testPlan", "GitXPerformance"])):
+            with self.subTest(command=command):
+                captured.write_text("")
+                subprocess.run([script, "--run-id", f"non-atomic-{index}", *command], check=True,
+                               capture_output=True, text=True, env=self.environment)
+                self.assertNotIn("-instrprof-atomic-counter-update-all", captured.read_text())
+                self.assertNotIn("-fprofile-update=atomic", captured.read_text())
 
     def test_ui_preflight_forwards_non_selection_extras_only(self) -> None:
         script = self.install_script("xcodebuild.sh")

@@ -32,6 +32,7 @@ Global options:
 Every invocation emits a receipt under artifacts/verification/<run-id> while
 reusing caches under ~/Library/Caches/GitX/Verification. GITX_DERIVED_DATA,
 GITX_SWIFTPM_BUILD_ROOT and GITX_SOURCE_PACKAGE_CACHE override resolved paths.
+GITX_VERIFICATION_CACHE_ROOT relocates the partitioned cache hierarchy.
 USAGE
 }
 
@@ -242,6 +243,26 @@ if [[ "$command" == "test" ]]; then
 			;;
 	esac
 fi
+# Concurrent readers can corrupt ordinary instrumentation counters, including
+# producing wrapped branch counts. Correctness uses atomic updates in both the
+# host probe and suite. Record these effective flags before receipt creation.
+coverage_mode=$(python3 "$root/scripts/workflow_session.py" coverage-mode "$command" ${command_arguments[@]+"${command_arguments[@]}"}) || exit $?
+if [[ "$coverage_mode" == "atomic" ]]; then
+	coverage_arguments=()
+	swift_flags="\$(inherited)"
+	c_flags="\$(inherited)"
+	for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
+		case "$argument" in
+			OTHER_SWIFT_FLAGS=*) swift_flags=${argument#*=} ;;
+			OTHER_CFLAGS=*) c_flags=${argument#*=} ;;
+			*) coverage_arguments+=("$argument") ;;
+		esac
+	done
+	coverage_arguments+=("OTHER_SWIFT_FLAGS=$swift_flags -Xllvm -instrprof-atomic-counter-update-all"
+		"OTHER_CFLAGS=$c_flags -fprofile-update=atomic")
+	command_arguments=("${coverage_arguments[@]}")
+fi
+
 coverage_gate=not-applicable
 if [[ "$command" == "test" ]]; then
 	case "${command_arguments[0]:-}" in

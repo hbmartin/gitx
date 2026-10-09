@@ -114,6 +114,32 @@ class WorkflowSessionTests(unittest.TestCase):
             resources, _ = session.entry_resources("xcodebuild.sh", ["raw", "--", "build-for-testing"])
             self.assertNotIn(f"desktop:{os.getuid()}", resources)
 
+    def test_cache_root_override_preserves_partitions_and_individual_overrides(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode Test"):
+            root = pathlib.Path(directory).resolve()
+            cache = root / "protected"
+            cache.mkdir()
+            alias = root / "alias"
+            alias.symlink_to(cache)
+            with mock.patch.dict(os.environ, {"GITX_VERIFICATION_CACHE_ROOT": str(alias)}):
+                paths = [session.cache_paths(root / checkout, configuration, instrumentation)
+                         for checkout, configuration, instrumentation in (
+                             ("first", "Debug", "plain"), ("second", "Debug", "plain"),
+                             ("first", "Release", "plain"), ("first", "Debug", "correctness"))]
+                self.assertEqual(len({value["derivedData"] for value in paths}), 4)
+                for value in paths:
+                    for key in ("derivedData", "swiftPM", "sourcePackages"):
+                        self.assertTrue(pathlib.Path(value[key]).is_relative_to(cache))
+                self.assertIn("correctness-atomic", pathlib.Path(paths[-1]["derivedData"]).parts)
+                with mock.patch.dict(os.environ, {"GITX_DERIVED_DATA": str(root / "explicit")}):
+                    self.assertEqual(session.cache_paths(root)["derivedData"], str(root / "explicit"))
+
+    def test_relative_cache_root_is_resolved_against_checkout(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"GITX_VERIFICATION_CACHE_ROOT": "verification-cache"}, clear=True), mock.patch.object(session.subprocess, "check_output", return_value=b"Xcode Test"):
+            root = pathlib.Path(directory).resolve()
+            result = session.cache_paths(root)
+            self.assertTrue(pathlib.Path(result["derivedData"]).is_relative_to(root / "verification-cache"))
+
     def test_interruption_stops_descendants_in_separate_process_groups(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
