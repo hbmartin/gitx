@@ -34,12 +34,12 @@
 		item = [outline itemAtRow:outline.clickedRow];
 		if ([item isKindOfClass:NSTreeNode.class]) tree = ((NSTreeNode *)item).representedObject;
 	}
-	[PBHistoryFileOpening openTree:tree
-						   outline:outline
-							  item:item
-							opener:^BOOL(NSURL *url) {
-								return [[NSWorkspace sharedWorkspace] openURL:url];
-							}];
+	(void)[PBHistoryFileOpening openTree:tree
+								 outline:outline
+									item:item
+								  opener:^BOOL(NSURL *url) {
+									  return [[NSWorkspace sharedWorkspace] openURL:url];
+								  }];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem
