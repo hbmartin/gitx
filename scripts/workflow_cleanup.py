@@ -508,7 +508,7 @@ def run_cleanup(root, receipt, inherited=None):
             report["reason"] = changed
         report["finishedAt"] = records.now()
         reports = directory / "reports"
-        output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8] + ".json")
+        output = reports / (dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%f") + "-" + uuid.uuid4().hex[:8] + ".json")
         session.atomic_json(output, public_report(report))
         for old in sorted(reports.glob("*.json"))[:-report["policy"]["reportLimit"]]:
             if not old.is_symlink():

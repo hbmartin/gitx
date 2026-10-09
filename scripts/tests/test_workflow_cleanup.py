@@ -392,6 +392,22 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(receipt['status'], 'passed')
         self.assertTrue((self.root / 'build/GitX.app/binary').exists())
 
+    def test_newest_report_survives_reports_created_in_the_same_second(self):
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        reports = cleanup.state_directory(self.root) / 'reports'
+        instant = cleanup.dt.datetime(2026, 10, 9, 12, 0, 0, 500000, tzinfo=cleanup.dt.timezone.utc)
+        prefix = instant.strftime('%Y%m%dT%H%M%S')
+        for i in range(20):
+            self.write(reports / f'{prefix}-f{i:07}.json', {'old': True})
+        with mock.patch.object(cleanup.dt, 'datetime', wraps=cleanup.dt.datetime) as clock, \
+                mock.patch.object(cleanup.uuid, 'uuid4', return_value=mock.Mock(hex='0' * 32)):
+            clock.now.return_value = instant
+            result = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(result['status'], 'complete')
+        self.assertTrue(pathlib.Path(result['report']).is_file(), 'The newly saved report must survive retention')
+        self.assertEqual(len(list(reports.glob('*.json'))), 20)
+
     def test_busy_cache_inside_run_prevents_parent_deletion(self):
         old = self.run_directory('old')
         cache = old / 'DerivedData'
