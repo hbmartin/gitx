@@ -327,13 +327,26 @@ nonisolated struct HistoryFlowRevisionProvider: RevisionProvider {
         @objc(drainPipeWithFileDescriptor:)
         // swiftlint:disable:next unused_declaration -- The test-only compatibility header reaches this selector.
         static func drainPipe(fileDescriptor: Int32) -> [String: Any] {
+            drainPipe(fileDescriptor: fileDescriptor, injectedPollError: nil)
+        }
+
+        @objc(drainPipeWithFileDescriptor:pollError:)
+        // swiftlint:disable:next unused_declaration -- The test-only compatibility header reaches this selector.
+        static func drainPipe(fileDescriptor: Int32, pollError: Int32) -> [String: Any] {
+            drainPipe(fileDescriptor: fileDescriptor, injectedPollError: pollError)
+        }
+
+        private static func drainPipe(fileDescriptor: Int32, injectedPollError: Int32?) -> [String: Any] {
             let stopCount = Mutex(0)
-            let reader = HistoryFlowBoundedPipeReader(
-                fileHandle: FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: false),
-                maximumBytes: 1024,
-                shouldStop: { false },
-                stopProcess: { stopCount.withLock { $0 += 1 } }
-            )
+            let handle = FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: false)
+            let reader: HistoryFlowBoundedPipeReader
+            if let injectedPollError {
+                reader = HistoryFlowBoundedPipeReader(testingFileHandle: handle, pollError: injectedPollError,
+                                                      stopProcess: { stopCount.withLock { $0 += 1 } })
+            } else {
+                reader = HistoryFlowBoundedPipeReader(fileHandle: handle, maximumBytes: 1024,
+                                                      shouldStop: { false }, stopProcess: { stopCount.withLock { $0 += 1 } })
+            }
             reader.drain()
             return [
                 "data": reader.data,
@@ -537,6 +550,17 @@ private final nonisolated class HistoryFlowBoundedPipeReader: Sendable {
     private let shouldStop: @Sendable () -> Bool
     private let stopProcess: @Sendable () -> Void
     private let state = Mutex(State())
+    #if DEBUG
+        private let pollErrorForTesting: Int32?
+
+        init(testingFileHandle: FileHandle, pollError: Int32, stopProcess: @escaping @Sendable () -> Void) {
+            fileHandle = testingFileHandle
+            maximumBytes = 1024
+            shouldStop = { false }
+            self.stopProcess = stopProcess
+            pollErrorForTesting = pollError
+        }
+    #endif
 
     init(
         fileHandle: FileHandle,
@@ -548,6 +572,9 @@ private final nonisolated class HistoryFlowBoundedPipeReader: Sendable {
         self.maximumBytes = max(0, maximumBytes)
         self.shouldStop = shouldStop
         self.stopProcess = stopProcess
+        #if DEBUG
+            pollErrorForTesting = nil
+        #endif
     }
 
     var data: Data {
@@ -601,7 +628,17 @@ private final nonisolated class HistoryFlowBoundedPipeReader: Sendable {
                     events: Int16(POLLIN | POLLHUP | POLLERR),
                     revents: 0
                 )
-                let result = poll(&descriptor, 1, 100)
+                #if DEBUG
+                    let result: Int32
+                    if let pollErrorForTesting {
+                        errno = pollErrorForTesting
+                        result = -1
+                    } else {
+                        result = poll(&descriptor, 1, 100)
+                    }
+                #else
+                    let result = poll(&descriptor, 1, 100)
+                #endif
                 if result >= 0 || errno == EINTR {
                     continue
                 }

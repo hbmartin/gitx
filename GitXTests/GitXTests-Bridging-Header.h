@@ -74,6 +74,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface PBHistoryFlowRevisionProviderTestHarness : NSObject
 + (NSString *)unsupportedPathDescription:(NSString *)path;
 + (NSDictionary<NSString *, id> *)drainPipeWithFileDescriptor:(int)descriptor NS_SWIFT_NAME(drainPipe(fileDescriptor:));
++ (NSDictionary<NSString *, id> *)drainPipeWithFileDescriptor:(int)descriptor pollError:(int)pollError NS_SWIFT_NAME(drainPipe(fileDescriptor:pollError:));
 + (PBHistoryFlowRevisionProviderTestOperation *)cancelledBeforeLaunchWithGitExecutableURL:(NSURL *)gitExecutableURL
 																		completionHandler:(void (^)(NSString *_Nullable errorDescription))completionHandler
 	NS_SWIFT_NAME(cancelledBeforeLaunch(gitExecutableURL:completionHandler:));
