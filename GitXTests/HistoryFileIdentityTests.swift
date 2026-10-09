@@ -33,6 +33,29 @@ final class HistoryFileIdentityTests: XCTestCase {
         try GitXTestGitFixture.run(["update-index", "-z", "--index-info"], in: directory, standardInput: input)
     }
 
+    func testCommittedPathspecMetacharactersKeepTheirOwnHistoryAndObjectContents() throws {
+        try fixture { directory in
+            let decoy = try blob("decoy\n", directory: directory)
+            try put([(Data("a1.txt".utf8), decoy), (Data("decoy.txt".utf8), decoy)], directory: directory)
+            try GitXTestGitFixture.run(["commit", "-q", "-m", "decoy history"], in: directory)
+            let literal = try blob("literal contents\n", directory: directory)
+            let paths = ["a[1].txt", "*.txt", ":(glob)*.txt"]
+            try put(paths.map { (Data($0.utf8), literal) }, directory: directory)
+            try GitXTestGitFixture.run(["commit", "-q", "-m", "literal history"], in: directory)
+            let repository = try XCTUnwrap(GitXTestGitRepository(url: directory))
+            defer { repository.revisionList?.cleanup() }
+            let nodes = try XCTUnwrap(PBHistoryTreePresentation(repository: repository).tree(for: headCommit(in: repository)).children)
+            for path in paths {
+                let node = try XCTUnwrap(nodes.first { $0.path == path })
+                XCTAssertEqual(node.log("%s").trimmingCharacters(in: .newlines), "literal history", path)
+                XCTAssertTrue(node.blame().contains("literal contents"), path)
+                XCTAssertEqual(node.textContents(), "literal contents")
+                XCTAssertEqual(node.fileSize(), Int64("literal contents\n".utf8.count))
+                XCTAssertEqual(try String(contentsOfFile: XCTUnwrap(node.tmpFileNameForContents()), encoding: .utf8), "literal contents\n")
+            }
+        }
+    }
+
     func testCanonicallyEquivalentCommittedPathsKeepDistinctIdentityMetadataAndOrdering() throws {
         try fixture { directory in
             let nfc = Data("caf\u{00E9}.txt".utf8)

@@ -299,7 +299,7 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
     }
 
     private var unavailableText: String? {
-        let attributes = output(["check-attr", "binary", "--", fullPath], diagnosticOnFailure: false)
+        let attributes = output(["--literal-pathspecs", "check-attr", "binary", "--", fullPath], diagnosticOnFailure: false)
         let binaryAttribute = attributes?.hasSuffix("binary: set") == true
         let binaryExtension = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".o"].contains { fullPath.hasSuffix($0) }
         let binary = binaryAttribute || (attributes != nil && attributes?.hasSuffix("binary: unset") != true && binaryExtension)
@@ -328,12 +328,12 @@ private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
 
     override func blame() -> String! {
         guard canPreview else { return contents }
-        return unavailableText ?? checkedText(output(["blame", "-p", sha, "--", fullPath]))
+        return unavailableText ?? checkedText(output(["--literal-pathspecs", "blame", "-p", sha, "--", fullPath]))
     }
 
     override func log(_ format: String!) -> String! {
         guard canPreview else { return contents }
-        return unavailableText ?? checkedText(output(["log", "--pretty=format:\(format ?? "")", "--follow", "--", fullPath]))
+        return unavailableText ?? checkedText(output(["--literal-pathspecs", "log", "--pretty=format:\(format ?? "")", "--follow", "--", fullPath]))
     }
 
     override func tmpFileNameForContents() -> String! {
