@@ -132,9 +132,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(index.mutationReconciliationPending)
         XCTAssertEqual((index.value(forKey: "postMutationStatCacheRefreshesPending") as? NSNumber)?.uintValue, 0)
         index.close()
+        let closedWorktree = try fixture.git(["diff", "--binary"])
+        let closedIndex = try fixture.git(["write-tree"])
         XCTAssertFalse(index.stageFiles([file]))
         XCTAssertFalse(index.unstageFiles([file]))
         index.discardChanges(for: [file])
+        XCTAssertFalse(index.discardChanges(for: [file], completion: { _, _ in XCTFail("Closed discard was admitted") }))
+        XCTAssertEqual(try fixture.git(["diff", "--binary"]), closedWorktree)
+        XCTAssertEqual(try fixture.git(["write-tree"]), closedIndex)
         XCTAssertFalse(index.applyPatch("closed", stage: true, reverse: false))
         index.applyRefreshResult(PBIndexRefreshResult(staged: nil, unstaged: nil, untracked: nil, mutationGeneration: 0))
         XCTAssertFalse(index.stageFiles([], completion: { _, _ in XCTFail("Closed operation was admitted") }))
@@ -249,6 +254,42 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
                 XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending && (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent("nested/tracked.txt"), encoding: .utf8)) == original })
             }
         }
+    }
+
+    func testWholeFileDiscardAuthorizesOnlyTrackedFilesInAMixedBinarySelection() throws {
+        let path = "nested/tracked.txt"
+        let original = try fixture.git(["show", "HEAD:" + path])
+        try fixture.write("modified tracked\n", to: path)
+        let untracked = URL(fileURLWithPath: fixture.path).appendingPathComponent("untracked.bin")
+        let bytes = Data([0, 255, 1, 0])
+        try bytes.write(to: untracked)
+        let pane = try openStagingPane()
+        let selected = repository.index.indexChanges.filter { $0.path == path || $0.path == "untracked.bin" }
+        XCTAssertEqual(selected.count, 2)
+        pane.fileListController.unstagedFilesController.setSelectedObjects(selected)
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("discardFiles:"), with: self) }
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent(path), encoding: .utf8), original)
+        XCTAssertEqual(try Data(contentsOf: untracked), bytes)
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Mixed-Selection-Tracked-Discard")
+    }
+
+    func testWholeFileDiscardAuthorizesDeletedNonUTF8FilenameWithoutTextDecoding() async throws {
+        let rawPath = Data(Array("tracked-".utf8) + [255] + Array(".txt".utf8))
+        let directory = URL(fileURLWithPath: fixture.path)
+        // APFS rejects creation of non-UTF-8 names. A deleted tracked index
+        // entry still exercises real Git's byte protocol and authorization.
+        let original = Data("original raw filename\n".utf8)
+        let oid = try GitXTestGitFixture.run(["hash-object", "-w", "--stdin"], in: directory, standardInput: original).standardOutput.trimmingCharacters(in: .newlines)
+        var input = Data("100644 \(oid)\t".utf8); input.append(rawPath); input.append(0)
+        try GitXTestGitFixture.run(["update-index", "-z", "--index-info"], in: directory, standardInput: input)
+        try fixture.git(["commit", "-qm", "raw tracked path"])
+        // update-index --refresh also rejects this name on APFS, so capture
+        // the tracked deletion directly rather than requiring a UI refresh.
+        let file = PBChangedFile(path: "tracked-\\xFF.txt", rawPath: rawPath)
+        file.status = .DELETED
+        file.hasUnstagedChanges = true
+        try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: IndexRepositoryCommandRunner(repository: repository), files: [file])
     }
 
     func testWholeFileDiscardRejectsChangedStateBeforeShowingConfirmation() throws {

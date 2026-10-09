@@ -71,6 +71,150 @@ private final nonisolated class StagingImageLookup: @unchecked Sendable {
     }
 }
 
+/// Whole-file authorization compares Git and filesystem bytes, independently
+/// of diff rendering or filename display decoding.
+private nonisolated struct StagingDiscardSnapshot: Equatable {
+    let parentTree: String
+    let files: [File]
+
+    struct File: Equatable {
+        let rawPath: Data
+        let status: Int
+        let staged: Bool
+        let indexEntries: [Data]
+        let worktree: Worktree
+    }
+
+    enum Worktree: Equatable {
+        case absent
+        case regular(mode: UInt32, digest: Data)
+        case symlink(mode: UInt32, target: Data)
+    }
+}
+
+private nonisolated struct StagingDiscardCapture {
+    let runner: IndexCommandRunning
+
+    func snapshot(_ requests: [StagingDiffLoadRequest], parentTree: String) throws -> StagingDiscardSnapshot {
+        guard let first = requests.first else { return StagingDiscardSnapshot(parentTree: parentTree, files: []) }
+        guard let rawRunner = runner as? IndexRawOutputCommandRunning,
+              let directory = first.workingDirectoryURL,
+              requests.allSatisfy({ $0.parentTree == first.parentTree && $0.workingDirectoryURL == directory })
+        else { throw StagingDiffPaneController.staleActionError() }
+        func data(_ arguments: [String]) throws -> Data {
+            try rawRunner.rawOutput(arguments: ["--literal-pathspecs"] + arguments, environment: ["GIT_OPTIONAL_LOCKS": "0"])
+        }
+        // Query raw records once, then select by bytes. No argv encoding can
+        // represent every Git pathname, and no command is needed per file.
+        let parser = IndexStatusParser()
+        var error: NSError?
+        guard let staged = try parser.parseTrackedData(data(["diff-index", "--cached", "--no-renames", "-z", first.parentTree]), error: &error),
+              let unstaged = try parser.parseTrackedData(data(["diff-files", "--no-renames", "-z"]), error: &error)
+        else { throw error ?? StagingDiffPaneController.staleActionError() }
+        let selected = Set(requests.map(\.rawPath))
+        var entries: [Data: [Data]] = [:]
+        for record in try IndexFilePresentation.rawPaths(data: data(["ls-files", "--stage", "-z"])) {
+            guard let tab = record.firstIndex(of: 9) else { throw StagingDiffPaneController.staleActionError() }
+            let path = Data(record.suffix(from: record.index(after: tab)))
+            guard selected.contains(path) else { continue }
+            let header = Data(record[..<tab])
+            guard let text = String(data: header, encoding: .ascii) else { throw StagingDiffPaneController.staleActionError() }
+            let fields = text.split(separator: " ")
+            guard fields.count == 3, fields[0].count == 6, fields[0].allSatisfy({ ("0" ... "7").contains(String($0)) }),
+                  [40, 64].contains(fields[1].count), fields[1].allSatisfy(\.isHexDigit), ["0", "1", "2", "3"].contains(fields[2])
+            else { throw StagingDiffPaneController.staleActionError() }
+            entries[path, default: []].append(header)
+        }
+        let root = directory.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) } ?? -1
+        }
+        guard root >= 0 else { throw Self.fileError() }
+        defer { Darwin.close(root) }
+        let files = try requests.map { request in
+            guard let actual = unstaged[request.rawPath], actual.status == request.status,
+                  (staged[request.rawPath] != nil) == request.hasStagedChanges,
+                  let indexEntries = entries[request.rawPath], !indexEntries.isEmpty
+            else { throw StagingDiffPaneController.staleActionError() }
+            return try StagingDiscardSnapshot.File(rawPath: request.rawPath, status: actual.status,
+                                                   staged: request.hasStagedChanges, indexEntries: indexEntries,
+                                                   worktree: Self.worktreeIdentity(root: root, path: request.rawPath))
+        }
+        NSLog("[GitX] Captured byte-preserving discard identities for %ld tracked files", files.count)
+        return StagingDiscardSnapshot(parentTree: parentTree, files: files)
+    }
+
+    private static func worktreeIdentity(root: Int32, path: Data) throws -> StagingDiscardSnapshot.Worktree {
+        let components = path.split(separator: 47, omittingEmptySubsequences: false)
+        guard !path.contains(0), components.allSatisfy({ !$0.isEmpty && $0 != Data([46]) && $0 != Data([46, 46]) })
+        else { throw StagingDiffPaneController.staleActionError() }
+        var terminated = path; terminated.append(0)
+        return try terminated.withUnsafeBytes { bytes in
+            let name = bytes.baseAddress!.assumingMemoryBound(to: CChar.self)
+            var before = stat()
+            guard fstatat(root, name, &before, AT_SYMLINK_NOFOLLOW) == 0 else {
+                if errno == ENOENT {
+                    return .absent
+                }
+                throw fileError()
+            }
+            let mode = UInt32(before.st_mode & 0o777)
+            let kind = before.st_mode & S_IFMT
+            let identity: StagingDiscardSnapshot.Worktree
+            if kind == S_IFLNK {
+                var capacity = 256
+                while true {
+                    var buffer = [UInt8](repeating: 0, count: capacity)
+                    let count = buffer.withUnsafeMutableBytes { readlinkat(root, name, $0.baseAddress!.assumingMemoryBound(to: CChar.self), $0.count) }
+                    guard count >= 0 else { throw fileError() }
+                    if count < capacity {
+                        identity = .symlink(mode: mode, target: Data(buffer.prefix(count)))
+                        break
+                    }
+                    guard capacity < 1024 * 1024 else { throw StagingDiffPaneController.staleActionError() }
+                    capacity *= 2
+                }
+            } else {
+                guard kind == S_IFREG else { throw StagingDiffPaneController.staleActionError() }
+                let descriptor = Darwin.openat(root, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+                guard descriptor >= 0 else { throw fileError() }
+                defer { Darwin.close(descriptor) }
+                var opened = stat()
+                guard fstat(descriptor, &opened) == 0, sameFile(before, opened) else { throw StagingDiffPaneController.staleActionError() }
+                var hash = SHA256()
+                var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+                while true {
+                    let count = Darwin.read(descriptor, &buffer, buffer.count)
+                    if count > 0 {
+                        hash.update(data: Data(buffer.prefix(count)))
+                    } else if count == 0 {
+                        break
+                    } else if errno != EINTR {
+                        throw fileError()
+                    }
+                }
+                var finished = stat()
+                guard fstat(descriptor, &finished) == 0, sameFile(opened, finished) else { throw StagingDiffPaneController.staleActionError() }
+                identity = .regular(mode: mode, digest: Data(hash.finalize()))
+            }
+            var after = stat()
+            guard fstatat(root, name, &after, AT_SYMLINK_NOFOLLOW) == 0, sameFile(before, after)
+            else { throw StagingDiffPaneController.staleActionError() }
+            return identity
+        }
+    }
+
+    private static func sameFile(_ first: stat, _ second: stat) -> Bool {
+        first.st_dev == second.st_dev && first.st_ino == second.st_ino && first.st_mode == second.st_mode &&
+            first.st_size == second.st_size && first.st_mtimespec.tv_sec == second.st_mtimespec.tv_sec &&
+            first.st_mtimespec.tv_nsec == second.st_mtimespec.tv_nsec && first.st_ctimespec.tv_sec == second.st_ctimespec.tv_sec &&
+            first.st_ctimespec.tv_nsec == second.st_ctimespec.tv_nsec
+    }
+
+    private static func fileError() -> NSError {
+        NSError(domain: NSPOSIXErrorDomain, code: Int(errno), userInfo: [NSLocalizedDescriptionKey: "Could not capture the selected file for discard."])
+    }
+}
+
 /// Produces diff text from immutable request values on the coordinator's
 /// serial queue. The service owns the Git command execution; synthetic
 /// untracked diffs read only the snapshotted working-directory URL.
@@ -171,6 +315,21 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
     private func parentTreeIdentity(_ parentTree: String) throws -> String {
         let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
         return parentTree == emptyTree ? emptyTree : try runner.output(arguments: ["rev-parse", "--verify", parentTree + "^{tree}"], input: nil, environment: nil).trimmingCharacters(in: .newlines)
+    }
+
+    func discardAuthorization(requests: [StagingDiffLoadRequest],
+                              eligibility: @escaping @MainActor @Sendable () -> Bool) throws -> PBIndexPatchAuthorization
+    {
+        let expected = try discardSnapshot(requests)
+        return PBIndexPatchAuthorization { [weak self] in
+            guard let self, DispatchQueue.main.sync(execute: { eligibility() }),
+                  try discardSnapshot(requests) == expected else { throw StagingDiffPaneController.staleActionError() }
+        }
+    }
+
+    private func discardSnapshot(_ requests: [StagingDiffLoadRequest]) throws -> StagingDiscardSnapshot {
+        let tree = try requests.first.map { try parentTreeIdentity($0.parentTree) } ?? ""
+        return try StagingDiscardCapture(runner: runner).snapshot(requests, parentTree: tree)
     }
 
     func actionIdentities(_ requests: [StagingDiffLoadRequest]) throws -> [StagingDiffActionContext] {
@@ -520,7 +679,7 @@ final class StagingDiffPaneController: NSObject {
                         completion: @escaping @MainActor @Sendable (PBIndexPatchAuthorization?, NSError?) -> Void)
     {
         let parentTree = repository.index.parentTree
-        let requests = files.map { file in
+        let requests = IndexFilePresentation.discardableFiles(files: files).map { file in
             StagingDiffLoadRequest(path: file.path, rawPath: file.rawPath, status: file.worktreeStatus.rawValue,
                                    hasStagedChanges: file.hasStagedChanges, staged: false, parentTree: parentTree, contextLines: 3,
                                    workingDirectoryURL: repository.workingDirectoryURL(), syntheticUntracked: file.worktreeStatus == .NEW)
@@ -529,8 +688,7 @@ final class StagingDiffPaneController: NSObject {
         let writer = IndexRepositoryCommandRunner(repository: repository).writerCoordinator
         writer.schedule("capture discard confirmation", work: { [producer] () -> (PBIndexPatchAuthorization?, NSError?) in
             do {
-                let identities = try producer.actionIdentities(requests)
-                let authorization = producer.authorization(requests: requests, identities: identities, eligibility: eligibility)
+                let authorization = try producer.discardAuthorization(requests: requests, eligibility: eligibility)
                 return (authorization, nil)
             } catch { return (nil, error as NSError) }
         }, completion: { result in
@@ -603,9 +761,18 @@ final class StagingDiffPaneController: NSObject {
         static func prepareAndValidate(repository: PBGitRepository, runner: IndexCommandRunning, files: [PBChangedFile],
                                        completion: @escaping @MainActor @Sendable (NSError?) -> Void)
         {
+            prepareAndValidate(repository: repository, runner: runner, files: files, beforeValidation: {}, completion: completion)
+        }
+
+        @objc(prepareAndValidateWithRepository:runner:files:beforeValidation:completion:)
+        static func prepareAndValidate(repository: PBGitRepository, runner: IndexCommandRunning, files: [PBChangedFile],
+                                       beforeValidation: @escaping @MainActor @Sendable () -> Void,
+                                       completion: @escaping @MainActor @Sendable (NSError?) -> Void)
+        {
             let pane = StagingDiffPaneController(repository: repository, diffRunner: runner)
             pane.prepareDiscard(files: files, eligibility: { true }) { authorization, error in
                 guard let authorization else { completion(error); return }
+                beforeValidation()
                 let writer = IndexRepositoryCommandRunner(repository: repository).writerCoordinator
                 writer.schedule("test confirmed discard revalidation", work: { [pane] () -> NSError? in
                     withExtendedLifetime(pane) {

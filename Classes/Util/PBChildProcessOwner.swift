@@ -606,6 +606,8 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
     private let usesLegacyWorkingDirectoryAPI: Bool
     private let observeExit: @Sendable (pid_t, UnsafeMutablePointer<siginfo_t>) -> Int32
     private let inspectGroup: @Sendable (pid_t, UnsafeMutableRawPointer?, Int32) -> Int32
+    private let duplicateDescriptor: @Sendable (Int32) -> Int32
+    private let copyArgument: @Sendable (String) -> UnsafeMutablePointer<CChar>?
 
     init(
         usesLegacyWorkingDirectoryAPI: Bool = false,
@@ -614,11 +616,15 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         },
         inspectGroup: @escaping @Sendable (pid_t, UnsafeMutableRawPointer?, Int32) -> Int32 = {
             proc_listpgrppids($0, $1, $2)
-        }
+        },
+        duplicateDescriptor: @escaping @Sendable (Int32) -> Int32 = { fcntl($0, F_DUPFD_CLOEXEC, STDERR_FILENO + 1) },
+        copyArgument: @escaping @Sendable (String) -> UnsafeMutablePointer<CChar>? = { strdup($0) }
     ) {
         self.usesLegacyWorkingDirectoryAPI = usesLegacyWorkingDirectoryAPI
         self.observeExit = observeExit
         self.inspectGroup = inspectGroup
+        self.duplicateDescriptor = duplicateDescriptor
+        self.copyArgument = copyArgument
     }
 
     private struct PreparedDescriptors {
@@ -875,7 +881,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
             throw posixError(errno == 0 ? EBADF : errno, operation: operation)
         }
         guard descriptor <= STDERR_FILENO else { return descriptor }
-        let duplicate = fcntl(descriptor, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
+        let duplicate = duplicateDescriptor(descriptor)
         guard duplicate != -1 else {
             throw posixError(errno, operation: operation)
         }
@@ -890,7 +896,7 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
         var pointers: [UnsafeMutablePointer<CChar>?] = []
         defer { pointers.forEach { free($0) } }
         for value in strings {
-            guard let pointer = strdup(value) else {
+            guard let pointer = copyArgument(value) else {
                 throw posixError(ENOMEM, operation: "allocate child process arguments")
             }
             pointers.append(pointer)
@@ -921,6 +927,43 @@ nonisolated struct PBPosixChildProcessSystem: PBChildProcessSystem {
 #if GITX_APP_TARGET
     // This bridge is referenced only by Objective-C PBTask.m.
     // swiftlint:disable unused_declaration
+    #if DEBUG
+        @objc(PBChildProcessFailureTestHarness)
+        final nonisolated class PBChildProcessFailureTestHarness: NSObject {
+            @objc(exerciseFailureWithDuplicateDescriptor:error:)
+            static func exerciseFailure(duplicateDescriptor: Bool) throws {
+                let copies = OSAllocatedUnfairLock(initialState: 0)
+                let system: PBPosixChildProcessSystem
+                if duplicateDescriptor {
+                    system = PBPosixChildProcessSystem(duplicateDescriptor: { _ in errno = EMFILE; return -1 })
+                } else {
+                    system = PBPosixChildProcessSystem(copyArgument: { value in
+                        let shouldCopy = copies.withLock { count in
+                            count += 1
+                            return count == 1
+                        }
+                        return shouldCopy ? strdup(value) : nil
+                    })
+                }
+                try spawn(system: system)
+            }
+
+            @objc(exerciseSuccessfulSpawnAndReturnError:)
+            static func exerciseSuccessfulSpawn() throws {
+                try spawn(system: PBPosixChildProcessSystem())
+            }
+
+            private static func spawn(system: PBPosixChildProcessSystem) throws {
+                let pid = try system.spawn(configuration: PBChildProcessConfiguration(
+                    launchPath: "/usr/bin/true", arguments: ["fixture"], environment: [:], workingDirectory: nil,
+                    standardInputFileDescriptor: nil, standardOutputFileDescriptor: STDOUT_FILENO
+                ))
+                // The successful control owns and reaps its child as well.
+                var status: Int32 = 0
+                while waitpid(pid, &status, 0) == -1, errno == EINTR {}
+            }
+        }
+    #endif
     @objc(PBChildProcessSupervisor)
     final nonisolated class PBChildProcessSupervisor: NSObject {
         private let configuration: PBChildProcessConfiguration

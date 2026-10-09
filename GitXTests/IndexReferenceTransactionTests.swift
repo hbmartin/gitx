@@ -77,6 +77,57 @@ final class IndexReferenceTransactionTests: XCTestCase {
     }
 
     #if DEBUG
+        func testCancelledAndFailedLaunchCapabilityProbesRemainRetryable() throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let executable = directory.appendingPathComponent("peer")
+            try "#!/bin/sh\nprintf 'probe\\n' >> probes\nwhile read command; do printf '%s: ok\\n' \"$command\"; done\n".write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+            func task() -> PBTask {
+                PBTask(launchPath: executable.path, arguments: [], inDirectory: directory.path)
+            }
+            XCTAssertThrowsError(try PBIndexReferenceCapabilityTestHarness.require(task: task(), cancelled: true)) { error in
+                XCTAssertEqual((error as NSError).code, 3)
+            }
+            try PBIndexReferenceCapabilityTestHarness.require(task: task())
+            let probes = try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8)
+            try PBIndexReferenceCapabilityTestHarness.require(task: task())
+            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8), probes)
+            for _ in 0 ..< 2 {
+                XCTAssertThrowsError(try PBIndexReferenceCapabilityTestHarness.require(task: PBTask(launchPath: "/gitx-missing-peer", arguments: [], inDirectory: nil))) { error in
+                    XCTAssertEqual((error as NSError).code, 4)
+                }
+            }
+        }
+
+        func testMergeCleanupRemovesOnlyUnchangedCapturedMarkers() throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            for replacement in [nil, "newer merge\n"] as [String?] {
+                try Data("parent\n".utf8).write(to: directory.appendingPathComponent("MERGE_HEAD"))
+                try Data("captured merge\n".utf8).write(to: directory.appendingPathComponent("MERGE_MSG"))
+                try PBIndexReferenceCapabilityTestHarness.clearCapturedMergeState(directory: directory.path, replacementMessage: replacement)
+                XCTAssertEqual(FileManager.default.fileExists(atPath: directory.appendingPathComponent("MERGE_HEAD").path), replacement != nil)
+                if let replacement {
+                    XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("MERGE_MSG"), encoding: .utf8), replacement)
+                } else {
+                    XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("MERGE_MSG").path))
+                }
+            }
+        }
+
+        func testFinalAcknowledgementWrittenBetweenReadAndExitObservationIsAccepted() throws {
+            try PBIndexReferenceTransactionTestHarness.exerciseTerminalReadRace(acknowledgement: true)
+        }
+
+        func testFinalDiagnosticWrittenBetweenReadAndExitObservationIsReported() {
+            XCTAssertThrowsError(try PBIndexReferenceTransactionTestHarness.exerciseTerminalReadRace(acknowledgement: false)) { error in
+                XCTAssertEqual((error as NSError).userInfo[NSLocalizedFailureReasonErrorKey] as? String, "final diagnostic\n")
+            }
+        }
+
         func testFailedCapabilityProbesAreRetriedAndSuccessIsCachedByExecutableIdentity() throws {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXCapability-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

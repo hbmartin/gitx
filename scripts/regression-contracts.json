@@ -135,6 +135,12 @@
           "identifier": "GitXTests/HistoryControllerTests/testWorkingStateTreeAndDiffUseRawIdentityAcrossDisplayCollisionsAndDetachedParents",
           "role": "failure",
           "oracle": "Resolve actual selected path and parent rather than its rendered label."
+        },
+        {
+          "source": "GitXTests/HistoryFileIdentityTests.swift",
+          "identifier": "GitXTests/HistoryFileIdentityTests/testCommittedPathspecMetacharactersKeepTheirOwnHistoryAndObjectContents",
+          "role": "boundary",
+          "oracle": "Literal Git history excludes matching decoy paths while object reads remain correct."
         }
       ]
     },
@@ -212,6 +218,24 @@
           "identifier": "GitXTests/HistoryControllerTests/testDiscardConfirmationRevalidatesItsSnapshotBeforeApplyingThePatch",
           "role": "boundary",
           "oracle": "Confirmation completion revalidates current content before applying."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWholeFileDiscardAuthorizesOnlyTrackedFilesInAMixedBinarySelection",
+          "role": "valid",
+          "oracle": "Tracked contents are restored and the untracked binary remains byte-identical."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWholeFileDiscardAuthorizesDeletedNonUTF8FilenameWithoutTextDecoding",
+          "role": "compatibility",
+          "oracle": "Real NUL-delimited Git output authorizes a tracked raw-byte deletion without text decoding."
+        },
+        {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testDiscardSnapshotRejectsSameSizedContentPermissionsIndexTreeAndStagingChanges",
+          "role": "boundary",
+          "oracle": "Each changed confirmation input rejects authorization before mutation."
         }
       ]
     },
@@ -283,6 +307,24 @@
           "identifier": "GitXTests/IndexReferenceTransactionTests/testHeadExpectationsDistinguishSymbolicDetachedUnbornAndRawIdentity",
           "role": "failure",
           "oracle": "Distinguish actual symbolic, detached and unborn identities despite matching OIDs."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testCancelledAndFailedLaunchCapabilityProbesRemainRetryable",
+          "role": "failure",
+          "oracle": "Cancellation and launch failures permit another probe; successful capability evidence remains reusable."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testMergeCleanupRemovesOnlyUnchangedCapturedMarkers",
+          "role": "boundary",
+          "oracle": "Changed merge markers survive post-publication cleanup."
+        },
+        {
+          "source": "GitXTests/IndexCommitPublicationTests.swift",
+          "identifier": "GitXTests/IndexCommitPublicationTests/testInvalidMergeParentBytesRefusePublicationAndPreservePreparedState",
+          "role": "failure",
+          "oracle": "Invalid UTF-8 and malformed merge parents refuse publication and retain captured state."
         }
       ]
     },
@@ -354,7 +396,9 @@
       "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit.",
       "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output.",
       "sourcePaths": [
-        "Classes/Util/PBTask*"
+        "Classes/Util/PBTask*",
+        "Classes/Util/PBChildProcessOwner.swift",
+        "Classes/git/IndexReferenceTransaction.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -380,6 +424,24 @@
           "identifier": "GitXTests/PBTaskDiagnosticCaptureTests/testRepeatedDeadlineDrainNeverUpgradesAClosedIncompleteStreamToEOF",
           "role": "failure",
           "oracle": "Repeated drainage cannot upgrade an incomplete stream to complete EOF."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testFinalAcknowledgementWrittenBetweenReadAndExitObservationIsAccepted",
+          "role": "valid",
+          "oracle": "A controlled peer exit between reads preserves its final acknowledgement."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testFinalDiagnosticWrittenBetweenReadAndExitObservationIsReported",
+          "role": "failure",
+          "oracle": "The failure reason retains diagnostics written just before exit."
+        },
+        {
+          "source": "GitXTests/PBChildProcessOwnerTests.swift",
+          "identifier": "GitXTests/PBChildProcessOwnerTests/testAppPosixResourceFailuresPreserveCallerDescriptors",
+          "role": "boundary",
+          "oracle": "Injected application resource failures preserve caller descriptors and the successful control reaps its child."
         }
       ]
     },
@@ -413,6 +475,12 @@
           "identifier": "GitXTests/PBTaskDiagnosticCaptureTests/testCoreSummaryRedactsBeforeCutoffAndExportRetainsMiddle",
           "role": "failure",
           "oracle": "Both summary cutoff and full export exclude secrets."
+        },
+        {
+          "source": "GitXTests/PBTaskDiagnosticRedactorTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticRedactorTests/testAmbiguousAuthorityWithoutAtKeepsItsCredentialRedactedAcrossWhitespace",
+          "role": "boundary",
+          "oracle": "Malformed userinfo stays redacted through the application boundary."
         }
       ]
     },
@@ -453,16 +521,20 @@
     {
       "id": "ENV-001",
       "family": "Deterministic Git fixtures",
-      "invariant": "Tests isolate inherited Git selectors while keeping explicitly configured local hooks and binary input.",
+      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input.",
       "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state.",
       "sourcePaths": [
         "GitXTests/GitXTestGitEnvironment.swift",
         "GitXTests/GitXTestGitFixture.swift",
         "Classes/Util/PBProcessEnvironment*",
-        "scripts/run_app.sh"
+        "scripts/run_app.sh",
+        "scripts/workflow_session.py",
+        "scripts/workflow_records.py",
+        "scripts/regression_guardrails.py"
       ],
       "requiredChecks": [
-        "correctness"
+        "correctness",
+        "static"
       ],
       "tests": [
         {
@@ -494,7 +566,8 @@
         "Classes/*.h",
         "Classes/Util/PBTask*",
         "GitX.xcodeproj/project.pbxproj",
-        "Resources/GitX.h"
+        "Resources/GitX.h",
+        "GitXTests/GitXTests-Bridging-Header.h"
       ],
       "requiredChecks": [
         "correctness",
