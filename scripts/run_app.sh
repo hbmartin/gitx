@@ -18,7 +18,8 @@
 #   scripts/run_app.sh --m3 review              # deterministic Milestone 3 journey
 #   scripts/run_app.sh --repo /tmp/some-repo    # open an existing repository
 #   scripts/run_app.sh --repo /tmp/some-repo --preserve-git-environment
-#                                             # preserve identity, signing, and Git settings
+#                                             # preserve caller identity, dates, signing, authentication, and helpers
+#                                             # always clear repository/storage selector variables
 #   scripts/run_app.sh --stop                   # terminate app and log stream
 #
 # Milestone 2 scenarios: push-create, existing-pull-request, exact-checkout,
@@ -29,6 +30,12 @@
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+# A selected repository owns storage, regardless of preserved caller identity.
+for gitx_repository_selector in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH GIT_NAMESPACE; do
+    unset "$gitx_repository_selector"
+done
+
 if [[ "${GITX_GUARDED_ENTRY:-}" != "$root/scripts/run_app.sh" ]]; then
 	exec python3 "$root/scripts/workflow_session.py" guard "$root/scripts/run_app.sh" "$@"
 fi
@@ -353,7 +360,7 @@ fi
 # Preferences stay isolated in either mode. Only explicit existing-repository
 # launches may retain the caller's Git identity, signing, config, and helpers.
 if (( preserve_git_environment )); then
-	echo "Preserving the caller's Git environment for the existing repository."
+	echo "Preserving caller Git identity, dates, signing configuration, authentication, and helpers; repository/storage selectors are cleared."
 else
 	for gitx_git_environment_key in "${!GIT_@}"; do
 		unset "$gitx_git_environment_key"

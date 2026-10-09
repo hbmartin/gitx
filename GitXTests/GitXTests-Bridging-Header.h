@@ -686,6 +686,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 + (nullable NSButton *)buttonForError:(NSError *)error NS_SWIFT_NAME(button(for:));
 + (void)installOnWindow:(nullable NSWindow *)window error:(NSError *)error NS_SWIFT_NAME(install(on:error:));
 + (void)exportProofForScenario:(NSString *)scenario completion:(void (^)(NSDictionary<NSString *, NSNumber *> *facts))completion NS_SWIFT_NAME(exportProof(scenario:completion:));
++ (void)exportProofForScenario:(NSString *)scenario restoration:(void (^)(NSWindow *))restoration completion:(void (^)(NSDictionary<NSString *, NSNumber *> *))completion NS_SWIFT_NAME(exportProof(scenario:restoration:completion:));
 @end
 #endif
 

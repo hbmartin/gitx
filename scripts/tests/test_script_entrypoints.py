@@ -1166,6 +1166,22 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
+        (repository / "selected.txt").write_text("selected fixture\n")
+        foreign = self.root / "foreign-repo"
+        foreign.mkdir()
+        subprocess.run(["git", "init", "--quiet", foreign], check=True, env=self.fixture_environment)
+        (foreign / "foreign.txt").write_text("foreign fixture\n")
+        (foreign / "selected.txt").write_text("different foreign contents\n")
+        subprocess.run(["git", "-C", foreign, "add", "foreign.txt"], check=True, env=self.fixture_environment)
+        foreign_index = foreign / ".git" / "index"
+        original_foreign_index = foreign_index.read_bytes()
+        selectors = {
+            "GIT_DIR": str(foreign / ".git"), "GIT_WORK_TREE": str(foreign),
+            "GIT_INDEX_FILE": str(foreign_index), "GIT_COMMON_DIR": str(foreign / ".git"),
+            "GIT_OBJECT_DIRECTORY": str(foreign / ".git" / "objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(foreign / ".git" / "objects"),
+            "GIT_QUARANTINE_PATH": str(foreign / ".git" / "objects"), "GIT_NAMESPACE": "inherited-namespace",
+        }
         app_contents = self.root / "build" / "GitX.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)
@@ -1173,10 +1189,13 @@ class ScriptEntrypointTests(unittest.TestCase):
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         forge_roots = self.root / "forge-roots.txt"
         launch_environment = self.root / "launch-environment.txt"
+        mutation_result = self.root / "mutation-result.txt"
         app_binary.write_text(
             "#!/bin/bash\n"
             f"printf '%s\\n' \"$GITX_UITEST_FORGE_STORAGE_ROOT\" >>'{forge_roots}'\n"
             f"/usr/bin/env >'{launch_environment}'\n"
+            '/usr/bin/git -C "$GITX_UITEST_REPO" add selected.txt\n'
+            f"printf '%s\\n' \"$?\" >'{mutation_result}'\n"
             "exec /bin/sleep 60\n"
         )
         app_binary.chmod(0o755)
@@ -1199,20 +1218,25 @@ class ScriptEntrypointTests(unittest.TestCase):
             "GCM_INTERACTIVE": "always",
             "LC_ALL": "en_US.UTF-8",
         }
+        environment.update(selectors)
         sessions: list[dict[str, str]] = []
         captured_environments: list[dict[str, str]] = []
 
         try:
             for preserve in (False, False, True):
-                subprocess.run(
+                (repository / ".git" / "index").unlink(missing_ok=True)
+                mutation_result.unlink(missing_ok=True)
+                launch = subprocess.run(
                     [script, "--no-build", "--repo", str(repository), "--timeout", "2"]
                     + (["--preserve-git-environment"] if preserve else []),
-                    check=True,
+                    check=False,
                     capture_output=True,
                     text=True,
                     env=environment,
                     timeout=10,
                 )
+                self.assertEqual(foreign_index.read_bytes(), original_foreign_index, f"preserve={preserve}; launcher status={launch.returncode}")
+                launch.check_returncode()
                 session = dict(
                     line.split("=", maxsplit=1)
                     for line in (self.root / "build" / "Logs" / "run-app" / "session.txt")
@@ -1224,6 +1248,14 @@ class ScriptEntrypointTests(unittest.TestCase):
                     line.split("=", maxsplit=1)
                     for line in launch_environment.read_text().splitlines() if "=" in line
                 ))
+                deadline = time.monotonic() + 2
+                while not mutation_result.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(mutation_result.exists(), "Fixture mutation did not complete")
+                self.assertEqual(mutation_result.read_text().strip(), "0", f"preserve={preserve}")
+                self.assertEqual(foreign_index.read_bytes(), original_foreign_index, f"preserve={preserve}")
+                self.assertEqual(subprocess.run(["git", "-C", repository, "ls-files"], check=True,
+                    capture_output=True, text=True, env=self.fixture_environment).stdout, "selected.txt\n")
                 os.kill(int(session["app_pid"]), signal.SIGTERM)
                 os.kill(int(session["log_pid"]), signal.SIGTERM)
                 time.sleep(0.1)
@@ -1271,7 +1303,9 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(captured["LC_ALL"], "C")
         preserved = captured_environments[2]
         for key, value in environment.items():
-            if key.startswith("GIT_") or key in ("GCM_INTERACTIVE", "LC_ALL"):
+            if key in selectors:
+                for captured in captured_environments: self.assertNotIn(key, captured)
+            elif key.startswith("GIT_") or key in ("GCM_INTERACTIVE", "LC_ALL"):
                 self.assertEqual(preserved[key], value, key)
         self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 

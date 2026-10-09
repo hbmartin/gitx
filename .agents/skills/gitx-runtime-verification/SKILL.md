@@ -26,6 +26,8 @@ scripts/run_app.sh --m3 lifecycle
 scripts/run_app.sh --repo /tmp/existing-repository
 ```
 
+For an existing fixture repository, `--repo /tmp/existing-repository --preserve-git-environment` retains caller identity, dates, signing configuration, authentication, and helper environment. Both launch modes clear inherited repository/storage selectors: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_QUARANTINE_PATH`, and `GIT_NAMESPACE`. The flag requires `--repo`; it does not provide an alternate-index launch mode.
+
 Use only a repository in an unprotected temporary location unless access prompts are the behavior under test. The harness intentionally isolates preferences and Git configuration. If launch fails, inspect the paths printed by the script before trying a different launch method.
 
 ## Observe the recorded process

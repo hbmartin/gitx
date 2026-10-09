@@ -66,6 +66,36 @@ final class PushOutputExportCoordinatorTests: XCTestCase {
             XCTAssertEqual(result["finished"], 2)
         }
 
+        func testTemporaryInvisibilityRetainsOneExportErrorUntilRestoration() async {
+            for scenario in ["hidden-restore", "minimized-restore", "application-hidden-restore", "sheet-minimized-restore"] {
+                let result: [String: NSNumber] = await withCheckedContinuation { continuation in
+                    PBPushOutputExportCoordinatorTestHarness.exportProof(scenario: scenario, restoration: { window in
+                        do { try self.attachScreenshot(of: window, named: "Export-Error-Recovery-" + scenario) } catch { XCTFail("Export diagnostic screenshot unavailable: \(error)") }
+                    }, completion: { continuation.resume(returning: $0) })
+                }
+                XCTAssertEqual(result["fixtureFailure"], 0, scenario)
+                XCTAssertEqual(result["presentationsBeforeRestoration"], 1, scenario)
+                XCTAssertEqual(result["presentationsAfterRestoration"], 0, scenario)
+                XCTAssertEqual(result["failuresBeforeRestoration"], 0, scenario)
+                XCTAssertEqual(result["failuresAfterRestoration"], 1, scenario)
+                XCTAssertEqual(result["failures"], 1, scenario)
+                XCTAssertEqual(result["failurePreservesDiagnostic"], 1, scenario)
+                XCTAssertEqual(result["finished"], 1, scenario)
+            }
+        }
+
+        func testPendingErrorIsDiscardedAfterActualClosureOrSheetDetachment() async {
+            for scenario in ["hidden-close", "hidden-sheet-dismiss", "hidden-parent-close"] {
+                let result = await facts(for: scenario)
+                XCTAssertEqual(result["fixtureFailure"], 0, scenario)
+                XCTAssertEqual(result["presentationsBeforeRestoration"], 1, scenario)
+                XCTAssertEqual(result["presentationsAfterRestoration"], 0, scenario)
+                XCTAssertEqual(result["failuresBeforeRestoration"], 0, scenario)
+                XCTAssertEqual(result["failuresAfterRestoration"], 0, scenario)
+                XCTAssertEqual(result["failures"], 0, scenario)
+            }
+        }
+
         func testDismissedSheetDoesNotReceiveLateExportFailure() async {
             for scenario in ["dismissed-sheet", "closed-window"] {
                 let result = await facts(for: scenario)
