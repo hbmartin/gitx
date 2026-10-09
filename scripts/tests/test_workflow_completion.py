@@ -18,6 +18,8 @@ class WorkflowCompletionTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts/verification-config.json").write_text('{"artifactRoot": "artifacts/verification"}')
         self.current = {"root": str(self.root), "head": "commit", "source": "source",
                         "dependencies": "dependencies", "plans": "plans"}
         self.commands = [("correctness", ["fixture-test"]), ("stage-debug", ["fixture-build"])]
@@ -78,6 +80,22 @@ class WorkflowCompletionTests(unittest.TestCase):
         self.assertEqual(code, 76)
         self.assertEqual(receipt["steps"][0]["evidenceStatus"], "invalid")
         self.assertEqual(execute.call_count, 1)
+
+    def test_cleanup_preview_interface_exists(self):
+        args = workflow.parser().parse_args(["cleanup", "preview"])
+        self.assertEqual(args.action, "preview")
+
+    def test_cleanup_failure_does_not_change_successful_verification(self):
+        with mock.patch.object(workflow.cleanup, "run_cleanup", side_effect=OSError("cleanup failed")):
+            code, receipt, _ = self.run_verification()
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt["status"], "passed")
+        self.assertTrue(receipt["deliveryEligible"])
+
+    def test_partial_verification_does_not_invoke_cleanup(self):
+        with mock.patch.object(workflow.cleanup, "run_cleanup") as prune:
+            self.run_verification((0,), "correctness")
+        prune.assert_not_called()
 
 
 if __name__ == "__main__":

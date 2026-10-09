@@ -66,12 +66,13 @@ class ScriptEntrypointTests(unittest.TestCase):
         if name == "run_app.sh":
             destination.write_text(destination.read_text().replace("/usr/bin/codesign", "/usr/bin/true"))
         shutil.copy2(ROOT / "scripts/workflow_session.py", self.scripts / "workflow_session.py")
+        shutil.copy2(ROOT / "scripts/verification-config.json", self.scripts / "verification-config.json")
         # Controlled desktop probe in the copied fixture, never in production.
         session_path = self.scripts / "workflow_session.py"
         session_path.write_text(session_path.read_text().replace("checks = desktop_checks()", "checks = []").replace("def desktop_checks():", "def desktop_checks():\n    return []\n\ndef real_desktop_checks():"))
         session_path.write_text(session_path.read_text().replace('LOCK_ROOT = pathlib.Path.home() / "Library/Caches/GitX/Verification/Locks"', 'LOCK_ROOT = ROOT / "fixture-locks"'))
         if name == "xcodebuild.sh":
-            for dependency in ("doctor.sh", "verification_support.py", "verification-config.json", "check_test_build_contracts.py"):
+            for dependency in ("doctor.sh", "verification_support.py", "check_test_build_contracts.py"):
                 shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
         return destination
 

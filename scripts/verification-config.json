@@ -10,6 +10,11 @@
   "derivedDataCache": "build/DerivedData",
   "swiftPMBuildCache": "build/SwiftPM",
   "sourcePackageCache": "artifacts/cache/SourcePackages",
+  "cleanup": {
+    "retentionDays": 7,
+    "diagnosticBudgetBytes": 10737418240,
+    "reportLimit": 20
+  },
   "testPlans": {
     "correctness": "GitX",
     "ui-preflight": "GitXUIPreflight",

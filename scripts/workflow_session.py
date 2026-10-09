@@ -146,19 +146,29 @@ def package_products(scratch):
             if path.suffix in {".xctest", ".dylib"} and not any(p.suffix == ".xctest" for p in path.relative_to(base).parents)}
 
 
-def cache_paths(root=ROOT, configuration="Debug", instrumentation="plain", developer=None):
+def verification_cache_root(root=ROOT):
+    root = pathlib.Path(root).resolve()
+    base = pathlib.Path(os.environ.get("GITX_VERIFICATION_CACHE_ROOT",
+                                     pathlib.Path.home() / "Library/Caches/GitX/Verification")).expanduser()
+    return (base if base.is_absolute() else root / base).resolve()
+
+
+def verification_artifact_root(root=ROOT):
+    root = pathlib.Path(root).resolve()
+    config = json.loads((root / "scripts/verification-config.json").read_text())
+    return root / config["artifactRoot"]
+
+
+def cache_paths(root=ROOT, configuration="Debug", instrumentation="plain", developer=None, toolchain=None):
     root = pathlib.Path(root).resolve()
     developer = developer or os.environ.get("GITX_DEVELOPER_DIR") or os.environ.get("DEVELOPER_DIR")
     developer = developer or "/Applications/Xcode.app/Contents/Developer"
-    try:
-        toolchain = subprocess.check_output([str(pathlib.Path(developer) / "usr/bin/xcodebuild"), "-version"], timeout=15).decode().strip()
-    except (OSError, subprocess.SubprocessError):
-        toolchain = str(developer)
-    base = pathlib.Path(os.environ.get("GITX_VERIFICATION_CACHE_ROOT",
-                                     pathlib.Path.home() / "Library/Caches/GitX/Verification")).expanduser()
-    if not base.is_absolute():
-        base = root / base
-    base = base.resolve()
+    if toolchain is None:
+        try:
+            toolchain = subprocess.check_output([str(pathlib.Path(developer) / "usr/bin/xcodebuild"), "-version"], timeout=15).decode().strip()
+        except (OSError, subprocess.SubprocessError):
+            toolchain = str(developer)
+    base = verification_cache_root(root)
     base = base / digest(str(root).encode())[:16] / digest(toolchain.encode())[:16]
     # Counter updates are part of instrumentation identity. Never reuse the
     # products previously compiled with racing, non-atomic coverage counters.
@@ -521,7 +531,7 @@ def uses_atomic_coverage(arguments):
     return arguments[:1] == ["correctness"] or arguments[:2] == ["-testPlan", "GitX"]
 
 
-def entry_resources(entry, arguments, root=ROOT):
+def entry_resources(entry, arguments, root=ROOT, toolchain=None):
     configuration = "Release" if "archive" in arguments and "raw" not in arguments else "Debug"
     for index, value in enumerate(arguments[:-1]):
         if value in {"--configuration", "-configuration"}:
@@ -547,11 +557,11 @@ def entry_resources(entry, arguments, root=ROOT):
             developer = arguments[index + 1]
             if pathlib.Path(developer).suffix.lower() == ".app":
                 developer = str(pathlib.Path(developer) / "Contents/Developer")
-    paths = cache_paths(root, configuration, instrumentation, developer)
+    paths = cache_paths(root, configuration, instrumentation, developer, toolchain=toolchain)
     resources = [paths["derivedData"], paths["swiftPM"], paths["sourcePackages"]]
     if entry == "check_test_build_contracts.py":
         for config in ("Debug", "Release"):
-            probe_paths = cache_paths(root, config, developer=developer)
+            probe_paths = cache_paths(root, config, developer=developer, toolchain=toolchain)
             resources.extend(probe_paths[key] for key in ("derivedData", "sourcePackages"))
     for index, arg in enumerate(arguments[:-1]):
         if arg in {"-derivedDataPath", "-clonedSourcePackagesDirPath", "--scratch-path"}:
@@ -581,11 +591,13 @@ def guard(entry, arguments):
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_id) is None:
         print("Run IDs may contain only letters, numbers, dots, underscores, and hyphens.", file=sys.stderr)
         return 2
-    receipt = root / "artifacts/verification/Coordination" / f"{run_id}.json"
+    receipt = verification_artifact_root(root) / "Coordination" / f"{run_id}.json"
     if receipt.exists():
         receipt = receipt.with_name(f"{run_id}-{uuid.uuid4().hex[:8]}.json")
     owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(receipt), "entry": str(entry)}
     resources, paths = entry_resources(pathlib.Path(entry).name, arguments, root)
+    if pathlib.Path(entry).name == "xcodebuild.sh":
+        resources.append(str(verification_artifact_root(root) / run_id))
     try:
         with Leases(resources, owner) as leases:
             env = leases.environment() | {"GITX_GUARDED_ENTRY": str(pathlib.Path(entry).resolve()),

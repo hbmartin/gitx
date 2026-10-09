@@ -17,6 +17,13 @@ Use `scripts/dev_workflow.py` as the local coordinator. Existing entrypoints rem
 - Review the non-mutating coverage proposal. Ratchet with `scripts/check_coverage.py RESULT --receipt RECEIPT --record-improvements` from one complete passed correctness run with valid evidence, then run the plain checker. New files need explicit policy admission; conversion paths preserve existing floors. Invalid evidence never relaxes policy.
 - Deliver the signature-verified `build/GitX.app`; its displayed name remains Half Dark.
 
+## Commit-triggered cleanup
+
+- `cleanup install-hook` installs the repository-local post-commit queue hook; it never replaces unrelated hooks. Commits and amendments only update pending state under the common Git directory, without scanning or deleting files.
+- `python3 scripts/dev_workflow.py cleanup preview` is a read-only retention inventory. Defaults in `scripts/verification-config.json` retain seven days of diagnostics with a soft 10 GiB target.
+- A successful full post-commit verification, including Debug staging, automatically prunes eligible output. `cleanup run --receipt WORKFLOW.json` uses the same evidence gate. Partial, failed, stale, or incomplete verification cannot trigger deletion.
+- Protect current warm caches, the staged app, referenced verification and recovery evidence, the newest failed run and previous-app backup, active resources, and other checkouts. Unknown directories remain untouched. Cleanup skips or failures retain pending state for a later successful verification; compact reports under the common Git directory retain the latest 20 runs.
+
 ## Work ownership and recovery
 
 `work inventory`, `work register ID --purpose TEXT --owner OWNER --chat CHAT`, `work update ID --owner OWNER --changes JSON`, `work seed MANIFEST`, and `work export --output JSON` maintain the atomic ledger under the common Git directory. All worktrees share it. Inventories and exports belong in ignored artifacts. `work import JSON` restores non-conflicting metadata.
