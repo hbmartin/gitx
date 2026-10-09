@@ -85,7 +85,9 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                 try await snapshotFixture { directory, repository, file in
                     let runner = StatusRunner(paths: [file.path])
                     let url = directory.appendingPathComponent(file.path)
-                    let date = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
+                    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+                    let date = try XCTUnwrap(attributes[.modificationDate] as? Date)
+                    let permissions = try XCTUnwrap(attributes[.posixPermissions] as? NSNumber).intValue
                     do {
                         try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: runner, files: [file], beforeValidation: {
                             do {
@@ -93,7 +95,7 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                                 case 0:
                                     try Data("mutated!\n".utf8).write(to: url)
                                     try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
-                                case 1: try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                                case 1: try FileManager.default.setAttributes([.posixPermissions: permissions ^ 0o100], ofItemAtPath: url.path)
                                 case 2: runner.changeIndex()
                                 case 3: runner.changeTree()
                                 default: runner.changeStaging()

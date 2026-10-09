@@ -182,7 +182,7 @@
     {
       "id": "STATE-001",
       "family": "Snapshot and refresh authority",
-      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk.",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files.",
       "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content.",
       "sourcePaths": [
         "Classes/git/IndexRefreshCoordinator.swift",
@@ -195,6 +195,12 @@
         "ui"
       ],
       "tests": [
+        {
+          "source": "GitXTests/GitXCoreTests.m",
+          "identifier": "GitXTests/GitXIndexIntegrationTests/testRefreshStageAndUnstageTrackedAndUnicodePaths",
+          "role": "valid",
+          "oracle": "Index reconciliation finishes between stage and unstage, with tracked and Unicode paths preserving mutation order."
+        },
         {
           "source": "GitXTests/HistoryControllerTests.swift",
           "identifier": "GitXTests/HistoryControllerTests/testNormalSelectionAdvanceKeepsTheNextPositionAfterStaging",

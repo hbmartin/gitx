@@ -268,7 +268,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(selected.count, 2)
         pane.fileListController.unstagedFilesController.setSelectedObjects(selected)
         waitForIndexUpdate { pane.perform(NSSelectorFromString("discardFiles:"), with: self) }
-        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertTrue(waitForCondition {
+            !self.repository.index.mutationReconciliationPending &&
+                (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent(path), encoding: .utf8)) == original
+        })
         XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent(path), encoding: .utf8), original)
         XCTAssertEqual(try Data(contentsOf: untracked), bytes)
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Mixed-Selection-Tracked-Discard")
