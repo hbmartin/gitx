@@ -99,6 +99,102 @@ final class IndexMutationServiceTests: XCTestCase {
         verifyWriterOrdering(asynchronous: true)
     }
 
+    func testMainThreadWriterAdmissionReturnsPromptlyWhileBackgroundWriterOwnsIndex() throws {
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let finished = expectation(description: "background writer finishes")
+        let repository = ControlledRepository { argument in
+            if argument == "held" {
+                return { entered.signal(); _ = release.wait(timeout: .now() + 5) }
+            }
+            return {}
+        }
+        let box = RunnerBox(IndexRepositoryCommandRunner(repository: repository))
+        DispatchQueue.global().async {
+            defer { finished.fulfill() }
+            _ = try? box.value.output(withArguments: ["update-index", "held"], input: nil, environment: nil)
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 3), .success)
+        // A deterministic upper bound frees the old blocking implementation so
+        // this regression fails instead of freezing the test host.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { release.signal() }
+        let start = ProcessInfo.processInfo.systemUptime
+        XCTAssertThrowsError(try box.value.output(withArguments: ["update-index", "second"], input: nil, environment: nil))
+        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 0.2)
+        var mutationError: NSError?
+        XCTAssertFalse(PBIndexMutationService(repository: repository).mutate(stageRawPaths: [Data("tracked.txt".utf8)], unstageRawPaths: [], parentTree: "HEAD", error: &mutationError))
+        XCTAssertEqual(mutationError?.code, 6)
+        let request = PBIndexCommitRequest(message: "must not publish", verify: false, gpgSign: false, amend: false, environment: nil, parentSHAs: [], hasHead: false)
+        let result = PBIndexCommitService(repository: repository).commit(with: request, progress: { _ in })
+        XCTAssertEqual(result.kind, .failure)
+        XCTAssertTrue(result.message.contains("Another operation"))
+        release.signal()
+        wait(for: [finished], timeout: 3)
+        XCTAssertEqual(try box.value.output(withArguments: ["update-index", "recovered"], input: nil, environment: nil), "result\n")
+        withExtendedLifetime(repository) {}
+    }
+
+    private final class LocatedRepository: PBGitRepository {
+        let directory: URL
+        let makeBody: (String) -> (() -> Void)
+        init(directory: URL, makeBody: @escaping (String) -> (() -> Void)) {
+            self.directory = directory; self.makeBody = makeBody; super.init()
+        }
+
+        override func gitURL() -> URL? {
+            directory
+        }
+
+        override func task(withArguments arguments: [Any]?) -> PBTask {
+            ControlledTask(body: makeBody((arguments as? [String])?.last ?? ""))
+        }
+    }
+
+    func testPathAliasesShareAWriterAndSeparateWorktreeGitDirectoriesRemainIndependent() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("GitXWriterAliases-\(UUID().uuidString)")
+        let first = root.appendingPathComponent("first")
+        let second = root.appendingPathComponent("second")
+        let alias = root.appendingPathComponent("alias")
+        try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: first)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let held = expectation(description: "aliased writer released")
+        let repository = LocatedRepository(directory: first) { argument in
+            if argument == "held" {
+                return { entered.signal(); _ = release.wait(timeout: .now() + 5) }
+            }
+            return {}
+        }
+        let aliased = LocatedRepository(directory: alias) { _ in {} }
+        let independent = LocatedRepository(directory: second) { _ in {} }
+        let transfer = RunnerBox(IndexRepositoryCommandRunner(repository: repository))
+        DispatchQueue.global().async {
+            _ = try? transfer.value.output(withArguments: ["update-index", "held"], input: nil, environment: nil)
+            held.fulfill()
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        defer { release.signal() }
+        XCTAssertThrowsError(try IndexRepositoryCommandRunner(repository: aliased).output(withArguments: ["update-index", "alias"], input: nil, environment: nil))
+        XCTAssertEqual(try IndexRepositoryCommandRunner(repository: independent).output(withArguments: ["update-index", "independent"], input: nil, environment: nil), "result\n")
+        release.signal()
+        wait(for: [held], timeout: 3)
+    }
+
+    func testNestedSynchronousWriterRetainsOwnershipWithoutDeadlocking() throws {
+        var nestedRunner: IndexRepositoryCommandRunner?
+        let repository = ControlledRepository { argument in
+            if argument == "outer" {
+                return { XCTAssertEqual(try? nestedRunner?.output(withArguments: ["update-index", "inner"], input: nil, environment: nil), "result\n") }
+            }
+            return {}
+        }
+        nestedRunner = IndexRepositoryCommandRunner(repository: repository)
+        XCTAssertEqual(try nestedRunner?.output(withArguments: ["update-index", "outer"], input: nil, environment: nil), "result\n")
+    }
+
     private func verifyWriterOrdering(asynchronous: Bool) {
         let firstEntered = DispatchSemaphore(value: 0)
         let secondAllocated = DispatchSemaphore(value: 0)

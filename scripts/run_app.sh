@@ -18,7 +18,8 @@
 #   scripts/run_app.sh --m3 review              # deterministic Milestone 3 journey
 #   scripts/run_app.sh --repo /tmp/some-repo    # open an existing repository
 #   scripts/run_app.sh --repo /tmp/some-repo --preserve-git-environment
-#                                             # preserve identity, signing, and Git settings
+#                                             # preserve caller identity, dates, signing, authentication, and helpers
+#                                             # always clear repository/storage selector variables
 #   scripts/run_app.sh --stop                   # terminate app and log stream
 #
 # Milestone 2 scenarios: push-create, existing-pull-request, exact-checkout,
@@ -29,9 +30,19 @@
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+# A selected repository owns storage, regardless of preserved caller identity.
+for gitx_repository_selector in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR \
+    GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_QUARANTINE_PATH GIT_NAMESPACE; do
+    unset "$gitx_repository_selector"
+done
+
+if [[ "${GITX_GUARDED_ENTRY:-}" != "$root/scripts/run_app.sh" ]]; then
+	exec python3 "$root/scripts/workflow_session.py" guard "$root/scripts/run_app.sh" "$@"
+fi
+unset GITX_GUARDED_ENTRY
 cd "$root" || exit 2
 
-app_bundle="$root/build/Half Dark.app"
+app_bundle="$root/build/GitX.app"
 session_dir=$root/build/Logs/run-app
 log_file=
 stdout_file=
@@ -279,14 +290,8 @@ stop_session() {
 	(( failed == 0 ))
 }
 
-# Keep the shared PID and session records owned by one invocation at a time.
-# The lock is held by this shell's open descriptor through its EXIT trap.
+# The outer process holds the desktop and staged-bundle leases through exit.
 /bin/mkdir -p "$session_dir" || exit 2
-exec 9>"$session_dir/session.lock" || exit 2
-if ! /usr/bin/lockf -t 0 9; then
-	echo "Another run_app.sh invocation owns the runtime session; retry after it finishes." >&2
-	exit 75
-fi
 
 stop_session
 stop_status=$?
@@ -317,6 +322,11 @@ if [[ ! -x "$app_binary" ]]; then
 	echo "No executable at $app_binary." >&2
 	exit 2
 fi
+/usr/bin/codesign --verify --deep --strict "$app_bundle" || {
+	echo "Signature blocker: rebuild the staged app before launch." >&2
+	exit 3
+}
+python3 "$root/scripts/workflow_session.py" desktop || exit $?
 
 bundle_identifier=$(
 	/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_bundle/Contents/Info.plist" 2>/dev/null
@@ -350,7 +360,7 @@ fi
 # Preferences stay isolated in either mode. Only explicit existing-repository
 # launches may retain the caller's Git identity, signing, config, and helpers.
 if (( preserve_git_environment )); then
-	echo "Preserving the caller's Git environment for the existing repository."
+	echo "Preserving caller Git identity, dates, signing configuration, authentication, and helpers; repository/storage selectors are cleared."
 else
 	for gitx_git_environment_key in "${!GIT_@}"; do
 		unset "$gitx_git_environment_key"

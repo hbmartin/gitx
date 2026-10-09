@@ -287,6 +287,21 @@ final class HistoryFlowRevisionProviderTests: XCTestCase, @unchecked Sendable {
             XCTAssertGreaterThanOrEqual(fcntl(writeOnly, F_GETFD), 0, "The runner retains descriptor closure ownership")
         }
 
+        func testPollFailureReportsTheErrorAndRequestsOneStopWithoutClosingTheDescriptor() throws {
+            let source = Pipe()
+            defer { try? source.fileHandleForReading.close(); try? source.fileHandleForWriting.close() }
+            let descriptor = source.fileHandleForReading.fileDescriptor
+            let result = PBHistoryFlowRevisionProviderTestHarness.drainPipe(fileDescriptor: descriptor, pollError: EIO)
+            XCTAssertEqual(result["data"] as? Data, Data())
+            XCTAssertEqual(result["didExceedLimit"] as? Bool, false)
+            XCTAssertEqual(result["stopCount"] as? Int, 1)
+            XCTAssertEqual(result["failure"] as? String, "Could not read git output: \(String(cString: strerror(EIO)))")
+            XCTAssertGreaterThanOrEqual(fcntl(descriptor, F_GETFD), 0)
+            let bytes = Data("descriptor still belongs to caller".utf8)
+            try source.fileHandleForWriting.write(contentsOf: bytes)
+            XCTAssertEqual(try source.fileHandleForReading.read(upToCount: bytes.count), bytes)
+        }
+
         func testBufferedPipeEOFAndOutputBoundariesPreserveBytesAndDescriptorOwnership() throws {
             for byteCount in [0, 1024, 1025] {
                 let source = Pipe()

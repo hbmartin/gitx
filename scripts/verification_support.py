@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import workflow_session as session
 from typing import Any
 
 
@@ -256,14 +257,18 @@ def doctor_checks(
         elif not version_at_least(version[0], config["minimumXcodeVersion"]):
             add("xcode", "failed", f"Xcode {version[0]} is older than {config['minimumXcodeVersion']}")
         else:
-            qualifier = " (newer toolchain; verify CI compatibility)" if version_components(version[0]) > version_components(config["minimumXcodeVersion"]) else ""
-            add("xcode", "warning" if qualifier else "passed", f"Xcode {version[0]} ({version[1]}) at {selected}{qualifier}")
+            add("xcode", "passed", f"Xcode {version[0]} ({version[1]}) at {selected}; local verification is authoritative")
 
     for command in ("git", "python3", "xcrun"):
         location = shutil.which(command)
         add(command, "passed" if location else "failed", location or f"{command} is not on PATH")
     location = shutil.which("xcbeautify")
     add("xcbeautify", "passed" if location else "warning", location or "optional; raw output will be used")
+    from check_test_build_contracts import dependency_checks
+    checks.extend(dependency_checks(ROOT))
+
+    if mode in {"test", "ui"}:
+        checks.extend(session.desktop_checks())
 
     workspace = ROOT / config["workspace"]
     add("workspace", "passed" if workspace.exists() else "failed", str(workspace))
@@ -313,8 +318,9 @@ def doctor_checks(
 
     if selected is not None and workspace.exists():
         executable = selected / "usr/bin/xcodebuild"
-        derived_data = ROOT / config["derivedDataCache"]
-        package_cache = ROOT / config["sourcePackageCache"]
+        resolved_paths = session.cache_paths(ROOT, developer=str(selected))
+        derived_data = pathlib.Path(resolved_paths["derivedData"])
+        package_cache = pathlib.Path(resolved_paths["sourcePackages"])
         try:
             destinations = run(
                 [
@@ -366,7 +372,7 @@ def doctor_payload(
     failed = sum(check["status"] == "failed" for check in checks)
     warnings = sum(check["status"] == "warning" for check in checks)
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "mode": mode,
         "status": "failed" if failed else "passed",
         "developerDir": str(selected) if selected else None,
@@ -447,7 +453,13 @@ def receipt_base(arguments: argparse.Namespace) -> dict[str, Any]:
 
 
 def command_receipt_init(arguments: argparse.Namespace) -> int:
-    atomic_json(arguments.path, receipt_base(arguments))
+    payload = receipt_base(arguments)
+    payload["schemaVersion"] = 2
+    payload["evidence"] = {"status": "pending", "inputsBefore": session.inputs(ROOT)}
+    payload["buildPaths"] = {key: os.environ.get(variable) for key, variable in (
+        ("derivedData", "GITX_DERIVED_DATA"), ("swiftPM", "GITX_SWIFTPM_BUILD_ROOT"),
+        ("sourcePackages", "GITX_SOURCE_PACKAGE_CACHE"))}
+    atomic_json(arguments.path, payload)
     return 0
 
 
@@ -501,10 +513,22 @@ def command_receipt_step(arguments: argparse.Namespace) -> int:
             pass
     if arguments.exit_code and failure_category is None:
         failure_category = "command"
+        if arguments.log and pathlib.Path(arguments.log).is_file():
+            categories = re.findall(r"Verification blocker: ([a-z-]+)\.", pathlib.Path(arguments.log).read_text(errors="replace"))
+            if categories:
+                failure_category = categories[-1]
+    missing_probe = arguments.name == "host-preflight" and arguments.exit_code == 0 and (not test_counts or not test_counts["total"])
+    if missing_probe:
+        failure_category = "host-probe-missing"
+    missing_execution = (arguments.exit_code == 0 and bool(arguments.xcresult) and
+        (arguments.name.startswith("test:") or arguments.name == "raw") and
+        (not test_counts or not test_counts["total"]))
+    if missing_execution:
+        failure_category = "test-selection-empty" if test_counts else "test-evidence-missing"
     step = {
         "name": arguments.name,
-        "status": arguments.status,
-        "exitCode": arguments.exit_code,
+        "status": "failed" if missing_probe or missing_execution else arguments.status,
+        "exitCode": 77 if missing_probe else 78 if missing_execution else arguments.exit_code,
         "durationSeconds": round(arguments.duration, 3),
         "command": scrub_arguments(arguments.command),
         "log": relative_artifact(arguments.log),
@@ -519,6 +543,12 @@ def command_receipt_step(arguments: argparse.Namespace) -> int:
         if artifact and artifact not in payload["artifacts"]:
             payload["artifacts"].append(artifact)
     atomic_json(arguments.path, payload)
+    if missing_probe:
+        print("Host probe did not execute; inspect plan selection and rebuild test products.", file=sys.stderr)
+        return 77
+    if missing_execution:
+        print("Test execution produced no verified test cases; inspect the exact test selection and retained result bundle.", file=sys.stderr)
+        return 78
     return 0
 
 
@@ -530,6 +560,36 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
     payload["durationSeconds"] = round(time.time() - started, 3) if isinstance(started, (int, float)) else None
     payload["status"] = arguments.status
     payload["exitCode"] = arguments.exit_code
+    evidence = payload.get("evidence")
+    if evidence:
+        evidence["inputsAfter"] = session.inputs(ROOT)
+        evidence["changedInputs"] = session.changed_inputs(evidence["inputsBefore"], evidence["inputsAfter"])
+        developer = pathlib.Path(payload["toolchain"]["developerDir"])
+        final_version = xcode_version(developer) or ("unknown", "unknown")
+        evidence["toolchainAfter"] = {"xcodeVersion": final_version[0], "xcodeBuild": final_version[1]}
+        if final_version != (payload["toolchain"]["xcodeVersion"], payload["toolchain"]["xcodeBuild"]):
+            evidence["changedInputs"].append("toolchain")
+        invalid_steps = [step for step in payload["steps"] if step["exitCode"] == 76]
+        evidence["status"] = "invalid" if evidence["changedInputs"] or invalid_steps else "valid"
+        payload["testOutcome"] = "failed" if any(step.get("testCounts", {}).get("failed", 0)
+            for step in payload["steps"] if step.get("testCounts")) else (
+            "passed" if any(step["name"].startswith("test:") and step["status"] == "passed" for step in payload["steps"]) else "not-run")
+        if evidence["status"] == "invalid":
+            payload["deliveryEligible"] = False
+            if payload["status"] == "passed":
+                payload["status"] = "invalid"
+                payload["exitCode"] = 76
+        else:
+            payload["deliveryEligible"] = payload["status"] == "passed"
+        product_path = payload.get("buildPaths", {}).get("derivedData")
+        if product_path:
+            evidence["products"] = session.product_identity(product_path)
+        evidence["dependencyProducts"] = session.dependency_products(ROOT)
+        package_path = payload.get("buildPaths", {}).get("swiftPM")
+        if package_path and payload["invocation"]["preset"] in {"test:core", "test:forgekit"}:
+            evidence["packageProducts"] = session.package_products(package_path)
+        evidence["results"] = {step["xcresult"]: session.tree_identity(ROOT / step["xcresult"])
+            for step in payload["steps"] if step.get("xcresult")}
     run_directory = arguments.path.parent
     bundle_suffixes = {".app", ".xcarchive", ".xcresult"}
     discovered: set[str | None] = set()
@@ -561,7 +621,7 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
         latest,
         {"schemaVersion": 1, "runId": payload["runId"], "receipt": relative_artifact(str(arguments.path))},
     )
-    return 0
+    return 76 if evidence and evidence["status"] == "invalid" else 0
 
 
 def command_config(arguments: argparse.Namespace) -> int:

@@ -28,8 +28,18 @@
 	if ([selectedFiles count] == 0)
 		return;
 	PBGitTree *tree = [selectedFiles objectAtIndex:0];
-	NSURL *url = [PBHistoryFilePreview urlForTree:tree];
-	if (url) [[NSWorkspace sharedWorkspace] openURL:url];
+	NSOutlineView *outline = [sender isKindOfClass:NSOutlineView.class] ? sender : [self valueForKey:@"fileBrowser"];
+	id item = self.treeController.selectedNodes.firstObject;
+	if ([sender isKindOfClass:NSOutlineView.class] && outline.clickedRow >= 0) {
+		item = [outline itemAtRow:outline.clickedRow];
+		if ([item isKindOfClass:NSTreeNode.class]) tree = ((NSTreeNode *)item).representedObject;
+	}
+	(void)[PBHistoryFileOpening openTree:tree
+								 outline:outline
+									item:item
+								  opener:^BOOL(NSURL *url) {
+									  return [[NSWorkspace sharedWorkspace] openURL:url];
+								  }];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem

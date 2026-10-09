@@ -104,6 +104,87 @@ final class PushReviewDiagnosticsTests: XCTestCase {
         #endif
     }
 
+    func testReadablePushFailureRedactsBeforeTheStandardErrorTailIsSelected() throws {
+        #if DEBUG
+            let repository = PushReviewTaskRepository()
+            // The retained suffix starts inside userinfo, after its scheme has gone.
+            repository.script = "printf 'remote: https://user:' >&2; /usr/bin/awk 'BEGIN { for (i = 0; i < 65536; i++) printf \"x\"; }' >&2; printf 'FAKE-SECRET@example.invalid/repo\\npermission denied\\n' >&2; exit 1"
+            let result = PBMilestone2ProductCoverageHarness.reviewPushCommandResult(repository: repository, arguments: ["push"])
+            let artifact = try XCTUnwrap(result.diagnosticArtifact)
+            defer { artifact.discard() }
+            let error = try XCTUnwrap(result.error) as NSError
+            let displayed = PBErrorMessagePresentation.infoText(for: error)
+            XCTAssertTrue(displayed.contains("permission denied"))
+            XCTAssertFalse(displayed.contains("FAKE-SECRET"))
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: destination) }
+            try artifact.writeRedactedReport(to: destination)
+            XCTAssertFalse(try String(contentsOf: destination, encoding: .utf8).contains("FAKE-SECRET"))
+        #else
+            throw XCTSkip("Shipped runner boundary is exposed by the Debug harness")
+        #endif
+    }
+
+    func testCapturePreparationFailureNeverPresentsAClippedCredentialSuffix() throws {
+        #if DEBUG
+            for fault in ["createDirectory", "createReport", "redactionWrite", "partialAppend"] {
+                let repository = PushReviewTaskRepository()
+                repository.script = "printf 'remote: https://user:' >&2; /usr/bin/awk 'BEGIN { for (i = 0; i < 65536; i++) printf \"x\"; }' >&2; printf 'FAKE-SECRET@example.invalid/repo\\npermission denied\\n' >&2; exit 7"
+                let result = PBMilestone2ProductCoverageHarness.reviewPushCommandResult(repository: repository, arguments: ["push"], captureFault: fault)
+                let artifact = try XCTUnwrap(result.diagnosticArtifact)
+                defer { artifact.discard() }
+                let error = try XCTUnwrap(result.error) as NSError
+                let text = PBErrorMessagePresentation.infoText(for: error)
+                XCTAssertFalse(text.contains("FAKE-SECRET"), fault)
+                XCTAssertEqual(result.terminationStatus, 7)
+                XCTAssertTrue(try XCTUnwrap(repository.tasks.first).standardErrorTruncated)
+                if fault != "partialAppend" {
+                    XCTAssertTrue(text.contains("original beginning was discarded"), fault)
+                }
+                XCTAssertFalse(artifact.captureComplete)
+            }
+        #else
+            throw XCTSkip("Fault injection belongs to the Debug harness")
+        #endif
+    }
+
+    func testReportFailureAfterTimeoutUpdatesStreamEvidenceStatus() throws {
+        #if DEBUG
+            let repository = PushReviewTaskRepository()
+            repository.forcesShortTimeout = true
+            repository.script = "trap 'exit 0' TERM; printf diagnostic >&2; while :; do :; done"
+            let result = PBMilestone2ProductCoverageHarness.reviewPushCommandResult(repository: repository, arguments: ["push"], captureFault: "createReport")
+            defer { result.diagnosticArtifact?.discard() }
+            XCTAssertEqual(try (XCTUnwrap(result.error) as NSError).code, Int(PBTaskErrorCode.timeoutError.rawValue))
+            XCTAssertFalse(result.standardErrorComplete)
+            XCTAssertFalse(try XCTUnwrap(result.diagnosticArtifact).captureComplete)
+        #else
+            throw XCTSkip("Fault injection belongs to the Debug harness")
+        #endif
+    }
+
+    func testRedactedReadableExcerptsRemainBoundedAndReportTruncation() throws {
+        #if DEBUG
+            for payload in [String(repeating: "x", count: 70000), String(repeating: "🙂", count: 18000)] {
+                let capture = PBTaskDiagnosticCapture()
+                capture.appendStandardOutput(Data(("output-head\n" + payload).utf8))
+                capture.appendStandardError(Data((payload + "\nerror-tail").utf8))
+                capture.finishStandardOutput(reachedEOF: true)
+                capture.finishStandardError(reachedEOF: true)
+                let artifact = capture.seal()
+                defer { artifact.discard() }
+                let excerpts = try XCTUnwrap(PBTaskDiagnosticCaptureTestHarness.readableExcerpts(for: artifact))
+                XCTAssertEqual(excerpts.count, 2)
+                XCTAssertTrue(excerpts.allSatisfy { $0.utf8.count <= 64 * 1024 && $0.contains("truncated display excerpt") })
+                XCTAssertTrue(excerpts[0].hasPrefix("output-head"))
+                XCTAssertTrue(excerpts[1].hasSuffix("error-tail"))
+                XCTAssertFalse(excerpts.contains { $0.contains("�") })
+            }
+        #else
+            throw XCTSkip("Shipped excerpt boundary is exposed by the Debug harness")
+        #endif
+    }
+
     func testShippedGeneralLaunchPreservesMutationAndFailureWithoutStoredOutput() throws {
         #if DEBUG
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

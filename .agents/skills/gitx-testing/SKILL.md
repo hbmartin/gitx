@@ -3,6 +3,8 @@ name: gitx-testing
 description: Plan, add, run, and review XCTest-based verification for GitX. Use whenever changing GitX behavior, fixing a bug, adding or reviewing tests, diagnosing test, coverage, analyzer, sanitizer, or performance failures, changing shared test plans or CI verification, ratcheting coverage, or preparing and validating an Objective-C-to-Swift conversion. Select Swift or Objective-C XCTest, app-hosted integration tests, XCUITest, performance tests, sanitizers, static analysis, and the stable app build in proportion to risk.
 ---
 
+For resource coordination, evidence reuse, work ownership and review targets, use the repo-local [development-workflow skill](../development-workflow/SKILL.md). Compile Debug and Release test consumers before long suites. Coverage ratchets require one complete passed local correctness receipt with valid provenance; rerun the plain checker after the atomic ratchet.
+
 # GitX Testing
 
 Protect observable behavior with XCTest, ratcheting coverage, explicit test plans, and risk-based verification. Preserve a green history while making tests durable across the gradual Objective-C-to-Swift migration.

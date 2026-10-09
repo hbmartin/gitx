@@ -1,3 +1,5 @@
+import AppKit
+
 // Objective-C callers are not visible to SwiftLint's analyzer.
 // swiftlint:disable unused_declaration
 private final nonisolated class HistoryFlatTreeRoot: PBGitTree {
@@ -39,7 +41,7 @@ private struct HistoryChangedPath {
 
     var displayTitle: String {
         let code = status.isEmpty ? "M" : String(status.prefix(1))
-        if let previousPath, previousPath != path {
+        if let previousPath, Data(previousPath.utf8) != Data(path.utf8) {
             return "\(code)  \(path)  ←  \(previousPath)"
         }
         return "\(code)  \(path)"
@@ -70,43 +72,29 @@ final class HistoryTreePresentation: NSObject {
         root.path = ""
         root.leaf = false
 
-        let nodes: [PBGitTree]
+        var nodes: [PBGitTree] = []
         if commit is PBUncommittedChanges {
-            let leaves = leafNodes(in: commit.tree)
             var byRawPath: [Data: PBGitTree] = [:]
-            for case let leaf as PBWorkingTree in leaves {
+            for case let leaf as PBWorkingTree in leafNodes(in: commit.tree) {
                 if let rawPath = leaf.rawPath {
                     byRawPath[rawPath] = leaf
                 }
             }
-            nodes = changes.compactMap { $0.rawPath.flatMap { byRawPath[$0] } }
+            for change in changes {
+                guard let rawPath = change.rawPath, let node = byRawPath[rawPath] else { continue }
+                nodes.append(node)
+                metadata[ObjectIdentifier(node)] = change
+            }
         } else {
-            nodes = changes.map { change in
-                let node = PBGitTree()
+            for change in changes {
+                let node = HistoryCommittedTreeNode(rawPath: change.rawPath ?? Data(change.path.utf8))
                 node.repository = repository
                 node.sha = commit.sha
                 node.path = change.path
                 node.parent = root
                 node.leaf = true
-                return node
-            }
-        }
-
-        if commit is PBUncommittedChanges {
-            let byRawPath = Dictionary(uniqueKeysWithValues: changes.compactMap { change in
-                change.rawPath.map { ($0, change) }
-            })
-            for case let node as PBWorkingTree in nodes {
-                if let rawPath = node.rawPath, let value = byRawPath[rawPath] {
-                    metadata[ObjectIdentifier(node)] = value
-                }
-            }
-        } else {
-            let metadataByPath = Dictionary(uniqueKeysWithValues: changes.map { ($0.path, $0) })
-            for node in nodes {
-                if let value = metadataByPath[node.fullPath] {
-                    metadata[ObjectIdentifier(node)] = value
-                }
+                nodes.append(node)
+                metadata[ObjectIdentifier(node)] = change
             }
         }
         root.flatChildren = sorted(nodes)
@@ -129,10 +117,10 @@ final class HistoryTreePresentation: NSObject {
     }
 
     private func committedChanges(sha: String) -> [HistoryChangedPath] {
-        guard let output = try? repository.outputOfTask(withArguments: [
-            "diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-M", "-z", sha,
-        ]) else { return [] }
-        return parseNameStatus(output)
+        let task = repository.task(withArguments: ["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-M", "-z", sha])
+        task.separatesStandardError = true
+        guard (try? task.launch()) != nil else { return [] }
+        return parseNameStatus(task.standardOutputData)
     }
 
     private func workingChanges() -> [HistoryChangedPath] {
@@ -169,18 +157,19 @@ final class HistoryTreePresentation: NSObject {
         return result
     }
 
-    private func parseNameStatus(_ output: String) -> [HistoryChangedPath] {
-        let tokens = output.components(separatedBy: "\0").filter { !$0.isEmpty }
+    private func parseNameStatus(_ output: Data) -> [HistoryChangedPath] {
+        let tokens = IndexFilePresentation.rawPaths(data: output)
         var result: [HistoryChangedPath] = []
         var index = 0
         while index < tokens.count {
-            let status = tokens[index]
+            guard let status = String(data: tokens[index], encoding: .ascii) else { break }
             let rename = status.hasPrefix("R") || status.hasPrefix("C")
             let required = rename ? 3 : 2
             guard index + required - 1 < tokens.count else { break }
-            let oldPath = rename ? tokens[index + 1] : nil
-            let path = tokens[index + required - 1]
-            result.append(HistoryChangedPath(path: path, status: status, previousPath: oldPath, order: result.count))
+            let oldPath = rename ? IndexPathDisplayName.string(for: tokens[index + 1]) : nil
+            let rawPath = tokens[index + required - 1]
+            result.append(HistoryChangedPath(path: IndexPathDisplayName.string(for: rawPath), rawPath: rawPath,
+                                             status: status, previousPath: oldPath, order: result.count))
             index += required
         }
         return result
@@ -199,6 +188,16 @@ final class HistoryTreePresentation: NSObject {
         return result
     }
 
+    private func orderedBefore(_ left: PBGitTree, _ right: PBGitTree) -> Bool {
+        let comparison = left.fullPath.localizedStandardCompare(right.fullPath)
+        if comparison != .orderedSame {
+            return comparison == .orderedAscending
+        }
+        let leftBytes = metadata[ObjectIdentifier(left)]?.rawPath ?? Data(left.fullPath.utf8)
+        let rightBytes = metadata[ObjectIdentifier(right)]?.rawPath ?? Data(right.fullPath.utf8)
+        return leftBytes.lexicographicallyPrecedes(rightBytes)
+    }
+
     private func sorted(_ nodes: [PBGitTree]) -> [PBGitTree] {
         switch ApplicationSettings.changedFilesSort {
         case .gitOrder:
@@ -210,10 +209,10 @@ final class HistoryTreePresentation: NSObject {
                 if left?.statusRank != right?.statusRank {
                     return left?.statusRank ?? 4 < right?.statusRank ?? 4
                 }
-                return $0.fullPath.localizedStandardCompare($1.fullPath) == .orderedAscending
+                return orderedBefore($0, $1)
             }
         case .alphabetical:
-            return nodes.sorted { $0.fullPath.localizedStandardCompare($1.fullPath) == .orderedAscending }
+            return nodes.sorted(by: orderedBefore)
         @unknown default:
             return nodes
         }
@@ -226,6 +225,9 @@ final class HistoryTreePresentation: NSObject {
 final class HistoryFilePreview: NSObject {
     @objc(urlForTree:)
     static func url(for tree: PBGitTree) -> URL? {
+        if let raw = (tree as? HistoryCommittedTreeNode)?.rawPath, IndexFilePresentation.safePath(rawPath: raw) == nil {
+            return nil
+        }
         guard let path = tree.tmpFileNameForContents(), !path.isEmpty else {
             NSLog("[GitX] History preview path is unavailable for %@", tree.fullPath ?? "")
             return nil
@@ -237,6 +239,153 @@ final class HistoryFilePreview: NSObject {
 private extension PBGitTree {
     var objectIdentifier: ObjectIdentifier {
         ObjectIdentifier(self)
+    }
+}
+
+/// Preserve Git's identity independently of Swift String equivalence. Unsafe
+/// byte paths remain visible but never become an unrelated escaped argv path.
+private final nonisolated class HistoryCommittedTreeNode: PBGitTree {
+    @objc let rawPath: Data
+    init(rawPath: Data) {
+        self.rawPath = rawPath; super.init()
+    }
+
+    override var fullPath: String! {
+        IndexPathDisplayName.string(for: rawPath)
+    }
+
+    private var canPreview: Bool {
+        IndexFilePresentation.safePath(rawPath: rawPath) != nil
+    }
+
+    private var previewPath: String?
+    private var previewModificationDate: Date?
+
+    private var hasCurrentPreview: Bool {
+        guard let previewPath, let previewModificationDate,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: previewPath),
+              let modificationDate = attributes[.modificationDate] as? Date else { return false }
+        return modificationDate == previewModificationDate
+    }
+
+    private func task(_ arguments: [String]) -> PBTask {
+        // Git on macOS can precompose argv even when the committed tree keeps
+        // both spellings. This leaf's immutable bytes must select its own blob.
+        repository.task(withArguments: ["-c", "core.precomposeUnicode=false"] + arguments)
+    }
+
+    private func output(_ arguments: [String], diagnosticOnFailure: Bool = true) -> String? {
+        let command = task(arguments)
+        command.separatesStandardError = true
+        do { try command.launch() } catch { return diagnosticOnFailure ? String(data: command.standardErrorData, encoding: .utf8) : nil }
+        guard var text = command.standardOutputString() else { return nil }
+        // Retain PBGitTree's existing one-newline stripping behavior.
+        if text.utf16.count > 1, text.hasSuffix("\n") {
+            text.removeLast()
+        }
+        return text
+    }
+
+    private var objectSpec: String {
+        "\(sha ?? ""):\(fullPath ?? "")"
+    }
+
+    override var contents: String! {
+        guard canPreview else { return "This filename cannot be represented for preview." }
+        if hasCurrentPreview, let previewPath, let data = try? Data(contentsOf: URL(fileURLWithPath: previewPath)) {
+            return String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
+        }
+        return output(["show", objectSpec])
+    }
+
+    private var unavailableText: String? {
+        let attributes = output(["check-attr", "binary", "--", fullPath], diagnosticOnFailure: false)
+        let binaryAttribute = attributes?.hasSuffix("binary: set") == true
+        let binaryExtension = [".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".o"].contains { fullPath.hasSuffix($0) }
+        let binary = binaryAttribute || (attributes != nil && attributes?.hasSuffix("binary: unset") != true && binaryExtension)
+        let size = fileSize()
+        if binary {
+            return "\(fullPath ?? "") appears to be a binary file of \(size) bytes"
+        }
+        if size > 52_428_800 {
+            return "\(fullPath ?? "") is too big to be displayed (\(size) bytes)"
+        }
+        return nil
+    }
+
+    private func checkedText(_ text: String?) -> String? {
+        guard let text else { return nil }
+        if (text as NSString).range(of: "\0", options: [], range: NSRange(location: 0, length: text.utf16.count >= 8000 ? 7999 : text.utf16.count)).location != NSNotFound {
+            return "\(fullPath ?? "") appears to be a binary file of \(fileSize()) bytes"
+        }
+        return text
+    }
+
+    override func textContents() -> String! {
+        guard canPreview else { return contents }
+        return unavailableText ?? checkedText(contents)
+    }
+
+    override func blame() -> String! {
+        guard canPreview else { return contents }
+        return unavailableText ?? checkedText(output(["blame", "-p", sha, "--", fullPath]))
+    }
+
+    override func log(_ format: String!) -> String! {
+        guard canPreview else { return contents }
+        return unavailableText ?? checkedText(output(["log", "--pretty=format:\(format ?? "")", "--follow", "--", fullPath]))
+    }
+
+    override func tmpFileNameForContents() -> String! {
+        guard canPreview else { return nil }
+        if hasCurrentPreview, let previewPath {
+            return previewPath
+        }
+        let command = task(["show", objectSpec])
+        command.separatesStandardError = true
+        do {
+            try command.launch()
+            let destination: URL
+            if let previewPath {
+                destination = URL(fileURLWithPath: previewPath)
+            } else {
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitX-History-" + UUID().uuidString)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                destination = directory.appendingPathComponent((fullPath as NSString).lastPathComponent)
+            }
+            try command.standardOutputData.write(to: destination, options: .atomic)
+            previewPath = destination.path
+            previewModificationDate = (try? FileManager.default.attributesOfItem(atPath: destination.path))?[.modificationDate] as? Date
+            return previewPath
+        } catch {
+            NSLog("[GitX] History preview creation failed for %@: %@", fullPath ?? "", error.localizedDescription)
+            return nil
+        }
+    }
+
+    override func fileSize() -> Int64 {
+        guard canPreview else { return 0 }
+        return output(["cat-file", "-s", objectSpec]).flatMap(Int64.init) ?? -1
+    }
+}
+
+@objc(PBHistoryFileOpening)
+final class HistoryFileOpening: NSObject {
+    @objc(openTree:outline:item:opener:)
+    static func open(tree: PBGitTree, outline: NSOutlineView?, item: Any?, opener: (URL) -> Bool) -> Bool {
+        if !tree.leaf {
+            guard let outline, let item else { return false }
+            if outline.isItemExpanded(item) {
+                outline.collapseItem(item)
+            } else {
+                outline.expandItem(item)
+            }
+            NSLog("[GitX] Toggled history directory %@", tree.fullPath ?? "")
+            return true
+        }
+        guard let url = HistoryFilePreview.url(for: tree) else { return false }
+        NSLog("[GitX] Opening history leaf preview %@", tree.fullPath ?? "")
+        return opener(url)
     }
 }
 

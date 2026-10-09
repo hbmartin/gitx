@@ -48,7 +48,8 @@ final nonisolated class IndexMutationService: NSObject {
             return staged && unstaged
         }
         if let native = runner as? IndexRepositoryCommandRunner {
-            return native.writerCoordinator.perform("stage then unstage batch", operation)
+            do { return try native.writerCoordinator.perform("stage then unstage batch", operation) }
+            catch { outputError?.pointee = error as NSError; return false }
         }
         return operation()
     }

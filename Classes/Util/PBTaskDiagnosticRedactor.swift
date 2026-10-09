@@ -49,7 +49,7 @@ nonisolated enum PBTaskDiagnosticRedactor {
                try cursor.byte(at: offset + 2) == 47
             {
                 let start = offset + 3
-                let span = try authoritySpan(start: start, cursor: cursor, length: source.length)
+                let span = try authoritySpan(start: start, cursor: cursor, length: source.length, incomplete: incomplete)
                 let stopped = incomplete && span.end == source.length
                 if start < span.end, stopped || (span.lastAt == nil && span.ambiguous) {
                     try copy(until: start)
@@ -80,16 +80,15 @@ nonisolated enum PBTaskDiagnosticRedactor {
         let ambiguous: Bool
     }
 
-    /// Only authority bytes decide whether this is userinfo. Once credentials
-    /// are suspected, malformed separators and nested schemes remain inside the
-    /// redacted span; they never become a new, independently copied URL.
-    private static func authoritySpan(start: Int64, cursor: Cursor, length: Int64) throws -> AuthoritySpan {
-        var end = start
-        var colon: Int64?
-        var lastAt: Int64?
+    /// Inspect ambiguous userinfo across malformed separators before declaring
+    /// an ordinary authority safe. Independent URLs remain separate candidates.
+    private static func authoritySpan(start: Int64, cursor: Cursor, length: Int64, incomplete: Bool) throws -> AuthoritySpan {
+        var authorityEnd = start
+        var authorityColon: Int64?
+        var authorityAt: Int64?
         var bracketed = false
-        while end < length {
-            let byte = try cursor.byte(at: end)
+        while authorityEnd < length {
+            let byte = try cursor.byte(at: authorityEnd)
             if byte <= 32 || byte == 47 || byte == 63 || byte == 35 {
                 break
             }
@@ -99,49 +98,93 @@ nonisolated enum PBTaskDiagnosticRedactor {
             if byte == 93 {
                 bracketed = false
             }
-            if byte == 58, !bracketed, colon == nil {
+            if byte == 58, !bracketed, authorityColon == nil {
+                authorityColon = authorityEnd
+            }
+            if byte == 64 {
+                authorityAt = authorityEnd
+            }
+            authorityEnd += 1
+        }
+        var numericPort = false
+        if let authorityColon, authorityAt == nil, authorityColon + 1 < authorityEnd {
+            numericPort = true
+            for offset in authorityColon + 1 ..< authorityEnd {
+                if try !(48 ... 57).contains(cursor.byte(at: offset)) {
+                    numericPort = false
+                }
+            }
+        }
+        let initiallyAmbiguous = authorityColon != nil && !numericPort
+        var end = authorityEnd
+        var colon = authorityColon
+        var lastAt = authorityAt
+        var firstWhitespace: Int64?
+        var tokenHasLetter = false
+        var tokenStart = authorityEnd
+        let authorityHasHostSyntax = try hasHostSyntax(start: start, end: authorityColon ?? authorityEnd, cursor: cursor)
+        while end < length {
+            let byte = try cursor.byte(at: end)
+            if byte == 10 || byte == 13 {
+                break
+            }
+            if byte <= 32, let lastAt,
+               try authorityAt != nil || hasHostSyntax(start: lastAt + 1, end: end, cursor: cursor)
+            {
+                break
+            }
+            if byte <= 32, firstWhitespace == nil {
+                firstWhitespace = end
+            }
+            if byte == 58, tokenHasLetter, end + 2 < length,
+               try cursor.byte(at: end + 1) == 47, try cursor.byte(at: end + 2) == 47
+            {
+                let credentialPrefix = initiallyAmbiguous || (authorityColon != nil && !authorityHasHostSyntax) || (authorityColon == nil && colon != nil)
+                if !credentialPrefix || (lastAt != nil && firstWhitespace != nil) {
+                    end = tokenStart
+                    break
+                }
+            }
+            if byte == 58, colon == nil {
                 colon = end
             }
             if byte == 64 {
                 lastAt = end
             }
+            if isSchemeByte(byte) {
+                tokenHasLetter = tokenHasLetter || isLetter(byte)
+            } else {
+                tokenStart = end + 1
+                tokenHasLetter = false
+            }
             end += 1
         }
-        var numericPort = false
-        if let colon, lastAt == nil, colon + 1 < end {
-            numericPort = true
-            var position = colon + 1
-            while position < end {
-                let byte = try cursor.byte(at: position)
-                if !(48 ... 57).contains(byte) {
-                    numericPort = false
-                }
-                position += 1
-            }
+        // A colon following an @ belongs to the path/query, not userinfo.
+        let laterUserinfo = colon.map { firstColon in
+            lastAt.map { firstColon < $0 } ?? (firstWhitespace.map { firstColon < $0 } ?? true)
+        } ?? false
+        let ambiguous = initiallyAmbiguous || (laterUserinfo && lastAt != nil)
+            || (incomplete && end == length && laterUserinfo && !authorityHasHostSyntax)
+        if authorityAt != nil || (lastAt != nil && laterUserinfo) {
+            return AuthoritySpan(end: end, lastAt: lastAt, ambiguous: ambiguous)
         }
-        let ambiguous = colon != nil && !numericPort
-        let credentials = ambiguous || lastAt != nil
-        if !credentials {
-            // Continue scanning ordinary paths and queries for independent URLs.
-            return AuthoritySpan(end: end, lastAt: nil, ambiguous: false)
+        if ambiguous {
+            return AuthoritySpan(end: end, lastAt: nil, ambiguous: true)
         }
-        var malformedUserinfo = false
-        // A normal URL ends at whitespace. Malformed userinfo can contain spaces
-        // before its @, but ordinary text following the host stays independent.
-        while end < length {
-            let byte = try cursor.byte(at: end)
-            if byte == 10 || byte == 13 || (byte <= 32 && (!credentials || (lastAt != nil && !malformedUserinfo))) {
+        return AuthoritySpan(end: authorityEnd, lastAt: nil, ambiguous: false)
+    }
+
+    private static func hasHostSyntax(start: Int64, end: Int64, cursor: Cursor) throws -> Bool {
+        for offset in start ..< end {
+            let byte = try cursor.byte(at: offset)
+            if byte == 47 || byte == 63 || byte == 35 || byte <= 32 {
                 break
             }
-            if credentials, lastAt == nil, byte <= 32 || byte == 47 || byte == 63 || byte == 35 {
-                malformedUserinfo = true
+            if byte == 46 || byte == 91 {
+                return true
             }
-            if credentials, byte == 64 {
-                lastAt = end
-            }
-            end += 1
         }
-        return AuthoritySpan(end: end, lastAt: lastAt, ambiguous: ambiguous)
+        return false
     }
 
     private static func isLetter(_ byte: UInt8) -> Bool {

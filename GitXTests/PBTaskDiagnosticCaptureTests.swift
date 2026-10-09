@@ -4,6 +4,94 @@ import ObjectiveC
 import XCTest
 
 final class PBTaskDiagnosticCaptureTests: XCTestCase {
+    // swift6-safety-justification: The lock protects the one-time gate and DispatchSemaphore is thread-safe.
+    private final nonisolated class ShortReadHandle: FileHandle, @unchecked Sendable {
+        let gate: DispatchSemaphore
+        private let underlying: FileHandle
+        private let lock = NSLock()
+        private var firstRead = true
+
+        init(descriptor: Int32, gate: DispatchSemaphore) {
+            self.gate = gate
+            underlying = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            super.init()
+        }
+
+        required init?(coder _: NSCoder) {
+            nil
+        }
+
+        override var fileDescriptor: Int32 {
+            underlying.fileDescriptor
+        }
+
+        override var readabilityHandler: (@Sendable (FileHandle) -> Void)? {
+            get { underlying.readabilityHandler }
+            set {
+                if let newValue {
+                    underlying.readabilityHandler = { [weak self] _ in
+                        if let self {
+                            newValue(self)
+                        }
+                    }
+                } else {
+                    underlying.readabilityHandler = nil
+                }
+            }
+        }
+
+        override func closeFile() {
+            underlying.closeFile()
+        }
+
+        override var availableData: Data {
+            lock.lock()
+            let wait = firstRead
+            firstRead = false
+            lock.unlock()
+            if wait {
+                gate.wait()
+            }
+            var byte: UInt8 = 0
+            let count = Darwin.read(fileDescriptor, &byte, 1)
+            return count > 0 ? Data([byte]) : Data()
+        }
+    }
+
+    // swift6-safety-justification: Pipe construction happens once before transfer to PBTask's readers.
+    private final nonisolated class ShortReadPipe: Pipe, @unchecked Sendable {
+        private let underlying: Pipe
+        private let reader: ShortReadHandle
+
+        init(gate: DispatchSemaphore) {
+            let pipe = Pipe()
+            underlying = pipe
+            let descriptor = dup(pipe.fileHandleForReading.fileDescriptor)
+            _ = fcntl(descriptor, F_SETFD, FD_CLOEXEC)
+            reader = ShortReadHandle(descriptor: descriptor, gate: gate)
+            super.init()
+        }
+
+        override var fileHandleForReading: FileHandle {
+            reader
+        }
+
+        override var fileHandleForWriting: FileHandle {
+            underlying.fileHandleForWriting
+        }
+    }
+
+    private final nonisolated class ShortReaderTask: PBTask {
+        /// PBTask's Objective-C factory bypasses Swift subclass initialization.
+        /// Each fixture configures its gate explicitly before launching readers.
+        var readerGate: DispatchSemaphore!
+
+        @objc(makePipe)
+        func makePipe() -> Pipe? { // swiftlint:disable:this unused_declaration
+            ShortReadPipe(gate: readerGate)
+        }
+    }
+
     private class HeldOutputWriterTask: PBTask {
         private var pipeCount = 0
         // PBTask's test-only Objective-C initializer can leave Swift subclass
@@ -73,6 +161,59 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
 
         XCTAssertEqual(task.standardOutputData, Data(output.utf8))
         XCTAssertEqual(task.standardErrorData, expectedDiagnostic)
+    }
+
+    func testCapturedFiniteStreamsSupportShortReadsBeforeTheDeadline() throws {
+        let task = ShortReaderTask(launchPath: "/bin/sh", arguments: ["-c", "printf a; printf b >&2"], inDirectory: nil)
+        task.readerGate = DispatchSemaphore(value: 0)
+        let capture = PBTaskDiagnosticCapture()
+        task.diagnosticCapture = capture
+        task.readerGate.signal()
+        task.readerGate.signal()
+        try task.launch()
+        XCTAssertEqual(task.standardOutputData, Data("a".utf8))
+        XCTAssertEqual(task.standardErrorData, Data("b".utf8))
+        let artifact = try XCTUnwrap(capture.artifact)
+        defer { artifact.discard() }
+        XCTAssertTrue(artifact.captureComplete)
+    }
+
+    func testDrainPolicyResetsIdleDeadlineWithoutExtendingHardOrTaskDeadlines() {
+        XCTAssertEqual(PBTaskDrainPolicy.deadline(leaderExit: 10, lastProgress: 9, taskDeadline: 0), 11)
+        XCTAssertEqual(PBTaskDrainPolicy.deadline(leaderExit: 10, lastProgress: 15, taskDeadline: 0), 16)
+        XCTAssertEqual(PBTaskDrainPolicy.deadline(leaderExit: 10, lastProgress: 25, taskDeadline: 0), 20)
+        XCTAssertEqual(PBTaskDrainPolicy.deadline(leaderExit: 10, lastProgress: 15, taskDeadline: 14), 14)
+    }
+
+    func testProductionDrainPreservesFiniteBufferedStreamsWithDelayedShortReaders() throws {
+        let task = ShortReaderTask(launchPath: "/bin/sh", arguments: ["-c", "printf finite-output; printf finite-error >&2"], inDirectory: nil)
+        task.readerGate = DispatchSemaphore(value: 0)
+        let capture = PBTaskDiagnosticCapture()
+        task.diagnosticCapture = capture
+        task.timeout = 15
+        let completed = expectation(description: "finite short-reader completion")
+        task.perform(on: .global(qos: .userInitiated)) { error in
+            XCTAssertNil(error)
+            completed.fulfill()
+        }
+        defer { task.readerGate.signal(); task.readerGate.signal(); task.terminate() }
+        waitForCondition("leader exited while both finite streams await reader delivery") {
+            task.value(forKey: "leaderExitObserved") as? Bool == true &&
+                (task.value(forKey: "outputReadsInFlight") as? Int ?? 0) > 0 &&
+                (task.value(forKey: "errorReadsInFlight") as? Int ?? 0) > 0
+        }
+        // Hold actual reader work until the production deadline requests closure.
+        // There is no descendant and all bytes are already buffered in the pipes.
+        waitForCondition("production drain deadline reached") { task.value(forKey: "outputDrainExpired") as? Bool == true }
+        task.readerGate.signal()
+        task.readerGate.signal()
+        wait(for: [completed], timeout: 15)
+        XCTAssertEqual(task.standardOutputData, Data("finite-output".utf8))
+        XCTAssertEqual(task.standardErrorData, Data("finite-error".utf8))
+        XCTAssertEqual(task.value(forKey: "terminationStatus") as? Int, 0)
+        let artifact = try XCTUnwrap(capture.artifact)
+        defer { artifact.discard() }
+        XCTAssertTrue(artifact.captureComplete)
     }
 
     func testLegacySeparateReadersPreserveBinaryBytesAndKeepInvalidDiagnosticOutOfErrorText() {
@@ -228,6 +369,45 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         XCTAssertEqual(task.standardErrorData, Data("final-error".utf8))
         XCTAssertTrue(task.value(forKey: "outputHandleClosed") as? Bool == true)
         XCTAssertTrue(task.value(forKey: "errorHandleClosed") as? Bool == true)
+    }
+
+    func testProductionDrainPreservesDescendantOutputReleasedAfterLeaderExit() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gate = directory.appendingPathComponent("gate")
+        XCTAssertEqual(mkfifo(gate.path, 0o600), 0)
+        let descriptor = Darwin.open(gate.path, O_RDWR | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return XCTFail("Could not open descendant gate") }
+        defer { _ = Darwin.close(descriptor) }
+        let capture = PBTaskDiagnosticCapture()
+        let task = PBTask(launchPath: "/bin/sh", arguments: ["-c", """
+        (printf ready > "$1/ready"; read permit < "$1/gate"; printf delayed-output; printf delayed-error >&2) &
+        exit 9
+        """, "fixture", directory.path], inDirectory: nil)
+        task.diagnosticCapture = capture
+        task.timeout = 5
+        defer { task.terminate() }
+        let completed = expectation(description: "descendant output after leader exit")
+        task.perform(on: .global(qos: .userInitiated)) { error in
+            XCTAssertEqual((error as NSError?)?.userInfo[PBTaskTerminationStatusKey] as? Int, 9)
+            completed.fulfill()
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        func ready() -> Bool {
+            task.value(forKey: "leaderExitObserved") as? Bool == true && FileManager.default.fileExists(atPath: directory.appendingPathComponent("ready").path)
+        }
+        while !ready(), ProcessInfo.processInfo.systemUptime < deadline {
+            _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.005))
+        }
+        XCTAssertTrue(ready(), "Release the descendant from observed exit state, before the idle deadline")
+        let permit = Data("continue\n".utf8)
+        XCTAssertEqual(permit.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }, permit.count)
+        wait(for: [completed], timeout: 10)
+        let artifact = try XCTUnwrap(capture.artifact)
+        defer { artifact.discard() }
+        XCTAssertTrue(artifact.captureComplete)
+        XCTAssertEqual(task.standardOutputData, Data("delayed-output".utf8))
+        XCTAssertEqual(task.standardErrorData, Data("delayed-error".utf8))
     }
 
     func testOptInCooperativeTerminationDrainsBothTrapMarkersBeforeCompletion() throws {
@@ -676,7 +856,7 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         }
 
         func testCoreCaptureFailureModesKeepSafeStaticFallbackAndPartialIntegrity() {
-            for fault in ["createDirectory", "createLease", "createOutput", "createError", "append", "partialAppend", "close", "createReport", "read", "redactionWrite"] {
+            for fault in ["createDirectory", "createLease", "createOutput", "createError", "append", "partialAppend", "close", "closeError", "createReport", "read", "redactionWrite"] {
                 let capture = PBTaskDiagnosticCaptureTestHarness.capture(fault: fault)
                 capture.appendStandardOutput(Data("https://user:secret@example.invalid/repo".utf8))
                 capture.finishStandardOutput(reachedEOF: true)

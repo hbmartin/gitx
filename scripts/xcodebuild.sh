@@ -4,6 +4,10 @@
 set -uo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+if [[ "${GITX_GUARDED_ENTRY:-}" != "$root/scripts/xcodebuild.sh" ]]; then
+	exec python3 "$root/scripts/workflow_session.py" guard "$root/scripts/xcodebuild.sh" "$@"
+fi
+unset GITX_GUARDED_ENTRY
 support="$root/scripts/verification_support.py"
 cd "$root" || exit 2
 
@@ -26,7 +30,9 @@ Global options:
   --stage-app
 
 Every invocation emits a receipt under artifacts/verification/<run-id> while
-reusing the ignored build caches under build/.
+reusing caches under ~/Library/Caches/GitX/Verification. GITX_DERIVED_DATA,
+GITX_SWIFTPM_BUILD_ROOT and GITX_SOURCE_PACKAGE_CACHE override resolved paths.
+GITX_VERIFICATION_CACHE_ROOT relocates the partitioned cache hierarchy.
 USAGE
 }
 
@@ -141,6 +147,16 @@ fi
 if [[ "$command" == "archive" && "$configuration_explicit" == 0 ]]; then
 	configuration=Release
 fi
+if [[ "$command" == "raw" ]]; then
+	for (( index=0; index < ${#command_arguments[@]}; index++ )); do
+		case "${command_arguments[$index]}" in
+			-configuration) configuration=${command_arguments[$((index + 1))]:-$configuration} ;;
+			-configuration=*) configuration=${command_arguments[$index]#*=} ;;
+			-destination) destination=${command_arguments[$((index + 1))]:-$destination} ;;
+			-destination=*) destination=${command_arguments[$index]#*=} ;;
+		esac
+	done
+fi
 
 if [[ -z "$developer_dir" ]]; then
 	developer_dir=$(python3 "$support" developer-dir) || exit $?
@@ -166,13 +182,17 @@ products="$run_dir/Products"
 analyzer_derived_data=
 mkdir -p "$root/build"
 if [[ "$command" == "analyze" ]]; then
-	analyzer_derived_data=$(mktemp -d "$root/build/AnalyzerDerivedData.XXXXXX") || exit 2
+	mkdir -p "${GITX_DERIVED_DATA%/*}"
+	analyzer_derived_data=$(mktemp -d "${GITX_DERIVED_DATA%/*}/AnalyzerDerivedData.XXXXXX") || exit 2
 	derived_data="$analyzer_derived_data"
 else
 	derived_data=${GITX_DERIVED_DATA:-"$root/$derived_data_cache"}
 fi
-swiftpm_build_root="$root/$swiftpm_build_cache"
-mkdir -p "$logs" "$results" "$products" "$derived_data" "$swiftpm_build_root" "$root/$source_package_cache"
+swiftpm_build_root=${GITX_SWIFTPM_BUILD_ROOT:-"$root/$swiftpm_build_cache"}
+source_package_cache=${GITX_SOURCE_PACKAGE_CACHE:-"$root/$source_package_cache"}
+export GITX_DERIVED_DATA="$derived_data" GITX_SWIFTPM_BUILD_ROOT="$swiftpm_build_root" GITX_SOURCE_PACKAGE_CACHE="$source_package_cache"
+mkdir -p "$logs" "$results" "$products" "$derived_data" "$swiftpm_build_root" "$source_package_cache"
+echo "Build paths: DerivedData=$derived_data; SwiftPM=$swiftpm_build_root; SourcePackages=$source_package_cache"
 receipt="$run_dir/receipt.json"
 
 signing_allowed=YES
@@ -215,7 +235,7 @@ fi
 preset=$command
 if [[ "$command" == "test" ]]; then
 	case "${command_arguments[0]:-}" in
-		correctness|ui|address-undefined|thread-sanitizer|performance|core|forgekit)
+			correctness|host-preflight|ui|address-undefined|thread-sanitizer|performance|core|forgekit)
 			preset="test:${command_arguments[0]}"
 			;;
 		-testPlan)
@@ -223,6 +243,26 @@ if [[ "$command" == "test" ]]; then
 			;;
 	esac
 fi
+# Concurrent readers can corrupt ordinary instrumentation counters, including
+# producing wrapped branch counts. Correctness uses atomic updates in both the
+# host probe and suite. Record these effective flags before receipt creation.
+coverage_mode=$(python3 "$root/scripts/workflow_session.py" coverage-mode "$command" ${command_arguments[@]+"${command_arguments[@]}"}) || exit $?
+if [[ "$coverage_mode" == "atomic" ]]; then
+	coverage_arguments=()
+	swift_flags="\$(inherited)"
+	c_flags="\$(inherited)"
+	for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
+		case "$argument" in
+			OTHER_SWIFT_FLAGS=*) swift_flags=${argument#*=} ;;
+			OTHER_CFLAGS=*) c_flags=${argument#*=} ;;
+			*) coverage_arguments+=("$argument") ;;
+		esac
+	done
+	coverage_arguments+=("OTHER_SWIFT_FLAGS=$swift_flags -Xllvm -instrprof-atomic-counter-update-all"
+		"OTHER_CFLAGS=$c_flags -fprofile-update=atomic")
+	command_arguments=("${coverage_arguments[@]}")
+fi
+
 coverage_gate=not-applicable
 if [[ "$command" == "test" ]]; then
 	case "${command_arguments[0]:-}" in
@@ -234,7 +274,7 @@ if [[ "$command" == "test" ]]; then
 	if [[ "$coverage_gate" == "enforced" ]]; then
 		for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
 			case "$argument" in
-				-only-testing|-only-testing:*|-skip-testing|-skip-testing:*) coverage_gate=not-applicable-focused-selection ;;
+                -only-testing|-only-testing:*|-only-testing=*|-skip-testing|-skip-testing:*|-skip-testing=*) coverage_gate=not-applicable-focused-selection ;;
 			esac
 		done
 	fi
@@ -264,7 +304,9 @@ finish_receipt() {
 	elif (( exit_code == 0 )); then
 		overall_status=passed
 	fi
-	python3 "$support" receipt-finish "$receipt" --status "$overall_status" --exit-code "$exit_code" >/dev/null 2>&1 || true
+	python3 "$support" receipt-finish "$receipt" --status "$overall_status" --exit-code "$exit_code"
+	evidence_status=$?
+	if (( exit_code == 0 && evidence_status != 0 )); then exit_code=$evidence_status; fi
 	if [[ -n "$analyzer_derived_data" && -d "$analyzer_derived_data" ]]; then
 		rm -rf -- "$analyzer_derived_data" || true
 	fi
@@ -300,10 +342,10 @@ run_step() {
 	shift 3
 	started=$(python3 -c 'import time; print(time.time())')
 	if (( use_xcbeautify )) && command -v xcbeautify >/dev/null 2>&1 && [[ "$1" == "$xcodebuild" ]]; then
-		"$@" 2>&1 | tee "$log_path" | xcbeautify --disable-logging
+		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" -- "$@" 2>&1 | tee "$log_path" | xcbeautify --disable-logging
 		step_status=${PIPESTATUS[0]}
 	else
-		"$@" 2>&1 | tee "$log_path"
+		python3 "$root/scripts/workflow_session.py" run --diagnostics "$run_dir/Diagnostics/$step_name" -- "$@" 2>&1 | tee "$log_path"
 		step_status=${PIPESTATUS[0]}
 	fi
 	duration=$(elapsed_seconds "$started")
@@ -313,6 +355,8 @@ run_step() {
 		step_result=failed
 	fi
 	record_step "$step_name" "$step_result" "$step_status" "$duration" "$log_path" "$result_path" "$@"
+	receipt_step_status=$?
+	if (( step_status == 0 && receipt_step_status != 0 )); then step_status=$receipt_step_status; fi
 	return "$step_status"
 }
 
@@ -326,7 +370,12 @@ case "$command" in
 			doctor_mode=ui
 		fi
 		;;
-	analyze|archive|smoke|build|raw)
+	raw)
+		for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
+			case "$argument" in test|test-without-building) doctor_mode="test" ;; esac
+		done
+		;;
+	analyze|archive|smoke|build|build-tests)
 		;;
 	*)
 		echo "Unknown verification command: $command" >&2
@@ -357,7 +406,7 @@ common=(
 	-scheme "$scheme"
 	-destination "$destination"
 	-derivedDataPath "$derived_data"
-	-clonedSourcePackagesDirPath "$root/$source_package_cache"
+	-clonedSourcePackagesDirPath "$source_package_cache"
 	-configuration "$configuration"
 	MACOSX_DEPLOYMENT_TARGET="$deployment_target"
 )
@@ -375,14 +424,64 @@ reject_managed_paths() {
 	done
 }
 
+# Xcode rejects duplicate singleton options. Inherit an explicit suite option
+# first; add a plan-derived probe default only when the caller supplied none.
+ensure_probe_option() {
+	local option=$1 value=$2 argument
+	for argument in ${probe_arguments[@]+"${probe_arguments[@]}"}; do
+		[[ "$argument" == "$option" || "$argument" == "$option="* ]] && return 0
+	done
+	probe_arguments+=("$option" "$value")
+}
+
 xcode_test() {
 	local test_preset=$1
 	local plan=$2
 	local result="$results/$plan.xcresult"
 	shift 2
+	if [[ "$test_preset" != "ui-preflight" && "$test_preset" != "ui" ]]; then
+		local probe_arguments=() index=0
+		local arguments=("$@")
+		while (( index < ${#arguments[@]} )); do
+			case "${arguments[$index]}" in
+				-only-testing|-skip-testing) index=$((index + 2)) ;;
+				-only-testing:*|-skip-testing:*|-only-testing=*|-skip-testing=*) index=$((index + 1)) ;;
+				*) probe_arguments+=("${arguments[$index]}"); index=$((index + 1)) ;;
+			esac
+		done
+		case "$test_preset" in
+			correctness) ensure_probe_option -enableCodeCoverage YES ;;
+			address-undefined) ensure_probe_option -enableAddressSanitizer YES; ensure_probe_option -enableUndefinedBehaviorSanitizer YES ;;
+			thread-sanitizer) ensure_probe_option -enableThreadSanitizer YES ;;
+		esac
+		run_step compile:host-preflight "$logs/$plan-host-build.log" "" \
+			"$xcodebuild" "${common[@]}" build-for-testing -testPlan GitXHostPreflight \
+			CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO ${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
+	fi
+	# Compile before starting host deadlines, preserving suite instrumentation.
+	run_step "compile:$test_preset" "$logs/$plan-build.log" "" \
+		"$xcodebuild" "${common[@]}" build-for-testing -testPlan "$plan" \
+		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@" || return $?
+	run_step signatures "$logs/$plan-signatures.log" "" python3 "$root/scripts/workflow_session.py" signatures "$derived_data" || return $?
+	local snapshot="$results/$plan-inputs.json"
+	python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || return $?
+	if [[ "$test_preset" != "ui-preflight" && "$test_preset" != "ui" ]]; then
+		run_step host-preflight "$logs/$plan-host.log" "$results/$plan-host.xcresult" \
+			python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" -- \
+			"$xcodebuild" "${common[@]}" test-without-building -testPlan GitXHostPreflight \
+			-only-testing:GitXTests/GitXHostStartTests/testHostStarts \
+			-resultBundlePath "$results/$plan-host.xcresult" CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
+			${probe_arguments[@]+"${probe_arguments[@]}"} || return $?
+	fi
 	run_step "test:$test_preset" "$logs/$plan.log" "$result" \
-		"$xcodebuild" "${common[@]}" test -testPlan "$plan" -resultBundlePath "$result" \
-		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES "$@"
+		python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/$plan" -- \
+		"$xcodebuild" "${common[@]}" test-without-building -testPlan "$plan" -resultBundlePath "$result" \
+		CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO "$@"
+	local test_status=$?
+	run_step evidence "$logs/$plan-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"
+	local evidence_status=$?
+	(( test_status == 0 )) || return "$test_status"
+	return "$evidence_status"
 }
 
 stage_built_app() {
@@ -396,7 +495,7 @@ stage_built_app() {
 		return 3
 	fi
 	/usr/bin/codesign --verify --deep --strict "$built_app" || return 3
-	staged="$root/build/Half Dark.app"
+	staged="$root/build/GitX.app"
 	running_pids=$(
 		pgrep -x GitX 2>/dev/null | while read -r pid; do
 			case "$(ps -p "$pid" -o comm= 2>/dev/null)" in
@@ -428,6 +527,12 @@ stage_built_app() {
 }
 
 case "$command" in
+	build-tests)
+		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		run_step build-tests "$logs/build-tests.log" "" "$xcodebuild" "${common[@]}" build-for-testing \
+			-testPlan GitX CODE_SIGN_IDENTITY=- ENABLE_TESTABILITY=YES ENABLE_HARDENED_RUNTIME=NO \
+			${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		;;
 	build)
 		reject_managed_paths ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
 		run_step build "$logs/build.log" "" "$xcodebuild" "${common[@]}" build CODE_SIGN_IDENTITY=- ${command_arguments[@]+"${command_arguments[@]}"} || exit $?
@@ -480,6 +585,9 @@ case "$command" in
 		fi
 		reject_managed_paths ${extra[@]+"${extra[@]}"} || exit $?
 		case "$test_preset" in
+			host-preflight)
+				xcode_test host-preflight GitXHostPreflight ${extra[@]+"${extra[@]}"} || exit $?
+				;;
 			correctness)
 				plan=$(config testPlans.correctness)
 				xcode_test correctness "$plan" -enableCodeCoverage YES ${extra[@]+"${extra[@]}"} || exit $?
@@ -581,21 +689,84 @@ case "$command" in
 		# Release Swift packages also need testable interfaces for app-hosted
 		# XCTest imports; ordinary release builds retain their normal settings.
 		(( is_test_build )) && raw_common+=( ENABLE_TESTABILITY=YES )
+		# Local ad hoc test hosts cannot use Release library validation with
+		# third-party signed frameworks. Production build/archive stays intact.
+		if (( is_test_build )) && [[ "$signing_mode" == "ad-hoc" ]]; then
+			raw_common+=( ENABLE_HARDENED_RUNTIME=NO )
+		fi
 		(( has_workspace || has_project )) || raw_common+=( -workspace "$workspace" )
 		(( has_scheme )) || raw_common+=( -scheme "$scheme" )
 		(( has_destination )) || raw_common+=( -destination "$destination" )
 		(( has_configuration )) || raw_common+=( -configuration "$configuration" )
 		(( has_derived_data )) || raw_common+=( -derivedDataPath "$derived_data" )
-		(( has_package_cache )) || raw_common+=( -clonedSourcePackagesDirPath "$root/$source_package_cache" )
+		(( has_package_cache )) || raw_common+=( -clonedSourcePackagesDirPath "$source_package_cache" )
 		result_path=
 		if (( is_test_action && ! has_result_bundle )); then
 			result_path="$results/raw.xcresult"
 			raw_common+=( -resultBundlePath "$result_path" )
 		fi
-		run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" \
-			${raw_common[@]+"${raw_common[@]}"} \
-			MACOSX_DEPLOYMENT_TARGET="$deployment_target" \
-			${extra[@]+"${extra[@]}"} || exit $?
+		if (( is_test_action )); then
+			# Raw test actions use the same desktop/provenance protections while
+			# retaining explicit project, scheme, paths, signing and test options.
+			suite_arguments=() compile_arguments=() probe_arguments=()
+			raw_arguments=("${raw_common[@]}" "MACOSX_DEPLOYMENT_TARGET=$deployment_target" "${extra[@]}")
+			raw_plan=GitX
+			for ((index=0; index < ${#raw_arguments[@]}; index++)); do
+				argument=${raw_arguments[$index]}
+				case "$argument" in
+					test|test-without-building) continue ;;
+					-resultBundlePath)
+						result_path=${raw_arguments[$((index + 1))]}
+						suite_arguments+=("$argument" "$result_path")
+						index=$((index + 1)); continue ;;
+					-resultBundlePath=*)
+						result_path=${argument#*=}; suite_arguments+=("$argument"); continue ;;
+				esac
+				suite_arguments+=("$argument")
+				compile_arguments+=("$argument")
+				case "$argument" in
+					-testPlan)
+						raw_plan=${raw_arguments[$((index + 1))]}
+						suite_arguments+=("$raw_plan"); compile_arguments+=("$raw_plan")
+						index=$((index + 1)) ;;
+					-testPlan=*) raw_plan=${argument#*=} ;;
+					-only-testing|-skip-testing)
+						suite_arguments+=("${raw_arguments[$((index + 1))]}")
+						compile_arguments+=("${raw_arguments[$((index + 1))]}")
+						index=$((index + 1)) ;;
+					-only-testing:*|-skip-testing:*|-only-testing=*|-skip-testing=*) ;;
+					*) probe_arguments+=("$argument") ;;
+				esac
+			done
+			case "$raw_plan" in
+				GitX) ensure_probe_option -enableCodeCoverage YES ;;
+				GitXAddressUndefined) ensure_probe_option -enableAddressSanitizer YES; ensure_probe_option -enableUndefinedBehaviorSanitizer YES ;;
+				GitXThreadSanitizer) ensure_probe_option -enableThreadSanitizer YES ;;
+			esac
+			run_step compile:host-preflight "$logs/raw-host-build.log" "" "$xcodebuild" build-for-testing \
+				"${probe_arguments[@]}" -testPlan GitXHostPreflight || exit $?
+			run_step compile:raw "$logs/raw-build.log" "" "$xcodebuild" build-for-testing "${compile_arguments[@]}" || exit $?
+			run_step signatures "$logs/raw-signatures.log" "" python3 "$root/scripts/workflow_session.py" signatures "$derived_data" || exit $?
+			snapshot="$results/raw-inputs.json"
+			python3 "$root/scripts/workflow_session.py" snapshot "$snapshot" --products "$derived_data" || exit $?
+			run_step host-preflight "$logs/raw-host.log" "$results/raw-host.xcresult" \
+				python3 "$root/scripts/workflow_session.py" run --timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/host" -- \
+				"$xcodebuild" test-without-building "${probe_arguments[@]}" -testPlan GitXHostPreflight \
+				-only-testing:GitXTests/GitXHostStartTests/testHostStarts -resultBundlePath "$results/raw-host.xcresult" || exit $?
+			run_step raw "$logs/raw.log" "$result_path" \
+				python3 "$root/scripts/workflow_session.py" run --startup-timeout 120 --desktop --diagnostics "$run_dir/Diagnostics/raw" -- \
+				"$xcodebuild" test-without-building "${suite_arguments[@]}"
+			raw_status=$?
+			run_step evidence "$logs/raw-evidence.log" "" python3 "$root/scripts/workflow_session.py" validate "$snapshot"
+			evidence_status=$?
+			(( raw_status == 0 )) || exit "$raw_status"
+			(( evidence_status == 0 )) || exit "$evidence_status"
+		else
+			run_step raw "$logs/raw.log" "$result_path" "$xcodebuild" \
+				${raw_common[@]+"${raw_common[@]}"} \
+				MACOSX_DEPLOYMENT_TARGET="$deployment_target" \
+				${extra[@]+"${extra[@]}"} || exit $?
+		fi
 		;;
 esac
 

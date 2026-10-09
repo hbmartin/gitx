@@ -4,9 +4,11 @@ final class CommitControllerPoliciesTests: XCTestCase {
     private final nonisolated class ImmediatelySettledIndex: PBGitIndex {
         var onStage: (() -> Void)?
 
-        override func stageFiles(_ files: [PBChangedFile]) -> Bool {
+        override func stageFiles(_ files: [PBChangedFile], completion: @escaping (Bool, Error?) -> Void) -> Bool {
             onStage?()
-            return !files.isEmpty
+            let accepted = !files.isEmpty
+            completion(accepted, nil)
+            return accepted
         }
     }
 

@@ -3,6 +3,8 @@ name: gitx-runtime-verification
 description: Build, launch, observe, and diagnose GitX with the repository's deterministic runtime harness. Use when manually verifying a GitX UI or lifecycle change, reproducing a Milestone 2 or Milestone 3 journey, collecting diagnostic screenshots or accessibility evidence, inspecting live logs, or investigating a launch/runtime failure after XCTest.
 ---
 
+Use the repo-local [development-workflow skill](../development-workflow/SKILL.md) for desktop leases, blocker diagnosis and provenance. The canonical staged bundle is `build/GitX.app` (display name Half Dark). Retain current diagnostic attachments and stop only processes owned by the runtime session.
+
 # GitX Runtime Verification
 
 Use the checked-in launch and observation scripts so a manual run has the same isolated preferences, deterministic repository fixtures, and noninteractive Git environment as the UI tests.
@@ -23,6 +25,8 @@ scripts/run_app.sh --m2 push-create
 scripts/run_app.sh --m3 lifecycle
 scripts/run_app.sh --repo /tmp/existing-repository
 ```
+
+For an existing fixture repository, `--repo /tmp/existing-repository --preserve-git-environment` retains caller identity, dates, signing configuration, authentication, and helper environment. Both launch modes clear inherited repository/storage selectors: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_QUARANTINE_PATH`, and `GIT_NAMESPACE`. The flag requires `--repo`; it does not provide an alternate-index launch mode.
 
 Use only a repository in an unprotected temporary location unless access prompts are the behavior under test. The harness intentionally isolates preferences and Git configuration. If launch fails, inspect the paths printed by the script before trying a different launch method.
 

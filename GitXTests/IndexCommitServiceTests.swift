@@ -15,7 +15,7 @@ final class IndexCommitServiceTests: XCTestCase {
         }
     }
 
-    private final class CommandRunnerFake: NSObject, PBIndexCommandRunning {
+    private final class CommandRunnerFake: NSObject, PBIndexCommandRunning, PBIndexCommitReferenceRunning {
         struct Call {
             let arguments: [String]
             let input: String?
@@ -23,6 +23,7 @@ final class IndexCommitServiceTests: XCTestCase {
         }
 
         var results: [Result<String, Error>] = []
+        var preparationError: Error?
         private(set) var calls: [Call] = []
 
         func output(
@@ -32,6 +33,23 @@ final class IndexCommitServiceTests: XCTestCase {
         ) throws -> String {
             calls.append(Call(arguments: arguments, input: input, environment: environment))
             return try results.removeFirst().get()
+        }
+
+        func prepareCommitRequest(_ request: PBIndexCommitRequest) throws -> PBIndexCommitRequest {
+            if let preparationError {
+                throw preparationError
+            }
+            if request.headExpectation != nil {
+                return request
+            }
+            let oid = request.hasHead ? String(repeating: "a", count: 40) : nil
+            let head = try PBCommitHeadExpectation(symbolicTarget: "refs/heads/main", expectedOID: oid, objectIDWidth: 40)
+            let parents = request.hasHead && !request.amend && request.parentSHAs.isEmpty ? [oid!] : request.parentSHAs
+            return request.prepared(head: head, parents: parents)
+        }
+
+        func publishCommit(_ oid: String, request: PBIndexCommitRequest, subject: String) throws {
+            _ = try output(withArguments: ["update-ref", "--stdin", "-m", subject], input: "update HEAD \(oid) \(request.headExpectation!.expectedOID ?? String(repeating: "0", count: 40))", environment: nil)
         }
 
         func data(
@@ -84,6 +102,29 @@ final class IndexCommitServiceTests: XCTestCase {
     private var rootURL: URL!
     private var gitDirectory: URL!
     private var temporaryDirectory: URL!
+
+    func testPreparationFailureDoesNotRunHooksOrCreateObjects() {
+        let runner = CommandRunnerFake()
+        runner.preparationError = NSError(domain: "publication", code: 4, userInfo: [NSLocalizedDescriptionKey: "Select a Git supporting prepared reference transactions."])
+        let hooks = HookRunnerFake()
+        let result = makeService(runner: runner, hooks: hooks).commit(with: request(verify: true), progress: { _ in })
+        XCTAssertEqual(result.kind, .failure)
+        XCTAssertTrue(result.message.contains("prepared reference transactions"))
+        XCTAssertTrue(runner.calls.isEmpty)
+        XCTAssertTrue(hooks.calls.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: gitDirectory.appendingPathComponent("COMMIT_EDITMSG").path))
+    }
+
+    func testMessageWriteFailureDoesNotRunHooksOrCreateObjects() throws {
+        let runner = CommandRunnerFake()
+        let hooks = HookRunnerFake()
+        try FileManager.default.createDirectory(at: gitDirectory.appendingPathComponent("COMMIT_EDITMSG"), withIntermediateDirectories: true)
+        let result = makeService(runner: runner, hooks: hooks).commit(with: request(verify: true), progress: { _ in })
+        XCTAssertEqual(result.kind, .failure)
+        XCTAssertTrue(result.message.contains("Could not save the commit message"))
+        XCTAssertTrue(runner.calls.isEmpty)
+        XCTAssertTrue(hooks.calls.isEmpty)
+    }
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -199,11 +240,11 @@ final class IndexCommitServiceTests: XCTestCase {
         XCTAssertEqual(result.message, "Successfully created commit \(commit)")
         XCTAssertEqual(
             progress,
-            ["Creating tree", "Running hooks", "Creating commit", "Updating HEAD", "Running post-commit hook"]
+            ["Running hooks", "Creating tree", "Creating commit", "Updating HEAD", "Running post-commit hook"]
         )
-        XCTAssertEqual(runner.calls[1].arguments, ["commit-tree", tree, "-p", "HEAD"])
+        XCTAssertEqual(runner.calls[1].arguments, ["commit-tree", tree, "-p", String(repeating: "a", count: 40)])
         XCTAssertEqual(runner.calls[1].input, "edited by hook")
-        XCTAssertEqual(runner.calls[2].arguments, ["update-ref", "-m", "commit: subject", "HEAD", commit])
+        XCTAssertEqual(runner.calls[2].arguments, ["update-ref", "--stdin", "-m", "commit: subject"])
         XCTAssertEqual(hooks.calls.map(\.name), ["pre-commit", "commit-msg", "post-commit"])
     }
 
@@ -285,7 +326,7 @@ final class IndexCommitServiceTests: XCTestCase {
 
         XCTAssertEqual(preResult.kind, .hookFailure)
         XCTAssertEqual(preResult.message, "Pre-commit hook failed:\npre denied")
-        XCTAssertEqual(preRunner.calls.count, 1)
+        XCTAssertTrue(preRunner.calls.isEmpty)
         XCTAssertEqual(messageResult.kind, .hookFailure)
         XCTAssertEqual(messageResult.message, "Commit-msg hook failed")
         XCTAssertEqual(messageHooks.calls.map(\.name), ["pre-commit", "commit-msg"])
@@ -341,7 +382,7 @@ final class IndexCommitServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(result.kind, .failure)
-        XCTAssertEqual(result.message, "Could not update HEAD")
+        XCTAssertEqual(result.message, NSError(domain: "test", code: 4).localizedDescription)
         XCTAssertTrue(hooks.calls.isEmpty)
     }
 
@@ -373,12 +414,13 @@ final class IndexCommitServiceTests: XCTestCase {
         XCTAssertEqual(
             eventDescriptions(recorder.events),
             [
-                "phase:\(PBIndexCommitPhase.creatingTree.rawValue)",
+                "prepared",
                 "phase:\(PBIndexCommitPhase.runningPreCommitHook.rawValue)",
                 "output:pre ",
                 "output:€\n",
                 "phase:\(PBIndexCommitPhase.runningCommitMessageHook.rawValue)",
                 "output:message\n",
+                "phase:\(PBIndexCommitPhase.creatingTree.rawValue)",
                 "phase:\(PBIndexCommitPhase.creatingCommit.rawValue)",
                 "phase:\(PBIndexCommitPhase.updatingHead.rawValue)",
                 "phase:\(PBIndexCommitPhase.runningPostCommitHook.rawValue)",
@@ -476,7 +518,7 @@ final class IndexCommitServiceTests: XCTestCase {
         }
         let coordinator = PBIndexCommitCoordinator(service: service, repository: repository)
 
-        coordinator.commit(with: request(verify: true)) { _ in }
+        coordinator.commit(with: request(verify: true), eventHandler: { _ in })
         XCTAssertEqual(hookStarted.wait(timeout: .now() + 5), .success)
         repository = nil
         releaseHook.signal()
@@ -539,6 +581,9 @@ final class IndexCommitServiceTests: XCTestCase {
             }
             if let completion = event as? PBIndexCommitCompletionEvent {
                 return "completion:\(completion.result.kind.rawValue)"
+            }
+            if event is PBIndexCommitPreparedEvent {
+                return "prepared"
             }
             return "unknown"
         }

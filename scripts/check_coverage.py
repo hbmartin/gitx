@@ -11,6 +11,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import workflow_session as session
 from typing import NamedTuple
 
 
@@ -310,23 +311,105 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="OUTPUT",
         help="Write a candidate ratchet report without changing the checked-in policy.",
     )
+    parser.add_argument("--receipt", type=pathlib.Path, help="Validated complete correctness receipt required for a ratchet.")
+    parser.add_argument("--compare", type=pathlib.Path, help="Previous local correctness receipt with compatible instrumentation.")
+    parser.add_argument("--base", help="Commit used to classify changed source paths (default: origin/master merge base).")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_arguments(argv)
+    if args.record_improvements:
+        owner = {"runId": os.environ.get("GITX_SESSION_ID", "coverage-ratchet"), "pid": os.getpid(), "receipt": str(args.receipt)}
+        try:
+            with session.Leases([str(args.policy)], owner):
+                return check(args)
+        except session.ResourceBusy as error:
+            print(error, file=sys.stderr)
+            return 75
+    return check(args)
+
+
+def ratchet_evidence(args):
+    path = args.receipt or args.result_bundle.parent.parent / "receipt.json"
+    if not path.is_file():
+        raise ValueError("Ratchet requires a receipt from a complete local correctness run; historical coverage is reportable only.")
+    receipt = json.loads(path.read_text())
+    evidence = receipt.get("evidence", {})
+    if evidence.get("status") != "valid" or receipt.get("status") != "passed":
+        raise ValueError("Ratchet requires a passed receipt with valid provenance.")
+    if receipt.get("invocation", {}).get("coverageGate") != "enforced":
+        raise ValueError("Ratchet requires complete correctness execution, without focused selections.")
+    tests = [step for step in receipt.get("steps", []) if step.get("name") == "test:correctness"]
+    if not tests or any(step.get("status") != "passed" or not step.get("testCounts", {}).get("total") or step["testCounts"].get("failed") for step in tests):
+        raise ValueError("Ratchet requires successful complete correctness test counts.")
+    if session.changed_inputs(evidence["inputsAfter"], session.inputs()):
+        raise ValueError("Ratchet source, dependencies, plans or commit changed since execution.")
+    result = str(args.result_bundle.resolve().relative_to(session.ROOT))
+    recorded = evidence.get("results", {}).get(result)
+    if recorded is None or recorded != session.tree_identity(args.result_bundle):
+        raise ValueError("Ratchet result identity is missing or changed.")
+    derived = receipt.get("buildPaths", {}).get("derivedData")
+    if not derived or evidence.get("products") != session.product_identity(derived):
+        raise ValueError("Ratchet test products changed since execution.")
+    if evidence.get("dependencyProducts") != session.dependency_products():
+        raise ValueError("Ratchet dependency products changed since execution.")
+    return receipt
+
+
+def coverage_diagnostics(policy, coverage, counts, root, result, receipt=None, base=None):
+    changed = set(session.git(root, "diff", "--name-only", "HEAD").splitlines())
+    base = base or session.git(root, "merge-base", "origin/master", "HEAD")
+    if base:
+        changed.update(session.git(root, "diff", "--name-only", base).splitlines())
+    if receipt:
+        before = receipt.get("evidence", {}).get("inputsBefore", {}).get("files", {})
+        after = session.inputs(root).get("files", {})
+        changed.update(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+    for path, minimum in sorted(policy.files.items()):
+        actual = coverage.get(path)
+        if actual is None:
+            category = "stale-policy-path" if not (root / path).exists() else "missing-coverage"
+            print(f"[{category}] {path}: check source membership and suite instrumentation.", file=sys.stderr)
+        elif actual < minimum:
+            covered, executable = counts[path]
+            print(f"[uncovered-behavior] {path}: {covered}/{executable} lines; {'changed' if path in changed else 'untouched'} source.", file=sys.stderr)
+            query = subprocess.run(["xcrun", "xccov", "view", "--archive", "--file", str(root / path), "--json", str(result)], capture_output=True, text=True)
+            if query.returncode == 0:
+                try:
+                    payload = json.loads(query.stdout)
+                    records = payload.get(str(root / path), []) if isinstance(payload, dict) else payload
+                    uncovered = [str(item.get("line", item.get("lineNumber"))) for item in records if item.get("isExecutable") and item.get("executionCount", 0) == 0 and ("line" in item or "lineNumber" in item)]
+                    print("  Uncovered source lines: " + ", ".join(uncovered), file=sys.stderr)
+                except (ValueError, TypeError, AttributeError):
+                    print("  Uncovered-line detail unavailable; inspect the retained xcresult.", file=sys.stderr)
+
+
+def compatible_comparison(current, previous):
+    current_plans = current.get("evidence", {}).get("inputsAfter", {}).get("plans")
+    previous_plans = previous.get("evidence", {}).get("inputsAfter", {}).get("plans")
+    return bool(current.get("evidence", {}).get("status") == previous.get("evidence", {}).get("status") == "valid"
+        and current_plans is not None and current_plans == previous_plans
+        and current.get("toolchain") == previous.get("toolchain")
+        and current.get("invocation") == previous.get("invocation"))
+
+
+def check(args) -> int:
 
     root = pathlib.Path(__file__).resolve().parent.parent
     policy = load_policy(args.policy)
     try:
+        report = xccov_report(args.result_bundle)
         target_coverage, file_coverage, file_line_counts = extract_coverage(
-            xccov_report(args.result_bundle),
+            report,
             policy,
             root,
         )
     except ValueError as error:
         print(error, file=sys.stderr)
         return 1
+    target = next(item for item in report.get("targets", []) if item.get("name") == policy.target)
+    print(f"Exact target lines: {target.get('coveredLines', sum(v[0] for v in file_line_counts.values()))}/{target.get('executableLines', sum(v[1] for v in file_line_counts.values()))}")
 
     print(f"{policy.target}: {target_coverage:.2%} (minimum {policy.minimum_line_coverage:.2%})")
     for relative_path, minimum in sorted(policy.files.items()):
@@ -340,6 +423,41 @@ def main(argv: list[str] | None = None) -> int:
         actual_text = "missing" if actual is None else f"{actual:.2%}"
         print(f"{name}: {actual_text} (minimum {group.minimum_line_coverage:.2%})")
 
+    failures = evaluate_coverage(policy, target_coverage=target_coverage, file_coverage=file_coverage, file_line_counts=file_line_counts)
+    receipt_path = args.receipt or args.result_bundle.parent.parent / "receipt.json"
+    receipt = json.loads(receipt_path.read_text()) if receipt_path.is_file() else None
+    comparison_path = args.compare
+    if comparison_path is None and receipt and receipt.get("evidence", {}).get("status") == "valid":
+        previous_paths = sorted((root / "artifacts/verification").glob("*/receipt.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        for previous_path in previous_paths:
+            if previous_path.resolve() == receipt_path.resolve():
+                continue
+            previous = json.loads(previous_path.read_text())
+            if compatible_comparison(receipt, previous):
+                comparison_path = previous_path
+                break
+    if comparison_path:
+        previous = json.loads(comparison_path.read_text())
+        if not receipt or not compatible_comparison(receipt, previous):
+            print("[instrumentation-difference] Previous run is incompatible; no coverage comparison.")
+        else:
+            for step in previous.get("steps", []):
+                if step.get("name") == "test:correctness" and step.get("coverage", {}).get("lineCoverage") is not None:
+                    print(f"Compatible previous target coverage: {step['coverage']['lineCoverage']:.4%}; delta {target_coverage - step['coverage']['lineCoverage']:+.4%}")
+                    previous_result = root / step["xcresult"]
+                    if previous_result.exists():
+                        try:
+                            _, previous_files, previous_counts = extract_coverage(xccov_report(previous_result), policy, root)
+                            for path, actual in sorted(file_coverage.items()):
+                                if actual < policy.files.get(path, 0) and path in previous_files:
+                                    print(f"Previous {path}: {previous_counts[path][0]}/{previous_counts[path][1]} lines ({previous_files[path]:.4%}); current {file_line_counts[path][0]}/{file_line_counts[path][1]} ({actual:.4%})")
+                        except (ValueError, subprocess.SubprocessError):
+                            print("Previous file coverage unavailable; retained target comparison only.")
+    if failures:
+        coverage_diagnostics(policy, file_coverage, file_line_counts, root, args.result_bundle, receipt, args.base)
+    if args.record_improvements and failures:
+        print("Coverage validation failed; baseline unchanged.", file=sys.stderr)
+        return 1
     if args.record_improvements or args.propose_improvements:
         candidate = ratchet_policy(
             policy,
@@ -348,9 +466,21 @@ def main(argv: list[str] | None = None) -> int:
             file_line_counts=file_line_counts,
         )
         if args.record_improvements:
-            policy = candidate
-            write_json_atomic(args.policy, policy_payload(policy))
-            print(f"Raised coverage floors in {args.policy}")
+            try:
+                ratchet_evidence(args)
+            except (ValueError, OSError, KeyError) as error:
+                print(f"{error} Baseline unchanged.", file=sys.stderr)
+                return 1
+            proposed_failures = evaluate_coverage(candidate, target_coverage=target_coverage, file_coverage=file_coverage, file_line_counts=file_line_counts)
+            if proposed_failures:
+                print("Candidate policy failed validation; baseline unchanged.", file=sys.stderr)
+                return 1
+            if policy_payload(candidate) == policy_payload(policy):
+                print("No coverage floor increases; baseline unchanged.")
+            else:
+                write_json_atomic(args.policy, policy_payload(candidate))
+                policy = candidate
+                print(f"Raised coverage floors in {args.policy}")
         else:
             assert args.propose_improvements is not None
             if args.propose_improvements.resolve() == args.policy.resolve():

@@ -25,6 +25,14 @@ final class GitXTestGitFixtureTests: XCTestCase {
         XCTAssertEqual(shared["GCM_INTERACTIVE"], "never")
     }
 
+    func testVerificationOwnershipReachesAnEmptyUILaunchEnvironment() {
+        let environment = GitXTestGitEnvironment.isolated([:], verificationSession: "verified-run")
+        XCTAssertEqual(environment["GITX_VERIFICATION_SESSION"], "verified-run")
+        XCTAssertEqual(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
+        let unowned = GitXTestGitEnvironment.isolated([:], verificationSession: nil)
+        XCTAssertNil(unowned["GITX_VERIFICATION_SESSION"])
+    }
+
     func testFixtureRunnerCommitsLiteralFilesAndPreservesIntentionalLocalHooks() throws {
         let directory = try makeRepository()
         let hook = directory.appendingPathComponent(".git/hooks/pre-commit")

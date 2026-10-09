@@ -492,6 +492,7 @@ final class RepositoryLocalStatusLoader: NSObject {
             inDirectory: directory
         )
         task.timeout = 10
+        task.additionalEnvironment = ["GIT_OPTIONAL_LOCKS": "0"]
         self.task = task
         logger.debug("Loading local repository status generation=\(requestedGeneration, privacy: .public)")
         task.perform(on: .main) { [weak self] data, error in

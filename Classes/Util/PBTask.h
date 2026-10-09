@@ -11,6 +11,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class PBTaskDiagnosticCapture;
+@class PBTaskExecutionContext;
 
 extern NSString *const PBTaskErrorDomain;
 extern NSString *const PBTaskUnderlyingExceptionKey;
@@ -72,6 +73,10 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 ///
 - (BOOL)launchTask:(NSError *_Nullable *_Nullable)error;
 
+/// Freeze validated executable inputs for an owned interactive process.
+/// Argument and environment exceptions remain inside PBTask's Objective-C boundary.
+- (nullable PBTaskExecutionContext *)executionContext:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(executionContext());
+
 /// Execute a task synchronously, reporting each raw output chunk before completion.
 - (BOOL)launchTaskWithOutputChunkHandler:(nullable PBTaskOutputChunkHandler)outputChunkHandler
 								   error:(NSError *_Nullable *_Nullable)error
@@ -81,6 +86,9 @@ typedef void(NS_SWIFT_SENDABLE ^ PBTaskOutputChunkHandler)(NSData *chunk);
 @property (readonly, retain) NSData *standardOutputData;
 /// The separate standard error stream, or empty data when streams are merged.
 @property (readonly, retain) NSData *standardErrorData;
+/// Explicitly distinguish a complete memory stream from a prefix or clipped tail.
+@property (readonly) BOOL standardOutputTruncated;
+@property (readonly) BOOL standardErrorTruncated;
 /// Keep standard error out of standard output. Defaults to NO for existing callers.
 @property BOOL separatesStandardError;
 /// Set to NO when an output chunk handler consumes a large stream. Defaults to YES.

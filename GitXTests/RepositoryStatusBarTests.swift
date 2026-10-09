@@ -633,6 +633,25 @@ final class RepositoryStatusBarTests: XCTestCase {
         failingLoader.cancel()
     }
 
+    func testLocalStatusQueryDoesNotRefreshIndexBytes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitXReadOnlyStatus-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try runGit(["init", "-q", "-b", "main"], in: directory)
+        let file = directory.appendingPathComponent("tracked.txt")
+        try "tracked\n".write(to: file, atomically: true, encoding: .utf8)
+        try runGit(["add", "tracked.txt"], in: directory)
+        let index = directory.appendingPathComponent(".git/index")
+        let before = try Data(contentsOf: index)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_234_567_890)], ofItemAtPath: file.path)
+        let repository = try XCTUnwrap(PBGitRepository(url: directory))
+        let loaded = expectation(description: "read-only status completed")
+        let loader = RepositoryLocalStatusLoader(repository: repository, gitExecutablePath: "/usr/bin/git") { _ in loaded.fulfill() }
+        loader.refresh()
+        wait(for: [loaded], timeout: 10)
+        XCTAssertEqual(try Data(contentsOf: index), before)
+    }
+
     private func statusInput(
         freshness: ForgeOverlayFreshness = .notLoaded,
         diagnostic: ForgeStatusDiagnostic = .none

@@ -17,7 +17,7 @@ from support import ROOT
 class ScriptEntrypointTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
-        self.root = pathlib.Path(self.temporary_directory.name)
+        self.root = pathlib.Path(self.temporary_directory.name).resolve()
         self.scripts = self.root / "scripts"
         self.scripts.mkdir()
         self.bin = self.root / "bin"
@@ -31,6 +31,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         test_directory.mkdir()
         for plan in (
             "GitX",
+            "GitXHostPreflight",
             "GitXUIPreflight",
             "GitXUI",
             "GitXAddressUndefined",
@@ -41,6 +42,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.environment = os.environ.copy()
         self.environment["PATH"] = f"{self.bin}:{self.environment['PATH']}"
         self.environment["GITX_DEVELOPER_DIR"] = str(self.developer_directory)
+        for key in ("GITX_RESOURCE_LEASES", "GITX_SESSION_ID", "GITX_GUARDED_ENTRY"):
+            self.environment.pop(key, None)
+        self.environment["GITX_DERIVED_DATA"] = str(self.root / "build/DerivedData")
+        self.environment["GITX_SWIFTPM_BUILD_ROOT"] = str(self.root / "build/SwiftPM")
+        self.environment["GITX_SOURCE_PACKAGE_CACHE"] = str(self.root / "artifacts/cache/SourcePackages")
         self.fixture_environment = {
             key: value for key, value in self.environment.items() if not key.startswith("GIT_")
         } | {
@@ -57,8 +63,15 @@ class ScriptEntrypointTests(unittest.TestCase):
     def install_script(self, name: str) -> pathlib.Path:
         destination = self.scripts / name
         shutil.copy2(ROOT / "scripts" / name, destination)
+        if name == "run_app.sh":
+            destination.write_text(destination.read_text().replace("/usr/bin/codesign", "/usr/bin/true"))
+        shutil.copy2(ROOT / "scripts/workflow_session.py", self.scripts / "workflow_session.py")
+        # Controlled desktop probe in the copied fixture, never in production.
+        session_path = self.scripts / "workflow_session.py"
+        session_path.write_text(session_path.read_text().replace("checks = desktop_checks()", "checks = []").replace("def desktop_checks():", "def desktop_checks():\n    return []\n\ndef real_desktop_checks():"))
+        session_path.write_text(session_path.read_text().replace('LOCK_ROOT = pathlib.Path.home() / "Library/Caches/GitX/Verification/Locks"', 'LOCK_ROOT = ROOT / "fixture-locks"'))
         if name == "xcodebuild.sh":
-            for dependency in ("doctor.sh", "verification_support.py", "verification-config.json"):
+            for dependency in ("doctor.sh", "verification_support.py", "verification-config.json", "check_test_build_contracts.py"):
                 shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
         return destination
 
@@ -75,6 +88,23 @@ class ScriptEntrypointTests(unittest.TestCase):
         test_build = next(value for value in invocations if "\nbuild-for-testing\n" in value)
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
+
+    def test_canonical_release_tests_allow_locally_signed_framework_loading(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        for command in (["build-tests"], ["test", "correctness", "-only-testing:GitXTests/GitXInteropContractTests"]):
+            subprocess.run([script, "--configuration", "Release", *command], check=True,
+                           capture_output=True, text=True, env=self.environment)
+        tests = [value for value in captured.read_text().split("__INVOCATION__")
+                 if "\nbuild-for-testing\n" in value or "\ntest-without-building\n" in value]
+        self.assertTrue(tests)
+        for invocation in tests:
+            self.assertIn("ENABLE_HARDENED_RUNTIME=NO", invocation)
+            self.assertIn("CODE_SIGN_IDENTITY=-", invocation)
+        captured.write_text("")
+        subprocess.run([script, "--configuration", "Release", "build"], check=True,
+                       capture_output=True, text=True, env=self.environment)
+        self.assertNotIn("ENABLE_HARDENED_RUNTIME=NO", captured.read_text())
 
     def install_mock_xcodebuild(
         self,
@@ -95,10 +125,16 @@ class ScriptEntrypointTests(unittest.TestCase):
             "printf '__INVOCATION__\\n' >>\"$CAPTURED_ARGUMENTS\"\n"
             "printf '%s\\n' \"$@\" >>\"$CAPTURED_ARGUMENTS\"\n"
             "arguments=(\"$@\")\n"
+            "for option in -enableCodeCoverage -enableAddressSanitizer -enableUndefinedBehaviorSanitizer -enableThreadSanitizer; do\n"
+            "  count=0\n"
+            "  for argument in \"${arguments[@]}\"; do [[ \"$argument\" == \"$option\" || \"$argument\" == \"$option=\"* ]] && count=$((count + 1)); done\n"
+            "  if (( count > 1 )); then echo \"duplicate singleton option: $option\" >&2; exit 64; fi\n"
+            "done\n"
             "derived=''\n"
             "for ((index = 0; index < ${#arguments[@]}; index++)); do\n"
             "  if [[ \"${arguments[$index]}\" == '-derivedDataPath' ]]; then\n"
             "    derived=${arguments[$((index + 1))]}\n"
+            "    if [[ \" $* \" == *' build '* || \" $* \" == *' build-for-testing '* ]]; then\n"
             "    app=\"$derived/Build/Products/Debug/Half Dark.app\"\n"
             "    mkdir -p \"$app/Contents/MacOS\" \"$app/Contents/Resources\"\n"
             "    printf '#!/bin/bash\\n' >\"$app/Contents/MacOS/GitX\"\n"
@@ -108,8 +144,10 @@ class ScriptEntrypointTests(unittest.TestCase):
             "    /usr/bin/plutil -insert CFBundleExecutable -string GitX \"$app/Contents/Info.plist\"\n"
             "    /usr/bin/plutil -insert CFBundleIdentifier -string com.gitx.test \"$app/Contents/Info.plist\"\n"
             "    /usr/bin/codesign --force --sign - \"$app\" >/dev/null 2>&1\n"
+            "    fi\n"
             "  fi\n"
             "  case \"${arguments[$index]}\" in\n"
+            "    -resultBundlePath) mkdir -p \"${arguments[$((index + 1))]}\" ;;\n"
             "    CLANG_ANALYZER_OUTPUT_DIR=*)\n"
             "      analyzer_output=${arguments[$index]#*=}\n"
             "      mkdir -p \"$analyzer_output/StaticAnalyzer/GitX/GitX/normal/arm64\"\n"
@@ -122,12 +160,17 @@ class ScriptEntrypointTests(unittest.TestCase):
             "fi\n"
             "if [[ \" $* \" == *' -showdestinations '* ]]; then\n"
             "  printf '{ platform: macOS, arch: arm64 }\\n'\n"
+            "  printf '{ platform: macOS, arch: x86_64 }\\n'\n"
             "fi\n"
             "if [[ \"${MOCK_XCODEBUILD_EXIT_STATUS:-0}\" != 0 && \" $* \" == *' analyze '* ]]; then\n"
             "  exit \"$MOCK_XCODEBUILD_EXIT_STATUS\"\n"
             "fi\n"
         )
         mock.chmod(0o755)
+        xcrun = self.bin / "xcrun"
+        if not xcrun.exists():
+            xcrun.write_text('#!/bin/bash\nif [[ "$1" == "xcresulttool" ]]; then printf \'{"totalTestCount":1,"passedTests":1,"failedTests":0,"skippedTests":0}\\n\'; else exec /usr/bin/xcrun "$@"; fi\n')
+            xcrun.chmod(0o755)
         self.environment["CAPTURED_ARGUMENTS"] = str(captured_arguments)
         self.environment["PRODUCTS_DIRECTORY"] = str(products_directory)
         return captured_arguments
@@ -232,7 +275,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
-        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
         self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
@@ -250,7 +293,13 @@ class ScriptEntrypointTests(unittest.TestCase):
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             if (session_directory / "app.pid").exists() and (session_directory / "logstream.pid").exists():
-                return process, session_directory, temporary_root
+                app_record = (session_directory / "app.pid").read_text().strip().split("\t")
+                log_record = (session_directory / "logstream.pid").read_text().strip().split("\t")
+                session = session_directory / "session.txt"
+                if len(app_record) == len(log_record) == 2 and session.exists():
+                    facts = dict(line.split("=", 1) for line in session.read_text().splitlines() if "=" in line)
+                    if facts.get("app_pid") == app_record[0] and facts.get("log_pid") == log_record[0] and facts.get("isolated_home"):
+                        return process, session_directory, temporary_root
             time.sleep(0.02)
         process.kill()
         process.communicate(timeout=2)
@@ -310,7 +359,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             env=self.environment,
         )
 
-        fixture = self.root / "build" / "Half Dark.app" / "Contents" / "Resources" / "fixture.txt"
+        fixture = self.root / "build" / "GitX.app" / "Contents" / "Resources" / "fixture.txt"
         self.assertEqual(fixture.read_text(), "staged\n")
 
     def test_xcodebuild_wrapper_rejects_an_xcode_older_than_ci(self) -> None:
@@ -452,12 +501,34 @@ class ScriptEntrypointTests(unittest.TestCase):
         result_bundles = [
             arguments[index + 1]
             for index, argument in enumerate(arguments[:-1])
-            if argument == "-resultBundlePath"
+            if argument == "-resultBundlePath" and not arguments[index + 1].endswith("raw-host.xcresult")
         ]
         self.assertEqual(len(result_bundles), 2)
         self.assertEqual(len(set(result_bundles)), 2)
         logs = list((self.root / "artifacts" / "verification").glob("*/Logs/raw.log"))
         self.assertEqual(len(logs), 2)
+
+    def test_raw_tests_compile_and_validate_before_bounded_execution(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        subprocess.run(
+            [script, "--raw", "--run-id", "raw-protected", "raw", "--", "test", "-testPlan", "GitXThreadSanitizer", "-only-testing:GitXTests/Contract", "CODE_SIGN_IDENTITY=-"],
+            check=True, capture_output=True, text=True, env=self.environment,
+        )
+        invocations = captured.read_text().split("__INVOCATION__")
+        host_build = next(value for value in invocations if "\nbuild-for-testing\n" in value and "GitXHostPreflight" in value)
+        self.assertIn("-enableThreadSanitizer\nYES", host_build)
+        self.assertNotIn("-only-testing:GitXTests/Contract", host_build)
+        self.assertIn("CODE_SIGN_IDENTITY=-", host_build)
+        suite = next(value for value in invocations if "\ntest-without-building\n" in value and "GitXThreadSanitizer" in value)
+        self.assertIn("-only-testing:GitXTests/Contract", suite)
+        receipt = self.receipt("raw-protected")
+        names = [step["name"] for step in receipt["steps"]]
+        self.assertLess(names.index("compile:raw"), names.index("host-preflight"))
+        self.assertLess(names.index("signatures"), names.index("raw"))
+        self.assertEqual(receipt["evidence"]["status"], "valid")
+        execution = next(step for step in receipt["steps"] if step["name"] == "raw")
+        self.assertIn("--startup-timeout", execution["command"])
 
     def test_xcodebuild_wrapper_reuses_shared_derived_data(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -678,6 +749,63 @@ class ScriptEntrypointTests(unittest.TestCase):
             "not-applicable-focused-selection",
         )
         self.assertNotIn("coverage", [step["name"] for step in receipt["steps"]])
+
+    def test_correctness_preserves_caller_compiler_flags_in_probe_and_suite(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        flags = ["OTHER_SWIFT_FLAGS=$(inherited) -DWORKFLOW_CHARACTERIZATION",
+                 "OTHER_CFLAGS=$(inherited) -DWORKFLOW_CHARACTERIZATION=1"]
+        subprocess.run([script, "--run-id", "compiler-flags", "test", "correctness",
+                        "-only-testing:GitXTests/ExampleTests", *flags], check=True,
+                       capture_output=True, text=True, env=self.environment)
+        builds = [value.splitlines() for value in captured.read_text().split("__INVOCATION__")
+                  if "\nbuild-for-testing\n" in value]
+        self.assertEqual(len(builds), 2)
+        for arguments in builds:
+            for setting in ("OTHER_SWIFT_FLAGS", "OTHER_CFLAGS"):
+                value = next(argument for argument in arguments if argument.startswith(setting + "="))
+                self.assertIn("$(inherited)", value)
+                self.assertIn("WORKFLOW_CHARACTERIZATION", value)
+        for flag in flags:
+            self.assertTrue(any(flag in argument for argument in
+                                self.receipt("compiler-flags")["invocation"]["arguments"]))
+
+    def test_correctness_records_atomic_counters_for_all_compilation_entrypoints(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        commands = (["build-tests"],
+                    ["test", "correctness", "-only-testing:GitXTests/ExampleTests"],
+                    ["test", "-testPlan", "GitX", "-only-testing:GitXTests/ExampleTests"],
+                    ["raw", "--", "build-for-testing", "-testPlan=GitX"],
+                    ["raw", "--", "test", "-only-testing:GitXTests/ExampleTests"])
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                captured.write_text("")
+                run_id = f"atomic-{index}"
+                subprocess.run([script, "--run-id", run_id, *command], check=True,
+                               capture_output=True, text=True, env=self.environment)
+                builds = [value.splitlines() for value in captured.read_text().split("__INVOCATION__")
+                          if "\nbuild-for-testing\n" in value]
+                self.assertTrue(builds)
+                for arguments in builds:
+                    self.assertIn("OTHER_SWIFT_FLAGS=$(inherited) -Xllvm -instrprof-atomic-counter-update-all", arguments)
+                    self.assertIn("OTHER_CFLAGS=$(inherited) -fprofile-update=atomic", arguments)
+                recorded = self.receipt(run_id)["invocation"]["arguments"]
+                self.assertTrue(any("-instrprof-atomic-counter-update-all" in value for value in recorded))
+                self.assertTrue(any("-fprofile-update=atomic" in value for value in recorded))
+
+    def test_non_coverage_commands_keep_existing_counter_mode(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        for index, command in enumerate((["build"], ["test", "performance"],
+                                         ["test", "address-undefined"], ["test", "thread-sanitizer"],
+                                         ["raw", "--", "build-for-testing", "-testPlan", "GitXPerformance"])):
+            with self.subTest(command=command):
+                captured.write_text("")
+                subprocess.run([script, "--run-id", f"non-atomic-{index}", *command], check=True,
+                               capture_output=True, text=True, env=self.environment)
+                self.assertNotIn("-instrprof-atomic-counter-update-all", captured.read_text())
+                self.assertNotIn("-fprofile-update=atomic", captured.read_text())
 
     def test_ui_preflight_forwards_non_selection_extras_only(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -1095,17 +1223,36 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
-        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
+        (repository / "selected.txt").write_text("selected fixture\n")
+        foreign = self.root / "foreign-repo"
+        foreign.mkdir()
+        subprocess.run(["git", "init", "--quiet", foreign], check=True, env=self.fixture_environment)
+        (foreign / "foreign.txt").write_text("foreign fixture\n")
+        (foreign / "selected.txt").write_text("different foreign contents\n")
+        subprocess.run(["git", "-C", foreign, "add", "foreign.txt"], check=True, env=self.fixture_environment)
+        foreign_index = foreign / ".git" / "index"
+        original_foreign_index = foreign_index.read_bytes()
+        selectors = {
+            "GIT_DIR": str(foreign / ".git"), "GIT_WORK_TREE": str(foreign),
+            "GIT_INDEX_FILE": str(foreign_index), "GIT_COMMON_DIR": str(foreign / ".git"),
+            "GIT_OBJECT_DIRECTORY": str(foreign / ".git" / "objects"),
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(foreign / ".git" / "objects"),
+            "GIT_QUARANTINE_PATH": str(foreign / ".git" / "objects"), "GIT_NAMESPACE": "inherited-namespace",
+        }
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         forge_roots = self.root / "forge-roots.txt"
         launch_environment = self.root / "launch-environment.txt"
+        mutation_result = self.root / "mutation-result.txt"
         app_binary.write_text(
             "#!/bin/bash\n"
             f"printf '%s\\n' \"$GITX_UITEST_FORGE_STORAGE_ROOT\" >>'{forge_roots}'\n"
             f"/usr/bin/env >'{launch_environment}'\n"
+            '/usr/bin/git -C "$GITX_UITEST_REPO" add selected.txt\n'
+            f"printf '%s\\n' \"$?\" >'{mutation_result}'\n"
             "exec /bin/sleep 60\n"
         )
         app_binary.chmod(0o755)
@@ -1128,20 +1275,25 @@ class ScriptEntrypointTests(unittest.TestCase):
             "GCM_INTERACTIVE": "always",
             "LC_ALL": "en_US.UTF-8",
         }
+        environment.update(selectors)
         sessions: list[dict[str, str]] = []
         captured_environments: list[dict[str, str]] = []
 
         try:
             for preserve in (False, False, True):
-                subprocess.run(
+                (repository / ".git" / "index").unlink(missing_ok=True)
+                mutation_result.unlink(missing_ok=True)
+                launch = subprocess.run(
                     [script, "--no-build", "--repo", str(repository), "--timeout", "2"]
                     + (["--preserve-git-environment"] if preserve else []),
-                    check=True,
+                    check=False,
                     capture_output=True,
                     text=True,
                     env=environment,
                     timeout=10,
                 )
+                self.assertEqual(foreign_index.read_bytes(), original_foreign_index, f"preserve={preserve}; launcher status={launch.returncode}")
+                launch.check_returncode()
                 session = dict(
                     line.split("=", maxsplit=1)
                     for line in (self.root / "build" / "Logs" / "run-app" / "session.txt")
@@ -1153,6 +1305,14 @@ class ScriptEntrypointTests(unittest.TestCase):
                     line.split("=", maxsplit=1)
                     for line in launch_environment.read_text().splitlines() if "=" in line
                 ))
+                deadline = time.monotonic() + 2
+                while not mutation_result.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(mutation_result.exists(), "Fixture mutation did not complete")
+                self.assertEqual(mutation_result.read_text().strip(), "0", f"preserve={preserve}")
+                self.assertEqual(foreign_index.read_bytes(), original_foreign_index, f"preserve={preserve}")
+                self.assertEqual(subprocess.run(["git", "-C", repository, "ls-files"], check=True,
+                    capture_output=True, text=True, env=self.fixture_environment).stdout, "selected.txt\n")
                 os.kill(int(session["app_pid"]), signal.SIGTERM)
                 os.kill(int(session["log_pid"]), signal.SIGTERM)
                 time.sleep(0.1)
@@ -1200,7 +1360,9 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(captured["LC_ALL"], "C")
         preserved = captured_environments[2]
         for key, value in environment.items():
-            if key.startswith("GIT_") or key in ("GCM_INTERACTIVE", "LC_ALL"):
+            if key in selectors:
+                for captured in captured_environments: self.assertNotIn(key, captured)
+            elif key.startswith("GIT_") or key in ("GCM_INTERACTIVE", "LC_ALL"):
                 self.assertEqual(preserved[key], value, key)
         self.assertFalse((self.root / "build" / "Logs" / "run-app" / "session.txt").exists())
 
@@ -1211,7 +1373,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
-        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
@@ -1280,7 +1442,8 @@ class ScriptEntrypointTests(unittest.TestCase):
                     timeout=5,
                 )
                 self.assertEqual(result.returncode, 75)
-                self.assertIn("owns the runtime session", result.stderr)
+                self.assertIn("owning run", result.stderr)
+                self.assertIn("receipt", result.stderr)
                 self.assertTrue(self.process_is_running(app_pid))
                 self.assertTrue(self.process_is_running(log_pid))
                 self.assertEqual((session_directory / "session.txt").read_text(), session)
@@ -1289,7 +1452,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             process.send_signal(signal.SIGINT)
             process.communicate(timeout=10)
 
-    def test_run_app_interrupt_preserves_home_when_app_pid_record_is_missing(self) -> None:
+    def test_run_app_interrupt_stops_owned_process_and_preserves_unknown_home_when_app_pid_record_is_missing(self) -> None:
         process, session_directory, temporary_root = self.start_pending_run_app_launch()
         app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
         log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
@@ -1300,7 +1463,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         try:
             process.send_signal(signal.SIGINT)
             process.communicate(timeout=10)
-            self.assertTrue(self.process_is_running(app_pid))
+            self.assertFalse(self.process_is_running(app_pid))
             self.assertTrue((session_directory / "session.txt").exists())
             self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
         finally:
@@ -1308,7 +1471,7 @@ class ScriptEntrypointTests(unittest.TestCase):
                 process.kill()
                 process.communicate(timeout=2)
 
-    def test_run_app_interrupt_preserves_home_when_app_pid_record_is_unverifiable(self) -> None:
+    def test_run_app_interrupt_stops_owned_process_and_preserves_unknown_home_when_app_pid_record_is_unverifiable(self) -> None:
         process, session_directory, temporary_root = self.start_pending_run_app_launch()
         app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
         log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
@@ -1319,7 +1482,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         try:
             process.send_signal(signal.SIGINT)
             process.communicate(timeout=10)
-            self.assertTrue(self.process_is_running(app_pid))
+            self.assertFalse(self.process_is_running(app_pid))
             self.assertTrue((session_directory / "session.txt").exists())
             self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
         finally:
@@ -1327,7 +1490,7 @@ class ScriptEntrypointTests(unittest.TestCase):
                 process.kill()
                 process.communicate(timeout=2)
 
-    def test_run_app_interrupt_preserves_home_when_log_pid_record_is_missing(self) -> None:
+    def test_run_app_interrupt_stops_owned_process_and_preserves_unknown_home_when_log_pid_record_is_missing(self) -> None:
         process, session_directory, temporary_root = self.start_pending_run_app_launch()
         app_pid = int((session_directory / "app.pid").read_text().split("\t", maxsplit=1)[0])
         log_pid = int((session_directory / "logstream.pid").read_text().split("\t", maxsplit=1)[0])
@@ -1338,7 +1501,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         try:
             process.send_signal(signal.SIGINT)
             process.communicate(timeout=10)
-            self.assertTrue(self.process_is_running(log_pid))
+            self.assertFalse(self.process_is_running(log_pid))
             self.assertTrue((session_directory / "session.txt").exists())
             self.assertEqual(len(list(temporary_root.glob("gitx-run-app-home.*"))), 1)
         finally:
@@ -1353,7 +1516,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
         self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
@@ -1392,7 +1555,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
         app_binary = app_contents / "MacOS" / "GitX"
         app_binary.parent.mkdir(parents=True)
         app_binary.write_text("#!/bin/bash\nexit 0\n")
@@ -1439,7 +1602,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository = self.root / "fixture-repo"
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
-        app_contents = self.root / "build" / "Half Dark.app" / "Contents"
+        app_contents = self.root / "build" / "GitX.app" / "Contents"
         self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)

@@ -16,7 +16,8 @@
     "ui": "GitXUI",
     "address-undefined": "GitXAddressUndefined",
     "thread-sanitizer": "GitXThreadSanitizer",
-    "performance": "GitXPerformance"
+    "performance": "GitXPerformance",
+    "host-preflight": "GitXHostPreflight"
   },
   "packages": {
     "core": "GitXCore",

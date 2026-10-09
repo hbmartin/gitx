@@ -21,38 +21,44 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
     }
 
     func testDiffActionAuthorityRequiresExactIdentityAndValidSide() async {
-        let token = StagingDiffActionContext(snapshotRevision: 7, loadIdentity: UUID(), rawPath: Data([0xFF]), staged: false)
-        XCTAssertEqual(StagingDiffActionContext(dictionary: token.dictionary), token)
-        XCTAssertTrue(token.permits("stage"))
-        XCTAssertTrue(token.permits("discard"))
-        XCTAssertFalse(token.permits("unstage"))
-        XCTAssertFalse(token.permits("unknown"))
-        let staged = StagingDiffActionContext(snapshotRevision: 7, loadIdentity: token.loadIdentity, rawPath: token.rawPath, staged: true)
-        XCTAssertTrue(staged.permits("unstage"))
-        XCTAssertFalse(staged.permits("stage"))
-        XCTAssertFalse(staged.permits("discard"))
-        XCTAssertNotEqual(staged, token)
-        for (key, invalid) in [("snapshotRevision", "7" as Any), ("loadIdentity", "bad UUID"), ("rawPath", Data()), ("rawPath", Data([0])), ("staged", "true")] {
-            var dictionary = token.dictionary
-            dictionary[key] = invalid
-            XCTAssertNil(StagingDiffActionContext(dictionary: dictionary))
+        func token(path: Data = Data([0xFF]), staged: Bool = false, tree: String = "tree", diff: String = "patch",
+                   lines: UInt = 3, status: Int = 2, hasStaged: Bool = false, visual: String = "") -> StagingDiffActionContext
+        {
+            StagingDiffActionContext(rawPath: path, staged: staged, parentTree: tree, diff: diff, contextLines: lines,
+                                     status: status, hasStagedChanges: hasStaged, visualIdentity: visual)
         }
-        var extended = token.dictionary
-        extended["extra"] = true
+        let original = token()
+        XCTAssertEqual(StagingDiffActionContext(dictionary: original.dictionary), original)
+        XCTAssertEqual(token(), original, "An unchanged render retains authority")
+        XCTAssertTrue(original.permits("stage")); XCTAssertTrue(original.permits("discard"))
+        XCTAssertFalse(original.permits("unstage")); XCTAssertFalse(original.permits("unknown"))
+        let staged = token(staged: true)
+        XCTAssertTrue(staged.permits("unstage")); XCTAssertFalse(staged.permits("stage")); XCTAssertFalse(staged.permits("discard"))
+        for changed in [token(path: Data("other".utf8)), staged, token(tree: "other"), token(diff: "different"),
+                        token(lines: 4), token(status: 3), token(hasStaged: true), token(visual: "image-sha")]
+        {
+            XCTAssertNotEqual(changed.contentIdentity, original.contentIdentity)
+        }
+        XCTAssertNotEqual(token(path: Data("é".utf8)), token(path: Data("e\u{301}".utf8)))
+        XCTAssertNotEqual(token(diff: "é"), token(diff: "e\u{301}"), "Diff identity retains exact UTF-8 bytes")
+        for (key, invalid) in [("rawPath", "path" as Any), ("rawPath", Data()), ("rawPath", Data([0])),
+                               ("staged", "true"), ("parentTree", ""), ("parentTree", 1),
+                               ("contentIdentity", "short"), ("contentIdentity", String(repeating: "Z", count: 64)),
+                               ("contextLines", "3"), ("status", "2"), ("hasStagedChanges", "false"), ("visualIdentity", 1)]
+        {
+            var dictionary = original.dictionary; dictionary[key] = invalid
+            XCTAssertNil(StagingDiffActionContext(dictionary: dictionary), key)
+        }
+        var extended = original.dictionary; extended["extra"] = true
         XCTAssertNil(StagingDiffActionContext(dictionary: extended))
-        let delivered = expectation(description: "authority delivered")
-        var request = request(path: "context.txt")
-        request = StagingDiffLoadRequest(path: request.path, rawPath: request.rawPath, status: request.status,
-                                         hasStagedChanges: request.hasStagedChanges, staged: request.staged,
-                                         parentTree: request.parentTree, contextLines: request.contextLines,
-                                         workingDirectoryURL: request.workingDirectoryURL,
-                                         syntheticUntracked: request.syntheticUntracked, actionContext: token)
-        StagingDiffLoadCoordinator { _ in .success("patch") }.schedule([request]) { output in
-            XCTAssertEqual(output.sections.first?.actionContext, token)
-            XCTAssertFalse(output.cacheIdentifier.contains(token.loadIdentity.uuidString))
-            delivered.fulfill()
+        let request = request(path: "context.txt")
+        let validated = expectation(description: "validated production supplies content authority")
+        StagingDiffLoadCoordinator { _ in .validated(diff: "patch", parentTree: "actual-tree", visualIdentity: "actual-image") }.schedule([request]) { output in
+            let authority = output.sections.first?.actionContext
+            XCTAssertEqual(authority?.parentTree, "actual-tree"); XCTAssertEqual(authority?.visualIdentity, "actual-image")
+            validated.fulfill()
         }
-        await fulfillment(of: [delivered], timeout: 3)
+        await fulfillment(of: [validated], timeout: 3)
     }
 
     func testSchedulingDoesNotWaitForDiffProduction() async {
@@ -63,7 +69,7 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
         let coordinator = StagingDiffLoadCoordinator { request in
             producerStarted.fulfill()
             producerGate.wait()
-            return .success("diff for \(request.path)")
+            return .validated(diff: "diff for \(request.path)", parentTree: "HEAD", visualIdentity: "")
         }
 
         DispatchQueue.global(qos: .userInitiated).async {
@@ -90,7 +96,7 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
                 firstStarted.fulfill()
                 firstGate.wait()
             }
-            return .success("diff for \(request.path)")
+            return .validated(diff: "diff for \(request.path)", parentTree: "HEAD", visualIdentity: "")
         }
 
         coordinator.schedule([request(path: "first.txt")]) { _ in
@@ -107,6 +113,30 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(producedPaths.values, ["first.txt", "newest.txt"])
     }
 
+    func testSupersededQueuedGenerationsAndRemainingSectionsSkipProduction() async {
+        let started = expectation(description: "first section started")
+        let delivered = expectation(description: "newest generation delivered")
+        let gate = DispatchSemaphore(value: 0)
+        let paths = LockedValues<String>()
+        let coordinator = StagingDiffLoadCoordinator { request in
+            paths.append(request.path)
+            if request.path == "first.txt" {
+                started.fulfill(); _ = gate.wait(timeout: .now() + 5)
+            }
+            return .validated(diff: "diff for \(request.path)", parentTree: "HEAD", visualIdentity: "")
+        }
+        coordinator.schedule([request(path: "first.txt"), request(path: "obsolete-section.txt")]) { _ in XCTFail("Superseded generation published") }
+        await fulfillment(of: [started], timeout: 2)
+        coordinator.schedule([request(path: "obsolete-queued.txt")]) { _ in XCTFail("Superseded queued generation published") }
+        coordinator.schedule([request(path: "newest.txt")]) { output in
+            XCTAssertEqual(output.sections.map(\.path), ["newest.txt"])
+            delivered.fulfill()
+        }
+        gate.signal()
+        await fulfillment(of: [delivered], timeout: 3)
+        XCTAssertEqual(paths.values, ["first.txt", "newest.txt"])
+    }
+
     func testInvalidationDiscardsPendingWorkWithoutCancellingIt() async {
         let producerStarted = expectation(description: "producer started")
         let producerFinished = expectation(description: "producer finished")
@@ -117,7 +147,7 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
             producerStarted.fulfill()
             producerGate.wait()
             producerFinished.fulfill()
-            return .success("obsolete diff")
+            return .validated(diff: "obsolete diff", parentTree: "HEAD", visualIdentity: "")
         }
 
         coordinator.schedule([request(path: "obsolete.txt")]) { _ in
@@ -139,7 +169,7 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
             if request.path == "broken.txt" {
                 return .failure("git exited 128: invalid object name")
             }
-            return .success("diff for \(request.path)")
+            return .validated(diff: "diff for \(request.path)", parentTree: "HEAD", visualIdentity: "")
         }
         let requests = [
             request(path: "first.txt", staged: false),
@@ -166,7 +196,7 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
         let secondDelivered = expectation(description: "second context delivered")
         let identifiers = LockedValues<String>()
         let coordinator = StagingDiffLoadCoordinator { request in
-            .success("context \(request.contextLines)")
+            .validated(diff: "context \(request.contextLines)", parentTree: "HEAD", visualIdentity: "")
         }
 
         coordinator.schedule([request(path: "context.txt", contextLines: 3)]) { output in
@@ -190,7 +220,7 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
         let firstDelivered = expectation(description: "raw filename delivered")
         let secondDelivered = expectation(description: "literal filename delivered")
         let identifiers = LockedValues<String>()
-        let coordinator = StagingDiffLoadCoordinator { _ in .success("preview") }
+        let coordinator = StagingDiffLoadCoordinator { _ in .validated(diff: "preview", parentTree: "HEAD", visualIdentity: "") }
         func collision(_ rawPath: Data) -> StagingDiffLoadRequest {
             StagingDiffLoadRequest(path: "f\\xFF", rawPath: rawPath, status: 1,
                                    hasStagedChanges: false, staged: false, parentTree: "HEAD",

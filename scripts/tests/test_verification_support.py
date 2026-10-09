@@ -315,6 +315,7 @@ class DoctorTests(unittest.TestCase):
             set(plans),
             {
                 "correctness",
+                "host-preflight",
                 "ui-preflight",
                 "ui",
                 "address-undefined",
@@ -325,6 +326,23 @@ class DoctorTests(unittest.TestCase):
 
 
 class WrapperContractTests(unittest.TestCase):
+    def test_zero_test_execution_cannot_produce_passed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "receipt.json"
+            result = pathlib.Path(directory) / "result.xcresult"
+            result.mkdir()
+            path.write_text(json.dumps({"steps": [], "artifacts": []}))
+            arguments = argparse.Namespace(path=path, name="test:correctness", status="passed", exit_code=0,
+                duration=.1, log=None, xcresult=str(result), command=["xcodebuild", "test-without-building"])
+            def response(command, **kwargs):
+                payload = {"totalTestCount": 0, "passedTests": 0, "failedTests": 0, "skippedTests": 0} if "summary" in command else {"targets": []}
+                return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+            with mock.patch.object(verification, "run", side_effect=response):
+                self.assertEqual(verification.command_receipt_step(arguments), 78)
+            step = json.loads(path.read_text())["steps"][0]
+            self.assertEqual(step["status"], "failed")
+            self.assertEqual(step["failureCategory"], "test-selection-empty")
+
     def test_ui_preflight_selects_one_test_excluded_from_full_ui_plan(self) -> None:
         preflight = json.loads((ROOT / "GitXTests" / "GitXUIPreflight.xctestplan").read_text())
         full_ui = json.loads((ROOT / "GitXTests" / "GitXUI.xctestplan").read_text())

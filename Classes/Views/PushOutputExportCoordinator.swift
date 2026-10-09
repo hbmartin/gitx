@@ -58,7 +58,12 @@ nonisolated enum PushDiagnosticOwnership {
             Task { @MainActor in completion(await exportProof(scenario: scenario)) }
         }
 
-        private static func exportProof(scenario: String) async -> [String: NSNumber] {
+        @objc(exportProofForScenario:restoration:completion:)
+        static func exportProof(scenario: String, restoration: @escaping (NSWindow) -> Void, completion: @escaping ([String: NSNumber]) -> Void) {
+            Task { @MainActor in completion(await exportProof(scenario: scenario, restoration: restoration)) }
+        }
+
+        private static func exportProof(scenario: String, restoration: ((NSWindow) -> Void)? = nil) async -> [String: NSNumber] {
             let capture = PBTaskDiagnosticCapture()
             capture.appendStandardError(Data("saved diagnostic https://user:secret@example.invalid/repo\n".utf8))
             capture.finishStandardOutput(reachedEOF: true)
@@ -66,16 +71,17 @@ nonisolated enum PushDiagnosticOwnership {
             let artifact = capture.seal()
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("GitX-Export-Proof-" + UUID().uuidString, isDirectory: true)
             let destination = directory.appendingPathComponent("push.txt")
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled, .miniaturizable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
             let button = NSButton()
             let state = PushOutputExportProofState(artifact: artifact, destination: destination, window: window)
-            let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+            state.restoration = restoration
+            let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 400), styleMask: [.titled, .miniaturizable], backing: .buffered, defer: false)
             parent.isReleasedWhenClosed = false
-            if scenario == "dismissed-sheet" {
+            if ["dismissed-sheet", "hidden-sheet-dismiss", "sheet-minimized-restore", "hidden-parent-close"].contains(scenario) {
                 parent.makeKeyAndOrderFront(nil)
                 parent.beginSheet(window, completionHandler: nil)
-            } else if scenario == "closed-window" {
+            } else if ["closed-window", "failure-retry", "hidden-restore", "minimized-restore", "hidden-close", "hidden-sheet-dismiss", "application-hidden-restore", "sheet-minimized-restore", "hidden-parent-close"].contains(scenario) {
                 window.makeKeyAndOrderFront(nil)
             }
             let coordinator: PushOutputExportCoordinator
@@ -89,6 +95,9 @@ nonisolated enum PushDiagnosticOwnership {
             }
             coordinator.exportDidFinishForTesting = state.didFinish
             defer {
+                if scenario == "application-hidden-restore" {
+                    NSApp.unhide(nil)
+                }
                 state.responses.removeAll()
                 if let sheet = window.attachedSheet {
                     window.endSheet(sheet)
@@ -125,7 +134,7 @@ nonisolated enum PushDiagnosticOwnership {
                 state.responses[1](.cancel, nil)
             case "windowless":
                 break
-            case "success", "writing", "failure-retry", "dismissed-sheet", "closed-window":
+            case "success", "writing", "failure-retry", "dismissed-sheet", "closed-window", "hidden-restore", "minimized-restore", "hidden-close", "hidden-sheet-dismiss", "application-hidden-restore", "sheet-minimized-restore", "hidden-parent-close":
                 state.responses[0](.OK, destination)
                 await state.waitForWriter(count: 1)
                 state.facts["buttonDisabledDuringWrite"] = button.isEnabled ? 0 : 1
@@ -138,8 +147,65 @@ nonisolated enum PushDiagnosticOwnership {
                 } else if scenario == "closed-window" {
                     window.close()
                 }
-                let failure = ["failure-retry", "dismissed-sheet", "closed-window"].contains(scenario) ? NSError(domain: "GitX.Export.Proof", code: 7, userInfo: [NSLocalizedDescriptionKey: "Controlled export failure"]) : nil
+                if ["hidden-restore", "hidden-close"].contains(scenario) {
+                    window.orderOut(nil)
+                }
+                if scenario == "minimized-restore" {
+                    window.miniaturize(nil)
+                    if !(await waitForUIState { window.isMiniaturized }) {
+                        state.facts["fixtureFailure"] = 1
+                    }
+                }
+                if scenario == "application-hidden-restore" {
+                    NSApp.hide(nil)
+                    if !(await waitForUIState { NSApp.isHidden }) {
+                        state.facts["fixtureFailure"] = 1
+                    }
+                }
+                if ["sheet-minimized-restore", "hidden-sheet-dismiss", "hidden-parent-close"].contains(scenario) {
+                    parent.miniaturize(nil)
+                    if !(await waitForUIState { parent.isMiniaturized }) {
+                        state.facts["fixtureFailure"] = 1
+                    }
+                }
+                let failure = ["failure-retry", "dismissed-sheet", "closed-window", "hidden-restore", "minimized-restore", "hidden-close", "hidden-sheet-dismiss", "application-hidden-restore", "sheet-minimized-restore", "hidden-parent-close"].contains(scenario) ? NSError(domain: "GitX.Export.Proof", code: 7, userInfo: [NSLocalizedDescriptionKey: "Controlled export failure"]) : nil
                 await state.finishWrite(with: failure)
+                if scenario.hasPrefix("hidden-") || ["minimized-restore", "application-hidden-restore", "sheet-minimized-restore", "hidden-parent-close"].contains(scenario) {
+                    state.facts["presentationsBeforeRestoration"] = coordinator.retainedPresentationCountForTesting
+                    state.facts["failuresBeforeRestoration"] = state.facts["failures"]
+                    if scenario == "hidden-close" {
+                        window.close()
+                    }
+                    if scenario == "hidden-sheet-dismiss" {
+                        parent.endSheet(window)
+                        if !(await waitForUIState { window.sheetParent == nil }) {
+                            state.facts["fixtureFailure"] = 1
+                        }
+                    }
+                    if scenario == "hidden-parent-close" {
+                        parent.close()
+                    }
+                    if scenario == "minimized-restore" {
+                        window.deminiaturize(nil)
+                    }
+                    if ["sheet-minimized-restore", "hidden-sheet-dismiss", "hidden-parent-close"].contains(scenario) {
+                        parent.deminiaturize(nil)
+                    }
+                    if scenario == "application-hidden-restore" {
+                        NSApp.unhide(nil)
+                    }
+                    window.makeKeyAndOrderFront(nil)
+                    if !(await waitForUIState { window.isVisible && !window.isMiniaturized && !NSApp.isHidden && !parent.isMiniaturized }) {
+                        state.facts["fixtureFailure"] = 1
+                    }
+                    if scenario == "application-hidden-restore" {
+                        NotificationCenter.default.post(name: NSApplication.didUnhideNotification, object: NSApp)
+                    }
+                    NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+                    NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+                    state.facts["presentationsAfterRestoration"] = coordinator.retainedPresentationCountForTesting
+                    state.facts["failuresAfterRestoration"] = state.facts["failures"]
+                }
                 state.facts["dismissedWindowVisible"] = window.isVisible ? 1 : 0
                 state.facts["buttonEnabledAfterWrite"] = button.isEnabled ? 1 : 0
                 if scenario == "failure-retry" {
@@ -175,6 +241,14 @@ nonisolated enum PushDiagnosticOwnership {
             return state.facts.mapValues(NSNumber.init(value:))
         }
 
+        private static func waitForUIState(_ condition: @MainActor () -> Bool) async -> Bool {
+            let deadline = Date().addingTimeInterval(5)
+            while !condition(), Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return condition()
+        }
+
         private static func textInView(_ view: NSView) -> String {
             ((view as? NSTextField)?.stringValue ?? "") + view.subviews.map(textInView).joined(separator: "\n")
         }
@@ -185,6 +259,7 @@ nonisolated enum PushDiagnosticOwnership {
     @MainActor
     private final class PushOutputExportProofState {
         var responses: [PushOutputExportCoordinator.DestinationResponse] = []
+        var restoration: ((NSWindow) -> Void)?
         var facts = ["panels": 0, "writes": 0, "failures": 0, "finished": 0, "fixtureFailure": 0]
         private let artifact: PBTaskDiagnosticArtifact
         private let destination: URL
@@ -220,6 +295,10 @@ nonisolated enum PushDiagnosticOwnership {
             facts["failures", default: 0] += 1
             facts["failureUsesSenderWindow"] = window === self.window ? 1 : 0
             facts["failurePreservesDiagnostic"] = error.domain == "GitX.Export.Proof" && error.code == 7 ? 1 : 0
+            if let restoration {
+                PushOutputExportCoordinator.presentFailure(error, for: window)
+                restoration(window.attachedSheet ?? window)
+            }
         }
 
         func waitForWriter(count: Int) async {
@@ -289,6 +368,12 @@ final class PushOutputExportCoordinator: NSObject {
     private let failurePresenter: FailurePresenter
     private let logger = os.Logger(subsystem: "com.gitx.gitx", category: "PushOutputExport")
     private var isExporting = false
+    private var presentations: [UUID: PushOutputExportPresentation] = [:]
+    #if DEBUG
+        fileprivate var retainedPresentationCountForTesting: Int {
+            presentations.count
+        }
+    #endif
 
     #if DEBUG
         var exportDidFinishForTesting: (() -> Void)?
@@ -324,7 +409,9 @@ final class PushOutputExportCoordinator: NSObject {
 
     @objc func saveOutput(_ sender: NSButton) {
         guard !isExporting, let window = sender.window else { return }
-        let presentation = PushOutputExportPresentation(window: window)
+        let identity = UUID()
+        let presentation = PushOutputExportPresentation(window: window) { [weak self] in self?.presentations.removeValue(forKey: identity) }
+        presentations[identity] = presentation
         isExporting = true
         var responseHandled = false
         destinationPresenter(window) { [self] response, destination in
@@ -332,6 +419,7 @@ final class PushOutputExportCoordinator: NSObject {
             responseHandled = true
             guard response == .OK, let destination else {
                 isExporting = false
+                presentation.finish()
                 return
             }
             sender.isEnabled = false
@@ -341,13 +429,10 @@ final class PushOutputExportCoordinator: NSObject {
                 sender.isEnabled = true
                 if let failure {
                     logger.error("Redacted push output export failed")
-                    if let currentWindow = presentation.currentWindow {
-                        failurePresenter(failure, currentWindow)
-                    } else {
-                        logger.info("Suppressed late export failure after its presentation was dismissed")
-                    }
+                    presentation.presentOrRetain(failure, presenter: failurePresenter)
                 } else {
                     logger.info("Redacted push output export completed")
+                    presentation.finish()
                 }
                 #if DEBUG
                     exportDidFinishForTesting?()
@@ -371,7 +456,7 @@ final class PushOutputExportCoordinator: NSObject {
         }.value
     }
 
-    private static func presentFailure(_ error: NSError, for window: NSWindow) {
+    fileprivate static func presentFailure(_ error: NSError, for window: NSWindow) {
         let alert = NSAlert()
         alert.messageText = NSLocalizedString("Could Not Save Push Output", comment: "Push output export failure title")
         alert.informativeText = error.localizedDescription
@@ -379,30 +464,94 @@ final class PushOutputExportCoordinator: NSObject {
     }
 }
 
-/// A detached write retains its capture, while error presentation belongs to the
-/// sheet or window that was visible when the user requested the export.
+/// Export failures belong to the original owner until actual closure or sheet
+/// detachment. Invisibility defers presentation without dismissing ownership.
 @MainActor
-private struct PushOutputExportPresentation {
+private final class PushOutputExportPresentation {
     private weak var window: NSWindow?
     private weak var parent: NSWindow?
     private let wasSheet: Bool
-    private let wasVisible: Bool
+    private let finished: () -> Void
+    private var dismissed = false
+    private var observers: [NSObjectProtocol] = []
+    private var pending: (NSError, PushOutputExportCoordinator.FailurePresenter)?
 
-    init(window: NSWindow) {
+    init(window: NSWindow, finished: @escaping () -> Void) {
         self.window = window
         parent = window.sheetParent
         wasSheet = window.sheetParent != nil
-        wasVisible = window.isVisible
+        self.finished = finished
+        let center = NotificationCenter.default
+        for name in [NSWindow.willCloseNotification, NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification,
+                     NSWindow.didDeminiaturizeNotification, NSWindow.didChangeOcclusionStateNotification, NSWindow.didUpdateNotification]
+        {
+            observers.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] notification in
+                let closesOwner = notification.name == NSWindow.willCloseNotification
+                // swift6-safety-justification: NotificationCenter's explicit main queue confines all AppKit and presentation state to MainActor.
+                MainActor.assumeIsolated {
+                    if closesOwner {
+                        self?.finish()
+                    } else {
+                        self?.flush()
+                    }
+                }
+            })
+        }
+        if let parent {
+            for name in [NSWindow.didEndSheetNotification, NSWindow.willCloseNotification,
+                         NSWindow.didDeminiaturizeNotification, NSWindow.didBecomeKeyNotification,
+                         NSWindow.didChangeOcclusionStateNotification, NSWindow.didUpdateNotification]
+            {
+                observers.append(center.addObserver(forName: name, object: parent, queue: .main) { [weak self] notification in
+                    let closesOwner = notification.name == NSWindow.willCloseNotification
+                    // swift6-safety-justification: NotificationCenter's explicit main queue confines all AppKit and presentation state to MainActor.
+                    MainActor.assumeIsolated {
+                        if closesOwner {
+                            self?.finish()
+                        } else {
+                            self?.flush()
+                        }
+                    }
+                })
+            }
+        }
+        observers.append(center.addObserver(forName: NSApplication.didUnhideNotification, object: nil, queue: .main) { [weak self] _ in
+            // swift6-safety-justification: NotificationCenter's explicit main queue confines all AppKit and presentation state to MainActor.
+            MainActor.assumeIsolated { self?.flush() }
+        })
     }
 
-    var currentWindow: NSWindow? {
-        guard let window else { return nil }
-        if wasSheet, parent == nil || window.sheetParent !== parent {
-            return nil
+    isolated deinit { removeObservers() }
+
+    func presentOrRetain(_ error: NSError, presenter: @escaping PushOutputExportCoordinator.FailurePresenter) {
+        guard !dismissed else { return }
+        pending = (error, presenter)
+        NSLog("[GitX] Retained export error until its owner can present it")
+        flush()
+    }
+
+    func finish() {
+        guard !dismissed else { return }
+        dismissed = true
+        pending = nil
+        removeObservers()
+        NSLog("[GitX] Ended export presentation ownership")
+        finished()
+    }
+
+    private func removeObservers() {
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
         }
-        if wasVisible, !window.isVisible {
-            return nil
-        }
-        return window
+        observers.removeAll()
+    }
+
+    private func flush() {
+        guard !dismissed else { return }
+        guard let window, !wasSheet || (parent != nil && window.sheetParent === parent) else { finish(); return }
+        guard let (error, presenter) = pending, window.isVisible, !window.isMiniaturized, !NSApp.isHidden,
+              parent?.isVisible != false, parent?.isMiniaturized != true else { return }
+        finish()
+        presenter(error, window)
     }
 }

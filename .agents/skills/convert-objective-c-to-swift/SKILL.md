@@ -3,6 +3,8 @@ name: convert-objective-c-to-swift
 description: Safely convert or incrementally extract first-party gitx production Objective-C into Swift while preserving observable behavior and Objective-C interoperability. Use whenever Codex explicitly converts Objective-C, assesses a conversion candidate, or substantively edits a first-party production .m or .h file and a low-risk, low-churn Swift migration is feasible. Support compatibility shims, header modernization, Swift characterization tests, controller logic extraction, and conversion verification. Exclude tests, External dependencies, Objective-C++, generated scripting bridges, process entry points, NSInvocation or message-forwarding code, Objective-C exception-handling code, and archive-sensitive code without frozen fixtures.
 ---
 
+Use the repo-local [development-workflow skill](../development-workflow/SKILL.md) for coordinated verification and valid coverage evidence. Before replacing an implementation, compile its actual Objective-C and Swift consumers with the canonical Debug/Release `build-tests` gates and inspect the compiler-generated Swift/Objective-C interfaces. Record the consumer build receipts and generated interface paths; source spelling or selector checks alone do not prove import visibility. Keep the existing characterization, compatibility and 90% coverage requirements.
+
 # Convert Objective-C to Swift
 
 Migrate gitx production code toward Swift without treating compilation as proof of equivalence. Preserve behavior, repair the compatibility surface before converting, and verify the result at the seams where Swift and Objective-C differ.

@@ -70,9 +70,13 @@ final nonisolated class IndexCommitCoordinator: NSObject, @unchecked Sendable {
                     }
                 }
             }
-            DispatchQueue.main.async { [lifetimeToken, logger] in
-                withExtendedLifetime(lifetimeToken) {
-                    logger.debug("Background commit orchestration completed; releasing repository lifetime on main")
+            // Completion must reach main before the final repository release.
+            // Use the same event queue so a fast worker cannot outrun delivery.
+            eventQueue.async {
+                DispatchQueue.main.async { [lifetimeToken, logger] in
+                    withExtendedLifetime(lifetimeToken) {
+                        logger.debug("Background commit orchestration completed; releasing repository lifetime on main")
+                    }
                 }
             }
         }

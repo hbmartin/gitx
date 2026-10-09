@@ -62,7 +62,7 @@ final class CommitTableInteractionCoordinator: NSObject {
         else { return }
         NSLog("[GitX] Staging %ld selected file(s)", files.count)
         let selectionIndex = controller.selectionIndex
-        index.stageFiles(files)
+        index.stageFiles(files, completion: { _, _ in })
         reselectNextFile(in: controller, currentSelectionIndex: selectionIndex)
     }
 
@@ -73,7 +73,7 @@ final class CommitTableInteractionCoordinator: NSObject {
         else { return }
         NSLog("[GitX] Unstaging %ld selected file(s)", files.count)
         let selectionIndex = controller.selectionIndex
-        index.unstageFiles(files)
+        index.unstageFiles(files, completion: { _, _ in })
         reselectNextFile(in: controller, currentSelectionIndex: selectionIndex)
     }
 
@@ -126,10 +126,10 @@ final class CommitTableInteractionCoordinator: NSObject {
 
         if tableView === unstagedTable {
             NSLog("[GitX] Staging %ld file(s) from a double-click", files.count)
-            index.stageFiles(files)
+            index.stageFiles(files, completion: { _, _ in })
         } else {
             NSLog("[GitX] Unstaging %ld file(s) from a double-click", files.count)
-            index.unstageFiles(files)
+            index.unstageFiles(files, completion: { _, _ in })
         }
     }
 
@@ -175,10 +175,10 @@ final class CommitTableInteractionCoordinator: NSObject {
               !files.isEmpty else { return false }
         if tableView.tag == 0 {
             NSLog("[GitX] Unstaging %ld dropped file(s)", files.count)
-            return index.unstageFiles(files)
+            return index.unstageFiles(files, completion: { _, _ in })
         }
         NSLog("[GitX] Staging %ld dropped file(s)", files.count)
-        return index.stageFiles(files)
+        return index.stageFiles(files, completion: { _, _ in })
     }
 
     private func dropFiles(_ info: NSDraggingInfo, destination tableView: NSTableView) -> [PBChangedFile]? {
