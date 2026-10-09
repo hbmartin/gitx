@@ -2,6 +2,16 @@ import Foundation
 import XCTest
 
 final class PBTaskDiagnosticRedactorTests: XCTestCase {
+    func testAmbiguousAuthorityWithoutAtKeepsItsCredentialRedactedAcrossWhitespace() {
+        let input = "https://user:secret remaining-secret"
+        XCTAssertEqual(PBTaskDiagnostics.redacted(input), PBTaskDiagnosticRedactor.redacted(input))
+        for incomplete in [false, true] {
+            let output = PBTaskDiagnosticRedactor.redacted(input, incomplete: incomplete)
+            XCTAssertFalse(output.contains("secret"))
+            XCTAssertTrue(output.contains("[redacted"))
+        }
+    }
+
     func testOrdinaryURLDoesNotConsumeFollowingColonAndEmailDiagnostics() {
         let input = "fatal: https://github.com/org/repo.git: contact admin@corp.com https://user:secret@other.invalid/repo"
         XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), "fatal: https://github.com/org/repo.git: contact admin@corp.com https://[redacted]@other.invalid/repo")

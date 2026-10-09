@@ -266,7 +266,26 @@ nonisolated struct IndexCommitMergeState: Sendable {
     final nonisolated class IndexReferenceCapabilityTestHarness: NSObject {
         @objc(requireWithTask:error:)
         static func require(task: PBTask) throws {
-            try IndexPreparedReferenceCapabilities.shared.require(context: task.executionContext(), cancellation: IndexCommitCancellation())
+            try require(task: task, cancelled: false)
+        }
+
+        @objc(requireWithTask:cancelled:error:)
+        static func require(task: PBTask, cancelled: Bool) throws {
+            let cancellation = IndexCommitCancellation()
+            if cancelled {
+                cancellation.cancel()
+            }
+            try IndexPreparedReferenceCapabilities.shared.require(context: task.executionContext(), cancellation: cancellation)
+        }
+
+        @objc(clearCapturedMergeStateInDirectory:replacementMessage:error:)
+        static func clearCapturedMergeState(directory: String, replacementMessage: String?) throws {
+            let url = URL(fileURLWithPath: directory)
+            let state = try IndexCommitMergeState(directory: url)
+            if let replacementMessage {
+                try Data(replacementMessage.utf8).write(to: url.appendingPathComponent("MERGE_MSG"))
+            }
+            state.clearAfterPublication()
         }
     }
 #endif

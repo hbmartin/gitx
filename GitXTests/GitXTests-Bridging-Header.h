@@ -41,9 +41,16 @@ NS_ASSUME_NONNULL_BEGIN
 #if DEBUG
 @interface PBIndexReferenceCapabilityTestHarness : NSObject
 + (BOOL)requireWithTask:(PBTask *)task error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(require(task:));
++ (BOOL)requireWithTask:(PBTask *)task cancelled:(BOOL)cancelled error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(require(task:cancelled:));
++ (BOOL)clearCapturedMergeStateInDirectory:(NSString *)directory replacementMessage:(nullable NSString *)replacementMessage error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(clearCapturedMergeState(directory:replacementMessage:));
 @end
 @interface PBIndexReferenceTransactionTestHarness : NSObject
++ (BOOL)exerciseTerminalReadRaceWithAcknowledgement:(BOOL)acknowledgement error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseTerminalReadRace(acknowledgement:));
 + (BOOL)exerciseWithLaunchPath:(NSString *)launchPath arguments:(NSArray<NSString *> *)arguments workingDirectory:(nullable NSString *)workingDirectory commands:(NSArray<NSString *> *)commands acknowledgements:(NSArray<NSString *> *)acknowledgements timeout:(NSTimeInterval)timeout cancelAfterAcknowledgement:(NSInteger)cancelAfter error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exercise(launchPath:arguments:workingDirectory:commands:acknowledgements:timeout:cancelAfterAcknowledgement:));
+@end
+@interface PBChildProcessFailureTestHarness : NSObject
++ (BOOL)exerciseSuccessfulSpawnAndReturnError:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseSuccessfulSpawn());
++ (BOOL)exerciseFailureWithDuplicateDescriptor:(BOOL)duplicateDescriptor error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseFailure(duplicateDescriptor:));
 @end
 #endif
 
@@ -1020,6 +1027,7 @@ typedef NS_ENUM(NSInteger, PBSyntheticUntrackedFileMode) {
 
 #if DEBUG
 @interface PBStagingDiffRevalidationTestHarness : NSObject
++ (void)prepareAndValidateWithRepository:(PBGitRepository *)repository runner:(id<PBIndexCommandRunning>)runner files:(NSArray<PBChangedFile *> *)files beforeValidation:(void (^)(void))beforeValidation completion:(void (^)(NSError *_Nullable error))completion NS_SWIFT_NAME(prepareAndValidate(repository:runner:files:beforeValidation:completion:));
 + (void)prepareAndValidateWithRepository:(PBGitRepository *)repository
 								  runner:(id<PBIndexCommandRunning>)runner
 								   files:(NSArray<PBChangedFile *> *)files
