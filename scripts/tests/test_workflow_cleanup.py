@@ -154,7 +154,7 @@ class CleanupTests(unittest.TestCase):
         parent = self.run_directory('parent')
         child = self.run_directory('child')
         legacy = self.legacy_cache('protected-legacy')
-        self.write(parent / 'workflow.json', {'status': 'failed', 'steps': [{'receipt': str(child / 'receipt.json')}]})
+        self.write(parent / 'workflow.json', {'schemaVersion': 2, 'status': 'failed', 'steps': [{'receipt': str(child / 'receipt.json')}]})
         child_value = cleanup.read_json(child / 'receipt.json')
         child_value['buildPaths'] = {'derivedData': str(legacy)}
         self.write(child / 'receipt.json', child_value)
@@ -168,7 +168,7 @@ class CleanupTests(unittest.TestCase):
     def test_unprotected_workflow_is_evicted_as_a_group(self):
         parent = self.run_directory('parent')
         child = self.run_directory('child')
-        self.write(parent / 'workflow.json', {'status': 'passed', 'steps': [{'receipt': str(child / 'receipt.json')}]})
+        self.write(parent / 'workflow.json', {'schemaVersion': 2, 'status': 'passed', 'steps': [{'receipt': str(child / 'receipt.json')}]})
         self.stamp(parent, 10)
         report = cleanup.preview(self.root, now=self.now)
         group = next(c for c in report['candidates'] if str(parent) in c['paths'])
@@ -222,6 +222,37 @@ class CleanupTests(unittest.TestCase):
         self.assertNotIn(str(warm), self.candidate_paths(report))
         self.assertNotIn(str(other), self.candidate_paths(report))
         self.assertNotIn(str(foreign), self.candidate_paths(report))
+
+    def test_legacy_metadata_link_is_unknown(self):
+        cache = self.root / 'build/legacy'
+        cache.mkdir(parents=True)
+        (cache / 'source.txt').write_text('unknown contents')
+        outside = self.base / 'ownership.plist'
+        outside.write_bytes(plistlib.dumps({'WorkspacePath': str(self.root / 'GitX.xcworkspace')}))
+        metadata = cache / 'info.plist'
+        metadata.symlink_to(outside)
+        self.stamp(cache, 10)
+        when = self.now - 10 * 86400
+        os.utime(metadata, (when, when), follow_symlinks=False)
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertNotIn(str(cache), self.candidate_paths(report))
+        self.assertTrue(any(str(cache) in item['paths'] and item['reason'] == 'unknown build directory'
+                            for item in report['retained']))
+
+    def test_unknown_receipt_metadata_is_retained(self):
+        paths = []
+        for i, value in enumerate(({}, {'schemaVersion': 999, 'status': 'passed'},
+                                   {'schemaVersion': 2, 'status': 'unknown'},
+                                   {'schemaVersion': True, 'status': 'passed'},
+                                   {'schemaVersion': 2, 'status': []})):
+            path = self.run_directory(f'unknown-{i}')
+            self.write(path / 'receipt.json', value)
+            self.stamp(path, 10)
+            paths.append(str(path))
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertFalse(set(paths) & self.candidate_paths(report))
+        self.assertTrue(all(any(path in item['paths'] and 'unknown' in item['reason']
+                                for item in report['retained']) for path in paths))
 
     def test_gate_rejects_partial_failed_stale_inputs_and_changed_app(self):
         cleanup.queue_commit(self.root)

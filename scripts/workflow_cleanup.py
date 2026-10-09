@@ -226,6 +226,10 @@ def inventory(root, receipt=None, now=None):
                 for name in ("workflow.json", "receipt.json", "runtime.json"):
                     value = read_json(p / name)
                     if isinstance(value, dict):
+                        version, status = value.get("schemaVersion"), value.get("status")
+                        if (type(version) is not int or version not in {1, 2} or not isinstance(status, str) or
+                                status not in {"passed", "failed", "running", "pending", "interrupted", "invalid", "blocked"}):
+                            raise ValueError("Unrecognized run metadata")
                         documents.append(value)
                     elif value is not None:
                         raise ValueError("Run metadata must be an object")
@@ -329,7 +333,10 @@ def inventory(root, receipt=None, now=None):
             if not p.is_dir() or p.is_symlink():
                 continue
             try:
-                info = plistlib.loads((p / "info.plist").read_bytes())
+                metadata = p / "info.plist"
+                if metadata.is_symlink():
+                    raise ValueError("Symlink cache ownership metadata")
+                info = plistlib.loads(metadata.read_bytes())
                 valid = isinstance(info, dict) and isinstance(info.get("WorkspacePath"), str) and pathlib.Path(info["WorkspacePath"]).resolve() == (root / config["workspace"]).resolve()
             except (OSError, ValueError, plistlib.InvalidFileException):
                 valid = False
