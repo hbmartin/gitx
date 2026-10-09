@@ -360,7 +360,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let pane = try openStagingPane()
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
         for (staged, expectedBytes) in [(true, indexed), (false, worktreeBytes)] {
-            pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: staged)])
+            try selectDiffFile(file, staged: staged, in: pane)
             let native = pane.diffPaneController.contentView
             XCTAssertTrue(waitForCondition { native.textView.string.contains((staged ? "Staged" : "Unstaged") + " — " + path) })
             let bytes = native.delegate?.nativeContentView?(native, imageDataForPath: path, section: 0, imageSource: [:])
@@ -378,7 +378,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try FileManager.default.createSymbolicLink(atPath: fixture.path + "/" + link, withDestinationPath: "missing-image-target")
         let pane = try openStagingPane()
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == conflict })
-        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+        try selectDiffFile(file, staged: true, in: pane)
         let native = pane.diffPaneController.contentView
         XCTAssertTrue(waitForCondition { native.textView.string.contains("Staged — " + conflict) })
         let conflictSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
@@ -386,7 +386,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(conflictSections.first?[PBNativeSectionTextKey] as? String, expected)
         try attachScreenshot(of: native, named: "Staging-Unmerged-Image-Diff")
         let untracked = try XCTUnwrap(repository.index.indexChanges.first { $0.path == link })
-        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: untracked, staged: false)])
+        try selectDiffFile(untracked, staged: false, in: pane)
         XCTAssertTrue(waitForCondition { native.textView.string.contains("missing-image-target") })
         let linkSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
         XCTAssertTrue((linkSections.first?[PBNativeSectionTextKey] as? String)?.contains("120000") == true)
@@ -2208,6 +2208,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         })
     }
 
+    private func selectDiffFile(_ file: PBChangedFile, staged: Bool, in pane: PBStagingViewController) throws {
+        let lists = pane.fileListController
+        let selected = staged ? lists.stagedFilesController : lists.unstagedFilesController
+        let other = staged ? lists.unstagedFilesController : lists.stagedFilesController
+        let arranged = try XCTUnwrap(selected.arrangedObjects as? [PBChangedFile])
+        let selectedFile = try XCTUnwrap(arranged.first { $0.rawPath == file.rawPath })
+        other.setSelectedObjects([])
+        XCTAssertTrue(selected.setSelectedObjects([selectedFile]))
+    }
+
     private func activateNativeDiffAction(_ title: String, in pane: PBStagingViewController) throws {
         let contentView = pane.diffPaneController.contentView
         XCTAssertTrue(waitForCondition {
@@ -2484,7 +2494,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let leaf = try XCTUnwrap(root.children.first { $0.fullPath == path } as? PBWorkingTree)
         XCTAssertEqual(leaf.contents, "literal index filename", "The existing text API trims the terminal LF while preserving the literal index filename")
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data(path.utf8) })
-        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+        try selectDiffFile(file, staged: true, in: pane)
         let view = pane.diffPaneController.contentView
         XCTAssertTrue(waitForCondition { view.textView.string.contains("+literal index filename") })
         let delegate = try XCTUnwrap(view.delegate)
@@ -2666,7 +2676,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try FileManager.default.removeItem(at: url)
         let pane = try openStagingPane()
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data(path.utf8) })
-        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+        try selectDiffFile(file, staged: true, in: pane)
 
         try activateNativeDiffAction("Show image", in: pane)
 

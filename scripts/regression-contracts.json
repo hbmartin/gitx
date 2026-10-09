@@ -141,6 +141,30 @@
           "identifier": "GitXTests/HistoryFileIdentityTests/testCommittedPathspecMetacharactersKeepTheirOwnHistoryAndObjectContents",
           "role": "boundary",
           "oracle": "Literal Git history excludes matching decoy paths while object reads remain correct."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWorkingTreeAndStagingImageFallbackUseExplicitStageZeroForColonFilename",
+          "role": "compatibility",
+          "oracle": "Working-tree and staging image lookups preserve the explicit stage-zero identity of a colon filename after actual staged selection."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testStagedImagePreviewUsesIndexBytesWhileWorktreePreviewUsesWorktreeBytes",
+          "role": "valid",
+          "oracle": "Actual staged and unstaged selections render the correct labels and return the exact index and worktree image bytes."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testUnmergedAndDanglingSymlinkImagesRetainUsableDiffSections",
+          "role": "boundary",
+          "oracle": "Actual selections preserve unmerged index diff sections and dangling symlink targets."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testStagingImageExpansionResolvesTheIndexOnTheRendererQueue",
+          "role": "compatibility",
+          "oracle": "Selecting a staged colon filename renders an expanded image from the index on the renderer queue."
         }
       ]
     },
