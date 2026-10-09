@@ -386,12 +386,30 @@ def coverage_diagnostics(policy, coverage, counts, root, result, receipt=None, b
 
 
 def compatible_comparison(current, previous):
-    current_plans = current.get("evidence", {}).get("inputsAfter", {}).get("plans")
-    previous_plans = previous.get("evidence", {}).get("inputsAfter", {}).get("plans")
-    return bool(current.get("evidence", {}).get("status") == previous.get("evidence", {}).get("status") == "valid"
+    if not isinstance(current, dict) or not isinstance(previous, dict):
+        return False
+    current_evidence, previous_evidence = current.get("evidence"), previous.get("evidence")
+    if not isinstance(current_evidence, dict) or not isinstance(previous_evidence, dict):
+        return False
+    current_inputs, previous_inputs = current_evidence.get("inputsAfter"), previous_evidence.get("inputsAfter")
+    if not isinstance(current_inputs, dict) or not isinstance(previous_inputs, dict):
+        return False
+    current_plans, previous_plans = current_inputs.get("plans"), previous_inputs.get("plans")
+    return bool(current_evidence.get("status") == previous_evidence.get("status") == "valid"
         and current_plans is not None and current_plans == previous_plans
         and current.get("toolchain") == previous.get("toolchain")
         and current.get("invocation") == previous.get("invocation"))
+
+
+def comparison_receipt(path):
+    try:
+        payload = json.loads(path.read_text())
+        if isinstance(payload, dict):
+            return payload
+    except (OSError, ValueError):
+        pass
+    print(f"Coverage comparison receipt unavailable: {path}")
+    return None
 
 
 def check(args) -> int:
@@ -425,25 +443,31 @@ def check(args) -> int:
 
     failures = evaluate_coverage(policy, target_coverage=target_coverage, file_coverage=file_coverage, file_line_counts=file_line_counts)
     receipt_path = args.receipt or args.result_bundle.parent.parent / "receipt.json"
-    receipt = json.loads(receipt_path.read_text()) if receipt_path.is_file() else None
+    receipt = comparison_receipt(receipt_path) if receipt_path.is_file() else None
     comparison_path = args.compare
-    if comparison_path is None and receipt and receipt.get("evidence", {}).get("status") == "valid":
+    if failures and comparison_path is None and receipt:
         previous_paths = sorted((root / "artifacts/verification").glob("*/receipt.json"), key=lambda path: path.stat().st_mtime, reverse=True)
         for previous_path in previous_paths:
             if previous_path.resolve() == receipt_path.resolve():
                 continue
-            previous = json.loads(previous_path.read_text())
+            previous = comparison_receipt(previous_path)
             if compatible_comparison(receipt, previous):
                 comparison_path = previous_path
                 break
     if comparison_path:
-        previous = json.loads(comparison_path.read_text())
+        previous = comparison_receipt(comparison_path)
         if not receipt or not compatible_comparison(receipt, previous):
             print("[instrumentation-difference] Previous run is incompatible; no coverage comparison.")
         else:
-            for step in previous.get("steps", []):
-                if step.get("name") == "test:correctness" and step.get("coverage", {}).get("lineCoverage") is not None:
-                    print(f"Compatible previous target coverage: {step['coverage']['lineCoverage']:.4%}; delta {target_coverage - step['coverage']['lineCoverage']:+.4%}")
+            steps = previous.get("steps")
+            for step in steps if isinstance(steps, list) else []:
+                measurement = step.get("coverage") if isinstance(step, dict) else None
+                previous_coverage = measurement.get("lineCoverage") if isinstance(measurement, dict) else None
+                if isinstance(previous_coverage, (int, float)) and step.get("name") == "test:correctness":
+                    print(f"Compatible previous target coverage: {previous_coverage:.4%}; delta {target_coverage - previous_coverage:+.4%}")
+                    if not isinstance(step.get("xcresult"), str):
+                        print("Previous file coverage unavailable; retained target comparison only.")
+                        continue
                     previous_result = root / step["xcresult"]
                     if previous_result.exists():
                         try:

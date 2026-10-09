@@ -13,6 +13,30 @@ from support import load_script
 
 
 class CoverageTransactionTests(unittest.TestCase):
+    def test_automatic_history_is_lazy_and_corrupt_history_cannot_break_the_gate(self):
+        coverage = load_script("check_coverage.py")
+        for floor in [.5, .9]:
+            with self.subTest(floor=floor), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                (root / "scripts").mkdir()
+                policy = root / "policy.json"
+                policy.write_text(json.dumps({"version": 1, "target": "Half Dark.app", "minimumLineCoverage": .5, "files": {"Classes/A.m": floor}}))
+                receipt = {"evidence": {"status": "valid", "inputsAfter": {"plans": "plan"}}, "toolchain": "test", "invocation": "test"}
+                current = root / "current.json"
+                current.write_text(json.dumps(receipt))
+                history = root / "artifacts/verification/broken"
+                history.mkdir(parents=True)
+                incomplete = root / "artifacts/verification/incomplete"
+                incomplete.mkdir()
+                (incomplete / "receipt.json").write_text(json.dumps(receipt | {"steps": [{"name": "test:correctness", "coverage": {"lineCoverage": .7}}]}))
+                # Newest first: corrupt history must be skipped before the
+                # compatible record with missing per-file evidence is reached.
+                (history / "receipt.json").write_text("{invalid")
+                report = {"targets": [{"name": "Half Dark.app", "lineCoverage": .8, "files": [{"path": str(root / "Classes/A.m"), "lineCoverage": .8, "coveredLines": 8, "executableLines": 10}]}]}
+                with mock.patch.object(coverage, "__file__", str(root / "scripts/check_coverage.py")), mock.patch.object(coverage, "xccov_report", return_value=report) as xccov, mock.patch.object(coverage, "coverage_diagnostics"), contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(coverage.main([str(root / "result.xcresult"), "--policy", str(policy), "--receipt", str(current)]), int(floor > .8))
+                self.assertEqual(xccov.call_count, 1)
+
     def test_failed_measurement_leaves_policy_bytes_unchanged(self):
         coverage = load_script("check_coverage.py")
         with tempfile.TemporaryDirectory() as directory:

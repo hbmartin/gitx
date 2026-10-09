@@ -225,6 +225,17 @@ class WorkflowSessionTests(unittest.TestCase):
         with mock.patch.object(session.platform, "system", return_value="Linux"):
             self.assertEqual(session.desktop_checks()[0]["name"], "desktop-unavailable")
 
+    def test_locked_desktop_accepts_compact_and_spaced_ioreg_properties(self):
+        for property_text, expected in [('\"CGSSessionScreenIsLocked\"=Yes', "failed"),
+                                        ('\"CGSSessionScreenIsLocked\" = Yes', "failed"),
+                                        ('\"CGSSessionScreenIsLocked\"=No', "passed")]:
+            with self.subTest(property_text=property_text):
+                outputs = [f"Name : fixture\nUID : {os.getuid()}\n", "display", property_text, ""]
+                responses = [subprocess.CompletedProcess([], 0, value, "") for value in outputs]
+                with mock.patch.object(session.platform, "system", return_value="Darwin"), mock.patch.object(session.subprocess, "run", side_effect=responses):
+                    display = next(check for check in session.desktop_checks() if check["name"] == "display")
+                self.assertEqual(display["status"], expected)
+
     def test_signature_failure_is_distinct_from_unknown_startup(self):
         with tempfile.TemporaryDirectory() as directory:
             product = pathlib.Path(directory) / "Build/Products/Debug/Test.app"
