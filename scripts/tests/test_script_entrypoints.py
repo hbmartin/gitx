@@ -750,6 +750,25 @@ class ScriptEntrypointTests(unittest.TestCase):
         )
         self.assertNotIn("coverage", [step["name"] for step in receipt["steps"]])
 
+    def test_correctness_preserves_caller_compiler_flags_in_probe_and_suite(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        flags = ["OTHER_SWIFT_FLAGS=$(inherited) -DWORKFLOW_CHARACTERIZATION",
+                 "OTHER_CFLAGS=$(inherited) -DWORKFLOW_CHARACTERIZATION=1"]
+        subprocess.run([script, "--run-id", "compiler-flags", "test", "correctness",
+                        "-only-testing:GitXTests/ExampleTests", *flags], check=True,
+                       capture_output=True, text=True, env=self.environment)
+        builds = [value.splitlines() for value in captured.read_text().split("__INVOCATION__")
+                  if "\nbuild-for-testing\n" in value]
+        self.assertEqual(len(builds), 2)
+        for arguments in builds:
+            for setting in ("OTHER_SWIFT_FLAGS", "OTHER_CFLAGS"):
+                value = next(argument for argument in arguments if argument.startswith(setting + "="))
+                self.assertIn("$(inherited)", value)
+                self.assertIn("WORKFLOW_CHARACTERIZATION", value)
+        for flag in flags:
+            self.assertIn(flag, self.receipt("compiler-flags")["invocation"]["arguments"])
+
     def test_ui_preflight_forwards_non_selection_extras_only(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
