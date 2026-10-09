@@ -53,8 +53,15 @@ def digest(value):
     return hashlib.sha256(value).hexdigest()
 
 
+def git_environment():
+    """Inspect the requested checkout while retaining caller configuration."""
+    selectors = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                 "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH", "GIT_NAMESPACE"}
+    return {key: value for key, value in os.environ.items() if key not in selectors}
+
+
 def git(root, *args):
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True)
+    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, env=git_environment())
     return result.stdout.decode(errors="replace").strip() if result.returncode == 0 else ""
 
 

@@ -17,6 +17,16 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_git_environment_scrubs_repository_selectors_but_preserves_configuration(self):
+        selectors = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH", "GIT_NAMESPACE")
+        inherited = {key: "foreign" for key in selectors} | {"GIT_CONFIG_GLOBAL": "configured", "GIT_AUTHOR_NAME": "Author", "PATH": "/usr/bin"}
+        with mock.patch.dict(os.environ, inherited, clear=True):
+            environment = session.git_environment()
+            self.assertEqual(os.environ["GIT_DIR"], "foreign")
+        self.assertFalse(set(selectors) & environment.keys())
+        self.assertEqual(environment, {"GIT_CONFIG_GLOBAL": "configured", "GIT_AUTHOR_NAME": "Author", "PATH": "/usr/bin"})
+
     def test_collision_alias_nested_ownership_and_release(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

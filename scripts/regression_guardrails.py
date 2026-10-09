@@ -143,7 +143,7 @@ def validate_catalogue(payload, root=ROOT):
 
 
 def git(root, *arguments):
-    result = subprocess.run(["git", "-C", str(root), *arguments], capture_output=True, timeout=30)
+    result = subprocess.run(["git", "-C", str(root), *arguments], capture_output=True, timeout=30, env=session.git_environment())
     if result.returncode:
         raise ValueError(result.stderr.decode(errors="replace").strip() or "Git inspection failed")
     return result.stdout
