@@ -424,6 +424,127 @@ class CleanupTests(unittest.TestCase):
         with session.Leases([str(run)], {'runId': 'after', 'pid': os.getpid(), 'receipt': 'other'}, inherited={}):
             pass
 
+    def test_gate_checks_final_shared_cache_state_and_every_test_result(self):
+        command = str(self.root / 'scripts/xcodebuild.sh')
+        self.commands[:] = [('check', [command, 'build-tests']), ('stage-debug', [command, 'build', '--stage-app'])]
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        current = session.inputs(self.root)
+        cache = self.legacy_cache('shared')
+        result = self.artifact / 'first/Results/test.xcresult'
+        result.mkdir(parents=True)
+        (result / 'test-data').write_text('original result')
+        for i, step in enumerate(value['steps']):
+            child_path = self.artifact / f'child-{i}/receipt.json'
+            evidence = {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
+                        'dependencyProducts': {}, 'products': {'snapshot': i}, 'results': {}}
+            if i == 0:
+                evidence['dependencyProducts'] = {'earlier-build': 'superseded'}
+                evidence['results'][str(result.relative_to(self.root))] = session.tree_identity(result)
+            self.write(child_path, {'schemaVersion': 2, 'status': 'passed', 'evidence': evidence,
+                                  'buildPaths': {'derivedData': str(cache)}})
+            step['receipt'] = str(child_path)
+        self.write(receipt, value)
+        with mock.patch.object(session, 'product_identity', return_value={'snapshot': 1}):
+            self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
+            (result / 'test-data').write_text('changed result')
+            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'test-results-changed')
+        (result / 'test-data').write_text('original result')
+        # Restore the result identity after rewriting; mutable caches must still match.
+        first = self.artifact / 'child-0/receipt.json'
+        child = cleanup.read_json(first)
+        child['evidence']['results'][str(result.relative_to(self.root))] = session.tree_identity(result)
+        self.write(first, child)
+        with mock.patch.object(session, 'product_identity', return_value={'snapshot': 2}):
+            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'final-cache-products-changed')
+        with mock.patch.object(session, 'product_identity', return_value={'snapshot': 1}), mock.patch.object(
+                session, 'dependency_products', return_value={'modified-library': {}}):
+            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'dependency-products-changed')
+
+    def test_child_receipt_and_profile_guards_preserve_pending_work(self):
+        command = str(self.root / 'scripts/xcodebuild.sh')
+        self.commands[:] = [('check', [command, 'test', 'core']), ('stage-debug', [command, 'build', '--stage-app'])]
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'missing-child-receipt')
+        value['steps'][0]['receipt'] = str(self.base / 'external/receipt.json')
+        self.write(receipt, value)
+        self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'child-receipt-outside-checkout')
+        child_path = self.artifact / 'child/receipt.json'
+        value['steps'][0]['receipt'] = str(child_path)
+        self.write(receipt, value)
+        self.write(child_path, {'schemaVersion': 2, 'status': 'failed'})
+        self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'invalid-child-evidence')
+        self.assertTrue(cleanup.pending_path(self.root).exists())
+        self.write(receipt, value | {'profile': 'partial'})
+        self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'full-successful-verification-required')
+
+    def test_final_package_products_are_validated_after_all_package_checks(self):
+        command = str(self.root / 'scripts/xcodebuild.sh')
+        self.commands[:] = [('check', [command, 'test', 'core']), ('stage-debug', [command, 'build', '--stage-app'])]
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        current = session.inputs(self.root)
+        scratch = self.base / 'scratch'
+        for i, step in enumerate(value['steps']):
+            child_path = self.artifact / f'child-{i}/receipt.json'
+            self.write(child_path, {'schemaVersion': 2, 'status': 'passed', 'buildPaths': {'swiftPM': str(scratch)},
+                       'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
+                                    'dependencyProducts': {}, 'packageProducts': {'snapshot': i}, 'results': {}}})
+            step['receipt'] = str(child_path)
+        self.write(receipt, value)
+        with mock.patch.object(session, 'package_products', return_value={'snapshot': 1}):
+            self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
+        with mock.patch.object(session, 'package_products', return_value={'snapshot': 2}):
+            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'final-cache-products-changed')
+
+    def test_newest_backup_uses_staging_run_time_not_original_bundle_time(self):
+        older = self.run_directory('older-stage', 12)
+        newer = self.run_directory('newer-stage', 10)
+        for run in (older, newer):
+            (run / 'previous-Half Dark.app').mkdir()
+        self.stamp(older, 12)
+        self.stamp(newer, 10)
+        os.utime(older / 'previous-Half Dark.app', (self.now, self.now))
+        config_path = self.root / 'scripts/verification-config.json'
+        config = cleanup.read_json(config_path)
+        config['cleanup']['diagnosticBudgetBytes'] = 1
+        self.write(config_path, config)
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertIn(str(older), self.candidate_paths(report))
+        self.assertNotIn(str(newer), self.candidate_paths(report))
+
+    def test_completed_analyzer_does_not_require_its_deleted_temporary_products(self):
+        command = str(self.root / 'scripts/xcodebuild.sh')
+        self.commands[:] = [('analyze', [command, 'analyze']), ('stage-debug', ['fixture-stage'])]
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        current = session.inputs(self.root)
+        child = self.artifact / 'analyzer/receipt.json'
+        self.write(child, {'schemaVersion': 2, 'status': 'passed', 'invocation': {'preset': 'analyze'},
+                          'buildPaths': {'derivedData': str(self.base / 'AnalyzerDerivedData.deleted')},
+                          'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
+                                       'dependencyProducts': {}, 'products': {'temporary.app': 'removed'}, 'results': {}}})
+        value['steps'][0]['receipt'] = str(child)
+        self.write(receipt, value)
+        self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
+
+    def test_registered_nested_worktree_is_preserved_under_budget_pressure(self):
+        old = self.run_directory('old')
+        checkout = old / 'checkout'
+        self.git('worktree', 'add', '-qb', 'nested', str(checkout))
+        config_path = self.root / 'scripts/verification-config.json'
+        config = cleanup.read_json(config_path)
+        config['cleanup']['diagnosticBudgetBytes'] = 1
+        self.write(config_path, config)
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertNotIn(str(old), self.candidate_paths(report))
+        self.assertTrue((checkout / '.git').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

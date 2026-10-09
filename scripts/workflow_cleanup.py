@@ -179,6 +179,10 @@ def inventory(root, receipt=None, now=None):
     if artifact.is_symlink() or not artifact.resolve().is_relative_to(root):
         raise ValueError("Artifact root must remain inside the checkout without a symlink")
     protected = {root / "build/GitX.app": "staged Debug app"}
+    for tree in records.worktrees(root):
+        path = pathlib.Path(tree["worktree"]).resolve()
+        if path != root:
+            protected[path] = "registered worktree"
     for name in session.git(root, "ls-files", "-z").split("\0"):
         if name:
             p = root / name
@@ -251,7 +255,7 @@ def inventory(root, receipt=None, now=None):
             protected[max(matching, key=lambda p: entries[p]["completed"])] = label
     backups = [p for run in entries for p in run.glob("previous-*.app") if p.is_dir() and not p.is_symlink()]
     if backups:
-        protected[max(backups, key=lambda p: p.stat().st_mtime)] = "newest previous-app backup"
+        protected[max(backups, key=lambda p: (entries[p.parent]["completed"], p.stat().st_mtime))] = "newest previous-app backup"
     # Union workflows, their child receipts, and cross-run evidence into indivisible groups.
     parents = {p: p for p in entries}
     def find(p):
@@ -320,7 +324,7 @@ def inventory(root, receipt=None, now=None):
                 continue
             try:
                 info = plistlib.loads((p / "info.plist").read_bytes())
-                valid = pathlib.Path(info.get("WorkspacePath", "")).resolve() == (root / config["workspace"]).resolve()
+                valid = isinstance(info, dict) and isinstance(info.get("WorkspacePath"), str) and pathlib.Path(info["WorkspacePath"]).resolve() == (root / config["workspace"]).resolve()
             except (OSError, ValueError, plistlib.InvalidFileException):
                 valid = False
             if valid:
@@ -400,11 +404,46 @@ def eligibility(root, receipt):
     expected = workflow.full_profile(root)
     if value.get("selectedChecks") != [name for name, _ in expected] or len(value.get("steps", [])) != len(expected):
         return None, "incomplete-profile"
+    toolchain = session.cache_paths(root)["toolchain"]
+    products, packages = {}, {}
+    dependencies = None
     for (name, command), step in zip(expected, value["steps"]):
-        if step.get("name") != name or not workflow.reusable(step, current, command):
+        if step.get("name") != name or step.get("command") != command or step.get("status") != "passed" or step.get("evidenceStatus") != "valid" or step.get("toolchain") != toolchain or session.changed_inputs(step.get("inputsAfter", {}), current):
             return None, "verification-evidence-no-longer-reusable"
         if pathlib.Path(command[0]).name == "xcodebuild.sh" and not step.get("receipt"):
             return None, "missing-child-receipt"
+        if step.get("receipt"):
+            child_path = pathlib.Path(step["receipt"])
+            if not child_path.is_absolute():
+                child_path = root / child_path
+            if not child_path.resolve().is_relative_to(artifact.resolve()):
+                return None, "child-receipt-outside-checkout"
+            child = read_json(child_path, {})
+            evidence = child.get("evidence", {})
+            if child.get("schemaVersion") != 2 or child.get("status") != "passed" or evidence.get("status") != "valid" or any(
+                    session.changed_inputs(evidence.get(key, {}), current) for key in ("inputsBefore", "inputsAfter")):
+                return None, "invalid-child-evidence"
+            if not isinstance(evidence.get("dependencyProducts"), dict):
+                return None, "invalid-child-evidence"
+            dependencies = evidence["dependencyProducts"]
+            for result, identity in evidence.get("results", {}).items():
+                if session.tree_identity(root / result) != identity:
+                    return None, "test-results-changed"
+            paths = child.get("buildPaths", {})
+            temporary_analyzer = name == "analyze" and child.get("invocation", {}).get("preset") == "analyze"
+            if paths.get("derivedData") and "products" in evidence and not temporary_analyzer:
+                products[paths["derivedData"]] = evidence["products"]
+            if paths.get("swiftPM") and "packageProducts" in evidence:
+                packages[paths["swiftPM"]] = evidence["packageProducts"]
+        if any(session.tree_identity(path) != identity for path, identity in step.get("outputs", {}).items()):
+            return None, "workflow-output-changed"
+    # Later checks intentionally reuse and update earlier compilation products.
+    # Validate the last snapshot of each mutable cache, and every immutable result.
+    if dependencies is not None and dependencies != session.dependency_products(root):
+        return None, "dependency-products-changed"
+    if any(session.product_identity(path) != identity for path, identity in products.items()) or any(
+            session.package_products(path) != identity for path, identity in packages.items()):
+        return None, "final-cache-products-changed"
     app = root / "build/GitX.app"
     if not app.is_dir() or value["steps"][-1].get("outputs", {}).get(str(app)) != session.tree_identity(app):
         return None, "staged-app-does-not-match"
