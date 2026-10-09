@@ -87,9 +87,9 @@ final class PBTaskDiagnosticCaptureTests: XCTestCase {
         var readerGate: DispatchSemaphore!
 
         @objc(makePipe)
-        func makePipe() -> Pipe? {
+        func makePipe() -> Pipe? { // swiftlint:disable:this unused_declaration
             ShortReadPipe(gate: readerGate)
-        } // swiftlint:disable:this unused_declaration
+        }
     }
 
     private class HeldOutputWriterTask: PBTask {

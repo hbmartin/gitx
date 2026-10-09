@@ -41,10 +41,11 @@ final nonisolated class PBTaskDiagnostics: NSObject {
 }
 
 /// Deadline decisions are separate from Objective-C process and exception handling.
+/// PBTask.m calls this class and selector through the generated Objective-C interface.
 @objc(PBTaskDrainPolicy)
-final nonisolated class PBTaskDrainPolicy: NSObject {
+final nonisolated class PBTaskDrainPolicy: NSObject { // swiftlint:disable:this unused_declaration
     @objc(deadlineWithLeaderExit:lastProgress:taskDeadline:)
-    static func deadline(leaderExit: TimeInterval, lastProgress: TimeInterval, taskDeadline: TimeInterval) -> TimeInterval {
+    static func deadline(leaderExit: TimeInterval, lastProgress: TimeInterval, taskDeadline: TimeInterval) -> TimeInterval { // swiftlint:disable:this unused_declaration
         min(max(leaderExit, lastProgress) + 1, leaderExit + 10,
             taskDeadline > 0 ? taskDeadline : .infinity)
     }
