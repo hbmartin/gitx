@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		FED3AAE90EE43C10492BA56A /* HistoryFileIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */; };
 		00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */; };
 		DC57A0CECB698C04E264BFCD /* IndexMutationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */; };
 		C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */; };
@@ -679,6 +680,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFileIdentityTests.swift; sourceTree = "<group>"; };
 		D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinatorTests.swift; sourceTree = "<group>"; };
 		0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinator.swift; sourceTree = "<group>"; };
 		42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexReferenceTransactionTests.swift; sourceTree = "<group>"; };
@@ -1818,6 +1820,7 @@
 				C0DE57A600000000000000B2 /* StagingListViewModelTests.swift */,
 				C0DEE0000000000000000017 /* IndexCommitServiceTests.swift */,
 				42411B93BC4D2A20224B4390 /* IndexReferenceTransactionTests.swift */,
+				8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */,
 				D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */,
 				20698EBA2417442B5162DFB6 /* IndexCommitPublicationTests.swift */,
 				C0DEE0000000000000000019 /* IndexRefreshCoordinatorTests.swift */,
@@ -2565,6 +2568,7 @@
 				C0DE57A600000000000000A2 /* StagingListViewModelTests.swift in Sources */,
 				C0DEE0000000000000000007 /* IndexCommitServiceTests.swift in Sources */,
 				C30F1D88249C073E2FC8B784 /* IndexReferenceTransactionTests.swift in Sources */,
+				FED3AAE90EE43C10492BA56A /* HistoryFileIdentityTests.swift in Sources */,
 				00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */,
 				63A735203E9919B6FC5B1938 /* IndexCommitPublicationTests.swift in Sources */,
 				C0DEE0000000000000000009 /* IndexRefreshCoordinatorTests.swift in Sources */,

@@ -4433,6 +4433,36 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         assertMenu(menuItems(selector: "menuItemsForRef:", argument: detachedHead), contains: ["Push"])
     }
 
+    func testOpeningDirectoryExpandsAndCollapsesWithoutInvokingWorkspace() throws {
+        let commit = try XCTUnwrap(repository.headCommit())
+        historyController.selectedCommitDetailsIndex = 1
+        historyController.gitTree = commit.tree
+        let node = try XCTUnwrap(waitForTreeNode(fullPath: "nested"))
+        let outline = try XCTUnwrap(historyController.value(forKey: "fileBrowser") as? NSOutlineView)
+        historyController.treeController.setSelectionIndexPath(node.indexPath)
+        let original = try XCTUnwrap(class_getInstanceMethod(NSWorkspace.self, NSSelectorFromString("openURL:")))
+        let replacement = try XCTUnwrap(class_getInstanceMethod(WorkspaceOpenRecorder.self, #selector(WorkspaceOpenRecorder.recordOpenedURL(_:))))
+        WorkspaceOpenRecorder.openedURLs = []
+        method_exchangeImplementations(original, replacement)
+        defer { method_exchangeImplementations(original, replacement); WorkspaceOpenRecorder.openedURLs = [] }
+        let row = outline.row(forItem: node)
+        XCTAssertGreaterThanOrEqual(row, 0)
+        let clickedRow = try XCTUnwrap(class_getInstanceMethod(NSOutlineView.self, NSSelectorFromString("clickedRow")))
+        let click: @convention(block) (NSOutlineView) -> Int = { _ in row }
+        let clickImplementation = imp_implementationWithBlock(click)
+        let previousClick = method_setImplementation(clickedRow, clickImplementation)
+        defer { method_setImplementation(clickedRow, previousClick); imp_removeBlock(clickImplementation) }
+        outline.collapseItem(node)
+        XCTAssertFalse(outline.isItemExpanded(node))
+        historyController.openSelectedFile(outline)
+        XCTAssertTrue(outline.isItemExpanded(node))
+        XCTAssertTrue(WorkspaceOpenRecorder.openedURLs.isEmpty)
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "History-Directory-Opening-Expands-Outline")
+        historyController.openSelectedFile(outline)
+        XCTAssertFalse(outline.isItemExpanded(node))
+        XCTAssertTrue(WorkspaceOpenRecorder.openedURLs.isEmpty)
+    }
+
     func testNavigationCopySearchQuickLookAndObserverCallbacks() throws {
         let commits = loadedCommits().filter { !$0.parents.isEmpty }
         XCTAssertFalse(commits.isEmpty)

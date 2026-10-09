@@ -406,6 +406,14 @@ typedef NS_ENUM(NSInteger, PBStagingSelectionContext) {
 + (void)applySelectedIcon;
 @end
 
+@interface PBHistoryFileOpening : NSObject
++ (BOOL)openTree:(PBGitTree *)tree outline:(nullable NSOutlineView *)outline item:(nullable id)item opener:(BOOL (^)(NSURL *))opener NS_SWIFT_NAME(open(tree:outline:item:opener:));
+@end
+
+@interface PBHistoryFilePreview : NSObject
++ (nullable NSURL *)urlForTree:(PBGitTree *)tree NS_SWIFT_NAME(url(for:));
+@end
+
 @interface PBHistoryTreePresentation : NSObject
 - (instancetype)initWithRepository:(PBGitRepository *)repository;
 - (PBGitTree *)treeForCommit:(PBGitCommit *)commit;
