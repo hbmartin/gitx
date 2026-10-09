@@ -3428,11 +3428,15 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 	XCTAssertTrue(tracked.hasUnstagedChanges);
 	XCTAssertTrue(untracked.hasUnstagedChanges);
 
-	XCTAssertTrue(([self.repository.index stageFiles:@[ tracked, untracked ]]));
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue(([self.repository.index stageFiles:@[ tracked, untracked ]]));
+	}];
 	NSString *cached = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];
 	XCTAssertTrue([cached containsString:@"tracked.txt"]);
 	XCTAssertTrue([cached containsString:@"folder/spaced"]);
-	XCTAssertTrue(([self.repository.index unstageFiles:@[ tracked, untracked ]]));
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue(([self.repository.index unstageFiles:@[ tracked, untracked ]]));
+	}];
 	NSString *cachedAfterUnstage = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];
 	XCTAssertEqualObjects(cachedAfterUnstage, @"");
 }
