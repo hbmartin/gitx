@@ -1,6 +1,57 @@
 import XCTest
 
 final class RepositoryPushEventGateTests: XCTestCase {
+    func testAllBoundedEventSequencesPreserveOneOperationLifetime() {
+        let alphabet: [RepositoryPushEvent] = [.began(createPullRequestSelected: false), .began(createPullRequestSelected: true), .cancelled, .succeeded, .failed]
+        var sequences: [[RepositoryPushEvent]] = [[]]
+        var frontier: [[RepositoryPushEvent]] = [[]]
+        for _ in 0 ..< 4 {
+            frontier = frontier.flatMap { prefix in
+                alphabet.map { prefix + [$0] }
+            }
+            sequences += frontier
+        }
+        XCTAssertEqual(sequences.count, 781)
+        for sequence in sequences {
+            var gate = RepositoryPushEventGate()
+            var acceptedBegins = 0
+            var acceptedTerminals = 0
+            for event in sequence {
+                let activeBefore = gate.isActive
+                let accepted = gate.accept(event)
+                if acceptedTerminals > 0 {
+                    XCTAssertFalse(accepted, "Late callback in \(sequence)")
+                }
+                switch event {
+                case .began:
+                    if accepted {
+                        acceptedBegins += 1
+                    }
+                    if acceptedBegins == 0 && acceptedTerminals == 0 {
+                        XCTFail("A fresh operation must accept its first begin: \(sequence)")
+                    }
+                case .cancelled:
+                    if activeBefore {
+                        XCTAssertFalse(accepted, "An active push must settle through its actual result")
+                    }
+                    if accepted {
+                        acceptedTerminals += 1
+                    }
+                case .succeeded, .failed:
+                    if acceptedTerminals == 0 {
+                        XCTAssertTrue(accepted, "The first actual result must settle the operation")
+                    }
+                    if accepted {
+                        acceptedTerminals += 1
+                    }
+                }
+                XCTAssertLessThanOrEqual(acceptedBegins, 1, "\(sequence)")
+                XCTAssertLessThanOrEqual(acceptedTerminals, 1, "\(sequence)")
+                XCTAssertEqual(gate.isActive, acceptedBegins == 1 && acceptedTerminals == 0, "\(sequence)")
+            }
+        }
+    }
+
     func testCancellationBeforeBeginFinishesWithoutAcceptingALateAction() {
         var gate = RepositoryPushEventGate()
         XCTAssertFalse(gate.isActive)

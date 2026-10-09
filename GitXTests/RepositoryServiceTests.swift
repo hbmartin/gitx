@@ -1208,12 +1208,16 @@ final class RepositoryForgeCoordinatorTests: XCTestCase {
         XCTAssertFalse(service.pushBranch(PBGitRef(string: "refs/heads/main"), toRemote: PBGitRef(string: "refs/remotes/origin"), error: &error))
         let plan = try XCTUnwrap(error.flatMap { PBRepositoryPushRetryPlan.plan(forError: $0) })
         try runGit(["commit", "--quiet", "--allow-empty", "-m", "later local work"])
+        let laterLocalSource = try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines)
+        XCTAssertNotEqual(laterLocalSource, frozenSource)
         try runGit(["fetch", "--quiet", "origin"])
         error = nil
         XCTAssertTrue(service.retryPush(with: plan, error: &error))
         XCTAssertNil(error)
         XCTAssertEqual(try runner.output(withArguments: ["--git-dir=" + bare.path, "rev-parse", "refs/heads/main"]).trimmingCharacters(in: .whitespacesAndNewlines), frozenSource)
         XCTAssertEqual(plan.sourceOID, frozenSource)
+        XCTAssertEqual(try runner.output(withArguments: ["rev-parse", "HEAD"]).trimmingCharacters(in: .newlines), laterLocalSource,
+                       "Publishing frozen intent must not rewrite later local work")
         XCTAssertEqual(try runner.output(withArguments: ["rev-parse", "refs/remotes/origin/main"]).trimmingCharacters(in: .newlines), frozenSource)
     }
 
