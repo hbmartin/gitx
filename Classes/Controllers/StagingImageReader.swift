@@ -185,6 +185,8 @@ final nonisolated class StagingImageBlobReader: @unchecked Sendable {
 }
 
 #if GITX_APP_TARGET && DEBUG
+    // SwiftLint cannot follow XCTest's Objective-C bridge declarations.
+    // swiftlint:disable unused_declaration
     @objc(PBStagingImageReaderTestHarness)
     final nonisolated class StagingImageReaderTestHarness: NSObject {
         @objc(readURL:maximumBytes:cancelled:timeout:whileReading:error:)
@@ -203,4 +205,5 @@ final nonisolated class StagingImageBlobReader: @unchecked Sendable {
             try StagingImageBlobReader(task: task).read(maximumBytes: maximumBytes)
         }
     }
+    // swiftlint:enable unused_declaration
 #endif
