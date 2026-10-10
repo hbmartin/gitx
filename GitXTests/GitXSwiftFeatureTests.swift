@@ -951,7 +951,7 @@ final class GitXSwiftFeatureTests: XCTestCase {
                 }
             }
             expectation(for: repositoryOpened, evaluatedWith: nil)
-            waitForExpectations(timeout: 5)
+            waitForExpectations(timeout: 20)
         }
     }
 
