@@ -464,6 +464,7 @@ class Leases:
 
     def environment(self):
         return os.environ | {"GITX_RESOURCE_LEASES": json.dumps(self.inherited | self.held),
+                             "GITX_VERIFICATION_PRODUCER": json.dumps(self.owner.get("producer")),
                              "GITX_SESSION_ID": os.environ.get("GITX_SESSION_ID", self.owner["runId"])}
 
     def descriptors(self):
@@ -485,6 +486,23 @@ class Leases:
             for stream in self.opened:
                 stream.close()
             self.opened.clear()
+
+
+def inherited_ownership():
+    """Receipt helpers inherit their long-lived owner's authenticated holdings."""
+    try:
+        holdings = json.loads(os.environ.get("GITX_RESOURCE_LEASES", "{}"))
+        producer = json.loads(os.environ.get("GITX_VERIFICATION_PRODUCER", "null"))
+    except (ValueError, TypeError):
+        return None, []
+    if not isinstance(holdings, dict):
+        return None, []
+    resources = sorted(resource for resource, prior in holdings.items()
+                       if isinstance(resource, str) and isinstance(prior, dict) and Leases.authenticated(resource, prior))
+    if (not resources or not isinstance(producer, dict) or type(producer.get("pid")) is not int or
+            producer["pid"] <= 0 or not isinstance(producer.get("started"), str) or not producer["started"]):
+        producer = None
+    return producer, resources
 
 
 def desktop_checks():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -117,6 +118,36 @@ class PackageDoctorTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_init_records_the_authenticated_long_lived_producer_and_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            path = root / "receipt.json"
+            owner = {"runId": "owner", "pid": os.getpid(), "receipt": "outer.json",
+                     "producer": verification.session.producer_identity()}
+            resource = str(root / "products")
+            with verification.session.Leases([resource], owner, root / "locks", inherited={}) as lease:
+                with mock.patch.object(verification, "receipt_base", return_value={"status": "running"}), \
+                        mock.patch.object(verification.session, "inputs", return_value={}), \
+                        mock.patch.dict(os.environ, lease.environment(), clear=True):
+                    verification.command_receipt_init(argparse.Namespace(path=path))
+                payload = json.loads(path.read_text())
+        self.assertEqual(payload["producer"], owner["producer"])
+        self.assertEqual(payload["resources"], [resource])
+
+    def test_init_keeps_unauthenticated_or_malformed_producer_ownership_uncertain(self) -> None:
+        for ownership in ({"pid": 999999999, "started": "missing"}, ["invalid"], "malformed"):
+            with self.subTest(ownership=ownership), tempfile.TemporaryDirectory() as directory:
+                path = pathlib.Path(directory) / "receipt.json"
+                environment = {"GITX_VERIFICATION_PRODUCER": json.dumps(ownership),
+                               "GITX_RESOURCE_LEASES": json.dumps({"/products": {"socket": "/absent", "token": "forged"}})}
+                with mock.patch.object(verification, "receipt_base", return_value={"status": "running"}), \
+                        mock.patch.object(verification.session, "inputs", return_value={}), \
+                        mock.patch.dict(os.environ, environment, clear=True):
+                    verification.command_receipt_init(argparse.Namespace(path=path))
+                payload = json.loads(path.read_text())
+                self.assertIsNone(payload["producer"])
+                self.assertEqual(payload["resources"], [])
+
     def test_init_preserves_running_status_input_evidence_and_build_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / "receipt.json"
