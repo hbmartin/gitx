@@ -186,7 +186,7 @@ def verify(args):
                     evidence = json.loads(prior_receipt.read_text())
                     if evidence.get("evidence", {}).get("status") == "valid" and evidence["evidence"].get("analyzerScratch") and not session.changed_inputs(evidence["evidence"].get("inputsAfter", {}), current) and \
                             any(step.get("name") == "analyze" and step.get("status") == "passed" for step in evidence.get("steps", [])):
-                        actual += ["--resume-analysis", evidence["runId"]]
+                        actual += ["--resume-analysis", evidence["runId"], "--fresh-on-stale-analysis"]
             step_started = time.monotonic()
             status = session.supervise(actual, timeout=args.timeout, directory=directory / "Diagnostics" / name,
                                        env=env | {"GITX_SESSION_ID": child_id}, pass_fds=leases.descriptors())
