@@ -426,6 +426,44 @@ class CleanupTests(unittest.TestCase):
         self.assertTrue(any(str(legacy) in item['paths'] and 'unmanaged' in item['reason'] for item in report['retained']))
         self.assertGreater(report['protectedDiagnosticBytes'], 0)
 
+    def test_malformed_coordination_and_generic_metadata_is_isolated(self):
+        remaining = self.run_directory('remaining')
+        coordination = self.artifact / 'Coordination/broken.json'
+        self.write(coordination, {'runId': 'broken', 'receipt': str(coordination),
+            'entry': str(self.root / 'scripts/dev_workflow.py'), 'status': 'passed', 'evidence': []})
+        generic = self.artifact / 'diagnostics/broken'
+        self.write(generic / 'diagnostic-owner.json', {'schemaVersion': 1, 'kind': 'gitx-diagnostics',
+            'checkout': str(self.root), 'runId': 'broken', 'status': 'passed', 'buildPaths': []})
+        self.stamp(self.artifact, 10)
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertIn(str(remaining), self.candidate_paths(report))
+        self.assertTrue(report['discoveryErrors'])
+        self.assertTrue(any(str(coordination) in str(item['paths']) for item in report['retained']))
+        self.assertTrue(any(str(generic) in str(item['paths']) for item in report['retained']))
+
+    def test_vanished_cache_is_isolated_from_the_remaining_inventory(self):
+        remaining = self.run_directory('remaining')
+        cache = self.legacy_cache('vanished')
+        identity = cleanup.directory_identity
+        def inspect(path):
+            if pathlib.Path(path) == cache:
+                raise FileNotFoundError('cache vanished')
+            return identity(path)
+        with mock.patch.object(cleanup, 'directory_identity', side_effect=inspect):
+            report = cleanup.preview(self.root, now=self.now)
+        self.assertIn(str(remaining), self.candidate_paths(report))
+        self.assertTrue(report['discoveryErrors'])
+
+    def test_tracked_binary_screenshots_do_not_create_false_discovery_failures(self):
+        old = self.run_directory('old')
+        screenshot = self.root / 'docs/diagnostics/screenshot.png'
+        screenshot.parent.mkdir(parents=True)
+        screenshot.write_bytes(b'\x89PNG\r\n\x1a\nfixture')
+        self.git('add', 'docs'); self.git('commit', '-qm', 'tracked screenshot')
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertIn(str(old), self.candidate_paths(report))
+        self.assertFalse(report['discoveryErrors'])
+
     def test_hook_queues_commits_and_amend_without_pruning(self):
         old = self.run_directory('old')
         cleanup.install_hook(self.root)
