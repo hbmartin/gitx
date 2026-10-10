@@ -262,6 +262,14 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
 }
 
 #if GITX_APP_TARGET && DEBUG
+    extension IndexWriterCoordinator {
+        nonisolated func withSuspendedQueueForTesting(_ body: () -> Void) {
+            queue.suspend()
+            defer { queue.resume() }
+            body()
+        }
+    }
+
     // SwiftLint cannot follow XCTest's Objective-C bridge declarations.
     // swiftlint:disable unused_declaration
     @objc(PBIndexWriterCommandTestHarness)

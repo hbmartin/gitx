@@ -764,6 +764,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 
 #if DEBUG
 @interface PBMilestone2ProductCoverageHarness (ReviewFixProof)
++ (NSDictionary<NSString *, id> *)queuedWriterRejectionScenario;
 + (uint64_t)rejectedPushRecoveryProof;
 + (void)reviewRetryCancellationWorkflowWithCompletion:(void (^)(BOOL preservedAndReusable))completion NS_SWIFT_NAME(reviewRetryCancellationWorkflow(completion:));
 + (uint64_t)verificationBoundaryProof;

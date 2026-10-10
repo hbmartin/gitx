@@ -713,6 +713,45 @@
             return starts == 1 && cancelledRetries == 1 && windowController.errorCount == 0
         }
 
+        // Called through the XCTest Objective-C bridge, which SwiftLint cannot follow.
+        // swiftlint:disable:next unused_declaration
+        @objc static func queuedWriterRejectionScenario() -> [String: Any] {
+            let coordinator = IndexWriterCoordinator()
+            let completed = Mutex<Int>(-1)
+            let finished = DispatchSemaphore(value: 0)
+            var rejection: NSError?
+            var synchronousBodyExecuted = false
+            var busyBeforeRejection = false
+            var busyAfterRejection = false
+            coordinator.withSuspendedQueueForTesting {
+                coordinator.schedule("queued-test-writer", work: { 42 }, completion: { result in
+                    completed.withLock { $0 = result }
+                    finished.signal()
+                })
+                busyBeforeRejection = coordinator.isBusy
+                do {
+                    _ = try coordinator.perform("overtaking-test-writer") {
+                        synchronousBodyExecuted = true
+                        return 99
+                    }
+                } catch { rejection = error as NSError }
+                busyAfterRejection = coordinator.isBusy
+            }
+            let didFinish = finished.wait(timeout: .now() + 5) == .success
+            let recovered = didFinish ? (try? coordinator.perform("recovered-test-writer") { 7 }) : nil
+            return [
+                "busyBeforeRejection": busyBeforeRejection,
+                "busyAfterRejection": busyAfterRejection,
+                "errorDomain": rejection?.domain ?? "",
+                "errorCode": rejection?.code ?? -1,
+                "synchronousBodyExecuted": synchronousBodyExecuted,
+                "finished": didFinish,
+                "queuedResult": completed.withLock { $0 },
+                "idleAfterCompletion": !coordinator.isBusy,
+                "recoveredResult": recovered ?? -1,
+            ]
+        }
+
         @objc static func reviewHistoryOutput(repository: PBGitRepository, arguments: [String]) throws -> String {
             try RepositoryGitCommandRunner(repository: repository).historyOutput(arguments: arguments)
         }
