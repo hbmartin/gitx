@@ -242,8 +242,9 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(waitForCondition { window.attachedSheet != nil })
         let sheet = try XCTUnwrap(window.attachedSheet)
         window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
-        XCTAssertTrue(waitForCondition {
+        XCTAssertTrue(waitForCondition(timeout: 20) {
             !self.repository.index.mutationReconciliationPending &&
+                self.repository.index.writerPendingCount == 0 && self.repository.index.writerActiveCount == 0 &&
                 (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent(path), encoding: .utf8)) == "original unicode\n"
         })
     }
@@ -434,14 +435,17 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == conflict })
         try selectDiffFile(file, staged: true, in: pane)
         let native = pane.diffPaneController.contentView
-        XCTAssertTrue(waitForCondition { native.textView.string.contains("Staged — " + conflict) })
+        XCTAssertTrue(waitForCondition(timeout: 20) { native.textView.string.contains("Actions unavailable — " + conflict) })
         let conflictSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
+        XCTAssertEqual(conflictSections.first?[PBNativeSectionTitleKey] as? String, "Actions unavailable — " + conflict)
+        XCTAssertEqual(conflictSections.first?[PBNativeSectionStagingChromeKey] as? Bool, false)
+        XCTAssertTrue((conflictSections.first?[PBNativeSectionActionContextKey] as? [String: Any])?.isEmpty == true)
         let expected = try fixture.git(["diff-index", "-U3", "--cached", "HEAD", "--", conflict])
         XCTAssertEqual(conflictSections.first?[PBNativeSectionTextKey] as? String, expected)
         try attachScreenshot(of: native, named: "Staging-Unmerged-Image-Diff")
         let untracked = try XCTUnwrap(repository.index.indexChanges.first { $0.path == link })
         try selectDiffFile(untracked, staged: false, in: pane)
-        XCTAssertTrue(waitForCondition { native.textView.string.contains("missing-image-target") })
+        XCTAssertTrue(waitForCondition(timeout: 20) { native.textView.string.contains("missing-image-target") })
         let linkSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
         XCTAssertTrue((linkSections.first?[PBNativeSectionTextKey] as? String)?.contains("120000") == true)
         try attachScreenshot(of: native, named: "Staging-Dangling-Image-Symlink-Diff")
@@ -2241,13 +2245,20 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
     }
 
     private func waitForIndexUpdate(during block: () throws -> Void) rethrows {
+        XCTAssertTrue(waitForCondition(timeout: 20) {
+            !self.repository.index.mutationReconciliationPending &&
+                self.repository.index.writerPendingCount == 0 && self.repository.index.writerActiveCount == 0
+        }, "index actions wait for reconciliation and all queued writers")
         let updated = expectation(
             forNotification: NSNotification.Name(PBGitIndexIndexUpdated),
             object: repository.index
         )
         try block()
-        wait(for: [updated], timeout: 10)
-        XCTAssertTrue(waitForCondition { !repository.index.mutationReconciliationPending })
+        wait(for: [updated], timeout: 20)
+        XCTAssertTrue(waitForCondition(timeout: 20) {
+            !self.repository.index.mutationReconciliationPending &&
+                self.repository.index.writerPendingCount == 0 && self.repository.index.writerActiveCount == 0
+        })
         pumpRunLoop()
     }
 
@@ -2918,7 +2929,10 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             wait(for: [completed], timeout: 20)
             NotificationCenter.default.removeObserver(self, name: Notification.Name(PBGitIndexFinishedCommit), object: index)
             XCTAssertEqual((index.value(forKey: "mutationGeneration") as? NSNumber)?.uintValue, generation + 1)
-            XCTAssertTrue(waitForCondition { !index.mutationReconciliationPending && index.indexChanges.isEmpty })
+            XCTAssertTrue(waitForCondition(timeout: 20) {
+                !index.mutationReconciliationPending && index.writerPendingCount == 0 &&
+                    index.writerActiveCount == 0 && index.indexChanges.isEmpty
+            })
             XCTAssertEqual(try fixture.git(["show", "HEAD:" + path]), "created commit\n")
         }
     }
@@ -4066,6 +4080,8 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             with: NSNotification(name: NSApplication.didBecomeActiveNotification, object: nil)
         )
 
+        let amendMenu = NSMenuItem(title: "Amend", action: NSSelectorFromString("toggleAmendCommit:"), keyEquivalent: "")
+        XCTAssertTrue(waitForCondition(timeout: 20) { stub.validateMenuItem(amendMenu) })
         waitForIndexUpdate {
             stub.toggleAmendCommit(self)
         }
@@ -4075,6 +4091,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             "amend repopulates the composer with the last commit message"
         )
         XCTAssertTrue(historyController.uncommittedChangesSelected == false || pane.view.isHidden == false)
+        XCTAssertTrue(waitForCondition(timeout: 20) { pane.validate(amendMenu) })
         waitForIndexUpdate {
             pane.perform(NSSelectorFromString("toggleAmendCommit:"), with: nil)
         }
