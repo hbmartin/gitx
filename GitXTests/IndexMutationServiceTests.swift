@@ -134,6 +134,51 @@ final class IndexMutationServiceTests: XCTestCase {
         withExtendedLifetime(repository) {}
     }
 
+    #if DEBUG
+        func testQueuedWriterRejectsOvertakingSynchronousWorkAndRemainsReusable() {
+            let result = PBMilestone2ProductCoverageHarness.queuedWriterRejectionScenario()
+            XCTAssertEqual(result["busyBeforeRejection"] as? Bool, true)
+            XCTAssertEqual(result["busyAfterRejection"] as? Bool, true)
+            XCTAssertEqual(result["errorDomain"] as? String, "PBGitIndexMutationError")
+            XCTAssertEqual(result["errorCode"] as? Int, 6)
+            XCTAssertEqual(result["synchronousBodyExecuted"] as? Bool, false)
+            XCTAssertEqual(result["finished"] as? Bool, true)
+            XCTAssertEqual(result["queuedResult"] as? Int, 42)
+            XCTAssertEqual(result["idleAfterCompletion"] as? Bool, true)
+            XCTAssertEqual(result["recoveredResult"] as? Int, 7)
+        }
+
+        func testGeneralCommandRunnerRejectsWritersDuringReconciliationAndSubmissionButAllowsReads() throws {
+            try MainActor.assumeIsolated {
+                for key in ["mutationReconciliationPending", "submissionActive"] {
+                    var writeExecutions = 0
+                    let repository = ControlledRepository { argument in
+                        if argument == "mutation-probe" {
+                            return { writeExecutions += 1 }
+                        }
+                        return {}
+                    }
+                    let index = repository.index
+                    index.setValue(false, forKey: "mutationReconciliationPending")
+                    index.setValue(false, forKey: "submissionActive")
+                    index.setValue(true, forKey: key)
+                    defer { index.setValue(false, forKey: key) }
+                    XCTAssertThrowsError(try PBMilestone2ProductCoverageHarness.reviewGeneralLaunch(
+                        repository: repository, arguments: ["update-index", "mutation-probe"]
+                    )) { error in
+                        XCTAssertEqual((error as NSError).domain, "PBGitIndexMutationError", key)
+                        XCTAssertEqual((error as NSError).code, 6, key)
+                    }
+                    XCTAssertEqual(writeExecutions, 0, "busy \(key) must not launch a writer")
+                    XCTAssertEqual(try PBMilestone2ProductCoverageHarness.reviewGeneralOutput(
+                        repository: repository, arguments: ["rev-parse", "read-probe"]
+                    ), "result", "reads remain available during \(key)")
+                    withExtendedLifetime(repository) {}
+                }
+            }
+        }
+    #endif
+
     private final class LocatedRepository: PBGitRepository {
         let directory: URL
         let makeBody: (String) -> (() -> Void)
