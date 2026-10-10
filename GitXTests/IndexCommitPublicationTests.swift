@@ -223,6 +223,23 @@ final class IndexCommitPublicationTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent(".git/MERGE_HEAD").path))
     }
 
+    func testInvalidMergeParentBytesRefusePublicationAndPreservePreparedState() throws {
+        try seed()
+        let original = try git(["rev-parse", "HEAD"])
+        repository = try GitXTestGitRepository(url: directory)
+        let observation = Observation()
+        let observer = failureObserver { observation.failure = $0 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        for marker in [Data([255]), Data("not-an-object-id\n".utf8)] {
+            observation.failure = nil
+            try marker.write(to: directory.appendingPathComponent(".git/MERGE_HEAD"))
+            try submitAndSettle("Invalid merge parent", verify: false)
+            XCTAssertNotNil(observation.failure)
+            XCTAssertEqual(try git(["rev-parse", "HEAD"]), original)
+            XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent(".git/MERGE_HEAD")), marker)
+        }
+    }
+
     func testCancellingAnOwnedPreparedTransactionReleasesAllReferenceLocks() throws {
         try seed()
         let original = try git(["rev-parse", "HEAD"])

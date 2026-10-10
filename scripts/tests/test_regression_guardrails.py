@@ -174,6 +174,26 @@ class RegressionGuardrailTests(unittest.TestCase):
             self.assertIn(check, requirements)
             self.assertTrue(guard.GENERAL_APP_CHECKS <= set(requirements))
 
+    def test_build_and_verification_policy_changes_require_full_profile(self):
+        full = {name for name, _ in guard.dev_workflow.full_profile(self.root)}
+        for path in ("GitX.xcconfig", "GitX.entitlements", "External/objective-git", "scripts/xcodebuild.sh", "scripts/check_coverage.py", "scripts/coverage-baseline.json"):
+            self.assertEqual(set(guard.required_checks([path], [])), full, path)
+
+    def test_generated_package_user_state_does_not_select_app_checks(self):
+        path = self.root / "GitXCore/.swiftpm/xcode/xcuserdata/user.xcuserdatad/settings.plist"
+        path.parent.mkdir(parents=True)
+        path.write_text("generated")
+        self.assertNotIn(str(path.relative_to(self.root)), guard.changes(self.root, self.base)[1])
+        self.assertFalse(guard.required_checks([str(path.relative_to(self.root))], []))
+
+    def test_missing_mapping_is_a_warning_without_overriding_readiness(self):
+        (self.root / "Classes/New.swift").write_text("struct New {}")
+        self.git("add", ".")
+        report = guard.build_report(self.root, self.base, self.catalogue)
+        self.assertEqual(report["status"], "ready")
+        warning = next(f for f in report["findings"] if f["code"] == "unmapped-source")
+        self.assertFalse(warning["affectsReadiness"])
+
     def test_result_walker_keeps_configuration_skip_and_failing_repetition(self):
         for result, repetitions, expected in [("Skipped", (), "Skipped"), ("Passed", ("Passed", "Failed"), "Failed"),
                                               ("Passed", ("Passed", "Skipped"), "Unknown")]:
@@ -186,6 +206,60 @@ class RegressionGuardrailTests(unittest.TestCase):
         record = guard.inspect_receipt(path, self.context)
         self.assertEqual(record["reasons"], [])
         self.assertEqual(guard.assess_checks(["correctness"], self.catalogue["contracts"], [record])[0], "ready")
+
+    def test_workflow_accepts_final_cache_owner_but_checks_every_result(self):
+        path, payload = self.receipt("correctness.json")
+        first = copy.deepcopy(payload)
+        first["invocation"]["preset"] = "build-tests"
+        first["steps"] = []
+        first["finishedAt"] = "2026-10-09T11:00:00Z"
+        self.save("build.json", first)
+        (path.parent / "products/Build/Products/GitX.app/binary").write_bytes(b"newest compilation")
+        payload["evidence"]["products"] = session.product_identity(path.parent / "products")
+        self.save(path.name, payload)
+        commands = dict(guard.dev_workflow.full_profile(self.root))
+        steps = [{"name": name, "command": commands[name], "receipt": str(child), "status": "passed", "exitCode": 0,
+                  "evidenceStatus": "valid", "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
+                  "toolchain": self.context.toolchain} for name, child in [("debug-test-build", path.parent / "build.json"), ("correctness", path)]]
+        workflow = {"schemaVersion": 2, "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
+                    "evidenceStatus": "valid", "steps": steps}
+        workflow["finalCacheProducts"] = session.workflow_cache_snapshots(workflow, self.root)
+        records = guard.inspect_workflow(path.parent / "workflow.json", workflow, self.context)
+        self.assertTrue(all(r["validity"] == "valid" for r in records), records)
+        workflow["steps"].reverse()
+        records = guard.inspect_workflow(path.parent / "workflow.json", workflow, self.context)
+        self.assertTrue(all(r["validity"] == "valid" for r in records), records)
+        (path.parent / "result.xcresult/tests.json").write_text("changed result")
+        records = guard.inspect_workflow(path.parent / "workflow.json", workflow, self.context)
+        self.assertEqual(next(r for r in records if r["check"] == "correctness")["validity"], "invalid")
+
+    def test_legacy_cache_ownership_requires_unambiguous_provenance(self):
+        path, payload = self.receipt()
+        first = copy.deepcopy(payload)
+        first.pop("finishedAt")
+        first["evidence"]["products"] = {"different": "compilation"}
+        other = self.save("legacy.json", first)
+        workflow = {"steps": [{"receipt": str(path)}, {"receipt": str(other)}]}
+        self.assertTrue(session.final_cache_problems(workflow, self.root))
+        first["evidence"]["products"] = payload["evidence"]["products"]
+        self.save(other.name, first)
+        self.assertEqual(session.final_cache_problems(workflow, self.root), [])
+
+    def test_missing_child_evidence_preserves_the_failed_observation(self):
+        commands = dict(guard.dev_workflow.full_profile(self.root))
+        workflow = {"schemaVersion": 2, "inputsBefore": self.context.inputs, "inputsAfter": self.context.inputs,
+                    "evidenceStatus": "valid", "steps": [{"name": "correctness", "command": commands["correctness"],
+                    "receipt": str(self.root / "missing.json"), "status": "failed", "exitCode": 65}]}
+        records = guard.inspect_workflow(self.root / "workflow.json", workflow, self.context)
+        self.assertEqual(records[0]["status"], "failed")
+        self.assertEqual(records[0]["validity"], "invalid")
+
+    def test_known_python_command_identity_survives_interpreter_relocation(self):
+        command = dict(guard.dev_workflow.full_profile(self.root))["interop"]
+        step = {"command": ["/retired/python", *command[1:]], "commandIdentity": session.command_identity(command)}
+        self.assertTrue(session.command_matches(step, command))
+        step["commandIdentity"]["python"][2] += 1
+        self.assertFalse(session.command_matches(step, command))
 
     def test_plan_configuration_is_distinct_from_build_configuration(self):
         path, payload = self.receipt()

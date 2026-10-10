@@ -3803,11 +3803,23 @@ static NSMutableArray<NSString *> *PBBinaryRecoveryCandidates;
 		[self.repository.index refresh];
 	}];
 	PBChangedFile *tracked = [self changedFileAtPath:@"tracked.txt"];
-	XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	[self refreshIndexAfterPerforming:^{
+		XCTAssertTrue([self.repository.index stageFiles:@[ tracked ]]);
+	}];
+	XCTAssertFalse(self.repository.index.mutationReconciliationPending);
 	NSString *lockPath = [self.fixture.path stringByAppendingPathComponent:@".git/index.lock"];
 	XCTAssertTrue([NSData.data writeToFile:lockPath options:NSDataWritingAtomic error:&error], @"%@", error);
 
+	__block NSString *failure = nil;
+	id token = [[NSNotificationCenter defaultCenter] addObserverForName:PBGitIndexOperationFailed
+																 object:self.repository.index
+																  queue:nil
+															 usingBlock:^(NSNotification *notification) {
+																 failure = notification.userInfo[@"description"];
+															 }];
 	XCTAssertFalse([self.repository.index unstageFiles:@[ tracked ]]);
+	[[NSNotificationCenter defaultCenter] removeObserver:token];
+	XCTAssertTrue([failure containsString:@"index.lock"], @"Expected the real Git lock failure: %@", failure);
 
 	[[NSFileManager defaultManager] removeItemAtPath:lockPath error:nil];
 	NSString *stagedNames = [self.fixture git:@[ @"diff", @"--cached", @"--name-only" ] error:&error];

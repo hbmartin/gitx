@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -100,7 +101,68 @@ class VersionTests(unittest.TestCase):
         version.assert_called_once_with(explicit)
 
 
+class PackageDoctorTests(unittest.TestCase):
+    def test_hostless_packages_do_not_require_objectivegit_or_a_desktop(self):
+        import check_test_build_contracts as contracts
+        for scope, package in [("core", "GitXCore"), ("forgekit", "ForgeKit")]:
+            with tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                (root / package).mkdir()
+                (root / package / "Package.swift").write_text("manifest")
+                (root / package / "Package.resolved").write_text("{}")
+                with mock.patch.object(verification, "ROOT", root), mock.patch.object(verification, "xcode_version", return_value=("27.0", "build")), mock.patch.object(contracts, "dependency_checks", side_effect=AssertionError("Hostless packages do not use ObjectiveGit")), mock.patch.object(verification.session, "desktop_checks", side_effect=AssertionError("Hostless tests do not own a desktop")):
+                    checks, _ = verification.doctor_checks("test", pathlib.Path("/Xcode"), scope=scope)
+                self.assertFalse(any(c["status"] == "failed" for c in checks), checks)
+                self.assertFalse(any(c["name"] in {"workspace", "generated-libraries", "submodules"} for c in checks))
+
+
+
 class ReceiptTests(unittest.TestCase):
+    def test_init_records_the_authenticated_long_lived_producer_and_resources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            path = root / "receipt.json"
+            owner = {"runId": "owner", "pid": os.getpid(), "receipt": "outer.json",
+                     "producer": verification.session.producer_identity()}
+            resource = str(root / "products")
+            with verification.session.Leases([resource], owner, root / "locks", inherited={}) as lease:
+                with mock.patch.object(verification, "receipt_base", return_value={"status": "running"}), \
+                        mock.patch.object(verification.session, "inputs", return_value={}), \
+                        mock.patch.dict(os.environ, lease.environment(), clear=True):
+                    verification.command_receipt_init(argparse.Namespace(path=path))
+                payload = json.loads(path.read_text())
+        self.assertEqual(payload["producer"], owner["producer"])
+        self.assertEqual(payload["resources"], [resource])
+
+    def test_init_keeps_unauthenticated_or_malformed_producer_ownership_uncertain(self) -> None:
+        for ownership in ({"pid": 999999999, "started": "missing"}, ["invalid"], "malformed"):
+            with self.subTest(ownership=ownership), tempfile.TemporaryDirectory() as directory:
+                path = pathlib.Path(directory) / "receipt.json"
+                environment = {"GITX_VERIFICATION_PRODUCER": json.dumps(ownership),
+                               "GITX_RESOURCE_LEASES": json.dumps({"/products": {"socket": "/absent", "token": "forged"}})}
+                with mock.patch.object(verification, "receipt_base", return_value={"status": "running"}), \
+                        mock.patch.object(verification.session, "inputs", return_value={}), \
+                        mock.patch.dict(os.environ, environment, clear=True):
+                    verification.command_receipt_init(argparse.Namespace(path=path))
+                payload = json.loads(path.read_text())
+                self.assertIsNone(payload["producer"])
+                self.assertEqual(payload["resources"], [])
+
+    def test_init_preserves_running_status_input_evidence_and_build_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "receipt.json"
+            environment = {"GITX_DERIVED_DATA": "/products", "GITX_SWIFTPM_BUILD_ROOT": "/packages",
+                           "GITX_SOURCE_PACKAGE_CACHE": "/sources"}
+            with mock.patch.object(verification, "receipt_base", return_value={"status": "running"}), \
+                    mock.patch.object(verification.session, "inputs", return_value={"source": "before"}), \
+                    mock.patch.dict(verification.os.environ, environment, clear=True):
+                self.assertEqual(verification.command_receipt_init(argparse.Namespace(path=path)), 0)
+            payload = json.loads(path.read_text())
+        self.assertEqual(payload["schemaVersion"], 2)
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(payload["evidence"], {"status": "pending", "inputsBefore": {"source": "before"}})
+        self.assertEqual(payload["buildPaths"], {"derivedData": "/products", "swiftPM": "/packages", "sourcePackages": "/sources"})
+
     def test_working_tree_fingerprint_includes_untracked_file_contents(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

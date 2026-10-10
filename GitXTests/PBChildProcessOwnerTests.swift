@@ -3,6 +3,19 @@ import Synchronization
 import XCTest
 
 final class PBChildProcessOwnerTests: XCTestCase {
+    #if DEBUG
+        func testAppPosixResourceFailuresPreserveCallerDescriptors() {
+            XCTAssertNoThrow(try PBChildProcessFailureTestHarness.exerciseSuccessfulSpawn())
+            for duplicate in [true, false] {
+                XCTAssertThrowsError(try PBChildProcessFailureTestHarness.exerciseFailure(duplicateDescriptor: duplicate)) { error in
+                    XCTAssertEqual((error as NSError).domain, NSPOSIXErrorDomain)
+                    XCTAssertEqual((error as NSError).code, Int(duplicate ? EMFILE : ENOMEM))
+                }
+                XCTAssertGreaterThanOrEqual(fcntl(STDOUT_FILENO, F_GETFD), 0)
+            }
+        }
+    #endif
+
     // swift6-safety-justification: The lock protects every access to mutable recorded state.
     private final class CompletionRecorder: @unchecked Sendable {
         private let lock = NSLock()

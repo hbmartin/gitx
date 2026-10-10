@@ -238,6 +238,7 @@ def doctor_checks(
     mode: str,
     developer_dir: pathlib.Path | None = None,
     destination: str | None = None,
+    scope: str = "app",
 ) -> tuple[list[dict[str, str]], pathlib.Path | None]:
     config = load_config()
     checks: list[dict[str, str]] = []
@@ -264,37 +265,47 @@ def doctor_checks(
         add(command, "passed" if location else "failed", location or f"{command} is not on PATH")
     location = shutil.which("xcbeautify")
     add("xcbeautify", "passed" if location else "warning", location or "optional; raw output will be used")
-    from check_test_build_contracts import dependency_checks
-    checks.extend(dependency_checks(ROOT))
+    if scope == "app":
+        from check_test_build_contracts import dependency_checks
+        checks.extend(dependency_checks(ROOT))
 
-    if mode in {"test", "ui"}:
-        checks.extend(session.desktop_checks())
+        if mode in {"test", "ui"}:
+            checks.extend(session.desktop_checks())
 
-    workspace = ROOT / config["workspace"]
-    add("workspace", "passed" if workspace.exists() else "failed", str(workspace))
-    package_lock = workspace / "xcshareddata/swiftpm/Package.resolved"
-    add("package-lock", "passed" if package_lock.is_file() else "failed", str(package_lock))
+        workspace = ROOT / config["workspace"]
+        add("workspace", "passed" if workspace.exists() else "failed", str(workspace))
+        package_lock = workspace / "xcshareddata/swiftpm/Package.resolved"
+        add("package-lock", "passed" if package_lock.is_file() else "failed", str(package_lock))
 
-    plan_names = [config["testPlans"]["correctness"]]
-    if mode == "ui":
-        plan_names.extend((config["testPlans"]["ui-preflight"], config["testPlans"]["ui"]))
-    elif mode in {"test", "ci"}:
-        plan_names.extend(
-            value for key, value in config["testPlans"].items() if key != "ui-preflight"
-        )
-    for name in sorted(set(plan_names)):
-        path = ROOT / "GitXTests" / f"{name}.xctestplan"
-        add(f"test-plan:{name}", "passed" if path.is_file() else "failed", str(path))
+        plan_names = [config["testPlans"]["correctness"]]
+        if mode == "ui":
+            plan_names.extend((config["testPlans"]["ui-preflight"], config["testPlans"]["ui"]))
+        elif mode in {"test", "ci"}:
+            plan_names.extend(
+                value for key, value in config["testPlans"].items() if key != "ui-preflight"
+            )
+        for name in sorted(set(plan_names)):
+            path = ROOT / "GitXTests" / f"{name}.xctestplan"
+            add(f"test-plan:{name}", "passed" if path.is_file() else "failed", str(path))
 
-    submodules = git_output("submodule", "status", "--recursive").splitlines()
-    missing = [line for line in submodules if line.startswith("-")]
-    divergent = [line for line in submodules if line.startswith("+")]
-    if missing:
-        add("submodules", "failed", f"{len(missing)} submodule(s) are not initialized")
-    elif divergent:
-        add("submodules", "warning", f"{len(divergent)} submodule(s) differ from the recorded commit")
+        submodules = git_output("submodule", "status", "--recursive").splitlines()
+        missing = [line for line in submodules if line.startswith("-")]
+        divergent = [line for line in submodules if line.startswith("+")]
+        if missing:
+            add("submodules", "failed", f"{len(missing)} submodule(s) are not initialized")
+        elif divergent:
+            add("submodules", "warning", f"{len(divergent)} submodule(s) differ from the recorded commit")
+        else:
+            add("submodules", "passed", f"{len(submodules)} recursive submodule(s) initialized")
+
     else:
-        add("submodules", "passed", f"{len(submodules)} recursive submodule(s) initialized")
+        directory = ROOT / {"core": "GitXCore", "forgekit": "ForgeKit"}[scope]
+        manifest = directory / "Package.swift"
+        add("package-manifest", "passed" if manifest.is_file() else "failed", str(manifest))
+        if scope == "forgekit":
+            lock = directory / "Package.resolved"
+            add("package-lock", "passed" if lock.is_file() else "failed", str(lock))
+        add("destination", "passed" if "macOS" in requested_destination else "failed", requested_destination)
 
     try:
         free_bytes = shutil.disk_usage(ROOT).free
@@ -308,7 +319,7 @@ def doctor_checks(
     except OSError as error:
         add("disk-space", "warning", str(error))
 
-    if mode == "ui":
+    if scope == "app" and mode == "ui":
         try:
             processes = run(["pgrep", "-x", "GitX"], timeout=5)
             pids = processes.stdout.split()
@@ -316,7 +327,7 @@ def doctor_checks(
             pids = []
         add("ui-processes", "failed" if pids else "passed", f"running GitX pid(s): {', '.join(pids)}" if pids else "no competing GitX process")
 
-    if selected is not None and workspace.exists():
+    if scope == "app" and selected is not None and workspace.exists():
         executable = selected / "usr/bin/xcodebuild"
         resolved_paths = session.cache_paths(ROOT, developer=str(selected))
         derived_data = pathlib.Path(resolved_paths["derivedData"])
@@ -367,13 +378,15 @@ def doctor_payload(
     mode: str,
     developer_dir: pathlib.Path | None = None,
     destination: str | None = None,
+    scope: str = "app",
 ) -> dict[str, Any]:
-    checks, selected = doctor_checks(mode, developer_dir, destination)
+    checks, selected = doctor_checks(mode, developer_dir, destination, scope)
     failed = sum(check["status"] == "failed" for check in checks)
     warnings = sum(check["status"] == "warning" for check in checks)
     return {
         "schemaVersion": 2,
         "mode": mode,
+        "scope": scope,
         "status": "failed" if failed else "passed",
         "developerDir": str(selected) if selected else None,
         "destination": destination or load_config()["destination"],
@@ -387,6 +400,7 @@ def command_doctor(arguments: argparse.Namespace) -> int:
         arguments.mode,
         pathlib.Path(arguments.developer_dir) if arguments.developer_dir else None,
         arguments.destination,
+        getattr(arguments, "scope", "app"),
     )
     if arguments.format == "json":
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -455,6 +469,7 @@ def receipt_base(arguments: argparse.Namespace) -> dict[str, Any]:
 def command_receipt_init(arguments: argparse.Namespace) -> int:
     payload = receipt_base(arguments)
     payload["schemaVersion"] = 2
+    payload["producer"], payload["resources"] = session.inherited_ownership()
     payload["evidence"] = {"status": "pending", "inputsBefore": session.inputs(ROOT)}
     payload["buildPaths"] = {key: os.environ.get(variable) for key, variable in (
         ("derivedData", "GITX_DERIVED_DATA"), ("swiftPM", "GITX_SWIFTPM_BUILD_ROOT"),
@@ -682,6 +697,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     subparsers = result.add_subparsers(dest="command", required=True)
     doctor = subparsers.add_parser("doctor")
+    doctor.add_argument("--scope", choices=("app", "core", "forgekit"), default="app")
     doctor.add_argument("--mode", choices=("build", "test", "ui", "ci"), default="build")
     doctor.add_argument("--format", choices=("text", "json"), default="text")
     doctor.add_argument("--developer-dir")

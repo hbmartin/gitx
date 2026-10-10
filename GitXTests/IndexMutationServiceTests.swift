@@ -242,15 +242,25 @@ final class IndexMutationServiceTests: XCTestCase {
             }
         } else {
             DispatchQueue.global().async {
-                do { _ = try second.value.output(withArguments: ["update-index", "second"], input: nil, environment: nil) }
-                catch { XCTFail("Writer failed: \(error)") }
+                do {
+                    _ = try second.value.output(withArguments: ["update-index", "second"], input: nil, environment: nil)
+                    XCTFail("A busy synchronous writer must be refused")
+                } catch {
+                    XCTAssertEqual((error as NSError).code, 6)
+                }
                 secondCompleted.fulfill()
             }
         }
         XCTAssertEqual(secondAllocated.wait(timeout: .now() + 2), .success)
+        if !asynchronous {
+            wait(for: [secondCompleted], timeout: 2)
+        }
         wait(for: [overlap], timeout: 0.2)
         release.signal()
-        wait(for: [firstCompleted, secondCompleted], timeout: 3)
+        wait(for: asynchronous ? [firstCompleted, secondCompleted] : [firstCompleted], timeout: 3)
+        if !asynchronous {
+            XCTAssertEqual(try? second.value.output(withArguments: ["update-index", "second"], input: nil, environment: nil), "result\n")
+        }
         withExtendedLifetime(repository) {}
     }
 

@@ -13,6 +13,19 @@ from support import load_script
 
 
 class CoverageTransactionTests(unittest.TestCase):
+    def test_pending_current_evidence_skips_automatic_historical_discovery(self):
+        coverage = load_script("check_coverage.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            policy = root / "policy.json"
+            policy.write_text(json.dumps({"version": 1, "target": "Half Dark.app", "minimumLineCoverage": .9, "files": {}}))
+            receipt = root / "receipt.json"
+            receipt.write_text("{}")
+            report = {"targets": [{"name": "Half Dark.app", "lineCoverage": .8, "files": []}]}
+            with mock.patch.object(coverage, "comparison_receipt", side_effect=[{"evidence": {"status": "pending"}}]) as read, mock.patch.object(coverage, "xccov_report", return_value=report), mock.patch.object(coverage, "coverage_diagnostics"), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(coverage.main([str(root / "result.xcresult"), "--policy", str(policy), "--receipt", str(receipt)]), 1)
+            self.assertEqual(read.call_count, 1)
+
     def test_automatic_history_is_lazy_and_corrupt_history_cannot_break_the_gate(self):
         coverage = load_script("check_coverage.py")
         for floor in [.5, .9]:

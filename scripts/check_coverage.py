@@ -445,7 +445,7 @@ def check(args) -> int:
     receipt_path = args.receipt or args.result_bundle.parent.parent / "receipt.json"
     receipt = comparison_receipt(receipt_path) if receipt_path.is_file() else None
     comparison_path = args.compare
-    if failures and comparison_path is None and receipt:
+    if failures and comparison_path is None and receipt and receipt.get("evidence", {}).get("status") == "valid":
         previous_paths = sorted((root / "artifacts/verification").glob("*/receipt.json"), key=lambda path: path.stat().st_mtime, reverse=True)
         for previous_path in previous_paths:
             if previous_path.resolve() == receipt_path.resolve():

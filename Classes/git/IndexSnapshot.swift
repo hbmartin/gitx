@@ -449,20 +449,25 @@ final nonisolated class IndexOperationErrorPresentation: NSObject {
 
     @objc(detailForError:)
     static func detail(for error: NSError) -> String {
-        var parts = [error.localizedDescription]
-        if let reason = error.localizedFailureReason, reason != error.localizedDescription {
-            parts.append(reason)
-        }
-        if let status = error.userInfo[PBTaskTerminationStatusKey] as? NSNumber {
-            parts.append(String(format: NSLocalizedString("Exit status: %@", comment: "Git process exit status in an index operation failure"), status))
-        }
-        if let output = error.userInfo[PBTaskTerminationOutputKey] as? String {
-            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                parts.append(trimmed)
+        var parts: [String] = []
+        var seen: Set<ObjectIdentifier> = []
+        var current: NSError? = error
+        while let value = current, seen.count < 8, seen.insert(ObjectIdentifier(value)).inserted {
+            var details = [value.localizedDescription, value.localizedFailureReason ?? "", value.localizedRecoverySuggestion ?? ""]
+            if let status = value.userInfo[PBTaskTerminationStatusKey] as? NSNumber {
+                details.append(String(format: NSLocalizedString("Exit status: %@", comment: "Git process exit status in an index operation failure"), status))
             }
+            details.append(value.userInfo[PBTaskTerminationOutputKey] as? String ?? "")
+            for text in details {
+                let safe = PBTaskDiagnosticRedactor.redacted(text).trimmingCharacters(in: .whitespacesAndNewlines)
+                let bounded = String(safe.prefix(16 * 1024))
+                if !bounded.isEmpty, !parts.contains(bounded) {
+                    parts.append(bounded)
+                }
+            }
+            current = value.userInfo[NSUnderlyingErrorKey] as? NSError
         }
-        return parts.joined(separator: "\n")
+        return String(parts.joined(separator: "\n").prefix(64 * 1024))
     }
 }
 

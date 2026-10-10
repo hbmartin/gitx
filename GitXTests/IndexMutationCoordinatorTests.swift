@@ -63,6 +63,30 @@ final class IndexMutationCoordinatorTests: XCTestCase {
         }
     }
 
+    #if DEBUG
+        func testGitGlobalOptionsAndLiteralHelpNamesRetainWriterClassification() {
+            for command in ["checkout", "stash", "reset", "merge", "cherry-pick", "rebase", "update-index", "update-ref", "pull"] {
+                XCTAssertTrue(PBIndexWriterCommandTestHarness.writesIndex(arguments: ["-C", "/fixture", "-c", "core.precomposeUnicode=false", "--git-dir=/fixture/.git", command, "--", "--help"]))
+                XCTAssertFalse(PBIndexWriterCommandTestHarness.writesIndex(arguments: ["-c", "key=value", command, "-h"]))
+            }
+            XCTAssertFalse(PBIndexWriterCommandTestHarness.writesIndex(arguments: ["-c", "key=value", "diff", "--", "file"]))
+        }
+    #endif
+
+    func testRepositoryCheckoutCannotOverlapAnIndexWriter() {
+        let repository = GateRepository()
+        let runner = IndexRepositoryCommandRunner(repository: repository)
+        let done = expectation(description: "writer completed")
+        runner.data(withArguments: ["-c", "core.precomposeUnicode=false", "update-index", "held"]) { _, _ in done.fulfill() }
+        XCTAssertEqual(repository.entered.wait(timeout: .now() + 2), .success)
+        let service = PBRepositoryMutationService(repository: repository)
+        var error: NSError?
+        XCTAssertFalse(service.checkoutRefish(PBGitRef(string: "refs/heads/main"), error: &error))
+        XCTAssertNotNil(error)
+        repository.release.signal()
+        wait(for: [done], timeout: 5)
+    }
+
     func testOrderedMixedMutationsCopyInputsAndCompleteExactlyOnceOnMain() {
         let repository = GateRepository()
         let runner = Fake()
