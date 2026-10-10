@@ -343,6 +343,18 @@
           "identifier": "GitXTests/HistoryControllerTests/testWriterActionsRejectStaleInvocationsDuringReconciliationAndRecoverAfterward",
           "role": "boundary",
           "oracle": "Busy menus and stale reference/stash invocations preserve HEAD, worktree and stashes; a real Git failure still presents its error after admission recovers."
+        },
+        {
+          "source": "GitXTests/IndexMutationServiceTests.swift",
+          "identifier": "GitXTests/IndexMutationServiceTests/testQueuedWriterRejectsOvertakingSynchronousWorkAndRemainsReusable",
+          "role": "boundary",
+          "oracle": "Hold the writer queue before execution; synchronous work is refused without running, queued completion releases ownership, and the coordinator accepts the next write."
+        },
+        {
+          "source": "GitXTests/IndexMutationServiceTests.swift",
+          "identifier": "GitXTests/IndexMutationServiceTests/testGeneralCommandRunnerRejectsWritersDuringReconciliationAndSubmissionButAllowsReads",
+          "role": "failure",
+          "oracle": "Reconciliation and submission each reject a main-thread writer without launching it while read output remains available."
         }
       ]
     },
