@@ -1,8 +1,10 @@
 import unittest
+import json
 import pathlib
 import shutil
 import subprocess
 import tempfile
+from unittest import mock
 from support import ROOT
 import check_test_build_contracts as contracts
 
@@ -28,6 +30,25 @@ class TestBuildContractTests(unittest.TestCase):
 
     def test_shared_source_and_plan_membership(self):
         contracts.validate_membership(ROOT)
+
+    def test_settings_probe_preserves_resolved_packages_when_a_newer_version_is_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            resolved = root / "Package.resolved"
+            resolved.write_text('{"version": "0.8.0"}')
+
+            def resolver(command, **_):
+                if not {"-onlyUsePackageVersionsFromResolvedFile", "-disableAutomaticPackageResolution"}.intersection(command):
+                    resolved.write_text('{"version": "0.9.0"}')
+                return subprocess.CompletedProcess(command, 0, json.dumps(self.settings()), "")
+
+            with mock.patch.object(contracts.session, "ROOT", root), \
+                 mock.patch.object(contracts.verification, "resolve_developer_dir", return_value=root), \
+                 mock.patch.object(contracts, "validate_membership"), \
+                 mock.patch.object(contracts.session, "cache_paths", return_value={"derivedData": "products", "sourcePackages": "packages"}), \
+                 mock.patch.object(contracts.subprocess, "run", side_effect=resolver):
+                self.assertEqual(contracts.main(), 0)
+            self.assertEqual(json.loads(resolved.read_text())["version"], "0.8.0")
 
     @unittest.skipUnless(shutil.which("xcrun"), "Local Xcode compiler required")
     def test_debug_release_compiled_consumers_reject_import_and_visibility_failures(self):
