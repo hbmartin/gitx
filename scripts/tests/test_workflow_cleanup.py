@@ -1018,13 +1018,25 @@ class CleanupTests(unittest.TestCase):
         value = cleanup.read_json(receipt)
         current = session.inputs(self.root)
         child = self.artifact / 'analyzer/receipt.json'
+        logs = []
+        artifacts = {}
+        for name in ('analyze', 'analyzer-policy', 'swiftlint-analyze'):
+            log = child.parent / (name + '.log')
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text('passed diagnostic')
+            logs.append({'name': name, 'status': 'passed', 'exitCode': 0, 'log': str(log)})
+            artifacts[str(log)] = session.tree_identity(log)
         self.write(child, {'schemaVersion': 2, 'status': 'passed', 'invocation': {'preset': 'analyze'},
+                          'steps': logs,
                           'buildPaths': {'derivedData': str(self.base / 'AnalyzerDerivedData.deleted')},
                           'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
-                                       'dependencyProducts': {}, 'products': {'temporary.app': 'removed'}, 'results': {}}})
+                                       'dependencyProducts': {}, 'products': {'temporary.app': 'removed'},
+                                       'results': {}, 'analysisArtifacts': artifacts}})
         value['steps'][0]['receipt'] = str(child)
         self.write(receipt, value)
         self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
+        log.write_text('changed diagnostic')
+        self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'child-artifacts-changed')
 
     def test_registered_nested_worktree_is_preserved_under_budget_pressure(self):
         old = self.run_directory('old')

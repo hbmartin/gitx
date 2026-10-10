@@ -118,6 +118,32 @@ class PackageDoctorTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_finish_records_durable_analyzer_logs_and_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            path = root / 'receipt.json'
+            diagnostics = root / 'Results/Analyzer'
+            diagnostics.mkdir(parents=True)
+            (diagnostics / 'finding.plist').write_text('retained diagnostic')
+            logs = []
+            for name in ('analyze', 'analyzer-policy', 'swiftlint-analyze'):
+                log = root / (name + '.log')
+                log.write_text('passed analysis')
+                logs.append({'name': name, 'status': 'passed', 'exitCode': 0, 'log': str(log)})
+            path.write_text(json.dumps({'runId': 'analysis', 'steps': logs, 'artifacts': [],
+                                       'toolchain': {'developerDir': '/Xcode', 'xcodeVersion': '27', 'xcodeBuild': 'test'},
+                                       'invocation': {'preset': 'analyze'}, 'evidence': {'inputsBefore': {}}}))
+            with mock.patch.object(verification, 'ROOT', root), \
+                    mock.patch.object(verification, 'xcode_version', return_value=('27', 'test')), \
+                    mock.patch.object(verification.session, 'inputs', return_value={}):
+                self.assertEqual(verification.command_receipt_finish(argparse.Namespace(path=path, status='passed', exit_code=0)), 0)
+            payload = json.loads(path.read_text())
+            artifacts = payload['evidence']['analysisArtifacts']
+            self.assertEqual(artifacts[str(diagnostics)], verification.session.tree_identity(diagnostics))
+            self.assertEqual(verification.session.receipt_artifact_problems(payload, root), [])
+            log.write_text('changed diagnostic')
+            self.assertTrue(verification.session.receipt_artifact_problems(payload, root))
+
     def test_init_records_the_authenticated_long_lived_producer_and_resources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory).resolve()
