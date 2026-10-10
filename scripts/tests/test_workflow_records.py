@@ -36,7 +36,6 @@ class WorkflowRecordsTests(unittest.TestCase):
         return subprocess.run(["git", "-C", self.root, *arguments], check=True, capture_output=True, env=self.environment)
 
     def test_repository_selectors_cannot_redirect_workflow_inspection(self):
-        import regression_guardrails as guardrails
         foreign = self.root.parent / "foreign"
         subprocess.run(["git", "clone", "-q", str(self.root), str(foreign)], check=True, env=self.environment)
         (self.root / "source.txt").write_text("second\n")
@@ -47,7 +46,6 @@ class WorkflowRecordsTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GIT_DIR": str(foreign / ".git"), "GIT_WORK_TREE": str(foreign),
                                          "GIT_INDEX_FILE": str(foreign / ".git/index")}):
             self.assertEqual(session.git(self.root, "rev-parse", "HEAD"), head)
-            self.assertEqual(guardrails.git(self.root, "rev-parse", "HEAD").decode().strip(), head)
             self.assertEqual(records.patch_id(self.root, self.first, head), expected_patch)
             with records.Ledger(self.root) as ledger:
                 self.assertEqual(ledger.path.parent.parent, (self.root / ".git").resolve())

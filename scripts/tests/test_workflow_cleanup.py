@@ -102,6 +102,330 @@ class CleanupTests(unittest.TestCase):
                         'inputsAfter': current, 'selectedChecks': [n for n, _ in self.commands], 'steps': steps})
         return path
 
+    def test_gate_accepts_reordered_resumed_checks_by_name(self):
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        value = cleanup.read_json(receipt)
+        value['steps'].reverse()
+        value['selectedChecks'].reverse()
+        self.write(receipt, value)
+        self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
+
+    def test_untracked_fingerprinted_inputs_cannot_authorize_cleanup(self):
+        (self.root / 'Classes').mkdir()
+        (self.root / 'Classes/New.swift').write_text('struct New {}')
+        cleanup.queue_commit(self.root)
+        self.assertEqual(cleanup.eligibility(self.root, self.valid_receipt())[1], 'uncommitted-build-inputs')
+
+    def test_untracked_research_stays_outside_the_commit_gate(self):
+        (self.root / 'research').mkdir()
+        (self.root / 'research/notes.txt').write_text('unrelated notes')
+        cleanup.queue_commit(self.root)
+        self.assertIsNone(cleanup.eligibility(self.root, self.valid_receipt())[1])
+
+    def test_embedded_repository_is_protected_at_any_depth(self):
+        old = self.run_directory('old')
+        (old / 'Results/nested/.git').mkdir(parents=True)
+        self.stamp(old, 10)
+        self.assertNotIn(str(old), self.candidate_paths(cleanup.preview(self.root, now=self.now)))
+
+    def test_filesystem_aliases_protect_the_same_directory(self):
+        old = self.run_directory('MixedCase')
+        alias = old.with_name('mixedcase')
+        if not alias.exists() or not os.path.samefile(alias, old):
+            self.skipTest('Fixture volume is case-sensitive')
+        self.write(self.root / '.git/gitx-workflow/ledger.json', {'items': {'work': {'recoverySources': [str(alias / 'Results/output')]}}})
+        self.assertNotIn(str(old), self.candidate_paths(cleanup.preview(self.root, now=self.now)))
+
+    def test_ancestor_worktree_does_not_protect_owned_child_output(self):
+        old = self.run_directory('old')
+        with mock.patch.object(cleanup.records, 'worktrees', return_value=[{'worktree': str(self.base)}, {'worktree': str(self.root)}]):
+            self.assertIn(str(old), self.candidate_paths(cleanup.preview(self.root, now=self.now)))
+
+    def test_tracked_provenance_paths_and_exact_run_ids_are_protected(self):
+        for content in [{'verificationReceipts': ['artifacts/verification/old/receipt.json']}, {'runs': ['old']}, 'Verified run ID: old\n']:
+            old = self.artifact / 'old'
+            if not old.exists():
+                self.run_directory('old')
+            provenance = self.root / 'docs/diagnostics/verification.json'
+            if isinstance(content, str):
+                provenance = provenance.with_name('REVIEW.md')
+                provenance.parent.mkdir(parents=True, exist_ok=True)
+                provenance.write_text(content)
+            else:
+                self.write(provenance, content)
+            self.git('add', 'docs')
+            self.git('commit', '-qm', 'tracked diagnostic provenance')
+            self.assertNotIn(str(old), self.candidate_paths(cleanup.preview(self.root, now=self.now)))
+            shutil.rmtree(self.root / 'docs')
+            self.git('add', '-u')
+            self.git('commit', '-qm', 'remove diagnostic provenance fixture')
+
+    def test_discovery_failure_retains_uncertainty_and_reports_remaining_inventory(self):
+        broken = self.run_directory('broken')
+        remaining = self.run_directory('remaining')
+        original = cleanup.fingerprint
+        def inspect(path):
+            if pathlib.Path(path) == broken:
+                raise FileNotFoundError('entry disappeared')
+            return original(path)
+        with mock.patch.object(cleanup, 'fingerprint', side_effect=inspect):
+            report = cleanup.preview(self.root, now=self.now)
+        self.assertIn(str(remaining), self.candidate_paths(report))
+        self.assertTrue(report['discoveryErrors'])
+        self.assertTrue(any(str(broken) in item['paths'] for item in report['retained']))
+
+    def test_conclusively_abandoned_run_enters_retention(self):
+        abandoned = self.run_directory('abandoned', status='running')
+        value = cleanup.read_json(abandoned / 'receipt.json')
+        value['producer'] = {'pid': 999999999, 'started': 'old identity'}
+        self.write(abandoned / 'receipt.json', value)
+        self.stamp(abandoned, 10)
+        with mock.patch.object(session, 'producer_state', return_value='abandoned', create=True):
+            self.assertIn(str(abandoned), self.candidate_paths(cleanup.preview(self.root, now=self.now)))
+        for state in ['live', 'uncertain']:
+            with mock.patch.object(session, 'producer_state', return_value=state, create=True):
+                self.assertNotIn(str(abandoned), self.candidate_paths(cleanup.preview(self.root, now=self.now)))
+
+    def test_discovery_holds_no_desktop_product_or_ledger_lease(self):
+        self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        original = cleanup.inventory
+        def inspect(*args, **kwargs):
+            resources = [str(self.root / 'build/GitX.app'), str(cleanup.records.common_directory(self.root) / 'ledger.json'), f'desktop:{os.getuid()}']
+            with session.Leases(resources, {'runId': 'independent', 'pid': os.getpid(), 'receipt': 'other'}, inherited={}):
+                pass
+            return original(*args, **kwargs)
+        with mock.patch.object(cleanup, 'inventory', side_effect=inspect):
+            self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'complete')
+
+    def test_interrupted_removal_is_retried_from_an_external_journal(self):
+        old = self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        remove = shutil.rmtree
+        def fail(path, **kwargs):
+            target = pathlib.Path(path)
+            if target == old or target.name.startswith('.gitx-cleanup-trash-'):
+                for name in ['receipt.json', 'workflow.json', 'info.plist']:
+                    (target / name).unlink(missing_ok=True)
+                raise OSError('interrupted removal after metadata loss')
+            return remove(path, **kwargs)
+        with mock.patch.object(cleanup.shutil, 'rmtree', side_effect=fail):
+            report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'partial')
+        journals = list((cleanup.state_directory(self.root) / 'journals').glob('*.json'))
+        self.assertTrue(journals)
+        journal = cleanup.read_json(journals[0])
+        self.assertEqual(journal['originalPath'], str(old))
+        self.assertTrue(pathlib.Path(journal['quarantinePath']).is_dir())
+        self.assertTrue(cleanup.pending_path(self.root).exists())
+        self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'complete')
+        self.assertFalse(pathlib.Path(journal['quarantinePath']).exists())
+
+    def test_queue_notifications_are_idempotent_for_one_commit(self):
+        first = cleanup.queue_commit(self.root)
+        second = cleanup.queue_commit(self.root)
+        self.assertEqual(first['token'], second['token'])
+
+    def test_owned_hooks_are_repaired_and_cover_commit_transitions(self):
+        cleanup.install_hook(self.root)
+        for name in ['post-commit', 'post-merge', 'post-applypatch', 'post-rewrite']:
+            hook = self.root / '.git/hooks' / name
+            self.assertTrue(hook.exists())
+            self.assertIn('python3 ', hook.read_text())
+        hook = self.root / '.git/hooks/post-commit'
+        legacy = ('#!/bin/sh\n# GitX commit-triggered cleanup v1\n'
+                  'checkout=$(git rev-parse --show-toplevel) || exit 0\n'
+                  'if [ -f "$checkout/scripts/workflow_cleanup.py" ] && [ -f "$checkout/scripts/dev_workflow.py" ]; then\n'
+                  '    /defunct/python "$checkout/scripts/dev_workflow.py" cleanup queue >/dev/null ||\n'
+                  '        echo "GitX: cleanup could not be queued; the commit is preserved." >&2\n'
+                  'fi\nexit 0\n')
+        hook.write_text(legacy)
+        cleanup.install_hook(self.root)
+        self.assertIn('python3 ', hook.read_text())
+        self.assertNotIn('/defunct/python', hook.read_text())
+
+    def test_owned_coordination_receipts_are_retention_candidates(self):
+        receipt = self.artifact / 'Coordination/old.json'
+        self.write(receipt, {'runId': 'old', 'pid': 999999999, 'receipt': str(receipt), 'entry': str(self.root / 'scripts/dev_workflow.py'),
+                            'status': 'passed', 'resources': [f'desktop:{os.getuid()}', self.cache_paths()['derivedData']], 'evidence': {'inputsBefore': {'root': str(self.root)}}})
+        self.stamp(receipt.parent, 10)
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertIn(str(receipt), self.candidate_paths(report))
+        self.assertIn('protectedDiagnosticBytes', report)
+        self.assertIn('reclaimableDiagnosticBytes', report)
+        candidate = next(c for c in cleanup.inventory(self.root, now=self.now)['candidates'] if str(receipt) in c['paths'])
+        self.assertEqual(candidate['resources'], [str(receipt)])
+
+    def test_exclusive_quarantine_does_not_replace_an_existing_destination(self):
+        original, destination = self.base / 'original', self.base / 'destination'
+        original.mkdir(); destination.mkdir()
+        with self.assertRaises(FileExistsError):
+            cleanup.rename_exclusive(original, destination)
+        self.assertTrue(original.is_dir())
+        self.assertTrue(destination.is_dir())
+
+    def interrupted_journal(self):
+        old = self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        remove = shutil.rmtree
+        def interrupt(path, **kwargs):
+            if pathlib.Path(path).name.startswith('.gitx-cleanup-trash-'):
+                raise OSError('interrupted')
+            return remove(path, **kwargs)
+        with mock.patch.object(cleanup.shutil, 'rmtree', side_effect=interrupt):
+            self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'partial')
+        journal = next((cleanup.state_directory(self.root) / 'journals').glob('*.json'))
+        return old, receipt, journal, cleanup.read_json(journal)
+
+    def test_retry_refuses_replaced_quarantine_and_preserves_journal(self):
+        old, receipt, journal, value = self.interrupted_journal()
+        quarantine = pathlib.Path(value['quarantinePath'])
+        preserved = self.base / 'preserved-quarantine'
+        quarantine.rename(preserved)
+        quarantine.mkdir()
+        (quarantine / 'foreign').write_text('keep')
+        report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'partial')
+        self.assertTrue((quarantine / 'foreign').exists())
+        self.assertTrue(preserved.exists())
+        self.assertTrue(journal.exists())
+        self.assertFalse(old.exists())
+
+    def test_retry_refuses_original_redirect_and_symlinked_quarantine(self):
+        old, receipt, journal, value = self.interrupted_journal()
+        quarantine = pathlib.Path(value['quarantinePath'])
+        outside = self.base / 'preserved'
+        quarantine.rename(outside)
+        quarantine.symlink_to(outside)
+        self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'partial')
+        self.assertTrue((outside / 'receipt.json').exists())
+        quarantine.unlink(); outside.rename(quarantine)
+        old.mkdir(); (old / 'foreign').write_text('keep')
+        self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'partial')
+        self.assertTrue((old / 'foreign').exists())
+        self.assertTrue(journal.exists())
+
+    def test_journal_retries_the_crash_between_rename_and_state_publication(self):
+        old, receipt, journal, value = self.interrupted_journal()
+        value['state'] = 'prepared'
+        self.write(journal, value)
+        self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'complete')
+        self.assertFalse(pathlib.Path(value['quarantinePath']).exists())
+        self.assertEqual(cleanup.read_json(journal)['state'], 'complete')
+
+    def test_new_protection_references_during_discovery_defer_deletion(self):
+        old = self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        original = cleanup.inventory
+        def discover(*args, **kwargs):
+            report = original(*args, **kwargs)
+            self.write(cleanup.records.common_directory(self.root) / 'ledger.json',
+                       {'items': {'new': {'recoverySources': [str(old)]}}})
+            return report
+        with mock.patch.object(cleanup, 'inventory', side_effect=discover):
+            report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'partial')
+        self.assertTrue(old.exists())
+        self.assertIn('protection-boundaries-changed', str(report['skipped']))
+
+    def test_reference_alias_retargeted_during_discovery_defers_deletion(self):
+        old = self.run_directory('old')
+        outside = self.base / 'outside'
+        (outside / 'Results').mkdir(parents=True)
+        (outside / 'Results/output').write_text('keep')
+        alias = self.base / 'alias'
+        alias.symlink_to(outside)
+        self.write(cleanup.records.common_directory(self.root) / 'ledger.json',
+                   {'items': {'reference': {'recoverySources': [str(alias / 'Results/output')]}}})
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        original = cleanup.inventory
+        def discover(*args, **kwargs):
+            report = original(*args, **kwargs)
+            alias.unlink(); alias.symlink_to(old)
+            return report
+        with mock.patch.object(cleanup, 'inventory', side_effect=discover):
+            report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'partial')
+        self.assertTrue(old.exists())
+        self.assertTrue((outside / 'Results/output').exists())
+
+    def test_recursive_removal_holds_only_candidate_and_cleanup_state(self):
+        self.run_directory('old')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        remove = shutil.rmtree
+        def inspect(path, **kwargs):
+            if not pathlib.Path(path).name.startswith('.gitx-cleanup-trash-'):
+                return remove(path, **kwargs)
+            with session.Leases([str(self.root / 'build/GitX.app'),
+                                 str(cleanup.records.common_directory(self.root) / 'ledger.json'),
+                                 f'desktop:{os.getuid()}'],
+                                {'runId': 'independent', 'pid': os.getpid(), 'receipt': 'other'}, inherited={}):
+                pass
+            return remove(path, **kwargs)
+        with mock.patch.object(cleanup.shutil, 'rmtree', side_effect=inspect):
+            self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'complete')
+
+    def test_unfinished_reports_and_journals_survive_report_rotation(self):
+        _, receipt, journal, _ = self.interrupted_journal()
+        reports = cleanup.state_directory(self.root) / 'reports'
+        for index in range(23):
+            self.write(reports / f'old-{index:02}.json', {'status': 'complete'})
+        partial = reports / 'pending-recovery.json'
+        self.write(partial, {'status': 'partial'})
+        self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'complete')
+        self.assertTrue(partial.exists())
+        self.assertTrue(journal.exists())
+        self.assertEqual(sum(cleanup.read_json(p)['status'] == 'complete' for p in reports.glob('*.json')), 20)
+
+    def test_foreign_hook_with_owned_marker_is_preserved(self):
+        hook = self.root / '.git/hooks/post-commit'
+        content = '#!/bin/sh\n# GitX commit-triggered cleanup v1\necho foreign\n'
+        hook.write_text(content)
+        with self.assertRaises(ValueError):
+            cleanup.install_hook(self.root)
+        self.assertEqual(hook.read_text(), content)
+
+    def test_merge_applypatch_and_rewrite_notifications_queue_current_head(self):
+        cleanup.install_hook(self.root)
+        branch = session.git(self.root, 'branch', '--show-current')
+        self.git('checkout', '-qb', 'side')
+        (self.root / 'side.txt').write_text('side')
+        self.git('add', 'side.txt'); self.git('commit', '-qm', 'side')
+        patch = self.git('format-patch', '-1', '--stdout').stdout
+        self.git('checkout', '-q', branch)
+        cleanup.pending_path(self.root).unlink()
+        self.git('merge', '--no-ff', '-qm', 'merged', 'side')
+        self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root))['head'], session.git(self.root, 'rev-parse', 'HEAD'))
+        self.git('checkout', '-qb', 'apply', 'HEAD~1')
+        cleanup.pending_path(self.root).unlink()
+        subprocess.run(['git', '-C', str(self.root), 'am'], input=patch, text=True, capture_output=True, check=True)
+        queued = cleanup.read_json(cleanup.pending_path(self.root))
+        self.assertEqual(queued['head'], session.git(self.root, 'rev-parse', 'HEAD'))
+        subprocess.run([str(self.root / '.git/hooks/post-rewrite'), 'rebase'], cwd=self.root,
+                       input='old new\n', text=True, capture_output=True, check=True)
+        self.assertEqual(cleanup.read_json(cleanup.pending_path(self.root))['token'], queued['token'])
+
+    def test_owned_generic_diagnostics_and_legacy_inventory_are_distinguished(self):
+        owned = self.artifact / 'diagnostics/owned'
+        self.write(owned / 'diagnostic-owner.json', {'schemaVersion': 1, 'kind': 'gitx-diagnostics',
+            'checkout': str(self.root), 'runId': 'owned', 'status': 'passed'})
+        (owned / 'output').write_bytes(b'x' * 16384)
+        legacy = self.artifact / 'diagnostics/legacy'
+        legacy.mkdir(); (legacy / 'output').write_bytes(b'x' * 16384)
+        self.stamp(self.artifact / 'diagnostics', 10)
+        report = cleanup.preview(self.root, now=self.now)
+        self.assertIn(str(owned), self.candidate_paths(report))
+        self.assertNotIn(str(legacy), self.candidate_paths(report))
+        self.assertTrue(any(str(legacy) in item['paths'] and 'unmanaged' in item['reason'] for item in report['retained']))
+        self.assertGreater(report['protectedDiagnosticBytes'], 0)
+
     def test_hook_queues_commits_and_amend_without_pruning(self):
         old = self.run_directory('old')
         cleanup.install_hook(self.root)
@@ -301,13 +625,14 @@ class CleanupTests(unittest.TestCase):
         receipt = self.valid_receipt()
         remove = shutil.rmtree
         def fail_candidate(path, **kwargs):
-            if pathlib.Path(path) == old:
+            if pathlib.Path(path).name.startswith('.gitx-cleanup-trash-'):
                 raise OSError('disk error')
             return remove(path, **kwargs)
         with mock.patch.object(cleanup.shutil, 'rmtree', side_effect=fail_candidate):
             report = cleanup.run_cleanup(self.root, receipt)
         self.assertEqual(report['status'], 'partial')
-        self.assertTrue(old.exists())
+        self.assertFalse(old.exists())
+        self.assertTrue(list(old.parent.glob('.gitx-cleanup-trash-*')))
         self.assertTrue(cleanup.pending_path(self.root).exists())
         self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'complete')
 
@@ -376,7 +701,7 @@ class CleanupTests(unittest.TestCase):
         remove = shutil.rmtree
         def changed(path, **kwargs):
             remove(path, **kwargs)
-            if pathlib.Path(path) == first:
+            if pathlib.Path(path).name.startswith('.gitx-cleanup-trash-'):
                 (self.root / 'source.txt').write_text('edited during deletion')
         with mock.patch.object(cleanup.shutil, 'rmtree', side_effect=changed):
             report = cleanup.run_cleanup(self.root, receipt)
@@ -405,7 +730,7 @@ class CleanupTests(unittest.TestCase):
         self.git('commit', '--allow-empty', '-qm', 'verified work')
         reports = cleanup.state_directory(self.root) / 'reports'
         for i in range(22):
-            self.write(reports / f'20000101-{i:02}.json', {'old': True})
+            self.write(reports / f'20000101-{i:02}.json', {'old': True, 'status': 'complete'})
         def execute(command, **kwargs):
             self.assertTrue(old.exists())
             if command == ['fixture-stage']:
@@ -430,7 +755,7 @@ class CleanupTests(unittest.TestCase):
         instant = cleanup.dt.datetime(2026, 10, 9, 12, 0, 0, 500000, tzinfo=cleanup.dt.timezone.utc)
         prefix = instant.strftime('%Y%m%dT%H%M%S')
         for i in range(20):
-            self.write(reports / f'{prefix}-f{i:07}.json', {'old': True})
+            self.write(reports / f'{prefix}-f{i:07}.json', {'old': True, 'status': 'complete'})
         with mock.patch.object(cleanup.dt, 'datetime', wraps=cleanup.dt.datetime) as clock, \
                 mock.patch.object(cleanup.uuid, 'uuid4', return_value=mock.Mock(hex='0' * 32)):
             clock.now.return_value = instant
@@ -519,8 +844,9 @@ class CleanupTests(unittest.TestCase):
         receipt = self.valid_receipt()
         ledger = self.root / '.git/gitx-workflow/ledger.json'
         ledger.write_text('broken JSON')
-        with self.assertRaises(ValueError):
-            cleanup.run_cleanup(self.root, receipt)
+        report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'partial')
+        self.assertTrue(report['discoveryErrors'])
         self.assertTrue(old.exists())
         self.assertTrue(cleanup.pending_path(self.root).exists())
         ledger.unlink()
@@ -572,13 +898,13 @@ class CleanupTests(unittest.TestCase):
                 evidence['dependencyProducts'] = {'earlier-build': 'superseded'}
                 evidence['results'][str(result.relative_to(self.root))] = session.tree_identity(result)
             self.write(child_path, {'schemaVersion': 2, 'status': 'passed', 'evidence': evidence,
-                                  'buildPaths': {'derivedData': str(cache)}})
+                                  'finishedAt': f'2026-10-09T12:00:0{i}Z', 'buildPaths': {'derivedData': str(cache)}})
             step['receipt'] = str(child_path)
         self.write(receipt, value)
         with mock.patch.object(session, 'product_identity', return_value={'snapshot': 1}):
             self.assertIsNone(cleanup.eligibility(self.root, receipt)[1])
             (result / 'test-data').write_text('changed result')
-            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'test-results-changed')
+            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'child-artifacts-changed')
         (result / 'test-data').write_text('original result')
         # Restore the result identity after rewriting; mutable caches must still match.
         first = self.artifact / 'child-0/receipt.json'
@@ -589,7 +915,7 @@ class CleanupTests(unittest.TestCase):
             self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'final-cache-products-changed')
         with mock.patch.object(session, 'product_identity', return_value={'snapshot': 1}), mock.patch.object(
                 session, 'dependency_products', return_value={'modified-library': {}}):
-            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'dependency-products-changed')
+            self.assertEqual(cleanup.eligibility(self.root, receipt)[1], 'final-cache-products-changed')
 
     def test_child_receipt_and_profile_guards_preserve_pending_work(self):
         command = str(self.root / 'scripts/xcodebuild.sh')
@@ -620,7 +946,7 @@ class CleanupTests(unittest.TestCase):
         scratch = self.base / 'scratch'
         for i, step in enumerate(value['steps']):
             child_path = self.artifact / f'child-{i}/receipt.json'
-            self.write(child_path, {'schemaVersion': 2, 'status': 'passed', 'buildPaths': {'swiftPM': str(scratch)},
+            self.write(child_path, {'schemaVersion': 2, 'status': 'passed', 'finishedAt': f'2026-10-09T12:00:0{i}Z', 'buildPaths': {'swiftPM': str(scratch)},
                        'evidence': {'status': 'valid', 'inputsBefore': current, 'inputsAfter': current,
                                     'dependencyProducts': {}, 'packageProducts': {'snapshot': i}, 'results': {}}})
             step['receipt'] = str(child_path)
