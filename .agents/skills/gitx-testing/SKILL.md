@@ -19,6 +19,8 @@ Protect observable behavior with XCTest, ratcheting coverage, explicit test plan
 
 Read [references/test-design.md](references/test-design.md) when choosing a seam, test language, fixture, UI strategy, or assertion boundary. Read [references/coverage-and-verification.md](references/coverage-and-verification.md) when work is uncovered, involves a conversion, changes a baseline or test plan, or is ready for final verification.
 
+For recurring review bugs, load [agentic regression prevention](references/agentic-regression-prevention.md). Run `python3 scripts/regression_guardrails.py check --base REF` before editing to retrieve affected invariants and protecting tests. Update the narrowest contract after an accepted recurrence; preserve valid behavior and independent oracles. The new metadata report is advisory; XCTest and coverage remain blocking.
+
 ## Classify the work before editing
 
 Identify the smallest applicable set:

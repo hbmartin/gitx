@@ -183,6 +183,28 @@ final class IndexSnapshotTests: XCTestCase {
     private let parser = PBIndexStatusParser()
     private let reducer = PBIndexSnapshotReducer()
 
+    func testRawPathCorpusSurvivesRecordOrderAndDisplayCollisions() throws {
+        let paths = ["plain.txt", "space name", "line\nbreak", "\u{FEFF}name", "é.txt", "e\u{301}.txt", "*.txt", "f\\xFF"].map { Data($0.utf8) } +
+            [Data([0x66, 0xFF]), Data([0x66, 0xFE])]
+        XCTAssertEqual(Set(paths).count, paths.count)
+        for offset in paths.indices {
+            let ordered = Array(paths[offset...] + paths[..<offset])
+            var stream = Data()
+            for rawPath in ordered + ordered {
+                stream.append(rawPath)
+                stream.append(0)
+            }
+            let entries = try XCTUnwrap(parser.parseUntrackedData(stream, error: nil))
+            XCTAssertEqual(Set(entries.keys), Set(paths), "Raw identity survives order \(offset) and duplicate records")
+            for rawPath in paths {
+                XCTAssertEqual(entries[rawPath]?.rawPath, rawPath)
+            }
+            let collected = PBWorkingTreePaths(files: [])
+            collected.append(data: stream)
+            XCTAssertEqual(collected.rawPaths, ordered, "First-seen order uses exact bytes")
+        }
+    }
+
     func testParserDecodesTrackedStatusesAndUnicodePaths() {
         let output = ":100644 100644 abc def M\0folder/spaced ünicode.txt\0" +
             ":100644 000000 abc 0000000000000000000000000000000000000000 D\0deleted.txt\0"

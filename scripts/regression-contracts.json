@@ -1,0 +1,680 @@
+{
+  "schemaVersion": 1,
+  "contracts": [
+    {
+      "id": "PUSH-001",
+      "family": "Frozen intent and explicit leases",
+      "invariant": "A retry publishes the captured source only when its explicit destination lease and remote settings still hold.",
+      "rootCause": "Retries rebuilt from mutable branch/configuration state can overwrite work or change destinations.",
+      "sourcePaths": [
+        "Classes/git/RepositoryRemoteService.swift",
+        "Classes/Controllers/RepositoryPushRecovery*",
+        "Classes/Controllers/RepositoryRejectedPushRecovery*"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/RepositoryServiceTests.swift",
+          "identifier": "GitXTests/RepositoryForgeCoordinatorTests/testRetryReplacesFetchedTipWithFrozenSourceEvenIfLocalBranchMoves",
+          "role": "valid",
+          "oracle": "Read the actual bare remote ref and require the captured source OID."
+        },
+        {
+          "source": "GitXTests/RepositoryServiceTests.swift",
+          "identifier": "GitXTests/RepositoryForgeCoordinatorTests/testRetryCannotReplaceNewerRemoteCommit",
+          "role": "failure",
+          "oracle": "Read the bare remote before and after both fetch timings; the newer OID must survive."
+        },
+        {
+          "source": "GitXTests/RepositoryServiceTests.swift",
+          "identifier": "GitXTests/RepositoryForgeCoordinatorTests/testRemoteSettingsDriftRequiresFreshPush",
+          "role": "boundary",
+          "oracle": "Configuration drift refuses retry without replacing the captured plan."
+        }
+      ]
+    },
+    {
+      "id": "PUSH-002",
+      "family": "Git syntax and remote identity",
+      "invariant": "Literal refnames, custom tracking mappings and named-remote hooks retain their identity.",
+      "rootCause": "Interpreting plus/equal characters as refspec operators or reconstructing a remote loses Git semantics.",
+      "sourcePaths": [
+        "Classes/git/RepositoryRemoteService.swift",
+        "Classes/Controllers/RepositoryPushRecovery*"
+      ],
+      "requiredChecks": [
+        "correctness"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/RepositoryServiceTests.swift",
+          "identifier": "GitXTests/RepositoryForgeCoordinatorTests/testLeadingPlusBranchPushPreservesRemoteFeatureAndSelectsLiteralSource",
+          "role": "valid",
+          "oracle": "Inspect destination refs after a real push of a literal leading-plus branch."
+        },
+        {
+          "source": "GitXTests/RepositoryServiceTests.swift",
+          "identifier": "GitXTests/RepositoryForgeCoordinatorTests/testEqualsBranchRecoveryPreservesInheritedConfigEntriesAndCustomTrackingMapping",
+          "role": "boundary",
+          "oracle": "Inspect effective mapping and remote ref for a branch containing equals."
+        },
+        {
+          "source": "GitXTests/RepositoryServiceTests.swift",
+          "identifier": "GitXTests/RepositoryForgeCoordinatorTests/testRetryPreservesNamedRemoteHookIdentityAndConfiguredReceivePack",
+          "role": "compatibility",
+          "oracle": "Observe hook remote identity and the configured receive-pack execution."
+        }
+      ]
+    },
+    {
+      "id": "EVENT-001",
+      "family": "Push event order",
+      "invariant": "An operation accepts at most one begin and one terminal event; stale callbacks cannot reactivate it.",
+      "rootCause": "Duplicate, reordered and cancellation callbacks can publish twice or replace a newer journey.",
+      "sourcePaths": [
+        "Classes/Controllers/RepositoryPushEventGate.swift",
+        "Classes/git/RepositoryRemoteService.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/RepositoryPushEventGateTests.swift",
+          "identifier": "GitXTests/RepositoryPushEventGateTests/testDuplicateBeginDoesNotStartASecondPushOrReplaceItsChoice",
+          "role": "valid",
+          "oracle": "Accepted event log retains the first user choice."
+        },
+        {
+          "source": "GitXTests/RepositoryPushEventGateTests.swift",
+          "identifier": "GitXTests/RepositoryPushEventGateTests/testAllBoundedEventSequencesPreserveOneOperationLifetime",
+          "role": "boundary",
+          "oracle": "All event sequences through length four preserve public lifetime invariants."
+        },
+        {
+          "source": "GitXTests/RepositoryPushEventGateTests.swift",
+          "identifier": "GitXTests/RepositoryPushEventGateTests/testCancellationAfterBeginKeepsThePushActiveUntilItsActualFailure",
+          "role": "failure",
+          "oracle": "Declining recovery completes through the actual failure event."
+        }
+      ]
+    },
+    {
+      "id": "PATH-001",
+      "family": "Byte identity",
+      "invariant": "Git path identity is exact bytes, distinct from display strings and Unicode equivalence.",
+      "rootCause": "Lossy decoding, BOM stripping and Swift String equality collapse or redirect paths.",
+      "sourcePaths": [
+        "Classes/git/IndexSnapshot.swift",
+        "Classes/PBChangedFile*",
+        "Classes/git/PBWorkingTree*",
+        "Classes/Controllers/HistoryTreePresentation.swift"
+      ],
+      "requiredChecks": [
+        "correctness"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/IndexSnapshotTests.swift",
+          "identifier": "GitXTests/IndexSnapshotTests/testFilenameDecodingPreservesBOMAndRoundTripsExactly",
+          "role": "valid",
+          "oracle": "Require literal Unicode and BOM byte round trips."
+        },
+        {
+          "source": "GitXTests/IndexSnapshotTests.swift",
+          "identifier": "GitXTests/IndexSnapshotTests/testRawPathCorpusSurvivesRecordOrderAndDisplayCollisions",
+          "role": "boundary",
+          "oracle": "Compare raw Data keys across record rotations, duplicates and display collisions."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWorkingStateTreeAndDiffUseRawIdentityAcrossDisplayCollisionsAndDetachedParents",
+          "role": "failure",
+          "oracle": "Resolve actual selected path and parent rather than its rendered label."
+        },
+        {
+          "source": "GitXTests/HistoryFileIdentityTests.swift",
+          "identifier": "GitXTests/HistoryFileIdentityTests/testCommittedPathspecMetacharactersKeepTheirOwnHistoryAndObjectContents",
+          "role": "boundary",
+          "oracle": "Literal Git history excludes matching decoy paths while object reads remain correct."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWorkingTreeAndStagingImageFallbackUseExplicitStageZeroForColonFilename",
+          "role": "compatibility",
+          "oracle": "Working-tree and staging image lookups preserve the explicit stage-zero identity of a colon filename after actual staged selection."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testStagedImagePreviewUsesIndexBytesWhileWorktreePreviewUsesWorktreeBytes",
+          "role": "valid",
+          "oracle": "Actual staged and unstaged selections render the correct labels and return the exact index and worktree image bytes."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testUnmergedAndDanglingSymlinkImagesRetainUsableDiffSections",
+          "role": "boundary",
+          "oracle": "Actual selections preserve unmerged index diff sections and dangling symlink targets."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testStagingImageExpansionResolvesTheIndexOnTheRendererQueue",
+          "role": "compatibility",
+          "oracle": "Selecting a staged colon filename renders an expanded image from the index on the renderer queue."
+        }
+      ]
+    },
+    {
+      "id": "PATH-002",
+      "family": "Literal mutation and atomic rejection",
+      "invariant": "Every selected path is validated before any mutation; raw identities never become shell/display text.",
+      "rootCause": "Partial validation and pathspec metacharacters can mutate the wrong files or leave a partially applied selection.",
+      "sourcePaths": [
+        "Classes/git/IndexMutationService.swift",
+        "Classes/git/PBGitIndex*",
+        "Classes/git/IndexCommandRunning.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/IndexMutationServiceTests.swift",
+          "identifier": "GitXTests/IndexMutationServiceTests/testModernUnstageUsesLiteralNulInputForOrdinaryAndRawNamesAndCachesProbe",
+          "role": "valid",
+          "oracle": "Inspect exact NUL input, literal flags and capability probe count."
+        },
+        {
+          "source": "GitXTests/IndexMutationServiceTests.swift",
+          "identifier": "GitXTests/IndexMutationServiceTests/testRawStageAndDiscardPreserveInvalidBytesAndValidateAllPathsBeforeMutation",
+          "role": "failure",
+          "oracle": "Actual raw-byte files are addressed; invalid selection causes no mutation."
+        },
+        {
+          "source": "GitXTests/IndexMutationServiceTests.swift",
+          "identifier": "GitXTests/IndexMutationServiceTests/testUnknownOrPartialCapabilitiesRejectEntireUnsafeSelectionBeforeAnyChunk",
+          "role": "boundary",
+          "oracle": "No chunk launches after an unsafe capability/selection combination."
+        }
+      ]
+    },
+    {
+      "id": "STATE-001",
+      "family": "Snapshot and refresh authority",
+      "invariant": "Only the current mutation generation and comparison identity may publish a refresh or authorize a hunk; whole-file discards must revalidate the selected discardable files.",
+      "rootCause": "A stale callback or cached action can replace a newer selection or apply obsolete content.",
+      "sourcePaths": [
+        "Classes/git/IndexRefreshCoordinator.swift",
+        "Classes/Controllers/Staging*",
+        "Classes/Controllers/PBGitHistoryController*"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "thread-sanitizer",
+        "ui"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/GitXCoreTests.m",
+          "identifier": "GitXTests/GitXIndexIntegrationTests/testRefreshStageAndUnstageTrackedAndUnicodePaths",
+          "role": "valid",
+          "oracle": "Index reconciliation finishes between stage and unstage, with tracked and Unicode paths preserving mutation order."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testNormalSelectionAdvanceKeepsTheNextPositionAfterStaging",
+          "role": "valid",
+          "oracle": "The next intended selection remains observable after staging."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testDelayedSelectionAdvanceDoesNotReplaceANewerUserSelection",
+          "role": "failure",
+          "oracle": "A later user selection survives the delayed operation callback."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testCachedHunkLinksCannotActAfterAnotherIndexPublication",
+          "role": "boundary",
+          "oracle": "A real index publication makes the old action refuse mutation."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testDiscardConfirmationRevalidatesItsSnapshotBeforeApplyingThePatch",
+          "role": "boundary",
+          "oracle": "Confirmation completion revalidates current content before applying."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWholeFileDiscardAuthorizesOnlyTrackedFilesInAMixedBinarySelection",
+          "role": "valid",
+          "oracle": "Tracked contents are restored and the untracked binary remains byte-identical."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWholeFileDiscardAuthorizesDeletedNonUTF8FilenameWithoutTextDecoding",
+          "role": "compatibility",
+          "oracle": "Real NUL-delimited Git output authorizes a tracked raw-byte deletion without text decoding."
+        },
+        {
+          "source": "GitXTests/StagingDiffPaneControllerTests.swift",
+          "identifier": "GitXTests/StagingDiffPaneControllerTests/testDiscardSnapshotRejectsSameSizedContentPermissionsIndexTreeAndStagingChanges",
+          "role": "boundary",
+          "oracle": "Each changed confirmation input rejects authorization before mutation."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testDecomposedUnicodeHunkCanBeDiscarded",
+          "role": "boundary",
+          "oracle": "Decomposed filename bytes authorize a real Git hunk discard."
+        },
+        {
+          "source": "GitXTests/StagingDiffLoadCoordinatorTests.swift",
+          "identifier": "GitXTests/StagingDiffLoadCoordinatorTests/testUnavailableImageIdentityRetainsDiffWithoutMutationAuthority",
+          "role": "failure",
+          "oracle": "Diff remains visible with no mutation token when image identity is unavailable."
+        }
+      ]
+    },
+    {
+      "id": "STATE-002",
+      "family": "Partial failure and reconciliation",
+      "invariant": "Successful chunks are reconciled before controls recover, including failure paths.",
+      "rootCause": "Early return or premature idle publication leaves the displayed index and operation eligibility untruthful.",
+      "sourcePaths": [
+        "Classes/git/IndexMutation*",
+        "Classes/git/IndexCommit*",
+        "Classes/Controllers/Staging*"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "thread-sanitizer",
+        "ui"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/IndexRefreshCoordinatorTests.swift",
+          "identifier": "GitXTests/IndexRefreshCoordinatorTests/testSuccessfulRefreshParsesAllComponentsAndDeliversOnMainThread",
+          "role": "valid",
+          "oracle": "Observe parsed components and main-thread completion."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testSecondStageChunkFailureReconcilesSuccessfullyStagedFirstChunk",
+          "role": "failure",
+          "oracle": "Inspect actual staged first chunk and reconciled UI after second-chunk failure."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testCommitCompletionReconcilesBeforeControlsReturnIncludingPostCommitHookFailure",
+          "role": "boundary",
+          "oracle": "Controls recover only after authoritative reconciliation, preserving hook failure."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testRepeatHunkClickWhileFinishingDoesNotReportAnError",
+          "role": "boundary",
+          "oracle": "A duplicate click during reconciliation produces one staging result and no error notification."
+        },
+        {
+          "source": "GitXTests/IndexMutationCoordinatorTests.swift",
+          "identifier": "GitXTests/IndexMutationCoordinatorTests/testRepositoryCheckoutCannotOverlapAnIndexWriter",
+          "role": "failure",
+          "oracle": "A synchronous checkout is refused while the shared repository writer owns a staging operation."
+        }
+      ]
+    },
+    {
+      "id": "COMMIT-001",
+      "family": "Prepared commit identity",
+      "invariant": "Prepared retries preserve HEAD identity, parents, message, signing and environment except the chosen verification policy.",
+      "rootCause": "Retrying from refreshed state changes user intent; equal OIDs alone miss branch identity changes.",
+      "sourcePaths": [
+        "Classes/git/IndexCommit*",
+        "Classes/git/IndexReferenceTransaction.swift",
+        "Classes/git/CommitHeadExpectation.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/IndexCommitServiceTests.swift",
+          "identifier": "GitXTests/IndexCommitServiceTests/testVerifiedCommitRunsHooksUsesEditedMessageAndUpdatesHead",
+          "role": "valid",
+          "oracle": "Observe hooks, resulting message and HEAD publication."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testPreparedRetryRetainsHeadParentsMessageSigningAndEnvironment",
+          "role": "boundary",
+          "oracle": "Compare every captured field and the only allowed verification change."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testHeadExpectationsDistinguishSymbolicDetachedUnbornAndRawIdentity",
+          "role": "failure",
+          "oracle": "Distinguish actual symbolic, detached and unborn identities despite matching OIDs."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testCancelledAndFailedLaunchCapabilityProbesRemainRetryable",
+          "role": "failure",
+          "oracle": "Cancellation and launch failures permit another probe; successful capability evidence remains reusable."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testMergeCleanupRemovesOnlyUnchangedCapturedMarkers",
+          "role": "boundary",
+          "oracle": "Changed merge markers survive post-publication cleanup."
+        },
+        {
+          "source": "GitXTests/IndexCommitPublicationTests.swift",
+          "identifier": "GitXTests/IndexCommitPublicationTests/testInvalidMergeParentBytesRefusePublicationAndPreservePreparedState",
+          "role": "failure",
+          "oracle": "Invalid UTF-8 and malformed merge parents refuse publication and retain captured state."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testCapabilityProbesCoalescePerExecutableWithoutBlockingOtherExecutables",
+          "role": "boundary",
+          "oracle": "A gated probe coalesces identical executable requests while a different executable completes."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testDefinitivelyUnsupportedCapabilityIsCached",
+          "role": "failure",
+          "oracle": "An explicit unsupported protocol result launches once across repeated requests."
+        }
+      ]
+    },
+    {
+      "id": "COPY-001",
+      "family": "Copy and drag entry points",
+      "invariant": "Immutable-copy actions reject selections containing Working State; text drags reject a clicked Working State source without changing the pasteboard.",
+      "rootCause": "Menu-only validation leaves direct responder actions and mixed drag selections unguarded.",
+      "sourcePaths": [
+        "Classes/Controllers/HistoryTableInteractionCoordinator.swift",
+        "Classes/Controllers/PBGitHistoryController*",
+        "Classes/Util/GitXCommitCopier.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "ui"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testCopyActionsCharacterizeMultipleCommitFormattingAndEmptySelection",
+          "role": "valid",
+          "oracle": "Compare actual multi-commit formatting and empty-selection output."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWorkingStateImmutableCopyActionsPreserveClipboard",
+          "role": "failure",
+          "oracle": "Invoke real responder actions and require unchanged clipboard text."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWorkingStateTextDragPreservesPasteboard",
+          "role": "boundary",
+          "oracle": "With Working State as the clicked source, test every text column and Working State/mixed row selection; retain pasteboard generation and types."
+        }
+      ]
+    },
+    {
+      "id": "PATCH-001",
+      "family": "Export round trips",
+      "invariant": "Root, ordinary and merge patches preserve final tree content and a final byte without a newline.",
+      "rootCause": "Incorrect diff parent/format or line chopping creates unusable or incomplete exports.",
+      "sourcePaths": [
+        "Classes/git/PBGitCommit*",
+        "Classes/Util/GitXCommitCopier.swift"
+      ],
+      "requiredChecks": [
+        "correctness"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testExportedRootOrdinaryAndMergePatchesRoundTripThroughApplyAndAm",
+          "role": "valid",
+          "oracle": "Apply and am exported patches with real Git; compare final tree IDs."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testCommitPatchPreservesFinalContentWhenOutputHasNoLineFeed",
+          "role": "boundary",
+          "oracle": "Compare exact final content when output has no final LF."
+        }
+      ]
+    },
+    {
+      "id": "TASK-001",
+      "family": "Drainage and process lifetime",
+      "invariant": "Completion preserves exit status and accepted bytes, while genuinely incomplete drainage stays explicit.",
+      "rootCause": "Leader exit is mistaken for EOF; arbitrary reader cutoffs truncate finite streams or hide descendant output.",
+      "sourcePaths": [
+        "Classes/Util/PBTask*",
+        "Classes/Util/PBChildProcessOwner.swift",
+        "Classes/git/IndexReferenceTransaction.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "address-undefined",
+        "thread-sanitizer",
+        "analyze"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/PBTaskDiagnosticCaptureTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticCaptureTests/testProductionDrainPreservesFiniteBufferedStreamsWithDelayedShortReaders",
+          "role": "valid",
+          "oracle": "Compare complete bytes from slow finite readers."
+        },
+        {
+          "source": "GitXTests/PBTaskDiagnosticCaptureTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticCaptureTests/testProductionDrainPreservesDescendantOutputReleasedAfterLeaderExit",
+          "role": "boundary",
+          "oracle": "Observe descendant output released after the parent exits."
+        },
+        {
+          "source": "GitXTests/PBTaskDiagnosticCaptureTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticCaptureTests/testRepeatedDeadlineDrainNeverUpgradesAClosedIncompleteStreamToEOF",
+          "role": "failure",
+          "oracle": "Repeated drainage cannot upgrade an incomplete stream to complete EOF."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testFinalAcknowledgementWrittenBetweenReadAndExitObservationIsAccepted",
+          "role": "valid",
+          "oracle": "A controlled peer exit between reads preserves its final acknowledgement."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testFinalDiagnosticWrittenBetweenReadAndExitObservationIsReported",
+          "role": "failure",
+          "oracle": "The failure reason retains diagnostics written just before exit."
+        },
+        {
+          "source": "GitXTests/PBChildProcessOwnerTests.swift",
+          "identifier": "GitXTests/PBChildProcessOwnerTests/testAppPosixResourceFailuresPreserveCallerDescriptors",
+          "role": "boundary",
+          "oracle": "Injected application resource failures preserve caller descriptors and the successful control reaps its child."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testZeroAndPartialCommitWritesDistinguishUnsentAndUncertainPublication",
+          "role": "boundary",
+          "oracle": "Only a positive syscall write makes commit publication uncertain."
+        }
+      ]
+    },
+    {
+      "id": "DIAG-001",
+      "family": "Credential-safe diagnostics",
+      "invariant": "Rendered and exported diagnostics redact credentials across every chunk/cutoff boundary while preserving ordinary URLs.",
+      "rootCause": "Truncating before redaction or parsing only common userinfo shapes can expose secrets.",
+      "sourcePaths": [
+        "Classes/Util/PBTaskDiagnostic*",
+        "Classes/Views/PushOutputExportCoordinator.swift"
+      ],
+      "requiredChecks": [
+        "correctness"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/PBTaskDiagnosticRedactorTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticRedactorTests/testOrdinaryURLBoundariesPreservePortsPathsAndFollowingDiagnostics",
+          "role": "valid",
+          "oracle": "Ordinary URLs and subsequent diagnostics remain byte-faithful."
+        },
+        {
+          "source": "GitXTests/PBTaskDiagnosticRedactorTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticRedactorTests/testSchemeAndCredentialSpanningEveryChunkBoundaryAreRedacted",
+          "role": "boundary",
+          "oracle": "Every two-part split excludes the credential from output."
+        },
+        {
+          "source": "GitXTests/PBTaskDiagnosticCaptureTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticCaptureTests/testCoreSummaryRedactsBeforeCutoffAndExportRetainsMiddle",
+          "role": "failure",
+          "oracle": "Both summary cutoff and full export exclude secrets."
+        },
+        {
+          "source": "GitXTests/PBTaskDiagnosticRedactorTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticRedactorTests/testAmbiguousAuthorityWithoutAtKeepsItsCredentialRedactedAcrossWhitespace",
+          "role": "boundary",
+          "oracle": "Malformed userinfo stays redacted through the application boundary."
+        },
+        {
+          "source": "GitXTests/PBTaskDiagnosticRedactorTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticRedactorTests/testDottedUsernameAndNumericPasswordRemainPrivate",
+          "role": "boundary",
+          "oracle": "Dotted usernames and numeric password prefixes remain hidden across chunks."
+        }
+      ]
+    },
+    {
+      "id": "EXPORT-001",
+      "family": "Presentation lifetime",
+      "invariant": "An export error survives temporary invisibility and is discarded only after actual owner dismissal.",
+      "rootCause": "Visibility is confused with lifetime, causing lost errors or presentation on a closed owner.",
+      "sourcePaths": [
+        "Classes/Views/PushOutputExportCoordinator.swift"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "ui",
+        "thread-sanitizer"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/PushOutputExportCoordinatorTests.swift",
+          "identifier": "GitXTests/PushOutputExportCoordinatorTests/testSuccessfulWriterReceivesOwnedArtifactAndSelectedDestination",
+          "role": "valid",
+          "oracle": "Observe actual owned artifact, destination and restored control."
+        },
+        {
+          "source": "GitXTests/PushOutputExportCoordinatorTests.swift",
+          "identifier": "GitXTests/PushOutputExportCoordinatorTests/testTemporaryInvisibilityRetainsOneExportErrorUntilRestoration",
+          "role": "boundary",
+          "oracle": "Hide/minimize then restore; exactly one error is presented."
+        },
+        {
+          "source": "GitXTests/PushOutputExportCoordinatorTests.swift",
+          "identifier": "GitXTests/PushOutputExportCoordinatorTests/testPendingErrorIsDiscardedAfterActualClosureOrSheetDetachment",
+          "role": "failure",
+          "oracle": "Closed or detached owners receive no later error."
+        }
+      ]
+    },
+    {
+      "id": "ENV-001",
+      "family": "Deterministic Git fixtures",
+      "invariant": "Tests and explicit-checkout Git inspection isolate inherited repository selectors while retaining configured local hooks and binary input.",
+      "rootCause": "Ambient repositories, config, hooks and identity make tests pass against the wrong state.",
+      "sourcePaths": [
+        "GitXTests/GitXTestGitEnvironment.swift",
+        "GitXTests/GitXTestGitFixture.swift",
+        "Classes/Util/PBProcessEnvironment*",
+        "scripts/run_app.sh",
+        "scripts/workflow_session.py",
+        "scripts/workflow_records.py",
+        "scripts/regression_guardrails.py"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "static"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testSharedEnvironmentMatchesExistingFixturePolicyAndKeepsNonGitInputs",
+          "role": "valid",
+          "oracle": "Inspect isolated Git environment and preserved non-Git variables."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testFixtureRunnerCommitsLiteralFilesAndPreservesIntentionalLocalHooks",
+          "role": "compatibility",
+          "oracle": "Real Git commits preserve explicitly configured fixture hooks."
+        },
+        {
+          "source": "GitXTests/GitXTestGitFixtureTests.swift",
+          "identifier": "GitXTests/GitXTestGitFixtureTests/testFixtureRunnerStoresBinaryStandardInputWithoutChangingItsBytes",
+          "role": "boundary",
+          "oracle": "Compare exact binary stdin bytes."
+        }
+      ]
+    },
+    {
+      "id": "INTEROP-001",
+      "family": "Debug and Release interoperability",
+      "invariant": "Required Objective-C selectors and Swift consumers remain valid in both build configurations.",
+      "rootCause": "Conditional runtime/test surfaces or bridge annotations compile in Debug but fail in Release.",
+      "sourcePaths": [
+        "Classes/*.h",
+        "Classes/Util/PBTask*",
+        "GitX.xcodeproj/project.pbxproj",
+        "Resources/GitX.h",
+        "GitXTests/GitXTests-Bridging-Header.h"
+      ],
+      "requiredChecks": [
+        "correctness",
+        "interop",
+        "debug-test-build",
+        "release-test-build",
+        "release-contracts"
+      ],
+      "tests": [
+        {
+          "source": "GitXTests/GitXInteropContractTests.swift",
+          "identifier": "GitXTests/GitXInteropContractTests/testRequiredObjectiveCRuntimeSelectorsRemainAvailable",
+          "role": "valid",
+          "oracle": "Query required Objective-C selectors in the running Debug host."
+        },
+        {
+          "source": "GitXTests/GitXInteropContractTests.swift",
+          "identifier": "GitXTests/GitXInteropContractTests/testConfigurationDependentRuntimeSurface",
+          "role": "compatibility",
+          "oracle": "Exercise the imported task and configuration-dependent runtime surface in Debug."
+        },
+        {
+          "source": "GitXTests/GitXInteropContractTests.swift",
+          "identifier": "GitXTests/GitXInteropContractTests/testConfigurationDependentRuntimeSurface",
+          "role": "compatibility",
+          "oracle": "Exercise the imported task and configuration-dependent runtime surface in Release.",
+          "check": "release-contracts"
+        }
+      ]
+    }
+  ]
+}

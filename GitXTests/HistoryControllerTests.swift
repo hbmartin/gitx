@@ -5163,27 +5163,36 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(open.isEnabled)
     }
 
-    func testWorkingStateTextDragPreservesPasteboard() {
+    func testWorkingStateTextDragPreservesPasteboard() throws {
         let working = PBUncommittedChanges(repository: repository)
-        historyController.commitController.content = [working]
+        let committed = try XCTUnwrap(loadedCommits().first)
+        historyController.commitController.content = [working, committed]
         historyController.commitController.rearrangeObjects()
+        let arranged = try XCTUnwrap(historyController.commitController.arrangedObjects as? [PBGitCommit])
+        let workingRow = try XCTUnwrap(arranged.firstIndex { $0 === working })
         let table = CommitListFake()
-        table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ShortSHAColumn")))
-        table.testRow = 0
-        table.testColumn = 0
+        for column in ["ShortSHAColumn", "SubjectColumn", "AuthorColumn"] {
+            table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column)))
+        }
+        table.testRow = workingRow
         table.revisionCell.referenceIndex = -1
         let coordinator = tableCoordinator
         let original = historyController.commitList
         historyController.setValue(table, forKey: "commitList")
         defer { historyController.setValue(original, forKey: "commitList") }
-        let pasteboard = freshPasteboard()
-        pasteboard.setString("preserve drag clipboard", forType: .string)
-        let changeCount = pasteboard.changeCount
-        let types = pasteboard.types
-        XCTAssertFalse(coordinator.tableView(table, writeRowsWith: IndexSet(integer: 0), to: pasteboard))
-        XCTAssertEqual(pasteboard.string(forType: .string), "preserve drag clipboard")
-        XCTAssertEqual(pasteboard.changeCount, changeCount)
-        XCTAssertEqual(pasteboard.types, types)
+        for column in 0 ..< table.numberOfColumns {
+            table.testColumn = column
+            for rows in [IndexSet(integer: workingRow), IndexSet(integersIn: 0 ..< arranged.count)] {
+                let pasteboard = freshPasteboard()
+                pasteboard.setString("preserve drag clipboard", forType: .string)
+                let changeCount = pasteboard.changeCount
+                let types = pasteboard.types
+                XCTAssertFalse(coordinator.tableView(table, writeRowsWith: rows, to: pasteboard))
+                XCTAssertEqual(pasteboard.string(forType: .string), "preserve drag clipboard")
+                XCTAssertEqual(pasteboard.changeCount, changeCount)
+                XCTAssertEqual(pasteboard.types, types)
+            }
+        }
     }
 
     func testTablePasteboardDropCheckoutAndResponderInteractions() throws {
