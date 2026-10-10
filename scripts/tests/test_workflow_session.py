@@ -17,6 +17,67 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_producer_pid_and_start_identity_distinguish_live_abandoned_and_uncertain(self):
+        identity = {'pid': 123, 'started': 'birth'}
+        with mock.patch.object(os, 'kill'), mock.patch.object(session, 'process_started', return_value='birth'):
+            self.assertEqual(session.producer_state(identity), 'live')
+        with mock.patch.object(os, 'kill'), mock.patch.object(session, 'process_started', return_value='reused'):
+            self.assertEqual(session.producer_state(identity), 'abandoned')
+        with mock.patch.object(os, 'kill', side_effect=ProcessLookupError):
+            self.assertEqual(session.producer_state(identity), 'abandoned')
+        with mock.patch.object(os, 'kill', side_effect=PermissionError):
+            self.assertEqual(session.producer_state(identity), 'uncertain')
+        self.assertEqual(session.producer_state({'pid': 123}), 'uncertain')
+
+    def test_broker_authentication_accepts_a_partial_framed_reply(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        connection.recv.side_effect = [b'o', b'wn', b'ed', b'\n']
+        with mock.patch.object(session.socket, 'socket', return_value=connection):
+            self.assertTrue(session.Leases.authenticated('/resource', {'socket': '/socket', 'token': 'token'}))
+        self.assertTrue(connection.sendall.call_args.args[0].endswith(b'\n'))
+        connection.shutdown.assert_not_called()
+
+    def test_final_cache_ownership_compares_instants_with_timezone_offsets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            steps = []
+            for index, (stamp, products) in enumerate([('2026-10-09T10:00:00+00:00', {'latest': True}),
+                                                      ('2026-10-09T11:00:00+02:00', {'earlier': True})]):
+                path = root / f'{index}.json'
+                path.write_text(json.dumps({'finishedAt': stamp, 'buildPaths': {'derivedData': '/cache'},
+                                            'evidence': {'products': products}}))
+                steps.append({'receipt': str(path)})
+            self.assertEqual(session.workflow_cache_snapshots({'steps': steps}, root)['products']['/cache'], {'latest': True})
+
+    def test_lease_releases_descriptors_when_broker_cleanup_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owner = {'runId': 'fixture', 'pid': os.getpid(), 'receipt': 'fixture'}
+            lease = session.Leases(['/fixture'], owner, lock_root=directory, inherited={})
+            lease.__enter__()
+            streams = list(lease.opened)
+            broker_directory = lease.broker_directory
+            with mock.patch.object(broker_directory, 'cleanup', side_effect=OSError('disk failure')):
+                with self.assertRaises(OSError):
+                    lease.__exit__()
+            self.assertTrue(all(stream.closed for stream in streams))
+            with session.Leases(['/fixture'], owner, lock_root=directory, inherited={}):
+                pass
+            broker_directory.cleanup()
+
+    def test_supervisor_preserves_legacy_diagnostics_and_records_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            (path / 'legacy.log').write_text('keep')
+            self.assertEqual(session.supervise([sys.executable, '-c', 'print("done")'], directory=path), 0)
+            self.assertFalse((path / 'diagnostic-owner.json').exists())
+            manifest = next(path.glob('owned-*/diagnostic-owner.json'))
+            value = json.loads(manifest.read_text())
+            self.assertEqual(value['status'], 'passed')
+            self.assertEqual(value['producer']['pid'], os.getpid())
+            self.assertTrue(value['producer']['started'])
+            self.assertEqual((path / 'legacy.log').read_text(), 'keep')
+
     def test_git_environment_scrubs_repository_selectors_but_preserves_configuration(self):
         selectors = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
                      "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH", "GIT_NAMESPACE")

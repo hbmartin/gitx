@@ -82,13 +82,13 @@ def verify(args):
         entry = pathlib.Path(command[0]).name
         if entry.endswith(".sh"):
             resources.extend(session.entry_resources(entry, command[1:], root)[0])
-    owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(path)}
+    owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(path), "producer": session.producer_identity()}
     previous_caches = None
     if args.resume and payload.get("status") == "passed" and not session.final_cache_problems(payload, root):
         previous_caches = payload.get("finalCacheProducts", session.workflow_cache_snapshots(payload, root))
     with session.Leases(resources, owner) as leases:
         env = leases.environment() | {"GITX_SESSION_ID": run_id, "GITX_COMMAND_TIMEOUT": str(args.timeout)}
-        payload["status"] = "running"
+        payload.update(status="running", producer=owner["producer"], resources=sorted(leases.held))
         session.atomic_json(path, payload)
         previous = {step["name"]: step for step in payload["steps"]}
         for name, command in commands:
@@ -103,12 +103,14 @@ def verify(args):
             child_id = f"{run_id}-{name}-{attempt}"
             actual = command + (["--run-id", child_id] if pathlib.Path(command[0]).name == "xcodebuild.sh" else [])
             status = session.supervise(actual, timeout=args.timeout, directory=directory / "Diagnostics" / name,
-                                       env=env, pass_fds=leases.descriptors())
+                                       env=env | {"GITX_SESSION_ID": child_id}, pass_fds=leases.descriptors())
             after = session.inputs(root)
             step = {"name": name, "command": command, "commandIdentity": session.command_identity(command), "status": "passed" if status == 0 else "failed", "exitCode": status,
                     "inputsBefore": current, "inputsAfter": after, "toolchain": session.cache_paths()["toolchain"], "finishedAt": records.now(),
                     "evidenceStatus": "invalid" if session.changed_inputs(current, after) else "valid", "outputs": {}}
-            child_path = root / "artifacts/verification" / child_id / "receipt.json"
+            child_path = session.verification_artifact_root(root) / child_id / "receipt.json"
+            if not child_path.is_file():
+                child_path = session.verification_artifact_root(root) / "Coordination" / (child_id + ".json")
             if child_path.is_file():
                 step["receipt"] = str(child_path)
                 child_receipt = json.loads(child_path.read_text())
@@ -132,13 +134,22 @@ def verify(args):
         payload["evidenceStatus"] = "valid"
         payload["deliveryEligible"] = not args.check
         payload["finalCacheProducts"] = session.workflow_cache_snapshots(payload, root)
-        if session.final_cache_problems(payload, root):
+        problems = session.final_cache_problems(payload, root)
+        for step in payload["steps"]:
+            if step.get("receipt"):
+                child = json.loads(pathlib.Path(step["receipt"]).read_text())
+                problems.extend(session.receipt_artifact_problems(child, root, payload["finalCacheProducts"]))
+            for output, identity in step.get("outputs", {}).items():
+                if identity is None or session.tree_identity(output) != identity:
+                    problems.append("Workflow output missing or changed: " + output)
+        if problems:
+            payload["evidenceProblems"] = problems
             payload.update(status="invalid", evidenceStatus="invalid", deliveryEligible=False)
             session.atomic_json(path, payload)
             return 76
         session.atomic_json(path, payload)
         print(f"Local verification passed. Receipt: {path}")
-        return 0
+    return 0
 
 
 def work(args):
