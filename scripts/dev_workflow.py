@@ -173,6 +173,7 @@ def verify(args):
             if args.resume and prior and reason is None:
                 print(f"Reuse {name}: passed evidence and inputs still match.", flush=True)
                 payload["reusedChecks"].append(name)
+                prior["lastAttempt"] = {"action": "reused", "reason": "matching-passed-evidence"}
                 continue
             previous_caches = None
             print(f"Verify {name}; owning run {run_id}; receipt {path}", flush=True)
@@ -194,7 +195,8 @@ def verify(args):
                     "inputsBefore": current, "inputsAfter": after, "toolchain": session.cache_paths()["toolchain"], "finishedAt": records.now(),
                     "evidenceStatus": "invalid" if session.changed_inputs(current, after) else "valid", "outputs": {},
                     "durationSeconds": round(time.monotonic() - step_started, 3),
-                    "executionReason": reason or "requested-fresh-check"}
+                    "executionReason": reason or "requested-fresh-check",
+                    "lastAttempt": {"action": "executed", "reason": reason or "requested-fresh-check"}}
             payload["executedChecks"].append(name)
             child_path = session.verification_artifact_root(root) / child_id / "receipt.json"
             if not child_path.is_file():

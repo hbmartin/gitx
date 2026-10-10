@@ -116,6 +116,15 @@ class FeedbackTests(unittest.TestCase):
         self.assertIn("selectedChecks", report)
         self.assertEqual(set(self.root.rglob("*")), before)
 
+    def test_nib_inputs_are_absolute_and_preserve_spaces(self):
+        feedback = self.feedback()
+        self.write("Resources/new nib.xib", "fixture\n")
+        calls = []
+        with mock.patch.object(feedback, "execute", side_effect=lambda command, root, env=None: calls.append(command)):
+            feedback.static_feedback(self.root, "HEAD")
+        command = next(command for command in calls if "ibtool" in command)
+        self.assertEqual(command[-1], str(self.root / "Resources/new nib.xib"))
+
     def test_static_does_not_claim_build_caches_or_desktop(self):
         resources, _ = session.entry_resources("verify_static.sh", [])
         self.assertEqual(resources, [])
