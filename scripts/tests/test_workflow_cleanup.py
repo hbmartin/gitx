@@ -220,6 +220,27 @@ class CleanupTests(unittest.TestCase):
         with mock.patch.object(cleanup, 'inventory', side_effect=inspect):
             self.assertEqual(cleanup.run_cleanup(self.root, receipt)['status'], 'complete')
 
+    def prepare_original_journal(self):
+        old = self.run_directory('prepared-original')
+        pending = cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        report = cleanup.inventory(self.root, receipt)
+        self.assertIn(str(old), self.candidate_paths(report))
+        journal, value = cleanup.prepare_journal(old, cleanup.fingerprint(old), self.root,
+                                                 receipt, pending, report['protectionToken'])
+        self.assertTrue(old.is_dir())
+        self.assertFalse(pathlib.Path(value['quarantinePath']).exists())
+        return old, receipt, journal, value
+
+    def test_prepared_original_journal_retries_under_unchanged_authorization(self):
+        old, receipt, journal, value = self.prepare_original_journal()
+        report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'complete')
+        self.assertFalse(old.exists())
+        self.assertFalse(pathlib.Path(value['quarantinePath']).exists())
+        self.assertEqual(cleanup.read_json(journal)['state'], 'complete')
+        self.assertFalse(cleanup.pending_path(self.root).exists())
+
     def test_interrupted_removal_is_retried_from_an_external_journal(self):
         old = self.run_directory('old')
         cleanup.queue_commit(self.root)
