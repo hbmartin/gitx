@@ -262,6 +262,8 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
 }
 
 #if GITX_APP_TARGET && DEBUG
+    // SwiftLint cannot follow XCTest's Objective-C bridge declarations.
+    // swiftlint:disable unused_declaration
     @objc(PBIndexWriterCommandTestHarness)
     final nonisolated class IndexWriterCommandTestHarness: NSObject {
         @objc(writesIndexWithArguments:)
@@ -269,6 +271,7 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
             IndexWriterCoordinator.writesIndex(arguments)
         }
     }
+    // swiftlint:enable unused_declaration
 #endif
 
 private final nonisolated class WeakIndexWriter {
