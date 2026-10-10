@@ -469,6 +469,7 @@ def receipt_base(arguments: argparse.Namespace) -> dict[str, Any]:
 def command_receipt_init(arguments: argparse.Namespace) -> int:
     payload = receipt_base(arguments)
     payload["schemaVersion"] = 2
+    payload["producer"], payload["resources"] = session.inherited_ownership()
     payload["evidence"] = {"status": "pending", "inputsBefore": session.inputs(ROOT)}
     payload["buildPaths"] = {key: os.environ.get(variable) for key, variable in (
         ("derivedData", "GITX_DERIVED_DATA"), ("swiftPM", "GITX_SWIFTPM_BUILD_ROOT"),
