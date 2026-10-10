@@ -160,6 +160,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         evidence = json.loads(coordination.read_text())["evidence"]
         self.assertEqual(evidence["status"], "invalid")
         self.assertIn("source", evidence["changedInputs"])
+
     def test_compilation_cache_mode_is_managed_and_recorded(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
