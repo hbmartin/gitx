@@ -755,7 +755,8 @@ def eligibility(root, receipt):
     if pending.get("checkout") != str(root) or pending.get("head") != current["head"] or value.get("inputsAfter", {}).get("root") != str(root) or any(
             session.changed_inputs(value.get(key, {}), current) for key in ("inputsBefore", "inputsAfter")):
         return None, "commit-or-inputs-changed"
-    if session.git(root, "diff", "HEAD", "--binary"):
+    # Local diff preferences must not hide dependency edits from the commit gate.
+    if session.git(root, "diff", "HEAD", "--binary", "--ignore-submodules=none"):
         return None, "uncommitted-tracked-changes"
     tracked = set(session.git(root, "ls-files", "-z").split("\0"))
     if set(current["files"]) - tracked:

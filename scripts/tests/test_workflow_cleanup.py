@@ -123,6 +123,26 @@ class CleanupTests(unittest.TestCase):
         cleanup.queue_commit(self.root)
         self.assertIsNone(cleanup.eligibility(self.root, self.valid_receipt())[1])
 
+    def test_dirty_dependency_cannot_authorize_cleanup_when_diff_ignores_submodules(self):
+        dependency = self.base / 'dependency'
+        dependency.mkdir()
+        def dependency_git(*args):
+            return subprocess.run(['git', '-C', str(dependency), *args], check=True, capture_output=True, text=True)
+        dependency_git('init', '-q')
+        dependency_git('config', 'user.name', 'Fixture')
+        dependency_git('config', 'user.email', 'fixture@example.invalid')
+        dependency_git('config', 'commit.gpgsign', 'false')
+        (dependency / 'source.c').write_text('int value = 1;\n')
+        dependency_git('add', '.')
+        dependency_git('commit', '-qm', 'dependency fixture')
+        self.git('-c', 'protocol.file.allow=always', 'submodule', 'add', str(dependency), 'External/Fixture')
+        self.git('commit', '-qam', 'add dependency')
+        self.git('config', 'diff.ignoreSubmodules', 'all')
+        (self.root / 'External/Fixture/source.c').write_text('int value = 2;\n')
+        self.assertEqual(self.git('diff', 'HEAD', '--binary').stdout, '')
+        cleanup.queue_commit(self.root)
+        self.assertEqual(cleanup.eligibility(self.root, self.valid_receipt())[1], 'uncommitted-tracked-changes')
+
     def test_embedded_repository_is_protected_at_any_depth(self):
         old = self.run_directory('old')
         (old / 'Results/nested/.git').mkdir(parents=True)
