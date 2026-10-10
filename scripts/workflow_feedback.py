@@ -151,7 +151,7 @@ def static_feedback(root, reference=None):
         if path.startswith("Resources/") and path.endswith(".plist"):
             execute(["plutil", "-lint", path], root)
         elif path.startswith("Resources/") and path.endswith(".xib"):
-            execute(["xcrun", "ibtool", "--warnings", "--errors", "--output-format", "human-readable-text", path], root)
+            execute(["xcrun", "ibtool", "--warnings", "--errors", "--output-format", "human-readable-text", str((root / path).absolute())], root)
         elif path.endswith(".xctestplan"):
             json.loads((root / path).read_text())
     if any(path.startswith("scripts/") for path in paths):

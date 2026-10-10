@@ -66,6 +66,20 @@ class WorkflowCompletionTests(unittest.TestCase):
         self.assertEqual(receipt["scope"], "partial")
         self.assertEqual(execute.call_count, 1)
 
+    def test_resume_records_why_matching_checks_are_reused_without_execution(self):
+        app = self.root / "build/GitX.app"
+        app.mkdir(parents=True)
+        (app / "binary").write_bytes(b"fixture")
+        self.assertEqual(self.run_verification()[0], 0)
+        args = workflow.parser().parse_args(["verify", "--resume", "fixture", "--cleanup-mode", "preview"])
+        with mock.patch.object(session, "supervise") as execute:
+            self.assertEqual(workflow.verify(args), 0)
+        execute.assert_not_called()
+        receipt = json.loads((self.root / "artifacts/verification/fixture/workflow.json").read_text())
+        self.assertEqual(receipt["reusedChecks"], ["correctness", "stage-debug"])
+        for step in receipt["steps"]:
+            self.assertEqual(step["lastAttempt"], {"action": "reused", "reason": "matching-passed-evidence"})
+
     def test_feedback_reports_selected_and_executed_checks_without_delivery(self):
         args = workflow.parser().parse_args(["verify", "--profile", "feedback", "--run-id", "fixture"])
         with mock.patch.object(workflow.feedback, "changed_paths", return_value=("base", ["Classes/View.swift"])), \
