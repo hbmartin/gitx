@@ -70,6 +70,7 @@ final nonisolated class IndexReferenceTransaction {
     private let checkCancellation: () throws -> Void
     #if DEBUG
         fileprivate var afterInitialRead: (() throws -> Void)?
+        fileprivate var controlledWrite: ((Int32, UnsafeRawPointer?, Int) -> Int)?
 
         fileprivate func releasePeerAndObserveExit() throws {
             try send("release\n")
@@ -128,17 +129,23 @@ final nonisolated class IndexReferenceTransaction {
         try checkBeforePublicationCancellation()
         // Once any commit bytes may reach Git, cancellation cannot roll back
         // publication. Settle its acknowledgement and actual exit instead.
-        if command == "commit\n" {
-            commitRequested = true
-        }
         let bytes = Data(command.utf8)
         try bytes.withUnsafeBytes { buffer in
             var offset = 0
             while offset < buffer.count {
                 guard remainingTime > 0 else { throw failure("Commit publication timed out after 30 seconds.") }
                 try checkBeforePublicationCancellation()
-                let count = Darwin.write(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                let count: Int
+                #if DEBUG
+                    count = controlledWrite?(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                        ?? Darwin.write(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                #else
+                    count = Darwin.write(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                #endif
                 if count > 0 {
+                    if command == "commit\n" {
+                        commitRequested = true
+                    }
                     offset += count
                 } else if count < 0, errno == EINTR {
                     continue
@@ -382,6 +389,19 @@ final nonisolated class IndexReferenceTransaction {
     /// Exercise the production pipe owner with controlled peers, never a second implementation.
     @objc(PBIndexReferenceTransactionTestHarness)
     final nonisolated class IndexReferenceTransactionTestHarness: NSObject {
+        @objc(exerciseCommitWriteWithAcceptedByteCount:error:)
+        static func exerciseCommitWrite(acceptedByteCount: Int) throws {
+            let transaction = IndexReferenceTransaction(timeout: 2)
+            defer { transaction.abortAndClose() }
+            try transaction.launch(context: PBTaskExecutionContext(launchPath: "/bin/sh", arguments: ["-c", "while read command; do :; done"], environment: ["PATH": "/usr/bin:/bin"], workingDirectory: nil))
+            var first = true
+            transaction.controlledWrite = { _, _, count in
+                defer { first = false }
+                return first ? min(count, acceptedByteCount) : 0
+            }
+            try transaction.send("commit\n")
+        }
+
         @objc(exerciseTerminalReadRaceWithAcknowledgement:error:)
         static func exerciseTerminalReadRace(acknowledgement: Bool) throws {
             let transaction = IndexReferenceTransaction(timeout: 5)

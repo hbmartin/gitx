@@ -61,6 +61,18 @@ final class StagingDiffLoadCoordinatorTests: XCTestCase, @unchecked Sendable {
         await fulfillment(of: [validated], timeout: 3)
     }
 
+    func testUnavailableImageIdentityRetainsDiffWithoutMutationAuthority() async {
+        let delivered = expectation(description: "read-only image delivered")
+        StagingDiffLoadCoordinator { _ in .readOnly(diff: "binary diff", detail: "unsafe target") }.schedule([request(path: "unsafe.png")]) { output in
+            XCTAssertEqual(output.sections.first?.text, "binary diff")
+            XCTAssertTrue(output.sections.first?.title.contains("Actions unavailable") == true)
+            XCTAssertEqual(output.sections.first?.stagingChrome, false)
+            XCTAssertNil(output.sections.first?.actionContext)
+            delivered.fulfill()
+        }
+        await fulfillment(of: [delivered], timeout: 3)
+    }
+
     func testSchedulingDoesNotWaitForDiffProduction() async {
         let producerStarted = expectation(description: "producer started")
         let schedulingReturned = expectation(description: "scheduling returned")

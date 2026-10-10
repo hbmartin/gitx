@@ -191,6 +191,63 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
     }
 
+    func testImageDeviceLinkHasReadOnlyControlsAndKeepsItsDiff() throws {
+        let path = "device-preview.png"
+        try FileManager.default.createSymbolicLink(atPath: fixture.path + "/" + path, withDestinationPath: "/dev/zero")
+        let pane = try openStagingPane()
+        try selectUnstagedFile(path, in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Actions unavailable") })
+        XCTAssertTrue(native.textView.string.contains("/dev/zero"))
+        XCTAssertFalse(native.textView.string.contains("Stage hunk"))
+        XCTAssertFalse(native.textView.string.contains("Discard hunk"))
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Unsafe-Image-Read-Only")
+    }
+
+    func testRepeatHunkClickWhileFinishingDoesNotReportAnError() throws {
+        try fixture.write("repeat click fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        waitForFreshDiffAuthority(in: pane, containing: "+repeat click fixture")
+        let native = pane.diffPaneController.contentView
+        let range = (native.textView.string as NSString).range(of: "Stage hunk")
+        let link = try XCTUnwrap(native.textView.textStorage?.attribute(.link, at: range.location, effectiveRange: nil))
+        let failures = UncheckedSendableBox(NSMutableArray())
+        let observer = NotificationCenter.default.addObserver(forName: Notification.Name(PBGitIndexOperationFailed), object: repository.index, queue: .main) { _ in
+            // swift6-safety-justification: NotificationCenter delivers this observer on the main queue, matching the test's AppKit actor.
+            MainActor.assumeIsolated { failures.value.add("failure") }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+        XCTAssertTrue(repository.index.mutationReconciliationPending)
+        XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertEqual(failures.value.count, 0)
+        XCTAssertEqual(try fixture.git(["diff", "--cached", "--name-only"]).trimmingCharacters(in: .newlines), "nested/tracked.txt")
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Repeat-Click-Reconciled")
+    }
+
+    func testDecomposedUnicodeHunkCanBeDiscarded() throws {
+        let path = "cafe\u{301}.txt"
+        try fixture.git(["config", "core.precomposeUnicode", "false"])
+        try fixture.write("original unicode\n", to: path)
+        try fixture.git(["add", "--", path])
+        try fixture.git(["commit", "-qm", "decomposed unicode fixture"])
+        try fixture.write("changed unicode\n", to: path)
+        let pane = try openStagingPane()
+        try selectUnstagedFile(path, in: pane)
+        waitForFreshDiffAuthority(in: pane, containing: "+changed unicode")
+        try activateNativeDiffAction("Discard hunk", in: pane)
+        let window = try XCTUnwrap(windowController.window)
+        XCTAssertTrue(waitForCondition { window.attachedSheet != nil })
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        XCTAssertTrue(waitForCondition {
+            !self.repository.index.mutationReconciliationPending &&
+                (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent(path), encoding: .utf8)) == "original unicode\n"
+        })
+    }
+
     func testWriterRevalidatesCachedHunkAgainstUnpublishedContentChanges() throws {
         try fixture.write("rendered hunk\n", to: "nested/tracked.txt")
         let pane = try openStagingPane()

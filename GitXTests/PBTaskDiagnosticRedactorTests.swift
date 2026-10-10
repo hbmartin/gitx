@@ -2,6 +2,32 @@ import Foundation
 import XCTest
 
 final class PBTaskDiagnosticRedactorTests: XCTestCase {
+    func testDottedUsernameAndNumericPasswordRemainPrivate() throws {
+        let input = Data("https://first.last:2024 Spring!@git.example.com/repo".utf8)
+        for size in 1 ... input.count {
+            let source = PBTaskDiagnosticByteSource(length: Int64(input.count)) { offset, count in
+                Data(input[Int(offset) ..< Int(offset) + count])
+            }
+            var result = Data()
+            try PBTaskDiagnosticRedactor.redact(source: source, incomplete: false, bufferSize: size) { result.append($0) }
+            XCTAssertEqual(String(decoding: result, as: UTF8.self), "https://[redacted]@git.example.com/repo")
+        }
+    }
+
+    func testSingleLabelURLsPreserveFollowingDiagnosticsWithLinearReads() throws {
+        let text = String(repeating: "http://localhost:3000/r http://gitserver/repo contact owner@example.invalid\n", count: 300)
+        let bytes = Data(text.utf8)
+        var readBytes = 0
+        let source = PBTaskDiagnosticByteSource(length: Int64(bytes.count)) { offset, count in
+            readBytes += count
+            return Data(bytes[Int(offset) ..< Int(offset) + count])
+        }
+        var result = Data()
+        try PBTaskDiagnosticRedactor.redact(source: source, incomplete: false, bufferSize: 64) { result.append($0) }
+        XCTAssertEqual(result, bytes)
+        XCTAssertLessThanOrEqual(readBytes, bytes.count * 4)
+    }
+
     func testAmbiguousAuthorityWithoutAtKeepsItsCredentialRedactedAcrossWhitespace() {
         let input = "https://user:secret remaining-secret"
         XCTAssertEqual(PBTaskDiagnostics.redacted(input), PBTaskDiagnosticRedactor.redacted(input))

@@ -21,6 +21,7 @@
 /* End PBXAggregateTarget section */
 
 /* Begin PBXBuildFile section */
+		C0DE90010000000000000001 /* StagingImageReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DE90010000000000000002 /* StagingImageReader.swift */; };
 		FED3AAE90EE43C10492BA56A /* HistoryFileIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */; };
 		00C867DFF1BE1789DBFD0174 /* IndexMutationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */; };
 		DC57A0CECB698C04E264BFCD /* IndexMutationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */; };
@@ -680,6 +681,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0DE90010000000000000002 /* StagingImageReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingImageReader.swift; sourceTree = "<group>"; };
 		8CF62DF5D36594A262A4A9F5 /* HistoryFileIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryFileIdentityTests.swift; sourceTree = "<group>"; };
 		D4F66B61B8D6EE640C581946 /* IndexMutationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinatorTests.swift; sourceTree = "<group>"; };
 		0E37680371F1BA2A2DB20E11 /* IndexMutationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndexMutationCoordinator.swift; sourceTree = "<group>"; };
@@ -1487,6 +1489,7 @@
 				C0DE57A600000000000000B1 /* StagingListViewModel.swift */,
 				C0DE57A600000000000000B3 /* StagingViewController.swift */,
 				C0DE57A600000000000000B4 /* StagingFileListController.swift */,
+				C0DE90010000000000000002 /* StagingImageReader.swift */,
 				C0DE57A600000000000000B5 /* StagingDiffPaneController.swift */,
 				C0DE83000000000000000003 /* StagingDiffLoadCoordinator.swift */,
 				4A5D763014A9A9CC00DF6C68 /* PBGitHistoryController.h */,
@@ -2369,6 +2372,7 @@
 				C0DE57A600000000000000A1 /* StagingListViewModel.swift in Sources */,
 				C0DE57A600000000000000A3 /* StagingViewController.swift in Sources */,
 				C0DE57A600000000000000A4 /* StagingFileListController.swift in Sources */,
+				C0DE90010000000000000001 /* StagingImageReader.swift in Sources */,
 				C0DE57A600000000000000A5 /* StagingDiffPaneController.swift in Sources */,
 				C0DE83000000000000000001 /* StagingDiffLoadCoordinator.swift in Sources */,
 				C0DE57A600000000000000A6 /* StagingFileCellView.swift in Sources */,

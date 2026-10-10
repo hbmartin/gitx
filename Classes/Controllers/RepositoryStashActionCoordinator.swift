@@ -54,6 +54,10 @@ final class RepositoryStashActionCoordinator: NSObject {
     }
 
     private func perform(_ action: () throws -> Void) {
+        guard CommitSubmissionEligibility.allowsMutation(repository.index) else {
+            logger.debug("Ignored stash action while repository mutation is active")
+            return
+        }
         do {
             try action()
             logger.debug("Stash action completed")

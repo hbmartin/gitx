@@ -70,6 +70,64 @@ final class StagingDiffPaneControllerTests: XCTestCase {
     }
 
     #if DEBUG
+        func testImageReaderPreservesRegularSymlinksAndTracksChangedContent() throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let file = root.appendingPathComponent("target")
+            let link = root.appendingPathComponent("image.png")
+            try Data("first".utf8).write(to: file)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+            let first = try PBStagingImageReaderTestHarness.identity(url: link)
+            XCTAssertEqual(try PBStagingImageReaderTestHarness.read(url: link, maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {}), Data("first".utf8))
+            try Data("other".utf8).write(to: file)
+            XCTAssertNotEqual(try PBStagingImageReaderTestHarness.identity(url: link), first)
+            let parentLink = root.appendingPathComponent("linked-parent")
+            try FileManager.default.createSymbolicLink(at: parentLink, withDestinationURL: root)
+            XCTAssertEqual(try PBStagingImageReaderTestHarness.read(url: parentLink.appendingPathComponent("image.png"), maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {}), Data("other".utf8))
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.read(url: link, maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {
+                try? FileManager.default.removeItem(at: link)
+                try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: root.appendingPathComponent("missing"))
+            }))
+        }
+
+        func testImageReaderRefusesDevicesFIFOsLimitsCancellationAndReplacement() throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let file = root.appendingPathComponent("image.png")
+            let fifo = root.appendingPathComponent("pipe")
+            XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+            for target in [URL(fileURLWithPath: "/dev/zero"), URL(fileURLWithPath: "/dev/null"), fifo] {
+                try FileManager.default.createSymbolicLink(at: file, withDestinationURL: target)
+                XCTAssertThrowsError(try PBStagingImageReaderTestHarness.identity(url: file))
+                try FileManager.default.removeItem(at: file)
+            }
+            try Data("contents".utf8).write(to: file)
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.read(url: file, maximumBytes: 2, cancelled: false, timeout: 2, whileReading: {}))
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.read(url: file, maximumBytes: 64, cancelled: true, timeout: 2, whileReading: {}))
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.read(url: file, maximumBytes: 64, cancelled: false, timeout: 0, whileReading: {}))
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.read(url: file, maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {
+                try? Data("replaced".utf8).write(to: file, options: .atomic)
+            }))
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.identity(url: root.appendingPathComponent("missing")))
+            try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.identity(url: file))
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            let loop = root.appendingPathComponent("loop.png")
+            try FileManager.default.createSymbolicLink(at: loop, withDestinationURL: loop)
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.identity(url: loop))
+        }
+
+        func testIndexedImageReadsAreBounded() throws {
+            let task = PBTask(launchPath: "/usr/bin/printf", arguments: ["normal"], inDirectory: nil)
+            XCTAssertEqual(try PBStagingImageReaderTestHarness.readBlob(task: task, maximumBytes: 64), Data("normal".utf8))
+            let large = PBTask(launchPath: "/usr/bin/printf", arguments: ["oversized"], inDirectory: nil)
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.readBlob(task: large, maximumBytes: 2))
+        }
+    #endif
+
+    #if DEBUG
         private func snapshotFixture(_ body: (URL, LifetimeRepository, PBChangedFile) async throws -> Void) async throws {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

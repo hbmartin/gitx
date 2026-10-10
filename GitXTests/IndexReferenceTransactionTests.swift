@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 
@@ -152,6 +153,67 @@ final class IndexReferenceTransactionTests: XCTestCase {
             try probe()
             try probe()
             XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8), "probe\nprobe\nprobe\n")
+            try install("read command; printf 'unsupported\\n'; exit 1\n")
+            XCTAssertThrowsError(try probe(), "Replacing a previously successful executable invalidates its capability")
+        }
+
+        func testZeroAndPartialCommitWritesDistinguishUnsentAndUncertainPublication() {
+            for count in [0, 1] {
+                XCTAssertThrowsError(try PBIndexReferenceTransactionTestHarness.exerciseCommitWrite(acceptedByteCount: count)) { error in
+                    XCTAssertEqual(error.localizedDescription.contains("may already be published"), count > 0)
+                }
+            }
+        }
+
+        func testDefinitivelyUnsupportedCapabilityIsCached() throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let executable = directory.appendingPathComponent("peer")
+            try "#!/bin/sh\nprintf 'probe\\n' >> probes\nread command; printf 'fatal: unknown command: start\\n' >&2; exit 1\n".write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+            for _ in 0 ..< 2 {
+                XCTAssertThrowsError(try PBIndexReferenceCapabilityTestHarness.require(task: PBTask(launchPath: executable.path, arguments: [], inDirectory: directory.path)))
+            }
+            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8), "probe\n")
+        }
+
+        func testCapabilityProbesCoalescePerExecutableWithoutBlockingOtherExecutables() throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let entered = directory.appendingPathComponent("entered")
+            let gate = directory.appendingPathComponent("gate")
+            XCTAssertEqual(mkfifo(entered.path, 0o600), 0)
+            XCTAssertEqual(mkfifo(gate.path, 0o600), 0)
+            let enteredFD = open(entered.path, O_RDWR | O_NONBLOCK)
+            let gateFD = open(gate.path, O_RDWR | O_NONBLOCK)
+            defer { close(enteredFD); close(gateFD) }
+            let slow = directory.appendingPathComponent("slow")
+            let fast = directory.appendingPathComponent("fast")
+            try "#!/bin/sh\nprintf 'probe\\n' >> probes\nread command; printf r > entered; read release < gate; printf 'start: ok\\n'; while read command; do printf '%s: ok\\n' \"$command\"; done\n".write(to: slow, atomically: true, encoding: .utf8)
+            try "#!/bin/sh\nwhile read command; do printf '%s: ok\\n' \"$command\"; done\n".write(to: fast, atomically: true, encoding: .utf8)
+            for path in [slow, fast] {
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+            }
+            let completed = expectation(description: "coalesced slow probes complete")
+            completed.expectedFulfillmentCount = 2
+            for _ in 0 ..< 2 {
+                DispatchQueue.global().async {
+                    defer { completed.fulfill() }
+                    do { try PBIndexReferenceCapabilityTestHarness.require(task: PBTask(launchPath: slow.path, arguments: [], inDirectory: directory.path)) }
+                    catch { XCTFail("Controlled capability probe failed: \(error)") }
+                }
+            }
+            var readiness = pollfd(fd: enteredFD, events: Int16(POLLIN), revents: 0)
+            XCTAssertEqual(poll(&readiness, 1, 2000), 1)
+            defer { _ = "release\n".withCString { Darwin.write(gateFD, $0, 8) } }
+            let start = ProcessInfo.processInfo.systemUptime
+            try PBIndexReferenceCapabilityTestHarness.require(task: PBTask(launchPath: fast.path, arguments: [], inDirectory: directory.path))
+            XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - start, 1)
+            _ = "release\n".withCString { Darwin.write(gateFD, $0, 8) }
+            wait(for: [completed], timeout: 7)
+            XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("probes"), encoding: .utf8), "probe\n")
         }
 
         func testCancellationAfterCommitAcknowledgementStillSettlesPublication() throws {

@@ -150,6 +150,11 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
     private var depth = 0
     private var observers: [UUID: Observer] = [:]
 
+    var isBusy: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return pending > 0 || depth > 0
+    }
+
     func observe(_ observer: @escaping Observer) -> UUID {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -186,10 +191,13 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
     }
 
     func perform<Value>(_ operation: String, _ body: () throws -> Value) throws -> Value {
-        if Thread.isMainThread {
-            guard lock.try() else { throw Self.busyError() }
-        } else {
-            lock.lock()
+        guard lock.try() else { throw Self.busyError() }
+        stateLock.lock()
+        let queuedOwner = depth == 0 && pending > 0
+        stateLock.unlock()
+        if queuedOwner {
+            lock.unlock()
+            throw Self.busyError()
         }
         return try withOwnedState(operation, scheduled: false, body)
     }
@@ -234,11 +242,34 @@ final nonisolated class IndexWriterCoordinator: @unchecked Sendable {
     }
 
     static func writesIndex(_ arguments: [String]) -> Bool {
-        guard !arguments.contains("-h"), !arguments.contains("--help") else { return false }
-        let command = arguments.first { !$0.hasPrefix("-") } ?? ""
-        return ["update-index", "reset", "apply", "checkout-index", "write-tree", "commit-tree", "update-ref"].contains(command)
+        var position = 0
+        while position < arguments.count, arguments[position].hasPrefix("-") {
+            let option = arguments[position]
+            if ["-h", "--help", "--version"].contains(option) {
+                return false
+            }
+            position += ["-c", "-C", "--git-dir", "--work-tree", "--namespace", "--config-env"].contains(option) ? 2 : 1
+        }
+        guard position < arguments.count else { return false }
+        let command = arguments[position]
+        let options = arguments.dropFirst(position + 1).prefix { $0 != "--" }
+        if options.contains("-h") || options.contains("--help") {
+            return false
+        }
+        return ["update-index", "reset", "apply", "checkout-index", "write-tree", "commit-tree", "update-ref",
+                "checkout", "switch", "restore", "stash", "merge", "cherry-pick", "rebase", "revert", "am", "pull", "branch", "tag"].contains(command)
     }
 }
+
+#if GITX_APP_TARGET && DEBUG
+    @objc(PBIndexWriterCommandTestHarness)
+    final nonisolated class IndexWriterCommandTestHarness: NSObject {
+        @objc(writesIndexWithArguments:)
+        static func writesIndex(arguments: [String]) -> Bool {
+            IndexWriterCoordinator.writesIndex(arguments)
+        }
+    }
+#endif
 
 private final nonisolated class WeakIndexWriter {
     weak var value: IndexWriterCoordinator?
