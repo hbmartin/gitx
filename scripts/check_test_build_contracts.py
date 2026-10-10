@@ -89,7 +89,7 @@ def main():
         paths = session.cache_paths(configuration=configuration, developer=str(developer))
         command = [str(developer / "usr/bin/xcodebuild"), "-workspace", "GitX.xcworkspace", "-scheme", "GitX",
                    "-configuration", configuration, "-derivedDataPath", paths["derivedData"], "-clonedSourcePackagesDirPath", paths["sourcePackages"],
-                   "-showBuildSettings", "-json", "ENABLE_TESTABILITY=YES", "CODE_SIGN_IDENTITY=-"]
+                   "-onlyUsePackageVersionsFromResolvedFile", "-showBuildSettings", "-json", "ENABLE_TESTABILITY=YES", "CODE_SIGN_IDENTITY=-"]
         command.extend(["build-for-testing", "-testPlan", "GitX"])
         result = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=120)
         if result.returncode:

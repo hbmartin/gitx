@@ -110,6 +110,57 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
 
+    def test_verification_preserves_resolved_packages_when_a_newer_version_is_available(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        resolved = self.root / "GitX.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+        pinned = {"pins": [{"identity": "swift-cmark", "state": {"version": "0.8.0"}}], "version": 3}
+        resolved.write_text(json.dumps(pinned))
+        (self.root / ".gitignore").write_text("__pycache__/\n")
+        subprocess.run(["git", "init", "--quiet", self.root], check=True, env=self.fixture_environment)
+        subprocess.run(["git", "-C", self.root, "add", str(resolved)], check=True, env=self.fixture_environment)
+        mock = self.developer_directory / "usr/bin/xcodebuild"
+        mock.write_text(mock.read_text() +
+                        '\nif [[ " $* " != *" -onlyUsePackageVersionsFromResolvedFile "* && '
+                        '" $* " != *" -disableAutomaticPackageResolution "* ]]; then\n'
+                        '  python3 - "$MOCK_RESOLVED_FILE" <<\'PY\'\n'
+                        'import json, pathlib, sys\n'
+                        'path = pathlib.Path(sys.argv[1])\n'
+                        'data = json.loads(path.read_text())\n'
+                        'data["pins"][0]["state"]["version"] = "0.9.0"\n'
+                        'path.write_text(json.dumps(data))\n'
+                        'PY\nfi\n')
+        self.environment["MOCK_RESOLVED_FILE"] = str(resolved)
+        for name, arguments in (("build", ["build"]), ("ui", ["test", "ui"]),
+                                ("raw-ui", ["raw", "--", "test", "-testPlan", "GitXUI"])):
+            with self.subTest(action=name):
+                resolved.write_text(json.dumps(pinned))
+                result = subprocess.run([script, "--run-id", f"pinned-{name}", *arguments],
+                                        capture_output=True, text=True, env=self.environment)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(json.loads(resolved.read_text()), pinned)
+                self.assertEqual(self.receipt(f"pinned-{name}")["evidence"]["status"], "valid")
+
+    def test_verification_still_rejects_dependency_drift_after_a_successful_build(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        resolved = self.root / "GitX.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+        (self.root / ".gitignore").write_text("__pycache__/\n")
+        subprocess.run(["git", "init", "--quiet", self.root], check=True, env=self.fixture_environment)
+        subprocess.run(["git", "-C", self.root, "add", str(resolved)], check=True, env=self.fixture_environment)
+        mock = self.developer_directory / "usr/bin/xcodebuild"
+        mock.write_text(mock.read_text() + '\nif [[ " $* " == *" build "* ]]; then\n'
+                        '  printf \'{"pins": [{"identity": "swift-cmark", "state": {"version": "0.9.0"}}]}\\n\' > "$MOCK_RESOLVED_FILE"\n'
+                        'fi\n')
+        self.environment["MOCK_RESOLVED_FILE"] = str(resolved)
+        result = subprocess.run([script, "--run-id", "unexpected-dependency-drift", "build"],
+                                capture_output=True, text=True, env=self.environment)
+        self.assertEqual(result.returncode, 76, result.stdout + result.stderr)
+        coordination = self.root / "artifacts/verification/Coordination/unexpected-dependency-drift.json"
+        evidence = json.loads(coordination.read_text())["evidence"]
+        self.assertEqual(evidence["status"], "invalid")
+        self.assertIn("source", evidence["changedInputs"])
+
     def test_compilation_cache_mode_is_managed_and_recorded(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
