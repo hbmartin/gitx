@@ -65,21 +65,29 @@ nonisolated protocol IndexCommitReferenceRunning: AnyObject {
     nonisolated func publishCommit(_ oid: String, request: IndexCommitRequest, subject: String) throws
 }
 
-// swift6-safety-justification: A lock protects the executable identity cache and serializes its one capability probe.
+// swift6-safety-justification: The condition protects the executable identity cache and in-flight set; probing never owns this global lock.
 private final nonisolated class IndexPreparedReferenceCapabilities: @unchecked Sendable {
     static let shared = IndexPreparedReferenceCapabilities()
-    private let lock = NSLock()
+    private let lock = NSCondition()
     private var results: [String: Result<Void, Error>] = [:]
+    private var probing: Set<String> = []
 
     func require(context: PBTaskExecutionContext, cancellation: IndexCommitCancellation) throws {
         let identity = IndexGitExecutableIdentity.identity(path: context.launchPath)
         lock.lock()
-        defer { lock.unlock() }
+        while probing.contains(identity) {
+            _ = lock.wait(until: Date().addingTimeInterval(0.05))
+            do { try cancellation.check() }
+            catch { lock.unlock(); throw error }
+        }
         if let result = results[identity] {
+            lock.unlock()
             return try result.get()
         }
+        probing.insert(identity)
+        lock.unlock()
         let result = Result<Void, Error> {
-            let transaction = IndexReferenceTransaction(checkCancellation: cancellation.check)
+            let transaction = IndexReferenceTransaction(timeout: 5, checkCancellation: cancellation.check)
             defer { transaction.abortAndClose() }
             try transaction.launch(context: context)
             try transaction.send("start\nprepare\nabort\n")
@@ -96,14 +104,23 @@ private final nonisolated class IndexPreparedReferenceCapabilities: @unchecked S
                 NSUnderlyingErrorKey: error,
             ])
         }
-        if case let .failure(error) = result, (error as NSError).code == 3 {
-            throw error
-        }
         // Repository/configuration, launch and resource errors do not establish
         // an executable's capability. Only a successful probe is reusable.
-        if case .success = result {
-            results[identity] = result
+        lock.lock()
+        probing.remove(identity)
+        switch result {
+        case .success: results[identity] = result
+        case let .failure(error):
+            let underlying = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError
+            let diagnostic = underlying?.localizedFailureReason ?? ""
+            // Only Git's explicit protocol rejection establishes lack of
+            // capability. Resource/configuration errors remain retryable.
+            if diagnostic.contains("unknown command: start") || diagnostic.contains("unknown command: prepare") {
+                results[identity] = result
+            }
         }
+        lock.broadcast()
+        lock.unlock()
         try result.get()
     }
 }

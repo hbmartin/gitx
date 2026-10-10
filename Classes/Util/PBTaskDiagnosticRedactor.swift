@@ -120,6 +120,7 @@ nonisolated enum PBTaskDiagnosticRedactor {
         var colon = authorityColon
         var lastAt = authorityAt
         var firstWhitespace: Int64?
+        var tailHasHostSyntax: Bool?
         var tokenHasLetter = false
         var tokenStart = authorityEnd
         let authorityHasHostSyntax = try hasHostSyntax(start: start, end: authorityColon ?? authorityEnd, cursor: cursor)
@@ -131,13 +132,22 @@ nonisolated enum PBTaskDiagnosticRedactor {
             // Inspect malformed credentials within the URL, but an ordinary
             // host/path ends at whitespace. Following diagnostics and email
             // addresses must not become userinfo or trigger repeated scans.
-            if byte <= 32, authorityHasHostSyntax, !initiallyAmbiguous, authorityAt == nil {
-                break
-            }
-            if byte <= 32, let lastAt,
-               try authorityAt != nil || hasHostSyntax(start: lastAt + 1, end: end, cursor: cursor)
+            // A numeric prefix can be a password followed by whitespace. An
+            // actual path, however, ends at its first whitespace even for a
+            // single-label host. Do not scan the remainder of every log line.
+            if byte <= 32, !initiallyAmbiguous, authorityAt == nil,
+               colon == nil || numericPort || (authorityHasHostSyntax && authorityColon == nil), authorityEnd < end,
+               try cursor.byte(at: authorityEnd) > 32
             {
                 break
+            }
+            if byte <= 32, let lastAt {
+                if tailHasHostSyntax == nil {
+                    tailHasHostSyntax = try hasHostSyntax(start: lastAt + 1, end: end, cursor: cursor)
+                }
+                if authorityAt != nil || tailHasHostSyntax == true {
+                    break
+                }
             }
             if byte <= 32, firstWhitespace == nil {
                 firstWhitespace = end
@@ -156,6 +166,7 @@ nonisolated enum PBTaskDiagnosticRedactor {
             }
             if byte == 64 {
                 lastAt = end
+                tailHasHostSyntax = nil
             }
             if isSchemeByte(byte) {
                 tokenHasLetter = tokenHasLetter || isLetter(byte)
@@ -177,7 +188,9 @@ nonisolated enum PBTaskDiagnosticRedactor {
         if ambiguous {
             return AuthoritySpan(end: end, lastAt: nil, ambiguous: true)
         }
-        return AuthoritySpan(end: authorityEnd, lastAt: nil, ambiguous: false)
+        // Everything inspected was ordinary text. Advance through it once;
+        // returning to authorityEnd would repeatedly inspect the same suffix.
+        return AuthoritySpan(end: end, lastAt: nil, ambiguous: false)
     }
 
     private static func hasHostSyntax(start: Int64, end: Int64, cursor: Cursor) throws -> Bool {

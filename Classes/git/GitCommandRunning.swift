@@ -20,14 +20,16 @@ protocol GitEvidenceCommandRunning: GitCommandRunning {
 final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
     private unowned let repository: PBGitRepository
     private let makeCapture: @Sendable () -> PBTaskDiagnosticCapture
+    private let writer: IndexWriterCoordinator
 
     init(repository: PBGitRepository, makeCapture: @escaping @Sendable () -> PBTaskDiagnosticCapture = PBTaskDiagnosticCapture.init) {
         self.repository = repository
         self.makeCapture = makeCapture
+        writer = IndexRepositoryCommandRunner(repository: repository).writerCoordinator
     }
 
     func output(arguments: [String]) throws -> String {
-        try repository.outputOfTask(withArguments: arguments)
+        try perform(arguments) { try repository.outputOfTask(withArguments: arguments) }
     }
 
     func historyOutput(arguments: [String]) throws -> String {
@@ -45,7 +47,7 @@ final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
         var additions = task.additionalEnvironment ?? [:]
         environment?.forEach { additions[$0.key] = $0.value }
         task.additionalEnvironment = Self.protectedHistoryEnvironment(additions)
-        try task.launch()
+        try perform(arguments) { try task.launch() }
         return task.standardOutputData
     }
 
@@ -117,7 +119,15 @@ final nonisolated class RepositoryGitCommandRunner: GitEvidenceCommandRunning {
 
     func launch(arguments: [String]) throws {
         let task = repository.task(withArguments: arguments)
-        _ = try task.launch()
+        _ = try perform(arguments) { try task.launch() }
+    }
+
+    private func perform<Value>(_ arguments: [String], _ body: () throws -> Value) throws -> Value {
+        guard IndexWriterCoordinator.writesIndex(arguments) else { return try body() }
+        if Thread.isMainThread, repository.index.mutationReconciliationPending || repository.index.submissionActive {
+            throw IndexWriterCoordinator.busyError()
+        }
+        return try writer.perform(arguments.joined(separator: " "), body)
     }
 
     private static func protectedHistoryEnvironment(_ inherited: [String: Any]) -> [String: Any] {

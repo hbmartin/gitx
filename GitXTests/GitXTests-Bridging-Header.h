@@ -44,7 +44,11 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)requireWithTask:(PBTask *)task cancelled:(BOOL)cancelled error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(require(task:cancelled:));
 + (BOOL)clearCapturedMergeStateInDirectory:(NSString *)directory replacementMessage:(nullable NSString *)replacementMessage error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(clearCapturedMergeState(directory:replacementMessage:));
 @end
+@interface PBIndexWriterCommandTestHarness : NSObject
++ (BOOL)writesIndexWithArguments:(NSArray<NSString *> *)arguments NS_SWIFT_NAME(writesIndex(arguments:));
+@end
 @interface PBIndexReferenceTransactionTestHarness : NSObject
++ (BOOL)exerciseCommitWriteWithAcceptedByteCount:(NSInteger)acceptedByteCount error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseCommitWrite(acceptedByteCount:));
 + (BOOL)exerciseTerminalReadRaceWithAcknowledgement:(BOOL)acknowledgement error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exerciseTerminalReadRace(acknowledgement:));
 + (BOOL)exerciseWithLaunchPath:(NSString *)launchPath arguments:(NSArray<NSString *> *)arguments workingDirectory:(nullable NSString *)workingDirectory commands:(NSArray<NSString *> *)commands acknowledgements:(NSArray<NSString *> *)acknowledgements timeout:(NSTimeInterval)timeout cancelAfterAcknowledgement:(NSInteger)cancelAfter error:(NSError *_Nullable *_Nullable)error NS_SWIFT_NAME(exercise(launchPath:arguments:workingDirectory:commands:acknowledgements:timeout:cancelAfterAcknowledgement:));
 @end
@@ -800,6 +804,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @end
 
 @interface PBRepositoryMutationService : NSObject
+- (instancetype)initWithRepository:(PBGitRepository *)repository NS_SWIFT_NAME(init(repository:));
 - (instancetype)initWithRepository:(PBGitRepository *)repository runner:(id<PBGitCommandRunning>)runner;
 - (NSString *)performDiff:(PBGitCommit *)startCommit against:(nullable PBGitCommit *)diffCommit forFiles:(nullable NSArray<NSString *> *)filePaths;
 - (BOOL)checkoutRefish:(id<PBGitRefish>)ref error:(NSError * _Nullable * _Nullable)error __attribute__((swift_error(none)));
@@ -885,6 +890,7 @@ typedef NS_ENUM(NSInteger, PBRecentRepositoryActivationAction) {
 @end
 
 @interface PBIndexOperationErrorPresentation : NSObject
++ (NSString *)detailForError:(NSError *)error NS_SWIFT_NAME(detail(for:));
 + (NSString *)messageForOperation:(NSString *)operation error:(nullable NSError *)error NS_SWIFT_NAME(message(forOperation:error:));
 @end
 
@@ -1594,3 +1600,13 @@ typedef NS_ENUM(NSInteger, PBRepositoryForgeScriptingErrorCode) {
 @end
 
 NS_ASSUME_NONNULL_END
+
+#if DEBUG
+NS_ASSUME_NONNULL_BEGIN
+@interface PBStagingImageReaderTestHarness : NSObject
++ (nullable NSData *)readURL:(NSURL *)url maximumBytes:(NSInteger)maximumBytes cancelled:(BOOL)cancelled timeout:(double)timeout whileReading:(void (^)(void))whileReading error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(read(url:maximumBytes:cancelled:timeout:whileReading:));
++ (nullable NSString *)identityForURL:(NSURL *)url error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(identity(url:));
++ (nullable NSData *)readBlobTask:(PBTask *)task maximumBytes:(NSInteger)maximumBytes error:(NSError * _Nullable * _Nullable)error NS_SWIFT_NAME(readBlob(task:maximumBytes:));
+@end
+NS_ASSUME_NONNULL_END
+#endif

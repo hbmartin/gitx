@@ -60,14 +60,11 @@ private final nonisolated class StagingImageLookup: @unchecked Sendable {
 
     func data() -> Data? {
         NSLog("[GitX] Reading staging image data on %@", Thread.isMainThread ? "main" : "renderer queue")
-        if let workingFileURL,
-           let data = try? Data(contentsOf: workingFileURL), !data.isEmpty
-        {
-            return data
+        if let workingFileURL {
+            return try? StagingImageReader.shared.read(workingFileURL).data
         }
-        guard (try? indexTask.launch()) != nil else { return nil }
-        let data = indexTask.standardOutputData
-        return data.isEmpty ? nil : data
+        let data = try? StagingImageBlobReader(task: indexTask).read()
+        return data?.isEmpty == false ? data : nil
     }
 }
 
@@ -229,8 +226,6 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
     private let repository: PBGitRepository
     private let mutationService: IndexMutationService
     private let runner: IndexCommandRunning
-    private let imageCacheLock = NSLock()
-    private var imageHashes: [String: String] = [:]
 
     init(repository: PBGitRepository, runner: IndexCommandRunning? = nil) {
         self.repository = repository
@@ -239,7 +234,7 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
         mutationService = IndexMutationService(repository: repository, runner: commands)
     }
 
-    func produce(_ request: StagingDiffLoadRequest, resolvedTree: String? = nil) -> StagingDiffProduction {
+    func produce(_ request: StagingDiffLoadRequest, resolvedTree: String? = nil, shouldCancel: () -> Bool = { false }) -> StagingDiffProduction {
         switch produceText(request) {
         case let .success(diff):
             do {
@@ -247,10 +242,10 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
                 // Unknown visual input must disable reuse/authorization, while
                 // retaining the diff and conflict details already produced.
                 let visual: String
-                do { visual = try imageIdentity(request) }
+                do { visual = try imageIdentity(request, shouldCancel: shouldCancel) }
                 catch {
                     NSLog("[GitX] Image identity unavailable for %@: %@", request.path, error.localizedDescription)
-                    visual = "unavailable:" + UUID().uuidString
+                    return .readOnly(diff: diff, detail: error.localizedDescription)
                 }
                 return .validated(diff: diff, parentTree: tree, visualIdentity: visual)
             } catch { return .failure(detail(for: error as NSError)) }
@@ -286,7 +281,7 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
             for group in groups {
                 let paths = group.compactMap { IndexFilePresentation.safePath(rawPath: $0.rawPath) }
                 func data(_ arguments: [String]) throws -> Data {
-                    let arguments = ["--literal-pathspecs"] + arguments + ["--"] + paths
+                    let arguments = ["-c", "core.precomposeUnicode=false", "--literal-pathspecs"] + arguments + ["--"] + paths
                     let environment: [String: Any] = ["GIT_OPTIONAL_LOCKS": "0"]
                     if let raw = runner as? IndexRawOutputCommandRunning {
                         return try raw.rawOutput(arguments: arguments, environment: environment)
@@ -348,70 +343,26 @@ private final nonisolated class IndexMutationStagingDiffProducer: @unchecked Sen
         }
     }
 
-    private func imageIdentity(_ request: StagingDiffLoadRequest) throws -> String {
+    private func imageIdentity(_ request: StagingDiffLoadRequest, shouldCancel: () -> Bool) throws -> String {
         guard ["png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "icns", "heic", "webp"].contains((request.path as NSString).pathExtension.lowercased()) else { return "" }
-        guard let path = IndexFilePresentation.safePath(rawPath: request.rawPath) else { return "unavailable" }
+        guard let path = IndexFilePresentation.safePath(rawPath: request.rawPath) else { throw StagingImageReader.failure("The image path cannot be represented safely.") }
         if request.staged {
             if request.status == PBChangedFileStatus.DELETED.rawValue {
                 return "absent:index"
             }
-            return try runner.output(arguments: ["rev-parse", "--verify", ":0:" + path], input: nil, environment: nil).trimmingCharacters(in: .newlines)
+            let object = try runner.output(arguments: ["rev-parse", "--verify", ":0:" + path], input: nil, environment: nil).trimmingCharacters(in: .newlines)
+            let size = try runner.output(arguments: ["cat-file", "-s", object], input: nil, environment: nil).trimmingCharacters(in: .newlines)
+            guard !shouldCancel(), let count = Int(size), count >= 0, count <= StagingImageReader.maximumBytes else {
+                throw StagingImageReader.failure("Indexed image is unavailable or exceeds the preview limit.")
+            }
+            return object
         }
-        guard let directory = request.workingDirectoryURL else { return "unavailable" }
+        guard let directory = request.workingDirectoryURL else { throw StagingImageReader.failure("The image working directory is unavailable.") }
         let url = directory.appendingPathComponent(path)
         if request.status == PBChangedFileStatus.DELETED.rawValue {
             return "absent:worktree"
         }
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue ?? 0
-        var hash = SHA256()
-        if attributes[.type] as? FileAttributeType == .typeSymbolicLink {
-            let destination = try FileManager.default.destinationOfSymbolicLink(atPath: url.path)
-            hash.update(data: Data(destination.utf8))
-            if !FileManager.default.fileExists(atPath: url.path) {
-                return "symlink:" + hash.finalize().map { String(format: "%02x", $0) }.joined() + ":" + String(mode)
-            }
-        }
-        try hash.update(data: Data(imageContentHash(url).utf8))
-        return hash.finalize().map { String(format: "%02x", $0) }.joined() + ":" + String(mode)
-    }
-
-    private func imageContentHash(_ url: URL) throws -> String {
-        let file = try FileHandle(forReadingFrom: url)
-        defer { try? file.close() }
-        func identity(descriptor: Int32?) throws -> String {
-            var status = stat()
-            let result = descriptor.map { fstat($0, &status) } ?? stat(url.path, &status)
-            guard result == 0 else { throw POSIXError(.EIO) }
-            return "\(status.st_dev):\(status.st_ino):\(status.st_mode):\(status.st_size):\(status.st_mtimespec.tv_sec):\(status.st_mtimespec.tv_nsec):\(status.st_ctimespec.tv_sec):\(status.st_ctimespec.tv_nsec)"
-        }
-        let key = try identity(descriptor: file.fileDescriptor)
-        imageCacheLock.lock()
-        let cached = imageHashes[key]
-        imageCacheLock.unlock()
-        var hash = SHA256()
-        if cached == nil {
-            while let bytes = try file.read(upToCount: 64 * 1024), !bytes.isEmpty {
-                hash.update(data: bytes)
-            }
-        }
-        // An edit or path replacement during hashing cannot authorize a patch
-        // using bytes from an older descriptor. ctime protects restored mtimes.
-        guard try identity(descriptor: file.fileDescriptor) == key, try identity(descriptor: nil) == key else {
-            throw NSError(domain: "PBGitIndexMutationError", code: 8, userInfo: [NSLocalizedDescriptionKey: "Image content changed while its diff was being loaded."])
-        }
-        if let cached {
-            NSLog("[GitX] Reused unchanged staging image identity for %@", url.lastPathComponent)
-            return cached
-        }
-        let result = hash.finalize().map { String(format: "%02x", $0) }.joined()
-        imageCacheLock.lock()
-        if imageHashes.count >= 64 {
-            imageHashes.removeAll()
-        }
-        imageHashes[key] = result
-        imageCacheLock.unlock()
-        return result
+        return try StagingImageReader.shared.read(url, includeData: false, shouldCancel: shouldCancel).identity
     }
 
     private func produceText(_ request: StagingDiffLoadRequest) -> StagingTextProduction {
@@ -540,7 +491,7 @@ final class StagingDiffPaneController: NSObject {
         contentView = PBNativeContentView(frame: .zero)
         let production = IndexMutationStagingDiffProducer(repository: repository, runner: diffRunner)
         producer = production
-        loadCoordinator = StagingDiffLoadCoordinator(producer: { production.produce($0) })
+        loadCoordinator = StagingDiffLoadCoordinator(cancellableProducer: { production.produce($0, shouldCancel: $1) })
         let savedContext = UserDefaults.standard.object(forKey: Self.contextLinesKey) as? Int
         contextLines = UInt(max(0, savedContext ?? 3))
         super.init()
@@ -705,6 +656,10 @@ final class StagingDiffPaneController: NSObject {
     }
 
     private func acceptsAction(_ action: String, context: [String: Any]) -> Bool {
+        guard CommitSubmissionEligibility.allowsMutation(repository.index) else {
+            NSLog("[GitX] Ignored a staging action while mutation or reconciliation is active")
+            return false
+        }
         guard let token = StagingDiffActionContext(dictionary: context), token.permits(action),
               stillSelected(token), CommitSubmissionEligibility.allowsMutation(repository.index)
         else {

@@ -509,6 +509,34 @@ final class IndexSnapshotTests: XCTestCase {
         XCTAssertEqual(PBIndexFilePresentation.discardableFiles(from: [deleted, modified, stagedOnly]), [modified])
     }
 
+    func testNestedIndexErrorsAreDeduplicatedBoundedAndRedacted() {
+        let child = NSError(domain: "Git", code: 128, userInfo: [NSLocalizedDescriptionKey: "Git failed",
+                                                                 PBTaskTerminationOutputKey: "https://first.last:2024 Spring!@git.example.com/repo",
+                                                                 PBTaskTerminationStatusKey: 128])
+        let wrapper = NSError(domain: "Wrapper", code: 4, userInfo: [NSLocalizedDescriptionKey: "Capability unavailable", NSUnderlyingErrorKey: child])
+        let detail = PBIndexOperationErrorPresentation.detail(for: wrapper)
+        XCTAssertTrue(detail.contains("Capability unavailable"))
+        XCTAssertTrue(detail.contains("Git failed"))
+        XCTAssertTrue(detail.contains("Exit status: 128"))
+        XCTAssertFalse(detail.contains("Spring!"))
+        XCTAssertTrue(detail.contains("[redacted]@git.example.com"))
+        let huge = NSError(domain: "Git", code: 1, userInfo: [NSLocalizedDescriptionKey: String(repeating: "x", count: 200_000), NSLocalizedRecoverySuggestionErrorKey: "https://user:secret@gitserver/repo"])
+        let bounded = PBIndexOperationErrorPresentation.detail(for: huge)
+        XCTAssertLessThanOrEqual(bounded.count, 64 * 1024)
+        XCTAssertFalse(bounded.contains("secret"))
+    }
+
+    func testUnderlyingIndexErrorCyclesTerminate() {
+        // swift6-safety-justification: This immutable NSError subclass creates its cycle on demand and owns no mutable state.
+        final class LoopError: NSError, @unchecked Sendable {
+            override var userInfo: [String: Any] {
+                [NSLocalizedDescriptionKey: "cyclic failure", NSUnderlyingErrorKey: self]
+            }
+        }
+        let error = LoopError(domain: "Cycle", code: 1)
+        XCTAssertLessThan(PBIndexOperationErrorPresentation.detail(for: error).count, 200)
+    }
+
     func testIndexOperationErrorsIncludeOrdinaryAndTaskDiagnostics() {
         XCTAssertEqual(PBIndexOperationErrorPresentation.message(forOperation: "Stage failed", error: nil), "Stage failed")
         let ordinary = NSError(domain: "Test", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unavailable Git", NSLocalizedFailureReasonErrorKey: "Choose another executable"])

@@ -95,6 +95,7 @@ struct StagingDiffLoadRequest: Equatable, Sendable {
 enum StagingDiffProduction: Equatable, Sendable {
     case validated(diff: String, parentTree: String, visualIdentity: String)
     case failure(String)
+    case readOnly(diff: String, detail: String)
 }
 
 nonisolated struct StagingDiffSectionDescriptor: Equatable, Sendable {
@@ -135,13 +136,17 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
         var pendingGeneration: UInt?
     }
 
-    private let producer: Producer
+    private let producer: @Sendable (StagingDiffLoadRequest, @Sendable () -> Bool) -> StagingDiffProduction
     private let queue = DispatchQueue(label: "com.gitx.staging-diff-load", qos: .userInitiated)
     private let stateLock = NSLock()
     private var state = State()
 
     init(producer: @escaping Producer) {
-        self.producer = producer
+        self.producer = { request, _ in producer(request) }
+    }
+
+    init(cancellableProducer: @escaping @Sendable (StagingDiffLoadRequest, @Sendable () -> Bool) -> StagingDiffProduction) {
+        producer = cancellableProducer
     }
 
     @discardableResult
@@ -227,10 +232,14 @@ final nonisolated class StagingDiffLoadCoordinator: @unchecked Sendable {
                 UInt64(generation),
                 request.path
             )
-            switch producer(request) {
+            switch producer(request, { [self] in mutateState { $0.latestGeneration != generation } }) {
             case let .validated(diff, parentTree, visualIdentity):
                 let token = StagingDiffActionContext(request: request, diff: diff, parentTree: parentTree, visualIdentity: visualIdentity)
                 sections.append(successfulSection(for: request, diff: diff, actionContext: token))
+            case let .readOnly(diff, detail):
+                sections.append(StagingDiffSectionDescriptor(title: "Actions unavailable — " + request.path, path: request.path,
+                                                             text: diff, context: "read-only", stagingChrome: false))
+                NSLog("[GitX] Staging image actions unavailable: %@", detail)
             case let .failure(detail):
                 NSLog(
                     "[GitX] Staging diff generation %llu failed for %@: %@",

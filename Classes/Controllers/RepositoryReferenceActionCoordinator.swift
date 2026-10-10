@@ -165,6 +165,10 @@ final class RepositoryReferenceActionCoordinator: NSObject {
     }
 
     private func perform(_ action: () throws -> Void) {
+        guard CommitSubmissionEligibility.allowsMutation(repository.index) else {
+            logger.debug("Ignored reference action while repository mutation is active")
+            return
+        }
         do {
             try action()
             logger.debug("Reference action completed")
