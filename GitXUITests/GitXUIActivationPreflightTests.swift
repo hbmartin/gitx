@@ -82,6 +82,7 @@ final class GitXUIActivationPreflightTests: XCTestCase, @unchecked Sendable {
     private func makeRepositoryFixture() throws -> URL {
         let repository = try makeDirectory(named: "repository")
         _ = try git(["init", "--quiet", "--initial-branch", "main"], in: repository)
+        try GitXUITestRepositoryPolicy.excludeFinderMetadata(inRepositoryAtPath: repository.path)
         _ = try git(["config", "user.name", "GitX UI Preflight"], in: repository)
         _ = try git(["config", "user.email", "ui-preflight@gitx.invalid"], in: repository)
         try "fixture\n".write(

@@ -704,6 +704,48 @@
           "check": "release-contracts"
         }
       ]
+    },
+    {
+      "id": "ENV-002",
+      "family": "Finder metadata in UI fixtures",
+      "invariant": "UI fixture repositories ignore untracked Finder metadata while preserving real untracked files, explicitly tracked metadata and existing exclusion rules.",
+      "rootCause": "Finder-created .DS_Store files alter first-file selection, dirty counts and before/after status oracles.",
+      "sourcePaths": [
+        "GitXUITests/GitXUITestFixtureWorkspace.swift",
+        "GitXUITests/GitXScreenshotTests.m",
+        "GitXUITests/GitXUIActivationPreflightTests.swift",
+        "GitXUITests/Milestone2WorkflowUITests.swift",
+        "GitXUITests/Milestone3WorkflowUITests.swift"
+      ],
+      "requiredChecks": [
+        "ui",
+        "debug-test-build",
+        "release-test-build",
+        "static"
+      ],
+      "tests": [
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureKeepsRealUntrackedFilesAndExplicitlyTrackedFinderMetadata",
+          "role": "valid",
+          "oracle": "Real Git status still reports a modified tracked .DS_Store and ordinary untracked source.",
+          "check": "ui"
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureIgnoresUntrackedFinderMetadataWithoutHidingRealFiles",
+          "role": "boundary",
+          "oracle": "Inject root and nested Finder metadata; real Git status retains only real files, including a similarly named notes file.",
+          "check": "ui"
+        },
+        {
+          "source": "GitXUITests/Milestone2WorkflowUITests.swift",
+          "identifier": "GitXUITests/Milestone2WorkflowUITests/testFixtureMetadataExclusionPreservesExistingRulesAndIsIdempotent",
+          "role": "boundary",
+          "oracle": "Preserve existing rule bytes and Git ignore/negation behavior; repeated setup keeps the same exclusion file.",
+          "check": "ui"
+        }
+      ]
     }
   ]
 }
