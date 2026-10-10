@@ -149,6 +149,7 @@ final class IndexMutationServiceTests: XCTestCase {
         }
 
         func testGeneralCommandRunnerRejectsWritersDuringReconciliationAndSubmissionButAllowsReads() throws {
+            // swift6-safety-justification: App-hosted XCTest invokes this synchronous test on the main thread, confining index fixture updates to the main actor.
             try MainActor.assumeIsolated {
                 for key in ["mutationReconciliationPending", "submissionActive"] {
                     var writeExecutions = 0
