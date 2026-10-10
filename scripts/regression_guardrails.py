@@ -36,7 +36,8 @@ BLOCKERS = {"resource-busy", "console-unavailable", "display-unavailable", "desk
 
 
 def finding(code, detail, contract=None):
-    return {"code": code, "detail": detail, "contract": contract}
+    return {"code": code, "detail": detail, "contract": contract,
+            "affectsReadiness": code not in {"unmapped-source", "contract-path-missing"}}
 
 
 def relative_path(value):
@@ -162,7 +163,7 @@ def changes(root, base):
             paths.add(os.fsdecode(path))
         index += width + 1
     paths.update(os.fsdecode(p) for p in git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0") if p)
-    return {"base": resolved, "mergeBase": merge_base, "head": head}, sorted(paths)
+    return {"base": resolved, "mergeBase": merge_base, "head": head}, sorted(p for p in paths if not session.generated_input_path(p))
 
 
 def select_contracts(contracts, paths):
@@ -177,7 +178,12 @@ def select_contracts(contracts, paths):
 
 
 def required_checks(paths, contracts):
+    paths = [p for p in paths if not session.generated_input_path(p)]
+    mapped = {path for contract in contracts for path in contract["sourcePaths"]}
+    mapped.update(test["source"] for contract in contracts for test in contract["tests"])
     checks = {"static"} if paths else set()
+    if any(session.build_input_path(p) and (not p.startswith(SOURCE_PREFIXES) or not any(fnmatch.fnmatchcase(p, pattern) for pattern in mapped)) for p in paths):
+        checks.update(name for name, _ in dev_workflow.full_profile(ROOT))
     app = any(p.startswith(SOURCE_PREFIXES) for p in paths)
     if app:
         checks.update(GENERAL_APP_CHECKS)
@@ -272,7 +278,7 @@ def result_path(context, value):
     return path if path.is_absolute() else context.root / path
 
 
-def xcode_problems(payload, context):
+def xcode_problems(payload, context, mutable_caches=None):
     evidence = payload.get("evidence", {})
     problems = input_problems(evidence, context)
     if payload.get("schemaVersion") != 2:
@@ -281,8 +287,7 @@ def xcode_problems(payload, context):
     if context.version is None or (toolchain.get("xcodeVersion"), toolchain.get("xcodeBuild")) != context.version:
         problems.append("Toolchain does not match the current supported Xcode")
     paths = payload.get("buildPaths", {})
-    if "dependencyProducts" not in evidence or evidence["dependencyProducts"] != context.identity("dependencies", context.root):
-        problems.append("Dependency products are missing or changed")
+    problems.extend(session.receipt_artifact_problems(payload, context.root, mutable_caches, context.identity))
     derived = paths.get("derivedData")
     analysis = payload.get("invocation", {}).get("preset") == "analyze"
     artifacts = evidence.get("analysisArtifacts", {})
@@ -298,18 +303,6 @@ def xcode_problems(payload, context):
             problems.append("Analyzer policy log identities are missing")
     if analysis and not durable_analysis:
         problems.append("Durable analyzer diagnostics are missing or changed")
-    if derived and not durable_analysis and ("products" not in evidence or evidence["products"] != context.identity("products", derived)):
-        problems.append("Build products are missing or changed")
-    scratch = paths.get("swiftPM")
-    if payload.get("invocation", {}).get("preset") in {"test:core", "test:forgekit"}:
-        if not scratch or "packageProducts" not in evidence or evidence["packageProducts"] != context.identity("packages", scratch):
-            problems.append("Package products are missing or changed")
-    for step in payload.get("steps", []):
-        value = step.get("xcresult")
-        if value:
-            expected = evidence.get("results", {}).get(value)
-            if expected is None or expected != context.identity("results", result_path(context, value)):
-                problems.append("Result artifact missing or changed: " + value)
     return problems
 
 
@@ -356,7 +349,7 @@ def observed_status(payload):
     return payload.get("status", "unknown")
 
 
-def inspect_receipt(path, context, expected_check=None):
+def inspect_receipt(path, context, expected_check=None, mutable_caches=None):
     path = pathlib.Path(path)
     record = {"receipt": str(path), "check": expected_check, "validity": "invalid",
               "status": "unknown", "reasons": [], "tests": [], "finishedAt": ""}
@@ -373,7 +366,7 @@ def inspect_receipt(path, context, expected_check=None):
         record.update(check=actual_check, status=observed_status(payload),
                       finishedAt=timestamp(payload))
         if "invocation" in payload:
-            record["reasons"] = xcode_problems(payload, context)
+            record["reasons"] = xcode_problems(payload, context, mutable_caches)
             for step in payload.get("steps", []):
                 if step.get("xcresult") and step["xcresult"].endswith(".xcresult"):
                     try:
@@ -427,16 +420,19 @@ def inspect_workflow(path, payload, context):
         "inputsBefore": payload.get("inputsBefore"), "inputsAfter": payload.get("inputsAfter")}, context)
     if payload.get("schemaVersion") != 2:
         global_problems.append("Historical workflow schema")
+    cache_problems = session.final_cache_problems(payload, context.root)
+    global_problems.extend(cache_problems)
+    mutable_caches = None if cache_problems else payload.get("finalCacheProducts", session.workflow_cache_snapshots(payload, context.root))
     for step in payload.get("steps", []):
         name = step.get("name")
         if step.get("receipt"):
-            child = inspect_receipt(result_path(context, step["receipt"]), context, name)
+            child = inspect_receipt(result_path(context, step["receipt"]), context, name, mutable_caches)
         else:
             child = {"receipt": str(path), "check": name, "status": observed_status(step),
                      "validity": "invalid", "tests": [], "reasons": [], "finishedAt": timestamp(payload)}
         problems = global_problems + input_problems({"status": step.get("evidenceStatus"),
             "inputsBefore": step.get("inputsBefore"), "inputsAfter": step.get("inputsAfter")}, context)
-        if name not in commands or step.get("command") != commands.get(name):
+        if name not in commands or not session.command_matches(step, commands.get(name, [])):
             problems.append("Workflow command does not match its canonical check")
         if step.get("toolchain") != context.toolchain:
             problems.append("Workflow toolchain changed")
@@ -513,7 +509,7 @@ def build_report(root, base, payload):
     for path in paths:
         if path.startswith(SOURCE_PREFIXES) and path not in mapped:
             problems.append(finding("unmapped-source", f"No seeded regression contract matches {path}"))
-    return {"schemaVersion": 1, "mode": "advisory", "action": "check", "status": "incomplete" if problems else "ready",
+    return {"schemaVersion": 1, "mode": "advisory", "action": "check", "status": "incomplete" if any(f["affectsReadiness"] for f in problems) else "ready",
             "repository": identities, "changedPaths": paths, "contracts": selected,
             "requiredChecks": required_checks(paths, selected), "findings": problems}
 
@@ -527,7 +523,7 @@ def render(report):
     for item in report["contracts"]:
         lines.append(f"  {item['id']}: {item['invariant']}")
     for item in report["findings"]:
-        lines.append(f"  [{item['code']}] {item['detail']}")
+        lines.append(f"  [{item['code']}, {'blocking' if item['affectsReadiness'] else 'warning'}] {item['detail']}")
     for item in report.get("checks", []):
         lines.append(f"  {item['check']}: {item['status']}")
     for item in report.get("testEvidence", []):
@@ -560,22 +556,24 @@ def main(argv=None):
         report["inputs"] = {key: value for key, value in before.items() if key != "files"}
         if report["repository"]["head"] != before["head"]:
             report["findings"].append(finding("assessment-inputs-changed", "HEAD changed while collecting the diff"))
+        tracked = set(session.git(ROOT, "ls-files", "-z").split("\0"))
         for path in report["changedPaths"]:
-            if path.startswith(SOURCE_PREFIXES) and (ROOT / path).is_file() and path not in before["files"]:
+            if session.build_input_path(path) and (ROOT / path).is_file() and (path not in before["files"] or path not in tracked):
                 report["findings"].append(finding("unfingerprinted-source", f"Canonical inputs do not yet fingerprint {path}; track it before final verification"))
-        if report["findings"]:
+        if any(f["affectsReadiness"] for f in report["findings"]):
             report["status"] = "incomplete"
         if args.action == "assess":
             context = EvidenceContext(ROOT)
             records = inspect_evidence(args.receipts, context)
             status, checks, tests = assess_checks(report["requiredChecks"], report["contracts"], records)
             report.update(action="assess", status=status, checks=checks, testEvidence=tests, receipts=records)
-            if report["findings"] and status == "ready":
+            if any(f["affectsReadiness"] for f in report["findings"]) and status == "ready":
                 report["status"] = "incomplete"
         drift = session.changed_inputs(before, session.inputs(ROOT))
         if drift:
             report["findings"].append(finding("assessment-inputs-changed", ", ".join(drift)))
-            report["status"] = "incomplete"
+            if report["status"] not in {"failed", "blocked"}:
+                report["status"] = "incomplete"
         output = args.output or ROOT / "artifacts/verification/regression-guardrails" / (uuid.uuid4().hex + ".json")
         output = output.resolve()
         if not output.is_relative_to((ROOT / "artifacts/verification").resolve()):

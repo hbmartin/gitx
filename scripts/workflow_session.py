@@ -101,9 +101,8 @@ def inputs(root=ROOT):
     root = pathlib.Path(root).resolve()
     names = git(root, "ls-files", "-z").split("\0")
     new = git(root, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
-    names += [p for p in new if p.startswith(("Classes/", "GitXTests/", "GitXUITests/",
-              "GitXCore/Sources/", "ForgeKit/Sources/", "scripts/", ".agents/skills/"))]
-    files = {name: file_identity(root / name) for name in sorted(set(names)) if name}
+    names += [p for p in new if build_input_path(p)]
+    files = {name: file_identity(root / name) for name in sorted(set(names)) if name and not generated_input_path(name)}
     # The canonical sdp phase regenerates this checked-in bridge header when a
     # new configuration is built. Byte-identical output is still the same
     # compiler input; content and mode changes remain invalidating.
@@ -124,6 +123,127 @@ def inputs(root=ROOT):
             "source": digest(json.dumps(files, sort_keys=True).encode()),
             "dependencies": digest(json.dumps([dependencies, dependency_diffs]).encode()),
             "plans": digest(json.dumps(plans, sort_keys=True).encode()), "files": files}
+
+
+def generated_input_path(name):
+    parts = pathlib.PurePosixPath(name).parts
+    return (len(parts) > 1 and parts[0] in {"GitXCore", "ForgeKit"} and
+            (parts[1] == ".build" or parts[1:4] == (".swiftpm", "xcode", "xcuserdata")))
+
+
+def build_input_path(name):
+    return not generated_input_path(name) and (name.startswith(("Classes/", "GitXTests/", "GitXUITests/",
+        "GitXCore/", "ForgeKit/", "Resources/", "External/", "scripts/", ".agents/skills/", ".github/",
+        "GitX.xcodeproj/", "GitX.xcworkspace/")) or name in {"AGENTS.md", "Mintfile", ".gitmodules",
+        ".swiftlint.yml", ".swiftformat"} or name.endswith((".xcconfig", ".entitlements")))
+
+
+def command_identity(command):
+    """Known Python scripts depend on their runtime, not its installation path."""
+    if len(command) >= 2 and pathlib.Path(command[1]).name == "check_test_build_contracts.py":
+        return {"entry": str(pathlib.Path(command[1]).resolve()), "arguments": command[2:],
+                "python": [platform.python_implementation(), *sys.version_info[:2]]}
+    return {"command": command}
+
+
+def command_matches(step, command):
+    recorded = step.get("command", [])
+    expected = command_identity(command)
+    identity = step.get("commandIdentity")
+    if identity is not None:
+        return identity == expected
+    # Legacy receipts did not record Python versions. Recognize a relocated
+    # interpreter only when it is this runtime (including filesystem aliases).
+    if recorded == command:
+        return True
+    if len(recorded) >= 2 and "python" in expected and recorded[1:] == command[1:]:
+        try:
+            return os.path.samefile(recorded[0], command[0])
+        except OSError:
+            return False
+    return False
+
+
+def receipt_artifact_problems(payload, root=ROOT, mutable_caches=None, identity=None):
+    """Validate immutable artifacts independently of the final mutable cache owner."""
+    root = pathlib.Path(root)
+    readers = {"results": tree_identity, "products": product_identity,
+               "packages": package_products, "dependencies": dependency_products}
+    identity = identity or (lambda kind, path: readers[kind](path))
+    evidence, paths = payload.get("evidence", {}), payload.get("buildPaths", {})
+    problems = []
+    def absolute(value):
+        path = pathlib.Path(value)
+        return path if path.is_absolute() else root / path
+    results = evidence.get("results", {})
+    required = {step["xcresult"] for step in payload.get("steps", []) if step.get("xcresult")}
+    for value in required | set(results):
+        expected = results.get(value)
+        if expected is None or expected != identity("results", absolute(value)):
+            problems.append("Result artifact missing or changed: " + value)
+    for value, expected in evidence.get("analysisArtifacts", {}).items():
+        if expected is None or expected != identity("results", absolute(value)):
+            problems.append("Analysis artifact missing or changed: " + value)
+    if "dependencyProducts" not in evidence or evidence["dependencyProducts"] != identity("dependencies", root):
+        problems.append("Dependency products are missing or changed")
+    analysis = payload.get("invocation", {}).get("preset") == "analyze"
+    package_check = payload.get("invocation", {}).get("preset") in {"test:core", "test:forgekit"}
+    if package_check and not paths.get("swiftPM"):
+        problems.append("Package products are missing or changed")
+    for kind, field, path in (("products", "products", paths.get("derivedData")),
+                              ("packages", "packageProducts", paths.get("swiftPM"))):
+        if kind == "packages" and not package_check and field not in evidence:
+            continue
+        if path and (kind != "products" or not analysis):
+            if field not in evidence or (path not in (mutable_caches or {}).get(kind, {}) and
+                                        evidence[field] != identity(kind, path)):
+                problems.append("Build products are missing or changed" if kind == "products" else "Package products are missing or changed")
+    return problems
+
+
+def workflow_cache_snapshots(payload, root=ROOT):
+    """Use completion provenance, never array position, to select each cache owner."""
+    candidates = {"products": {}, "packages": {}}
+    for step in payload.get("steps", []):
+        if not step.get("receipt"):
+            continue
+        path = pathlib.Path(step["receipt"])
+        child = json.loads((path if path.is_absolute() else pathlib.Path(root) / path).read_text())
+        paths, evidence = child.get("buildPaths", {}), child.get("evidence", {})
+        stamp = child.get("finishedAt") or step.get("finishedAt") or ""
+        for kind, field, cache in (("products", "products", paths.get("derivedData")),
+                                   ("packages", "packageProducts", paths.get("swiftPM"))):
+            if cache and field in evidence and not (kind == "products" and child.get("invocation", {}).get("preset") == "analyze"):
+                candidates[kind].setdefault(cache, []).append((stamp, evidence[field]))
+    snapshots = {"products": {}, "packages": {}}
+    for kind, caches in candidates.items():
+        for cache, owners in caches.items():
+            distinct = {json.dumps(value, sort_keys=True) for _, value in owners}
+            if len(distinct) > 1:
+                if any(not stamp for stamp, _ in owners):
+                    raise ValueError("Final cache ownership is ambiguous: " + cache)
+                latest = max(stamp for stamp, _ in owners)
+                winners = {json.dumps(value, sort_keys=True) for stamp, value in owners if stamp == latest}
+                if len(winners) != 1:
+                    raise ValueError("Final cache ownership is ambiguous: " + cache)
+            snapshots[kind][cache] = max(owners, key=lambda item: item[0])[1]
+    return snapshots
+
+
+def final_cache_problems(payload, root=ROOT):
+    try:
+        derived = workflow_cache_snapshots(payload, root)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return ["Final cache ownership cannot be validated: " + str(error)]
+    snapshots = payload.get("finalCacheProducts", derived)
+    if not isinstance(snapshots, dict) or snapshots != derived:
+        return ["Final cache ownership is incomplete or ambiguous"]
+    problems = []
+    for kind, reader in (("products", product_identity), ("packages", package_products)):
+        for path, expected in snapshots.get(kind, {}).items():
+            if expected is None or reader(path) != expected:
+                problems.append("Final cache products changed: " + path)
+    return problems
 
 
 def changed_inputs(before, after):
@@ -204,9 +324,16 @@ class Leases:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.settimeout(1)
                 client.connect(prior["socket"])
-                client.sendall(json.dumps({"resource": digest(resource.encode()), "token": prior["token"]}).encode())
-                client.shutdown(socket.SHUT_WR)
-                return client.recv(128) == b"owned"
+                client.sendall(json.dumps({"resource": digest(resource.encode()), "token": prior["token"]}).encode() + b"\n")
+                reply = b""
+                while len(reply) < 128:
+                    data = client.recv(128 - len(reply))
+                    if not data:
+                        return reply == b"owned"
+                    reply += data
+                    if b"\n" in reply:
+                        return reply == b"owned\n"
+                return False
         except (OSError, KeyError, ValueError):
             return False
 
@@ -239,9 +366,17 @@ class Leases:
                 with connection:
                     try:
                         connection.settimeout(1)
-                        request = json.loads(connection.recv(4096))
+                        data = b""
+                        while b"\n" not in data and len(data) <= 4096:
+                            chunk = connection.recv(min(4097 - len(data), 4096))
+                            if not chunk:
+                                break
+                            data += chunk
+                        if len(data) > 4096:
+                            continue
+                        request = json.loads(data)
                         owned = tokens.get(request.get("resource")) == request.get("token") and request.get("resource") in tokens
-                        connection.sendall(b"owned" if owned else b"denied")
+                        connection.sendall(b"owned\n" if owned else b"denied\n")
                     except (OSError, ValueError):
                         pass
         self.broker_thread = threading.Thread(target=serve, daemon=True)
@@ -311,8 +446,8 @@ def desktop_checks():
     console = "Name :" in output and "Name : loginwindow" not in output and f"UID : {os.getuid()}" in output
     display = subprocess.run(["/usr/sbin/ioreg", "-n", "IODisplayWrangler", "-r"], text=True, capture_output=True)
     lock_properties = subprocess.run(
-        ["/usr/sbin/ioreg", "-n", "Root", "-d", "1"], capture_output=True, text=True).stdout
-    locked = bool(re.search(r'"CGSSessionScreenIsLocked"\s*=\s*Yes\b', lock_properties))
+        ["/usr/sbin/ioreg", "-a", "-n", "Root", "-d", "1"], capture_output=True).stdout
+    locked = console_session_locked(lock_properties, os.getuid())
     checks = [{"name": "console-session", "status": "passed" if console else "failed",
                "detail": "Active local console user." if console else "Switch to this user's macOS desktop before retrying."},
               {"name": "display", "status": "passed" if display.stdout and not locked else "failed",
@@ -321,6 +456,25 @@ def desktop_checks():
     checks.append({"name": "competing-gitx", "status": "failed" if pids else "passed",
                    "detail": f"Close competing GitX processes {', '.join(pids)} and retry." if pids else "No competing GitX process."})
     return checks
+
+
+def console_session_locked(properties, uid):
+    try:
+        tree = plistlib.loads(properties.encode() if isinstance(properties, str) else properties)
+    except (ValueError, plistlib.InvalidFileException):
+        return True
+    sessions = []
+    def visit(value):
+        if isinstance(value, dict):
+            if value.get("CGSSessionUserID", value.get("kCGSSessionUserIDKey")) == uid and value.get("CGSSessionOnConsole", value.get("kCGSSessionOnConsoleKey")) is True:
+                sessions.append(value)
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+    visit(tree)
+    return len(sessions) != 1 or sessions[0].get("CGSSessionScreenIsLocked", False) is not False
 
 
 def verify_signatures(derived_data):

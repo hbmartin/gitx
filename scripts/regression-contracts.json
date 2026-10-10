@@ -266,6 +266,18 @@
           "identifier": "GitXTests/StagingDiffPaneControllerTests/testDiscardSnapshotRejectsSameSizedContentPermissionsIndexTreeAndStagingChanges",
           "role": "boundary",
           "oracle": "Each changed confirmation input rejects authorization before mutation."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testDecomposedUnicodeHunkCanBeDiscarded",
+          "role": "boundary",
+          "oracle": "Decomposed filename bytes authorize a real Git hunk discard."
+        },
+        {
+          "source": "GitXTests/StagingDiffLoadCoordinatorTests.swift",
+          "identifier": "GitXTests/StagingDiffLoadCoordinatorTests/testUnavailableImageIdentityRetainsDiffWithoutMutationAuthority",
+          "role": "failure",
+          "oracle": "Diff remains visible with no mutation token when image identity is unavailable."
         }
       ]
     },
@@ -302,6 +314,18 @@
           "identifier": "GitXTests/HistoryControllerTests/testCommitCompletionReconcilesBeforeControlsReturnIncludingPostCommitHookFailure",
           "role": "boundary",
           "oracle": "Controls recover only after authoritative reconciliation, preserving hook failure."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testRepeatHunkClickWhileFinishingDoesNotReportAnError",
+          "role": "boundary",
+          "oracle": "A duplicate click during reconciliation produces one staging result and no error notification."
+        },
+        {
+          "source": "GitXTests/IndexMutationCoordinatorTests.swift",
+          "identifier": "GitXTests/IndexMutationCoordinatorTests/testRepositoryCheckoutCannotOverlapAnIndexWriter",
+          "role": "failure",
+          "oracle": "A synchronous checkout is refused while the shared repository writer owns a staging operation."
         }
       ]
     },
@@ -355,6 +379,18 @@
           "identifier": "GitXTests/IndexCommitPublicationTests/testInvalidMergeParentBytesRefusePublicationAndPreservePreparedState",
           "role": "failure",
           "oracle": "Invalid UTF-8 and malformed merge parents refuse publication and retain captured state."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testCapabilityProbesCoalescePerExecutableWithoutBlockingOtherExecutables",
+          "role": "boundary",
+          "oracle": "A gated probe coalesces identical executable requests while a different executable completes."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testDefinitivelyUnsupportedCapabilityIsCached",
+          "role": "failure",
+          "oracle": "An explicit unsupported protocol result launches once across repeated requests."
         }
       ]
     },
@@ -472,6 +508,12 @@
           "identifier": "GitXTests/PBChildProcessOwnerTests/testAppPosixResourceFailuresPreserveCallerDescriptors",
           "role": "boundary",
           "oracle": "Injected application resource failures preserve caller descriptors and the successful control reaps its child."
+        },
+        {
+          "source": "GitXTests/IndexReferenceTransactionTests.swift",
+          "identifier": "GitXTests/IndexReferenceTransactionTests/testZeroAndPartialCommitWritesDistinguishUnsentAndUncertainPublication",
+          "role": "boundary",
+          "oracle": "Only a positive syscall write makes commit publication uncertain."
         }
       ]
     },
@@ -511,6 +553,12 @@
           "identifier": "GitXTests/PBTaskDiagnosticRedactorTests/testAmbiguousAuthorityWithoutAtKeepsItsCredentialRedactedAcrossWhitespace",
           "role": "boundary",
           "oracle": "Malformed userinfo stays redacted through the application boundary."
+        },
+        {
+          "source": "GitXTests/PBTaskDiagnosticRedactorTests.swift",
+          "identifier": "GitXTests/PBTaskDiagnosticRedactorTests/testDottedUsernameAndNumericPasswordRemainPrivate",
+          "role": "boundary",
+          "oracle": "Dotted usernames and numeric password prefixes remain hidden across chunks."
         }
       ]
     },

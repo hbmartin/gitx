@@ -384,9 +384,15 @@ case "$command" in
 		;;
 esac
 
+doctor_scope=app
+if [[ "$command" == "test" ]]; then
+    case "${command_arguments[0]:-}" in
+        core|forgekit) doctor_scope=${command_arguments[0]} ;;
+    esac
+fi
 doctor_log="$logs/doctor.log"
 started=$(python3 -c 'import time; print(time.time())')
-"$root/scripts/doctor.sh" --mode "$doctor_mode" --developer-dir "$developer_dir" --destination "$destination" 2>&1 | tee "$doctor_log"
+"$root/scripts/doctor.sh" --mode "$doctor_mode" --scope "$doctor_scope" --developer-dir "$developer_dir" --destination "$destination" 2>&1 | tee "$doctor_log"
 doctor_status=${PIPESTATUS[0]}
 duration=$(elapsed_seconds "$started")
 if (( doctor_status == 0 )); then
@@ -395,7 +401,7 @@ else
 	doctor_result=blocked
 	overall_status=blocked
 fi
-record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --developer-dir "$developer_dir" --destination "$destination"
+record_step doctor "$doctor_result" "$doctor_status" "$duration" "$doctor_log" "" "$root/scripts/doctor.sh" --mode "$doctor_mode" --scope "$doctor_scope" --developer-dir "$developer_dir" --destination "$destination"
 (( doctor_status == 0 )) || exit "$doctor_status"
 
 workspace=$(config workspace)
