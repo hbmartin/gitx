@@ -702,6 +702,8 @@ def resume_analyzer(prior_path, current_path, current) -> int:
     step = next((step for step in prior.get("steps", []) if step.get("name") == "analyze"), None)
     if not step or step.get("status") != "passed" or step.get("exitCode") != 0:
         raise ValueError("Prior compiler analysis did not pass")
+    if not isinstance(step.get("log"), str) or not step["log"]:
+        raise ValueError("Prior compiler analysis log is missing or malformed")
     if session.receipt_artifact_problems(prior, ROOT):
         raise ValueError("Prior analyzer diagnostics are missing or changed")
     log = ROOT / step["log"]

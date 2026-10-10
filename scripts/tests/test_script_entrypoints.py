@@ -179,7 +179,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         tool = self.scripts / "run_pinned_tool.sh"
         tool.write_text('#!/bin/bash\nexit "${GITX_TEST_LINT_STATUS:-0}"\n')
         tool.chmod(0o755)
-        for kind in ("toolchain", "invocation", "scratch", "diagnostics"):
+        for kind in ("toolchain", "invocation", "scratch", "diagnostics", "missing-log", "malformed-log"):
             with self.subTest(kind=kind):
                 prior_id = "prior-" + kind
                 failed = subprocess.run([script, "--run-id", prior_id, "analyze"], capture_output=True,
@@ -193,10 +193,21 @@ class ScriptEntrypointTests(unittest.TestCase):
                     prior["invocation"]["scheme"] = "old-scheme"
                 elif kind == "scratch":
                     shutil.rmtree(prior["evidence"]["analyzerScratch"]["path"])
+                elif kind == "missing-log":
+                    next(step for step in prior["steps"] if step["name"] == "analyze").pop("log")
+                elif kind == "malformed-log":
+                    next(step for step in prior["steps"] if step["name"] == "analyze")["log"] = None
                 else:
                     log = next(step["log"] for step in prior["steps"] if step["name"] == "analyze")
                     (self.root / log).write_text("changed diagnostics")
                 prior_path.write_text(json.dumps(prior))
+                if kind in ("missing-log", "malformed-log"):
+                    strict = subprocess.run([script, "--resume-analysis", prior_id,
+                                             "--run-id", "strict-" + kind, "analyze"],
+                                            capture_output=True, text=True, env=self.environment)
+                    self.assertEqual(strict.returncode, 2, strict.stderr)
+                    self.assertIn("analysis log is missing or malformed", strict.stderr)
+                    self.assertNotIn("Running fresh analysis", strict.stderr)
                 resumed = subprocess.run([script, "--resume-analysis", prior_id, "--fresh-on-stale-analysis",
                                           "--run-id", "fresh-" + kind, "analyze"], capture_output=True,
                                          text=True, env=self.environment)
@@ -208,7 +219,7 @@ class ScriptEntrypointTests(unittest.TestCase):
                 self.assertNotIn("reusedFrom", receipt["steps"][1])
                 self.assertEqual(receipt["status"], "passed")
         native = [call for call in captured.read_text().split("__INVOCATION__") if "\nanalyze\n" in call]
-        self.assertEqual(len(native), 8, "each rejected recovery must perform fresh compiler analysis")
+        self.assertEqual(len(native), 12, "each rejected recovery must perform fresh compiler analysis")
         failed_fresh = subprocess.run([script, "analyze", "--resume-analysis", "prior-diagnostics",
                                        "--fresh-on-stale-analysis", "--run-id", "fresh-failure"],
                                       capture_output=True, text=True,
