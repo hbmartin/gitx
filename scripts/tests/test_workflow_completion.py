@@ -86,11 +86,54 @@ class WorkflowCompletionTests(unittest.TestCase):
         self.assertEqual(args.action, "preview")
 
     def test_cleanup_failure_does_not_change_successful_verification(self):
+        app = self.root / "build/GitX.app"
+        app.mkdir(parents=True)
+        (app / "binary").write_bytes(b"fixture")
         with mock.patch.object(workflow.cleanup, "run_cleanup", side_effect=OSError("cleanup failed")):
             code, receipt, _ = self.run_verification()
         self.assertEqual(code, 0)
         self.assertEqual(receipt["status"], "passed")
         self.assertTrue(receipt["deliveryEligible"])
+
+    def test_preview_mode_runs_after_verification_is_published_and_leases_are_released(self):
+        app = self.root / "build/GitX.app"
+        app.mkdir(parents=True)
+        (app / "binary").write_bytes(b"fixture")
+        args = workflow.parser().parse_args(["verify", "--run-id", "fixture", "--cleanup-mode", "preview"])
+        lease = session.Leases.return_value
+        def preview(root):
+            value = json.loads((self.root / "artifacts/verification/fixture/workflow.json").read_text())
+            self.assertEqual(value["status"], "passed")
+            lease.__exit__.assert_called_once()
+            return {"status": "preview"}
+        with mock.patch.object(session, "supervise", return_value=0), \
+                mock.patch.object(workflow.cleanup, "preview", side_effect=preview) as inspect, \
+                mock.patch.object(workflow.cleanup, "run_cleanup") as remove:
+            self.assertEqual(workflow.verify(args), 0)
+        inspect.assert_called_once()
+        remove.assert_not_called()
+
+    def test_changed_immutable_result_invalidates_an_otherwise_successful_workflow(self):
+        artifact = self.root / "artifacts/verification"
+        result = artifact / "first/Results.xcresult"
+        result.mkdir(parents=True)
+        (result / "data").write_text("original")
+        child = artifact / "first/receipt.json"
+        child.write_text(json.dumps({"evidence": {"status": "valid", "results": {str(result): session.tree_identity(result)}}}))
+        def execute(command, **kwargs):
+            if command == ["fixture-test"]:
+                child_id = kwargs["env"]["GITX_SESSION_ID"]
+                path = artifact / child_id / "receipt.json"
+                path.parent.mkdir()
+                path.write_bytes(child.read_bytes())
+            else:
+                (result / "data").write_text("tampered")
+            return 0
+        args = workflow.parser().parse_args(["verify", "--run-id", "fixture"])
+        with mock.patch.object(session, "supervise", side_effect=execute), mock.patch.object(workflow.cleanup, "run_cleanup") as prune:
+            self.assertEqual(workflow.verify(args), 76)
+        prune.assert_not_called()
+        self.assertFalse(json.loads((artifact / "fixture/workflow.json").read_text())["deliveryEligible"])
 
     def test_partial_verification_does_not_invoke_cleanup(self):
         with mock.patch.object(workflow.cleanup, "run_cleanup") as prune:
