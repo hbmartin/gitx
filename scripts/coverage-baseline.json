@@ -81,6 +81,7 @@
     "Classes/Controllers/StagingDiffLoadCoordinator.swift": 0.9963,
     "Classes/Controllers/StagingDiffPaneController.swift": 0.9569,
     "Classes/Controllers/StagingFileListController.swift": 0.9413,
+    "Classes/Controllers/StagingImageReader.swift": 0.9528,
     "Classes/Controllers/StagingListViewModel.swift": 1.0,
     "Classes/Controllers/StagingViewController.swift": 0.9359,
     "Classes/Controllers/WorkspaceActionCoordinator.swift": 0.9805,

@@ -278,6 +278,12 @@
           "identifier": "GitXTests/StagingDiffLoadCoordinatorTests/testUnavailableImageIdentityRetainsDiffWithoutMutationAuthority",
           "role": "failure",
           "oracle": "Diff remains visible with no mutation token when image identity is unavailable."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testUnstageHunkPreservesOtherStagedHunksAndWorktree",
+          "role": "valid",
+          "oracle": "Unstage exactly the selected hunk while retaining the other staged hunk and all worktree bytes."
         }
       ]
     },
@@ -289,7 +295,12 @@
       "sourcePaths": [
         "Classes/git/IndexMutation*",
         "Classes/git/IndexCommit*",
-        "Classes/Controllers/Staging*"
+        "Classes/Controllers/Staging*",
+        "Classes/git/GitCommandRunning.swift",
+        "Classes/git/IndexCommandRunning.swift",
+        "Classes/Controllers/PBGitWindowController.swift",
+        "Classes/Controllers/RepositoryReferenceActionCoordinator.swift",
+        "Classes/Controllers/RepositoryStashActionCoordinator.swift"
       ],
       "requiredChecks": [
         "correctness",
@@ -326,6 +337,12 @@
           "identifier": "GitXTests/IndexMutationCoordinatorTests/testRepositoryCheckoutCannotOverlapAnIndexWriter",
           "role": "failure",
           "oracle": "A synchronous checkout is refused while the shared repository writer owns a staging operation."
+        },
+        {
+          "source": "GitXTests/HistoryControllerTests.swift",
+          "identifier": "GitXTests/HistoryControllerTests/testWriterActionsRejectStaleInvocationsDuringReconciliationAndRecoverAfterward",
+          "role": "boundary",
+          "oracle": "Busy menus and stale reference/stash invocations preserve HEAD, worktree and stashes; a real Git failure still presents its error after admission recovers."
         }
       ]
     },
