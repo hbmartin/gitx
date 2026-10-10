@@ -995,11 +995,26 @@ def run_cleanup(root, receipt, inherited=None):
                     candidate = {"paths": [str(original)], "bytes": value["authorization"]["snapshot"]["bytes"], "journal": str(journal)}
                     if any(overlap(p, q) for p in (original, quarantine) for q in report["protectedPaths"]):
                         raise ValueError("Quarantined object has a current protection reference")
-                    with session.Leases([str(original), str(quarantine)], owner, inherited=authenticated) as candidate_lease:
+                    selected = next((c for c in report["candidates"] if str(original) in c["paths"]), None)
+                    resources = [str(original), str(quarantine)] + (selected["resources"] if selected else [])
+                    with session.Leases(resources, owner, inherited=authenticated) as candidate_lease:
                         with session.Leases(proof, owner, inherited=authenticated | candidate_lease.held):
                             reason = gate()
                             if reason:
                                 raise ValueError(reason)
+                            # A prepared original still needs current retention authorization.
+                            # An already-renamed quarantine retains its recovery ownership.
+                            if original.exists() or original.is_symlink():
+                                if selected is None:
+                                    raise ValueError("Original directory is no longer eligible for cleanup")
+                                snapshot = selected["snapshots"][str(original)]
+                                if fingerprint(original) != snapshot:
+                                    raise ValueError("Original directory changed after inventory")
+                                value["authorization"].update(head=pending["head"], pendingToken=pending["token"],
+                                                              receipt=str(receipt), receiptIdentity=session.tree_identity(receipt),
+                                                              snapshot=snapshot, protection=report["protectionToken"])
+                                persist_journal(journal, value)
+                                candidate["bytes"] = snapshot["bytes"]
                             target = quarantine_journal(journal, value, directory)
                             removed.update((original, quarantine))
                         if target is not None:
