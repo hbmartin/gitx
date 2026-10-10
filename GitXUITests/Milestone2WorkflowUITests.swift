@@ -31,6 +31,21 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         super.tearDown()
     }
 
+    func testFixtureKeepsRealUntrackedFilesAndExplicitlyTrackedFinderMetadata() throws {
+        let repository = try makeWorkingRepository(name: "fixture-metadata-characterization")
+        let metadata = repository.appendingPathComponent(".DS_Store")
+        try Data([0, 1, 2]).write(to: metadata)
+        _ = try git(["add", "--force", ".DS_Store"], in: repository)
+        _ = try git(["commit", "--quiet", "-m", "Tracked fixture metadata"], in: repository)
+        try Data([0, 1, 3]).write(to: metadata)
+        try "real untracked source\n".write(
+            to: repository.appendingPathComponent("real.swift"), atomically: true, encoding: .utf8
+        )
+
+        let status = try git(["status", "--porcelain", "--untracked-files=all"], in: repository)
+        XCTAssertEqual(Set(status.split(separator: "\n").map(String.init)), [" M .DS_Store", "?? real.swift"])
+    }
+
     func testRejectedPushRetryShowsFrozenLeaseAndCancellationPreservesRemote() throws {
         let fixture = try makePushFixture()
         // Keep the forge identity while resolving both transport endpoints to the same isolated bare repository.
