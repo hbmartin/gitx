@@ -17,6 +17,24 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_analyzer_requires_retained_identities_for_every_referenced_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            log = root / 'analyze.log'
+            policy = root / 'policy.log'
+            log.write_text('passed analysis')
+            policy.write_text('passed policy')
+            payload = {'invocation': {'preset': 'analyze'}, 'steps': [{'log': str(log)}, {'log': str(policy)}],
+                       'evidence': {'dependencyProducts': {}, 'analysisArtifacts': {str(log): session.tree_identity(log)}}}
+            self.assertTrue(session.receipt_artifact_problems(payload, root))
+            payload['evidence']['analysisArtifacts'][str(policy)] = session.tree_identity(policy)
+            self.assertEqual(session.receipt_artifact_problems(payload, root), [])
+            policy.write_text('changed policy')
+            self.assertTrue(session.receipt_artifact_problems(payload, root))
+            payload['evidence']['analysisArtifacts'] = {}
+            payload['steps'] = []
+            self.assertTrue(session.receipt_artifact_problems(payload, root))
+
     def test_producer_pid_and_start_identity_distinguish_live_abandoned_and_uncertain(self):
         identity = {'pid': 123, 'started': 'birth'}
         with mock.patch.object(os, 'kill'), mock.patch.object(session, 'process_started', return_value='birth'):

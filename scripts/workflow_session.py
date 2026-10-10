@@ -181,12 +181,17 @@ def receipt_artifact_problems(payload, root=ROOT, mutable_caches=None, identity=
         expected = results.get(value)
         if expected is None or expected != identity("results", absolute(value)):
             problems.append("Result artifact missing or changed: " + value)
-    for value, expected in evidence.get("analysisArtifacts", {}).items():
+    analysis = payload.get("invocation", {}).get("preset") == "analyze"
+    artifacts = evidence.get("analysisArtifacts", {})
+    required_analysis = {step["log"] for step in payload.get("steps", []) if analysis and step.get("log")}
+    if analysis and not artifacts:
+        problems.append("Durable analyzer diagnostics are missing")
+    for value in required_analysis | set(artifacts):
+        expected = artifacts.get(value)
         if expected is None or expected != identity("results", absolute(value)):
             problems.append("Analysis artifact missing or changed: " + value)
     if ("invocation" in payload or "dependencyProducts" in evidence) and ("dependencyProducts" not in evidence or (str(root) not in (mutable_caches or {}).get("dependencies", {}) and evidence["dependencyProducts"] != identity("dependencies", root))):
         problems.append("Dependency products are missing or changed")
-    analysis = payload.get("invocation", {}).get("preset") == "analyze"
     package_check = payload.get("invocation", {}).get("preset") in {"test:core", "test:forgekit"}
     if package_check and not paths.get("swiftPM"):
         problems.append("Package products are missing or changed")
