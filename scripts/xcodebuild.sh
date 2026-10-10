@@ -413,6 +413,7 @@ common=(
 	-destination "$destination"
 	-derivedDataPath "$derived_data"
 	-clonedSourcePackagesDirPath "$source_package_cache"
+	-onlyUsePackageVersionsFromResolvedFile
 	-configuration "$configuration"
 	MACOSX_DEPLOYMENT_TARGET="$deployment_target"
 )
@@ -675,6 +676,7 @@ case "$command" in
 		has_derived_data=0
 		has_package_cache=0
 		has_result_bundle=0
+		has_resolved_versions=0
 		is_test_action=0
 		is_test_build=0
 		for argument in "${extra[@]}"; do
@@ -687,11 +689,13 @@ case "$command" in
 				-derivedDataPath|-derivedDataPath=*) has_derived_data=1 ;;
 				-clonedSourcePackagesDirPath|-clonedSourcePackagesDirPath=*) has_package_cache=1 ;;
 				-resultBundlePath|-resultBundlePath=*) has_result_bundle=1 ;;
+				-onlyUsePackageVersionsFromResolvedFile|-disableAutomaticPackageResolution) has_resolved_versions=1 ;;
 				test|test-without-building) is_test_action=1; is_test_build=1 ;;
 				build-for-testing) is_test_build=1 ;;
 			esac
 		done
 		raw_common=()
+		(( has_resolved_versions )) || raw_common+=( -onlyUsePackageVersionsFromResolvedFile )
 		# Release Swift packages also need testable interfaces for app-hosted
 		# XCTest imports; ordinary release builds retain their normal settings.
 		(( is_test_build )) && raw_common+=( ENABLE_TESTABILITY=YES )
