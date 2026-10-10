@@ -82,6 +82,22 @@ class BuildBenchmarkTests(unittest.TestCase):
             (destination / "Classes/renamed.swift").write_text("probe\n")
             self.assertEqual((root / "Classes/renamed.swift").read_text(), "current\n")
 
+    def test_fresh_products_preserve_the_owned_native_compilation_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = pathlib.Path(directory).resolve()
+            derived = workspace / "DerivedData"
+            cache = derived / "CompilationCache.noindex/builtin"
+            cache.mkdir(parents=True)
+            (cache / "cached-result").write_text("cache\n")
+            products = derived / "Build/Products"
+            products.mkdir(parents=True)
+            (products / "app").write_text("product\n")
+            self.module.reset_products(derived, workspace)
+            self.assertEqual((cache / "cached-result").read_text(), "cache\n")
+            self.assertFalse(products.exists())
+            with self.assertRaises(ValueError):
+                self.module.reset_products(workspace.parent, workspace)
+
 
 if __name__ == "__main__":
     unittest.main()

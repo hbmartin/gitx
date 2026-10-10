@@ -22,6 +22,19 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.scripts.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # These entrypoint tests model their own desktop. A fixture named GitX
+        # from a concurrent suite must not become a competing real application.
+        pgrep = self.bin / "pgrep"
+        pgrep.write_text(
+            '#!/bin/bash\n'
+            'if [[ "$*" == "-x GitX" ]]; then\n'
+            '  [[ -n "${GITX_TEST_COMPETING_PIDS:-}" ]] || exit 1\n'
+            '  printf "%s\\n" "$GITX_TEST_COMPETING_PIDS"\n'
+            '  exit 0\n'
+            'fi\n'
+            'exec /usr/bin/pgrep "$@"\n'
+        )
+        pgrep.chmod(0o755)
         self.developer_directory = self.root / "Xcode.app" / "Contents" / "Developer"
         self.developer_directory.mkdir(parents=True)
         workspace_data = self.root / "GitX.xcworkspace" / "xcshareddata" / "swiftpm"
@@ -64,7 +77,11 @@ class ScriptEntrypointTests(unittest.TestCase):
         destination = self.scripts / name
         shutil.copy2(ROOT / "scripts" / name, destination)
         if name == "run_app.sh":
-            destination.write_text(destination.read_text().replace("/usr/bin/codesign", "/usr/bin/true"))
+            destination.write_text(destination.read_text().replace("/usr/bin/codesign", "/usr/bin/true")
+                                   .replace("/MacOS/GitX", "/MacOS/GitXFixture")
+                                   .replace('stop_pid_file "$app_pid_file" GitX', 'stop_pid_file "$app_pid_file" GitXFixture'))
+        if name == "observe_app.sh":
+            destination.write_text(destination.read_text().replace("GitX | */GitX)", "GitXFixture | */GitXFixture)"))
         shutil.copy2(ROOT / "scripts/workflow_session.py", self.scripts / "workflow_session.py")
         shutil.copy2(ROOT / "scripts/verification-config.json", self.scripts / "verification-config.json")
         # Controlled desktop probe in the copied fixture, never in production.
@@ -287,7 +304,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         session_directory.mkdir(parents=True)
         repository = self.root / "fixture-repo"
         repository.mkdir()
-        executable = self.root / "GitX"
+        executable = self.root / "GitXFixture"
         executable.symlink_to("/bin/sleep")
         process = subprocess.Popen([executable, "60"])
         self.addCleanup(self._terminate_process, process)
@@ -343,7 +360,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitXFixture")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")
@@ -925,6 +942,28 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertIn("-default-test-execution-time-allowance=777", full_ui)
         self.assertIn("888", full_ui)
 
+    def test_mock_ui_checks_use_a_distinct_process_name(self) -> None:
+        foreign = self.root / "another-suite" / "GitXFixture"
+        self.install_sleeping_executable(foreign)
+        marker = self.root / "foreign-ready.pid"
+        process = subprocess.Popen([foreign], env=self.environment | {"GITX_TEST_APP_PID_FILE": str(marker)})
+        self.addCleanup(self._terminate_process, process)
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertTrue(marker.exists(), "Foreign fixture did not start")
+        real = subprocess.run(["/usr/bin/pgrep", "-x", "GitX"], capture_output=True, text=True)
+        self.assertNotIn(str(process.pid), real.stdout.splitlines())
+        self.test_ui_preflight_forwards_non_selection_extras_only()
+
+    def test_ui_preflight_still_rejects_a_controlled_competing_process(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        result = subprocess.run([script, "test", "ui"], capture_output=True, text=True,
+                                env=self.environment | {"GITX_TEST_COMPETING_PIDS": "12345"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("running GitX pid(s): 12345", result.stdout + result.stderr)
+
     def test_wrapper_rejects_caller_owned_workspace_scheme_and_test_plan(self) -> None:
         script = self.install_script("xcodebuild.sh")
         self.install_mock_xcodebuild(self.root / "Products")
@@ -1000,7 +1039,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         script = self.install_script("run_app.sh")
         session_directory = self.root / "build" / "Logs" / "run-app"
         session_directory.mkdir(parents=True)
-        executable = self.root / "GitX"
+        executable = self.root / "GitXFixture"
         executable.symlink_to("/bin/sleep")
         process = subprocess.Popen([executable, "60"])
         self.addCleanup(self._terminate_process, process)
@@ -1056,7 +1095,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         script = self.install_script("run_app.sh")
         session_directory = self.root / "build" / "Logs" / "run-app"
         session_directory.mkdir(parents=True)
-        executable = self.root / "GitX"
+        executable = self.root / "GitXFixture"
         executable.symlink_to("/bin/sleep")
         process = subprocess.Popen([executable, "60"])
         self.addCleanup(self._terminate_process, process)
@@ -1107,7 +1146,7 @@ class ScriptEntrypointTests(unittest.TestCase):
     def test_run_app_stop_preserves_home_when_identity_file_names_another_live_app(self) -> None:
         script = self.install_script("run_app.sh")
         identity_process, session_directory = self.create_live_run_app_session()
-        recorded_process = subprocess.Popen([self.root / "GitX", "60"])
+        recorded_process = subprocess.Popen([self.root / "GitXFixture", "60"])
         self.addCleanup(self._terminate_process, recorded_process)
         temporary_root = self.root / "runtime-tmp"
         temporary_root.mkdir()
@@ -1308,7 +1347,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             "GIT_QUARANTINE_PATH": str(foreign / ".git" / "objects"), "GIT_NAMESPACE": "inherited-namespace",
         }
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary = app_contents / "MacOS" / "GitXFixture"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
@@ -1439,7 +1478,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True, env=self.fixture_environment)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary = app_contents / "MacOS" / "GitXFixture"
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
@@ -1582,7 +1621,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitXFixture")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")
@@ -1621,7 +1660,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        app_binary = app_contents / "MacOS" / "GitX"
+        app_binary = app_contents / "MacOS" / "GitXFixture"
         app_binary.parent.mkdir(parents=True)
         app_binary.write_text("#!/bin/bash\nexit 0\n")
         app_binary.chmod(0o755)
@@ -1684,7 +1723,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         repository.mkdir()
         subprocess.run(["git", "init", "--quiet", repository], check=True)
         app_contents = self.root / "build" / "GitX.app" / "Contents"
-        self.install_sleeping_executable(app_contents / "MacOS" / "GitX")
+        self.install_sleeping_executable(app_contents / "MacOS" / "GitXFixture")
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         self.install_sleeping_executable(self.bin / "log")

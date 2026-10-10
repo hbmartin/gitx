@@ -145,6 +145,23 @@ def cache_hits(log):
     return len(re.findall(r"\bcache hit\b", log.read_text(errors="replace"), re.IGNORECASE))
 
 
+def reset_products(derived, workspace):
+    derived, workspace = pathlib.Path(derived).resolve(), pathlib.Path(workspace).resolve()
+    if derived.parent != workspace or derived.name != "DerivedData":
+        raise ValueError("Only the benchmark's owned DerivedData may be reset")
+    cache = derived / "CompilationCache.noindex"
+    preserved = workspace / "PreservedCompilationCache.noindex"
+    if cache.exists():
+        cache.rename(preserved)
+    try:
+        if derived.exists():
+            shutil.rmtree(derived)
+    finally:
+        derived.mkdir(parents=True, exist_ok=True)
+        if preserved.exists():
+            preserved.rename(cache)
+
+
 def compare_cache(root, output, runs):
     if runs < 5:
         raise ValueError("Cache qualification requires at least five paired runs")
@@ -191,7 +208,7 @@ def compare_cache(root, output, runs):
                 measure("on", "prime")
                 for index in range(1, runs + 1):
                     for mode in (("off", "on") if index % 2 else ("on", "off")):
-                        shutil.rmtree(derived, ignore_errors=True)
+                        reset_products(derived, workspace)
                         sample = {"run": index, "cold": measure(mode, f"{index}-{mode}-fresh"),
                                   "warm": measure(mode, f"{index}-{mode}-warm")}
                         for kind, relative in (("sourceEdit", "Classes/git/IndexSnapshot.swift"), ("headerEdit", "Classes/PBChangedFile.h")):
