@@ -172,6 +172,87 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.assertEqual(stale.returncode, 2)
         self.assertIn("compiler products are missing or changed", stale.stderr)
 
+    def test_optional_analyzer_recovery_runs_fresh_when_strong_evidence_is_stale(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        tool = self.scripts / "run_pinned_tool.sh"
+        tool.write_text('#!/bin/bash\nexit "${GITX_TEST_LINT_STATUS:-0}"\n')
+        tool.chmod(0o755)
+        for kind in ("toolchain", "invocation", "scratch", "diagnostics"):
+            with self.subTest(kind=kind):
+                prior_id = "prior-" + kind
+                failed = subprocess.run([script, "--run-id", prior_id, "analyze"], capture_output=True,
+                                        text=True, env=self.environment | {"GITX_TEST_LINT_STATUS": "9"})
+                self.assertEqual(failed.returncode, 9, failed.stderr)
+                prior_path = self.root / "artifacts/verification" / prior_id / "receipt.json"
+                prior = json.loads(prior_path.read_text())
+                if kind == "toolchain":
+                    prior["toolchain"]["xcodeBuild"] = "old-build"
+                elif kind == "invocation":
+                    prior["invocation"]["scheme"] = "old-scheme"
+                elif kind == "scratch":
+                    shutil.rmtree(prior["evidence"]["analyzerScratch"]["path"])
+                else:
+                    log = next(step["log"] for step in prior["steps"] if step["name"] == "analyze")
+                    (self.root / log).write_text("changed diagnostics")
+                prior_path.write_text(json.dumps(prior))
+                resumed = subprocess.run([script, "--resume-analysis", prior_id, "--fresh-on-stale-analysis",
+                                          "--run-id", "fresh-" + kind, "analyze"], capture_output=True,
+                                         text=True, env=self.environment)
+                self.assertEqual(resumed.returncode, 0, resumed.stderr)
+                receipt = self.receipt("fresh-" + kind)
+                self.assertEqual(receipt["analyzerRecovery"]["status"], "rejected")
+                self.assertEqual([step["name"] for step in receipt["steps"]],
+                                 ["doctor", "analyze", "analyzer-policy", "swiftlint-analyze"])
+                self.assertNotIn("reusedFrom", receipt["steps"][1])
+                self.assertEqual(receipt["status"], "passed")
+        native = [call for call in captured.read_text().split("__INVOCATION__") if "\nanalyze\n" in call]
+        self.assertEqual(len(native), 8, "each rejected recovery must perform fresh compiler analysis")
+        failed_fresh = subprocess.run([script, "analyze", "--resume-analysis", "prior-diagnostics",
+                                       "--fresh-on-stale-analysis", "--run-id", "fresh-failure"],
+                                      capture_output=True, text=True,
+                                      env=self.environment | {"GITX_TEST_LINT_STATUS": "9"})
+        self.assertEqual(failed_fresh.returncode, 9, failed_fresh.stderr)
+        failed_receipt = self.receipt("fresh-failure")
+        self.assertEqual(failed_receipt["status"], "failed")
+        self.assertEqual(failed_receipt["steps"][-1]["name"], "swiftlint-analyze")
+        self.assertFalse(failed_receipt["deliveryEligible"])
+
+    def test_workflow_resume_falls_back_to_fresh_after_toolchain_recovery_rejection(self) -> None:
+        self.install_script("xcodebuild.sh")
+        coordinator = self.install_script("dev_workflow.py")
+        for dependency in ("workflow_records.py", "workflow_cleanup.py", "workflow_feedback.py"):
+            shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        tool = self.scripts / "run_pinned_tool.sh"
+        tool.write_text('#!/bin/bash\nexit "${GITX_TEST_LINT_STATUS:-0}"\n')
+        tool.chmod(0o755)
+        command = ["python3", str(coordinator), "verify", "--check", "analyze"]
+        failed = subprocess.run(command + ["--run-id", "coordinator"], capture_output=True,
+                                text=True, env=self.environment | {"GITX_TEST_LINT_STATUS": "9"})
+        self.assertEqual(failed.returncode, 9, failed.stderr)
+        workflow_path = self.root / "artifacts/verification/coordinator/workflow.json"
+        prior_workflow = json.loads(workflow_path.read_text())
+        child_path = pathlib.Path(prior_workflow["steps"][0]["receipt"])
+        child = json.loads(child_path.read_text())
+        child["toolchain"]["xcodeBuild"] = "old-build"
+        child_path.write_text(json.dumps(child))
+        resumed = subprocess.run(command + ["--resume", "coordinator"], capture_output=True,
+                                 text=True, env=self.environment)
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        workflow = json.loads(workflow_path.read_text())
+        receipt = json.loads(pathlib.Path(workflow["steps"][0]["receipt"]).read_text())
+        self.assertEqual(receipt["analyzerRecovery"]["status"], "rejected")
+        self.assertIn("toolchain", receipt["analyzerRecovery"]["reason"])
+        self.assertEqual(workflow["status"], "passed")
+        self.assertEqual(workflow["executedChecks"], ["analyze"])
+        self.assertFalse(workflow["deliveryEligible"])
+        self.assertNotIn("reusedFrom", next(step for step in receipt["steps"] if step["name"] == "analyze"))
+        native = [call for call in captured.read_text().split("__INVOCATION__") if "\nanalyze\n" in call]
+        self.assertEqual(len(native), 2)
+
     def test_canonical_release_tests_allow_locally_signed_framework_loading(self) -> None:
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
