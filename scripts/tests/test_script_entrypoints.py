@@ -191,6 +191,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             "#!/bin/bash\n"
             "case \"${1:-} ${2:-}\" in\n"
             "  'list windows')\n"
+            "    if [[ -n \"${GITX_TEST_READY_FILE:-}\" && ! -s \"$GITX_TEST_READY_FILE\" ]]; then printf '%s\\n' '{\"success\":true,\"data\":{\"windows\":[]}}'; exit 0; fi\n"
             "    printf '%s\\n' '{\"success\":true,\"data\":{\"windows\":[{\"windowID\":7,\"index\":1,\"title\":\"Welcome\",\"isMainWindow\":false},{\"windowID\":42,\"index\":0,\"title\":\"fixture-repo (branch: main)\",\"isMainWindow\":true}]}}'\n"
             "    ;;\n"
             "  'image --pid')\n"
@@ -1277,6 +1278,7 @@ class ScriptEntrypointTests(unittest.TestCase):
             "LC_ALL": "en_US.UTF-8",
         }
         environment.update(selectors)
+        environment["GITX_TEST_READY_FILE"] = str(mutation_result)
         sessions: list[dict[str, str]] = []
         captured_environments: list[dict[str, str]] = []
 
@@ -1285,13 +1287,13 @@ class ScriptEntrypointTests(unittest.TestCase):
                 (repository / ".git" / "index").unlink(missing_ok=True)
                 mutation_result.unlink(missing_ok=True)
                 launch = subprocess.run(
-                    [script, "--no-build", "--repo", str(repository), "--timeout", "2"]
+                    [script, "--no-build", "--repo", str(repository), "--timeout", "15"]
                     + (["--preserve-git-environment"] if preserve else []),
                     check=False,
                     capture_output=True,
                     text=True,
                     env=environment,
-                    timeout=10,
+                    timeout=30,
                 )
                 self.assertEqual(foreign_index.read_bytes(), original_foreign_index, f"preserve={preserve}; launcher status={launch.returncode}")
                 launch.check_returncode()
@@ -1306,17 +1308,13 @@ class ScriptEntrypointTests(unittest.TestCase):
                     line.split("=", maxsplit=1)
                     for line in launch_environment.read_text().splitlines() if "=" in line
                 ))
-                deadline = time.monotonic() + 2
-                while not mutation_result.exists() and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                self.assertTrue(mutation_result.exists(), "Fixture mutation did not complete")
+                self.assertTrue(mutation_result.exists(), "Launcher reported readiness before the fixture mutation completed")
                 self.assertEqual(mutation_result.read_text().strip(), "0", f"preserve={preserve}")
                 self.assertEqual(foreign_index.read_bytes(), original_foreign_index, f"preserve={preserve}")
                 self.assertEqual(subprocess.run(["git", "-C", repository, "ls-files"], check=True,
                     capture_output=True, text=True, env=self.fixture_environment).stdout, "selected.txt\n")
-                os.kill(int(session["app_pid"]), signal.SIGTERM)
-                os.kill(int(session["log_pid"]), signal.SIGTERM)
-                time.sleep(0.1)
+                for key in ("app_pid", "log_pid"):
+                    self.terminate_pid(int(session[key]))
         finally:
             subprocess.run(
                 [script, "--stop"],
@@ -1564,12 +1562,27 @@ class ScriptEntrypointTests(unittest.TestCase):
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
         log = self.bin / "log"
-        log.write_text("#!/bin/bash\nexit 0\n")
+        log_pid = self.root / "exiting-log.pid"
+        identity_probe = self.root / "log-identity-probed"
+        log.write_text(
+            "#!/bin/bash\n"
+            f"printf '%s\\n' \"$$\" >'{log_pid}'\n"
+            f"while [[ ! -e '{identity_probe}' ]]; do sleep 0.01; done\n"
+            "exit 0\n"
+        )
         log.chmod(0o755)
         ps = self.bin / "ps"
         ps.write_text(
             "#!/bin/bash\n"
             "if [[ \"$*\" == *'lstart='* ]]; then\n"
+            # Owner identity queries must remain real. This fixture controls
+            # only the log's exit-before-identity race, with a marker handshake.
+            "  command=$(/bin/ps -p \"$2\" -o command= 2>/dev/null)\n"
+            "  [[ \"$command\" == *python* || \"$command\" == *Python* ]] && exec /bin/ps \"$@\"\n"
+            f"  if [[ \"$command\" != *'{log}'* && \"$command\" != *'{script}'* ]]; then exec /bin/ps \"$@\"; fi\n"
+            f"  for _ in {{1..200}}; do [[ -s '{log_pid}' ]] && break; sleep 0.01; done\n"
+            f"  [[ -s '{log_pid}' && \"$(cat '{log_pid}')\" == \"$2\" ]] || exec /bin/ps \"$@\"\n"
+            f"  touch '{identity_probe}'\n"
             "  for _ in {1..200}; do\n"
             "    state=$(/bin/ps -p \"$2\" -o stat= 2>/dev/null)\n"
             "    [[ -z \"$state\" || \"$state\" == *Z* ]] && exit 1\n"
@@ -1590,6 +1603,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 1)
+        self.assertTrue(identity_probe.exists(), "The fixture must exercise the log identity failure")
         self.assertIn("Could not record the log stream process identity.", result.stderr)
         self.assertEqual(list(temporary_root.glob("gitx-run-app-home.*")), [])
         session_directory = self.root / "build" / "Logs" / "run-app"
