@@ -31,6 +31,7 @@ Global options:
   --compilation-cache auto|on|off
   --profile-rules (analyze only; profiling is not delivery evidence)
   --resume-analysis RUN-ID (reuse matching compiler diagnostics; rerun all semantic checks)
+  --fresh-on-stale-analysis (with --resume-analysis, compile fresh if recovery is rejected)
 
 Every invocation emits a receipt under artifacts/verification/<run-id> while
 reusing caches under ~/Library/Caches/GitX/Verification. GITX_DERIVED_DATA,
@@ -53,6 +54,7 @@ use_xcbeautify=1
 compilation_cache=auto
 profile_rules=0
 resume_analysis=
+fresh_on_stale_analysis=0
 command=
 command_arguments=()
 
@@ -96,6 +98,10 @@ while (( $# )); do
 			(( $# >= 2 )) || { echo "$1 requires a value" >&2; exit 2; }
 			resume_analysis=$2
 			shift 2
+			;;
+		--fresh-on-stale-analysis)
+			fresh_on_stale_analysis=1
+			shift
 			;;
 		--raw|--raw-output)
 			# --raw was the original wrapper's spelling for unformatted output.
@@ -165,6 +171,10 @@ if [[ "$command" != "raw" ]]; then
 				resume_analysis=${command_arguments[$((index + 1))]}
 				index=$((index + 2))
 				;;
+			--fresh-on-stale-analysis)
+				fresh_on_stale_analysis=1
+				index=$((index + 1))
+				;;
 			--raw|--raw-output)
 				use_xcbeautify=0
 				index=$((index + 1))
@@ -181,6 +191,10 @@ fi
 if [[ -n "$resume_analysis" ]]; then
 	[[ "$command" == "analyze" ]] || { echo "--resume-analysis requires analyze" >&2; exit 2; }
 	python3 "$support" run-id "$resume_analysis" >/dev/null || exit $?
+fi
+if (( fresh_on_stale_analysis )) && [[ -z "$resume_analysis" ]]; then
+	echo "--fresh-on-stale-analysis requires --resume-analysis" >&2
+	exit 2
 fi
 if (( profile_rules )) && [[ "$command" != "analyze" ]]; then
 	echo "--profile-rules requires analyze" >&2
@@ -640,8 +654,22 @@ case "$command" in
 		analyzer_output="$results/Analyzer"
 		mkdir -p "$analyzer_output"
 		if [[ -n "$resume_analysis" ]]; then
-			python3 "$support" resume-analyzer "$artifact_root/$resume_analysis/receipt.json" "$receipt" || exit $?
-		else
+			recovery_options=()
+			if (( fresh_on_stale_analysis )); then
+				recovery_options+=(--allow-fresh)
+			fi
+			python3 "$support" resume-analyzer "$artifact_root/$resume_analysis/receipt.json" "$receipt" ${recovery_options[@]+"${recovery_options[@]}"}
+			recovery_status=$?
+			if (( recovery_status == 79 && fresh_on_stale_analysis )); then
+				# Only this newly owned run may contain partially copied reports.
+				rm -rf "$analyzer_output"
+				mkdir -p "$analyzer_output"
+				resume_analysis=
+			elif (( recovery_status != 0 )); then
+				exit "$recovery_status"
+			fi
+		fi
+		if [[ -z "$resume_analysis" ]]; then
 			run_step analyze "$analyzer_log" "" "$xcodebuild" "${common[@]}" analyze \
 			ARCHS=arm64 CLANG_STATIC_ANALYZER_MODE_ON_ANALYZE_ACTION=deep \
 			"CLANG_ANALYZER_OUTPUT_DIR=$analyzer_output" \

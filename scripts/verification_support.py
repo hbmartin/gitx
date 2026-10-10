@@ -664,7 +664,23 @@ def command_config(arguments: argparse.Namespace) -> int:
 
 def command_resume_analyzer(arguments: argparse.Namespace) -> int:
     prior_path, current_path = arguments.prior, arguments.current
-    prior, current = (json.loads(path.read_text()) for path in (prior_path, current_path))
+    current = json.loads(current_path.read_text())
+    try:
+        return resume_analyzer(prior_path, current_path, current)
+    except (OSError, ValueError) as error:
+        if not arguments.allow_fresh:
+            raise
+        # A rejected optimization must not turn required fresh analysis into a
+        # failure. Keep the reason without admitting any stale compiler evidence.
+        current = json.loads(current_path.read_text())
+        current["analyzerRecovery"] = {"status": "rejected", "prior": str(prior_path), "reason": str(error)}
+        atomic_json(current_path, current)
+        print(f"Analyzer recovery rejected: {error}. Running fresh analysis.", file=sys.stderr)
+        return 79
+
+
+def resume_analyzer(prior_path, current_path, current) -> int:
+    prior = json.loads(prior_path.read_text())
     if prior_path.resolve() == current_path.resolve():
         raise ValueError("Analyzer resume requires a separate prior run")
     evidence = prior.get("evidence", {})
@@ -797,6 +813,7 @@ def parser() -> argparse.ArgumentParser:
     resume_analysis = subparsers.add_parser("resume-analyzer")
     resume_analysis.add_argument("prior", type=pathlib.Path)
     resume_analysis.add_argument("current", type=pathlib.Path)
+    resume_analysis.add_argument("--allow-fresh", action="store_true")
     resume_analysis.set_defaults(handler=command_resume_analyzer)
     return result
 
