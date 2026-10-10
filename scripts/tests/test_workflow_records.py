@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
+
+from support import fixture_git_environment
 
 import workflow_records as records
 import workflow_session as session
@@ -15,7 +19,8 @@ class WorkflowRecordsTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name) / "repo"
         self.root.mkdir()
-        subprocess.run(["git", "init", "-q", self.root], check=True)
+        self.environment = fixture_git_environment()
+        subprocess.run(["git", "init", "-q", self.root], check=True, env=self.environment)
         self.git("config", "user.name", "Fixture")
         self.git("config", "user.email", "fixture@example.invalid")
         self.git("config", "commit.gpgsign", "false")
@@ -28,7 +33,35 @@ class WorkflowRecordsTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def git(self, *arguments):
-        return subprocess.run(["git", "-C", self.root, *arguments], check=True, capture_output=True)
+        return subprocess.run(["git", "-C", self.root, *arguments], check=True, capture_output=True, env=self.environment)
+
+    def test_repository_selectors_cannot_redirect_workflow_inspection(self):
+        foreign = self.root.parent / "foreign"
+        subprocess.run(["git", "clone", "-q", str(self.root), str(foreign)], check=True, env=self.environment)
+        (self.root / "source.txt").write_text("second\n")
+        self.git("commit", "-qam", "second")
+        head = session.git(self.root, "rev-parse", "HEAD")
+        expected_patch = records.patch_id(self.root, self.first, head)
+        foreign_index = (foreign / ".git/index").read_bytes()
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(foreign / ".git"), "GIT_WORK_TREE": str(foreign),
+                                         "GIT_INDEX_FILE": str(foreign / ".git/index")}):
+            self.assertEqual(session.git(self.root, "rev-parse", "HEAD"), head)
+            self.assertEqual(records.patch_id(self.root, self.first, head), expected_patch)
+            with records.Ledger(self.root) as ledger:
+                self.assertEqual(ledger.path.parent.parent, (self.root / ".git").resolve())
+                ledger.register("selected", "fixture", base=self.first)
+                scan = ledger.inventory()
+                self.assertEqual(scan["observations"]["selected"]["head"], head)
+                self.assertTrue(scan["observations"]["selected"]["ancestorOfCurrentHead"])
+        self.assertEqual((foreign / ".git/index").read_bytes(), foreign_index)
+
+    def test_fixture_commands_ignore_foreign_repository_and_global_config(self):
+        with mock.patch.dict(os.environ, {"GIT_DIR": "/gitx-nonexistent", "GIT_CONFIG_GLOBAL": "/gitx-nonexistent"}):
+            environment = fixture_git_environment()
+        self.assertNotIn("GIT_DIR", environment)
+        self.assertEqual(environment["GIT_CONFIG_GLOBAL"], "/dev/null")
+        self.assertEqual(environment["GIT_CONFIG_SYSTEM"], "/dev/null")
+        self.assertEqual(environment["GIT_CONFIG_NOSYSTEM"], "1")
 
     def test_ledger_shared_ownership_dirty_missing_and_export_import(self):
         other = self.root.parent / "other"

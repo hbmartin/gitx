@@ -11,6 +11,9 @@ private final nonisolated class ReferenceTransactionExit: @unchecked Sendable {
     private var result: (Int32, NSError?)?
     private var observedAt: TimeInterval?
     let semaphore = DispatchSemaphore(value: 0)
+    #if DEBUG
+        let leaderSemaphore = DispatchSemaphore(value: 0)
+    #endif
 
     func complete(status: Int32, error: NSError?) {
         lock.lock()
@@ -27,6 +30,9 @@ private final nonisolated class ReferenceTransactionExit: @unchecked Sendable {
 
     func observeLeader() {
         lock.lock(); observedAt = ProcessInfo.processInfo.systemUptime; lock.unlock()
+        #if DEBUG
+            leaderSemaphore.signal()
+        #endif
     }
 
     var leaderObserved: Bool {
@@ -62,6 +68,17 @@ final nonisolated class IndexReferenceTransaction {
     private var closed = false
     private var aborting = false
     private let checkCancellation: () throws -> Void
+    #if DEBUG
+        fileprivate var afterInitialRead: (() throws -> Void)?
+        fileprivate var controlledWrite: ((Int32, UnsafeRawPointer?, Int) -> Int)?
+
+        fileprivate func releasePeerAndObserveExit() throws {
+            try send("release\n")
+            guard exit.leaderSemaphore.wait(timeout: .now() + 2) == .success else {
+                throw failure("The controlled peer did not exit.")
+            }
+        }
+    #endif
 
     init(timeout: TimeInterval = 30, checkCancellation: @escaping () throws -> Void = {}) {
         deadline = .now() + (timeout.isFinite ? max(0, timeout) : 30)
@@ -112,17 +129,23 @@ final nonisolated class IndexReferenceTransaction {
         try checkBeforePublicationCancellation()
         // Once any commit bytes may reach Git, cancellation cannot roll back
         // publication. Settle its acknowledgement and actual exit instead.
-        if command == "commit\n" {
-            commitRequested = true
-        }
         let bytes = Data(command.utf8)
         try bytes.withUnsafeBytes { buffer in
             var offset = 0
             while offset < buffer.count {
                 guard remainingTime > 0 else { throw failure("Commit publication timed out after 30 seconds.") }
                 try checkBeforePublicationCancellation()
-                let count = Darwin.write(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                let count: Int
+                #if DEBUG
+                    count = controlledWrite?(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                        ?? Darwin.write(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                #else
+                    count = Darwin.write(input, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                #endif
                 if count > 0 {
+                    if command == "commit\n" {
+                        commitRequested = true
+                    }
                     offset += count
                 } else if count < 0, errno == EINTR {
                     continue
@@ -140,6 +163,11 @@ final nonisolated class IndexReferenceTransaction {
         while true {
             try checkBeforePublicationCancellation()
             try readAvailable()
+            #if DEBUG
+                let testHook = afterInitialRead
+                afterInitialRead = nil
+                try testHook?()
+            #endif
             if let newline = outputBytes.firstIndex(of: 10) {
                 let line = String(decoding: outputBytes[..<newline], as: UTF8.self)
                 outputBytes.removeSubrange(...newline)
@@ -150,7 +178,15 @@ final nonisolated class IndexReferenceTransaction {
                 return
             }
             guard remainingTime > 0 else { throw failure("Commit publication timed out after 30 seconds.") }
-            guard !outputEOF, !exit.leaderObserved, exit.value == nil else { throw failure("Git stopped before acknowledging commit publication.") }
+            if outputEOF || exit.leaderObserved || exit.value != nil {
+                // Exit can be observed after the first nonblocking read but
+                // before this check. Preserve the peer's final bytes first.
+                try readAvailable()
+                if outputBytes.firstIndex(of: 10) != nil {
+                    continue
+                }
+                throw failure("Git stopped before acknowledging commit publication.")
+            }
             try waitForIO(writing: false)
         }
     }
@@ -353,6 +389,32 @@ final nonisolated class IndexReferenceTransaction {
     /// Exercise the production pipe owner with controlled peers, never a second implementation.
     @objc(PBIndexReferenceTransactionTestHarness)
     final nonisolated class IndexReferenceTransactionTestHarness: NSObject {
+        @objc(exerciseCommitWriteWithAcceptedByteCount:error:)
+        static func exerciseCommitWrite(acceptedByteCount: Int) throws {
+            let transaction = IndexReferenceTransaction(timeout: 2)
+            defer { transaction.abortAndClose() }
+            try transaction.launch(context: PBTaskExecutionContext(launchPath: "/bin/sh", arguments: ["-c", "while read command; do :; done"], environment: ["PATH": "/usr/bin:/bin"], workingDirectory: nil))
+            var first = true
+            transaction.controlledWrite = { _, _, count in
+                defer { first = false }
+                return first ? min(count, acceptedByteCount) : 0
+            }
+            try transaction.send("commit\n")
+        }
+
+        @objc(exerciseTerminalReadRaceWithAcknowledgement:error:)
+        static func exerciseTerminalReadRace(acknowledgement: Bool) throws {
+            let transaction = IndexReferenceTransaction(timeout: 5)
+            defer { transaction.abortAndClose() }
+            let reply = acknowledgement ? "printf 'start: ok\\n'; " : ""
+            let script = "read command; read release; " + reply + "printf 'final diagnostic\\n' >&2; exit 0"
+            try transaction.launch(context: PBTaskExecutionContext(launchPath: "/bin/sh", arguments: ["-c", script], environment: ["PATH": "/usr/bin:/bin"], workingDirectory: nil))
+            try transaction.send("start\n")
+            transaction.afterInitialRead = { try transaction.releasePeerAndObserveExit() }
+            try transaction.acknowledge("start: ok")
+            try transaction.finish()
+        }
+
         @objc(exerciseWithLaunchPath:arguments:workingDirectory:commands:acknowledgements:timeout:cancelAfterAcknowledgement:error:)
         static func exercise(launchPath: String, arguments: [String], workingDirectory: String?, commands: [String], acknowledgements: [String], timeout: TimeInterval, cancelAfterAcknowledgement: Int) throws {
             guard commands.count == acknowledgements.count else {

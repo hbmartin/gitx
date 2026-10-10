@@ -132,9 +132,14 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(index.mutationReconciliationPending)
         XCTAssertEqual((index.value(forKey: "postMutationStatCacheRefreshesPending") as? NSNumber)?.uintValue, 0)
         index.close()
+        let closedWorktree = try fixture.git(["diff", "--binary"])
+        let closedIndex = try fixture.git(["write-tree"])
         XCTAssertFalse(index.stageFiles([file]))
         XCTAssertFalse(index.unstageFiles([file]))
         index.discardChanges(for: [file])
+        XCTAssertFalse(index.discardChanges(for: [file], completion: { _, _ in XCTFail("Closed discard was admitted") }))
+        XCTAssertEqual(try fixture.git(["diff", "--binary"]), closedWorktree)
+        XCTAssertEqual(try fixture.git(["write-tree"]), closedIndex)
         XCTAssertFalse(index.applyPatch("closed", stage: true, reverse: false))
         index.applyRefreshResult(PBIndexRefreshResult(staged: nil, unstaged: nil, untracked: nil, mutationGeneration: 0))
         XCTAssertFalse(index.stageFiles([], completion: { _, _ in XCTFail("Closed operation was admitted") }))
@@ -184,6 +189,63 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
         XCTAssertFalse(repository.index.mutationReconciliationPending)
         XCTAssertTrue(try fixture.git(["diff", "--cached", "--name-only"]).isEmpty)
+    }
+
+    func testImageDeviceLinkHasReadOnlyControlsAndKeepsItsDiff() throws {
+        let path = "device-preview.png"
+        try FileManager.default.createSymbolicLink(atPath: fixture.path + "/" + path, withDestinationPath: "/dev/zero")
+        let pane = try openStagingPane()
+        try selectUnstagedFile(path, in: pane)
+        let native = pane.diffPaneController.contentView
+        XCTAssertTrue(waitForCondition { native.textView.string.contains("Actions unavailable") })
+        XCTAssertTrue(native.textView.string.contains("/dev/zero"))
+        XCTAssertFalse(native.textView.string.contains("Stage hunk"))
+        XCTAssertFalse(native.textView.string.contains("Discard hunk"))
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Unsafe-Image-Read-Only")
+    }
+
+    func testRepeatHunkClickWhileFinishingDoesNotReportAnError() throws {
+        try fixture.write("repeat click fixture\n", to: "nested/tracked.txt")
+        let pane = try openStagingPane()
+        try selectUnstagedFile("nested/tracked.txt", in: pane)
+        waitForFreshDiffAuthority(in: pane, containing: "+repeat click fixture")
+        let native = pane.diffPaneController.contentView
+        let range = (native.textView.string as NSString).range(of: "Stage hunk")
+        let link = try XCTUnwrap(native.textView.textStorage?.attribute(.link, at: range.location, effectiveRange: nil))
+        let failures = UncheckedSendableBox(NSMutableArray())
+        let observer = NotificationCenter.default.addObserver(forName: Notification.Name(PBGitIndexOperationFailed), object: repository.index, queue: .main) { _ in
+            // swift6-safety-justification: NotificationCenter delivers this observer on the main queue, matching the test's AppKit actor.
+            MainActor.assumeIsolated { failures.value.add("failure") }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+        XCTAssertTrue(repository.index.mutationReconciliationPending)
+        XCTAssertTrue(native.textView(native.textView, clickedOnLink: link, at: UInt(range.location)))
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertEqual(failures.value.count, 0)
+        XCTAssertEqual(try fixture.git(["diff", "--cached", "--name-only"]).trimmingCharacters(in: .newlines), "nested/tracked.txt")
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Repeat-Click-Reconciled")
+    }
+
+    func testDecomposedUnicodeHunkCanBeDiscarded() throws {
+        let path = "cafe\u{301}.txt"
+        try fixture.git(["config", "core.precomposeUnicode", "false"])
+        try fixture.write("original unicode\n", to: path)
+        try fixture.git(["add", "--", path])
+        try fixture.git(["commit", "-qm", "decomposed unicode fixture"])
+        try fixture.write("changed unicode\n", to: path)
+        let pane = try openStagingPane()
+        try selectUnstagedFile(path, in: pane)
+        waitForFreshDiffAuthority(in: pane, containing: "+changed unicode")
+        try activateNativeDiffAction("Discard hunk", in: pane)
+        let window = try XCTUnwrap(windowController.window)
+        XCTAssertTrue(waitForCondition { window.attachedSheet != nil })
+        let sheet = try XCTUnwrap(window.attachedSheet)
+        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        XCTAssertTrue(waitForCondition {
+            !self.repository.index.mutationReconciliationPending &&
+                (try? String(contentsOf: URL(fileURLWithPath: self.fixture.path).appendingPathComponent(path), encoding: .utf8)) == "original unicode\n"
+        })
     }
 
     func testWriterRevalidatesCachedHunkAgainstUnpublishedContentChanges() throws {
@@ -251,6 +313,44 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testWholeFileDiscardAuthorizesOnlyTrackedFilesInAMixedBinarySelection() throws {
+        let path = "nested/tracked.txt"
+        let original = try fixture.git(["show", "HEAD:" + path])
+        try fixture.write("modified tracked\n", to: path)
+        let untracked = URL(fileURLWithPath: fixture.path).appendingPathComponent("untracked.bin")
+        let bytes = Data([0, 255, 1, 0])
+        try bytes.write(to: untracked)
+        let pane = try openStagingPane()
+        let selected = repository.index.indexChanges.filter { $0.path == path || $0.path == "untracked.bin" }
+        XCTAssertEqual(selected.count, 2)
+        pane.fileListController.unstagedFilesController.setSelectedObjects(selected)
+        waitForIndexUpdate { pane.perform(NSSelectorFromString("discardFiles:"), with: self) }
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent(path), encoding: .utf8), original)
+        XCTAssertEqual(try Data(contentsOf: untracked), bytes)
+        try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Mixed-Selection-Tracked-Discard")
+    }
+
+    #if DEBUG
+        func testWholeFileDiscardAuthorizesDeletedNonUTF8FilenameWithoutTextDecoding() async throws {
+            let rawPath = Data(Array("tracked-".utf8) + [255] + Array(".txt".utf8))
+            let directory = URL(fileURLWithPath: fixture.path)
+            // APFS rejects creation of non-UTF-8 names. A deleted tracked index
+            // entry still exercises real Git's byte protocol and authorization.
+            let original = Data("original raw filename\n".utf8)
+            let oid = try GitXTestGitFixture.run(["hash-object", "-w", "--stdin"], in: directory, standardInput: original).standardOutput.trimmingCharacters(in: .newlines)
+            var input = Data("100644 \(oid)\t".utf8); input.append(rawPath); input.append(0)
+            try GitXTestGitFixture.run(["update-index", "-z", "--index-info"], in: directory, standardInput: input)
+            try fixture.git(["commit", "-qm", "raw tracked path"])
+            // update-index --refresh also rejects this name on APFS, so capture
+            // the tracked deletion directly rather than requiring a UI refresh.
+            let file = PBChangedFile(path: "tracked-\\xFF.txt", rawPath: rawPath)
+            file.status = .DELETED
+            file.hasUnstagedChanges = true
+            try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: IndexRepositoryCommandRunner(repository: repository), files: [file])
+        }
+    #endif
+
     func testWholeFileDiscardRejectsChangedStateBeforeShowingConfirmation() throws {
         let controller = try XCTUnwrap(windowController as? HistoryWindowController)
         controller.automaticallyConfirms = false
@@ -314,7 +414,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let pane = try openStagingPane()
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
         for (staged, expectedBytes) in [(true, indexed), (false, worktreeBytes)] {
-            pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: staged)])
+            try selectDiffFile(file, staged: staged, in: pane)
             let native = pane.diffPaneController.contentView
             XCTAssertTrue(waitForCondition { native.textView.string.contains((staged ? "Staged" : "Unstaged") + " — " + path) })
             let bytes = native.delegate?.nativeContentView?(native, imageDataForPath: path, section: 0, imageSource: [:])
@@ -332,7 +432,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try FileManager.default.createSymbolicLink(atPath: fixture.path + "/" + link, withDestinationPath: "missing-image-target")
         let pane = try openStagingPane()
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == conflict })
-        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+        try selectDiffFile(file, staged: true, in: pane)
         let native = pane.diffPaneController.contentView
         XCTAssertTrue(waitForCondition { native.textView.string.contains("Staged — " + conflict) })
         let conflictSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
@@ -340,7 +440,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(conflictSections.first?[PBNativeSectionTextKey] as? String, expected)
         try attachScreenshot(of: native, named: "Staging-Unmerged-Image-Diff")
         let untracked = try XCTUnwrap(repository.index.indexChanges.first { $0.path == link })
-        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: untracked, staged: false)])
+        try selectDiffFile(untracked, staged: false, in: pane)
         XCTAssertTrue(waitForCondition { native.textView.string.contains("missing-image-target") })
         let linkSections = try XCTUnwrap(native.value(forKey: "currentDiffSections") as? [[String: Any]])
         XCTAssertTrue((linkSections.first?[PBNativeSectionTextKey] as? String)?.contains("120000") == true)
@@ -2162,6 +2262,16 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         })
     }
 
+    private func selectDiffFile(_ file: PBChangedFile, staged: Bool, in pane: PBStagingViewController) throws {
+        let lists = pane.fileListController
+        let selected = staged ? lists.stagedFilesController : lists.unstagedFilesController
+        let other = staged ? lists.unstagedFilesController : lists.stagedFilesController
+        let arranged = try XCTUnwrap(selected.arrangedObjects as? [PBChangedFile])
+        let selectedFile = try XCTUnwrap(arranged.first { $0.rawPath == file.rawPath })
+        other.setSelectedObjects([])
+        XCTAssertTrue(selected.setSelectedObjects([selectedFile]))
+    }
+
     private func activateNativeDiffAction(_ title: String, in pane: PBStagingViewController) throws {
         let contentView = pane.diffPaneController.contentView
         XCTAssertTrue(waitForCondition {
@@ -2438,7 +2548,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         let leaf = try XCTUnwrap(root.children.first { $0.fullPath == path } as? PBWorkingTree)
         XCTAssertEqual(leaf.contents, "literal index filename", "The existing text API trims the terminal LF while preserving the literal index filename")
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data(path.utf8) })
-        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+        try selectDiffFile(file, staged: true, in: pane)
         let view = pane.diffPaneController.contentView
         XCTAssertTrue(waitForCondition { view.textView.string.contains("+literal index filename") })
         let delegate = try XCTUnwrap(view.delegate)
@@ -2620,7 +2730,7 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try FileManager.default.removeItem(at: url)
         let pane = try openStagingPane()
         let file = try XCTUnwrap(repository.index.indexChanges.first { $0.rawPath == Data(path.utf8) })
-        pane.diffPaneController.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+        try selectDiffFile(file, staged: true, in: pane)
 
         try activateNativeDiffAction("Show image", in: pane)
 

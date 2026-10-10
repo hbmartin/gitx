@@ -31,10 +31,10 @@ def resolve(root, target):
 
 
 def patch_id(root, base, head):
-    diff = subprocess.run(["git", "-C", str(root), "diff", base, head], capture_output=True)
+    diff = subprocess.run(["git", "-C", str(root), "diff", base, head], capture_output=True, env=session.git_environment())
     if diff.returncode or not diff.stdout:
         return None
-    result = subprocess.run(["git", "patch-id", "--stable"], input=diff.stdout, capture_output=True)
+    result = subprocess.run(["git", "patch-id", "--stable"], input=diff.stdout, capture_output=True, env=session.git_environment())
     return result.stdout.decode().split()[0] if result.stdout.split() else None
 
 
@@ -137,7 +137,7 @@ class Ledger:
             base = item.get("base") or (session.git(self.root, "merge-base", head, observed_head) if observed_head else None)
             ancestry = False
             if observed_head:
-                ancestry = subprocess.run(["git", "-C", str(self.root), "merge-base", "--is-ancestor", observed_head, head], capture_output=True).returncode == 0
+                ancestry = subprocess.run(["git", "-C", str(self.root), "merge-base", "--is-ancestor", observed_head, head], capture_output=True, env=session.git_environment()).returncode == 0
             facts = {"exists": exists, "head": observed_head, "branch": session.git(path, "branch", "--show-current") if exists else item.get("branch"),
                      "dirtyState": session.git(path, "status", "--porcelain=v1", "--untracked-files=all") if exists else None,
                      "ancestorOfCurrentHead": ancestry,

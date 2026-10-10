@@ -60,7 +60,8 @@ final nonisolated class CommitRemotePresentationPolicy: NSObject {
 
 nonisolated enum CommitSubmissionEligibility {
     static func allowsMutation(_ index: PBGitIndex) -> Bool {
-        !index.mutationReconciliationPending && !index.submissionActive && index.repository?.isBare() != true
+        !index.mutationReconciliationPending && !index.submissionActive && index.repository?.isBare() != true &&
+            index.repository.map { !IndexRepositoryCommandRunner(repository: $0).writerCoordinator.isBusy } != false
     }
 }
 

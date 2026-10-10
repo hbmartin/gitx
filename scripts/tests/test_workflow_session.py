@@ -17,6 +17,95 @@ import dev_workflow as workflow
 
 
 class WorkflowSessionTests(unittest.TestCase):
+    def test_analyzer_requires_retained_identities_for_every_referenced_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            log = root / 'analyze.log'
+            policy = root / 'policy.log'
+            log.write_text('passed analysis')
+            policy.write_text('passed policy')
+            payload = {'invocation': {'preset': 'analyze'}, 'steps': [{'log': str(log)}, {'log': str(policy)}],
+                       'evidence': {'dependencyProducts': {}, 'analysisArtifacts': {str(log): session.tree_identity(log)}}}
+            self.assertTrue(session.receipt_artifact_problems(payload, root))
+            payload['evidence']['analysisArtifacts'][str(policy)] = session.tree_identity(policy)
+            self.assertEqual(session.receipt_artifact_problems(payload, root), [])
+            policy.write_text('changed policy')
+            self.assertTrue(session.receipt_artifact_problems(payload, root))
+            payload['evidence']['analysisArtifacts'] = {}
+            payload['steps'] = []
+            self.assertTrue(session.receipt_artifact_problems(payload, root))
+
+    def test_producer_pid_and_start_identity_distinguish_live_abandoned_and_uncertain(self):
+        identity = {'pid': 123, 'started': 'birth'}
+        with mock.patch.object(os, 'kill'), mock.patch.object(session, 'process_started', return_value='birth'):
+            self.assertEqual(session.producer_state(identity), 'live')
+        with mock.patch.object(os, 'kill'), mock.patch.object(session, 'process_started', return_value='reused'):
+            self.assertEqual(session.producer_state(identity), 'abandoned')
+        with mock.patch.object(os, 'kill', side_effect=ProcessLookupError):
+            self.assertEqual(session.producer_state(identity), 'abandoned')
+        with mock.patch.object(os, 'kill', side_effect=PermissionError):
+            self.assertEqual(session.producer_state(identity), 'uncertain')
+        self.assertEqual(session.producer_state({'pid': 123}), 'uncertain')
+
+    def test_broker_authentication_accepts_a_partial_framed_reply(self):
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        connection.recv.side_effect = [b'o', b'wn', b'ed', b'\n']
+        with mock.patch.object(session.socket, 'socket', return_value=connection):
+            self.assertTrue(session.Leases.authenticated('/resource', {'socket': '/socket', 'token': 'token'}))
+        self.assertTrue(connection.sendall.call_args.args[0].endswith(b'\n'))
+        connection.shutdown.assert_not_called()
+
+    def test_final_cache_ownership_compares_instants_with_timezone_offsets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            steps = []
+            for index, (stamp, products) in enumerate([('2026-10-09T10:00:00+00:00', {'latest': True}),
+                                                      ('2026-10-09T11:00:00+02:00', {'earlier': True})]):
+                path = root / f'{index}.json'
+                path.write_text(json.dumps({'finishedAt': stamp, 'buildPaths': {'derivedData': '/cache'},
+                                            'evidence': {'products': products}}))
+                steps.append({'receipt': str(path)})
+            self.assertEqual(session.workflow_cache_snapshots({'steps': steps}, root)['products']['/cache'], {'latest': True})
+
+    def test_lease_releases_descriptors_when_broker_cleanup_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owner = {'runId': 'fixture', 'pid': os.getpid(), 'receipt': 'fixture'}
+            lease = session.Leases(['/fixture'], owner, lock_root=directory, inherited={})
+            lease.__enter__()
+            streams = list(lease.opened)
+            broker_directory = lease.broker_directory
+            with mock.patch.object(broker_directory, 'cleanup', side_effect=OSError('disk failure')):
+                with self.assertRaises(OSError):
+                    lease.__exit__()
+            self.assertTrue(all(stream.closed for stream in streams))
+            with session.Leases(['/fixture'], owner, lock_root=directory, inherited={}):
+                pass
+            broker_directory.cleanup()
+
+    def test_supervisor_preserves_legacy_diagnostics_and_records_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            (path / 'legacy.log').write_text('keep')
+            self.assertEqual(session.supervise([sys.executable, '-c', 'print("done")'], directory=path), 0)
+            self.assertFalse((path / 'diagnostic-owner.json').exists())
+            manifest = next(path.glob('owned-*/diagnostic-owner.json'))
+            value = json.loads(manifest.read_text())
+            self.assertEqual(value['status'], 'passed')
+            self.assertEqual(value['producer']['pid'], os.getpid())
+            self.assertTrue(value['producer']['started'])
+            self.assertEqual((path / 'legacy.log').read_text(), 'keep')
+
+    def test_git_environment_scrubs_repository_selectors_but_preserves_configuration(self):
+        selectors = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+                     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_QUARANTINE_PATH", "GIT_NAMESPACE")
+        inherited = {key: "foreign" for key in selectors} | {"GIT_CONFIG_GLOBAL": "configured", "GIT_AUTHOR_NAME": "Author", "PATH": "/usr/bin"}
+        with mock.patch.dict(os.environ, inherited, clear=True):
+            environment = session.git_environment()
+            self.assertEqual(os.environ["GIT_DIR"], "foreign")
+        self.assertFalse(set(selectors) & environment.keys())
+        self.assertEqual(environment, {"GIT_CONFIG_GLOBAL": "configured", "GIT_AUTHOR_NAME": "Author", "PATH": "/usr/bin"})
+
     def test_collision_alias_nested_ownership_and_release(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -37,6 +126,15 @@ class WorkflowSessionTests(unittest.TestCase):
                         pass
             with session.Leases([str(alias)], owner, root / "locks", inherited={}):
                 pass
+
+    def test_inherited_lease_authentication_survives_fast_broker_close(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            resource = session.canonical_resource(str(root / "resource"))
+            owner = {"runId": "parent", "pid": os.getpid(), "receipt": "receipt"}
+            with session.Leases([resource], owner, root / "locks", inherited={}) as parent:
+                for _ in range(200):
+                    self.assertTrue(session.Leases.authenticated(resource, parent.held[resource]))
 
     def test_forged_nested_environment_does_not_claim_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -225,16 +323,37 @@ class WorkflowSessionTests(unittest.TestCase):
         with mock.patch.object(session.platform, "system", return_value="Linux"):
             self.assertEqual(session.desktop_checks()[0]["name"], "desktop-unavailable")
 
-    def test_locked_desktop_accepts_compact_and_spaced_ioreg_properties(self):
-        for property_text, expected in [('\"CGSSessionScreenIsLocked\"=Yes', "failed"),
-                                        ('\"CGSSessionScreenIsLocked\" = Yes', "failed"),
-                                        ('\"CGSSessionScreenIsLocked\"=No', "passed")]:
-            with self.subTest(property_text=property_text):
-                outputs = [f"Name : fixture\nUID : {os.getuid()}\n", "display", property_text, ""]
+    def test_lock_state_belongs_to_the_current_console_session(self):
+        import plistlib
+        for key_style in [False, True]:
+            user = "kCGSSessionUserIDKey" if key_style else "CGSSessionUserID"
+            console = "kCGSSessionOnConsoleKey" if key_style else "CGSSessionOnConsole"
+            for locked in [False, True]:
+                properties = plistlib.dumps([{"IOConsoleUsers": [
+                    {user: os.getuid() + 1, console: False, "CGSSessionScreenIsLocked": True},
+                    {user: os.getuid(), console: True, "CGSSessionScreenIsLocked": locked}]}])
+                outputs = [f"Name : fixture\nUID : {os.getuid()}\n", "display", properties, ""]
                 responses = [subprocess.CompletedProcess([], 0, value, "") for value in outputs]
                 with mock.patch.object(session.platform, "system", return_value="Darwin"), mock.patch.object(session.subprocess, "run", side_effect=responses):
                     display = next(check for check in session.desktop_checks() if check["name"] == "display")
-                self.assertEqual(display["status"], expected)
+                self.assertEqual(display["status"], "failed" if locked else "passed")
+        self.assertTrue(session.console_session_locked(b"broken", os.getuid()))
+        self.assertTrue(session.console_session_locked(plistlib.dumps([]), os.getuid()))
+
+    def test_broker_accepts_fragmented_framed_requests(self):
+        import socket
+        with tempfile.TemporaryDirectory() as directory:
+            resource = session.canonical_resource(str(pathlib.Path(directory) / "resource"))
+            owner = {"runId": "owner", "pid": os.getpid(), "receipt": "receipt"}
+            with session.Leases([resource], owner, pathlib.Path(directory) / "locks", inherited={}) as parent:
+                prior = parent.held[resource]
+                request = json.dumps({"resource": session.digest(resource.encode()), "token": prior["token"]}).encode() + b"\n"
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(2)
+                    client.connect(prior["socket"])
+                    for offset in range(0, len(request), 3):
+                        client.sendall(request[offset:offset + 3])
+                    self.assertEqual(client.recv(128), b"owned\n")
 
     def test_signature_failure_is_distinct_from_unknown_startup(self):
         with tempfile.TemporaryDirectory() as directory:

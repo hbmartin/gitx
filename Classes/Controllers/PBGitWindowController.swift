@@ -161,6 +161,14 @@ open class PBGitWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     @objc public dynamic func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if let action = menuItem.action,
+           ["checkout:", "merge:", "rebase:", "rebaseHeadBranch:", "cherryPick:", "resetSoft:",
+            "stashSave:", "stashSaveWithKeepIndex:", "stashPop:", "stashApply:", "stashDrop:",
+            "pullRemote:", "pullDefaultRemote:", "pullRebaseRemote:", "pullRebaseDefaultRemote:", "toolbarPull:"].contains(NSStringFromSelector(action)),
+           repository.map({ !CommitSubmissionEligibility.allowsMutation($0.index) }) != false
+        {
+            return false
+        }
         if menuItem.action == #selector(newPullRequest(_:)) {
             menuItem.isHidden = !createPullRequestControl.isVisible
             menuItem.toolTip = createPullRequestControl.helpText
