@@ -184,7 +184,7 @@ def receipt_artifact_problems(payload, root=ROOT, mutable_caches=None, identity=
     for value, expected in evidence.get("analysisArtifacts", {}).items():
         if expected is None or expected != identity("results", absolute(value)):
             problems.append("Analysis artifact missing or changed: " + value)
-    if "dependencyProducts" not in evidence or evidence["dependencyProducts"] != identity("dependencies", root):
+    if ("invocation" in payload or "dependencyProducts" in evidence) and ("dependencyProducts" not in evidence or (str(root) not in (mutable_caches or {}).get("dependencies", {}) and evidence["dependencyProducts"] != identity("dependencies", root))):
         problems.append("Dependency products are missing or changed")
     analysis = payload.get("invocation", {}).get("preset") == "analyze"
     package_check = payload.get("invocation", {}).get("preset") in {"test:core", "test:forgekit"}
@@ -203,7 +203,7 @@ def receipt_artifact_problems(payload, root=ROOT, mutable_caches=None, identity=
 
 def workflow_cache_snapshots(payload, root=ROOT):
     """Use completion provenance, never array position, to select each cache owner."""
-    candidates = {"products": {}, "packages": {}}
+    candidates = {"products": {}, "packages": {}, "dependencies": {}}
     for step in payload.get("steps", []):
         if not step.get("receipt"):
             continue
@@ -212,15 +212,29 @@ def workflow_cache_snapshots(payload, root=ROOT):
         paths, evidence = child.get("buildPaths", {}), child.get("evidence", {})
         stamp = child.get("finishedAt") or step.get("finishedAt") or ""
         for kind, field, cache in (("products", "products", paths.get("derivedData")),
-                                   ("packages", "packageProducts", paths.get("swiftPM"))):
+                                   ("packages", "packageProducts", paths.get("swiftPM")),
+                                   ("dependencies", "dependencyProducts", str(pathlib.Path(root)))):
             if cache and field in evidence and not (kind == "products" and child.get("invocation", {}).get("preset") == "analyze"):
                 candidates[kind].setdefault(cache, []).append((stamp, evidence[field]))
     snapshots = {"products": {}, "packages": {}}
     for kind, caches in candidates.items():
+        if not caches:
+            continue
+        snapshots.setdefault(kind, {})
         for cache, owners in caches.items():
+            normalized = []
+            for stamp, value in owners:
+                try:
+                    instant = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                    if instant.tzinfo is None:
+                        raise ValueError("Completion time lacks a timezone")
+                    normalized.append((instant.timestamp(), value))
+                except (ValueError, TypeError, AttributeError):
+                    normalized.append((float("-inf"), value))
+            owners = normalized
             distinct = {json.dumps(value, sort_keys=True) for _, value in owners}
             if len(distinct) > 1:
-                if any(not stamp for stamp, _ in owners):
+                if any(stamp == float("-inf") for stamp, _ in owners):
                     raise ValueError("Final cache ownership is ambiguous: " + cache)
                 latest = max(stamp for stamp, _ in owners)
                 winners = {json.dumps(value, sort_keys=True) for stamp, value in owners if stamp == latest}
@@ -239,11 +253,33 @@ def final_cache_problems(payload, root=ROOT):
     if not isinstance(snapshots, dict) or snapshots != derived:
         return ["Final cache ownership is incomplete or ambiguous"]
     problems = []
-    for kind, reader in (("products", product_identity), ("packages", package_products)):
+    for kind, reader in (("products", product_identity), ("packages", package_products), ("dependencies", dependency_products)):
         for path, expected in snapshots.get(kind, {}).items():
             if expected is None or reader(path) != expected:
                 problems.append("Final cache products changed: " + path)
     return problems
+
+
+def process_started(pid):
+    result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def producer_identity():
+    return {"pid": os.getpid(), "started": process_started(os.getpid())}
+
+
+def producer_state(producer):
+    if not isinstance(producer, dict) or type(producer.get("pid")) is not int or producer["pid"] <= 0 or not producer.get("started"):
+        return "uncertain"
+    try:
+        os.kill(producer["pid"], 0)
+    except ProcessLookupError:
+        return "abandoned"
+    except (PermissionError, OSError):
+        return "uncertain"
+    current = process_started(producer["pid"])
+    return "uncertain" if not current else "live" if current == producer["started"] else "abandoned"
 
 
 def changed_inputs(before, after):
@@ -434,18 +470,21 @@ class Leases:
         return ()
 
     def __exit__(self, *_):
-        if self.broker:
-            self.broker.close()
-            if self.broker_thread:
-                self.broker_thread.join(timeout=2)
-            self.broker = None
-        if self.broker_directory:
-            self.broker_directory.cleanup()
-            self.broker_directory = None
-        # Close our descriptors, never unlock an inherited parent's lease.
-        for stream in self.opened:
-            stream.close()
-        self.opened.clear()
+        try:
+            if self.broker:
+                self.broker.close()
+                if self.broker_thread:
+                    self.broker_thread.join(timeout=2)
+                self.broker = None
+            if self.broker_directory:
+                self.broker_directory.cleanup()
+                self.broker_directory = None
+        finally:
+            # Descriptor ownership ends even if broker-directory cleanup fails.
+            # Inherited parent leases are never unlocked here.
+            for stream in self.opened:
+                stream.close()
+            self.opened.clear()
 
 
 def desktop_checks():
@@ -598,6 +637,25 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
     if desktop:
         child_env["GITX_VERIFICATION_SESSION"] = tag
         child_env["TEST_RUNNER_GITX_VERIFICATION_SESSION"] = tag
+    directory.mkdir(parents=True, exist_ok=True)
+    manifest = directory / "diagnostic-owner.json"
+    if directory.is_symlink() or manifest.is_symlink():
+        raise ValueError("Refusing symlink diagnostic output")
+    previous_owner = None
+    try:
+        previous_owner = json.loads(manifest.read_text()) if manifest.is_file() else None
+    except (OSError, ValueError):
+        pass
+    owned = (isinstance(previous_owner, dict) and previous_owner.get("kind") == "gitx-diagnostics" and
+             previous_owner.get("schemaVersion") == 1 and previous_owner.get("checkout") == str(ROOT.resolve()))
+    if any(directory.iterdir()) and not owned:
+        directory = directory / ("owned-" + uuid.uuid4().hex)
+        directory.mkdir()
+        manifest = directory / "diagnostic-owner.json"
+    ownership = {"schemaVersion": 1, "kind": "gitx-diagnostics", "checkout": str(ROOT.resolve()),
+                 "runId": tag, "producer": producer_identity(), "resources": [str(directory)],
+                 "status": "running", "startedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
+    atomic_json(manifest, ownership)
     child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge_stderr else None,
                              start_new_session=True, env=child_env, pass_fds=pass_fds)
     if desktop and platform.system() == "Darwin":
@@ -665,6 +723,9 @@ def supervise(command, timeout=7200, startup_timeout=None, desktop=False, direct
             return 130 if interrupted else 124
         return child.wait()
     finally:
+        with contextlib.suppress(OSError, ValueError):
+            atomic_json(manifest, ownership | {"status": "failed" if category or child.returncode else "passed",
+                        "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat()})
         selector.close()
         child.stdout.close()
         for sig, handler in original.items():
@@ -755,7 +816,7 @@ def guard(entry, arguments):
     receipt = verification_artifact_root(root) / "Coordination" / f"{run_id}.json"
     if receipt.exists():
         receipt = receipt.with_name(f"{run_id}-{uuid.uuid4().hex[:8]}.json")
-    owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(receipt), "entry": str(entry)}
+    owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(receipt), "entry": str(entry), "schemaVersion": 2, "producer": producer_identity(), "startedAt": dt.datetime.now(dt.timezone.utc).isoformat()}
     resources, paths = entry_resources(pathlib.Path(entry).name, arguments, root)
     if pathlib.Path(entry).name == "xcodebuild.sh":
         resources.append(str(verification_artifact_root(root) / run_id))
@@ -776,12 +837,12 @@ def guard(entry, arguments):
                                          "evidence": {"status": "pending", "inputsBefore": before}})
             interpreter = sys.executable if pathlib.Path(entry).suffix == ".py" else "bash"
             status = supervise([interpreter, str(pathlib.Path(entry).resolve()), *arguments], env=env, desktop=pathlib.Path(entry).name == "run_app.sh",
-                               pass_fds=leases.descriptors(), timeout=float(os.environ.get("GITX_COMMAND_TIMEOUT", "7200")), directory=receipt.parent / "Diagnostics", merge_stderr=False)
+                               pass_fds=leases.descriptors(), timeout=float(os.environ.get("GITX_COMMAND_TIMEOUT", "7200")), directory=receipt.parent / "Diagnostics" / receipt.stem, merge_stderr=False)
             after = inputs(root)
             changed = changed_inputs(before, after)
             if changed and status == 0:
                 status = 76
-            atomic_json(receipt, owner | {"status": "invalid" if changed else "passed" if status == 0 else "failed", "exitCode": status, "resources": resources, "paths": paths,
+            atomic_json(receipt, owner | {"status": "invalid" if changed else "passed" if status == 0 else "failed", "exitCode": status, "resources": resources, "paths": paths, "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "evidence": {"status": "invalid" if changed else "valid", "inputsBefore": before, "inputsAfter": after, "changedInputs": changed}})
             return status
     except ResourceBusy as error:

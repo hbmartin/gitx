@@ -303,8 +303,8 @@ class ScriptEntrypointTests(unittest.TestCase):
                         return process, session_directory, temporary_root
             time.sleep(0.02)
         process.kill()
-        process.communicate(timeout=2)
-        self.fail("run_app.sh did not start both test processes")
+        output, errors = process.communicate(timeout=2)
+        self.fail("run_app.sh did not start both test processes: " + (output + errors).decode(errors="replace"))
 
     @staticmethod
     def process_is_running(pid: int) -> bool:
@@ -1379,7 +1379,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         app_binary.parent.mkdir(parents=True)
         with (app_contents / "Info.plist").open("wb") as handle:
             plistlib.dump({"CFBundleIdentifier": "me.haroldmartin.HalfDark.Tests"}, handle)
-        app_binary.write_text("#!/bin/bash\nexit 1\n")
+        app_binary.write_text("#!/bin/bash\nfor attempt in {1..200}; do\n    [[ -s $GITX_TEST_PROCESS_PID_FILE ]] && break\n    sleep 0.01\ndone\nexit 1\n")
         app_binary.chmod(0o755)
         self.install_sleeping_executable(self.bin / "log")
         recorded_pid = self.root / "log-process.pid"
