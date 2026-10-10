@@ -117,6 +117,21 @@ class PackageDoctorTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_init_preserves_running_status_input_evidence_and_build_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "receipt.json"
+            environment = {"GITX_DERIVED_DATA": "/products", "GITX_SWIFTPM_BUILD_ROOT": "/packages",
+                           "GITX_SOURCE_PACKAGE_CACHE": "/sources"}
+            with mock.patch.object(verification, "receipt_base", return_value={"status": "running"}), \
+                    mock.patch.object(verification.session, "inputs", return_value={"source": "before"}), \
+                    mock.patch.dict(verification.os.environ, environment, clear=True):
+                self.assertEqual(verification.command_receipt_init(argparse.Namespace(path=path)), 0)
+            payload = json.loads(path.read_text())
+        self.assertEqual(payload["schemaVersion"], 2)
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(payload["evidence"], {"status": "pending", "inputsBefore": {"source": "before"}})
+        self.assertEqual(payload["buildPaths"], {"derivedData": "/products", "swiftPM": "/packages", "sourcePackages": "/sources"})
+
     def test_working_tree_fingerprint_includes_untracked_file_contents(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
