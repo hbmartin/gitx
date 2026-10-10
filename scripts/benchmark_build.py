@@ -4,15 +4,22 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import pathlib
 import platform
+import os
+import re
 import shutil
 import statistics
 import subprocess
 import sys
 import time
+import tempfile
 from typing import NamedTuple
+
+import compilation_cache
+import workflow_session as session
 
 
 COLD_CEILING_SECONDS = 108.23
@@ -97,9 +104,123 @@ def build_command(
     ]
 
 
+def snapshot_checkout(root, destination):
+    """Copy the checked-out inputs into independent local clones for edit probes."""
+    environment = session.git_environment()
+    def clone(source, target):
+        subprocess.run(["git", "clone", "--quiet", "--shared", "--no-checkout", str(source), str(target)],
+                       check=True, env=environment)
+        revision = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], env=environment).decode().strip()
+        subprocess.run(["git", "-C", str(target), "checkout", "--quiet", "--detach", revision], check=True, env=environment)
+        patch = subprocess.check_output(["git", "-C", str(source), "diff", "--binary", "HEAD", "--"], env=environment)
+        if patch:
+            subprocess.run(["git", "-C", str(target), "apply", "--binary"], input=patch, check=True, env=environment)
+        entries = subprocess.check_output(["git", "-C", str(source), "ls-files", "--stage", "-z"], env=environment)
+        for entry in entries.split(b"\0"):
+            if not entry:
+                continue
+            metadata, name = entry.split(b"\t", 1)
+            relative = pathlib.Path(os.fsdecode(name))
+            if metadata.startswith(b"160000 "):
+                clone(source / relative, target / relative)
+            elif (source / relative).is_file():
+                (target / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source / relative, target / relative)
+            elif not (source / relative).exists():
+                (target / relative).unlink(missing_ok=True)
+    clone(root, destination)
+    new = subprocess.check_output(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"], env=environment)
+    for name in new.split(b"\0"):
+        if name and session.build_input_path(os.fsdecode(name)):
+            relative = pathlib.Path(os.fsdecode(name))
+            (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(root / relative, destination / relative)
+    external = pathlib.Path("External/objective-git/External")
+    (destination / external).mkdir(parents=True, exist_ok=True)
+    for name in ("libgit2.a", "libssh2.a", "libcrypto.a", ".libgit2-build.stamp"):
+        shutil.copy2(root / external / name, destination / external / name)
+
+
+def cache_hits(log):
+    return len(re.findall(r"\bcache hit\b", log.read_text(errors="replace"), re.IGNORECASE))
+
+
+def compare_cache(root, output, runs):
+    if runs < 5:
+        raise ValueError("Cache qualification requires at least five paired runs")
+    developer = os.environ.get("GITX_DEVELOPER_DIR") or os.environ.get("DEVELOPER_DIR") or \
+        json.loads((root / "scripts/verification-config.json").read_text())["defaultDeveloperDirectory"]
+    paths = session.cache_paths(root, developer=developer)
+    toolchain = paths["toolchain"]
+    policy = compilation_cache.policy("on", toolchain, platform.machine(), "Debug", "plain", "build", {})
+    before = session.inputs(root)
+    report = {"version": 2, "scope": "experiment", "deliveryEligible": False,
+              "inputsBefore": before, "environment": environment_fingerprint() | {"selectedXcode": toolchain, "developerDir": developer},
+              "cacheContext": policy["context"],
+              "samples": {"off": [], "on": []}, "cacheHits": 0, "logs": [], "passed": False}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    logs = output.parent / ("cache-logs-" + str(time.time_ns()))
+    logs.mkdir()
+    with tempfile.TemporaryDirectory(prefix="gitx-cache-benchmark-", dir=output.parent) as temporary:
+        workspace = pathlib.Path(temporary)
+        source = workspace / "source"
+        owner = {"runId": logs.name, "pid": os.getpid(), "receipt": str(output), "producer": session.producer_identity()}
+        with session.Leases([str(workspace), str(session.LOCK_ROOT / "build-benchmark")], owner) as leases:
+            environment = leases.environment() | session.git_environment() | {"DEVELOPER_DIR": developer}
+            snapshot_checkout(root, source)
+            derived = workspace / "DerivedData"
+            packages = workspace / "SourcePackages"
+            command = build_command(source, derived, packages)
+            command[0] = str(pathlib.Path(developer) / "usr/bin/xcodebuild")
+            command += ["-destination", "platform=macOS,arch=" + platform.machine(), "-showBuildTimingSummary"]
+            def measure(mode, label):
+                log = logs / (label + ".log")
+                started = time.monotonic()
+                with log.open("w") as stream, contextlib.redirect_stdout(stream):
+                    status = session.supervise(command + ["COMPILATION_CACHE_ENABLE_CACHING=" + ("YES" if mode == "on" else "NO"),
+                                                          "COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES"],
+                                               directory=logs / "Diagnostics" / label, timeout=1200, env=environment)
+                report["logs"].append(str(log))
+                if status:
+                    raise RuntimeError("Benchmark build failed: " + str(log))
+                if mode == "on" and label.endswith("-fresh"):
+                    report["cacheHits"] += cache_hits(log)
+                return time.monotonic() - started
+            try:
+                # Prime the native cache without deleting any shared Xcode CAS.
+                measure("on", "prime")
+                for index in range(1, runs + 1):
+                    for mode in (("off", "on") if index % 2 else ("on", "off")):
+                        shutil.rmtree(derived, ignore_errors=True)
+                        sample = {"run": index, "cold": measure(mode, f"{index}-{mode}-fresh"),
+                                  "warm": measure(mode, f"{index}-{mode}-warm")}
+                        for kind, relative in (("sourceEdit", "Classes/git/IndexSnapshot.swift"), ("headerEdit", "Classes/PBChangedFile.h")):
+                            path = source / relative
+                            original = path.read_bytes()
+                            try:
+                                path.write_bytes(original + f"\n// GitX benchmark {index} {mode} {kind}\n".encode())
+                                sample[kind] = measure(mode, f"{index}-{mode}-{kind}")
+                            finally:
+                                path.write_bytes(original)
+                        report["samples"][mode].append(sample)
+                        print(f"Pair {index}/{runs} {mode}: fresh {sample['cold']:.2f}s; warm {sample['warm']:.2f}s", flush=True)
+                report.update(compilation_cache.qualify(report["samples"]["off"], report["samples"]["on"], report["cacheHits"]))
+            except RuntimeError as error:
+                report["failures"] = [str(error)]
+            finally:
+                report["inputsAfter"] = session.inputs(root)
+                if session.changed_inputs(before, report["inputsAfter"]):
+                    report["passed"] = False
+                    report.setdefault("failures", []).append("Source inputs changed during the experiment")
+                session.atomic_json(output, report)
+    print("Cache qualification: " + ("passed" if report["passed"] else "failed") + "; report: " + str(output))
+    return 0 if report["passed"] else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=5)
+    parser.add_argument("--compare-compilation-cache", action="store_true")
     parser.add_argument(
         "--output",
         type=pathlib.Path,
@@ -111,6 +232,12 @@ def main() -> int:
 
     root = pathlib.Path(__file__).resolve().parent.parent
     output = args.output if args.output.is_absolute() else root / args.output
+    if args.compare_compilation_cache:
+        try:
+            return compare_cache(root, output, args.runs)
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            print(error, file=sys.stderr)
+            return 2
     benchmark_root = output.parent
     logs = benchmark_root / "logs"
     derived_data = benchmark_root / "DerivedData"

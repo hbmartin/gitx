@@ -28,6 +28,9 @@ Global options:
   --run-id ID
   --raw-output
   --stage-app
+  --compilation-cache auto|on|off
+  --profile-rules (analyze only; profiling is not delivery evidence)
+  --resume-analysis RUN-ID (reuse matching compiler diagnostics; rerun all semantic checks)
 
 Every invocation emits a receipt under artifacts/verification/<run-id> while
 reusing caches under ~/Library/Caches/GitX/Verification. GITX_DERIVED_DATA,
@@ -47,6 +50,9 @@ developer_dir=
 requested_run_id=
 stage_app=0
 use_xcbeautify=1
+compilation_cache=auto
+profile_rules=0
+resume_analysis=
 command=
 command_arguments=()
 
@@ -76,6 +82,20 @@ while (( $# )); do
 		--stage-app)
 			stage_app=1
 			shift
+			;;
+		--compilation-cache)
+			(( $# >= 2 )) || { echo "$1 requires a value" >&2; exit 2; }
+			compilation_cache=$2
+			shift 2
+			;;
+		--profile-rules)
+			profile_rules=1
+			shift
+			;;
+		--resume-analysis)
+			(( $# >= 2 )) || { echo "$1 requires a value" >&2; exit 2; }
+			resume_analysis=$2
+			shift 2
 			;;
 		--raw|--raw-output)
 			# --raw was the original wrapper's spelling for unformatted output.
@@ -131,6 +151,20 @@ if [[ "$command" != "raw" ]]; then
 				stage_app=1
 				index=$((index + 1))
 				;;
+			--compilation-cache)
+				(( index + 1 < ${#command_arguments[@]} )) || { echo "$argument requires a value" >&2; exit 2; }
+				compilation_cache=${command_arguments[$((index + 1))]}
+				index=$((index + 2))
+				;;
+			--profile-rules)
+				profile_rules=1
+				index=$((index + 1))
+				;;
+			--resume-analysis)
+				(( index + 1 < ${#command_arguments[@]} )) || { echo "$argument requires a value" >&2; exit 2; }
+				resume_analysis=${command_arguments[$((index + 1))]}
+				index=$((index + 2))
+				;;
 			--raw|--raw-output)
 				use_xcbeautify=0
 				index=$((index + 1))
@@ -143,6 +177,23 @@ if [[ "$command" != "raw" ]]; then
 	done
 	command_arguments=(${filtered_arguments[@]+"${filtered_arguments[@]}"})
 fi
+
+if [[ -n "$resume_analysis" ]]; then
+	[[ "$command" == "analyze" ]] || { echo "--resume-analysis requires analyze" >&2; exit 2; }
+	python3 "$support" run-id "$resume_analysis" >/dev/null || exit $?
+fi
+if (( profile_rules )) && [[ "$command" != "analyze" ]]; then
+	echo "--profile-rules requires analyze" >&2
+	exit 2
+fi
+for argument in ${command_arguments[@]+"${command_arguments[@]}"}; do
+	case "$argument" in
+		COMPILATION_CACHE_ENABLE_CACHING=*|COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=*)
+			echo "Use --compilation-cache to select and record managed compilation cache settings." >&2
+			exit 2
+			;;
+	esac
+done
 
 if [[ "$command" == "archive" && "$configuration_explicit" == 0 ]]; then
 	configuration=Release
@@ -264,6 +315,25 @@ if [[ "$coverage_mode" == "atomic" ]]; then
 fi
 
 coverage_gate=not-applicable
+cache_instrumentation=plain
+if [[ "$coverage_mode" == "atomic" ]]; then
+	cache_instrumentation=correctness-atomic
+elif [[ "$command" == "test" ]]; then
+	case "${command_arguments[0]:-}" in
+		address-undefined|thread-sanitizer|performance) cache_instrumentation=${command_arguments[0]} ;;
+	esac
+fi
+cache_policy=$(python3 "$root/scripts/compilation_cache.py" --mode "$compilation_cache" \
+	--developer-dir "$developer_dir" --configuration "$configuration" \
+	--instrumentation "$cache_instrumentation" --action "$preset") || exit $?
+export GITX_COMPILATION_CACHE_POLICY="$cache_policy" GITX_ANALYZER_PROFILING="$profile_rules"
+cache_enabled=$(python3 -c 'import json,sys; print("YES" if json.loads(sys.argv[1])["enabled"] else "NO")' "$cache_policy")
+cache_arguments=()
+if [[ "$preset" != "test:core" && "$preset" != "test:forgekit" ]]; then
+	cache_arguments+=("COMPILATION_CACHE_ENABLE_CACHING=$cache_enabled")
+	[[ "$cache_enabled" != "YES" ]] || cache_arguments+=(COMPILATION_CACHE_ENABLE_DIAGNOSTIC_REMARKS=YES)
+fi
+echo "Compilation cache: $cache_policy"
 if [[ "$command" == "test" ]]; then
 	case "${command_arguments[0]:-}" in
 		correctness) coverage_gate=enforced ;;
@@ -308,7 +378,11 @@ finish_receipt() {
 	evidence_status=$?
 	if (( exit_code == 0 && evidence_status != 0 )); then exit_code=$evidence_status; fi
 	if [[ -n "$analyzer_derived_data" && -d "$analyzer_derived_data" ]]; then
-		rm -rf -- "$analyzer_derived_data" || true
+		if (( exit_code == 0 )) || ! python3 -c 'import json,sys; s=json.load(open(sys.argv[1])).get("evidence",{}).get("analyzerScratch",{}); sys.exit(0 if s.get("identity") and s.get("path")==sys.argv[2] else 1)' "$receipt" "$analyzer_derived_data"; then
+			rm -rf -- "$analyzer_derived_data" || true
+		else
+			echo "Retained compiler products for analyzer resume: $analyzer_derived_data"
+		fi
 	fi
 	echo "Verification receipt: $receipt"
 	exit "$exit_code"
@@ -416,6 +490,7 @@ common=(
 	-configuration "$configuration"
 	MACOSX_DEPLOYMENT_TARGET="$deployment_target"
 )
+common+=(${cache_arguments[@]+"${cache_arguments[@]}"})
 
 reject_managed_paths() {
 	for argument in "$@"; do
@@ -564,14 +639,28 @@ case "$command" in
 		analyzer_log="$logs/analyze.log"
 		analyzer_output="$results/Analyzer"
 		mkdir -p "$analyzer_output"
-		run_step analyze "$analyzer_log" "" "$xcodebuild" "${common[@]}" analyze \
+		if [[ -n "$resume_analysis" ]]; then
+			python3 "$support" resume-analyzer "$artifact_root/$resume_analysis/receipt.json" "$receipt" || exit $?
+		else
+			run_step analyze "$analyzer_log" "" "$xcodebuild" "${common[@]}" analyze \
 			ARCHS=arm64 CLANG_STATIC_ANALYZER_MODE_ON_ANALYZE_ACTION=deep \
 			"CLANG_ANALYZER_OUTPUT_DIR=$analyzer_output" \
 			CLANG_WARN_NULLABILITY_COMPLETENESS=YES CLANG_WARN_NULLABILITY_COMPLETENESS_ON_ARRAYS=YES \
 			CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO \
 			${command_arguments[@]+"${command_arguments[@]}"} || exit $?
+		fi
 		run_step analyzer-policy "$logs/analyzer-policy.log" "" python3 scripts/check_analyzer_diagnostics.py "$analyzer_log" || exit $?
 		run_step swiftlint-analyze "$logs/swiftlint-analyze.log" "" scripts/run_pinned_tool.sh swiftlint analyze --strict --config .swiftlint.yml --baseline .swiftlint-baseline.json --compiler-log-path "$analyzer_log" || exit $?
+		if (( profile_rules )); then
+			for rule in unused_declaration unused_import; do
+				profile_dir="$results/Profiling/$rule"
+				mkdir -p "$profile_dir"
+				run_step "swiftlint-profile:$rule" "$logs/profile-$rule.log" "" scripts/run_pinned_tool.sh swiftlint analyze \
+					--strict --only-rule "$rule" --benchmark --force-exclude --working-directory "$profile_dir" \
+					--config "$root/.swiftlint.yml" --baseline "$root/.swiftlint-baseline.json" \
+					--compiler-log-path "$analyzer_log" "$root/Classes" "$root/GitXTests" "$root/GitXUITests" "$root/GitXCore" "$root/ForgeKit" || exit $?
+			done
+		fi
 		;;
 	test)
 		test_preset=${command_arguments[0]:-}
@@ -692,6 +781,7 @@ case "$command" in
 			esac
 		done
 		raw_common=()
+		raw_common+=(${cache_arguments[@]+"${cache_arguments[@]}"})
 		# Release Swift packages also need testable interfaces for app-hosted
 		# XCTest imports; ordinary release builds retain their normal settings.
 		(( is_test_build )) && raw_common+=( ENABLE_TESTABILITY=YES )

@@ -10,6 +10,9 @@
   "derivedDataCache": "build/DerivedData",
   "swiftPMBuildCache": "build/SwiftPM",
   "sourcePackageCache": "artifacts/cache/SourcePackages",
+  "compilationCache": {
+    "validated": []
+  },
   "cleanup": {
     "retentionDays": 7,
     "diagnosticBudgetBytes": 10737418240,

@@ -72,7 +72,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         session_path.write_text(session_path.read_text().replace("checks = desktop_checks()", "checks = []").replace("def desktop_checks():", "def desktop_checks():\n    return []\n\ndef real_desktop_checks():"))
         session_path.write_text(session_path.read_text().replace('LOCK_ROOT = pathlib.Path.home() / "Library/Caches/GitX/Verification/Locks"', 'LOCK_ROOT = ROOT / "fixture-locks"'))
         if name == "xcodebuild.sh":
-            for dependency in ("doctor.sh", "verification_support.py", "verification-config.json", "check_test_build_contracts.py"):
+            for dependency in ("doctor.sh", "verification_support.py", "verification-config.json", "check_test_build_contracts.py", "compilation_cache.py"):
                 shutil.copy2(ROOT / "scripts" / dependency, self.scripts / dependency)
         return destination
 
@@ -89,6 +89,71 @@ class ScriptEntrypointTests(unittest.TestCase):
         test_build = next(value for value in invocations if "\nbuild-for-testing\n" in value)
         self.assertNotIn("ENABLE_TESTABILITY=YES", build)
         self.assertIn("ENABLE_TESTABILITY=YES", test_build)
+
+    def test_compilation_cache_mode_is_managed_and_recorded(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        for mode in ("auto", "on", "off"):
+            subprocess.run([script, "--compilation-cache", mode, "--run-id", mode, "build"],
+                           check=True, capture_output=True, text=True, env=self.environment)
+            invocation = captured.read_text().split("__INVOCATION__")[-1]
+            enabled = mode == "on"
+            self.assertIn("COMPILATION_CACHE_ENABLE_CACHING=" + ("YES" if enabled else "NO"), invocation)
+            policy = self.receipt(mode)["invocation"]["compilationCache"]
+            self.assertEqual(policy["requested"], mode)
+            self.assertEqual(policy["enabled"], enabled)
+        rejected = subprocess.run([script, "build", "COMPILATION_CACHE_ENABLE_CACHING=YES"],
+                                  capture_output=True, text=True, env=self.environment)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("Use --compilation-cache", rejected.stderr)
+
+    def test_analyzer_profiling_preserves_full_analysis_and_is_partial_evidence(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        calls = self.root / "lint-calls.txt"
+        tool = self.scripts / "run_pinned_tool.sh"
+        tool.write_text(f"#!/bin/bash\nprintf '%s\\n' \"$*\" >>'{calls}'\n")
+        tool.chmod(0o755)
+        subprocess.run([script, "--profile-rules", "--run-id", "profile", "analyze"],
+                       check=True, capture_output=True, text=True, env=self.environment)
+        invocations = calls.read_text().splitlines()
+        self.assertEqual(len(invocations), 3)
+        self.assertNotIn("--only-rule", invocations[0])
+        self.assertIn("--only-rule unused_declaration --benchmark", invocations[1])
+        self.assertIn("--only-rule unused_import --benchmark", invocations[2])
+        self.assertIn(str(self.root / "artifacts/verification/profile/Results/Profiling"), invocations[1])
+        receipt = self.receipt("profile")
+        self.assertTrue(receipt["invocation"]["analysisProfiling"])
+        self.assertFalse(receipt["deliveryEligible"])
+
+    def test_analyzer_resume_requires_products_and_reruns_semantic_checks(self) -> None:
+        script = self.install_script("xcodebuild.sh")
+        captured = self.install_mock_xcodebuild(self.root / "Products")
+        (self.scripts / "check_analyzer_diagnostics.py").write_text("#!/usr/bin/env python3\n")
+        tool = self.scripts / "run_pinned_tool.sh"
+        # Keep this input stable across the failed and resumed runs.
+        tool.write_text('#!/bin/bash\nexit "${GITX_TEST_LINT_STATUS:-0}"\n')
+        tool.chmod(0o755)
+        failed = subprocess.run([script, "--run-id", "prior", "analyze"], capture_output=True,
+                                text=True, env=self.environment | {"GITX_TEST_LINT_STATUS": "9"})
+        self.assertEqual(failed.returncode, 9, failed.stderr)
+        prior = self.receipt("prior")
+        scratch = pathlib.Path(prior["evidence"]["analyzerScratch"]["path"])
+        self.assertTrue(scratch.is_dir())
+        subprocess.run([script, "--resume-analysis", "prior", "--run-id", "resumed", "analyze"],
+                       check=True, capture_output=True, text=True, env=self.environment)
+        receipt = self.receipt("resumed")
+        self.assertEqual([step["name"] for step in receipt["steps"]],
+                         ["doctor", "analyze", "analyzer-policy", "swiftlint-analyze"])
+        self.assertEqual(receipt["steps"][1]["executionReason"], "matching-compiler-evidence")
+        native = [call for call in captured.read_text().split("__INVOCATION__") if "\nanalyze\n" in call]
+        self.assertEqual(len(native), 1)
+        shutil.rmtree(scratch)
+        stale = subprocess.run([script, "--resume-analysis", "prior", "--run-id", "stale", "analyze"],
+                               capture_output=True, text=True, env=self.environment)
+        self.assertEqual(stale.returncode, 2)
+        self.assertIn("compiler products are missing or changed", stale.stderr)
 
     def test_canonical_release_tests_allow_locally_signed_framework_loading(self) -> None:
         script = self.install_script("xcodebuild.sh")
@@ -813,7 +878,7 @@ class ScriptEntrypointTests(unittest.TestCase):
         script = self.install_script("xcodebuild.sh")
         captured = self.install_mock_xcodebuild(self.root / "Products")
 
-        subprocess.run(
+        result = subprocess.run(
             [
                 script,
                 "--raw",
@@ -831,11 +896,12 @@ class ScriptEntrypointTests(unittest.TestCase):
                 "-maximum-test-execution-time-allowance",
                 "888",
             ],
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             env=self.environment,
         )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         invocations = captured.read_text().split("__INVOCATION__")
         preflight = next(value for value in invocations if "GitXUIPreflight" in value)
