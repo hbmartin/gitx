@@ -214,12 +214,13 @@ def reference_paths(value, root):
         elif isinstance(item, list):
             for child in item:
                 visit(child)
-    for key in ("receipt", "artifacts", "buildPaths", "paths", "outputs", "resources",
+    for key in ("receipt", "reusedFrom", "reusedAnalyzerScratch", "artifacts", "buildPaths", "paths", "outputs", "resources",
                 "verificationReceipts", "recoverySources", "integrationEvidence"):
         visit(value.get(key, []))
     for step in value.get("steps", []):
         found.update(reference_paths(step, root))
     visit(value.get("evidence", {}).get("results", {}))
+    visit(value.get("evidence", {}).get("analyzerScratch", {}))
     return found
 
 

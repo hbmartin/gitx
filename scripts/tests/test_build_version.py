@@ -11,7 +11,7 @@ from support import ROOT
 
 
 class BuildVersionTests(unittest.TestCase):
-    def run_version_script(self, tag: str | None = None) -> dict[str, object]:
+    def run_version_script(self, tag: str | None = None, *, repeat: bool = False, dirty: bool = False) -> dict[str, object]:
         with tempfile.TemporaryDirectory() as directory:
             repository = Path(directory)
             subprocess.run(
@@ -59,6 +59,8 @@ class BuildVersionTests(unittest.TestCase):
                     "INFOPLIST_PATH": info_plist.name,
                 }
             )
+            if dirty:
+                (repository / "tracked.txt").write_text("modified\n")
             subprocess.run(
                 [str(ROOT / "scripts" / "set_build_version.sh")],
                 cwd=repository,
@@ -67,6 +69,14 @@ class BuildVersionTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+            if repeat:
+                os.utime(info_plist, ns=(123000000000, 123000000000))
+                before = info_plist.stat().st_mtime_ns
+                contents = info_plist.read_bytes()
+                subprocess.run([str(ROOT / "scripts" / "set_build_version.sh")], cwd=repository,
+                               env=environment, check=True, capture_output=True, text=True)
+                self.assertEqual(info_plist.read_bytes(), contents)
+                self.assertEqual(info_plist.stat().st_mtime_ns, before)
             with info_plist.open("rb") as stream:
                 return plistlib.load(stream)
 
@@ -83,6 +93,13 @@ class BuildVersionTests(unittest.TestCase):
         info = self.run_version_script("v2.4.6")
 
         self.assertTrue(str(info["CFBundleVersion"]).startswith("2.4.6.1 ["))
+
+    def test_unchanged_version_does_not_rewrite_the_plist(self) -> None:
+        self.run_version_script("v2.4.6", repeat=True)
+
+    def test_dirty_state_remains_visible_without_repeated_writes(self) -> None:
+        info = self.run_version_script(dirty=True, repeat=True)
+        self.assertIn("-dirty-main", info["CFBundleBuildVersion"])
 
     def test_xcode_build_phase_invokes_the_checked_in_script(self) -> None:
         project = (ROOT / "GitX.xcodeproj" / "project.pbxproj").read_text()

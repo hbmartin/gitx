@@ -9,6 +9,11 @@ fi
 unset GITX_GUARDED_ENTRY
 cd "$root"
 
+if [[ "${1:-}" == "--feedback" ]]; then
+	shift
+	exec python3 scripts/workflow_feedback.py static "$@"
+fi
+
 base_ref=${1:-}
 if [[ -n "$base_ref" ]] && ! git rev-parse --verify "$base_ref^{commit}" >/dev/null 2>&1; then
 	base_ref=
@@ -70,7 +75,7 @@ python3 scripts/check_swift_concurrency_escapes.py
 
 find Resources -name '*.plist' -print0 | xargs -0 -n1 plutil -lint
 find Resources -name '*.xib' -print0 | while IFS= read -r -d '' xib; do
-    xcrun ibtool --warnings --errors --output-format human-readable-text "$xib" >/dev/null
+    xcrun ibtool --warnings --errors --output-format human-readable-text "$root/$xib" >/dev/null
 done
 find GitXTests -maxdepth 1 -name '*.xctestplan' -print0 | xargs -0 -n1 jq empty
 find .github -name '*.yml' -print0 | xargs -0 ruby -e 'require "yaml"; ARGV.each { |path| YAML.safe_load_file(path, aliases: true) }'

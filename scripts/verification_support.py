@@ -449,6 +449,8 @@ def receipt_base(arguments: argparse.Namespace) -> dict[str, Any]:
             "supported": version_at_least(version[0], config["minimumXcodeVersion"]),
         },
         "invocation": {
+            "compilationCache": json.loads(os.environ.get("GITX_COMPILATION_CACHE_POLICY", "null")),
+            "analysisProfiling": os.environ.get("GITX_ANALYZER_PROFILING") == "1",
             "preset": arguments.preset,
             "arguments": scrub_arguments(arguments.arguments),
             "workspace": config["workspace"],
@@ -595,7 +597,7 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
                 payload["status"] = "invalid"
                 payload["exitCode"] = 76
         else:
-            payload["deliveryEligible"] = payload["status"] == "passed"
+            payload["deliveryEligible"] = payload["status"] == "passed" and not payload["invocation"].get("analysisProfiling", False)
         product_path = payload.get("buildPaths", {}).get("derivedData")
         if product_path:
             evidence["products"] = session.product_identity(product_path)
@@ -613,6 +615,8 @@ def command_receipt_finish(arguments: argparse.Namespace) -> int:
             analyzer_output = arguments.path.parent / "Results/Analyzer"
             if analyzer_output.exists():
                 evidence["analysisArtifacts"][str(analyzer_output)] = session.tree_identity(analyzer_output)
+            if payload["status"] != "passed" and any(step["name"] == "analyze" and step["status"] == "passed" for step in payload["steps"]):
+                evidence["analyzerScratch"] = payload.get("reusedAnalyzerScratch") or {"path": product_path, "identity": session.tree_identity(product_path)}
     run_directory = arguments.path.parent
     bundle_suffixes = {".app", ".xcarchive", ".xcresult"}
     discovered: set[str | None] = set()
@@ -655,6 +659,50 @@ def command_config(arguments: argparse.Namespace) -> int:
         print(json.dumps(value, sort_keys=True))
     else:
         print(value)
+    return 0
+
+
+def command_resume_analyzer(arguments: argparse.Namespace) -> int:
+    prior_path, current_path = arguments.prior, arguments.current
+    prior, current = (json.loads(path.read_text()) for path in (prior_path, current_path))
+    if prior_path.resolve() == current_path.resolve():
+        raise ValueError("Analyzer resume requires a separate prior run")
+    evidence = prior.get("evidence", {})
+    if prior.get("schemaVersion") != 2 or evidence.get("status") != "valid" or \
+            evidence.get("inputsAfter", {}).get("root") != str(ROOT) or \
+            session.changed_inputs(evidence.get("inputsAfter", {}), session.inputs(ROOT)) or \
+            session.changed_inputs(evidence.get("inputsBefore", {}), evidence.get("inputsAfter", {})):
+        raise ValueError("Analyzer resume inputs or evidence no longer match")
+    scratch = evidence.get("analyzerScratch", {})
+    if not scratch.get("path") or scratch.get("identity") is None or session.tree_identity(scratch["path"]) != scratch["identity"]:
+        raise ValueError("Analyzer compiler products are missing or changed; run fresh analysis")
+    if prior.get("toolchain") != current.get("toolchain"):
+        raise ValueError("Analyzer resume toolchain no longer matches")
+    for key in ("preset", "arguments", "workspace", "scheme", "configuration", "destination", "signingMode", "compilationCache"):
+        if prior.get("invocation", {}).get(key) != current.get("invocation", {}).get(key):
+            raise ValueError("Analyzer resume invocation no longer matches: " + key)
+    if current["invocation"]["preset"] != "analyze":
+        raise ValueError("Analyzer resume requires analyze")
+    step = next((step for step in prior.get("steps", []) if step.get("name") == "analyze"), None)
+    if not step or step.get("status") != "passed" or step.get("exitCode") != 0:
+        raise ValueError("Prior compiler analysis did not pass")
+    if session.receipt_artifact_problems(prior, ROOT):
+        raise ValueError("Prior analyzer diagnostics are missing or changed")
+    log = ROOT / step["log"]
+    target_log = current_path.parent / "Logs/analyze.log"
+    target_log.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(log, target_log)
+    reports = prior_path.parent / "Results/Analyzer"
+    if reports.exists():
+        shutil.copytree(reports, current_path.parent / "Results/Analyzer", dirs_exist_ok=True)
+    if session.receipt_artifact_problems(prior, ROOT) or session.tree_identity(scratch["path"]) != scratch["identity"]:
+        raise ValueError("Prior analyzer diagnostics changed during reuse")
+    current["steps"].append(step | {"durationSeconds": 0, "log": relative_artifact(str(target_log)),
+                                   "reusedFrom": str(prior_path), "executionReason": "matching-compiler-evidence"})
+    current["reusedAnalyzerScratch"] = scratch
+    current["artifacts"].append(relative_artifact(str(target_log)))
+    atomic_json(current_path, current)
+    print("Reused compiler analysis; full analyzer policy and SwiftLint semantic analysis will run.")
     return 0
 
 
@@ -746,6 +794,10 @@ def parser() -> argparse.ArgumentParser:
     receipt_finish.add_argument("--status", choices=("passed", "failed", "blocked", "interrupted"), required=True)
     receipt_finish.add_argument("--exit-code", type=int, required=True)
     receipt_finish.set_defaults(handler=command_receipt_finish)
+    resume_analysis = subparsers.add_parser("resume-analyzer")
+    resume_analysis.add_argument("prior", type=pathlib.Path)
+    resume_analysis.add_argument("current", type=pathlib.Path)
+    resume_analysis.set_defaults(handler=command_resume_analyzer)
     return result
 
 

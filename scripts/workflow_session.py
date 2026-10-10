@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import math
 import threading
 import uuid
 
@@ -360,7 +361,11 @@ def canonical_resource(resource):
 
 
 class Leases:
-    def __init__(self, resources, owner, lock_root=LOCK_ROOT, inherited=None):
+    def __init__(self, resources, owner, lock_root=LOCK_ROOT, inherited=None, wait_seconds=0):
+        if not math.isfinite(wait_seconds) or wait_seconds < 0:
+            raise ValueError("Resource wait must be finite and nonnegative")
+        self.wait_limit = wait_seconds
+        self.wait_seconds = 0.0
         self.resources = sorted({canonical_resource(r) for r in resources})
         self.owner, self.lock_root = owner, pathlib.Path(lock_root)
         self.inherited = inherited if inherited is not None else json.loads(os.environ.get("GITX_RESOURCE_LEASES", "{}"))
@@ -434,6 +439,26 @@ class Leases:
         self.broker_thread.start()
 
     def __enter__(self):
+        started = time.monotonic()
+        last_owner = None
+        while True:
+            try:
+                result = self.acquire()
+                self.wait_seconds = time.monotonic() - started
+                return result
+            except ResourceBusy as error:
+                elapsed = time.monotonic() - started
+                if elapsed >= self.wait_limit:
+                    self.wait_seconds = elapsed
+                    raise
+                notice = (error.resource, error.owner.get("runId"), error.owner.get("pid"))
+                if notice != last_owner:
+                    print(f"Waiting up to {self.wait_limit:g}s: {error}", flush=True)
+                    last_owner = notice
+                time.sleep(min(.2, self.wait_limit - elapsed))
+
+    def acquire(self):
+        self.held = {}
         self.lock_root.mkdir(parents=True, exist_ok=True)
         try:
             for resource in self.resources:
@@ -803,12 +828,23 @@ def entry_resources(entry, arguments, root=ROOT, toolchain=None):
             if pathlib.Path(developer).suffix.lower() == ".app":
                 developer = str(pathlib.Path(developer) / "Contents/Developer")
     paths = cache_paths(root, configuration, instrumentation, developer, toolchain=toolchain)
-    resources = [paths["derivedData"], paths["swiftPM"], paths["sourcePackages"]]
+    resources = [] if entry == "verify_static.sh" else [paths["derivedData"], paths["swiftPM"], paths["sourcePackages"]]
     if entry == "check_test_build_contracts.py":
         for config in ("Debug", "Release"):
             probe_paths = cache_paths(root, config, developer=developer, toolchain=toolchain)
             resources.extend(probe_paths[key] for key in ("derivedData", "sourcePackages"))
     for index, arg in enumerate(arguments[:-1]):
+        if arg == "--resume-analysis":
+            value = arguments[index + 1]
+            if not value or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in value):
+                raise ValueError("Invalid prior analyzer run ID")
+            resources.append(str(verification_artifact_root(root) / value))
+            receipt = verification_artifact_root(root) / value / "receipt.json"
+            if receipt.is_file():
+                prior = json.loads(receipt.read_text())
+                scratch = prior.get("evidence", {}).get("analyzerScratch", {}).get("path")
+                if scratch:
+                    resources.append(scratch)
         if arg in {"-derivedDataPath", "-clonedSourcePackagesDirPath", "--scratch-path"}:
             resources.append(arguments[index + 1])
             if arg == "-derivedDataPath":
@@ -822,7 +858,7 @@ def entry_resources(entry, arguments, root=ROOT, toolchain=None):
                 resources.append(paths[key])
     if entry == "run_app.sh" or "--stage-app" in arguments:
         resources.append(str(pathlib.Path(root) / "build/GitX.app"))
-    if entry in {"verify_static.sh", "run_app.sh"} or (any(v in arguments for v in ("test", "test-without-building")) and not any(v in arguments for v in ("core", "forgekit"))):
+    if entry == "run_app.sh" or (any(v in arguments for v in ("test", "test-without-building")) and not any(v in arguments for v in ("core", "forgekit"))):
         resources.append(f"desktop:{os.getuid()}")
     return resources, paths
 
@@ -844,7 +880,13 @@ def guard(entry, arguments):
     if pathlib.Path(entry).name == "xcodebuild.sh":
         resources.append(str(verification_artifact_root(root) / run_id))
     try:
-        with Leases(resources, owner) as leases:
+        with Leases(resources, owner, wait_seconds=float(os.environ.get("GITX_RESOURCE_WAIT_SECONDS", "0"))) as leases:
+            refreshed_resources, refreshed_paths = entry_resources(pathlib.Path(entry).name, arguments, root)
+            if pathlib.Path(entry).name == "xcodebuild.sh":
+                refreshed_resources.append(str(verification_artifact_root(root) / run_id))
+            if {canonical_resource(value) for value in refreshed_resources} != set(leases.held):
+                raise ValueError("Required resources changed while waiting; retry to acquire the current resources")
+            paths = refreshed_paths
             env = leases.environment() | {"GITX_GUARDED_ENTRY": str(pathlib.Path(entry).resolve()),
                   "GITX_DERIVED_DATA": paths["derivedData"], "GITX_SWIFTPM_BUILD_ROOT": paths["swiftPM"],
                   "GITX_SOURCE_PACKAGE_CACHE": paths["sourcePackages"]}
@@ -857,6 +899,7 @@ def guard(entry, arguments):
                         env.pop(variable, None)
             before = inputs(root)
             atomic_json(receipt, owner | {"status": "running", "resources": resources, "paths": paths,
+                                         "resourceWaitSeconds": round(leases.wait_seconds, 3), "deliveryEligible": False,
                                          "evidence": {"status": "pending", "inputsBefore": before}})
             interpreter = sys.executable if pathlib.Path(entry).suffix == ".py" else "bash"
             status = supervise([interpreter, str(pathlib.Path(entry).resolve()), *arguments], env=env, desktop=pathlib.Path(entry).name == "run_app.sh",
@@ -865,7 +908,7 @@ def guard(entry, arguments):
             changed = changed_inputs(before, after)
             if changed and status == 0:
                 status = 76
-            atomic_json(receipt, owner | {"status": "invalid" if changed else "passed" if status == 0 else "failed", "exitCode": status, "resources": resources, "paths": paths, "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+            atomic_json(receipt, owner | {"status": "invalid" if changed else "passed" if status == 0 else "failed", "exitCode": status, "resources": resources, "paths": paths, "resourceWaitSeconds": round(leases.wait_seconds, 3), "deliveryEligible": False, "finishedAt": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "evidence": {"status": "invalid" if changed else "valid", "inputsBefore": before, "inputsAfter": after, "changedInputs": changed}})
             return status
     except ResourceBusy as error:
