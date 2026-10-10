@@ -55,7 +55,10 @@ class ScriptEntrypointTests(unittest.TestCase):
         self.environment = os.environ.copy()
         self.environment["PATH"] = f"{self.bin}:{self.environment['PATH']}"
         self.environment["GITX_DEVELOPER_DIR"] = str(self.developer_directory)
-        for key in ("GITX_RESOURCE_LEASES", "GITX_SESSION_ID", "GITX_GUARDED_ENTRY"):
+        # Fixture ownership and fail-fast probes must not inherit a waiting
+        # parent coordinator's leases or wait policy.
+        for key in ("GITX_RESOURCE_LEASES", "GITX_SESSION_ID", "GITX_GUARDED_ENTRY",
+                    "GITX_RESOURCE_WAIT_SECONDS"):
             self.environment.pop(key, None)
         self.environment["GITX_DERIVED_DATA"] = str(self.root / "build/DerivedData")
         self.environment["GITX_SWIFTPM_BUILD_ROOT"] = str(self.root / "build/SwiftPM")
