@@ -373,6 +373,29 @@ class WorkflowSessionTests(unittest.TestCase):
         self.assertTrue(session.console_session_locked(b"broken", os.getuid()))
         self.assertTrue(session.console_session_locked(plistlib.dumps([]), os.getuid()))
 
+    def test_registry_console_lock_is_scoped_to_the_matched_console_user(self):
+        import plistlib
+        for locked in [False, True]:
+            properties = plistlib.dumps([{"IOConsoleLocked": locked, "IOConsoleUsers": [
+                {"kCGSSessionUserIDKey": os.getuid(), "kCGSSessionOnConsoleKey": True}]}])
+            self.assertEqual(session.console_session_locked(properties, os.getuid()), locked)
+        properties = plistlib.dumps([{"IOConsoleLocked": False, "IOConsoleUsers": [
+            {"kCGSSessionUserIDKey": os.getuid() + 1, "kCGSSessionOnConsoleKey": True}]}])
+        self.assertTrue(session.console_session_locked(properties, os.getuid()))
+
+    def test_registry_lock_does_not_leak_between_session_subtrees(self):
+        import plistlib
+        properties = plistlib.dumps([
+            {"IOConsoleLocked": True, "IOConsoleUsers": [
+                {"kCGSSessionUserIDKey": os.getuid() + 1, "kCGSSessionOnConsoleKey": False}]},
+            {"IOConsoleLocked": False, "IOConsoleUsers": [
+                {"kCGSSessionUserIDKey": os.getuid(), "kCGSSessionOnConsoleKey": True}]}])
+        self.assertFalse(session.console_session_locked(properties, os.getuid()))
+        properties = plistlib.dumps([{"IOConsoleLocked": False, "IOConsoleUsers": [
+            {"kCGSSessionUserIDKey": os.getuid(), "kCGSSessionOnConsoleKey": True,
+             "kCGSSessionScreenIsLockedKey": True}]}])
+        self.assertTrue(session.console_session_locked(properties, os.getuid()))
+
     def test_broker_accepts_fragmented_framed_requests(self):
         import socket
         with tempfile.TemporaryDirectory() as directory:
