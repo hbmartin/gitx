@@ -1,5 +1,23 @@
 import Foundation
 
+/// Finder can create metadata while a fixture's document window is open.
+/// Keep that ambient output out of fixture status without hiding tracked files.
+@objc(GitXUITestRepositoryPolicy)
+public final nonisolated class GitXUITestRepositoryPolicy: NSObject {
+    @objc(excludeFinderMetadataInRepositoryAtPath:error:)
+    public static func excludeFinderMetadata(inRepositoryAtPath path: String) throws {
+        let info = URL(fileURLWithPath: path, isDirectory: true)
+            .appendingPathComponent(".git/info", isDirectory: true)
+        try FileManager.default.createDirectory(at: info, withIntermediateDirectories: true)
+        let exclude = info.appendingPathComponent("exclude")
+        var contents = FileManager.default.fileExists(atPath: exclude.path) ? try Data(contentsOf: exclude) : Data()
+        let rule = Data("\n.DS_Store\n".utf8)
+        guard contents.suffix(rule.count) != rule else { return }
+        contents.append(rule)
+        try contents.write(to: exclude, options: .atomic)
+    }
+}
+
 @MainActor
 final class GitXUITestFixtureWorkspace {
     private let prefix: String

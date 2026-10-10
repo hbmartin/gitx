@@ -46,6 +46,36 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(Set(status.split(separator: "\n").map(String.init)), [" M .DS_Store", "?? real.swift"])
     }
 
+    func testFixtureIgnoresUntrackedFinderMetadataWithoutHidingRealFiles() throws {
+        let repository = try makeWorkingRepository(name: "fixture-metadata-exclusion")
+        let nested = repository.appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try Data([0, 1, 2]).write(to: repository.appendingPathComponent(".DS_Store"))
+        try Data([0, 1, 2]).write(to: nested.appendingPathComponent(".DS_Store"))
+        try "real source\n".write(to: nested.appendingPathComponent("real.swift"), atomically: true, encoding: .utf8)
+        try "real notes\n".write(to: repository.appendingPathComponent(".DS_Store.notes"), atomically: true, encoding: .utf8)
+
+        let status = try git(["status", "--porcelain", "--untracked-files=all"], in: repository)
+        XCTAssertEqual(Set(status.split(separator: "\n").map(String.init)), ["?? .DS_Store.notes", "?? nested/real.swift"])
+    }
+
+    func testFixtureMetadataExclusionPreservesExistingRulesAndIsIdempotent() throws {
+        let repository = try makeWorkingRepository(name: "fixture-metadata-existing-rules")
+        let exclude = repository.appendingPathComponent(".git/info/exclude")
+        let existingRules = Data("private.log\n!keep.private.log\n".utf8)
+        try existingRules.write(to: exclude)
+        try GitXUITestRepositoryPolicy.excludeFinderMetadata(inRepositoryAtPath: repository.path)
+        let combinedRules = try Data(contentsOf: exclude)
+        XCTAssertTrue(combinedRules.starts(with: existingRules))
+        try GitXUITestRepositoryPolicy.excludeFinderMetadata(inRepositoryAtPath: repository.path)
+        XCTAssertEqual(try Data(contentsOf: exclude), combinedRules)
+
+        for name in [".DS_Store", "private.log", "keep.private.log"] {
+            try Data([0, 1, 2]).write(to: repository.appendingPathComponent(name))
+        }
+        XCTAssertEqual(try git(["status", "--porcelain", "--untracked-files=all"], in: repository), "?? keep.private.log\n")
+    }
+
     func testRejectedPushRetryShowsFrozenLeaseAndCancellationPreservesRemote() throws {
         let fixture = try makePushFixture()
         // Keep the forge identity while resolving both transport endpoints to the same isolated bare repository.
@@ -563,6 +593,7 @@ final class Milestone2WorkflowUITests: XCTestCase, @unchecked Sendable {
     private func makeWorkingRepository(name: String, branch: String = "main") throws -> URL {
         let repository = try makeDirectory(name: name)
         _ = try git(["init", "--quiet", "--initial-branch", branch], in: repository)
+        try GitXUITestRepositoryPolicy.excludeFinderMetadata(inRepositoryAtPath: repository.path)
         _ = try git(["config", "user.name", "GitX UI Tests"], in: repository)
         _ = try git(["config", "user.email", "ui-tests@gitx.invalid"], in: repository)
         try "fixture\n".write(
