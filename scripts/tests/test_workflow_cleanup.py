@@ -241,6 +241,41 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(cleanup.read_json(journal)['state'], 'complete')
         self.assertFalse(cleanup.pending_path(self.root).exists())
 
+    def test_prepared_journal_retains_original_after_retention_policy_change(self):
+        old, _, journal, value = self.prepare_original_journal()
+        policy_path = self.root / 'scripts/verification-config.json'
+        policy = cleanup.read_json(policy_path)
+        policy['cleanup']['retentionDays'] = 365
+        self.write(policy_path, policy)
+        self.git('add', str(policy_path))
+        self.git('commit', '-qm', 'Retain diagnostics for one year')
+        cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        self.assertNotIn(str(old), self.candidate_paths(cleanup.inventory(self.root, receipt)))
+
+        report = cleanup.run_cleanup(self.root, receipt)
+        self.assertTrue(old.is_dir(), 'A prepared journal is not current deletion authorization')
+        self.assertFalse(pathlib.Path(value['quarantinePath']).exists())
+        self.assertEqual(cleanup.read_json(journal)['state'], 'prepared')
+        self.assertEqual(report['status'], 'partial')
+        self.assertTrue(any('no longer eligible' in item['reason'] for item in report['failed']))
+        self.assertTrue(cleanup.pending_path(self.root).exists())
+
+    def test_prepared_journal_records_current_authorization_before_new_quarantine(self):
+        old, _, journal, value = self.prepare_original_journal()
+        (self.root / 'source.txt').write_text('new verified source')
+        self.git('commit', '-qam', 'New verified commit')
+        pending = cleanup.queue_commit(self.root)
+        receipt = self.valid_receipt()
+        self.assertNotEqual(value['authorization']['head'], pending['head'])
+        report = cleanup.run_cleanup(self.root, receipt)
+        self.assertEqual(report['status'], 'complete')
+        self.assertFalse(old.exists())
+        recorded = cleanup.read_json(journal)['authorization']
+        self.assertEqual(recorded['head'], pending['head'])
+        self.assertEqual(recorded['pendingToken'], pending['token'])
+        self.assertEqual(recorded['receiptIdentity'], session.tree_identity(receipt))
+
     def test_interrupted_removal_is_retried_from_an_external_journal(self):
         old = self.run_directory('old')
         cleanup.queue_commit(self.root)
