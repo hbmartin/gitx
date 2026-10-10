@@ -8,6 +8,7 @@
 //
 
 #import <XCTest/XCTest.h>
+#import "GitXUITests-Swift.h"
 
 // The app needs fixtures outside the runner's container, which macOS protects as another app's data.
 static NSString *const GitXUIFixtureRoot = @"/private/tmp/gitx-ui-fixtures";
@@ -259,6 +260,9 @@ static NSDictionary<NSString *, NSString *> *GitXIsolatedScreenshotGitEnvironmen
 	[[NSFileManager defaultManager] createDirectoryAtPath:repositoryPath withIntermediateDirectories:YES attributes:nil error:nil];
 	[self.temporaryRepositoryPaths addObject:repositoryPath];
 	XCTAssertTrue(([self runGit:@[ @"init", @"-q", @"-b", @"main" ] inDirectory:repositoryPath]));
+	NSError *metadataError = nil;
+	XCTAssertTrue([GitXUITestRepositoryPolicy excludeFinderMetadataInRepositoryAtPath:repositoryPath error:&metadataError],
+				  @"Failed to isolate Finder metadata in the fixture: %@", metadataError);
 	XCTAssertTrue(([self runGit:@[ @"config", @"user.name", @"GitX Tests" ] inDirectory:repositoryPath]));
 	XCTAssertTrue(([self runGit:@[ @"config", @"user.email", @"tests@gitx.invalid" ] inDirectory:repositoryPath]));
 	[@"tracked\n" writeToFile:[repositoryPath stringByAppendingPathComponent:@"tracked.swift"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
