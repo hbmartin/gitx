@@ -177,21 +177,17 @@ def fingerprint(path):
             "directory": directory_identity(path), "repositories": repositories}
 
 
-def overlap(left, right, identities=None):
+def overlap(left, right):
     """Ancestry is lexical or established by actual filesystem identity, not case folding."""
     left, right = pathlib.Path(os.path.abspath(left)), pathlib.Path(os.path.abspath(right))
     if left == right or left.is_relative_to(right) or right.is_relative_to(left):
         return True
     def identity(path):
-        if identities is not None and path in identities:
-            return identities[path]
         try:
             info = path.stat()
             value = info.st_dev, info.st_ino
         except FileNotFoundError:
             value = None
-        if identities is not None:
-            identities[path] = value
         return value
     for object_path, descendant in ((left, right), (right, left)):
         key = identity(object_path)
@@ -202,6 +198,8 @@ def overlap(left, right, identities=None):
 
 def reference_paths(value, root):
     """Extract path references, including dictionary keys used for output identities."""
+    if not isinstance(value, dict) or not isinstance(value.get("evidence", {}), dict):
+        raise ValueError("Diagnostic reference metadata must contain objects")
     found = set()
     def visit(item):
         if isinstance(item, str) and ("/" in item or item.endswith((".json", ".xcresult", ".app"))):
@@ -324,12 +322,6 @@ def inventory(root, receipt=None, now=None):
         raise ValueError("Artifact root must remain inside the checkout without a symlink")
     errors, unknown, entries, entry_identities = [], [], {}, set()
     identity_cache = {}
-    def intersects(left, right):
-        try:
-            return overlap(left, right, identity_cache)
-        except OSError as error:
-            uncertain(right, error)
-            return True
     protected = {root / "build/GitX.app": "staged Debug app", root / ".git": "repository metadata"}
     def uncertain(path, error):
         errors.append({"path": str(path), "reason": str(error)})
@@ -366,7 +358,7 @@ def inventory(root, receipt=None, now=None):
                     if tracked.is_relative_to(artifact) or tracked.is_relative_to(root / "build"):
                         protected[tracked] = "tracked repository file"
         token = protection_token(root)
-    except (OSError, ValueError, KeyError) as error:
+    except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
         uncertain(root / ".git", error)
         token = None
     if receipt:
@@ -392,7 +384,14 @@ def inventory(root, receipt=None, now=None):
     latest = metadata(artifact / "latest.json", {})
     if isinstance(latest, dict) and latest.get("receipt"):
         protected[(root / latest["receipt"]).resolve().parent] = "latest receipt"
+    current_inputs = None
     def add(path, documents):
+        try:
+            add_entry(path, documents)
+        except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
+            uncertain(path, error)
+    def add_entry(path, documents):
+        nonlocal current_inputs
         snap = snapshot(path)
         if snap is None:
             return
@@ -413,10 +412,14 @@ def inventory(root, receipt=None, now=None):
                          "resources": resources, "completed": completed}
         if unfinished and not abandoned:
             protected[path] = "live or uncertain unfinished run"
+        resumable = [d for d in documents if d.get("schemaVersion") == 2 and d.get("scope") == "full" and
+                     d.get("inputsAfter") and d.get("status") != "passed"]
+        if resumable and current_inputs is None:
+            current_inputs = session.inputs(root)
         if not abandoned and any(d.get("schemaVersion") == 2 and d.get("scope") == "full" and
-                d.get("inputsAfter") and not session.changed_inputs(d["inputsAfter"], session.inputs(root)) and
+                d.get("inputsAfter") and not session.changed_inputs(d["inputsAfter"], current_inputs) and
                 any(workflow.reusable(step, d["inputsAfter"], step.get("command")) for step in d.get("steps", []))
-                for d in documents if d.get("status") != "passed"):
+                for d in resumable):
             protected[path] = "resumable workflow"
     top = children(artifact)
     print(f"Cleanup inventory: inspecting verification output in {artifact}", file=sys.stderr, flush=True)
@@ -446,19 +449,27 @@ def inventory(root, receipt=None, now=None):
         if len(entries) and len(entries) % 100 == 0:
             print(f"Cleanup inventory: inspected {len(entries)} runs", file=sys.stderr, flush=True)
     for path in children(artifact / "Coordination"):
-        if path.name == "Diagnostics" and path.is_dir() and not path.is_symlink():
-            continue
-        value = metadata(path)
-        if (not path.is_symlink() and path.suffix == ".json" and isinstance(value, dict) and
-                isinstance(value.get("runId"), str) and (value["runId"] == path.stem or re.fullmatch(re.escape(value["runId"]) + r"-[0-9a-f]{8}", path.stem)) and value.get("receipt") == str(path) and
-                isinstance(value.get("entry"), str) and pathlib.Path(value["entry"]).resolve().is_relative_to(root / "scripts") and
-                value.get("evidence", {}).get("inputsBefore", {}).get("root") == str(root) and
-                value.get("status") in {"passed", "failed", "running", "blocked"}):
-            add(path, [value])
-        else:
-            unknown.append({"paths": [str(path)], "reason": "unmanaged legacy Coordination receipt"})
+        try:
+            if path.name == "Diagnostics" and path.is_dir() and not path.is_symlink():
+                continue
+            value = metadata(path)
+            if (not path.is_symlink() and path.suffix == ".json" and isinstance(value, dict) and
+                    isinstance(value.get("runId"), str) and (value["runId"] == path.stem or re.fullmatch(re.escape(value["runId"]) + r"-[0-9a-f]{8}", path.stem)) and value.get("receipt") == str(path) and
+                    isinstance(value.get("entry"), str) and pathlib.Path(value["entry"]).resolve().is_relative_to(root / "scripts") and
+                    value.get("evidence", {}).get("inputsBefore", {}).get("root") == str(root) and
+                    value.get("status") in {"passed", "failed", "running", "blocked"}):
+                add(path, [value])
+            else:
+                unknown.append({"paths": [str(path)], "reason": "unmanaged legacy Coordination receipt"})
+        except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
+            uncertain(path, error)
     generic_seen = set()
     def generic(path):
+        try:
+            generic_entry(path)
+        except (OSError, ValueError, TypeError, AttributeError, KeyError) as error:
+            uncertain(path, error)
+    def generic_entry(path):
         if path.is_symlink() or not path.is_dir() or path.name.startswith(".gitx-cleanup-trash-"):
             unknown.append({"paths": [str(path)], "reason": "unmanaged diagnostic entry"})
             return
@@ -492,15 +503,20 @@ def inventory(root, receipt=None, now=None):
         if not name or not (name.startswith("docs/diagnostics/") or pathlib.Path(name).name in
                             {"verification.json", "runtime.json", "provenance.json", "REVIEW.md"}):
             continue
+        if pathlib.Path(name).suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".ico"}:
+            continue
         try:
             text = (root / name).read_text()
             if name.endswith(".json"):
                 for path in all_paths(json.loads(text)):
                     protected[path] = "tracked diagnostic provenance"
-            for run_id, paths in aliases.items():
-                if re.search(r"(?<![\w.-])" + re.escape(run_id) + r"(?![\w.-])", text):
-                    for path in paths:
-                        protected[path] = "tracked exact run-ID citation"
+            cited = set(re.findall(r"[\w.-]+", text)) & set(aliases)
+            # Legacy IDs containing separators need their original boundaries.
+            cited.update(run_id for run_id in aliases if not re.fullmatch(r"[\w.-]+", run_id) and
+                         re.search(r"(?<![\w.-])" + re.escape(run_id) + r"(?![\w.-])", text))
+            for run_id in cited:
+                for path in aliases[run_id]:
+                    protected[path] = "tracked exact run-ID citation"
         except (OSError, ValueError) as error:
             uncertain(root / name, error)
     for label, predicate in (
@@ -510,9 +526,18 @@ def inventory(root, receipt=None, now=None):
         matching = [p for p, entry in entries.items() if any(predicate(d) for d in entry["documents"])]
         if matching:
             protected[max(matching, key=lambda p: entries[p]["completed"])] = label
-    backups = [p for run in entries if run.is_dir() for p in run.glob("previous-*.app") if p.is_dir() and not p.is_symlink()]
+    backups = []
+    for run in entries:
+        if not run.is_dir():
+            continue
+        try:
+            for path in run.glob("previous-*.app"):
+                if path.is_dir() and not path.is_symlink():
+                    backups.append((path, entries[run]["completed"], path.stat().st_mtime))
+        except OSError as error:
+            uncertain(run, error)
     if backups:
-        protected[max(backups, key=lambda p: (entries[p.parent]["completed"], p.stat().st_mtime))] = "newest previous-app backup"
+        protected[max(backups, key=lambda item: item[1:])[0]] = "newest previous-app backup"
     parents = {p: p for p in entries}
     def find(path):
         while parents[path] != path:
@@ -538,25 +563,72 @@ def inventory(root, receipt=None, now=None):
                         other = indexed.get((info.st_dev, info.st_ino))
                     except FileNotFoundError:
                         pass
+                    except OSError as error:
+                        uncertain(ancestor, error)
+                        break
                 if other is not None:
                     parents[find(other)] = find(path)
                     break
     groups = {}
     for path in entries:
         groups.setdefault(find(path), []).append(path)
+    lexical_nodes, lexical_ancestors, inode_nodes, inode_ancestors = {}, {}, {}, {}
+    protection_uncertain = False
+    def object_key(path):
+        if path not in identity_cache:
+            try:
+                info = path.stat()
+                identity_cache[path] = info.st_dev, info.st_ino
+            except FileNotFoundError:
+                identity_cache[path] = None
+        return identity_cache[path]
+    def index_protection(path, reason):
+        nonlocal protection_uncertain
+        path = pathlib.Path(path)
+        lexical_nodes.setdefault(path, set()).add(reason)
+        for ancestor in (path, *path.parents):
+            lexical_ancestors.setdefault(ancestor, set()).add(reason)
+        try:
+            key = object_key(path)
+            if key is not None:
+                inode_nodes.setdefault(key, set()).add(reason)
+            for ancestor in (path, *path.parents):
+                key = object_key(ancestor)
+                if key is not None:
+                    inode_ancestors.setdefault(key, set()).add(reason)
+        except OSError as error:
+            protection_uncertain = True
+            uncertain(path, error)
+    def protection_reasons(path):
+        reasons = set(lexical_ancestors.get(path, set()))
+        try:
+            key = object_key(path)
+            reasons.update(inode_ancestors.get(key, set()))
+            for ancestor in (path, *path.parents):
+                reasons.update(lexical_nodes.get(ancestor, set()))
+                reasons.update(inode_nodes.get(object_key(ancestor), set()))
+        except OSError as error:
+            uncertain(path, error)
+            reasons.add("unreadable protection reference")
+        if protection_uncertain:
+            reasons.add("unreadable protection reference")
+        return reasons
+    for path, reason in protected.items():
+        index_protection(path, reason)
     changed = True
     while changed:
         changed = False
         for members in groups.values():
-            if any(intersects(p, q) for p in members for q in protected):
+            if any(protection_reasons(p) for p in members):
                 for path in members:
                     for ref in entries[path]["refs"] | {path}:
                         if ref not in protected:
                             protected[ref] = "protected verification dependency"
+                            index_protection(ref, protected[ref])
                             changed = True
     candidates, retained = [], list(unknown)
     def consider(paths, kind, snapshots, resources, age):
-        reasons = sorted({reason for q, reason in protected.items() if any(intersects(p, q) for p in paths)})
+        reasons = sorted(set().union(*(protection_reasons(p) for p in paths)))
         # Only candidate output stays owned during removal. Shared products
         # and the ledger are leased separately for the short commit gate.
         resources = {q for q in resources if not str(q).startswith("desktop:") and
@@ -599,12 +671,16 @@ def inventory(root, receipt=None, now=None):
             retained.append({"paths": [str(path)], "reason": "unknown build directory"})
     cache_seen = set()
     for path in cache_directories:
-        identity = directory_identity(path)
+        try:
+            identity = directory_identity(path)
+        except OSError as error:
+            uncertain(path, error)
+            continue
         key = identity["device"], identity["inode"]
         if key in cache_seen:
             continue
         cache_seen.add(key)
-        reasons = sorted({reason for q, reason in protected.items() if intersects(path, q)})
+        reasons = sorted(protection_reasons(path))
         if reasons:
             retained.append({"paths": [str(path)], "kind": "cache", "reason": "; ".join(reasons)})
             continue
@@ -616,7 +692,11 @@ def inventory(root, receipt=None, now=None):
                 resources = {path} | {q for entry in entries.values() for q in entry["resources"] if q.is_relative_to(path)}
                 consider([path], "cache", {path: snap}, resources, snap["modified"])
     # Count each top-level tree once; collected top-level snapshots avoid rescans.
-    total = artifact.lstat().st_blocks * 512 if artifact.exists() else 0
+    try:
+        total = artifact.lstat().st_blocks * 512 if artifact.exists() else 0
+    except OSError as error:
+        uncertain(artifact, error)
+        total = 0
     for path in top:
         snap = entries[path]["snapshot"] if path in entries else snapshot(path)
         if snap is not None:
