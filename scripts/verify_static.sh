@@ -9,6 +9,11 @@ fi
 unset GITX_GUARDED_ENTRY
 cd "$root"
 
+if [[ "${1:-}" == "--feedback" ]]; then
+	shift
+	exec python3 scripts/workflow_feedback.py static "$@"
+fi
+
 base_ref=${1:-}
 if [[ -n "$base_ref" ]] && ! git rev-parse --verify "$base_ref^{commit}" >/dev/null 2>&1; then
 	base_ref=

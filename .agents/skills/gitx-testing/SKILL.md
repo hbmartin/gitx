@@ -5,6 +5,8 @@ description: Plan, add, run, and review XCTest-based verification for GitX. Use 
 
 For resource coordination, evidence reuse, work ownership and review targets, use the repo-local [development-workflow skill](../development-workflow/SKILL.md). Compile Debug and Release test consumers before long suites. Coverage ratchets require one complete passed local correctness receipt with valid provenance; rerun the plain checker after the atomic ratchet.
 
+Use the coordinator's `feedback` profile and target-specific `--only-testing` selectors during iteration. Feedback and profiling receipts remain partial, including feedback that expands to every check. Final delivery keeps the full canonical profile, post-commit correctness and coverage, and all task-specific plans. Native compilation-cache experiments must qualify against the existing build ceilings and verification equivalence before an exact context is enabled automatically.
+
 # GitX Testing
 
 Protect observable behavior with XCTest, ratcheting coverage, explicit test plans, and risk-based verification. Preserve a green history while making tests durable across the gradual Objective-C-to-Swift migration.
