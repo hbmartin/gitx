@@ -2980,6 +2980,66 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         try attachScreenshot(of: XCTUnwrap(windowController.window?.contentView), named: "Staging-Raw-Filename-Unavailable")
     }
 
+    func testWriterActionsRejectStaleInvocationsDuringReconciliationAndRecoverAfterward() throws {
+        try fixture.write("pending writer action\n", to: "nested/tracked.txt")
+        _ = try openStagingPane()
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        let checkout = NSMenuItem(title: "Checkout", action: #selector(PBGitWindowController.checkout(_:)), keyEquivalent: "")
+        checkout.representedObject = PBGitRef(string: "refs/heads/feature")
+        XCTAssertTrue(waitForCondition(timeout: 20) { stub.validateMenuItem(checkout) })
+        let beforeHead = try fixture.git(["rev-parse", "HEAD"])
+        let beforeStatus = try fixture.git(["status", "--porcelain=v1"])
+        let beforeStashes = try fixture.git(["stash", "list"])
+        repository.index.setValue(true, forKey: "mutationReconciliationPending")
+        defer { repository.index.setValue(false, forKey: "mutationReconciliationPending") }
+        for selector in ["checkout:", "merge:", "rebase:", "rebaseHeadBranch:", "cherryPick:", "resetSoft:",
+                         "stashSave:", "stashSaveWithKeepIndex:", "stashPop:", "stashApply:", "stashDrop:",
+                         "pullRemote:", "pullDefaultRemote:", "pullRebaseRemote:", "pullRebaseDefaultRemote:", "toolbarPull:"]
+        {
+            XCTAssertFalse(stub.validateMenuItem(NSMenuItem(title: selector, action: NSSelectorFromString(selector), keyEquivalent: "")), selector)
+        }
+        // These invocations retain the context from a menu that was valid before
+        // reconciliation started. They must revalidate before touching Git.
+        stub.checkout(checkout)
+        stub.merge(checkout)
+        stub.resetSoft(checkout)
+        stub.stashSave(nil)
+        stub.stashSaveWithKeepIndex(nil)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), beforeHead)
+        XCTAssertEqual(try fixture.git(["status", "--porcelain=v1"]), beforeStatus)
+        XCTAssertEqual(try fixture.git(["stash", "list"]), beforeStashes)
+        XCTAssertTrue(stub.shownErrors.isEmpty)
+
+        repository.index.setValue(false, forKey: "mutationReconciliationPending")
+        XCTAssertTrue(waitForCondition(timeout: 20) { stub.validateMenuItem(checkout) })
+        checkout.representedObject = PBGitRef(string: "refs/heads/missing-writer-action-fixture")
+        stub.checkout(checkout)
+        XCTAssertEqual(stub.shownErrors.count, 1, "A real Git failure still reaches the error presenter")
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), beforeHead)
+        XCTAssertEqual(try fixture.git(["status", "--porcelain=v1"]), beforeStatus)
+    }
+
+    func testUnstageHunkPreservesOtherStagedHunksAndWorktree() throws {
+        let path = "nested/tracked.txt"
+        let original = (1 ... 40).map { "original line \($0)\n" }.joined()
+        try fixture.write(original, to: path)
+        try fixture.git(["commit", "--quiet", "-am", "Separated hunk fixture"])
+        let working = original.replacingOccurrences(of: "original line 2\n", with: "changed line 2\n")
+            .replacingOccurrences(of: "original line 38\n", with: "changed line 38\n")
+        try fixture.write(working, to: path)
+        try fixture.git(["add", "--", path])
+        let pane = try openStagingPane()
+        let file = try XCTUnwrap(repository.index.indexChanges.first { $0.path == path })
+        try selectDiffFile(file, staged: true, in: pane)
+        waitForFreshDiffAuthority(in: pane, containing: "+changed line 2")
+        try waitForIndexUpdate { try activateNativeDiffAction("Unstage hunk", in: pane) }
+        XCTAssertEqual(try fixture.git(["show", ":" + path]), original.replacingOccurrences(of: "original line 38\n", with: "changed line 38\n"))
+        XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: fixture.path).appendingPathComponent(path), encoding: .utf8), working)
+        XCTAssertTrue(try fixture.git(["diff", "--", path]).contains("+changed line 2"))
+        XCTAssertFalse(try fixture.git(["diff", "--cached", "--", path]).contains("+changed line 2"))
+        XCTAssertTrue(try fixture.git(["diff", "--cached", "--", path]).contains("+changed line 38"))
+    }
+
     func testPendingIndexReconciliationDisablesMutationAndCommitControlsWithoutClearingSelection() throws {
         try fixture.write("staged portion\n", to: "pending-controls.txt")
         try fixture.git(["add", "pending-controls.txt"])
