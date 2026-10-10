@@ -48,6 +48,15 @@ class WorkflowSessionTests(unittest.TestCase):
             with session.Leases([str(alias)], owner, root / "locks", inherited={}):
                 pass
 
+    def test_inherited_lease_authentication_survives_fast_broker_close(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            resource = session.canonical_resource(str(root / "resource"))
+            owner = {"runId": "parent", "pid": os.getpid(), "receipt": "receipt"}
+            with session.Leases([resource], owner, root / "locks", inherited={}) as parent:
+                for _ in range(200):
+                    self.assertTrue(session.Leases.authenticated(resource, parent.held[resource]))
+
     def test_forged_nested_environment_does_not_claim_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             owner = {"runId": "run", "pid": os.getpid(), "receipt": "receipt"}
@@ -235,16 +244,37 @@ class WorkflowSessionTests(unittest.TestCase):
         with mock.patch.object(session.platform, "system", return_value="Linux"):
             self.assertEqual(session.desktop_checks()[0]["name"], "desktop-unavailable")
 
-    def test_locked_desktop_accepts_compact_and_spaced_ioreg_properties(self):
-        for property_text, expected in [('\"CGSSessionScreenIsLocked\"=Yes', "failed"),
-                                        ('\"CGSSessionScreenIsLocked\" = Yes', "failed"),
-                                        ('\"CGSSessionScreenIsLocked\"=No', "passed")]:
-            with self.subTest(property_text=property_text):
-                outputs = [f"Name : fixture\nUID : {os.getuid()}\n", "display", property_text, ""]
+    def test_lock_state_belongs_to_the_current_console_session(self):
+        import plistlib
+        for key_style in [False, True]:
+            user = "kCGSSessionUserIDKey" if key_style else "CGSSessionUserID"
+            console = "kCGSSessionOnConsoleKey" if key_style else "CGSSessionOnConsole"
+            for locked in [False, True]:
+                properties = plistlib.dumps([{"IOConsoleUsers": [
+                    {user: os.getuid() + 1, console: False, "CGSSessionScreenIsLocked": True},
+                    {user: os.getuid(), console: True, "CGSSessionScreenIsLocked": locked}]}])
+                outputs = [f"Name : fixture\nUID : {os.getuid()}\n", "display", properties, ""]
                 responses = [subprocess.CompletedProcess([], 0, value, "") for value in outputs]
                 with mock.patch.object(session.platform, "system", return_value="Darwin"), mock.patch.object(session.subprocess, "run", side_effect=responses):
                     display = next(check for check in session.desktop_checks() if check["name"] == "display")
-                self.assertEqual(display["status"], expected)
+                self.assertEqual(display["status"], "failed" if locked else "passed")
+        self.assertTrue(session.console_session_locked(b"broken", os.getuid()))
+        self.assertTrue(session.console_session_locked(plistlib.dumps([]), os.getuid()))
+
+    def test_broker_accepts_fragmented_framed_requests(self):
+        import socket
+        with tempfile.TemporaryDirectory() as directory:
+            resource = session.canonical_resource(str(pathlib.Path(directory) / "resource"))
+            owner = {"runId": "owner", "pid": os.getpid(), "receipt": "receipt"}
+            with session.Leases([resource], owner, pathlib.Path(directory) / "locks", inherited={}) as parent:
+                prior = parent.held[resource]
+                request = json.dumps({"resource": session.digest(resource.encode()), "token": prior["token"]}).encode() + b"\n"
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(2)
+                    client.connect(prior["socket"])
+                    for offset in range(0, len(request), 3):
+                        client.sendall(request[offset:offset + 3])
+                    self.assertEqual(client.recv(128), b"owned\n")
 
     def test_signature_failure_is_distinct_from_unknown_startup(self):
         with tempfile.TemporaryDirectory() as directory:

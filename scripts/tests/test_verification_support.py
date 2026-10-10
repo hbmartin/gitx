@@ -100,6 +100,22 @@ class VersionTests(unittest.TestCase):
         version.assert_called_once_with(explicit)
 
 
+class PackageDoctorTests(unittest.TestCase):
+    def test_hostless_packages_do_not_require_objectivegit_or_a_desktop(self):
+        import check_test_build_contracts as contracts
+        for scope, package in [("core", "GitXCore"), ("forgekit", "ForgeKit")]:
+            with tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                (root / package).mkdir()
+                (root / package / "Package.swift").write_text("manifest")
+                (root / package / "Package.resolved").write_text("{}")
+                with mock.patch.object(verification, "ROOT", root), mock.patch.object(verification, "xcode_version", return_value=("27.0", "build")), mock.patch.object(contracts, "dependency_checks", side_effect=AssertionError("Hostless packages do not use ObjectiveGit")), mock.patch.object(verification.session, "desktop_checks", side_effect=AssertionError("Hostless tests do not own a desktop")):
+                    checks, _ = verification.doctor_checks("test", pathlib.Path("/Xcode"), scope=scope)
+                self.assertFalse(any(c["status"] == "failed" for c in checks), checks)
+                self.assertFalse(any(c["name"] in {"workspace", "generated-libraries", "submodules"} for c in checks))
+
+
+
 class ReceiptTests(unittest.TestCase):
     def test_working_tree_fingerprint_includes_untracked_file_contents(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

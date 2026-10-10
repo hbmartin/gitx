@@ -32,8 +32,8 @@ def full_profile(root):
             ("stage-debug", [xcode, "--configuration", "Debug", "--stage-app", "build"])]
 
 
-def reusable(step, current, command):
-    if step.get("status") != "passed" or step.get("evidenceStatus") != "valid" or step.get("command") != command:
+def reusable(step, current, command, mutable_caches=None):
+    if step.get("status") != "passed" or step.get("evidenceStatus") != "valid" or not session.command_matches(step, command):
         return False
     if session.changed_inputs(step.get("inputsAfter", {}), current):
         return False
@@ -48,15 +48,7 @@ def reusable(step, current, command):
         evidence = receipt.get("evidence", {})
         if receipt.get("status") != "passed" or evidence.get("status") != "valid":
             return False
-        derived = receipt.get("buildPaths", {}).get("derivedData")
-        if derived and evidence.get("products") != session.product_identity(derived):
-            return False
-        if evidence.get("dependencyProducts") != session.dependency_products():
-            return False
-        scratch = receipt.get("buildPaths", {}).get("swiftPM")
-        if evidence.get("packageProducts") is not None and evidence["packageProducts"] != session.package_products(scratch):
-            return False
-        if any(session.tree_identity(session.ROOT / path) != identity for path, identity in evidence.get("results", {}).items()):
+        if session.receipt_artifact_problems(receipt, session.ROOT, mutable_caches):
             return False
     if any(session.tree_identity(path) != identity for path, identity in step.get("outputs", {}).items()):
         return False
@@ -96,6 +88,9 @@ def verify(args):
         if entry.endswith(".sh"):
             resources.extend(session.entry_resources(entry, command[1:], root)[0])
     owner = {"runId": run_id, "pid": os.getpid(), "receipt": str(path)}
+    previous_caches = None
+    if args.resume and payload.get("status") == "passed" and not session.final_cache_problems(payload, root):
+        previous_caches = payload.get("finalCacheProducts", session.workflow_cache_snapshots(payload, root))
     with session.Leases(resources, owner) as leases:
         env = leases.environment() | {"GITX_SESSION_ID": run_id, "GITX_COMMAND_TIMEOUT": str(args.timeout)}
         payload["status"] = "running"
@@ -104,9 +99,10 @@ def verify(args):
         for name, command in commands:
             current = session.inputs(root)
             prior = previous.get(name)
-            if args.resume and prior and reusable(prior, current, command):
+            if args.resume and prior and reusable(prior, current, command, previous_caches):
                 print(f"Reuse {name}: passed evidence and inputs still match.", flush=True)
                 continue
+            previous_caches = None
             print(f"Verify {name}; owning run {run_id}; receipt {path}", flush=True)
             attempt = uuid.uuid4().hex[:8]
             child_id = f"{run_id}-{name}-{attempt}"
@@ -114,8 +110,8 @@ def verify(args):
             status = session.supervise(actual, timeout=args.timeout, directory=directory / "Diagnostics" / name,
                                        env=env, pass_fds=leases.descriptors())
             after = session.inputs(root)
-            step = {"name": name, "command": command, "status": "passed" if status == 0 else "failed", "exitCode": status,
-                    "inputsBefore": current, "inputsAfter": after, "toolchain": session.cache_paths()["toolchain"],
+            step = {"name": name, "command": command, "commandIdentity": session.command_identity(command), "status": "passed" if status == 0 else "failed", "exitCode": status,
+                    "inputsBefore": current, "inputsAfter": after, "toolchain": session.cache_paths()["toolchain"], "finishedAt": records.now(),
                     "evidenceStatus": "invalid" if session.changed_inputs(current, after) else "valid", "outputs": {}}
             child_path = session.verification_artifact_root(root) / child_id / "receipt.json"
             if child_path.is_file():
@@ -140,6 +136,11 @@ def verify(args):
             return 76
         payload["evidenceStatus"] = "valid"
         payload["deliveryEligible"] = not args.check
+        payload["finalCacheProducts"] = session.workflow_cache_snapshots(payload, root)
+        if session.final_cache_problems(payload, root):
+            payload.update(status="invalid", evidenceStatus="invalid", deliveryEligible=False)
+            session.atomic_json(path, payload)
+            return 76
         session.atomic_json(path, payload)
         print(f"Local verification passed. Receipt: {path}")
         if not args.check:
