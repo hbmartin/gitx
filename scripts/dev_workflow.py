@@ -9,8 +9,13 @@ import pathlib
 import sys
 import uuid
 
+# A preview must not populate Python bytecode caches in the checkout either.
+if sys.argv[1:3] == ["cleanup", "preview"]:
+    sys.dont_write_bytecode = True
+
 import workflow_records as records
 import workflow_session as session
+import workflow_cleanup as cleanup
 
 
 def full_profile(root):
@@ -63,7 +68,7 @@ def verify(args):
     run_id = args.resume or args.run_id or "workflow-" + uuid.uuid4().hex[:12]
     if any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in run_id):
         raise ValueError("Invalid run ID")
-    directory = root / "artifacts/verification" / run_id
+    directory = session.verification_artifact_root(root) / run_id
     path = directory / "workflow.json"
     if args.resume:
         if not path.is_file():
@@ -85,7 +90,7 @@ def verify(args):
             raise ValueError("Unknown check; use " + ", ".join(name for name, _ in full_profile(root)))
     payload["scope"] = "partial" if args.check else "full"
     payload["selectedChecks"] = [name for name, _ in commands]
-    resources = []
+    resources = [str(directory)]
     for name, command in commands:
         entry = pathlib.Path(command[0]).name
         if entry.endswith(".sh"):
@@ -112,7 +117,7 @@ def verify(args):
             step = {"name": name, "command": command, "status": "passed" if status == 0 else "failed", "exitCode": status,
                     "inputsBefore": current, "inputsAfter": after, "toolchain": session.cache_paths()["toolchain"],
                     "evidenceStatus": "invalid" if session.changed_inputs(current, after) else "valid", "outputs": {}}
-            child_path = root / "artifacts/verification" / child_id / "receipt.json"
+            child_path = session.verification_artifact_root(root) / child_id / "receipt.json"
             if child_path.is_file():
                 step["receipt"] = str(child_path)
                 child_receipt = json.loads(child_path.read_text())
@@ -137,6 +142,16 @@ def verify(args):
         payload["deliveryEligible"] = not args.check
         session.atomic_json(path, payload)
         print(f"Local verification passed. Receipt: {path}")
+        if not args.check:
+            try:
+                report = cleanup.run_cleanup(root, path, inherited=leases.held)
+                print(f"Cleanup: {report['status']}; reclaimed {report.get('reclaimedBytes', 0)} bytes.", flush=True)
+                if report["status"] == "partial":
+                    print(f"Cleanup warning: some candidates were skipped or failed; cleanup stays pending. Report: {report.get('report')}", file=sys.stderr)
+            except Exception as error:
+                # Cleanup is maintenance after immutable verification has passed.
+                # Unexpected cleanup failures must not misreport a test failure.
+                print(f"Cleanup warning: {error}; verification remains passed; cleanup stays pending.", file=sys.stderr)
         return 0
 
 
@@ -174,6 +189,19 @@ def review(args):
     return 3 if result["status"] == "needs-target" else 0
 
 
+def clean(args):
+    if args.action == "install-hook":
+        result = cleanup.install_hook(session.ROOT)
+    elif args.action == "queue":
+        result = cleanup.queue_commit(session.ROOT)
+    elif args.action == "preview":
+        result = cleanup.preview(session.ROOT)
+    else:
+        result = cleanup.run_cleanup(session.ROOT, args.receipt)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 2 if result.get("status") == "partial" else 0
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     groups = result.add_subparsers(dest="group", required=True)
@@ -184,6 +212,14 @@ def parser():
     verification.add_argument("--timeout", type=float, default=7200)
     verification.add_argument("--check", action="append", help="Run only a named check while iterating; not a full delivery profile")
     verification.set_defaults(handler=verify)
+    cleaning = groups.add_parser("cleanup", help="Commit-triggered retention of verification output")
+    actions = cleaning.add_subparsers(dest="action", required=True)
+    actions.add_parser("install-hook")
+    actions.add_parser("queue", help=argparse.SUPPRESS)
+    actions.add_parser("preview", help="Read-only inventory and retention proposal")
+    prune = actions.add_parser("run", help="Prune only after valid full post-commit verification")
+    prune.add_argument("--receipt", required=True, type=pathlib.Path)
+    cleaning.set_defaults(handler=clean)
     working = groups.add_parser("work")
     actions = working.add_subparsers(dest="action", required=True)
     inventory = actions.add_parser("inventory")

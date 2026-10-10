@@ -4126,7 +4126,13 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
             (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "nested/tracked.txt" } ?? []
         )
         waitForIndexUpdate { pane.perform(NSSelectorFromString("discardFiles:"), with: nil) }
-        XCTAssertGreaterThan(stub.confirmationCount, confirmations, "plain discard confirms first")
+        XCTAssertTrue(waitForCondition { stub.confirmationCount > confirmations }, "plain discard confirms first")
+        XCTAssertTrue(waitForCondition { !self.repository.index.mutationReconciliationPending })
+        XCTAssertEqual(
+            try fixture.git(["status", "--porcelain", "--", "nested/tracked.txt"]).trimmingCharacters(in: .whitespacesAndNewlines),
+            "",
+            "plain discard restores the tracked file"
+        )
 
         unstaged.setSelectedObjects(
             (unstaged.arrangedObjects as? [PBChangedFile])?.filter { $0.path == "ignore-me.txt" } ?? []
