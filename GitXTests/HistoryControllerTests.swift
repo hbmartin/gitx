@@ -3165,6 +3165,30 @@ final class HistoryControllerTests: XCTestCase, @unchecked Sendable {
         }
     #endif
 
+    func testTagInfoDoesNotPresentStaleDetailsAfterTheTagIsDeleted() throws {
+        let tagName = "history-info-fixture"
+        try fixture.git(["tag", "-a", tagName, "-m", "actual tag message"])
+        let stub = try XCTUnwrap(windowController as? HistoryWindowController)
+        let menu = NSMenuItem(title: "Tag Info", action: NSSelectorFromString("showTagInfoSheet:"), keyEquivalent: "")
+        menu.representedObject = PBGitRef(string: "refs/tags/" + tagName)
+        stub.perform(NSSelectorFromString("showTagInfoSheet:"), with: menu)
+        let message = try XCTUnwrap(stub.shownMessages.last)
+        XCTAssertEqual(message.message, "Info for tag: " + tagName)
+        XCTAssertTrue(message.info.contains("actual tag message"))
+        let messages = stub.shownMessages.count
+        let errors = stub.shownErrors.count
+        let head = try fixture.git(["rev-parse", "HEAD"])
+        let status = try fixture.git(["status", "--porcelain=v1"])
+        try fixture.git(["tag", "-d", tagName])
+
+        // A menu can retain a reference after an external Git command removes it.
+        stub.perform(NSSelectorFromString("showTagInfoSheet:"), with: menu)
+        XCTAssertEqual(stub.shownMessages.count, messages, "A missing tag must not produce successful information")
+        XCTAssertEqual(stub.shownErrors.count, errors)
+        XCTAssertEqual(try fixture.git(["rev-parse", "HEAD"]), head)
+        XCTAssertEqual(try fixture.git(["status", "--porcelain=v1"]), status)
+    }
+
     func testUnstageHunkPreservesOtherStagedHunksAndWorktree() throws {
         let path = "nested/tracked.txt"
         let original = (1 ... 40).map { "original line \($0)\n" }.joined()

@@ -9,8 +9,13 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         let rawPaths: [Data]
         let status: String
         let indexOutput: Data?
-        init(paths: [String], rawPaths: [Data]? = nil, status: String = "M", indexOutput: Data? = nil) {
-            self.paths = paths; self.rawPaths = rawPaths ?? paths.map { Data($0.utf8) }; self.status = status; self.indexOutput = indexOutput; super.init()
+        let indexedImageSize: String?
+        let diffOutput: String
+        init(paths: [String], rawPaths: [Data]? = nil, status: String = "M", indexOutput: Data? = nil,
+             indexedImageSize: String? = nil, diffOutput: String = "diff --git a/selected.txt b/selected.txt\n")
+        {
+            self.paths = paths; self.rawPaths = rawPaths ?? paths.map { Data($0.utf8) }; self.status = status; self.indexOutput = indexOutput
+            self.indexedImageSize = indexedImageSize; self.diffOutput = diffOutput; super.init()
         }
 
         private let lock = NSLock()
@@ -81,8 +86,12 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                 treeCommands += 1
                 return treeObject + "\n"
             }
+            if arguments.first == "cat-file", let indexedImageSize {
+                XCTAssertEqual(arguments, ["cat-file", "-s", treeObject])
+                return indexedImageSize
+            }
             diffCommands += 1
-            return "diff --git a/selected.txt b/selected.txt\n"
+            return diffOutput
         }
 
         func data(withArguments _: [String], completion: @escaping (Data?, Error?) -> Void) {
@@ -111,6 +120,62 @@ final class StagingDiffPaneControllerTests: XCTestCase {
                 try? FileManager.default.removeItem(at: link)
                 try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: root.appendingPathComponent("missing"))
             }))
+        }
+
+        func testImageReaderResolvesRelativeSymlinkComponentsAndCapturesTheirIdentity() throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let directory = root.appendingPathComponent("nested")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let target = directory.appendingPathComponent("target.png")
+            let link = root.appendingPathComponent("image.png")
+            let bytes = Data("relative symlink image".utf8)
+            try bytes.write(to: target)
+            try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "./nested/../nested/target.png")
+            let first = try PBStagingImageReaderTestHarness.identity(url: link)
+            XCTAssertEqual(try PBStagingImageReaderTestHarness.read(url: link, maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {}), bytes)
+            try FileManager.default.removeItem(at: link)
+            try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "nested/target.png")
+            XCTAssertEqual(try PBStagingImageReaderTestHarness.read(url: link, maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {}), bytes)
+            XCTAssertNotEqual(try PBStagingImageReaderTestHarness.identity(url: link), first, "Changing the link target invalidates authority even if it resolves to the same image bytes")
+        }
+
+        func testImageReaderRejectsAncestorReplacementEvenWhenTheFileRemainsIdentical() throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let directory = root.appendingPathComponent("images")
+            let renamed = root.appendingPathComponent("moved-images")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let file = directory.appendingPathComponent("image.png")
+            let bytes = Data("unchanged image bytes".utf8)
+            try bytes.write(to: file)
+            XCTAssertThrowsError(try PBStagingImageReaderTestHarness.read(url: file, maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {
+                do {
+                    try FileManager.default.moveItem(at: directory, to: renamed)
+                    try FileManager.default.createSymbolicLink(at: directory, withDestinationURL: renamed)
+                } catch { XCTFail("Fixture ancestor replacement failed: \(error)") }
+            })) { error in
+                XCTAssertTrue(error.localizedDescription.contains("Image path changed"), error.localizedDescription)
+            }
+            XCTAssertEqual(try Data(contentsOf: file), bytes, "Refusal is caused by changed path authority, not changed file contents")
+        }
+
+        func testImageReaderMaintainsContentIdentityUnderCachePressure() throws {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let first = directory.appendingPathComponent("first.png")
+            let bytes = Data("first cached image".utf8)
+            try bytes.write(to: first)
+            let identity = try PBStagingImageReaderTestHarness.identity(url: first)
+            for number in 0 ..< 65 {
+                let file = directory.appendingPathComponent("image-\(number).png")
+                let contents = Data("distinct image \(number)".utf8)
+                try contents.write(to: file)
+                XCTAssertEqual(try PBStagingImageReaderTestHarness.read(url: file, maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {}), contents)
+            }
+            XCTAssertEqual(try PBStagingImageReaderTestHarness.identity(url: first), identity, "A bounded cache may evict hashes but must preserve content identity")
+            XCTAssertEqual(try PBStagingImageReaderTestHarness.read(url: first, maximumBytes: 64, cancelled: false, timeout: 2, whileReading: {}), bytes)
         }
 
         func testImageDefaultBudgetAcceptsSlowReadsAndStillHasAFiniteLimit() throws {
@@ -271,25 +336,28 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         }
 
         func testDiscardRefusesABlockingAncestorWithoutOverwritingIt() async throws {
-            try await snapshotFixture { directory, repository, _ in
-                let blocker = directory.appendingPathComponent("blocked")
-                try Data("keep this ancestor".utf8).write(to: blocker)
-                let file = PBChangedFile(path: "blocked/deleted.txt")
-                file.status = .DELETED; file.hasUnstagedChanges = true
-                do {
-                    try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path], status: "D"), files: [file])
-                    XCTFail("Discard cannot replace an uncaptured ancestor")
-                } catch {
-                    XCTAssertEqual((error as NSError).code, 8)
-                    XCTAssertTrue(error.localizedDescription.contains("blocked"), error.localizedDescription)
-                    XCTAssertTrue(error.localizedDescription.contains("Move or remove"), error.localizedDescription)
-                    let alert = NSAlert()
-                    alert.messageText = "Index operation failed"
-                    alert.informativeText = error.localizedDescription
-                    alert.layout()
-                    try attachScreenshot(of: alert.window, named: "Discard-Blocking-Parent-Refusal")
+            for blockerPath in ["blocked", "nested/blocked"] {
+                try await snapshotFixture { directory, repository, _ in
+                    let blocker = directory.appendingPathComponent(blockerPath)
+                    try FileManager.default.createDirectory(at: blocker.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try Data("keep this ancestor".utf8).write(to: blocker)
+                    let file = PBChangedFile(path: blockerPath + "/deleted.txt")
+                    file.status = .DELETED; file.hasUnstagedChanges = true
+                    do {
+                        try await PBStagingDiffRevalidationTestHarness.prepareAndValidate(repository: repository, runner: StatusRunner(paths: [file.path], status: "D"), files: [file])
+                        XCTFail("Discard cannot replace an uncaptured ancestor")
+                    } catch {
+                        XCTAssertEqual((error as NSError).code, 8)
+                        XCTAssertTrue(error.localizedDescription.contains("“" + blockerPath + "”"), error.localizedDescription)
+                        XCTAssertTrue(error.localizedDescription.contains("Move or remove"), error.localizedDescription)
+                        let alert = NSAlert()
+                        alert.messageText = "Index operation failed"
+                        alert.informativeText = error.localizedDescription
+                        alert.layout()
+                        try attachScreenshot(of: alert.window, named: "Discard-Blocking-Parent-Refusal")
+                    }
+                    XCTAssertEqual(try Data(contentsOf: blocker), Data("keep this ancestor".utf8))
                 }
-                XCTAssertEqual(try Data(contentsOf: blocker), Data("keep this ancestor".utf8))
             }
         }
 
@@ -505,6 +573,66 @@ final class StagingDiffPaneControllerTests: XCTestCase {
         }
         XCTAssertTrue(pane.contentView.textView.string.contains(expected))
         XCTAssertTrue(pane.contentView.textView.string.contains("untracked.txt"))
+    }
+
+    private func waitForRenderedText(_ text: String, in pane: PBStagingDiffPaneController) -> Bool {
+        let deadline = Date().addingTimeInterval(2)
+        while !pane.contentView.textView.string.contains(text), Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.001))
+        }
+        return pane.contentView.textView.string.contains(text)
+    }
+
+    func testUnsupportedUntrackedObjectShowsAReadOnlyFailureWithoutReadingIt() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = "untracked-pipe.txt"
+        let fifo = directory.appendingPathComponent(path)
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        let repository = LifetimeRepository(directory: directory, onDeinit: {})
+        let pane = PBStagingDiffPaneController(repository: repository, diffRunner: StatusRunner(paths: [path]))
+        defer { pane.renderRequests([]) }
+        let file = PBChangedFile(path: path)
+        file.status = .NEW; file.hasUnstagedChanges = true
+        pane.renderRequests([PBStagingDiffRequest(file: file, staged: false)])
+        XCTAssertTrue(waitForRenderedText("Diff unavailable — " + path, in: pane))
+        XCTAssertTrue(pane.contentView.textView.string.contains("not a regular file or symbolic link"))
+        XCTAssertFalse(pane.contentView.textView.string.contains("Stage hunk"))
+        XCTAssertFalse(pane.contentView.textView.string.contains("Discard hunk"))
+        var metadata = stat()
+        XCTAssertEqual(lstat(fifo.path, &metadata), 0)
+        XCTAssertEqual(metadata.st_mode & S_IFMT, S_IFIFO, "Preview refusal must leave the unsupported object intact")
+    }
+
+    func testInvalidIndexedImageSizeKeepsTheDiffAndDisablesItsActions() throws {
+        let path = "indexed-preview.png"
+        let diff = """
+        diff --git a/indexed-preview.png b/indexed-preview.png
+        --- a/indexed-preview.png
+        +++ b/indexed-preview.png
+        @@ -1 +1 @@
+        -previous image
+        +selected image
+
+        """
+        for size in [String(64 * 1024 * 1024 + 1), "invalid size"] {
+            let repository = LifetimeRepository(onDeinit: {})
+            let runner = StatusRunner(paths: [path], indexedImageSize: size, diffOutput: diff)
+            let pane = PBStagingDiffPaneController(repository: repository, diffRunner: runner)
+            defer { pane.renderRequests([]) }
+            let file = PBChangedFile(path: path)
+            file.status = .MODIFIED; file.hasStagedChanges = true
+            pane.renderRequests([PBStagingDiffRequest(file: file, staged: true)])
+            XCTAssertTrue(waitForRenderedText("Actions unavailable — " + path, in: pane))
+            let sections = try XCTUnwrap(pane.contentView.value(forKey: "currentDiffSections") as? [[String: Any]])
+            let section = try XCTUnwrap(sections.first)
+            XCTAssertEqual(section[PBNativeSectionTextKey] as? String, diff, "Unavailable image identity must preserve the selected Git diff")
+            XCTAssertEqual(section[PBNativeSectionStagingChromeKey] as? Bool, false)
+            XCTAssertTrue((section[PBNativeSectionActionContextKey] as? [String: Any])?.isEmpty == true)
+            XCTAssertFalse(pane.contentView.textView.string.contains("Unstage hunk"))
+            XCTAssertFalse(pane.contentView.textView.string.contains("Discard hunk"))
+        }
     }
 
     func testQueuedProductionRetainsRepositoryAfterPaneTeardownAndCompletes() async throws {

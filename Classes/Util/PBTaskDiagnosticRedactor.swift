@@ -139,7 +139,7 @@ nonisolated enum PBTaskDiagnosticRedactor {
                 break
             }
             if byte <= 32, !initiallyAmbiguous, authorityAt == nil,
-               colon == nil || numericPort || (authorityHasHostSyntax && authorityColon == nil), authorityEnd < end,
+               colon == nil || numericPort, authorityEnd < end,
                try cursor.byte(at: authorityEnd) > 32
             {
                 break

@@ -4455,7 +4455,8 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	NSArray<NSView *> *descendants = welcome.window.contentView.subviews;
 	NSTableView *recentsTable = nil;
 	NSTextField *welcomeTitle = nil;
-	while (descendants.count > 0 && (!recentsTable || !welcomeTitle)) {
+	NSSearchField *searchField = nil;
+	while (descendants.count > 0 && (!recentsTable || !welcomeTitle || !searchField)) {
 		NSView *view = descendants.firstObject;
 		descendants = [descendants subarrayWithRange:NSMakeRange(1, descendants.count - 1)];
 		if ([view isKindOfClass:NSTableView.class] &&
@@ -4464,12 +4465,16 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 		} else if ([view isKindOfClass:NSTextField.class] &&
 				   [view.accessibilityIdentifier isEqualToString:@"WelcomeTitle"]) {
 			welcomeTitle = (NSTextField *)view;
+		} else if ([view isKindOfClass:NSSearchField.class] &&
+				   [view.accessibilityIdentifier isEqualToString:@"WelcomeSearch"]) {
+			searchField = (NSSearchField *)view;
 		}
 		descendants = [descendants arrayByAddingObjectsFromArray:view.subviews];
 	}
 
 	XCTAssertNotNil(recentsTable);
 	XCTAssertNotNil(welcomeTitle);
+	XCTAssertNotNil(searchField);
 	NSFont *preferredTitleFont = [NSFont preferredFontForTextStyle:NSFontTextStyleTitle1 options:@{}];
 	XCTAssertEqualObjects(welcomeTitle.font.fontName, preferredTitleFont.fontName);
 	XCTAssertEqualWithAccuracy(welcomeTitle.font.pointSize, preferredTitleFont.pointSize, 0.01);
@@ -4477,10 +4482,40 @@ static PBRepositoryDocumentController *PBWindowInstalledDocumentController;
 	XCTAssertEqual(recentsTable.target, welcome);
 	XCTAssertEqual(recentsTable.doubleAction, NSSelectorFromString(@"openSelected:"));
 	XCTAssertGreaterThan(recentsTable.numberOfRows, (NSInteger)0);
+	NSString *originalSearch = searchField.stringValue;
+	searchField.stringValue = [NSString stringWithFormat:@"  %@ \n", self.repositoryURL.lastPathComponent.uppercaseString];
+	XCTAssertTrue([searchField sendAction:searchField.action to:searchField.target]);
+	XCTAssertEqual(recentsTable.numberOfRows, (NSInteger)1);
+	NSTextField *name = [recentsTable viewAtColumn:0 row:0 makeIfNecessary:YES];
+	XCTAssertEqualObjects(name.stringValue, self.repositoryURL.lastPathComponent);
+
+	NSString *parent = self.repositoryURL.URLByDeletingLastPathComponent.path;
+	searchField.stringValue = parent.uppercaseString;
+	XCTAssertTrue([searchField sendAction:searchField.action to:searchField.target]);
+	NSMutableArray<NSString *> *visibleNames = [NSMutableArray array];
+	for (NSInteger row = 0; row < recentsTable.numberOfRows; row++) {
+		NSTextField *nameField = [recentsTable viewAtColumn:0 row:row makeIfNecessary:YES];
+		NSTextField *parentField = [recentsTable viewAtColumn:1 row:row makeIfNecessary:YES];
+		[visibleNames addObject:nameField.stringValue];
+		XCTAssertNotEqual([parentField.stringValue rangeOfString:parent options:NSCaseInsensitiveSearch].location, NSNotFound);
+	}
+	XCTAssertTrue([visibleNames containsObject:self.repositoryURL.lastPathComponent]);
+
+	searchField.stringValue = NSUUID.UUID.UUIDString;
+	XCTAssertTrue([searchField sendAction:searchField.action to:searchField.target]);
+	XCTAssertEqual(recentsTable.numberOfRows, (NSInteger)0);
+	PBWindowDocumentOpenCount = 0;
+	[recentsTable sendAction:recentsTable.doubleAction to:recentsTable.target];
+	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)0);
+	searchField.stringValue = @"  ";
+	XCTAssertTrue([searchField sendAction:searchField.action to:searchField.target]);
+	XCTAssertGreaterThan(recentsTable.numberOfRows, (NSInteger)0);
 	[recentsTable selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
 	PBWindowDocumentOpenCount = 0;
 	XCTAssertTrue([recentsTable sendAction:recentsTable.doubleAction to:recentsTable.target]);
 	XCTAssertEqual(PBWindowDocumentOpenCount, (NSUInteger)1);
+	searchField.stringValue = originalSearch;
+	[welcome searchChanged:nil];
 	[welcome closeWelcome];
 
 	XCTAssertFalse(welcome.window.isVisible);

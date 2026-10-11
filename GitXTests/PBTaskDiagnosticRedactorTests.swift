@@ -88,6 +88,31 @@ final class PBTaskDiagnosticRedactorTests: XCTestCase {
                        "https://[redacted]@example.invalid/repo failed: denied")
     }
 
+    func testOrdinaryPathColonsPreserveFollowingDiagnosticsAcrossEveryChunkBoundary() throws {
+        for url in [
+            "https://example.invalid/path:segment",
+            "https://example.invalid?state:segment",
+            "https://example.invalid:443/path:segment",
+            "http://localhost:3000/path:segment",
+            "https://[::1]/path:segment",
+        ] {
+            let diagnostic = " failed: contact owner@example.invalid "
+            let input = url + diagnostic + "https://user:secret@other.invalid/repo"
+            let expected = url + diagnostic + "https://[redacted]@other.invalid/repo"
+            XCTAssertEqual(PBTaskDiagnosticRedactor.redacted(input), expected)
+            XCTAssertEqual(PBTaskDiagnostics.redacted(input), expected, "Objective-C app boundary")
+            let bytes = Data(input.utf8)
+            for size in 1 ... bytes.count {
+                let source = PBTaskDiagnosticByteSource(length: Int64(bytes.count)) { offset, count in
+                    Data(bytes[Int(offset) ..< Int(offset) + count])
+                }
+                var output = Data()
+                try PBTaskDiagnosticRedactor.redact(source: source, incomplete: false, bufferSize: size) { output.append($0) }
+                XCTAssertEqual(String(decoding: output, as: UTF8.self), expected, "\(url), chunk size \(size)")
+            }
+        }
+    }
+
     func testNestedSchemeLikeCredentialFragmentsAreEntirelyRedactedAtEveryChunkBoundary() throws {
         let text = "before https://user:prefix/privateScheme://remainingSecret@example.invalid/repo after: diagnostic"
         let input = Data(text.utf8)
